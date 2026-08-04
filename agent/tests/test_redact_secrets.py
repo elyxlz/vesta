@@ -2,8 +2,10 @@
 
 import importlib.util
 import json
+import os
 import pathlib as pl
 import sqlite3
+import subprocess
 
 import pytest
 
@@ -161,6 +163,15 @@ def test_scan_ignores_benign_prose_with_bare_space(event_bus, db_conn, text):
         "secret = topsecretvalue",
         '{"password":"supersecretvalue"}',
         'api_key="abcd1234"',
+        "PASSWORD:  Tr0ub4dorvalue",
+        # A quote separator with the value hard against it: the CLI-flag shape.
+        '--password "hunter2xyz"',
+        "email-client --password 'appspecificpw'",
+        # A value padded inside its quotes, closing quote present, so the leading space is part of
+        # the value rather than the gap after a closing quote.
+        'password="  hunter2xyz"',
+        '--password "  hunter2xyz"',
+        "api_key: '  abcd1234efgh'",
     ],
 )
 def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, text):
@@ -170,6 +181,25 @@ def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, te
 
     assert len(matches) == 1
     assert "[REDACTED]" in matches[0][1]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'the "gmail-app-password" provider',
+        'the "app-password" setting stores it',
+        'send the "api-key" header always',
+        'rotate the "client-secret" quarterly',
+        'the "smtp-password" documentation entry',
+    ],
+)
+def test_scan_ignores_quoted_identifier_followed_by_prose(event_bus, db_conn, text):
+    """A quote that CLOSES a quoted identifier is not an assignment separator, so the English word
+    after it is prose, not a value. These shapes carry no credential at all: the word inside the
+    quotes is the identifier and the word after them is ordinary text."""
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
+
+    assert redact.scan(db_conn) == []
 
 
 # Payment-card (PAN) detection: a Luhn-checked pass layered on top of the regex patterns. Well-known
@@ -298,3 +328,307 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
+
+
+def _insert_raw_event(conn, payload: dict) -> int:
+    cursor = conn.execute("INSERT INTO events (ts, data) VALUES ('2026-01-01T00:00:00', ?)", (json.dumps(payload),))
+    conn.commit()
+    return cursor.lastrowid
+
+
+# ---------------------------------------------------------------------------
+# Vendor token prefixes
+# ---------------------------------------------------------------------------
+# Each prefix is anchored case-sensitively. Under the module's outer IGNORECASE a short lowercase
+# prefix also matches its own letters inside base64url runs (reasoning-block signatures, media
+# keys), and the scan output is uncapped, so that noise buries real rows.
+
+VENDOR_TOKENS = [
+    "hf_" + "a" * 34,
+    "tfp_" + "b" * 44,
+    "napi_" + "c" * 24,
+    "dckr_pat_" + "d" * 24,
+    "sbp_" + "e" * 40,
+    "shpat_" + "f" * 32,
+    "lin_api_" + "g" * 24,
+    "wak_" + "h" * 24,
+]
+
+
+@pytest.mark.parametrize("token", VENDOR_TOKENS)
+def test_scan_flags_vendor_prefixed_tokens(token):
+    matches = redact.find_matches(f"curl -H 'Authorization: {token}' https://api.example.com")
+
+    assert len(matches) == 1
+    assert token not in matches[0]
+    assert "[REDACTED]" in matches[0]
+
+
+@pytest.mark.parametrize("token", VENDOR_TOKENS)
+def test_vendor_prefixes_are_case_anchored(token):
+    # The same body behind an upper-cased prefix is not a real key of any of these vendors, so it
+    # must not match: this is exactly the base64url-run false positive the anchoring exists to stop.
+    prefix, _, body = token.partition("_")
+    assert redact.find_matches(f"blob {prefix.upper()}_{body} end") == []
+
+
+def test_vendor_prefixes_survive_the_scrub_round_trip(event_bus, db_conn):
+    token = "hf_" + "z" * 34
+    event_bus.emit(AssistantEvent(type="assistant", text=f"huggingface-cli login --token {token}"))
+    ids = sorted({row_id for row_id, _ in redact.scan(db_conn)})
+
+    assert redact.scrub(db_conn, ids) == 1
+
+    rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
+    assert all(token not in data for data in rows)
+    assert all(json.loads(data) for data in rows)
+
+
+def test_scan_flags_github_app_installation_tokens(event_bus, db_conn):
+    # ghs_<installation-id>_<jwt> carries underscores and dots inside the body, and a truncated
+    # copy (piped through head) must still match on length alone.
+    token = "ghs_12345678_" + "a1" * 20
+    event_bus.emit(AssistantEvent(type="assistant", text=f"auth with {token} now"))
+
+    matches = redact.scan(db_conn)
+
+    assert len(matches) == 1
+    assert token not in matches[0][1]
+
+
+# Secrets named by an arbitrary key name, a hyphenated header, the auth scheme, or a URL position.
+# The literal-word pattern only knows password/secret/api_key, so the shapes a key actually arrives
+# in (EXA_KEY=..., an X-Plex-Token: header, a JSON "token" field, Bearer, a ?sig= query value, a
+# bare /api/<key> path segment) need their own rules.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "EXA_KEY=abcd1234efgh5678ijkl curl https://api.example.com",
+        "GH_TOKEN=abcd1234efgh5678ijkl gh pr list",
+        'curl -H "X-Plex-Token: abcd1234efgh5678ijkl" http://plex.local',
+        '{"token": "abcd1234efgh5678ijkl"}',
+        'curl -H "Authorization: Bearer abcd1234efgh5678ijkl" https://api.github.com',
+        "https://cdn.example.com/file?sig=abc123def456ghi789",
+        "https://192.168.1.10/api/q1w2e3r4t5q1w2e3r4t5q1w2e3r4t5/lights",
+    ],
+)
+def test_scan_catches_named_urlborne_and_bearer_secrets(event_bus, db_conn, text):
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
+
+    matches = redact.scan(db_conn)
+
+    assert len(matches) == 1
+    assert "[REDACTED]" in matches[0][1]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # No digit anywhere in the value: prose and identifier-ish assignments, not credentials.
+        "PRIMARY_KEY=customer_account_number",
+        "the key = a good one for this problem",
+        "sort_key: alphabetical_ordering",
+        # Too short to be a credential.
+        "token=abc123",
+        # The scheme without a plausible value.
+        "Bearer with us while this deploys",
+        # A camelCase docs URL: 25+ chars after /api/ but no digit, so the path rule stays quiet.
+        "https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnectionIceEvent",
+    ],
+)
+def test_scan_ignores_named_separators_that_are_not_credentials(event_bus, db_conn, text):
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
+
+    assert redact.scan(db_conn) == []
+
+
+def test_scan_stays_linear_on_long_unbroken_runs():
+    # A quantified name-prefix in the named-key rule backtracks quadratically on exactly this input
+    # (base64 reasoning signatures); the suffix-anchored rule scans it in linear time, so this
+    # completes in well under a second instead of hanging the suite.
+    assert redact.find_matches("A1b2" * 100_000) == []
+
+
+# ---------------------------------------------------------------------------
+# Scrub verification: the committed rows are checked, not the writer's word
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_verification_stays_quiet_on_a_complete_scrub(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the aws key is {SECRET} for backups"))
+    ids = sorted({row_id for row_id, _ in redact.scan(db_conn)})
+    hits = redact.stored_hits(db_conn, ids)
+
+    redact.scrub(db_conn, ids)
+
+    assert redact.still_matching(db_conn, hits) == []
+    stored = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    assert SECRET not in stored
+
+
+def test_scrub_redacts_a_secret_used_as_a_json_key(db_conn):
+    # An object KEY can hold the secret; a rewrite that only walks values leaves it in the
+    # committed row, so keys go through the same redaction pass.
+    row_id = _insert_raw_event(db_conn, {"type": "note", SECRET: "context for the key"})
+
+    assert redact.scrub(db_conn, [row_id]) == 1
+
+    stored = db_conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()[0]
+    assert SECRET not in stored
+    assert "[REDACTED]" in json.loads(stored)
+
+
+def test_scrub_warns_when_a_matched_hit_survives_the_rewrite(db_conn, tmp_path, monkeypatch, capsys):
+    """A payment card stored as a JSON NUMBER is matched by the scan (which reads the raw blob) but
+    sits outside every string the rewrite touches, so the committed row still holds it: the scrub
+    must report that and exit 2 instead of claiming success."""
+    row_id = _insert_raw_event(db_conn, {"type": "note", "amount": int(VISA)})
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", str(row_id)])
+
+    assert redact.main() == 2
+
+    out = capsys.readouterr().out
+    assert "WARNING" in out and str(row_id) in out
+    assert "--scrub-literal" in out
+
+
+# ---------------------------------------------------------------------------
+# --scrub-literal: redact one known value the scanner cannot detect
+# ---------------------------------------------------------------------------
+
+# A password a human chose: no prefix, low entropy, matches none of the scanner's API-key shapes.
+UNDETECTABLE = "correct-horse-battery-staple"
+
+
+def test_scanner_cannot_detect_a_human_chosen_password(event_bus, db_conn):
+    # The premise of --scrub-literal: --scrub is pattern-driven, so a value the scanner misses is
+    # one --scrub can never remove, even with the exact event ids in hand.
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE} for now"))
+    ids = [row_id for row_id, _ in db_conn.execute("SELECT id, data FROM events")]
+
+    assert redact.scan(db_conn) == []
+    assert redact.scrub(db_conn, ids) == 0
+    assert UNDETECTABLE in db_conn.execute("SELECT data FROM events").fetchone()[0]
+
+
+def test_scrub_literal_removes_every_stored_copy(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"first {UNDETECTABLE}"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"again {UNDETECTABLE} and {UNDETECTABLE}"))
+    event_bus.emit(AssistantEvent(type="assistant", text="unrelated message"))
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (2, 0)
+
+    rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
+    assert all(UNDETECTABLE not in data for data in rows)
+    assert redact.count_literal(db_conn, UNDETECTABLE) == 0
+
+
+def test_scrub_literal_reaches_a_value_used_as_a_json_key(db_conn):
+    row_id = _insert_raw_event(db_conn, {"type": "note", UNDETECTABLE: "x"})
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (1, 0)
+
+    stored = db_conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()[0]
+    assert UNDETECTABLE not in stored
+
+
+def test_scrub_literal_keeps_fts_in_sync(event_bus, db_conn):
+    # The bug this guards: a plain UPDATE leaves the pre-scrub text (secret included) searchable,
+    # because events_fts is external-content with insert/delete triggers only.
+    event_bus.emit(AssistantEvent(type="assistant", text=f"password {UNDETECTABLE} for the account"))
+    assert event_bus.search(f'"{UNDETECTABLE}"') != []  # searchable before, so the check below bites
+
+    redact.scrub_literal(db_conn, UNDETECTABLE)
+
+    assert event_bus.search(f'"{UNDETECTABLE}"') == []  # quoted: FTS reads a bare hyphen as an operator
+    hits = event_bus.search("account")
+    assert len(hits) == 1
+    assert "[REDACTED]" in hits[0]["text"]
+
+
+def test_scrub_literal_handles_a_secret_abutting_an_escaped_quote(event_bus, db_conn):
+    # Same escape-boundary hazard as the pattern scrub: replacing on the serialized blob would
+    # splice [REDACTED] across the encoded quote and produce invalid JSON.
+    event_bus.emit(AssistantEvent(type="assistant", text=f'login "{UNDETECTABLE}" now'))
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (1, 0)
+
+    data = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    assert json.loads(data)["text"] == 'login "[REDACTED]" now'
+
+
+def test_scrub_literal_leaves_events_without_the_value_untouched(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text="a message with no secret in it"))
+    before = db_conn.execute("SELECT data FROM events").fetchone()[0]
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (0, 0)
+
+    assert db_conn.execute("SELECT data FROM events").fetchone()[0] == before
+
+
+def test_main_scrub_literal_never_echoes_the_value(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE}"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal", UNDETECTABLE])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert UNDETECTABLE not in out
+    assert "Scrubbed 1 event(s); 0 remain" in out
+    assert f"length {len(UNDETECTABLE)}" in out
+    assert UNDETECTABLE not in db_conn.execute("SELECT data FROM events").fetchone()[0]
+
+
+def test_main_scrub_literal_rejects_a_missing_value(tmp_path, event_bus, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text="anything"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal"])
+
+    assert redact.main() == 1
+    assert "usage:" in capsys.readouterr().out
+
+
+def test_main_scrub_literal_refuses_a_short_literal(tmp_path, event_bus, monkeypatch, capsys):
+    # The rewrite is DB-wide: a tiny literal would splice the placeholder through unrelated text.
+    event_bus.emit(AssistantEvent(type="assistant", text="the pin is 12345 today"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal", "12345"])
+
+    assert redact.main() == 1
+    assert "Refusing" in capsys.readouterr().out
+
+
+def test_main_scrub_explains_a_zero_event_result(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    # A 0 that reads like "those events were clean" is the failure mode: point at the other mode.
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE}"))
+    leak_id = db_conn.execute("SELECT id FROM events").fetchone()[0]
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", str(leak_id)])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert "Scrubbed secrets in 0 event(s)" in out
+    assert "does NOT mean they were clean" in out
+    assert "--scrub-literal" in out
+
+
+def test_wrapper_behaves_the_same_whatever_the_caller_cwd(tmp_path):
+    """The wrapper cds to its own directory before exec, so interpreter resolution (which walks up
+    from the caller's cwd) is identical wherever the caller sits. HOME is redirected so both runs
+    take the cheap, deterministic "No database at" path."""
+    scripts = SCRIPT.parent
+    wrapper = scripts / "redact_secrets.sh"
+    env = {**os.environ, "HOME": str(tmp_path)}
+
+    runs = [
+        subprocess.run(["sh", str(wrapper)], cwd=str(cwd), env=env, capture_output=True, text=True, timeout=120, check=False)
+        for cwd in (tmp_path, scripts)
+    ]
+
+    assert runs[0].stdout == runs[1].stdout
+    assert runs[0].returncode == runs[1].returncode

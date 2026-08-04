@@ -465,6 +465,17 @@ def _read_compaction_summary(session_id: str) -> str | None:
         return None
 
 
+# Appended to every /compact's guidance, whatever the caller supplied. The summarizer reads the raw
+# context, which can still hold a credential the events-DB scrub already removed, and a value
+# reproduced into the summary lands in the ACTIVE context, where every later turn re-emits it into
+# fresh events and scrubbing never converges. Core owns this so no caller can forget it.
+COMPACTION_CREDENTIAL_GUARD = (
+    "Never reproduce a credential in the summary: no password, API key, token, OTP, card number, or "
+    "recovery code, even one quoted verbatim in the conversation. Say a credential was involved and "
+    "how it was handled, never what it was."
+)
+
+
 async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: str | None = None) -> None:
     """Compact the live conversation in place and block until it finishes.
 
@@ -484,7 +495,8 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
         # appended draft) reaches the summarizer intact instead of being truncated at the first newline.
         # The send is a stdin write to the CLI subprocess: bound it like every other query so a wedged
         # CLI fails the compaction instead of wedging the message processor.
-        query = "/compact" if prompt is None else f"/compact {' '.join(prompt.split())}"
+        guidance = COMPACTION_CREDENTIAL_GUARD if prompt is None else f"{' '.join(prompt.split())} {COMPACTION_CREDENTIAL_GUARD}"
+        query = f"/compact {guidance}"
         await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
         await asyncio.wait_for(turn.done.wait(), timeout=_COMPACT_TIMEOUT_S)
         if turn.error is not None:
