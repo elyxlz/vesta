@@ -875,20 +875,11 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
 
 
 def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
-    # Recurring reminders sort ahead of one-shots so the limit only ever trims one-shots: a
-    # long-lived daily/cron reminder is typically the oldest row and would otherwise silently fall
-    # off a created_at-ordered list, a false-negative view.
-    #
-    # Within the one-shot tail, order by WHEN THEY FIRE, not by when they were created. Creation
-    # order and fire order are unrelated, so a reminder created weeks ago that fires in an hour sat
-    # below every newer row: on a real store of 241 active reminders, one firing in 53 minutes was
-    # invisible at limit 50 and only appeared at limit 200. That is the same false negative this
-    # ordering exists to prevent, just moved from recurring rows to imminent ones, and it is worse
-    # here because "what fires next" is the question the list is asked. Sorting by fire time makes
-    # the limit trim the FURTHEST-OUT rows, which are the ones you can afford to lose.
-    #
-    # Recurring rows keep created_at ordering on purpose: for a plain cron row `scheduled_time`
-    # records the last advance rather than the next fire, so it is not a sound sort key for them.
+    # Recurring reminders sort first so the LIMIT only ever trims one-shots, and the one-shot tail
+    # sorts by fire time (scheduled_time ASC) so the LIMIT drops the furthest-out rows, never the
+    # soonest, keeping "what fires next" visible at any limit. Recurring rows keep created_at
+    # ordering: a plain cron row's scheduled_time records its last advance, not its next fire, so
+    # it is not a sound sort key for them.
     recurring_types = ", ".join(f"'{t}'" for t in RECURRING_TRIGGER_TYPES)
     is_recurring = f"json_extract(trigger_data, '$.type') IN ({recurring_types})"
     order_clause = (
