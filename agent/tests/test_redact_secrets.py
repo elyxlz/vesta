@@ -298,3 +298,52 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
+
+
+# ---------------------------------------------------------------------------
+# Vendor token prefixes
+# ---------------------------------------------------------------------------
+#
+# Each prefix is anchored case-sensitively. Under the module's outer IGNORECASE a short lowercase
+# prefix also matches its own letters inside base64url runs (reasoning-block signatures, media
+# keys), and the scan output is uncapped, so that noise buries real rows.
+
+VENDOR_TOKENS = [
+    "hf_" + "a" * 34,
+    "tfp_" + "b" * 44,
+    "napi_" + "c" * 24,
+    "dckr_pat_" + "d" * 24,
+    "sbp_" + "e" * 40,
+    "shpat_" + "f" * 32,
+    "lin_api_" + "g" * 24,
+    "wak_" + "h" * 24,
+]
+
+
+@pytest.mark.parametrize("token", VENDOR_TOKENS)
+def test_scan_flags_vendor_prefixed_tokens(token):
+    matches = redact.find_matches(f"curl -H 'Authorization: {token}' https://api.example.com")
+
+    assert len(matches) == 1
+    assert token not in matches[0]
+    assert "[REDACTED]" in matches[0]
+
+
+@pytest.mark.parametrize("token", VENDOR_TOKENS)
+def test_vendor_prefixes_are_case_anchored(token):
+    # The same body behind an upper-cased prefix is not a real key of any of these vendors, so it
+    # must not match: this is exactly the base64url-run false positive the anchoring exists to stop.
+    prefix, _, body = token.partition("_")
+    assert redact.find_matches(f"blob {prefix.upper()}_{body} end") == []
+
+
+def test_vendor_prefixes_survive_the_scrub_round_trip(event_bus, db_conn):
+    token = "hf_" + "z" * 34
+    event_bus.emit(AssistantEvent(type="assistant", text=f"huggingface-cli login --token {token}"))
+    ids = sorted({row_id for row_id, _ in redact.scan(db_conn)})
+
+    assert redact.scrub(db_conn, ids) == 1
+
+    rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
+    assert all(token not in data for data in rows)
+    assert all(json.loads(data) for data in rows)
