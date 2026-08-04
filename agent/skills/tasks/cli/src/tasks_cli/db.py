@@ -240,14 +240,17 @@ def _insert_auto_reminder(conn: sqlite3.Connection, task_id: str, message: str, 
 def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, due_date_str: str):
     now = datetime.now(UTC)
     due_dt = parse_datetime(due_date_str)
+    # A rung the user rewrote is owned (auto_generated = 0) and survives the delete before a rebuild,
+    # so skip any instant already occupied rather than firing a second reminder alongside it.
+    taken = {row["scheduled_time"] for row in conn.execute("SELECT scheduled_time FROM reminders WHERE task_id = ?", (task_id,))}
 
     for label, delta in auto_reminder_deltas(due_dt - now):
         fire_time = due_dt - delta
-        if fire_time <= now:
+        if fire_time <= now or fire_time.isoformat() in taken:
             continue
         _insert_auto_reminder(conn, task_id, f"Task due in {label}: {title}", f"auto: {label} before due", fire_time)
 
-    if due_dt > now:
+    if due_dt > now and due_dt.isoformat() not in taken:
         _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), "auto: at due", due_dt)
 
 
