@@ -2,14 +2,33 @@
 set -euo pipefail
 
 WHISPER_BIN="${WHISPER_BIN:-/usr/local/bin/whisper-cli}"
-WHISPER_MODEL="${WHISPER_MODEL:-/usr/local/share/ggml-small.en.bin}"
+
+# Default model: multilingual ggml-small.bin. The fallback chain matches the
+# model paths the whatsapp CLI's transcribe.go probes; a box may hold only an
+# english-only or tiny model.
+DEFAULT_MODEL="/usr/local/share/ggml-small.bin"
+resolve_model() {
+    for candidate in \
+        "$DEFAULT_MODEL" \
+        /usr/local/share/ggml-small.en.bin \
+        /usr/local/share/ggml-tiny.bin \
+        /usr/local/share/ggml-tiny.en.bin
+    do
+        if [ -f "$candidate" ]; then
+            echo "$candidate"
+            return
+        fi
+    done
+    echo "$DEFAULT_MODEL"
+}
+WHISPER_MODEL="${WHISPER_MODEL:-$(resolve_model)}"
 
 usage() {
     echo "Usage: whisper_transcribe.sh <audio-file> [options]"
     echo ""
     echo "Options:"
     echo "  --model <path>     Model file (default: $WHISPER_MODEL)"
-    echo "  --language <lang>  Language code, e.g. en, es, fr (default: en)"
+    echo "  --language <lang>  Language code, e.g. en, es, fr (default: auto)"
     echo "  --translate        Translate to English"
     echo "  --srt              Output SRT subtitles instead of plain text"
     echo "  --json             Output JSON with timestamps"
@@ -29,7 +48,7 @@ if [ ! -f "$INPUT_FILE" ]; then
     exit 1
 fi
 
-LANGUAGE="en"
+LANGUAGE="auto"
 TRANSLATE=""
 OUTPUT_FORMAT=""
 THREADS="4"
@@ -54,13 +73,28 @@ fi
 
 if [ ! -f "$WHISPER_MODEL" ]; then
     echo "Error: model not found at $WHISPER_MODEL" >&2
-    echo "Download it: curl -L -o $WHISPER_MODEL https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin" >&2
+    echo "Download it: curl -L -o $WHISPER_MODEL https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$(basename "$WHISPER_MODEL")" >&2
     exit 1
 fi
 
 TMP_WAV=$(mktemp /tmp/whisper_XXXX.wav)
 TMP_OUT=$(mktemp /tmp/whisper_out_XXXX)
-trap 'rm -f "$TMP_WAV" "$TMP_OUT" "${TMP_OUT}.srt" "${TMP_OUT}.json"' EXIT
+TMP_ERR=$(mktemp /tmp/whisper_err_XXXX)
+trap 'rm -f "$TMP_WAV" "$TMP_OUT" "${TMP_OUT}.srt" "${TMP_OUT}.json" "$TMP_ERR"' EXIT
+
+# whisper.cpp writes its progress banner to stderr, but also real diagnostics,
+# e.g. "model is not multilingual, ignoring language and translation options"
+# when an .en model silently drops --language/--translate. Keep the banner
+# quiet, forward warnings and errors, and dump all of stderr on a failed run.
+run_whisper() {
+    local status=0
+    "$WHISPER_BIN" "$@" 2>"$TMP_ERR" || status=$?
+    if [ "$status" -ne 0 ]; then
+        cat "$TMP_ERR" >&2
+        exit "$status"
+    fi
+    grep -iE 'warning|^error:|failed' "$TMP_ERR" >&2 || true
+}
 
 ffmpeg -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" -y 2>/dev/null
 
@@ -74,9 +108,9 @@ if [ -n "$OUTPUT_FORMAT" ]; then
         srt)  ARGS+=(-osrt -of "$TMP_OUT") ;;
         json) ARGS+=(-oj -of "$TMP_OUT") ;;
     esac
-    "$WHISPER_BIN" "${ARGS[@]}" >/dev/null 2>/dev/null
+    run_whisper "${ARGS[@]}" >/dev/null
     cat "${TMP_OUT}.${OUTPUT_FORMAT}"
 else
     ARGS+=(--no-timestamps)
-    "$WHISPER_BIN" "${ARGS[@]}" 2>/dev/null
+    run_whisper "${ARGS[@]}"
 fi

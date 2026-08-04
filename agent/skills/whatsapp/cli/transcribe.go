@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -17,7 +18,21 @@ var (
 	whisperModel     whisper.Model
 	whisperModelOnce sync.Once
 	whisperModelErr  error
+
+	// whisperProcessMu serializes all use of the whisper C context: model.NewContext
+	// hands out a fresh wrapper per call, but every wrapper shares the one underlying
+	// C model context, which whisper.cpp does not support calling concurrently.
+	whisperProcessMu sync.Mutex
 )
+
+// getLanguage returns WHISPER_LANGUAGE when set (a fixed whisper.cpp language
+// code, since auto-detection can misread short clips), defaulting to "auto".
+func getLanguage() string {
+	if l := os.Getenv("WHISPER_LANGUAGE"); l != "" {
+		return l
+	}
+	return "auto"
+}
 
 func getModelPath() string {
 	if p := os.Getenv("WHISPER_MODEL"); p != "" {
@@ -51,6 +66,12 @@ func loadWhisperModel() (whisper.Model, error) {
 	return whisperModel, whisperModelErr
 }
 
+// whisperThreads is the per-transcription thread budget: all of a small box's
+// cores, capped at WhisperMaxThreads on a big one.
+func whisperThreads(numCPU int) uint {
+	return uint(min(numCPU, WhisperMaxThreads))
+}
+
 // transcribeAudioBuiltIn transcribes audio using the built-in whisper.cpp bindings.
 func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	model, err := loadWhisperModel()
@@ -81,16 +102,25 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 		return "", fmt.Errorf("failed to create whisper context: %w", err)
 	}
 
-	// Auto-detect language (supports Italian, English, etc.)
-	if err := ctx.SetLanguage("auto"); err != nil {
-		return "", fmt.Errorf("failed to set language to auto: %w", err)
+	lang := getLanguage()
+	if err := ctx.SetLanguage(lang); err != nil {
+		return "", fmt.Errorf("failed to set language to %q: %w", lang, err)
 	}
+
+	// Cap compute threads: the binding otherwise gives the context
+	// runtime.NumCPU(). Thread count only partitions the matmuls, it is not a
+	// decoding parameter, so the transcript is unaffected.
+	ctx.SetThreads(whisperThreads(runtime.NumCPU()))
+
+	// Process and segment reads both touch the C model context shared by every
+	// context wrapper (see whisperProcessMu).
+	whisperProcessMu.Lock()
+	defer whisperProcessMu.Unlock()
 
 	if err := ctx.Process(samples, nil, nil, nil); err != nil {
 		return "", fmt.Errorf("whisper processing failed: %w", err)
 	}
 
-	// Collect segments
 	var parts []string
 	for {
 		segment, err := ctx.NextSegment()

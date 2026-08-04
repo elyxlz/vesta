@@ -122,30 +122,41 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 	return savePath, nil
 }
 
+// reactionSenderJID picks the "original sender" half of a reaction's message key. In a direct chat
+// the sender is the chat itself, which holds for a LID chat exactly as it does for a phone-number
+// one: isDirectChatJID is the same test send, calls, and contact lookup already use, so a chat you
+// can message is a chat you can react in. Groups need the stored per-message sender. Returns an
+// empty failure string on success.
+func (wac *WhatsAppClient) reactionSenderJID(jid types.JID, messageID string) (types.JID, string) {
+	if isDirectChatJID(jid) {
+		return jid, ""
+	}
+	if jid.Server != types.GroupServer {
+		return types.JID{}, fmt.Sprintf("Unsupported chat type: %s", jid.Server)
+	}
+
+	wac.sendersMutex.RLock()
+	storedSender := wac.messageSenders[messageID]
+	wac.sendersMutex.RUnlock()
+	if storedSender == "" {
+		return types.JID{}, "Message sender not found for group reaction"
+	}
+	senderJID, err := types.ParseJID(storedSender)
+	if err != nil {
+		return types.JID{}, fmt.Sprintf("Could not resolve the original sender for this message: %v", err)
+	}
+	return senderJID, ""
+}
+
 func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string) (bool, string) {
 	jid, err := wac.ResolveRecipient(chatIdentifier)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to resolve chat: %v", err)
 	}
 
-	var senderJID types.JID
-	if jid.Server == types.DefaultUserServer {
-		senderJID = jid
-	} else if jid.Server == types.GroupServer {
-		wac.sendersMutex.RLock()
-		storedSender := wac.messageSenders[messageID]
-		wac.sendersMutex.RUnlock()
-
-		if storedSender != "" {
-			senderJID, err = types.ParseJID(storedSender)
-			if err != nil {
-				return false, fmt.Sprintf("Could not resolve the original sender for this message: %v", err)
-			}
-		} else {
-			return false, "Message sender not found for group reaction"
-		}
-	} else {
-		return false, fmt.Sprintf("Unsupported chat type: %s", jid.Server)
+	senderJID, failure := wac.reactionSenderJID(jid, messageID)
+	if failure != "" {
+		return false, failure
 	}
 
 	reactionMsg := wac.client.BuildReaction(jid, senderJID, messageID, emoji)

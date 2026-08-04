@@ -103,7 +103,9 @@ account/device store.
 Voice notes transcribe in-process: the CLI downloads the audio, `ffmpeg` converts
 it to 16kHz mono WAV, and the built-in whisper.cpp bindings replace the `[audio]`
 placeholder with the text. Override the model path with the `WHISPER_MODEL` env
-var (default `/usr/local/share/ggml-small.bin`, downloaded by `setup.sh`).
+var (default `/usr/local/share/ggml-small.bin`, downloaded by `setup.sh`). Set
+`WHISPER_LANGUAGE` to a whisper.cpp language code (default: auto-detect) when the
+user's voice notes are one known language, since auto-detection can misread short clips.
 
 ## Contact cards
 

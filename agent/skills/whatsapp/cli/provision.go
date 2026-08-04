@@ -1,10 +1,5 @@
 package main
 
-import (
-	"fmt"
-	"os"
-)
-
 // runProvision is the managed-WhatsApp arm of `whatsapp connect` for a hosted
 // (vesta.run) box (runConnect dispatches here when the box can reach a pool). It
 // mirrors runLink: cold-start the daemon (ensureDaemon waits for the socket
@@ -31,6 +26,5 @@ func runProvision(source, opener string) {
 	if !connected {
 		failJSON("daemon not answering after start; check 'whatsapp daemon status'")
 	}
-	fmt.Println(string(output))
-	os.Exit(exitCode)
+	emitAndExit(output, exitCode)
 }
