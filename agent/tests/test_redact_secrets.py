@@ -444,11 +444,13 @@ def test_scan_ignores_named_separators_that_are_not_credentials(event_bus, db_co
     assert redact.scan(db_conn) == []
 
 
-def test_scan_stays_linear_on_long_unbroken_runs():
-    # A quantified name-prefix in the named-key rule backtracks quadratically on exactly this input
-    # (base64 reasoning signatures); the suffix-anchored rule scans it in linear time, so this
+@pytest.mark.parametrize("run", ["A1b2" * 100_000, "http://x" * 100_000])
+def test_scan_stays_linear_on_long_unbroken_runs(run):
+    # Quantified prefixes backtrack quadratically on exactly these inputs (a quantified name-prefix
+    # in the named-key rule on base64 reasoning signatures, a quantified URL prefix in the /api/
+    # rule on scheme-dense text); the literal-anchored rules scan them in linear time, so this
     # completes in well under a second instead of hanging the suite.
-    assert redact.find_matches("A1b2" * 100_000) == []
+    assert redact.find_matches(run) == []
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +560,26 @@ def test_scrub_literal_handles_a_secret_abutting_an_escaped_quote(event_bus, db_
 
     data = db_conn.execute("SELECT data FROM events").fetchone()[0]
     assert json.loads(data)["text"] == 'login "[REDACTED]" now'
+
+
+def test_scrub_literal_reports_a_number_held_copy_it_cannot_reach(db_conn):
+    """A digits-only value stored as a bare JSON number sits outside every string the rewrite
+    touches; the verification counts it from the raw blob, so the result is never a false clean."""
+    _insert_raw_event(db_conn, {"type": "note", "amount": 123456789012})
+
+    assert redact.scrub_literal(db_conn, "123456789012") == (0, 1)
+
+
+def test_main_scrub_literal_exits_2_when_a_copy_is_unreachable(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    _insert_raw_event(db_conn, {"type": "note", "amount": 123456789012})
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal", "123456789012"])
+
+    assert redact.main() == 2
+
+    out = capsys.readouterr().out
+    assert "1 remain" in out
+    assert "by hand" in out
 
 
 def test_scrub_literal_leaves_events_without_the_value_untouched(event_bus, db_conn):

@@ -43,11 +43,12 @@ for log in "$HOME"/agent/logs/*.log; do
     fi
 done
 
-# Events DB freshness: the store is written on every turn, so a stale file means nothing is landing.
+# Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between
+# checkpoints the recent commits touch only the -wal sibling; judge by the newest of the pair.
 db="$HOME/agent/data/events.db"
 if [ ! -e "$db" ]; then
     bad "events.db missing at $db"
-elif [ -n "$(find "$db" -mmin -1440 2>/dev/null)" ]; then
+elif [ -n "$(find "$db" "$db-wal" -mmin -1440 2>/dev/null)" ]; then
     ok "events.db written within 24h"
 else
     bad "events.db untouched for over 24h: events are not being recorded"

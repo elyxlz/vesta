@@ -548,7 +548,7 @@ async def test_compact_session_waits_for_result(config):
     """compact_session blocks until the compaction turn's ResultMessage closes the turn."""
     from claude_agent_sdk import SystemMessage
 
-    from core.client import compact_session
+    from core.client import COMPACTION_CREDENTIAL_GUARD, compact_session
 
     state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
 
@@ -557,8 +557,6 @@ async def test_compact_session_waits_for_result(config):
         await message_queue.put(boundary)
         await message_queue.put(result_msg())
         await asyncio.wait_for(compact_session(state=state, config=config), timeout=5.0)
-
-    from core.client import COMPACTION_CREDENTIAL_GUARD
 
     mock_client.query.assert_awaited_once_with(f"/compact {COMPACTION_CREDENTIAL_GUARD}")
     assert state.turn is None
@@ -570,7 +568,7 @@ async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
     first newline is truncated by the CLI parser."""
     from claude_agent_sdk import SystemMessage
 
-    from core.client import compact_session
+    from core.client import COMPACTION_CREDENTIAL_GUARD, compact_session
 
     state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
 
@@ -580,8 +578,6 @@ async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
         await message_queue.put(result_msg())
         multiline = "keep open threads\nand this draft:\nline two"
         await asyncio.wait_for(compact_session(state=state, config=config, prompt=multiline), timeout=5.0)
-
-    from core.client import COMPACTION_CREDENTIAL_GUARD
 
     mock_client.query.assert_awaited_once_with(f"/compact keep open threads and this draft: line two {COMPACTION_CREDENTIAL_GUARD}")
     assert state.turn is None

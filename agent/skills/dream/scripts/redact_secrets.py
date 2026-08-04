@@ -9,6 +9,7 @@ import json
 import re
 import sqlite3
 import sys
+import typing as tp
 from pathlib import Path
 
 DB = Path("~/agent/data/events.db").expanduser()
@@ -52,21 +53,20 @@ PATTERNS = [
     r"(?-i:wak_[A-Za-z0-9._-]{20,})",  # Vesta / Double Tick WhatsApp API keys, in ~/.whatsapp/state.json
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
-    # A real separator char (: = or a quote) is mandatory, so benign prose like "password reuse"
-    # (bare space between word and value) never matches. The \\? bits absorb the backslash JSON puts
-    # before an escaped quote, since the scan runs over the JSON `data` blob. Three shapes, because a
-    # quote separates an assignment from its value in some positions and closes an identifier in others.
-    #
-    # 1. A : or = carries the assignment by itself, so spaces and quotes around it are free:
-    #    password = "x", YAML password: x, JSON "password": "x".
-    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"']?[ ]*[:=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
-    # 2. A quote separates on its own when the value starts right after it: --password "x".
-    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"'][^ \"'\\]{4,}",
-    # 3. A value may sit padded inside its quotes (password="  x"), but a quote followed by a space
-    #    also closes an identifier in prose (`the "app-password" provider`). The quote opens a value
-    #    only when a : = or space already separates it from the keyword AND a closing quote follows
-    #    the value; prose has the quote hard against the keyword and the word outside the quotes.
-    r"(?:password|secret|api[_-]?key)\\?[\"']?(?:[ ]*[:=]+[ ]*|[ ]+)\\?[\"'][ ]+[^ \"'\\]{4,}\\?[\"']",
+    # A real separator (: = or a quote) is mandatory, so prose like "password reuse" never matches;
+    # the \\? bits absorb the backslash JSON puts before an escaped quote in the raw `data` blob.
+    # One factored keyword (the alternation is the expensive part, so it runs once per position)
+    # with three value shapes: (1) a : or = carries the assignment by itself, so spaces and quotes
+    # around it are free (password = "x", YAML password: x, JSON "password": "x"); (2) a bare quote
+    # separates when the value starts right after it (--password "x"); (3) a space-padded value
+    # inside quotes (password="  x") needs a separator before the quote AND a closing quote after
+    # the value, because a quote plus a space also closes a quoted identifier in prose.
+    (
+        r"(?:password|secret|api[_-]?key)(?:"
+        r"[ ]*\\?[\"']?[ ]*[:=]+[ ]*\\?[\"']?[^ \"'\\]{4,}"
+        r"|[ ]*\\?[\"'][^ \"'\\]{4,}"
+        r"|\\?[\"']?(?:[ ]*[:=]+[ ]*|[ ]+)\\?[\"'][ ]+[^ \"'\\]{4,}\\?[\"'])"
+    ),
     # Any name ENDING in key/token/secret/password followed by : or =, so EXA_KEY=<tok>, an
     # X-Plex-Token: header, and a JSON "token" field all hit. The match anchors at the suffix word
     # itself: a quantified name-prefix here backtracks quadratically inside base64 runs and hangs
@@ -78,10 +78,12 @@ PATTERNS = [
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
     # Credentials embedded in URLs, where the secret is a query value or bare path segment with no
     # key-shaped name (a Hue bridge key travels as /api/<key>). Query params whose name ends in
-    # key/token hit the named rule above; these are the names that don't. The digit lookahead keeps
-    # camelCase docs URLs (/api/RTCPeerConnectionIceEvent) out of the path rule.
+    # key/token hit the named rule above; these are the names that don't. Both rules anchor at a
+    # short literal ([?&] / the /api/ segment itself) rather than a quantified URL prefix, which
+    # would rescan the rest of the text from every scheme occurrence and hang the scan on large
+    # events. The digit lookahead keeps camelCase docs URLs (/api/RTCPeerConnectionIceEvent) out.
     r"[?&](?:auth|sig|signature)=[A-Za-z0-9_\-]{16,}",
-    r"https?://[^ \"'\\]*/api/(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{25,}",
+    r"/api/(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{25,}",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
@@ -168,19 +170,28 @@ def _redact_text(text: str) -> str:
 type JsonValue = str | int | float | bool | list["JsonValue"] | dict[str, "JsonValue"] | None
 
 
-def redact_json(value: JsonValue) -> JsonValue:
-    """Recursively apply both redaction passes to every string inside a parsed JSON value, dict keys
-    included (a secret can sit as an object KEY, and a rewrite that only touches values leaves it).
-    Redacting the decoded structure (not the serialized blob) guarantees the re-serialized event is
-    still valid JSON: a raw text .sub can splice `[REDACTED]` across a `\"`/escape boundary and
+def map_json_strings(value: JsonValue, transform: tp.Callable[[str], str]) -> JsonValue:
+    """Apply one string transform to every string inside a parsed JSON value, dict keys included (a
+    secret can sit as an object KEY, and a rewrite that only touches values leaves it). Rewriting
+    the decoded structure (not the serialized blob) guarantees the re-serialized event is still
+    valid JSON: a raw text substitution can splice `[REDACTED]` across a `\"`/escape boundary and
     corrupt the blob, which then breaks the json_extract in the FTS resync and rolls back the scrub."""
     if isinstance(value, str):
-        return _redact_text(value)
+        return transform(value)
     if isinstance(value, list):
-        return [redact_json(v) for v in value]
+        return [map_json_strings(v, transform) for v in value]
     if isinstance(value, dict):
-        return {_redact_text(k): redact_json(v) for k, v in value.items()}
+        return {transform(k): map_json_strings(v, transform) for k, v in value.items()}
     return value
+
+
+def _decoded(data: str) -> JsonValue | None:
+    """The blob parsed as JSON, or None for a non-JSON payload, which every scrub path treats as raw
+    text (nothing to keep valid)."""
+    try:
+        return json.loads(data)
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def _mask_context(window: str) -> str:
@@ -218,18 +229,23 @@ def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
     return matches
 
 
+def _rows_by_id(conn: sqlite3.Connection, ids: list[int]) -> dict[int, str]:
+    """Non-empty data blobs for the given event ids, in one query."""
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    return {row_id: data for row_id, data in conn.execute(f"SELECT id, data FROM events WHERE id IN ({marks})", ids) if data}
+
+
 def stored_hits(conn: sqlite3.Connection, ids: list[int]) -> dict[int, list[str]]:
     """The exact matched substrings per event, captured before a scrub (held in memory only, never
     printed). Verification asks whether these literals survive in the committed rows, which is
     independent of the write path: a hit the detector saw but the rewrite failed to remove cannot
     hide behind being re-missed."""
     hits: dict[int, list[str]] = {}
-    for row_id in ids:
-        row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
-        if row and row[0]:
-            found = [row[0][start:end] for start, end in _hit_spans(row[0])]
-            if found:
-                hits[row_id] = found
+    for row_id, data in _rows_by_id(conn, ids).items():
+        if found := [data[start:end] for start, end in _hit_spans(data)]:
+            hits[row_id] = found
     return hits
 
 
@@ -237,24 +253,8 @@ def still_matching(conn: sqlite3.Connection, hits: dict[int, list[str]]) -> list
     """Ids whose committed row still contains a pre-scrub matched literal: the rewrite could not
     reach that hit (a value outside a JSON string, a rolled-back commit). A scrub that changed
     something is not the same as an event that is clean, so the outcome is checked, not assumed."""
-    still = []
-    for row_id, row_hits in hits.items():
-        row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
-        if row and row[0] and any(hit in row[0] for hit in row_hits):
-            still.append(row_id)
-    return sorted(still)
-
-
-def replace_literal(value: JsonValue, secret: str) -> JsonValue:
-    """Recursively replace one exact substring with the placeholder in every string of a parsed JSON
-    value, dict keys included. Walks the decoded structure for the same reason redact_json does."""
-    if isinstance(value, str):
-        return value.replace(secret, REDACTED)
-    if isinstance(value, list):
-        return [replace_literal(v, secret) for v in value]
-    if isinstance(value, dict):
-        return {k.replace(secret, REDACTED): replace_literal(v, secret) for k, v in value.items()}
-    return value
+    rows = _rows_by_id(conn, list(hits))
+    return sorted(row_id for row_id, row_hits in hits.items() if row_id in rows and any(hit in rows[row_id] for hit in row_hits))
 
 
 def _contains_literal(value: JsonValue, secret: str) -> bool:
@@ -268,20 +268,46 @@ def _contains_literal(value: JsonValue, secret: str) -> bool:
 
 
 def count_literal(conn: sqlite3.Connection, secret: str) -> int:
-    """Events still holding the literal, checked by decoded-content containment rather than by the
-    writer's own predicate, so the post-write count is a real verification of the committed rows."""
+    """Events still holding the literal, checked independently of the writer's own predicate, so the
+    post-write count is a real verification of the committed rows. Both representations are checked:
+    raw catches a copy outside any JSON string (a digits-only value stored as a bare JSON number,
+    which the string rewrite never sees), decoded catches a copy whose special characters JSON
+    escapes in the raw blob."""
     total = 0
     for (data,) in conn.execute("SELECT data FROM events"):
         if not data:
             continue
-        try:
-            obj = json.loads(data)
-        except (json.JSONDecodeError, TypeError):
-            total += 1 if secret in data else 0
+        if secret in data:
+            total += 1
             continue
-        if _contains_literal(obj, secret):
+        obj = _decoded(data)
+        if obj is not None and _contains_literal(obj, secret):
             total += 1
     return total
+
+
+def _rewrite_rows(conn: sqlite3.Connection, rows: tp.Iterable[tuple[int, str]], transform: tp.Callable[[str], str]) -> int:
+    """Rewrite every row's blob with one string transform, committing through write_scrubbed. A JSON
+    blob is transformed per decoded string (map_json_strings) and re-serialized only when a real
+    change happened, so events with no secret are never rewritten (a reformat-only diff would
+    rewrite every event); json.dumps matches events.py's so a scrubbed blob keeps the fleet's byte
+    representation. A non-JSON payload gets the transform as a raw text substitution."""
+    changed: dict[int, str] = {}
+    json_ids: list[int] = []
+    for row_id, data in rows:
+        if not data:
+            continue
+        obj = _decoded(data)
+        if obj is None:
+            new_data = transform(data)
+            if new_data != data:
+                changed[row_id] = new_data
+            continue
+        new_obj = map_json_strings(obj, transform)
+        if new_obj != obj:
+            changed[row_id] = json.dumps(new_obj)
+            json_ids.append(row_id)
+    return write_scrubbed(conn, changed, json_ids)
 
 
 def scrub_literal(conn: sqlite3.Connection, secret: str) -> tuple[int, int]:
@@ -289,63 +315,27 @@ def scrub_literal(conn: sqlite3.Connection, secret: str) -> tuple[int, int]:
     it). Keyed by the literal rather than by pattern, because --scrub can only remove what the
     scanner DETECTS: a human-chosen password matches none of the shapes above, and this is the path
     for a value the operator knows exactly."""
-    changed: dict[int, str] = {}
-    for row_id, data in conn.execute("SELECT id, data FROM events"):
-        if not data:
-            continue
-        try:
-            obj = json.loads(data)
-        except (json.JSONDecodeError, TypeError):
-            if secret in data:
-                changed[row_id] = data.replace(secret, REDACTED)
-            continue
-        new_obj = replace_literal(obj, secret)
-        if new_obj != obj:
-            changed[row_id] = json.dumps(new_obj)
-    count = write_scrubbed(conn, changed)
+
+    def replace(text: str) -> str:
+        return text.replace(secret, REDACTED)
+
+    count = _rewrite_rows(conn, conn.execute("SELECT id, data FROM events"), replace)
     return count, count_literal(conn, secret)
 
 
 def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
     """Redact every hit in the given events in place, keeping their context and events_fts. Driven by
     the same patterns and keyed by id, so the caller never has to pass (and thereby re-leak) the literal."""
-    changed: dict[int, str] = {}
-    for row_id in ids:
-        row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
-        if row is None or not row[0]:
-            continue
-        try:
-            obj = json.loads(row[0])
-        except (json.JSONDecodeError, TypeError):
-            # Non-JSON payload: fall back to a raw text sub (nothing to keep valid).
-            new_data = _redact_text(row[0])
-            if new_data != row[0]:
-                changed[row_id] = new_data
-            continue
-        new_obj = redact_json(obj)
-        if new_obj != obj:
-            # Re-serialize only when a real redaction changed the structure, so events with no
-            # secret are never rewritten (a reformat-only diff would rewrite every event). Match
-            # events.py's json.dumps(event) so a scrubbed blob keeps the fleet's byte representation.
-            changed[row_id] = json.dumps(new_obj)
-    return write_scrubbed(conn, changed)
+    return _rewrite_rows(conn, _rows_by_id(conn, ids).items(), _redact_text)
 
 
-def _parses_as_json(data: str) -> bool:
-    try:
-        json.loads(data)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    return True
-
-
-def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str]) -> int:
+def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str], json_ids: list[int]) -> int:
     """Commit rewritten event blobs, resyncing events_fts around the UPDATE; every scrub path goes
-    through here. The resync spans only rows whose blob is JSON: a non-JSON payload was never in
-    the index, and json_extract over a malformed blob aborts the whole statement."""
+    through here. The resync spans only json_ids, the rows rewritten as decoded JSON: a non-JSON
+    payload was never in the index, and json_extract over a malformed blob aborts the whole
+    statement."""
     if not changed:
         return 0
-    json_ids = [row_id for row_id, new_data in changed.items() if _parses_as_json(new_data)]
     id_marks = ",".join("?" * len(json_ids))
     type_marks = ",".join("?" * len(FTS_TYPES))
     fts_where = f"id IN ({id_marks}) AND json_extract(data, '$.type') IN ({type_marks}) AND json_extract(data, '$.text') IS NOT NULL"
@@ -355,8 +345,7 @@ def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str]) -> int:
             f"SELECT 'delete', id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
             (*json_ids, *FTS_TYPES),
         )
-    for row_id, new_data in changed.items():
-        conn.execute("UPDATE events SET data = ? WHERE id = ?", (new_data, row_id))
+    conn.executemany("UPDATE events SET data = ? WHERE id = ?", [(new_data, row_id) for row_id, new_data in changed.items()])
     if json_ids:
         conn.execute(
             f"INSERT INTO events_fts(rowid, text_content) SELECT id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
@@ -403,9 +392,12 @@ def _run_scrub_literal(conn: sqlite3.Connection, rest: list[str]) -> int:
     # Report the shape, never the value: this process's own output is itself recorded.
     print(f"Scrubbed {scrubbed} event(s); {remaining} remain. (length {len(secret)}, value not echoed)")
     if remaining:
-        print("Copies remain: re-run the same command.")
-    else:
-        print("Re-run this command once more later: the event recording this run may also hold the value.")
+        print(
+            "The remaining event(s) hold the value where a JSON rewrite cannot reach it "
+            "(e.g. a bare JSON number): fix those events by hand and resync events_fts."
+        )
+        return 2
+    print("Re-run this command once more later: the event recording this run may also hold the value.")
     return 0
 
 

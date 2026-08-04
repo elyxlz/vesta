@@ -468,7 +468,9 @@ def _read_compaction_summary(session_id: str) -> str | None:
 # Appended to every /compact's guidance, whatever the caller supplied. The summarizer reads the raw
 # context, which can still hold a credential the events-DB scrub already removed, and a value
 # reproduced into the summary lands in the ACTIVE context, where every later turn re-emits it into
-# fresh events and scrubbing never converges. Core owns this so no caller can forget it.
+# fresh events and scrubbing never converges. Core owns this so no caller can forget it. It guards
+# only compactions issued through compact_session: the CLI's own auto-compaction
+# (CLAUDE_CODE_AUTO_COMPACT_WINDOW) never routes through here and summarizes without it.
 COMPACTION_CREDENTIAL_GUARD = (
     "Never reproduce a credential in the summary: no password, API key, token, OTP, card number, or "
     "recovery code, even one quoted verbatim in the conversation. Say a credential was involved and "

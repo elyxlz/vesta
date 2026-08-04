@@ -84,6 +84,21 @@ def test_full_disk_goes_red(tmp_path):
     assert "RED disk at 95%" in run.stdout
 
 
+def test_wal_only_writes_keep_events_db_green(tmp_path):
+    # The store runs in WAL mode: between checkpoints commits touch only the -wal sibling, so a
+    # stale main file with a fresh -wal is a healthy box, not a recording failure.
+    home = _healthy_home(tmp_path)
+    db = home / "agent" / "data" / "events.db"
+    stale = 1_000_000_000
+    os.utime(db, (stale, stale))
+    (home / "agent" / "data" / "events.db-wal").write_text("wal")
+
+    run = _run(home)
+
+    assert run.returncode == 0
+    assert "OK  events.db" in run.stdout
+
+
 def test_stale_events_db_goes_red(tmp_path):
     home = _healthy_home(tmp_path)
     db = home / "agent" / "data" / "events.db"
