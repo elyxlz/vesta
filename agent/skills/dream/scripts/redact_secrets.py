@@ -117,11 +117,9 @@ def mask(match: re.Match[str]) -> str:
 # `_is_card` decides. A run of 13 to 19 digits may be split into groups by single spaces or hyphens
 # (4111 1111 1111 1111, 3782-822463-10005). The lookarounds forbid a digit on either side so a
 # longer numeric id is never sliced into a fake PAN, and forbid a preceding DOT so the numeric tail
-# of a dotted identifier is not read as one. Namespaced ids (HathiTrust volume ids like
-# mdp.39015017012900 and coo.31924002274110, and the same shape in other catalogues) open with MII 3
-# and pass Luhn often enough to clear the IIN gate, so on a corpus that carries any of them they
-# dominate the report. A PAN is written after a space, a colon or a quote, never welded onto a
-# namespace, so the dot costs no real detection.
+# of a dotted identifier is not read as one: namespaced catalogue ids (mdp.39015017012900) run 14
+# digits from MII 3, clearing the IIN gate, and pass Luhn about one time in ten. A PAN follows a
+# space, a colon or a quote, never a namespace, so the dot costs no real detection.
 CARD_CANDIDATE = re.compile(r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)")
 # Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
 CONTEXT_CHARS = 40
