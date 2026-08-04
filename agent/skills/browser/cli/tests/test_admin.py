@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import socket
@@ -168,3 +169,53 @@ def test_send_times_out_when_the_daemon_never_replies(tmp_path, monkeypatch):
         assert "did not respond to 'browsingContext.create' within 0.3s" in str(raised[0])
     finally:
         listener.close()
+
+
+def test_ensure_daemon_rejects_stale_recorded_endpoint(tmp_path, monkeypatch):
+    """A recorded ws url outlives the browser it points at (the files live in /tmp and survive a
+    container restart). ensure_daemon must notice the recorded pid is dead and say so, instead of
+    handing the daemon a dead port and surfacing an opaque connection error."""
+    session = "stale-endpoint"
+    monkeypatch.setattr(admin, "_session_file", lambda name, suffix: tmp_path / f"{name}.{suffix}")
+    monkeypatch.setattr(admin, "daemon_healthy", lambda s: False)
+    monkeypatch.setattr(admin, "daemon_alive", lambda s: False)
+    monkeypatch.setattr(admin, "_pid_alive", lambda pid: False)
+    monkeypatch.delenv("VESTA_BROWSER_CDP_WS", raising=False)
+    monkeypatch.delenv("VESTA_BROWSER_BIDI_WS", raising=False)
+    (tmp_path / f"{session}.browser-pid").write_text("4216")
+    (tmp_path / f"{session}.bidi-ws").write_text("ws://127.0.0.1:38125/session")
+
+    try:
+        admin.ensure_daemon(wait_s=0.1, name=session)
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("a stale recorded endpoint must raise")
+
+    assert "stale" in message
+    assert "browser launch" in message
+    assert "4216" in message, "name the dead pid so the cause is checkable"
+    assert not (tmp_path / f"{session}.bidi-ws").exists(), "the stale ws url must be cleared"
+
+
+def test_ensure_daemon_keeps_endpoint_when_browser_is_alive(tmp_path, monkeypatch):
+    """The guard must only fire on a dead browser. A live one keeps its recorded endpoint."""
+    session = "live-endpoint"
+    monkeypatch.setattr(admin, "_session_file", lambda name, suffix: tmp_path / f"{name}.{suffix}")
+    monkeypatch.setattr(admin, "daemon_healthy", lambda s: False)
+    monkeypatch.setattr(admin, "daemon_alive", lambda s: False)
+    monkeypatch.setattr(admin, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(admin.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(_StopSpawnError()))
+    monkeypatch.delenv("VESTA_BROWSER_CDP_WS", raising=False)
+    monkeypatch.delenv("VESTA_BROWSER_BIDI_WS", raising=False)
+    (tmp_path / f"{session}.browser-pid").write_text("4216")
+    (tmp_path / f"{session}.bidi-ws").write_text("ws://127.0.0.1:38125/session")
+
+    # Reaching the spawn is the point: no stale-endpoint error was raised.
+    with contextlib.suppress(_StopSpawnError):
+        admin.ensure_daemon(wait_s=0.1, name=session)
+    assert (tmp_path / f"{session}.bidi-ws").exists(), "a live browser must keep its endpoint"
+
+
+class _StopSpawnError(Exception):
+    """Sentinel so the test stops at the spawn boundary without starting a real daemon."""

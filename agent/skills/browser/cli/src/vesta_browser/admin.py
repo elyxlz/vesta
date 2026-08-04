@@ -142,6 +142,13 @@ def read_session_ws_url(name: str | None = None) -> str | None:
         return None
 
 
+def clear_session_endpoints(name: str | None = None) -> None:
+    """Drop a session's recorded endpoints + browser pid. Used when the recorded browser is
+    confirmed dead, so a later call cannot resurrect a stale ws url."""
+    for suffix in ("bidi-ws", "cdp-ws", "browser-pid"):
+        _session_file(name, suffix).unlink(missing_ok=True)
+
+
 def read_session_cdp_ws(name: str | None = None) -> str | None:
     try:
         ws = _session_file(name, "cdp-ws").read_text().strip()
@@ -210,6 +217,18 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     # recorded BiDi endpoint (launched Camoufox).
     env = {**os.environ, "BROWSER_SESSION": session}
     if "VESTA_BROWSER_CDP_WS" not in env and "VESTA_BROWSER_BIDI_WS" not in env:
+        # A recorded endpoint outlives the process it points at: the files live in /tmp and
+        # survive the browser dying (container restart, OOM, manual kill). Connecting to a
+        # stale one fails deep in the daemon as an opaque "Connect call failed (127.0.0.1,
+        # <port>)", which reads like a network fault rather than "the browser is gone". Check
+        # the recorded pid first so the endpoint can never outlive its process silently.
+        browser_pid = read_session_browser_pid(session)
+        if browser_pid is not None and not _pid_alive(browser_pid):
+            clear_session_endpoints(session)
+            raise RuntimeError(
+                f"The browser recorded for session {session!r} is gone (pid {browser_pid} is not running), "
+                "so its saved endpoint is stale. Run `browser launch` to start a new one."
+            )
         cdp_ws = read_session_cdp_ws(session)
         bidi_ws = read_session_ws_url(session)
         if cdp_ws is not None:
