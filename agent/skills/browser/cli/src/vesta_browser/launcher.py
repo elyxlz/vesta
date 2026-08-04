@@ -39,6 +39,11 @@ CAMOUFOX_ASSETS = {
 RELEASE_DOWNLOAD_URL = "https://github.com/daijro/camoufox/releases/download"
 CACHE_ROOT = Path.home() / ".cache" / "camoufox"
 PROFILE_ROOT = Path.home() / ".browser" / "profile"
+# Throwaway per-session profiles live under their own root so cleanup has an unambiguous
+# target set. Nothing outside this directory is ever auto-deleted: a profile the agent
+# named itself with --user-data-dir is durable by intent, and an idle signed-in profile is
+# indistinguishable from an orphan by any liveness test.
+EPHEMERAL_ROOT = Path.home() / ".browser" / "ephemeral"
 
 DOWNLOAD_TIMEOUT_S = 600.0
 DOWNLOAD_CHUNK = 1 << 20
@@ -387,6 +392,17 @@ def _ensure_headed_prefs(profile_dir: Path) -> None:
     (profile_dir / "user.js").write_text(_HEADED_PREFS)
 
 
+def _camoufox_argv(exe: str, profile_dir: Path) -> list[str]:
+    """Argv for a Camoufox launch.
+
+    `_profile_has_live_owner` recognises a running browser by scanning /proc for this
+    exact shape, so the two must not drift: the executable path has to carry "camoufox"
+    and the profile dir has to stay its own element, never folded into `-profile=<dir>`.
+    Drift is silent, and it makes every live session look orphaned to `prune`.
+    """
+    return [exe, "-no-remote", "-profile", str(profile_dir), "--remote-debugging-port", "0"]
+
+
 def _profile_has_live_owner(profile_dir: Path) -> bool:
     """True if a live process is running Camoufox against this exact profile dir."""
     target = str(profile_dir)
@@ -445,7 +461,7 @@ def launch(
     # wasn't asked for (containers have no DISPLAY, so they always go headless).
     use_headless = headless or not os.environ.get("DISPLAY")
 
-    args = [exe, "-no-remote", "-profile", str(profile_dir), "--remote-debugging-port", "0"]
+    args = _camoufox_argv(exe, profile_dir)
     if use_headless:
         args.insert(1, "-headless")
     else:

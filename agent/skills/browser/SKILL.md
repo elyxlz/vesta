@@ -83,13 +83,15 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 # Session
 browser launch                                    # fetch (first time) + launch Camoufox, headless
 browser launch --mode screenshot                  # ... and report back with screenshots, not the a11y tree
-browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
+browser launch --ephemeral-profile                # isolated throwaway profile, deleted on stop
+browser launch --user-data-dir ~/.browser/work    # isolated DURABLE profile, kept forever
 browser connect http://192.168.1.10:9222          # attach to the user's own Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
 browser mode screenshot                           # switch perception: a11y | screenshot | both
 browser stop                                      # stop this session
 browser stop-all                                  # stop everything
 browser sessions                                  # list active sessions
+browser prune                                     # report ephemeral profiles left by crashes (--yes deletes)
 browser doctor                                    # report Camoufox install + session health
 
 # Navigation
@@ -180,6 +182,18 @@ order, most-preferred first:
 3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*
    logged-in Chrome, drive it over a tunnel with `browser connect`. See
    [interaction-skills/remote-control.md](interaction-skills/remote-control.md).
+
+## Picking a profile
+
+- **Nothing** (default): the shared profile. Handover sign-ins persist here.
+- **`--ephemeral-profile`**: isolated, own fingerprint, **deleted on stop**. Use for one-off runs.
+- **`--user-data-dir <path>`**: isolated and **durable**, kept forever. Only for a profile you mean
+  to reuse, like an account you signed into once.
+
+`browser prune` exists for ephemeral profiles whose session was killed before it could clean up; it
+walks the filesystem rather than the session registry, since the registry dies with the session.
+It only ever touches the ephemeral root, never a `--user-data-dir` profile: an idle signed-in
+profile and an orphan look identical to any liveness check, so intent is recorded at creation.
 
 ## More
 

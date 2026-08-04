@@ -5,9 +5,13 @@ from __future__ import annotations
 import os
 import signal
 import socket
+import subprocess
 import threading
+import time
+from pathlib import Path
 
-from vesta_browser import admin, daemon
+import pytest
+from vesta_browser import admin, daemon, launcher
 
 HANG_GUARD_S = 5
 
@@ -168,3 +172,138 @@ def test_send_times_out_when_the_daemon_never_replies(tmp_path, monkeypatch):
         assert "did not respond to 'browsingContext.create' within 0.3s" in str(raised[0])
     finally:
         listener.close()
+
+
+def _profile_tree(root, name, *, size=32):
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "prefs.js").write_bytes(b"x" * size)
+    return d
+
+
+def _isolate_roots(tmp_path, monkeypatch, *, live=()):
+    """Point both profile roots at tmp_path and stub the /proc liveness scan."""
+    monkeypatch.setattr(admin, "PROFILE_ROOT", tmp_path / "profile")
+    monkeypatch.setattr(admin, "EPHEMERAL_ROOT", tmp_path / "ephemeral")
+    monkeypatch.setattr(admin, "_profile_has_live_owner", lambda d: d.name in live)
+
+
+def test_prune_reports_without_deleting(tmp_path, monkeypatch):
+    """Default is a dry run: it reports reclaimable dirs and leaves them on disk."""
+    _isolate_roots(tmp_path, monkeypatch)
+    stale = _profile_tree(tmp_path / "ephemeral", "crashed-session")
+
+    out = admin.prune_profiles()
+
+    assert out["applied"] is False
+    assert [e["name"] for e in out["removable"]] == ["crashed-session"]
+    assert out["reclaimable_bytes"] == 32
+    assert out["removed"] == []
+    assert stale.exists()
+
+
+def test_prune_never_touches_durable_profiles(tmp_path, monkeypatch):
+    """A durable --user-data-dir profile is idle, not orphaned, and must survive --yes.
+
+    Regression: an earlier design pruned anything under ~/.browser with no live owner,
+    which deleted a signed-in profile the agent meant to reuse. Liveness cannot recover
+    intent, so scope is the ephemeral root and nothing else.
+    """
+    _isolate_roots(tmp_path, monkeypatch)
+    shared = _profile_tree(tmp_path, "profile")
+    durable = _profile_tree(tmp_path, "work")  # ~/.browser/work, signed in, idle
+    stale = _profile_tree(tmp_path / "ephemeral", "crashed-session")
+
+    out = admin.prune_profiles(apply=True)
+
+    assert durable.exists(), "a durable profile must never be pruned"
+    assert shared.exists()
+    assert not stale.exists()
+    assert [e["name"] for e in out["removed"]] == ["crashed-session"]
+
+
+def test_prune_keeps_running_ephemeral_session(tmp_path, monkeypatch):
+    """A live ephemeral session is never pulled out from under itself."""
+    _isolate_roots(tmp_path, monkeypatch, live=("in-use",))
+    live = _profile_tree(tmp_path / "ephemeral", "in-use")
+    stale = _profile_tree(tmp_path / "ephemeral", "crashed-session")
+
+    out = admin.prune_profiles(apply=True)
+
+    assert live.exists() and not stale.exists()
+    assert [e["name"] for e in out["kept"]] == ["in-use"]
+    assert out["kept"][0]["reason"] == "live owner"
+
+
+def test_prune_healthy_case_is_unambiguous(tmp_path, monkeypatch):
+    """With nothing to clean it says so plainly, and still names what it walked."""
+    _isolate_roots(tmp_path, monkeypatch)
+
+    out = admin.prune_profiles()
+
+    assert out["reclaimable_bytes"] == 0
+    assert out["removable"] == [] and out["kept"] == []
+    assert out["root"] == str(tmp_path / "ephemeral")
+
+
+def test_shutdown_removes_only_the_ephemeral_profile(tmp_path, monkeypatch):
+    """Stopping a session deletes its throwaway profile, fixing the leak at the source."""
+    _isolate_roots(tmp_path, monkeypatch)
+    monkeypatch.setenv("BROWSER_SESSION", "scrape")
+    monkeypatch.setattr(admin, "restart_daemon", lambda *a, **k: None)
+    monkeypatch.setattr(admin, "stop_browser", lambda *a, **k: None)
+    ephemeral = _profile_tree(tmp_path / "ephemeral", "scrape")
+    durable = _profile_tree(tmp_path, "work")
+
+    admin.shutdown()
+
+    assert not ephemeral.exists()
+    assert durable.exists()
+
+
+def test_shutdown_is_fine_without_an_ephemeral_profile(tmp_path, monkeypatch):
+    """The common case (shared profile, nothing to remove) must not raise."""
+    _isolate_roots(tmp_path, monkeypatch)
+    monkeypatch.setenv("BROWSER_SESSION", "default")
+    monkeypatch.setattr(admin, "restart_daemon", lambda *a, **k: None)
+    monkeypatch.setattr(admin, "stop_browser", lambda *a, **k: None)
+
+    admin.shutdown()  # must not raise
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="liveness scan reads /proc")
+def test_live_owner_is_detected_from_the_real_launch_argv(tmp_path):
+    """The /proc scan must recognise a process launched with the real argv builder.
+
+    Every other prune test stubs `_profile_has_live_owner`, so nothing else pins the
+    matcher to the argv `launch` actually spawns. If they drift, a live session reads
+    as orphaned and `prune --yes` deletes its profile out from under it, with the
+    stubbed tests still green.
+    """
+    exe = tmp_path / "camoufox"
+    exe.write_text("#!/bin/sh\nsleep 30\n")
+    exe.chmod(0o755)
+    mine = tmp_path / "in-use"
+    mine.mkdir()
+    other = tmp_path / "not-in-use"
+    other.mkdir()
+
+    proc = subprocess.Popen(
+        launcher._camoufox_argv(str(exe), mine),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + HANG_GUARD_S
+        while time.monotonic() < deadline:
+            if launcher._profile_has_live_owner(mine):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("a running Camoufox was not detected as the profile's live owner")
+        assert not launcher._profile_has_live_owner(other)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=HANG_GUARD_S)
+
+    assert not launcher._profile_has_live_owner(mine)

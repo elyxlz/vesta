@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -13,7 +14,7 @@ import time
 from pathlib import Path
 
 from .daemon import log_path, pid_path, socket_path
-from .launcher import RunningCamoufox, launch
+from .launcher import EPHEMERAL_ROOT, PROFILE_ROOT, RunningCamoufox, _profile_has_live_owner, launch
 
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
 GRACEFUL_EXIT_POLLS = 25
@@ -300,9 +301,75 @@ def stop_all() -> None:
         shutdown(s["name"])
 
 
+def _dir_size(path: Path) -> int:
+    total = 0
+    for p in path.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink():
+                total += p.stat().st_size
+        except OSError:
+            continue  # vanished mid-walk
+    return total
+
+
+def ephemeral_profile_dir(name: str | None = None) -> Path:
+    """Path of the throwaway profile for a session. Created by launch, removed by shutdown."""
+    return EPHEMERAL_ROOT / _session_name(name)
+
+
+def prune_profiles(*, apply: bool = False) -> dict:
+    """Report (and optionally delete) leftover ephemeral profile dirs.
+
+    Ephemeral profiles are normally removed by `shutdown()`, so this only ever finds the
+    ones whose session died before it could clean up (an OOM-killed parent, a container
+    kill). Those leave no /tmp pid file to find them by, so this walks the filesystem
+    rather than the session registry: the registry is exactly what does not survive the
+    crash it would be needed for.
+
+    Scope is EPHEMERAL_ROOT and nothing else. It cannot reach the shared profile or a
+    durable `--user-data-dir` profile, because "no live owner" does not mean "orphaned":
+    a signed-in profile the agent means to reuse looks unowned every moment it is idle.
+    Intent is recorded at creation time, not guessed at deletion time.
+
+    A live-owner check still runs, so a running ephemeral session is never pulled out
+    from under itself.
+    """
+    candidates, kept = [], []
+    if EPHEMERAL_ROOT.is_dir():
+        for d in sorted(EPHEMERAL_ROOT.iterdir()):
+            if not d.is_dir():
+                continue
+            entry = {"name": d.name, "path": str(d), "bytes": _dir_size(d)}
+            if _profile_has_live_owner(d):
+                entry["reason"] = "live owner"
+                kept.append(entry)
+            else:
+                candidates.append(entry)
+    removed = []
+    if apply:
+        for entry in candidates:
+            try:
+                shutil.rmtree(entry["path"])
+                removed.append(entry)
+            except OSError as e:
+                entry["error"] = str(e)
+    return {
+        "applied": apply,
+        "root": str(EPHEMERAL_ROOT),
+        "reclaimable_bytes": sum(e["bytes"] for e in candidates),
+        "removable": candidates,
+        "removed": removed,
+        "kept": kept,
+        "never_pruned": [str(PROFILE_ROOT), "any --user-data-dir profile"],
+    }
+
+
 def shutdown(name: str | None = None) -> None:
     """Stop the daemon and Camoufox for a single session, clean up state files."""
     session = _session_name(name)
     restart_daemon(session)
     stop_browser(session)
     Path(log_path(session)).unlink(missing_ok=True)
+    # An ephemeral profile is owned by the session, so it dies with it. Durable profiles
+    # (the shared one, or any --user-data-dir path) are never touched here.
+    shutil.rmtree(ephemeral_profile_dir(session), ignore_errors=True)
