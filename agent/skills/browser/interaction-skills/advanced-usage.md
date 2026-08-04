@@ -19,21 +19,27 @@ PY
 
 ## Multi-session (parallel sub-agents)
 
-Each sub-agent should set a unique `BROWSER_SESSION` so they don't share a daemon / socket /
-browser. Each session also gets its own profile (and therefore its own fingerprint).
+`BROWSER_SESSION` is the isolation key: the session name selects the daemon, socket, and browser
+a command talks to. Two agents on the same session (the default, whenever the variable is unset)
+drive one browser, so they share tabs, can navigate each other's pages, and can evict each other
+(`browser stop-all` from either kills both). A distinct `--user-data-dir` alone does NOT isolate:
+it changes the profile, not the session. So each parallel sub-agent sets its own unique
+`BROWSER_SESSION`, and for a throwaway run adds `--ephemeral-profile` so a crashed run leaves
+nothing behind (`browser prune` cleans up ephemeral leftovers).
 
 ```bash
-BROWSER_SESSION=agent-1 browser launch
+BROWSER_SESSION=agent-1 browser launch --ephemeral-profile
 BROWSER_SESSION=agent-1 browser open "https://a.com"
 
-BROWSER_SESSION=agent-2 browser launch
+BROWSER_SESSION=agent-2 browser launch --ephemeral-profile
 BROWSER_SESSION=agent-2 browser open "https://b.com"
 ```
 
 Each session's state lives under `/tmp/vesta-browser-<name>.*` (socket, pid, bidi-ws, log).
-`browser stop` cleans its own; `browser stop-all` stops everything. Memory warning: each Camoufox
-uses several hundred MB, so 3+ concurrently on a small host can OOM. Prefer sequential for
-wide-scrape tasks.
+`browser stop` cleans its own; `browser stop-all` stops every session in the container, so never
+run it while sibling agents may be browsing: stop your own named session instead. Memory warning:
+each Camoufox uses several hundred MB, so 3+ concurrently on a small host can OOM. Prefer
+sequential for wide-scrape tasks.
 
 ## Raw BiDi escape hatch
 

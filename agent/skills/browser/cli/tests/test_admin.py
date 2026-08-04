@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import socket
@@ -172,6 +173,88 @@ def test_send_times_out_when_the_daemon_never_replies(tmp_path, monkeypatch):
         assert "did not respond to 'browsingContext.create' within 0.3s" in str(raised[0])
     finally:
         listener.close()
+
+
+class _StopSpawnError(Exception):
+    """Sentinel so a test stops at the spawn boundary without starting a real daemon."""
+
+
+def _stop_spawn(*args, **kwargs):
+    raise _StopSpawnError
+
+
+def _stale_guard_setup(tmp_path, monkeypatch, *, pid_alive):
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/")
+    monkeypatch.setattr(admin, "daemon_healthy", lambda s: False)
+    monkeypatch.setattr(admin, "daemon_alive", lambda s: False)
+    monkeypatch.setattr(admin, "_pid_alive", lambda pid: pid_alive)
+    monkeypatch.setattr(admin.subprocess, "Popen", _stop_spawn)
+    monkeypatch.delenv("VESTA_BROWSER_CDP_WS", raising=False)
+    monkeypatch.delenv("VESTA_BROWSER_BIDI_WS", raising=False)
+
+
+def test_ensure_daemon_rejects_stale_recorded_endpoint(tmp_path, monkeypatch):
+    """A recorded ws url outlives the browser it points at (the files live in /tmp and survive a
+    container restart). ensure_daemon must notice the recorded pid is dead and say so, instead of
+    handing the daemon a dead port and surfacing an opaque connection error."""
+    session = "stale-endpoint"
+    _stale_guard_setup(tmp_path, monkeypatch, pid_alive=False)
+    (tmp_path / f"{session}.browser-pid").write_text("4216")
+    (tmp_path / f"{session}.bidi-ws").write_text("ws://127.0.0.1:38125/session")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        admin.ensure_daemon(wait_s=0.1, name=session)
+
+    message = str(excinfo.value)
+    assert "stale" in message
+    assert "browser launch" in message
+    assert "4216" in message, "name the dead pid so the cause is checkable"
+    assert not (tmp_path / f"{session}.bidi-ws").exists(), "the stale ws url must be cleared"
+
+
+def test_ensure_daemon_keeps_endpoint_when_browser_is_alive(tmp_path, monkeypatch):
+    """The guard must only fire on a dead browser. A live one keeps its recorded endpoint."""
+    session = "live-endpoint"
+    _stale_guard_setup(tmp_path, monkeypatch, pid_alive=True)
+    (tmp_path / f"{session}.browser-pid").write_text("4216")
+    (tmp_path / f"{session}.bidi-ws").write_text("ws://127.0.0.1:38125/session")
+
+    # Reaching the spawn is the point: no stale-endpoint error was raised.
+    with contextlib.suppress(_StopSpawnError):
+        admin.ensure_daemon(wait_s=0.1, name=session)
+    assert (tmp_path / f"{session}.bidi-ws").exists(), "a live browser must keep its endpoint"
+
+
+def test_connect_endpoint_survives_a_dead_launch_pid(tmp_path, monkeypatch):
+    """Recording a connect endpoint over a dead launch's records must clear the launch's
+    browser-pid, so the stale-pid guard never reads the dead pid and clears a still-valid
+    connect endpoint or raises the stale error."""
+    session = "connect-after-dead-launch"
+    _stale_guard_setup(tmp_path, monkeypatch, pid_alive=False)
+    (tmp_path / f"{session}.browser-pid").write_text("4216")
+    admin.record_cdp_endpoint("ws://127.0.0.1:9222/devtools/browser/abc", session)
+
+    # Reaching the spawn is the point: the guard did not fire on the dead launch pid.
+    with contextlib.suppress(_StopSpawnError):
+        admin.ensure_daemon(wait_s=0.1, name=session)
+    assert (tmp_path / f"{session}.cdp-ws").exists(), "a connect endpoint must survive the stale-pid guard"
+
+
+def test_launch_records_replace_a_connect_era_endpoint(tmp_path, monkeypatch):
+    """launch_browser must clear a prior connect's cdp-ws before recording its own pid + bidi-ws:
+    a surviving cdp-ws would win endpoint precedence over the launched browser, and the recorded
+    pid would let the stale-pid guard clear that unrelated endpoint once the pid dies."""
+    session = "launch-after-connect"
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/")
+    (tmp_path / f"{session}.cdp-ws").write_text("ws://127.0.0.1:9222/devtools/browser/abc")
+    running = launcher.RunningCamoufox(pid=4216, ws_url="ws://127.0.0.1:38125/session", user_data_dir=tmp_path, exe_path="camoufox", proc=None)
+    monkeypatch.setattr(admin, "launch", lambda **kwargs: running)
+
+    assert admin.launch_browser(session) is running
+
+    assert not (tmp_path / f"{session}.cdp-ws").exists(), "a connect-era cdp endpoint must not outlive a launch"
+    assert (tmp_path / f"{session}.bidi-ws").read_text() == "ws://127.0.0.1:38125/session"
+    assert (tmp_path / f"{session}.browser-pid").read_text() == "4216"
 
 
 def _profile_tree(root, name, *, size=32):

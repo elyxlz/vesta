@@ -26,6 +26,17 @@ consider a block, and even then suspect a cookie/consent wall or a redirect befo
 
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
 
+**And the harder version: a page that appears to have NO field at all is almost never a page that cannot be filled.** "There is nowhere to type it, so this needs the user's own device" is the most expensive wrong conclusion available, because it looks like diligence. Before writing that sentence, rule out five things, in this order:
+1. **A cross-origin iframe.** `document.body.innerText` on the parent returns almost nothing while the screenshot plainly shows a form, and the mount point (`#onfido-mount`, `#widget-root`) reads as empty. Enumerate every browsing context and query inside each, do not trust the top document. Identity, payment and document-upload widgets are nearly always third-party iframes.
+2. **A field behind a conditional render.** The input exists only after some control is clicked (a `v-if`/`x-show` toggled by a "Get a code" or "Enter it manually" link). If the visible call-to-action opens a new tab, click it with a capture-phase `preventDefault` so the framework's handler still runs and reveals the field without navigating away.
+3. **A selector that is too specific.** Framework-rendered inputs often carry no `type` attribute, so `input[type=text]` matches nothing even though `el.type === 'text'`. Query bare `input` and filter in JS, and include `[contenteditable]` and `[role=textbox]` for masked/custom widgets. A `contenteditable` rich-text editor needs [interaction-skills/prosemirror-tiptap-editors.md](interaction-skills/prosemirror-tiptap-editors.md).
+4. **A shadow root.** `querySelectorAll` never pierces one, so a web-component field is invisible to it. Walk recursively: collect matches, then recurse into every `el.shadowRoot`.
+5. **Hydration timing.** A code-split step component mounts late, so an immediate query legitimately returns 0 a moment before the field exists. Re-query after a short wait or a `wait_for_text` on the expected label before concluding anything.
+
+A genuine wall states a capability the machine lacks (a camera, a physical document, a biometric, an on-device 2FA), not merely a field you could not find.
+
+**Parallel agents must not share a browser session**: concurrent runs on one session share tabs and can navigate each other's pages or evict each other, so give each parallel run its own `BROWSER_SESSION` (isolation details in [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md)).
+
 **Setup**: [SETUP.md](SETUP.md)
 
 ## Search first
@@ -33,7 +44,9 @@ consider a block, and even then suspect a cookie/consent wall or a redirect befo
 Before inventing an approach to a site, check `domain-skills/<host>/` for saved recipes and
 `interaction-skills/` for reusable mechanics (dialogs, iframes, shadow DOM, uploads, scrolling,
 dropdowns). When you open or navigate to a URL, the CLI prepends a banner listing any matching
-recipes. Read them.
+recipes. Read them. Also check for the site's own API first: many SPAs answer their own JSON or
+config endpoints with everything the page shows, so a job board, booking widget, or account flow
+is often one `curl` or `browser http-get` instead of a launch, a navigation, and a snapshot.
 
 ```bash
 # List everything we know about a site
