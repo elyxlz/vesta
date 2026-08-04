@@ -38,6 +38,18 @@ PATTERNS = [
     # space-padded assignments still hit (password = "x", YAML password: "x"). The \\? bits absorb
     # the backslash JSON puts before an escaped quote, since the scan runs over the JSON `data` blob.
     r"(?:password|secret|api[_-]?key)[ ]*\\?[\"':=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
+    # The pattern above only knows the literal words password/secret/api_key, so the commonest
+    # real shapes slipped through entirely: a shell/env name like `EXA_KEY=<tok>` or `GH_TOKEN=<tok>`,
+    # an HTTP header `X-Plex-Token: <tok>`, a JSON field `"token": "<tok>"`. The name may carry any
+    # prefix and may be hyphenated (header style), and the separator may be `=` or `:`.
+    # A shell command is how a key most often reaches an event in the first place, so this is not an
+    # exotic case: it is the main one. Value guard: >=16 unbroken token chars AND at least one digit,
+    # which keeps prose ("the key = a good one") and identifier-ish assignments
+    # (PRIMARY_KEY=customer_account_number) out of the report.
+    r"[A-Za-z0-9_\-]*(?:key|token|secret|password)\\?[\"']?[ ]*\\?[:=]+[ ]*\\?[\"']?(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}",
+    # `Authorization: Bearer <tok>`, where the secret is named by the SCHEME rather than by a key
+    # name, so no amount of name-matching above can ever reach it.
+    r"Bearer[ ]+(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9_\-.]{16,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)

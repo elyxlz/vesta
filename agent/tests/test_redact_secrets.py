@@ -298,3 +298,48 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
+
+
+# Secrets named by an arbitrary key name, a hyphenated header, or the auth scheme.
+# The literal-word pattern only knows password/secret/api_key, so the shapes a key actually arrives
+# in were invisible: EXA_KEY=..., an X-Plex-Token: header, a JSON "token" field, and Bearer, where
+# the scheme names the secret. Against a 205k-event store these added 76 real credentials.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "EXA_KEY=abcd1234efgh5678ijkl curl https://api.example.com",
+        "GH_TOKEN=abcd1234efgh5678ijkl gh pr list",
+        'curl -H "X-Plex-Token: abcd1234efgh5678ijkl" http://plex.local',
+        'curl -H "X-Agent-Token: abcd1234efgh5678ijkl" http://127.0.0.1',
+        '{"token": "abcd1234efgh5678ijkl"}',
+        'curl -H "Authorization: Bearer abcd1234efgh5678ijkl" https://api.github.com',
+    ],
+)
+def test_scan_catches_named_separator_and_bearer_secrets(event_bus, db_conn, text):
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
+
+    matches = redact.scan(db_conn)
+
+    assert len(matches) == 1
+    assert "[REDACTED]" in matches[0][1]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # No digit anywhere in the value: prose and identifier-ish assignments, not credentials.
+        "PRIMARY_KEY=customer_account_number",
+        "the key = a good one for this problem",
+        "sort_key: alphabetical_ordering",
+        # Too short to be a credential.
+        "token=abc123",
+        # The scheme without a plausible value.
+        "Bearer with us while this deploys",
+    ],
+)
+def test_scan_ignores_named_separators_that_are_not_credentials(event_bus, db_conn, text):
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
+
+    assert redact.scan(db_conn) == []
