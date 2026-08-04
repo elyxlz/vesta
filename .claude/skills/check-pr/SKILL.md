@@ -45,11 +45,21 @@ Say so plainly when the change is simply good. A review that manufactures object
 
 Work through the diff yourself. Delegate to a subagent only when the diff is genuinely too large to hold in one reading, and then split it by area so each subagent owns a different part rather than re-reviewing the same code. One is usually enough. Do not spawn a subagent to double-check a finding you already have.
 
+## The junior-code lens
+
+Press hardest when the code looks finished and the tests are green: that is exactly where a junior author stopped. The symptom-versus-cause check above is the first pass; these are the misses it does not catch on its own, and each one has bitten a merged PR:
+
+- **A shared flag flipped for one reader.** The change sets a field, flag, or column that several behaviors read, and only the reader the author cared about was checked. Enumerate every reader and say what the change does to each; the break hides in the one they forgot.
+- **Happy path only.** No guard for contradictory, empty, or impossible input. The branch that "can't happen" is silently wrong the first time it does.
+- **The tests encode the author's assumptions.** Green proves their mental model, not the truth. Find the case the tests skip; when the PR touches a shared mechanism, exercise the paths its *other* users take, not the one the author wrote a test for. The bug the author would have tested for is not the one still in the diff.
+- **Right idea, wrong execution.** The direction is correct and the fix is worth having, and it still double-books, drops, or duplicates in case X. Name X. That is `BUGGED`, not `MERGE`: a needed fix carried in wrong is still carried in wrong.
+- **Stale base.** A PR correct when it was written can be wrong against today's `master`. Read the current code paths, including whatever merged *after* it was opened, since a later change may have repurposed a field it relies on. When another open PR touches the same function, read that diff too and say whether they compose, conflict, or need a merge order.
+
 ## Also confirm
 
 **It fixes the issue it claims to.** Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`) and read the issue itself, not the PR's description of it. Distinguish fixing it from fixing part of it, fixing something adjacent, and not addressing it at all. With no issue linked, say what problem the PR appears to solve and whether it is worth carrying.
 
-**It is right for this repository.** Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch for the repo-wide bans CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors, `.unwrap()` on fallible Rust paths, `any` in TypeScript.
+**It is right for this repository.** Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch for the repo-wide bans CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors (`.get()`/`getattr`/`hasattr`), `.unwrap()` on fallible Rust paths, `any` in TypeScript, and under `agent/` a docstring or comment that narrates a previous design or restates the PR's rationale (the agent reads it cold, so it must state the current mechanism only).
 
 **It is mergeable.** CI green, no conflicts, not draft, scoped to one concern.
 
@@ -71,7 +81,7 @@ Write every label every time, in this order. When a label has nothing under it, 
 
 **Non-blocking:** everything else worth saying, same two lines. Do not argue for them; a maintainer decides.
 
-**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. Judge the diff and nothing else. CI is not your business: a red check is on the PR page already, it says nothing about whether the change is right, and a sound change with a formatting failure is still `MERGE`.
+**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. Judge the diff and nothing else. CI is not your business: a red check is on the PR page already, it says nothing about whether the change is right, and a sound change with a formatting failure is still `MERGE`. When a check is red, still name which kind in one line under **Non-blocking**, so the maintainer knows the move: a real failure the diff caused, a fixable nit one commit from green (a comment over the cap, a banned accessor, a format miss), or a flake unrelated to the change (often red on `master` too, green on a re-run).
 
 ## Proof
 
