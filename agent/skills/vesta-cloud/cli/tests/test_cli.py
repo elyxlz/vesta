@@ -17,9 +17,16 @@ def _tmp_referral_store(tmp_path, monkeypatch):
 
 
 def _run(argv, capsys):
+    """A failure prints on stderr with stdout untouched; success prints on stdout alone."""
     rc = cli_mod.main(argv)
-    out = capsys.readouterr().out
-    return rc, (json.loads(out) if out.strip() else None)
+    captured = capsys.readouterr()
+    if rc == 0:
+        assert captured.err == ""
+        payload = captured.out
+    else:
+        assert captured.out == ""
+        payload = captured.err
+    return rc, (json.loads(payload) if payload.strip() else None)
 
 
 # --- whoami -----------------------------------------------------------------
@@ -285,10 +292,12 @@ def test_login_gives_up_on_terminal_poll_error(capsys, monkeypatch):
     monkeypatch.setattr(cli_mod.Client, "pair_poll", poll)
     monkeypatch.setattr(cli_mod.time, "sleep", lambda _s: None)
     rc = cli_mod.main(["login"])
-    docs = _read_json_docs(capsys.readouterr().out)
+    captured = capsys.readouterr()
     assert rc == 2
     assert calls["n"] == 1  # a terminal refusal stops the loop immediately
-    assert "already_has_server" in docs[-1]["error"]
+    # The code relay stays on stdout; the refusal itself lands on stderr.
+    assert _read_json_docs(captured.out)[0]["user_code"] == "BCDF-2345"
+    assert "already_has_server" in json.loads(captured.err)["error"]
 
 
 def test_login_times_out(capsys, monkeypatch):
@@ -303,9 +312,9 @@ def test_login_times_out(capsys, monkeypatch):
     ticks = iter([0.0, 1.0, 10_000.0])
     monkeypatch.setattr(cli_mod.time, "monotonic", lambda: next(ticks, 10_000.0))
     rc = cli_mod.main(["login"])
-    docs = _read_json_docs(capsys.readouterr().out)
+    captured = capsys.readouterr()
     assert rc == 2
-    assert docs[-1]["error"] == "pairing timed out"
+    assert json.loads(captured.err)["error"] == "pairing timed out"
 
 
 def test_login_survives_transient_poll_failures(capsys, monkeypatch):
