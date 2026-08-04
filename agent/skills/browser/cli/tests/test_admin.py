@@ -76,6 +76,32 @@ def test_pid_alive_false_for_reserved_pid():
     assert admin._pid_alive(2**31 - 1) is False
 
 
+def test_pid_alive_false_for_none():
+    assert admin._pid_alive(None) is False
+
+
+def test_pid_alive_false_for_a_real_zombie():
+    """A dead child its parent never reaped lingers in the pid table and still answers a signal-0
+    probe; the shared predicate must read it as dead, since a zombie backend can serve nothing."""
+    proc = subprocess.Popen(["true"])
+    try:
+        deadline = time.monotonic() + HANG_GUARD_S
+        while time.monotonic() < deadline and admin._pid_alive(proc.pid):
+            time.sleep(0.02)
+        assert admin._pid_alive(proc.pid) is False, "zombie still reported alive"
+        os.kill(proc.pid, 0)  # a signal-0 probe still succeeds on the corpse
+    finally:
+        proc.wait()
+
+
+def test_pid_alive_reads_the_state_past_a_comm_holding_spaces_and_parens(tmp_path, monkeypatch):
+    # /proc/<pid>/stat's comm field is unescaped, so splitting on whitespace misreads the state.
+    (tmp_path / "42").mkdir()
+    (tmp_path / "42" / "stat").write_text("42 (odd ) name Z) R 1 1 0 0 -1 0 0 0")
+    monkeypatch.setattr(admin, "PROC", tmp_path)
+    assert admin._pid_alive(42) is True
+
+
 def test_terminate_pid_no_op_when_already_dead():
     admin._terminate_pid(2**31 - 1)
 
@@ -255,6 +281,68 @@ def test_launch_records_replace_a_connect_era_endpoint(tmp_path, monkeypatch):
     assert not (tmp_path / f"{session}.cdp-ws").exists(), "a connect-era cdp endpoint must not outlive a launch"
     assert (tmp_path / f"{session}.bidi-ws").read_text() == "ws://127.0.0.1:38125/session"
     assert (tmp_path / f"{session}.browser-pid").read_text() == "4216"
+
+
+def _spawn_orphan_sleep() -> int:
+    """A sleep with no living parent in this process tree, so init reaps it the moment it dies:
+    the shape of a browser recorded by an earlier CLI invocation."""
+    out = subprocess.run(["sh", "-c", "sleep 60 & echo $!"], capture_output=True, text=True, check=True)
+    return int(out.stdout.strip())
+
+
+def test_recording_a_new_backend_terminates_the_replaced_live_browser(tmp_path, monkeypatch):
+    """The records describe exactly one backend, so recording a connect endpoint over a launched
+    browser must terminate the old process: a cleared pid with nothing pointing at it would keep
+    a headless browser running invisibly forever."""
+    session = "replace-live"
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/")
+    pid = _spawn_orphan_sleep()
+    try:
+        (tmp_path / f"{session}.browser-pid").write_text(str(pid))
+        (tmp_path / f"{session}.bidi-ws").write_text("ws://127.0.0.1:38125/session")
+
+        admin.record_cdp_endpoint("ws://127.0.0.1:9222/devtools/browser/abc", session)
+
+        deadline = time.monotonic() + HANG_GUARD_S
+        while time.monotonic() < deadline and admin._pid_alive(pid):
+            time.sleep(0.05)
+        assert not admin._pid_alive(pid), "the replaced browser was left running"
+        assert not (tmp_path / f"{session}.browser-pid").exists()
+        assert (tmp_path / f"{session}.cdp-ws").read_text() == "ws://127.0.0.1:9222/devtools/browser/abc"
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_recording_over_a_dead_pid_record_stays_quiet(tmp_path, monkeypatch):
+    """A recorded pid whose process is already gone is cleared with no termination attempt."""
+    session = "replace-dead"
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/")
+    reaped = subprocess.Popen(["true"])
+    reaped.wait()
+    terminated: list[int] = []
+    monkeypatch.setattr(admin, "_terminate_pid", terminated.append)
+    (tmp_path / f"{session}.browser-pid").write_text(str(reaped.pid))
+
+    admin.record_bidi_endpoint("ws://127.0.0.1:38125/session", session)
+
+    assert terminated == []
+    assert not (tmp_path / f"{session}.browser-pid").exists()
+    assert (tmp_path / f"{session}.bidi-ws").read_text() == "ws://127.0.0.1:38125/session"
+
+
+def test_stop_browser_terminates_the_recorded_browser_and_clears_records(tmp_path, monkeypatch):
+    session = "stop-live"
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/")
+    pid = _spawn_orphan_sleep()
+    try:
+        (tmp_path / f"{session}.browser-pid").write_text(str(pid))
+        admin.stop_browser(session)
+        assert not admin._pid_alive(pid)
+        assert not (tmp_path / f"{session}.browser-pid").exists()
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
 
 
 def _profile_tree(root, name, *, size=32):

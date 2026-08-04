@@ -17,6 +17,7 @@ from .daemon import log_path, pid_path, socket_path
 from .launcher import EPHEMERAL_ROOT, PROFILE_ROOT, RunningCamoufox, _profile_has_live_owner, launch
 
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
+PROC = Path("/proc")
 GRACEFUL_EXIT_POLLS = 25
 GRACEFUL_POLL_INTERVAL_S = 0.2
 # Above the daemon's largest per-command bound (the navigate wait), so its error (which names the method) wins the race.
@@ -156,7 +157,12 @@ def read_session_cdp_ws(name: str | None = None) -> str | None:
 def clear_session_endpoints(name: str | None = None) -> None:
     """Drop a session's recorded endpoints + browser pid, so no later call can pick up a
     record that no longer describes the session's backend. Every writer (launch and both
-    recorders) clears before writing, so the records always describe exactly one backend."""
+    recorders) clears before writing, so the records always describe exactly one backend,
+    and a recorded browser that is still running is terminated here so replacing a backend
+    never orphans the old one. Parallel backends belong in separate sessions."""
+    pid = read_session_browser_pid(name)
+    if pid is not None and _pid_alive(pid):
+        _terminate_pid(pid)
     for suffix in ("bidi-ws", "cdp-ws", "browser-pid"):
         _session_file(name, suffix).unlink(missing_ok=True)
 
@@ -196,11 +202,8 @@ def set_mode(mode: str, name: str | None = None) -> None:
 
 
 def stop_browser(name: str | None = None) -> None:
-    """Terminate the Camoufox process for a session, if we launched it."""
+    """Terminate the Camoufox process for a session, if we launched it, and drop its records."""
     session = _session_name(name)
-    pid = read_session_browser_pid(session)
-    if pid:
-        _terminate_pid(pid)
     clear_session_endpoints(session)
     _session_file(session, "mode").unlink(missing_ok=True)
 
@@ -291,7 +294,7 @@ def list_sessions() -> list[dict]:
     for pid_f in Path("/tmp").glob("vesta-browser-*.browser-pid"):
         name = pid_f.name.removeprefix("vesta-browser-").removesuffix(".browser-pid")
         browser_pid = _read_pid(pid_f)
-        alive = _pid_alive(browser_pid) if browser_pid else False
+        alive = _pid_alive(browser_pid)
         out.append(
             {
                 "name": name,
@@ -304,12 +307,22 @@ def list_sessions() -> list[dict]:
     return out
 
 
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
+def _pid_alive(pid: int | None) -> bool:
+    """True only for a process that is actually running. A signal-0 probe cannot answer this:
+    a dead process whose pid lingers unreaped (a detached child reparented to init) answers the
+    probe like a live one. /proc's state code distinguishes the corpse; the comm field can hold
+    spaces and parens, so the state is read relative to its closing paren rather than by
+    splitting on whitespace."""
+    if pid is None:
         return False
+    try:
+        stat = (PROC / str(pid) / "stat").read_text()
+    except OSError:
+        return False
+    comm_end = stat.rfind(") ")
+    if comm_end == -1:
+        return False
+    return stat[comm_end + 2] != "Z"
 
 
 def stop_all() -> None:
