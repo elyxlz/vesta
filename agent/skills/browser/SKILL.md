@@ -27,7 +27,7 @@ consider a block, and even then suspect a cookie/consent wall or a redirect befo
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
 
 **And the harder version: a page that appears to have NO field at all is almost never a page that cannot be filled.** "There is nowhere to type it, so this needs the user's own device" is the most expensive wrong conclusion available, because it looks like diligence. Before writing that sentence, rule out five things, in this order:
-1. **A cross-origin iframe.** `document.body.innerText` on the parent returns almost nothing while the screenshot plainly shows a form, and the mount point (`#onfido-mount`, `#widget-root`) reads as empty. Enumerate every browsing context and query inside each, do not trust the top document. Identity, payment and document-upload widgets are nearly always third-party iframes.
+1. **A cross-origin iframe.** Identity, payment and document-upload widgets are nearly always third-party iframes, so the parent document reads as empty while the screenshot plainly shows a form. Enumerating contexts and working inside one: [interaction-skills/cross-origin-iframes.md](interaction-skills/cross-origin-iframes.md).
 2. **A field behind a conditional render.** The input exists only after some control is clicked (a `v-if`/`x-show` toggled by a "Get a code" or "Enter it manually" link). If the visible call-to-action opens a new tab, click it with a capture-phase `preventDefault` so the framework's handler still runs and reveals the field without navigating away.
 3. **A selector that is too specific.** Framework-rendered inputs often carry no `type` attribute, so `input[type=text]` matches nothing even though `el.type === 'text'`. Query bare `input` and filter in JS, and include `[contenteditable]` and `[role=textbox]` for masked/custom widgets. A `contenteditable` rich-text editor needs [interaction-skills/prosemirror-tiptap-editors.md](interaction-skills/prosemirror-tiptap-editors.md).
 4. **A shadow root.** `querySelectorAll` never pierces one, so a web-component field is invisible to it. Walk recursively: collect matches, then recurse into every `el.shadowRoot`.
@@ -42,8 +42,8 @@ A genuine wall states a capability the machine lacks (a camera, a physical docum
 ## Search first
 
 Before inventing an approach to a site, check `domain-skills/<host>/` for saved recipes and
-`interaction-skills/` for reusable mechanics (dialogs, iframes, shadow DOM, uploads, scrolling,
-dropdowns). When you open or navigate to a URL, the CLI prepends a banner listing any matching
+`interaction-skills/` for reusable mechanics (dialogs, tabs, cross-origin iframes, screenshots,
+rich-text editors). When you open or navigate to a URL, the CLI prepends a banner listing any matching
 recipes. Read them. Also check for the site's own API first: many SPAs answer their own JSON or
 config endpoints with everything the page shows, so a job board, booking widget, or account flow
 is often one `curl` or `browser http-get` instead of a launch, a navigation, and a snapshot.
@@ -145,9 +145,8 @@ browser wait --load-state load
 
 ## Screenshots
 
-Screenshots are costly in context: prefer `--webp` (much smaller than PNG) and `--region` to
-clip to the part that matters. Use PNG only when you need lossless output (e.g. pixel-diffing UI
-state). Camoufox captures PNG and JPEG natively; `--webp` is encoded as JPEG.
+Screenshots are costly in context: prefer `--webp` and `--region` to keep them small. Format and
+clipping tradeoffs: [interaction-skills/screenshots.md](interaction-skills/screenshots.md).
 
 ## Perception: a11y tree or screenshots
 
@@ -213,7 +212,7 @@ profile and an orphan look identical to any liveness check, so intent is recorde
 Occasional topics live in their own files so this one stays lean:
 
 - [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md) : extending helpers, multi-session, the raw BiDi escape hatch, how stealth works, contributing back
-- [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, iframes, shadow DOM, uploads, tabs)
+- [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, tabs, cross-origin iframes, screenshots, connection)
 
 ## Troubleshooting
 

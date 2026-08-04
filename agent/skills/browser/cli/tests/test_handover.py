@@ -6,23 +6,10 @@ websocket proxy) is exercised end-to-end in a real container, not here.
 
 from __future__ import annotations
 
-import os
 import socket
-import subprocess
-import time
 
 import pytest
 from vesta_browser import handover
-
-
-def wait_until(predicate, timeout_s=5.0):
-    """Poll `predicate` to a deadline. A process reaching zombie state is not an event we can await."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.02)
-    return predicate()
 
 
 @pytest.fixture(autouse=True)
@@ -173,35 +160,6 @@ def test_stop_is_idempotent_without_an_xvfb_pid(monkeypatch):
     assert killed == []
 
 
-# ── liveness ──────────────────────────────────────────────────
-
-
-def test_alive_is_false_for_a_real_zombie():
-    # A genuine zombie, made the way handover makes them: Popen never reaps until wait(), so once
-    # `true` exits its pid lingers in the table. This is the exact state that had status() calling
-    # a dead x11vnc up while the page span on "Waking".
-    proc = subprocess.Popen(["true"])
-    try:
-        assert wait_until(lambda: not handover._alive(proc.pid)), "zombie still reported alive"
-        os.kill(proc.pid, 0)  # the old signal-0 probe still succeeds on the corpse: that was the bug
-    finally:
-        proc.wait()
-
-
-def test_alive_is_true_for_a_running_process():
-    proc = subprocess.Popen(["sleep", "30"])
-    try:
-        assert handover._alive(proc.pid) is True
-    finally:
-        proc.kill()
-        proc.wait()
-
-
-def test_alive_is_false_for_an_absent_or_unknown_pid():
-    assert handover._alive(None) is False
-    assert handover._alive(999_999_999) is False
-
-
 # ── x11vnc bring-up ───────────────────────────────────────────
 
 
@@ -310,15 +268,6 @@ def test_x11vnc_that_binds_then_dies_is_not_taken_as_ready(monkeypatch, isolated
     assert attempts == [(), ("-noshm",)]  # the death after the bind still reached the fallback
 
 
-def test_alive_reads_the_state_past_a_comm_holding_spaces_and_parens(isolated, monkeypatch):
-    # /proc/<pid>/stat's comm field is unescaped, so splitting on whitespace misreads the state.
-    proc_root = isolated / "proc"
-    (proc_root / "42").mkdir(parents=True)
-    (proc_root / "42" / "stat").write_text("42 (odd ) name Z) R 1 1 0 0 -1 0 0 0")
-    monkeypatch.setattr(handover, "PROC", proc_root)
-    assert handover._alive(42) is True
-
-
 def test_readiness_reports_missing_binaries(monkeypatch):
     monkeypatch.setattr(handover.shutil, "which", lambda _: None)
     report = handover.readiness()
@@ -354,7 +303,7 @@ def test_register_public_service_returns_port_and_public_url(monkeypatch, tmp_pa
     assert url == "https://box.vesta.run/agents/ada/browser/handover.html"
 
 
-# ── ports + liveness ──────────────────────────────────────────
+# ── ports + displays ──────────────────────────────────────────
 
 
 def test_free_port_returns_a_bindable_port():
@@ -402,12 +351,6 @@ def test_claim_own_display_gives_up_after_the_attempt_cap(monkeypatch):
     monkeypatch.setattr(handover, "DISPLAY_CLAIM_ATTEMPTS", 3)
     with pytest.raises(RuntimeError, match="could not claim a free X display"):
         handover._claim_own_display()
-
-
-def test_alive_false_for_none_and_dead_pid():
-    assert handover._alive(None) is False
-    # PID 2**31-1 is not a running process on any sane system.
-    assert handover._alive(2**31 - 1) is False
 
 
 # ── teardown ──────────────────────────────────────────────────

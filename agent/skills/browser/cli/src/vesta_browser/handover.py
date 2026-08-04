@@ -39,7 +39,6 @@ X11VNC_SETTLE_S = 0.4
 X11VNC_TERMINATE_TIMEOUT_S = 5.0
 DISPLAY_CLAIM_ATTEMPTS = 10
 READY_POLL_S = 0.1
-PROC = Path("/proc")
 # The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
 # page actually has. `fit_to_screen` reports this verbatim as screen.width/height, so a geometry no
 # real display ships would itself be an automation tell on the account-trust sites handover exists
@@ -154,26 +153,6 @@ def _claim_own_display() -> tuple[str, int]:
         if pid is not None:
             return display, pid
     raise RuntimeError(f"could not claim a free X display after {DISPLAY_CLAIM_ATTEMPTS} attempts")
-
-
-def _alive(pid: int | None) -> bool:
-    """True only for a process that is actually running.
-
-    A signal-0 probe cannot answer this: start() exits once it has spawned these, so they reparent
-    to init and a dead one's pid lingers unreaped, answering the probe like a live process.
-    /proc's state code distinguishes the corpse; the comm field can hold spaces and parens, so the
-    state is read relative to its closing paren rather than by splitting on whitespace.
-    """
-    if pid is None:
-        return False
-    try:
-        stat = (PROC / str(pid) / "stat").read_text()
-    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
-        return False
-    comm_end = stat.rfind(") ")
-    if comm_end == -1:
-        return False
-    return stat[comm_end + 2] != "Z"
 
 
 def _read_pid(suffix: str) -> int | None:
@@ -411,11 +390,11 @@ def status() -> dict[str, object]:
     web_port = _read_pid("web-port")
     return {
         "session": HANDOVER_SESSION,
-        "browser": _alive(admin.read_session_browser_pid(HANDOVER_SESSION)),
-        "xvfb": _alive(_read_pid("xvfb-pid")),
-        "openbox": _alive(_read_pid("openbox-pid")),
-        "x11vnc": _alive(_read_pid("x11vnc-pid")),
-        "websockify": _alive(_read_pid("websockify-pid")),
+        "browser": admin._pid_alive(admin.read_session_browser_pid(HANDOVER_SESSION)),
+        "xvfb": admin._pid_alive(_read_pid("xvfb-pid")),
+        "openbox": admin._pid_alive(_read_pid("openbox-pid")),
+        "x11vnc": admin._pid_alive(_read_pid("x11vnc-pid")),
+        "websockify": admin._pid_alive(_read_pid("websockify-pid")),
         "serving": _port_serving(web_port) if web_port else False,
         "web_port": web_port,
         "page": "handover.html" if web_port else None,
