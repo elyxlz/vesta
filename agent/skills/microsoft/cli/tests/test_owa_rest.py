@@ -681,8 +681,9 @@ def test_owa_login_paste_rejects_garbage(tmp_path):
     from microsoft_cli.config import Config
 
     cfg = Config(data_dir=tmp_path)
-    result = auth_commands.owa_login(cfg, account_email="user@example.com", token="not-a-jwt")
-    assert result["status"] == "error"
+    # The raise reaches main, which prints the error on stderr and exits non-zero.
+    with pytest.raises(ValueError, match="does not look like an OWA access token"):
+        auth_commands.owa_login(cfg, account_email="user@example.com", token="not-a-jwt")
     assert owa_rest.has_valid_token("user@example.com", cfg) is False
 
 

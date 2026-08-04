@@ -160,7 +160,7 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
             "message": f"Successfully authenticated {account['username']}",
         }
 
-    return {"status": "error", "message": "Authentication succeeded but no account was found"}
+    raise Exception("Authentication succeeded but no account was found")
 
 
 def owa_login(config: Config, *, account_email: str, use_device: bool = False, token: str | None = None) -> dict[str, str]:
@@ -243,14 +243,10 @@ def _owa_login_paste(config: Config, *, account_email: str, token: str) -> dict[
     token = token.strip()
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {
-            "status": "error",
-            "message": (
-                "That does not look like an OWA access token (its expiry could not be decoded). "
-                "Re-copy the value the snippet put on the clipboard."
-            ),
-        }
+    except Exception as e:
+        raise ValueError(
+            "That does not look like an OWA access token (its expiry could not be decoded). Re-copy the value the snippet put on the clipboard."
+        ) from e
     owa_rest.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
         "status": "success",
@@ -294,8 +290,8 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
 
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {"status": "error", "message": "Token was captured but its expiry could not be decoded. The token may be malformed."}
+    except Exception as e:
+        raise ValueError("Token was captured but its expiry could not be decoded. The token may be malformed.") from e
 
     owa_rest.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
 
@@ -368,7 +364,7 @@ def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
     claims = result["id_token_claims"] if "id_token_claims" in result else {}
     username = claims["preferred_username"] if "preferred_username" in claims else ""
     if not username:
-        return {"status": "error", "message": "Teams authorization succeeded but no account was found"}
+        raise Exception("Teams authorization succeeded but no account was found")
     teams.mark_device_account(username, config)
     return {
         "status": "success",
@@ -394,14 +390,11 @@ def _teams_capture_paste(config: Config, *, account_email: str, token: str) -> d
     token = token.strip()
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {
-            "status": "error",
-            "message": (
-                "That does not look like a Teams access token (its expiry could not be decoded). "
-                "Re-copy the value the snippet put on the clipboard."
-            ),
-        }
+    except Exception as e:
+        raise ValueError(
+            "That does not look like a Teams access token (its expiry could not be decoded). "
+            "Re-copy the value the snippet put on the clipboard."
+        ) from e
     teams.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
         "status": "success",
@@ -439,8 +432,8 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
 
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {"status": "error", "message": "Token was captured but its expiry could not be decoded. The token may be malformed."}
+    except Exception as e:
+        raise ValueError("Token was captured but its expiry could not be decoded. The token may be malformed.") from e
 
     teams.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
