@@ -44,7 +44,9 @@ A genuine wall states a capability the machine lacks (a camera, a physical docum
 Before inventing an approach to a site, check `domain-skills/<host>/` for saved recipes and
 `interaction-skills/` for reusable mechanics (dialogs, iframes, shadow DOM, uploads, scrolling,
 dropdowns). When you open or navigate to a URL, the CLI prepends a banner listing any matching
-recipes. Read them.
+recipes. Read them. Also check for the site's own API first: many SPAs answer their own JSON or
+config endpoints with everything the page shows, so a job board, booking widget, or account flow
+is often one `curl` or `browser http-get` instead of a launch, a navigation, and a snapshot.
 
 ```bash
 # List everything we know about a site
@@ -229,10 +231,3 @@ Occasional topics live in their own files so this one stays lean:
 
 - **Heavy-JS auth pages (Google, Zoom, Apple `idmsa`/`dev.apple`, and similar SPAs) HANG `goto`/`wait_for_load` for the full timeout**: these SPAs keep network connections open so the `load` event never fires cleanly, yet the page almost always loaded underneath. After a `goto` that times out, do NOT retry it and NEVER call `wait_for_load()` on these. Run a SEPARATE short call (`timeout 30 browser`) that reads `page_info()` and inspects the DOM directly (no navigation, no wait_for_load). Cap every browser call at `timeout 40-55` so a hang costs seconds, not minutes. Long blocking browser calls during a live exchange make the agent go unresponsive, so keep them short.
 - **Login-form fills need care**: some sign-in widgets live in an iframe (e.g. Apple's `aid-auth-widget-iFrame`, same-origin so `contentDocument` works). A JS `value`-set often does NOT satisfy the form's own validation (it re-renders back to empty after "Verifying..."), and real keystrokes (`type_text`) can DOUBLE a field that already holds a value, so CLEAR it first. These flows also commonly gate on device-2FA or a passcode that only the user's phone has, so browser automation frequently cannot finish them: prefer the official API or app path.
-
-## Check for the site's own API first
-
-Many SPAs answer their own JSON or config endpoints with everything the page shows, so a job
-board, booking widget, or account flow is often one `curl` or `browser http-get` instead of a
-launch, a navigation, and a snapshot. Before driving a browser at a site, look for that underlying
-API, and check `domain-skills/<host>/` for a saved recipe.

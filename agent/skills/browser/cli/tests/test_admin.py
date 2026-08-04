@@ -179,12 +179,16 @@ class _StopSpawnError(Exception):
     """Sentinel so a test stops at the spawn boundary without starting a real daemon."""
 
 
+def _stop_spawn(*args, **kwargs):
+    raise _StopSpawnError
+
+
 def _stale_guard_setup(tmp_path, monkeypatch, *, pid_alive):
-    monkeypatch.setattr(admin, "_session_file", lambda name, suffix: tmp_path / f"{name}.{suffix}")
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/")
     monkeypatch.setattr(admin, "daemon_healthy", lambda s: False)
     monkeypatch.setattr(admin, "daemon_alive", lambda s: False)
     monkeypatch.setattr(admin, "_pid_alive", lambda pid: pid_alive)
-    monkeypatch.setattr(admin.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(_StopSpawnError()))
+    monkeypatch.setattr(admin.subprocess, "Popen", _stop_spawn)
     monkeypatch.delenv("VESTA_BROWSER_CDP_WS", raising=False)
     monkeypatch.delenv("VESTA_BROWSER_BIDI_WS", raising=False)
 
@@ -198,13 +202,10 @@ def test_ensure_daemon_rejects_stale_recorded_endpoint(tmp_path, monkeypatch):
     (tmp_path / f"{session}.browser-pid").write_text("4216")
     (tmp_path / f"{session}.bidi-ws").write_text("ws://127.0.0.1:38125/session")
 
-    try:
+    with pytest.raises(RuntimeError) as excinfo:
         admin.ensure_daemon(wait_s=0.1, name=session)
-    except RuntimeError as exc:
-        message = str(exc)
-    else:
-        raise AssertionError("a stale recorded endpoint must raise")
 
+    message = str(excinfo.value)
     assert "stale" in message
     assert "browser launch" in message
     assert "4216" in message, "name the dead pid so the cause is checkable"
@@ -237,6 +238,23 @@ def test_connect_endpoint_survives_a_dead_launch_pid(tmp_path, monkeypatch):
     with contextlib.suppress(_StopSpawnError):
         admin.ensure_daemon(wait_s=0.1, name=session)
     assert (tmp_path / f"{session}.cdp-ws").exists(), "a connect endpoint must survive the stale-pid guard"
+
+
+def test_launch_records_replace_a_connect_era_endpoint(tmp_path, monkeypatch):
+    """launch_browser must clear a prior connect's cdp-ws before recording its own pid + bidi-ws:
+    a surviving cdp-ws would win endpoint precedence over the launched browser, and the recorded
+    pid would let the stale-pid guard clear that unrelated endpoint once the pid dies."""
+    session = "launch-after-connect"
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/")
+    (tmp_path / f"{session}.cdp-ws").write_text("ws://127.0.0.1:9222/devtools/browser/abc")
+    running = launcher.RunningCamoufox(pid=4216, ws_url="ws://127.0.0.1:38125/session", user_data_dir=tmp_path, exe_path="camoufox", proc=None)
+    monkeypatch.setattr(admin, "launch", lambda **kwargs: running)
+
+    assert admin.launch_browser(session) is running
+
+    assert not (tmp_path / f"{session}.cdp-ws").exists(), "a connect-era cdp endpoint must not outlive a launch"
+    assert (tmp_path / f"{session}.bidi-ws").read_text() == "ws://127.0.0.1:38125/session"
+    assert (tmp_path / f"{session}.browser-pid").read_text() == "4216"
 
 
 def _profile_tree(root, name, *, size=32):

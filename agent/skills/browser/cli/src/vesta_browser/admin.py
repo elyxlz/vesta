@@ -130,6 +130,8 @@ def launch_browser(
         extra_args=extra_args,
         window_size=window_size,
     )
+    # After launch(), so a failed launch leaves the old records intact.
+    clear_session_endpoints(session)
     _session_file(session, "browser-pid").write_text(str(running.pid))
     _session_file(session, "bidi-ws").write_text(running.ws_url)
     return running
@@ -153,27 +155,20 @@ def read_session_cdp_ws(name: str | None = None) -> str | None:
 
 def clear_session_endpoints(name: str | None = None) -> None:
     """Drop a session's recorded endpoints + browser pid, so no later call can pick up a
-    record that no longer describes the session's backend."""
+    record that no longer describes the session's backend. Every writer (launch and both
+    recorders) clears before writing, so the records always describe exactly one backend."""
     for suffix in ("bidi-ws", "cdp-ws", "browser-pid"):
         _session_file(name, suffix).unlink(missing_ok=True)
 
 
 def record_bidi_endpoint(ws_url: str, name: str | None = None) -> None:
-    """Record a connected Camoufox BiDi endpoint so the daemon (and restarts) find it.
-
-    Clears prior records first: a leftover browser-pid or cdp-ws from an earlier launch or
-    connect would read as the session's backend and shadow or invalidate this endpoint.
-    """
+    """Record a connected Camoufox BiDi endpoint so the daemon (and restarts) find it."""
     clear_session_endpoints(name)
     _session_file(name, "bidi-ws").write_text(ws_url)
 
 
 def record_cdp_endpoint(ws_url: str, name: str | None = None) -> None:
-    """Record a connected Chrome CDP endpoint so the daemon (and restarts) find it.
-
-    Clears prior records first: a leftover browser-pid or bidi-ws from an earlier launch or
-    connect would read as the session's backend and shadow or invalidate this endpoint.
-    """
+    """Record a connected Chrome CDP endpoint so the daemon (and restarts) find it."""
     clear_session_endpoints(name)
     _session_file(name, "cdp-ws").write_text(ws_url)
 
@@ -223,11 +218,9 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     # recorded BiDi endpoint (launched Camoufox).
     env = {**os.environ, "BROWSER_SESSION": session}
     if "VESTA_BROWSER_CDP_WS" not in env and "VESTA_BROWSER_BIDI_WS" not in env:
-        # Endpoint records live in /tmp and survive the browser dying (container restart,
-        # OOM, manual kill). Connecting to a stale one fails deep in the daemon as an opaque
-        # "Connect call failed (127.0.0.1, <port>)", which reads like a network fault rather
-        # than "the browser is gone". Check the recorded pid first so a recorded endpoint
-        # can never silently outlive its process.
+        # Endpoint records live in /tmp and outlive the browser (container restart, OOM,
+        # manual kill); dialing a stale one fails deep in the daemon as an opaque
+        # "Connect call failed", so check the recorded pid before handing the record over.
         browser_pid = read_session_browser_pid(session)
         if browser_pid is not None and not _pid_alive(browser_pid):
             clear_session_endpoints(session)
