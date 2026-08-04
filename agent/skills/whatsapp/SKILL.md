@@ -118,3 +118,30 @@ Shared setup and named-instance details: [SETUP.md](SETUP.md).
 
 ## Contact Preferences
 [How the user prefers to communicate with different contacts]
+
+## Never pipe a send through `grep` to check it worked
+
+`whatsapp send` behaves correctly on rejection: it exits **1** and prints a JSON `error` saying what to
+fix (e.g. bubble lint refusing text after a `?` or `.`). The trap is entirely on the calling side:
+
+```bash
+whatsapp send "$TO" "..." | grep -o '"success": true'     # WRONG
+```
+
+That is broken twice over. The `error` object never matches the pattern, so the explanation is
+swallowed; and the pipeline's exit status becomes **grep's**, so a rejected send is indistinguishable
+from a successful one whose output was filtered away. Both failures point the same way: the send looks
+fine and did not happen. The gap only surfaces later, when the other person answers a question they
+never received.
+
+Read the output, or test the exit status explicitly:
+
+```bash
+whatsapp send "$TO" "..." || echo "SEND FAILED, read the error above"
+```
+
+**The general form is worth internalising, because it is not specific to this CLI: any `cmd | filter`
+discards `cmd`'s exit status.** The same mistake turns `go build ./... | head -10 && echo "BUILD OK"`
+into a confident `BUILD OK` on a machine with no Go toolchain installed, because `head` succeeded. When
+a command's *success* is what you are checking, do not pipe it, or use `set -o pipefail` /
+`${PIPESTATUS[0]}`.
