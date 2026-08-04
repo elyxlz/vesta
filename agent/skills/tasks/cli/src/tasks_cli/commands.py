@@ -902,11 +902,19 @@ def _next_run_for_row(row) -> str | None:
 
 
 def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
-    # Recurring reminders sort ahead of one-shots so the limit only ever trims the newest
-    # one-shot tail: a long-lived daily/cron reminder is typically the oldest row and would
-    # otherwise silently fall off a created_at-ordered list, a false-negative view.
+    # Recurring reminders sort first so the LIMIT only ever trims one-shots, and the one-shot tail
+    # sorts by fire time (scheduled_time ASC) so the LIMIT drops the furthest-out rows, never the
+    # soonest, keeping "what fires next" visible at any limit. Recurring rows keep created_at
+    # ordering: a plain cron row's scheduled_time records its last advance, not its next fire, so
+    # it is not a sound sort key for them.
     recurring_types = ", ".join(f"'{t}'" for t in RECURRING_TRIGGER_TYPES)
-    order_clause = f"ORDER BY json_extract(trigger_data, '$.type') IN ({recurring_types}) DESC, created_at DESC LIMIT ?"
+    is_recurring = f"json_extract(trigger_data, '$.type') IN ({recurring_types})"
+    order_clause = (
+        f"ORDER BY {is_recurring} DESC, "
+        f"CASE WHEN {is_recurring} THEN created_at END DESC, "
+        f"CASE WHEN {is_recurring} THEN NULL ELSE scheduled_time END ASC "
+        "LIMIT ?"
+    )
     with closing(db.get_db(config.data_dir)) as conn:
         if task_id is not None:
             cursor = conn.execute(
