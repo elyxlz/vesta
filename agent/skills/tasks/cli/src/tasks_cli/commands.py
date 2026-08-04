@@ -882,6 +882,25 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
     }
 
 
+def _next_run_for_row(row) -> str | None:
+    """The next fire instant to report for a reminder row.
+
+    A plain cron row's `scheduled_time` only advances when the job fires, so it can lag the real
+    next fire; derive that live from the trigger. Every other row's column is the live answer.
+    """
+    if row["trigger_data"]:
+        try:
+            trigger_data = json.loads(row["trigger_data"])
+            trigger_type = trigger_data["type"] if "type" in trigger_data else None
+            if trigger_type == "cron" and "fuzz_minutes" not in trigger_data:
+                next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
+                if next_fire is not None:
+                    return next_fire.isoformat()
+        except (ValueError, KeyError):
+            pass  # malformed trigger_data: fall back to the stored column rather than hiding the row
+    return row["scheduled_time"]
+
+
 def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
     # Recurring reminders sort ahead of one-shots so the limit only ever trims the newest
     # one-shot tail: a long-lived daily/cron reminder is typically the oldest row and would
@@ -905,7 +924,7 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) 
                 "task_id": row["task_id"],
                 "message": row["message"],
                 "schedule": row["schedule_type"],
-                "next_run": row["scheduled_time"],
+                "next_run": _next_run_for_row(row),
                 "created_at": row["created_at"],
                 "auto_generated": bool(row["auto_generated"]),
                 "status": "pending",
@@ -1000,6 +1019,6 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         "id": reminder_id,
         "message": message,
         "schedule": schedule_type,
-        "next_run": reminder["scheduled_time"],
+        "next_run": _next_run_for_row(reminder),
         "status": "updated",
     }
