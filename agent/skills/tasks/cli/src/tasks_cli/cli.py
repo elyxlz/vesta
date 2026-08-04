@@ -468,7 +468,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    http_server = start_server(config, port)
+    http_server = start_server(config, port, notif_dir)
 
     scheduler = create_scheduler()
     scheduler.start()
