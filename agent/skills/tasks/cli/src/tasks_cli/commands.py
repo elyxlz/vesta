@@ -359,7 +359,9 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
 
 
 def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status: str | None, new_due_date: str | None):
-    """Rebuild the auto reminders after a due-date change, preferring the values updated in the same call."""
+    """Rebuild the auto reminders after a due-date or title change, preferring the values updated in
+    the same call. An auto reminder's message embeds the task title, so a title change has to
+    regenerate them for the armed reminders to carry the current title."""
     db.delete_auto_reminders(conn, task_id)
     if not new_due_date:
         return
@@ -421,6 +423,10 @@ def update_task(
             updates.append("due_date = ?")
             params.append(new_due_date)
             _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=new_due_date)
+        elif title is not None and status != "done":
+            # A title change with the due date unchanged still has to refresh the reminder text,
+            # which embeds the title; the fixed tail keeps its instants, the checkpoints re-derive.
+            _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=result["due_date"])
 
         if updates:
             params.append(task_id)

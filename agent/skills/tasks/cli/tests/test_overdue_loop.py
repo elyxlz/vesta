@@ -321,3 +321,82 @@ def test_migration_v4_regenerates_auto_reminders_and_creates_meta(tmp_config: Co
     with closing(db.get_db(tmp_config.data_dir)) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 4
         assert db.get_meta(conn, "anything") is None
+
+
+# ---------------------------------------------------------------------------
+# Retitling regenerates the reminder text
+# ---------------------------------------------------------------------------
+
+
+def test_retitle_rewrites_armed_reminder_messages(tmp_config: Config):
+    """An auto reminder's message embeds the task title, so a retitle must refresh every armed
+    reminder's text to carry the new title."""
+    task = _add_task_due_in(tmp_config, "Chase the refund (never issued)", timedelta(days=10))
+    commands.update_task(tmp_config, task_id=task["id"], title="Refund ALREADY PAID, close this")
+
+    messages = [r["message"] for r in _auto_reminders(tmp_config, task["id"])]
+    assert messages, "the ladder must survive a retitle"
+    assert all("Refund ALREADY PAID" in m for m in messages)
+    assert not any("never issued" in m for m in messages)
+
+
+def test_retitle_keeps_the_tail_firing_at_the_same_instants(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "before", timedelta(days=10))
+    before = {r["schedule_type"]: r["scheduled_time"] for r in _auto_reminders(tmp_config, task["id"])}
+    commands.update_task(tmp_config, task_id=task["id"], title="after")
+    after = {r["schedule_type"]: r["scheduled_time"] for r in _auto_reminders(tmp_config, task["id"])}
+    assert before == after
+
+
+def test_retitle_does_not_duplicate_the_ladder(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "one ladder", timedelta(days=10))
+    count = len(_auto_reminders(tmp_config, task["id"]))
+    commands.update_task(tmp_config, task_id=task["id"], title="still one ladder")
+    commands.update_task(tmp_config, task_id=task["id"], title="and again")
+    assert len(_auto_reminders(tmp_config, task["id"])) == count
+
+
+def test_retitle_does_not_duplicate_a_hand_owned_reminder(tmp_config: Config):
+    """Rewriting a reminder makes it user-owned (auto_generated = 0). A retitle refreshes the auto
+    ladder, but must not fire a second reminder at the instant the owned one already holds."""
+    task = _add_task_due_in(tmp_config, "orig", timedelta(days=10))
+    owned = _auto_reminders(tmp_config, task["id"])[0]
+    commands.remind_update(tmp_config, reminder_id=owned["id"], message="hand written checkpoint")
+
+    commands.update_task(tmp_config, task_id=task["id"], title="new title")
+
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        at_instant = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT message, auto_generated FROM reminders WHERE task_id = ? AND scheduled_time = ?",
+                (task["id"], owned["scheduled_time"]),
+            )
+        ]
+    assert at_instant == [{"message": "hand written checkpoint", "auto_generated": 0}], (
+        f"retitle double-booked the owned rung's instant: {at_instant}"
+    )
+
+
+def test_retitling_a_done_task_does_not_resurrect_reminders(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "finished", timedelta(days=10))
+    commands.update_task(tmp_config, task_id=task["id"], status="done")
+    commands.update_task(tmp_config, task_id=task["id"], title="finished, renamed")
+    assert _auto_reminders(tmp_config, task["id"]) == []
+
+
+def test_reopening_with_a_new_title_uses_the_new_title(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "old claim", timedelta(days=10))
+    commands.update_task(tmp_config, task_id=task["id"], status="done")
+    commands.update_task(tmp_config, task_id=task["id"], status="pending", title="corrected claim")
+
+    messages = [r["message"] for r in _auto_reminders(tmp_config, task["id"])]
+    assert messages
+    assert all("corrected claim" in m for m in messages)
+    assert not any("old claim" in m for m in messages)
+
+
+def test_retitling_an_undated_task_is_a_no_op(tmp_config: Config):
+    task = commands.add_task(tmp_config, title="no due date")
+    commands.update_task(tmp_config, task_id=task["id"], title="still no due date")
+    assert _auto_reminders(tmp_config, task["id"]) == []
