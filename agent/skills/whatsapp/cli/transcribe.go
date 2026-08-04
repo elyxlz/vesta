@@ -26,6 +26,15 @@ var (
 	whisperProcessMu sync.Mutex
 )
 
+// getLanguage returns WHISPER_LANGUAGE when set (a fixed whisper.cpp language
+// code, since auto-detection can misread short clips), defaulting to "auto".
+func getLanguage() string {
+	if l := os.Getenv("WHISPER_LANGUAGE"); l != "" {
+		return l
+	}
+	return "auto"
+}
+
 func getModelPath() string {
 	if p := os.Getenv("WHISPER_MODEL"); p != "" {
 		return p
@@ -94,9 +103,9 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 		return "", fmt.Errorf("failed to create whisper context: %w", err)
 	}
 
-	// Auto-detect language (supports Italian, English, etc.)
-	if err := ctx.SetLanguage("auto"); err != nil {
-		return "", fmt.Errorf("failed to set language to auto: %w", err)
+	lang := getLanguage()
+	if err := ctx.SetLanguage(lang); err != nil {
+		return "", fmt.Errorf("failed to set language to %q: %w", lang, err)
 	}
 
 	// Cap compute threads: the binding otherwise gives the context
