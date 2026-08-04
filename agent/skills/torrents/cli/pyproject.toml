@@ -1,0 +1,26 @@
+[project]
+name = "torrents"
+version = "0.1.0"
+description = "qBittorrent and TorrentLeech CLIs for the torrents skill"
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+qb = "torrents_cli.qb:main"
+tl = "torrents_cli.tl:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/torrents_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
