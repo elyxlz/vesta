@@ -144,16 +144,11 @@ func readDaemonInfo(dataDir string) (daemonInfo, error) {
 	return info, nil
 }
 
-// failDaemon ends a verb with its error envelope on stderr, which is where the contract puts a
-// failure: stdout carries the one status object a verb answers with and nothing else.
+// failDaemon ends a verb with its error envelope as the one compact line the
+// daemon contract pins; emitAndExit routes it to stderr.
 func failDaemon(format string, args ...any) {
-	envelope, err := json.Marshal(map[string]string{"error": fmt.Sprintf(format, args...)})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintln(os.Stderr, string(envelope))
-	os.Exit(1)
+	envelope, _ := json.Marshal(map[string]string{"error": fmt.Sprintf(format, args...)})
+	emitAndExit(envelope, 1)
 }
 
 func runDaemon() {

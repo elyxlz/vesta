@@ -89,6 +89,24 @@ func getSocketPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".telegram", "telegram.sock")
 }
 
+// emit is the one owner of which stream a command's answer takes: stdout
+// carries only success output, and anything paired with a non-zero exit prints
+// to stderr, so a filter piped onto stdout can never swallow a failure or its
+// explanation.
+func emit(data []byte, exitCode int) {
+	if exitCode == 0 {
+		fmt.Println(string(data))
+	} else {
+		fmt.Fprintln(os.Stderr, string(data))
+	}
+}
+
+func emitAndExit(data []byte, exitCode int) {
+	emit(data, exitCode)
+	os.Exit(exitCode)
+}
+
+// printJSON prints a success result; failures go through failJSON or failDaemon.
 func printJSON(v interface{}) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -96,6 +114,12 @@ func printJSON(v interface{}) {
 		os.Exit(1)
 	}
 	fmt.Println(string(data))
+}
+
+// failJSON prints an {"error": ...} object on stderr and exits nonzero.
+func failJSON(format string, args ...interface{}) {
+	data, _ := json.MarshalIndent(map[string]interface{}{"error": fmt.Sprintf(format, args...)}, "", "  ")
+	emitAndExit(data, 1)
 }
 
 func writeDeathNotification(notifDir string, sig string) {
@@ -349,16 +373,13 @@ func runOneShot(command string) {
 	sockPath := getSocketPath()
 	args, err := resolveStdinArgs(stripGlobalFlags(os.Args[1:]), "message")
 	if err != nil {
-		printJSON(map[string]interface{}{"error": fmt.Sprintf("could not read the body from stdin: %v", err)})
-		os.Exit(1)
+		failJSON("could not read the body from stdin: %v", err)
 	}
 	output, exitCode, connected := trySocketCommand(sockPath, command, args)
 	if !connected {
-		printJSON(map[string]interface{}{"error": "daemon not running; start with: telegram daemon start"})
-		os.Exit(1)
+		failJSON("daemon not running; start with: telegram daemon start")
 	}
-	fmt.Println(string(output))
-	os.Exit(exitCode)
+	emitAndExit(output, exitCode)
 }
 
 func executeCommand(command string, args []string, tc *TelegramClient) (interface{}, error) {
