@@ -31,6 +31,20 @@ PATTERNS = [
     # IGNORECASE, a plain AKIA matches "akia...." runs inside base64 blobs (reasoning-block
     # signatures, media keys), a recurring false positive that buries the real matches.
     r"PMAK-[A-Za-z0-9-]{20,}",
+    # Vendor coverage beyond the big five. Added after a scan on a real box surfaced 26 live tokens
+    # it had never flagged: a Typeform token that had been sitting in the events DB for weeks and
+    # two HuggingFace tokens, all inlined into curl commands. Every nightly scan had passed clean.
+    # The general lesson, worth stating because it changes how a clean result should be read: this
+    # list only covers vendors someone thought of, so "no hits" means "no known-shape secret", not
+    # "no secret". When an agent first calls a new vendor's API from a shell command, its token
+    # prefix belongs here.
+    r"hf_[A-Za-z0-9]{30,}",  # HuggingFace user access tokens
+    r"tfp_[A-Za-z0-9._-]{40,}",  # Typeform personal access tokens
+    r"napi_[a-z0-9]{20,}",  # Neon Postgres API keys
+    r"dckr_pat_[A-Za-z0-9_-]{20,}",  # Docker Hub personal access tokens
+    r"sbp_[a-f0-9]{40,}",  # Supabase service role tokens
+    r"shpat_[a-f0-9]{32}",  # Shopify admin API access tokens
+    r"lin_api_[A-Za-z0-9]{20,}",  # Linear API keys
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
     # A real separator char (: = or a quote) is mandatory, so benign prose like "password reuse"
