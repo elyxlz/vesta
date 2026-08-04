@@ -64,21 +64,24 @@ class ApiError(Exception):
 def _ssh_run(server: Server, command: str, *, stdin: bytes | None = None) -> bytes:
     if not server.ssh_host:
         raise ApiError("this command needs a media server: set MEDIA_SERVER_HOST")
-    proc = subprocess.run(
-        ["ssh", "-p", server.ssh_port, f"{server.ssh_user}@{server.ssh_host}", command],
-        input=stdin,
-        capture_output=True,
-        timeout=SSH_TIMEOUT_SECS,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["ssh", "-p", server.ssh_port, f"{server.ssh_user}@{server.ssh_host}", command],
+            input=stdin,
+            capture_output=True,
+            timeout=SSH_TIMEOUT_SECS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ApiError(f"ssh to {server.ssh_host} timed out after {SSH_TIMEOUT_SECS}s") from error
     if proc.returncode != 0:
         raise ApiError(f"ssh to {server.ssh_host} failed: {proc.stderr.decode(errors='replace').strip()}")
     return proc.stdout
 
 
-def ssh_text(server: Server, command: str) -> str:
-    """Run a shell command on the media server and return its stdout."""
-    return _ssh_run(server, command).decode(errors="replace")
+def ssh_text(server: Server, argv: list[str]) -> str:
+    """Run a command on the media server and return its stdout; arguments are quoted here."""
+    return _ssh_run(server, " ".join(shlex.quote(part) for part in argv)).decode(errors="replace")
 
 
 def api(server: Server, path: str, data: dict[str, str] | None = None, file: pl.Path | None = None) -> Json:
@@ -95,21 +98,20 @@ def api(server: Server, path: str, data: dict[str, str] | None = None, file: pl.
 
 
 def stop_torrents(server: Server, hashes: str) -> Json:
-    return _first_supported(server, ("torrents/stop", "torrents/pause"), {"hashes": hashes})
+    return _with_legacy_fallback(server, "torrents/stop", "torrents/pause", {"hashes": hashes})
 
 
 def start_torrents(server: Server, hashes: str) -> Json:
-    return _first_supported(server, ("torrents/start", "torrents/resume"), {"hashes": hashes})
+    return _with_legacy_fallback(server, "torrents/start", "torrents/resume", {"hashes": hashes})
 
 
-def _first_supported(server: Server, paths: tuple[str, ...], data: dict[str, str]) -> Json:
-    for index, path in enumerate(paths):
-        try:
-            return api(server, path, data)
-        except ApiError as error:
-            if error.status != 404 or index + 1 == len(paths):
-                raise
-    raise ApiError(f"no supported endpoint among {paths}")
+def _with_legacy_fallback(server: Server, path: str, legacy: str, data: dict[str, str]) -> Json:
+    try:
+        return api(server, path, data)
+    except ApiError as error:
+        if error.status != 404:
+            raise
+    return api(server, legacy, data)
 
 
 def _call_ssh(server: Server, path: str, data: dict[str, str] | None, file: pl.Path | None) -> str:
@@ -126,8 +128,11 @@ def _call_ssh(server: Server, path: str, data: dict[str, str] | None, file: pl.P
             parts += ["--data-urlencode", shlex.quote(f"{key}={value}")]
     parts.append(shlex.quote(url))
     body, _, status = _ssh_run(server, " ".join(parts), stdin=stdin).decode(errors="replace").rpartition("\n")
-    if not status.isdigit() or int(status) >= 400:
-        raise ApiError(f"qBittorrent returned {status} for {path}", status=int(status) if status.isdigit() else None)
+    if not status.isdigit():
+        raise ApiError(f"qBittorrent returned {status!r} for {path}")
+    code = int(status)
+    if code >= 400:
+        raise ApiError(f"qBittorrent returned {code} for {path}", status=code)
     return body
 
 

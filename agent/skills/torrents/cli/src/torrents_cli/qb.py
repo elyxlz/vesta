@@ -5,13 +5,13 @@ set, direct HTTP to $QB_HOST (default $BOX_HOST) : $QB_PORT otherwise. `ls-libra
 filesystem operations on the media server and require the SSH transport.
 
 TorrentLeech is a different service and lives in its own CLI, `tl`. The media library layouts are
-documented under integrations/. This file only ever talks to qBittorrent.
+documented under integrations/. Apart from `search`, which queries the public apibay index, this
+file talks only to qBittorrent.
 """
 
 import argparse
 import json
 import pathlib as pl
-import shlex
 import sys
 import typing as tp
 import urllib.error
@@ -23,6 +23,8 @@ from . import qbapi
 APIBAY_TIMEOUT_SECS = 60
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36"
 ETA_UNKNOWN_SECS = 8640000
+STOPPED_COMPLETE_STATES = ("pausedUP", "stoppedUP")  # qBittorrent 4.x and 5.x names
+STOPPED_STATES = ("pausedUP", "pausedDL", "stoppedUP", "stoppedDL")
 
 
 class Torrent(tp.TypedDict, total=False):
@@ -38,13 +40,12 @@ class Torrent(tp.TypedDict, total=False):
     num_leechs: int
     save_path: str
     content_path: str
-    added_on: int
     seeding_time: int
     ratio_limit: float
     seeding_time_limit: int
 
 
-class ServerState(tp.TypedDict, total=False):
+class ServerState(tp.TypedDict):
     free_space_on_disk: int
     dl_info_speed: int
     up_info_speed: int
@@ -63,8 +64,13 @@ def library_path() -> str:
     return qbapi.env("MEDIA_LIBRARY_PATH", "/media/library")
 
 
-def torrent_list(server: qbapi.Server) -> list[Torrent]:
-    return tp.cast(list[Torrent], qbapi.api(server, "torrents/info"))
+def torrent_list(server: qbapi.Server, hashes: list[str] | None = None) -> list[Torrent]:
+    path = "torrents/info" if hashes is None else "torrents/info?hashes=" + urllib.parse.quote("|".join(hashes))
+    return tp.cast(list[Torrent], qbapi.api(server, path))
+
+
+def join_hashes(torrents: list[Torrent]) -> str:
+    return "|".join(t["hash"] for t in torrents)
 
 
 def norm(text: str) -> str:
@@ -89,7 +95,7 @@ def human(size: int) -> str:
 
 def show(torrents: list[Torrent]) -> None:
     for t in sorted(torrents, key=lambda x: -x["progress"]):
-        eta = "?" if t["eta"] > ETA_UNKNOWN_SECS else f"{t['eta'] // 60}min"
+        eta = "?" if t["eta"] >= ETA_UNKNOWN_SECS else f"{t['eta'] // 60}min"
         print(
             f"  {t['name'][:44]:44} {t['progress'] * 100:5.1f}% {t['dlspeed'] / 1e6:5.2f}MB/s "
             f"peers {t['num_seeds']:>3} ratio {t['ratio']:5.2f} {t['state']:<12} eta {eta}"
@@ -100,14 +106,14 @@ def show(torrents: list[Torrent]) -> None:
 def cmd_status(server: qbapi.Server, a: argparse.Namespace) -> None:
     torrents = torrent_list(server)
     if a.name:
-        torrents = [t for t in torrents if matches(a.name, t["name"])]
-    show(torrents if a.all else [t for t in torrents if t["state"] not in ("pausedUP", "stoppedUP")])
+        torrents = [t for t in torrents if matches(" ".join(a.name), t["name"])]
+    show(torrents if a.all else [t for t in torrents if t["state"] not in STOPPED_COMPLETE_STATES])
 
 
 def cmd_ls(server: qbapi.Server, a: argparse.Namespace) -> None:
     torrents = torrent_list(server)
     if a.filter:
-        torrents = [t for t in torrents if matches(a.filter, t["name"])]
+        torrents = [t for t in torrents if matches(" ".join(a.filter), t["name"])]
     if a.json:
         print(json.dumps(torrents, indent=1))
     else:
@@ -130,25 +136,25 @@ def cmd_add(server: qbapi.Server, a: argparse.Namespace) -> None:
 
 
 def cmd_pause(server: qbapi.Server, a: argparse.Namespace) -> None:
-    hits = pick(server, a.name)
-    qbapi.stop_torrents(server, "|".join(t["hash"] for t in hits))
+    hits = pick(server, " ".join(a.name))
+    qbapi.stop_torrents(server, join_hashes(hits))
     print(f"  paused {len(hits)}")
 
 
 def cmd_resume(server: qbapi.Server, a: argparse.Namespace) -> None:
-    hits = pick(server, a.name)
-    qbapi.start_torrents(server, "|".join(t["hash"] for t in hits))
+    hits = pick(server, " ".join(a.name))
+    qbapi.start_torrents(server, join_hashes(hits))
     print(f"  resumed {len(hits)}")
 
 
 def cmd_delete(server: qbapi.Server, a: argparse.Namespace) -> None:
-    hits = pick(server, a.name)
+    hits = pick(server, " ".join(a.name))
     print(f"  matched {len(hits)}:")
     for t in hits:
         print(f"    {t['name'][:60]}")
     if not a.yes:
         sys.exit("  refusing without --yes")
-    qbapi.api(server, "torrents/delete", {"hashes": "|".join(t["hash"] for t in hits), "deleteFiles": str(bool(a.files)).lower()})
+    qbapi.api(server, "torrents/delete", {"hashes": join_hashes(hits), "deleteFiles": str(bool(a.files)).lower()})
     print(f"  deleted {len(hits)} (files={'yes' if a.files else 'no'})")
 
 
@@ -168,7 +174,7 @@ INFO_FIELDS = (
 
 
 def cmd_info(server: qbapi.Server, a: argparse.Namespace) -> None:
-    for t in pick(server, a.name):
+    for t in pick(server, " ".join(a.name)):
         print(f"  {t['name']}")
         for key in INFO_FIELDS:
             if key in t:
@@ -176,27 +182,23 @@ def cmd_info(server: qbapi.Server, a: argparse.Namespace) -> None:
 
 
 def cmd_limits(server: qbapi.Server, a: argparse.Namespace) -> None:
-    torrents = torrent_list(server)
-    hits = [t for t in torrents if matches(a.name, t["name"])] if a.name else torrents
-    if not hits:
-        sys.exit(f"no torrent matching {a.name!r}")
+    hits = pick(server, " ".join(a.name)) if a.name else torrent_list(server)
     if not a.name and not a.yes:
         sys.exit(f"  no name given, that would set limits on ALL {len(hits)} torrents; pass --yes")
-    hashes = {t["hash"] for t in hits}
+    hashes = [t["hash"] for t in hits]
     qbapi.api(
         server,
         "torrents/setShareLimits",
         {"hashes": "|".join(hashes), "ratioLimit": str(a.ratio), "seedingTimeLimit": str(a.hours * 60), "inactiveSeedingTimeLimit": "-2"},
     )
     print(f"  set ratio {a.ratio} / {a.hours}h on {len(hits)}, verifying:")
-    for t in torrent_list(server):
-        if t["hash"] in hashes:
-            print(f"    {t['name'][:40]:40} ratio_limit={t['ratio_limit']} seed_limit={t['seeding_time_limit']}min")
+    for t in torrent_list(server, hashes):
+        print(f"    {t['name'][:40]:40} ratio_limit={t['ratio_limit']} seed_limit={t['seeding_time_limit']}min")
 
 
 def cmd_rule(server: qbapi.Server, a: argparse.Namespace) -> None:
     torrents = torrent_list(server)
-    live = [t for t in torrents if t["state"] not in ("pausedUP", "pausedDL", "stoppedUP", "stoppedDL")]
+    live = [t for t in torrents if t["state"] not in STOPPED_STATES]
     hit = [t for t in live if t["ratio"] >= a.ratio or ("seeding_time" in t and t["seeding_time"] >= a.hours * 3600)]
     print(f"  blast radius: {len(torrents)} torrents, {len(live)} live, {len(hit)} would pause now")
     for t in hit[:8]:
@@ -216,13 +218,12 @@ def cmd_rule(server: qbapi.Server, a: argparse.Namespace) -> None:
 
 
 def server_state(server: qbapi.Server) -> ServerState:
-    maindata = tp.cast(dict[str, ServerState], qbapi.api(server, "sync/maindata"))
-    return maindata["server_state"] if "server_state" in maindata else ServerState()
+    return tp.cast(dict[str, ServerState], qbapi.api(server, "sync/maindata"))["server_state"]
 
 
 def cmd_health(server: qbapi.Server, _a: argparse.Namespace) -> None:
     s = server_state(server)
-    print(f"  free space  : {human(s['free_space_on_disk'] if 'free_space_on_disk' in s else 0)}")
+    print(f"  free space  : {human(s['free_space_on_disk'])}")
     print(f"  dl / ul     : {s['dl_info_speed'] / 1e6:.2f} / {s['up_info_speed'] / 1e6:.2f} MB/s")
     print(f"  write cache : {s['write_cache_overload']}%  queued io: {s['queued_io_jobs']}")
     print(f"  avg queue   : {s['average_time_queue']} ms")
@@ -231,10 +232,16 @@ def cmd_health(server: qbapi.Server, _a: argparse.Namespace) -> None:
 
 def cmd_disk(server: qbapi.Server, _a: argparse.Namespace) -> None:
     if server.ssh_host:
-        print(qbapi.ssh_text(server, f"df -h {shlex.quote(library_path())}").rstrip())
+        print(qbapi.ssh_text(server, ["df", "-h", library_path()]).rstrip())
     else:
-        s = server_state(server)
-        print(f"  free on qBittorrent's disk: {human(s['free_space_on_disk'] if 'free_space_on_disk' in s else 0)}")
+        print(f"  free on qBittorrent's disk: {human(server_state(server)['free_space_on_disk'])}")
+
+
+class SearchHit(tp.NamedTuple):
+    seeders: int
+    size: int
+    name: str
+    info_hash: str
 
 
 def cmd_search(_server: qbapi.Server, a: argparse.Namespace) -> None:
@@ -246,30 +253,29 @@ def cmd_search(_server: qbapi.Server, a: argparse.Namespace) -> None:
     except urllib.error.URLError as error:
         sys.exit(f"apibay unreachable: {error.reason}")
     results = tp.cast(list[dict[str, str]], json.loads(raw or "[]"))
-    rows = [(int(r["seeders"]), int(r["size"]), r["name"], r["info_hash"]) for r in results if r["id"] != "0"]
+    rows = [SearchHit(int(r["seeders"]), int(r["size"]), r["name"], r["info_hash"]) for r in results if r["id"] != "0"]
     if a.min_gb:
-        rows = [r for r in rows if r[1] >= a.min_gb * 1e9]
+        rows = [r for r in rows if r.size >= a.min_gb * 1e9]
     if a.max_gb:
-        rows = [r for r in rows if r[1] <= a.max_gb * 1e9]
+        rows = [r for r in rows if r.size <= a.max_gb * 1e9]
     if a.p1080:
-        rows = [r for r in rows if "2160" not in r[2]]
-    rows.sort(key=lambda r: -r[0])
-    for seeders, size, name, info_hash in rows[: a.limit]:
-        print(f"  {seeders:>4}s {human(size):>7}  {info_hash}  {name[:58]}")
+        rows = [r for r in rows if "2160" not in r.name]
+    rows.sort(key=lambda r: -r.seeders)
+    for hit in rows[: a.limit]:
+        print(f"  {hit.seeders:>4}s {human(hit.size):>7}  {hit.info_hash}  {hit.name[:58]}")
     print(f"  ({len(rows)} matches; public trackers. For the private tracker see `tl search`.)")
 
 
 def cmd_ls_library(server: qbapi.Server, a: argparse.Namespace) -> None:
-    print(qbapi.ssh_text(server, f"ls -la {shlex.quote(str(pl.PurePosixPath(library_path()) / (a.subpath or '')))}").rstrip())
+    print(qbapi.ssh_text(server, ["ls", "-la", str(pl.PurePosixPath(library_path()) / (a.subpath or ""))]).rstrip())
 
 
 def cmd_find(server: qbapi.Server, a: argparse.Namespace) -> None:
-    print(qbapi.ssh_text(server, f"find {shlex.quote(library_path())} -iname {shlex.quote('*' + a.keyword + '*')}").rstrip())
+    print(qbapi.ssh_text(server, ["find", library_path(), "-iname", f"*{a.keyword}*"]).rstrip())
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="qb", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--json", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("status", help="active torrents")
@@ -279,6 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("ls", help="list all torrents, optionally filtered")
     s.add_argument("filter", nargs="*")
+    s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_ls)
 
     s = sub.add_parser("add", help="add magnet, info-hash or .torrent file")
@@ -348,10 +355,6 @@ def _add_maintenance_commands(sub: "argparse._SubParsersAction[argparse.Argument
 
 def main(argv: list[str] | None = None) -> None:
     a = build_parser().parse_args(argv)
-    # name/filter accept multiple words so `qb info quiet place 2018` works
-    for attr in ("name", "filter"):
-        if attr in a and isinstance(a.__dict__[attr], list):
-            a.__dict__[attr] = " ".join(a.__dict__[attr]) if a.__dict__[attr] else None
     try:
         a.func(qbapi.server_from_env(), a)
     except qbapi.ApiError as error:

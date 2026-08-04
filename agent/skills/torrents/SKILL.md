@@ -1,6 +1,6 @@
 ---
 name: torrents
-description: This skill should be used when the user asks about their torrent box: searching public trackers or TorrentLeech, adding torrents to qBittorrent, monitoring or share-limiting downloads, or browsing the media library on the server.
+description: The user's torrent box. Use when asked to search public trackers or TorrentLeech, add or manage torrents in qBittorrent, monitor or share-limit downloads, or browse the media library on the media server.
 ---
 
 # Torrents (CLIs: qb, tl)
@@ -29,7 +29,7 @@ For TorrentLeech (`tl`):
 ## Commands
 
 ```bash
-qb status [name] [--all]      qb ls [filter]        qb info <name>
+qb status [name] [--all]      qb ls [filter] [--json]     qb info <name>
 qb add <magnet|hash|file>...  [--path DIR] [--tv]
 qb pause <name>               qb resume <name>
 qb delete <name> [--files] --yes
@@ -39,7 +39,7 @@ qb health     qb disk
 qb search <query> [--1080] [--min-gb N]     # public trackers (apibay)
 qb ls-library [SUBPATH]     qb find <keyword>       # need MEDIA_SERVER_HOST
 
-tl search <query> [--1080|--uhd] [--min-gb N] [--max-gb N]
+tl search <query> [--1080|--uhd] [--min-gb N] [--max-gb N] [--json]
 tl get <fid>... [--out DIR]
 ```
 

@@ -9,6 +9,7 @@ its own.
 """
 
 import argparse
+import functools
 import json
 import pathlib as pl
 import subprocess
@@ -31,11 +32,19 @@ class Listing(tp.TypedDict):
     seeders: int
 
 
-def curl(url: str, out: pl.Path | None = None, post: dict[str, str] | None = None) -> str:
-    proxy = subprocess.run(["vpn", "proxy-url"], capture_output=True, text=True, check=False).stdout.strip()
+@functools.cache
+def proxy_url() -> str:
+    try:
+        proxy = subprocess.run(["vpn", "proxy-url"], capture_output=True, text=True, check=False).stdout.strip()
+    except FileNotFoundError:
+        proxy = ""
     if not proxy:
-        sys.exit("no VPN proxy available; the TorrentLeech website is unreachable without it")
-    cmd = ["curl", "-s", "--max-time", str(CURL_TIMEOUT_SECS), "-A", USER_AGENT, "-L", "--proxy", proxy, "-c", str(JAR), "-b", str(JAR)]
+        sys.exit("no VPN proxy available (is the vpn skill active?); the TorrentLeech website is unreachable without it")
+    return proxy
+
+
+def curl(url: str, out: pl.Path | None = None, post: dict[str, str] | None = None) -> str:
+    cmd = ["curl", "-s", "--max-time", str(CURL_TIMEOUT_SECS), "-A", USER_AGENT, "-L", "--proxy", proxy_url(), "-c", str(JAR), "-b", str(JAR)]
     for key, value in (post or {}).items():
         cmd += ["--data-urlencode", f"{key}={value}"]
     if out is not None:
@@ -44,16 +53,20 @@ def curl(url: str, out: pl.Path | None = None, post: dict[str, str] | None = Non
     return subprocess.run(cmd, capture_output=True, text=True, check=False).stdout
 
 
+def logged_in() -> bool:
+    return curl(f"{TL}/torrents/browse/list/query/test").startswith("{")
+
+
 def login() -> None:
     """Idempotent: only re-authenticates when the stored cookie has gone stale."""
-    if JAR.exists() and curl(f"{TL}/torrents/browse/list/query/test").startswith("{"):
+    if JAR.exists() and logged_in():
         return
     if not CRED.exists():
         sys.exit(f'no credentials at {CRED}: write {{"username": ..., "password": ...}} and chmod 600 it')
     cred = tp.cast(dict[str, str], json.loads(CRED.read_text()))
     curl(f"{TL}/user/account/login/", post={"username": cred["username"], "password": cred["password"]})
     JAR.chmod(0o600)
-    if not curl(f"{TL}/torrents/browse/list/query/test").startswith("{"):
+    if not logged_in():
         sys.exit("TorrentLeech login failed; check ~/.torrentleech_cred")
 
 
@@ -105,7 +118,6 @@ def cmd_get(a: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="tl", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--json", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("search", help="search the tracker")
@@ -115,6 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--min-gb", type=float)
     s.add_argument("--max-gb", type=float)
     s.add_argument("--limit", type=int, default=10)
+    s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("get", help="download .torrent file(s) by fid")

@@ -11,10 +11,9 @@ import pytest
 
 class FakeQb:
     def __init__(self) -> None:
-        self.torrents: list[dict[str, object]] = []
+        self.torrents: list[dict[str, str | int | float]] = []
         self.removed_endpoints: set[str] = set()
-        self.requests: list[tuple[str, str, dict[str, str]]] = []
-        self.raw_bodies: list[bytes] = []
+        self.requests: list[tuple[str, str, dict[str, str], bytes]] = []
 
         fake = self
 
@@ -23,17 +22,19 @@ class FakeQb:
                 path = urllib.parse.urlparse(self.path).path.removeprefix("/api/v2/")
                 length = int(self.headers["Content-Length"]) if "Content-Length" in self.headers else 0
                 body = self.rfile.read(length)
-                fake.raw_bodies.append(body)
                 fields = dict(urllib.parse.parse_qsl(body.decode(errors="replace")))
-                fake.requests.append((method, path, fields))
+                fake.requests.append((method, path, fields, body))
                 if path in fake.removed_endpoints:
                     self.send_error(404)
                     return
-                payload = json.dumps(fake.torrents).encode() if path == "torrents/info" else b"Ok."
-                if path == "app/preferences":
+                if path == "torrents/info":
+                    payload = json.dumps(fake.torrents).encode()
+                elif path == "app/preferences":
                     payload = json.dumps({"max_ratio": 1.0, "max_seeding_time": 11520, "max_ratio_act": 0}).encode()
-                if path == "sync/maindata":
+                elif path == "sync/maindata":
                     payload = json.dumps({"server_state": {"free_space_on_disk": 5_000_000_000}}).encode()
+                else:
+                    payload = b"Ok."
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
@@ -54,7 +55,7 @@ class FakeQb:
         self.thread.start()
 
     def paths(self) -> list[str]:
-        return [path for _, path, _ in self.requests]
+        return [path for _, path, _, _ in self.requests]
 
     def close(self) -> None:
         self.server.shutdown()

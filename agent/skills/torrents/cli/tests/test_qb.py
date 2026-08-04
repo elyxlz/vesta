@@ -91,10 +91,18 @@ def test_rule_refuses_without_yes(fake_qb):
     assert "app/setPreferences" not in fake_qb.paths()
 
 
+def test_limits_accepts_a_hash_prefix_like_every_other_command(fake_qb, capsys):
+    fake_qb.torrents = [TORRENT]
+    qb.main(["limits", "abc123", "--ratio", "1"])
+    fields = next(fields for _, path, fields, _ in fake_qb.requests if path == "torrents/setShareLimits")
+    assert fields["hashes"] == TORRENT["hash"]
+    assert "set ratio" in capsys.readouterr().out
+
+
 def test_rule_with_yes_sets_pause_never_delete(fake_qb, capsys):
     fake_qb.torrents = [TORRENT]
     qb.main(["rule", "--ratio", "1", "--yes"])
-    fields = next(fields for _, path, fields in fake_qb.requests if path == "app/setPreferences")
+    fields = next(fields for _, path, fields, _ in fake_qb.requests if path == "app/setPreferences")
     assert '"max_ratio_act": 0' in fields["json"]
     assert "VERIFIED" in capsys.readouterr().out
 
@@ -106,7 +114,7 @@ def test_add_file_over_http_uploads_multipart(fake_qb, tmp_path, capsys):
     torrent_file = tmp_path / "movie.torrent"
     torrent_file.write_bytes(b"d8:announce3:url4:infod4:name5:moviee" + b"e")
     qb.main(["add", str(torrent_file), "--path", "/media/library/Movies"])
-    body = next(b for b in fake_qb.raw_bodies if b"movie.torrent" in b)
+    body = next(body for _, _, _, body in fake_qb.requests if b"movie.torrent" in body)
     assert b"d8:announce" in body
     assert b"/media/library/Movies" in body
     assert "Ok." in capsys.readouterr().out
@@ -152,6 +160,28 @@ def test_unreachable_server_errors_clearly(monkeypatch):
     assert "cannot reach qBittorrent" in str(exc.value.code)
 
 
+# --- status display ---
+
+
+def test_status_shows_unknown_eta_for_the_sentinel(fake_qb, capsys):
+    """qBittorrent caps eta at exactly 8640000 (its unknown sentinel), never above it."""
+    fake_qb.torrents = [{**TORRENT, "eta": 8640000}]
+    qb.main(["status"])
+    assert "eta ?" in capsys.readouterr().out
+
+
+def test_ssh_timeout_errors_clearly(monkeypatch):
+    monkeypatch.setenv("MEDIA_SERVER_HOST", "mediabox")
+
+    def fake_run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=90)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(SystemExit) as exc:
+        qb.main(["ls"])
+    assert "timed out" in str(exc.value.code)
+
+
 # --- status filtering ---
 
 
@@ -166,5 +196,5 @@ def test_status_hides_stopped_complete_without_all(fake_qb, capsys):
 
 def test_add_infohash_becomes_magnet(fake_qb):
     qb.main(["add", "abc123def456"])
-    fields = next(fields for _, path, fields in fake_qb.requests if path == "torrents/add")
+    fields = next(fields for _, path, fields, _ in fake_qb.requests if path == "torrents/add")
     assert fields["urls"].startswith("magnet:?xt=urn:btih:abc123def456")

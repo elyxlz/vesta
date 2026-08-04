@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 from torrents_cli import tl
@@ -24,6 +25,19 @@ def test_login_skipped_while_cookie_still_valid(monkeypatch, home):
     assert all("/user/account/login/" not in url for url in fetched)
 
 
+def test_missing_vpn_command_fails_clearly(monkeypatch, home):
+    (home / "cookies").write_text("jar")
+    tl.proxy_url.cache_clear()
+
+    def fake_run(argv, **kwargs):
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(SystemExit) as exc:
+        tl.main(["search", "film"])
+    assert "VPN proxy" in str(exc.value.code)
+
+
 def test_login_fails_clearly_without_credentials(monkeypatch, home):
     monkeypatch.setattr(tl, "curl", lambda url, out=None, post=None: "not json")
     with pytest.raises(SystemExit) as exc:
@@ -31,7 +45,7 @@ def test_login_fails_clearly_without_credentials(monkeypatch, home):
     assert "credentials" in str(exc.value.code)
 
 
-def test_get_rejects_non_bencode_and_removes_the_file(monkeypatch, home, tmp_path, capsys):
+def test_get_rejects_non_bencode_and_removes_the_file(monkeypatch, home, capsys):
     (home / "cookies").write_text("jar")
 
     def fake_curl(url, out=None, post=None):
@@ -40,13 +54,13 @@ def test_get_rejects_non_bencode_and_removes_the_file(monkeypatch, home, tmp_pat
         return '{"torrentList": []}'
 
     monkeypatch.setattr(tl, "curl", fake_curl)
-    out_dir = tmp_path / "out"
+    out_dir = home / "out"
     tl.main(["get", "12345", "--out", str(out_dir)])
     assert "not a valid torrent" in capsys.readouterr().out
     assert not (out_dir / "12345.torrent").exists()
 
 
-def test_get_keeps_valid_torrents(monkeypatch, home, tmp_path, capsys):
+def test_get_keeps_valid_torrents(monkeypatch, home, capsys):
     (home / "cookies").write_text("jar")
 
     def fake_curl(url, out=None, post=None):
@@ -55,7 +69,7 @@ def test_get_keeps_valid_torrents(monkeypatch, home, tmp_path, capsys):
         return '{"torrentList": []}'
 
     monkeypatch.setattr(tl, "curl", fake_curl)
-    out_dir = tmp_path / "out"
+    out_dir = home / "out"
     tl.main(["get", "12345", "--out", str(out_dir)])
     assert (out_dir / "12345.torrent").exists()
     assert "12345.torrent" in capsys.readouterr().out
