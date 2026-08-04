@@ -322,3 +322,38 @@ def test_remind_list_keeps_old_recurring_reminders_past_the_limit(tmp_config: Co
     assert listed[daily["id"]]["schedule"] == "daily at 09:00 Europe/Rome"
     assert listed[cron["id"]]["schedule"] == "cron: 0 9 * * 1-5 (Europe/Rome)"
     assert listed[hourly["id"]]["schedule"] == "hourly"
+
+
+def test_remind_list_shows_the_soonest_one_shots_not_the_newest(tmp_config: Config):
+    """The limit must trim the furthest-out reminders, never the imminent ones.
+
+    Creation order and fire order are unrelated. Ordering the one-shot tail by created_at meant a
+    reminder written weeks ago and firing within the hour sat below every newer row, so on a real
+    store it was invisible at the default limit: the exact false negative this ordering exists to
+    prevent, and worse here, because "what fires next" is the question the list is asked.
+    """
+    imminent = commands.remind_set(tmp_config, commands.ReminderSpec(message="fires first", in_hours=1))
+    _backdate(tmp_config, [imminent["id"]])  # oldest row, soonest fire
+    for index in range(5):
+        commands.remind_set(tmp_config, commands.ReminderSpec(message=f"later {index}", in_days=10 + index))
+
+    listed = commands.remind_list(tmp_config, limit=3)
+
+    assert [r["message"] for r in listed] == ["fires first", "later 0", "later 1"]
+
+
+def test_remind_list_still_puts_recurring_ahead_of_a_sooner_one_shot(tmp_config: Config):
+    """Fire-time ordering applies WITHIN the one-shot tail only.
+
+    A plain cron row's scheduled_time records its last advance rather than its next fire, so it is
+    not a sound sort key for recurring rows; they keep their own group at the top.
+    """
+    daily = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-04-26T09:00:00", tz="Europe/Rome", recurring="daily")
+    )
+    _backdate(tmp_config, [daily["id"]])
+    commands.remind_set(tmp_config, commands.ReminderSpec(message="one-shot in a minute", in_minutes=1))
+
+    listed = commands.remind_list(tmp_config, limit=1)
+
+    assert [r["id"] for r in listed] == [daily["id"]]
