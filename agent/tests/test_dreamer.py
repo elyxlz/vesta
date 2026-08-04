@@ -478,10 +478,15 @@ async def test_processor_drains_turnless_compaction_on_idle_tick():
         assert state.pending_compaction is not None, "the drain must not fire while turnless work streams"
         mock_client.query.assert_not_called()
 
-        # The turnless turn ends: bus flips idle, the next tick drains, /compact goes out.
+        # The turnless turn ends: bus flips idle, the next tick drains, /compact goes out
+        # (with the credential guard core appends to every compaction's guidance).
+        from core.client import COMPACTION_CREDENTIAL_GUARD
+
         await message_queue.put(result_msg())
         await wait_for_condition(
-            lambda: any(call.args == ("/compact curate the open threads",) for call in mock_client.query.call_args_list),
+            lambda: any(
+                call.args == (f"/compact curate the open threads {COMPACTION_CREDENTIAL_GUARD}",) for call in mock_client.query.call_args_list
+            ),
             timeout=5.0,
             message="idle tick never drained the pending compaction",
         )

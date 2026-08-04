@@ -14,7 +14,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 ## Order of operations
 
 0. **Curiosity**
-1. **Self-improvement**: retrospective, review, fix, validate, upstream, recurrence sweep
+1. **Self-improvement**: reality check, retrospective, review, fix, validate, upstream, recurrence sweep
 2. **User State**
 3. **Memory curation**
 4. **Workspace cleanup**
@@ -34,6 +34,10 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 
 ## Self-Improvement
 
+### 0. Reality check
+
+Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. The retrospective reads your own record, so a failure nobody wrote down is invisible to it; the probe reads the running system. Every RED line gets fixed tonight or a one-line write-off in tonight's summary (what it is, why it can wait). Never carry a RED silently.
+
 ### 1. Retrospective
 
 Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
@@ -41,6 +45,8 @@ Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
 
 Calendar audit: every dated appointment, however informally arranged (mentioned in passing, set up via a family member, a verbal plan, an email with no formal invite), must live on the user's actual calendar to trigger an automatic reminder. One that lives only in a note, a task-metadata file, or the morning brief fires no timed nudge, so the user misses it. Walk the day for any dated thing that never reached the calendar; each is a reminder-strategy failure. Fix it upstream: add events the moment they are known, not once in a brief.
+
+**Prove the calendar is reachable before auditing it.** Run the list command for the calendar the user actually connects: `email-client calendar list --days-ahead 7` for a CalDAV or Google account, the `microsoft` skill for an Outlook account. A walk of the day against a calendar that is not connected can never fail, so a clean result proves nothing. If the probe errors, the finding is a broken or missing calendar connection, a capability gap to surface to the user, never "no gaps found".
 
 **Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. Every line is tagged by source: `[SYSTEM]` is the daemon, `[AGENT]` is you. Count `[SYSTEM]` lines, because `[AGENT]` lines are your own narration and match whatever word you are investigating, which is why a naive count climbs as you grep. A guessed cause aims the fix in the wrong direction. The local file is the readable path (the `/gateway/logs` HTTP endpoint needs an admin token you may not hold).
 
@@ -63,7 +69,9 @@ Prefer the simplest, most reliable change that addresses the root cause. Options
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
 
-**Where the fix lives.** A judgment call or a behavior with no code locus → a one-line rule. A fixable bug in a command/tool/CLI (errored, wrong output, silently failed on a bad flag) → fix the source and upstream it, never a memory rule that routes around a broken thing while it stays broken for every other instance. Litmus: "would another instance hit this?" Yes → skill/source edit plus upstream; no → memory, and only for instance-specific facts. Memory loads on every message so every character costs tokens: keep it to short, always-needed rules (under two lines, broadly relevant); anything longer or task-specific is a skill, which is preferred.
+**Where the fix lives.** A judgment call or a behavior with no code locus → a one-line rule. A fixable bug in a command/tool/CLI (errored, wrong output, silently failed on a bad flag) → fix the source and upstream it, never a memory rule that routes around a broken thing while it stays broken for every other instance. Litmus: "would another instance hit this?" Yes → skill/source edit plus upstream; no → memory, and only for instance-specific facts. That litmus picks WHERE a fix lives, never whether to fix at all.
+
+**Decide WHETHER to codify by the cost of recurrence, not by how likely a repeat looks.** "One-off" is a prediction, and a friction waved away tonight is re-derived months later with none of tonight's context. Ask "if this recurs, what does it cost?", not "will it recur?". Cheap friction (a retry, a wasted call, a loud rejection) can stay uncodified; when a recurrence would have you state something false to the user or take an irreversible action, codify it even when it looks like a fluke, because that failure is silent. Memory loads on every message so every character costs tokens: keep it to short, always-needed rules (under two lines, broadly relevant); anything longer or task-specific is a skill, which is preferred.
 
 Phrase every rule as WHEN <recognizable moment> -> DO <concrete check or action>. A rule whose trigger moment you cannot name will not fire when it matters and belongs in the relevant skill's workflow instead.
 
@@ -77,6 +85,8 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 Simulating it yourself tends to approve your own fixes, so for a failure that has already recurred, hand a fresh subagent (no knowledge of the fix) the original failing exchange plus the updated skill or prompt and see if it independently produces the right behavior. If it doesn't, flag the fix unresolved.
 
+**When the fix is a check, a detector, a threshold, or a monitor, also simulate the HEALTHY case.** Replaying the failure it was built for only proves it fires. Ask literally: what does this print when everything is fine? If the answer is "the last bad value", "nothing, so the previous reading stands", or "I cannot tell the difference", the check is a high-water mark that pins you to a stale state, and it looks healthy the whole time because it still returns a plausible number.
+
 ### 5. Upstream
 
 Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it.
@@ -89,7 +99,7 @@ One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting
 
 - **Recurring user asks** (questions repeated across days: "what's my balance?", "did the build pass?"; states or numbers checked over and over): build a widget via the `dashboard` skill (the "ask first" gate has a dreamer carve-out, use it). Anything that kills the recurring ask is fair game: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links; pick the lightest form. Opposite: prune stale widgets (data source gone, never opened, broken at build).
 - **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a snooze rule via the `notifications` skill so it stops breaking your focus. Snoozing defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat snoozed when it should have reached you fast, propose an interrupt rule.
-- **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): twice is the limit. On the third arrival it is a producer bug, not background weather; fix the producer (stop emitting a state you already know about) or snooze it. Expectedness is a reason to fix it, not a reason to keep being woken by it.
+- **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): read the producer before deciding, and judge by cost, not by arrival count. A non-interrupting alarm that re-notifies on a sane throttle and clears itself when its condition clears is doing its job for a still-open blocker; the repetition is the point, so close the blocker, never mute the reporter. Everything else that keeps arriving with a state you already know is a producer bug: fix the producer (stop emitting known state) or snooze it, preferring `--for <duration>` so the suppression cannot outlive the cause. Expectedness is a reason to fix it, not a reason to keep being woken by it.
 
 ## Personality
 
@@ -147,7 +157,7 @@ MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory
 - Lessons learned, framed as rules not stories
 - Pointers to where larger things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
 
-Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics.
+Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks; a lesson kept for its cost of recurrence (a false statement to the user, an irreversible action) retires only by graduating, never by quiet weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics.
 
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
@@ -166,7 +176,9 @@ Keep the container's filesystem organized and disk usage under control.
 
 ## Sensitive Data Cleanup
 
-Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, connection strings, and payment-card numbers (a digit run is reported only when it opens with a real card-issuer prefix and passes the Luhn check, so order numbers, tracking numbers, and timestamp ids stay out of the report). Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, connection strings, and payment-card numbers (a digit run is reported only when it opens with a real card-issuer prefix and passes the Luhn check, so order numbers, tracking numbers, and timestamp ids stay out of the report). Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact, then verifies the committed rows and warns (exit 2) if a matched secret survived the rewrite. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+
+**For a value the scanner cannot detect but you know exactly** (a human-chosen password matches no API-key shape, and `--scrub` on its events prints `0 event(s)` while the value stays put): `redact_secrets.sh --scrub-literal '<exact value>'` replaces every stored copy DB-wide, prints only counts and the value's length (never the value), keeps the search index in sync, and refuses values under 6 characters because the rewrite is DB-wide. The same command is the fix when `--scrub` exits 2 with a warning that a matched secret survived. `--scrub-literal` verifies the committed rows too, and exits 2 when a copy sits where a JSON rewrite cannot reach it (a bare JSON number): fix those events by hand and resync events_fts. After a literal scrub, re-run it once at the end of the night: the command that invoked it may itself be recorded as a new event.
 
 ## Summary
 
