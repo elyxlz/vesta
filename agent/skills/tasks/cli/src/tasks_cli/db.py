@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
 
+from .config import default_data_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -121,12 +123,12 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection, data_dir: Path):
         conn.execute("DROP TABLE tasks")
         conn.execute("ALTER TABLE tasks_v2 RENAME TO tasks")
 
-    # Import reminders from the old reminder CLI db, but ONLY into the real store. The legacy path
-    # is absolute and home-relative while the database being built is whatever the caller passed,
-    # so without this guard EVERY new database gets seeded from the developer's own reminders:
-    # a temp-directory database comes up holding 40 rows that belong to a different store entirely.
+    # LEGACY(remove-when: no fleet agent's tasks.db remains below schema v2): one-time import from the
+    # old reminder CLI db, and ONLY into the real store. The legacy path is absolute and home-relative
+    # while the database being built is whatever the caller passed, so without this guard every new
+    # database (a temp-directory test db included) gets seeded from a store that isn't its own.
     old_reminder_db = Path.home() / ".reminder" / "reminders.db"
-    if data_dir == Path.home() / ".tasks" and old_reminder_db.exists():
+    if data_dir == default_data_dir() and old_reminder_db.exists():
         try:
             old_conn = sqlite3.connect(old_reminder_db)
             old_conn.row_factory = sqlite3.Row
@@ -249,6 +251,10 @@ def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, du
 
     if due_dt > now:
         _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), "auto: at due", due_dt)
+
+
+def delete_task_reminders(conn: sqlite3.Connection, task_id: str):
+    conn.execute("DELETE FROM reminders WHERE task_id = ?", (task_id,))
 
 
 def delete_auto_reminders(conn: sqlite3.Connection, task_id: str):

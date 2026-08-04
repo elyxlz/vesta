@@ -161,6 +161,18 @@ def test_snooze_relabels_the_schedule_shown_by_remind_list(tmp_config: Config):
     assert rendered.startswith("in 8d\t")
 
 
+def test_snooze_fire_time_is_second_precision(tmp_config: Config):
+    """A relative snooze derives its fire time from now, so it must not leak the sub-second precision
+    no other schedule label carries."""
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="chase it", scheduled_datetime="2026-07-19T09:00:00", tz="UTC"))
+
+    result = commands.remind_snooze(tmp_config, reminder_id=reminder["id"], in_hours=5)
+
+    assert db.parse_datetime(result["next_run"]).microsecond == 0
+    assert result["schedule"] == f"once at {result['next_run']}"
+    assert "." not in result["next_run"].split("+")[0], f"snooze fire time leaked sub-second precision: {result['next_run']}"
+
+
 def test_snooze_rejects_recurring(tmp_config: Config):
     reminder = commands.remind_set(
         tmp_config, commands.ReminderSpec(message="daily", scheduled_datetime="2026-04-26T10:30:00", tz="UTC", recurring="daily")
