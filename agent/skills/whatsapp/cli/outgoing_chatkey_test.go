@@ -8,25 +8,13 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-// newOutgoingTestClient builds a store-backed client with no whatsmeow connection, matching the
-// pattern in edits_test.go. canonicalChatKey degrades to the raw JID when client is nil, so these
-// tests pin the routing contract (outgoing storage goes through canonicalChatKey) rather than the
-// LID lookup itself, which needs a live whatsmeow store.
+// newOutgoingTestClient builds a store-backed client with no whatsmeow connection.
+// canonicalChatKey degrades to the raw JID when client is nil, so these tests pin the routing
+// contract (outgoing storage goes through canonicalChatKey) rather than the LID lookup itself,
+// which needs a live whatsmeow store.
 func newOutgoingTestClient(t *testing.T) *WhatsAppClient {
 	t.Helper()
-	store, err := NewMessageStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("failed to open store: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-	return &WhatsAppClient{
-		store:          store,
-		logger:         waLog.Noop,
-		instance:       "personal",
-		readOnly:       true,
-		skipSenders:    map[string]bool{},
-		messageSenders: map[string]string{},
-	}
+	return &WhatsAppClient{store: newTestStore(t), logger: waLog.Noop}
 }
 
 // TestOutgoingMessageStoredUnderCanonicalChatKey pins that an outgoing message is filed under
