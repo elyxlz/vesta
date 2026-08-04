@@ -502,11 +502,15 @@ func (wac *WhatsAppClient) recordOutgoingMessage(jid types.JID, p StoreMessagePa
 		p.ID = fmt.Sprintf("local-%d", time.Now().UnixNano())
 	}
 
-	p.ChatJID = jid.String()
+	// File under the canonical chat key: keyed by the raw JID, a send to a peer's
+	// LID and their phone-JID replies would split one conversation into two chats.
+	chatKey := wac.canonicalChatKey(jid)
+
+	p.ChatJID = chatKey
 	p.Timestamp = time.Now()
 	p.IsFromMe = true
 
-	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid), p.Timestamp); err != nil {
+	if err := wac.store.StoreChat(chatKey, wac.getChatName(jid), p.Timestamp); err != nil {
 		wac.logger.Warnf("Failed to store outgoing chat metadata: %v", err)
 	}
 
