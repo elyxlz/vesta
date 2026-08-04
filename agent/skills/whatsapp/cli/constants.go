@@ -56,6 +56,13 @@ const (
 	// instead of silently dropping the message forever.
 	WhisperProcessTimeout = 2 * time.Minute
 
+	// WhisperMaxThreads caps the compute threads a transcription may use. The Go
+	// binding defaults each context to runtime.NumCPU(), which starves the
+	// daemon's own work on a big box; whisper.cpp gains little past a handful of
+	// threads anyway. 4 matches the whisper skill's own default
+	// (skills/whisper/scripts/whisper_transcribe.sh).
+	WhisperMaxThreads = 4
+
 	TypingDelayPerChar = 25 * time.Millisecond
 	TypingDelayMin     = 1500 * time.Millisecond
 	TypingDelayMax     = 6 * time.Second

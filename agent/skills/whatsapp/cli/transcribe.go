@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,12 @@ func loadWhisperModel() (whisper.Model, error) {
 	return whisperModel, whisperModelErr
 }
 
+// whisperThreads is the per-transcription thread budget: all of a small box's
+// cores, capped at WhisperMaxThreads on a big one.
+func whisperThreads(numCPU int) uint {
+	return uint(min(numCPU, WhisperMaxThreads))
+}
+
 // transcribeAudioBuiltIn transcribes audio using the built-in whisper.cpp bindings.
 func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	model, err := loadWhisperModel()
@@ -91,6 +98,11 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	if err := ctx.SetLanguage("auto"); err != nil {
 		return "", fmt.Errorf("failed to set language to auto: %w", err)
 	}
+
+	// Cap compute threads: the binding otherwise gives the context
+	// runtime.NumCPU(). Thread count only partitions the matmuls, it is not a
+	// decoding parameter, so the transcript is unaffected.
+	ctx.SetThreads(whisperThreads(runtime.NumCPU()))
 
 	// The timeout clock starts only once the mutex is held, so each queued voice
 	// note gets the full budget. On timeout the goroutine keeps the mutex until
