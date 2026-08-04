@@ -65,20 +65,15 @@ Example, for a request like "show me my running this week":
     Out of scope: No history beyond 7 days, no goals, no live device sync.
     Done when:    Health page shows the Running card and the dashboard serves.
 
-## Typecheck before you rebuild
+## Typechecking
 
-`vite build` does NOT typecheck. It transpiles and strips types, so a data file that violates its own
-interface builds clean, ships, and renders wrong. A field written under the wrong name is the common
-case: the page reads the declared field, gets `undefined`, and quietly renders a broken link or an
-empty cell that looks like real but sparse data.
-
-Run `npx tsc --noEmit -p tsconfig.app.json` from `agent/skills/dashboard/app` before rebuilding.
-
-**Do NOT run `npx tsc --noEmit -p .`**, which is the obvious command and is worse than useless here.
-The root `tsconfig.json` is solution-style (`"files": []` plus project references), so that invocation
-compiles **zero files** and always exits 0. It reports a pass it never measured, and it consumes the
-attention a real check would have received. Confirm which one you are running with `--listFiles`: if
-the count is 0, the check is hollow.
+`vite build` does NOT typecheck: it strips types, so a data file that violates its own interface
+builds clean and renders wrong (a field under the wrong name reads as `undefined`: a dead link or an
+empty cell that looks like real but sparse data). The builder runs the real check before every build;
+if you ever check by hand, run `npx tsc --noEmit -p tsconfig.app.json` from `~/agent/skills/dashboard/app`.
+Never `-p .`: the root tsconfig is solution-style, so that compiles zero files and always passes.
+A page rendering empty cells or dead links from data that looks right is this failure; typecheck
+before debugging the page.
 
 ## Verify and relay
 
