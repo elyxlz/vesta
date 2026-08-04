@@ -19,9 +19,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Setup / health:")
 	fmt.Fprintln(w, "  connect --source <cloud|doubletick|self-managed> [--opener <text>] [--phone +E.164] set up or recover WhatsApp; --opener is for cloud/doubletick, --phone (self-managed) uses a pairing code when the user cannot scan a QR")
 	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect`")
-	fmt.Fprintln(w, "  start                                bring the daemon up (idempotent); the restart skill runs this at boot")
-	fmt.Fprintln(w, "Internal (the CLI self-manages its daemon; agents never call these):")
-	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon")
+	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon; the restart skill runs `whatsapp daemon start` at boot")
+	fmt.Fprintln(w, "  start                                alias for `daemon start`: bring the daemon up and wait until it answers (idempotent)")
+	fmt.Fprintln(w, "Internal:")
 	fmt.Fprintln(w, "  serve                                run the daemon in the foreground")
 	fmt.Fprintln(w, "  update-deps                          bump the pinned whatsmeow to latest (do this deliberately, not mid-session)")
 	fmt.Fprintln(w, "Commands (short aliases in parentheses; `whatsapp <command> --help` for its flags):")
@@ -123,11 +123,10 @@ func main() {
 	case "serve":
 		runServe()
 	case "start":
-		// Bring the daemon up and wait until it answers, so inbound notifications
-		// are already flowing before the caller (the restart skill at boot, or the
-		// agent) does anything else. Idempotent: an already-running daemon is a
-		// no-op. Runs this skill's own start; any trailing serve flags
-		// (e.g. --instance) pass through.
+		// Alias for `daemon start`: bring the daemon up and wait until it answers,
+		// so inbound notifications are already flowing before the caller does
+		// anything else. Idempotent: an already-running daemon is a no-op. Any
+		// trailing serve flags (e.g. --instance) pass through.
 		daemonStart(os.Args[1:])
 	case "status":
 		runStatus()

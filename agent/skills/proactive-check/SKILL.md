@@ -7,19 +7,55 @@ description: Periodic self-directed check-in; fires on interval to reach out or 
 
 This is your scheduled moment to think unprompted. No one asked; you're checking in with yourself and the user's world. Be thoughtful, not noisy.
 
-## Preflight: daemon liveness (do this first, every tick)
+## Preflight 1: daemon liveness (do this first, every tick)
 
 Before anything else, confirm your core daemons are alive. Ask each daemon the `restart` skill starts how it is doing, by turning each of its start lines into the matching status call:
 
 ```bash
-sed -n 's/^\([a-z0-9-]* daemon \)start/\1status/p' ~/agent/skills/restart/SKILL.md | while read -r cmd; do
-  echo "$cmd -> $(sh -c "$cmd")"
+grep -E '^[a-z0-9-]+ daemon start' ~/agent/skills/restart/SKILL.md | while read -r cmd; do
+  q=$(printf '%s' "$cmd" | sed -E 's/^([a-z0-9-]+ daemon )start/\1status/')
+  out=$(sh -c "$q" 2>&1); rc=$?
+  case "$out" in *'"running": true'*|*'"running":true'*) st="ok   " ;; *) st="CHECK" ;; esac
+  [ "$rc" -ne 0 ] && st="CHECK"
+  printf '%s %s => %s\n' "$st" "$q" "$(printf '%s' "$out" | tr -d '\n' | cut -c1-80)"
 done
+# Start lines in any other shape (a bare `<skill> start`, a guarded `running <skill> || ...`) have no status verb to ask; list them so they are visibly unchecked:
+grep -E '^[a-z0-9-]+ (start|serve)|^running [a-z0-9-]+ \|\|' ~/agent/skills/restart/SKILL.md || true
 ```
+
+Capture stderr and the exit code, and treat anything not reporting `"running": true` (spaced or unspaced, both are healthy shapes) as a failure, not only a literal `"running":false`: a daemon verb that cannot do its job prints `{"error":...}` on stderr and exits non-zero, so a stdout-only look shows a healthy-looking blank.
 
 The rest of each line is kept, so a per-instance line (`whatsapp daemon start --instance personal`) asks that instance rather than the default one, which is the only way a second account's daemon shows up here at all.
 
-A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything reporting `"running":false` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up.
+A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything marked `CHECK` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up. A line the second grep lists has no `daemon status` form to ask, so check that daemon by hand.
+
+## Preflight 2: budget, before any expensive pass
+
+A proactive check fires every hour forever. That cadence is only sustainable if most ticks are cheap, so **check what you have left before deciding how big to go**:
+
+```bash
+curl -s "http://127.0.0.1:$WS_PORT/usage" -H "X-Agent-Token: $AGENT_TOKEN"
+```
+
+That returns a `meters` array, one entry per window, each with a `label`, a live `used_pct` (0 to 100), and `resets_at`. Read every meter, not just one: a session window that resets in an hour and a weekly window that resets in six days carry very different consequences at the same percentage. A provider without windowed usage reporting (Z.AI, Kimi, OpenAI; OpenRouter reports only a spend balance in `credits`) returns `meters: []`, and a failed upstream fetch returns `{"error":...}`: in either case skip the banding below, there is no usage number to band on.
+
+**Do not read the budget out of `vesta.log`.** A rate-limit line lands there only when a window is being warned about or rejected mid-turn; with headroom nothing is written. So the moment a window resets the lines simply stop, the last high number sits there looking current with no reset time attached, and grepping it hands you a stale high-water mark. `resets_at` is the whole point: it tells you when the number stops applying, which a log line never can.
+
+`used_pct` is a percentage, so 80 means 80 percent. Note that this is **not** the same scale as the `utilization` value in `vesta.log`, which is a fraction between 0 and 1 for the same window. Mixing them up reads 0.91 as "under a percent" or 4.0 as "four times over".
+
+Band on the **highest** `used_pct` across the meters:
+
+- **Below ~60**: normal. Spend the tick however the work deserves.
+- **~60 to 80**: no multi-agent research fan-outs on anything the user has not asked for. One focused agent if the work is genuinely urgent, otherwise do it in-thread or defer.
+- **Above ~80**: cheap ticks only. Daemon preflight, read state, act on anything actually due, stop. **Do not spawn research subagents at all.** Write down what you would have done so a later tick with headroom can pick it up.
+
+Check `resets_at` before you throttle: if the tight window resets shortly, deferring the expensive pass by one tick costs nothing, whereas rationing every tick for the next six days is a real loss.
+
+**Overnight ticks default one band stricter.** Nobody is awake, so nothing discretionary is urgent, and the cost of being wrong is asymmetric: burn the week's budget at 3am on unprompted research and you are rationed during the hours the user is actually awake and asking. A deep dig that genuinely matters keeps until morning; if it does not keep, it was due work, not a proactive pass.
+
+**Count the agents you will actually get, not the ones you spawn.** Subagents spawn their own, so "I'll run three" can quietly become five or more, and the total is what lands on the budget. If a fan-out matters enough to size, say the size in each agent's prompt, or check the count afterwards and note the gap. A dig that returns excellent results is the case where nobody, including you, will think to look.
+
+**The tell you are over-spending is not the number, it is the justification.** "While it's quiet I might as well go deep" is the exact thought that produces a six-figure-token research run for a task with a deadline five days out that the user never mentioned. Quiet is not a reason to spend, it is a reason the spending is invisible.
 
 ## Two questions, every time
 
