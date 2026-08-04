@@ -38,7 +38,19 @@ PATTERNS = [
     # space-padded assignments still hit (password = "x", YAML password: "x"). The \\? bits absorb
     # the backslash JSON puts before an escaped quote, since the scan runs over the JSON `data` blob.
     r"(?:password|secret|api[_-]?key)[ ]*\\?[\"':=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
+    # Shell-style assignment of a high-entropy value to a *-KEY/TOKEN/SECRET/PASS variable.
+    # The rule above only fires when the literal words password/secret/api_key sit next to
+    # the value, so it misses the commonest real-world leak: `set -x` tracing an assignment.
+    # A live 40-char Hue API key sat in 21 event rows as `+ KEY=Ashy...` and was not flagged.
+    r"\b[A-Za-z_]*(?:KEY|TOKEN|SECRET|PASSWD|PASSWORD|PWD)[A-Za-z_]*=[A-Za-z0-9_\-]{24,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
+    # Credentials embedded in URLs. This is a whole class the rules above miss, because the
+    # secret is a path segment or query value rather than an assignment. Found the hard way:
+    # a live Hue API key sat in 21 event rows as `https://<bridge>/api/<40-char-key>/...` and
+    # neither the keyword rule nor a shell-assignment rule touched it.
+    r"[?&](?:token|api[_-]?key|access[_-]?token|auth|key|sig|signature)=[A-Za-z0-9_\-]{16,}",
+    r"X-Plex-Token=[A-Za-z0-9_\-]{15,}",
+    r"https?://[^ \"'\\]*/api/[A-Za-z0-9]{25,}",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
