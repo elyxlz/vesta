@@ -22,7 +22,7 @@ from core.loops import (
     monitor_loop,
     process_batch,
 )
-from core.notification import Notification
+from core.notification import CORE_SOURCE, Notification
 from core.provider import ProviderAuthState, ProviderStatus
 
 
@@ -309,7 +309,7 @@ async def test_process_batch_queues_prompt(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue)
+        await process_batch([notif], queue=queue, disposition="interrupt")
 
     assert not queue.empty()
     prompt, is_user, _file_paths, _ = await queue.get()
@@ -317,11 +317,73 @@ async def test_process_batch_queues_prompt(tmp_path):
     assert is_user is False
 
 
+def _external_pair() -> list[Notification]:
+    return [
+        Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", body="one"),
+        Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="email", type="message", body="two"),
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("disposition", "prefix", "hint_expected"),
+    [("snooze", "[2 snoozed notifications delivered as one batch;", True), ("interrupt", "<channel ", False)],
+)
+async def test_process_batch_multiple_stamps_disposition_and_hints_only_snoozed(disposition, prefix, hint_expected):
+    """Each external element carries the effective disposition as an attribute; only a snoozed
+    batch opens with the triage pointer (interrupts were let through as important)."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await process_batch(_external_pair(), queue=queue, disposition=disposition)
+
+    prompt, _, _, _ = await queue.get()
+    assert prompt.startswith(prefix)
+    assert ("notifications skill" in prompt) is hint_expected
+    assert prompt.count(f'disposition="{disposition}"') == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("disposition", ["snooze", "interrupt"])
+async def test_process_batch_single_external_stamps_disposition_without_hint(disposition):
+    """A single notification carries its disposition attribute but no hint line: there is no
+    batch to triage."""
+    queue: asyncio.Queue = asyncio.Queue()
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", body="hi")
+
+    await process_batch([notif], queue=queue, disposition=disposition)
+
+    prompt, _, _, _ = await queue.get()
+    assert prompt.startswith(f'<channel source="whatsapp" type="message" disposition="{disposition}">')
+    assert "notifications skill" not in prompt
+
+
+@pytest.mark.anyio
+async def test_process_batch_system_section_has_no_hint():
+    """Core notifications are control flow, not triage material: even a multi-item system section
+    is delivered bare while the external section keeps its hint."""
+    queue: asyncio.Queue = asyncio.Queue()
+    notifs = [
+        Notification(timestamp=dt.datetime(2025, 1, 1), source=CORE_SOURCE, type="proactive-check", body="a"),
+        Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source=CORE_SOURCE, type="compaction-followup", body="b"),
+        *_external_pair(),
+    ]
+
+    await process_batch(notifs, queue=queue, disposition="snooze")
+
+    system_prompt, _, _, _ = await queue.get()
+    external_prompt, _, _, _ = await queue.get()
+    assert system_prompt.startswith("<channel ")
+    assert "notifications skill" not in system_prompt
+    assert "disposition=" not in system_prompt
+    assert external_prompt.startswith("[2 snoozed notifications delivered as one batch;")
+    assert external_prompt.count('disposition="snooze"') == 2
+
+
 @pytest.mark.anyio
 async def test_process_batch_empty_is_noop():
     queue: asyncio.Queue = asyncio.Queue()
 
-    await process_batch([], queue=queue)
+    await process_batch([], queue=queue, disposition="interrupt")
     assert queue.empty()
 
 
@@ -338,7 +400,7 @@ async def test_process_batch_keeps_files_until_processing(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue)
+        await process_batch([notif], queue=queue, disposition="interrupt")
 
     assert f.exists(), "notification file must stay on disk until the queued message is processed"
     _, _, file_paths, _ = await queue.get()
