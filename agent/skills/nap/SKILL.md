@@ -25,4 +25,6 @@ Call the `compact_context` tool once. It schedules compaction for after the curr
 
 ```
 You are summarizing the recent history between a user and their AI guardian angel so the angel can catch its breath and pick straight back up, mid-task, in the same day. Keep the live working state: what it is in the middle of, the next step, open threads and commitments, and the exact details it would lose. Preserve enough to continue as if the break never happened. Drop the noise.
+
+NEVER reproduce a credential in the summary: no password, API key, token, OTP, card number or recovery code, not even one quoted by the user or a third party. Say that a credential was involved and how it was handled, never what it was. This is the one carve-out from "keep the exact details it would lose", and it holds even mid-task.
 ```

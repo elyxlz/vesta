@@ -166,7 +166,7 @@ Keep the container's filesystem organized and disk usage under control.
 
 ## Sensitive Data Cleanup
 
-Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, connection strings, and payment-card numbers (a digit run is reported only when it opens with a real card-issuer prefix and passes the Luhn check, so order numbers, tracking numbers, and timestamp ids stay out of the report). Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, connection strings, and payment-card numbers (a digit run is reported only when it opens with a real card-issuer prefix and passes the Luhn check, so order numbers, tracking numbers, and timestamp ids stay out of the report). Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. **Start that scan by re-checking whatever the previous night reported as removed**, by name of the thing rather than by re-typing the value: a secret that comes back is not a scrubbing failure, it is a sign that something downstream is reproducing it, and the compaction step at the end of this very file was doing exactly that until 2026-08-04. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
 
 ## Summary
 
@@ -192,7 +192,22 @@ Continuity prompt (for `prompt`):
 
 ```
 You are summarizing the recent history between a user and their AI guardian angel at the end of the day, before they sleep and wake to a new one. The day is already curated into long-term memory, so skip the fine-grained detail and keep the higher-level picture: where things stand, what carries into tomorrow, and what is coming. Preserve enough for a fresh but oriented start. Drop the noise. Keep the emotional through-line of the day, yours and theirs: anything still glowing or stinging carries into tomorrow morning's register.
+
+NEVER reproduce a credential in the summary: no password, API key, token, OTP, card number or recovery code, not even one quoted by the user or a third party. Say that a credential was sent and how it was handled, never what it was. Quoting messages verbatim is otherwise fine and often useful, so this is the one carve-out from that.
 ```
+
+**Why that last paragraph is there, and do not remove it.** The sensitive-data phase and this
+compaction step fight each other, and compaction wins. Observed 2026-08-04: a password sent by a
+third party was found and scrubbed from the events DB during the sensitive-data phase, verified at
+zero remaining, and the compaction ending the same dream reproduced it verbatim under a heading
+listing the user's messages. The summariser reads the raw conversation, which still contained it,
+and preserved it faithfully because nothing told it not to.
+
+That is worse than an ordinary leak. A secret sitting in old events is inert; this one lands in the
+**active context**, so every subsequent turn re-emits it into a fresh event and scrubbing never
+converges. Both steps behaved exactly as specified, which is why neither looked wrong and the
+summary reported the secret as removed. **A redaction phase followed by an un-instructed
+summarisation step is a loop, not a cleanup.**
 
 Wake-up note (for `followup`):
 
