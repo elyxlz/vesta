@@ -359,7 +359,15 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
 
 
 def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status: str | None, new_due_date: str | None):
-    """Rebuild the auto reminders after a due-date change, preferring the values updated in the same call."""
+    """Rebuild the auto reminders after a due-date or title change, preferring the values updated in
+    the same call.
+
+    An auto reminder's message is a template of the task title, frozen when the reminder was
+    written. Nothing regenerated it when the title alone changed, so correcting a title left every
+    armed reminder still asserting what the new title had just retracted, in some cases for months.
+    That made tidying a task actively harmful: the reminder body is what the agent reads when it
+    fires, so the correction was invisible exactly where it mattered.
+    """
     db.delete_auto_reminders(conn, task_id)
     if not new_due_date:
         return
@@ -405,10 +413,13 @@ def update_task(
                 # Recreate auto-reminders if task has a due date and is reopened.
                 # If due date is also being updated in this call, skip here;
                 # the due-date block below handles reminder recreation with the new value.
+                # A title given in the same call is the one the reminders must carry: reopening a
+                # task and correcting its title together is the common case, and the old title is
+                # exactly what that correction retracts.
                 if not due_date_changed:
                     old_due = result["due_date"]
                     if old_due:
-                        db.create_auto_reminders(conn, task_id, result["title"], old_due)
+                        db.create_auto_reminders(conn, task_id, title if title is not None else result["title"], old_due)
 
         for field, value in [("title", title), ("priority", priority)]:
             if value is not None:
@@ -419,6 +430,13 @@ def update_task(
             updates.append("due_date = ?")
             params.append(new_due_date)
             _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=new_due_date)
+        elif title is not None and status != "done":
+            # The due date is unchanged, so the 1w/1d/1h/15m tail and the at-due fire land on exactly
+            # the same instants; only the halving checkpoints re-derive from the lead that is left,
+            # which is the right ladder for the time actually remaining. Rebuilding rather than
+            # editing each message in place also collapses the duplicate ladder a repeated
+            # `--status pending` would otherwise leave behind, because the delete comes first.
+            _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=result["due_date"])
 
         if updates:
             params.append(task_id)
