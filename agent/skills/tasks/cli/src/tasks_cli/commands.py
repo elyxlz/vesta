@@ -875,23 +875,16 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
 
 
 def _next_run_for_row(row) -> str | None:
-    """Next fire instant to report for a reminder row.
+    """The next fire instant to report for a reminder row.
 
-    `scheduled_time` records the LAST ADVANCE, not a live schedule: for a plain cron reminder it
-    is only written when the job fires (see send_reminder_job). Any downtime longer than one
-    period therefore strands it in the past, and a perfectly healthy daily renders as "4d ago"
-    while its rebuilt CronTrigger is armed and correct. A status display that reports the opposite
-    of reality is worse than none, because it invites re-arming a schedule that was never broken.
-    _sync_jobs already treats the column as non-authoritative for recurring rows ("recurring jobs
-    recompute their own next fire"); this makes the listing agree with it.
-
-    Fuzzed cron rows are chained one-shots whose next fuzzed instant IS written to the column by
-    the restore path, so for them, and for date and interval rows, the column is the live answer.
+    A plain cron row's `scheduled_time` only advances when the job fires, so it can lag the real
+    next fire; derive that live from the trigger. Every other row's column is the live answer.
     """
     if row["trigger_data"]:
         try:
             trigger_data = json.loads(row["trigger_data"])
-            if trigger_data.get("type") == "cron" and "fuzz_minutes" not in trigger_data:
+            trigger_type = trigger_data["type"] if "type" in trigger_data else None
+            if trigger_type == "cron" and "fuzz_minutes" not in trigger_data:
                 next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
                 if next_fire is not None:
                     return next_fire.isoformat()
