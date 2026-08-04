@@ -43,9 +43,8 @@ RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more t
 class DueSpec(BaseModel):
     """A task due date: an absolute datetime + timezone, or a relative due-in offset.
 
-    `clear` removes the due date entirely. Without it, setting a due date is a one-way door:
-    every other field can only move the date, never unset it, and auto reminders are regenerated
-    from due_date, so a date set by mistake keeps its reminder cascade forever.
+    The due-setting fields only move the date. `clear` is the one that unsets it, along with the
+    auto reminders regenerated from it, and cannot be combined with a due-setting field.
     """
 
     due_datetime: str | None = None
@@ -239,21 +238,22 @@ def normalize_priority(priority: int | str) -> int:
     return priority_map[key]
 
 
+def _due_field_set(due: DueSpec) -> bool:
+    """Whether any due-setting field is populated (`clear` is not one of them)."""
+    return due.due_datetime is not None or due.due_in_minutes is not None or due.due_in_hours is not None or due.due_in_days is not None
+
+
 def _due_requested(due: DueSpec | None) -> bool:
     """Whether the spec asks for a due-date change (a timezone alone does not)."""
-    return due is not None and (
-        due.clear
-        or due.due_datetime is not None
-        or due.due_in_minutes is not None
-        or due.due_in_hours is not None
-        or due.due_in_days is not None
-    )
+    return due is not None and (due.clear or _due_field_set(due))
 
 
 def _compute_due_date(due: DueSpec | None) -> str | None:
     if due is None:
         return None
     if due.clear:
+        if _due_field_set(due):
+            raise ValueError("clear removes the due date, so it cannot be combined with a due date or offset")
         return None
     if due.due_datetime is not None:
         if due.timezone is None:
@@ -359,7 +359,9 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
 
 
 def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status: str | None, new_due_date: str | None):
-    """Rebuild the auto reminders after a due-date change, preferring the values updated in the same call."""
+    """Rebuild the auto reminders after a due-date or title change, preferring the values updated in
+    the same call. An auto reminder's message embeds the task title, so a title change has to
+    regenerate them for the armed reminders to carry the current title."""
     db.delete_auto_reminders(conn, task_id)
     if not new_due_date:
         return
@@ -399,7 +401,9 @@ def update_task(
             if status == "done":
                 updates.append("completed_at = ?")
                 params.append(_now_utc().isoformat())
-                db.delete_auto_reminders(conn, task_id)
+                # A finished task stops reminding entirely, so this clears owned reminders too, not
+                # just auto ones. A due-date change below rebuilds only the auto ones (delete_auto).
+                db.delete_task_reminders(conn, task_id)
             elif status == "pending":
                 updates.append("completed_at = NULL")
                 # Recreate auto-reminders if task has a due date and is reopened.
@@ -419,6 +423,10 @@ def update_task(
             updates.append("due_date = ?")
             params.append(new_due_date)
             _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=new_due_date)
+        elif title is not None and status != "done":
+            # A title change with the due date unchanged still has to refresh the reminder text,
+            # which embeds the title; the fixed tail keeps its instants, the checkpoints re-derive.
+            _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=result["due_date"])
 
         if updates:
             params.append(task_id)
@@ -874,6 +882,25 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
     }
 
 
+def _next_run_for_row(row) -> str | None:
+    """The next fire instant to report for a reminder row.
+
+    A plain cron row's `scheduled_time` only advances when the job fires, so it can lag the real
+    next fire; derive that live from the trigger. Every other row's column is the live answer.
+    """
+    if row["trigger_data"]:
+        try:
+            trigger_data = json.loads(row["trigger_data"])
+            trigger_type = trigger_data["type"] if "type" in trigger_data else None
+            if trigger_type == "cron" and "fuzz_minutes" not in trigger_data:
+                next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
+                if next_fire is not None:
+                    return next_fire.isoformat()
+        except (ValueError, KeyError):
+            pass  # malformed trigger_data: fall back to the stored column rather than hiding the row
+    return row["scheduled_time"]
+
+
 def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
     # Recurring reminders sort first so the LIMIT only ever trims one-shots, and the one-shot tail
     # sorts by fire time (scheduled_time ASC) so the LIMIT drops the furthest-out rows, never the
@@ -905,7 +932,7 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) 
                 "task_id": row["task_id"],
                 "message": row["message"],
                 "schedule": row["schedule_type"],
-                "next_run": row["scheduled_time"],
+                "next_run": _next_run_for_row(row),
                 "created_at": row["created_at"],
                 "auto_generated": bool(row["auto_generated"]),
                 "status": "pending",
@@ -954,6 +981,7 @@ def remind_snooze(
                 raise ValueError("Say when: tasks remind snooze <id> --in-hours N (or --in-minutes/--in-days, or --at + --tz)")
             run_time = _now_utc() + offset
 
+        run_time = run_time.replace(microsecond=0)
         new_data = {"type": "date", "run_date": run_time.isoformat()}
         # schedule_type is the human-readable label `remind list` prints, so it tracks the new fire time.
         new_schedule = f"once at {run_time.isoformat()}"
@@ -999,6 +1027,6 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         "id": reminder_id,
         "message": message,
         "schedule": schedule_type,
-        "next_run": reminder["scheduled_time"],
+        "next_run": _next_run_for_row(reminder),
         "status": "updated",
     }

@@ -1,17 +1,19 @@
 """Clearing a due date.
 
-Before `clear`, setting a due date was a one-way door: every DueSpec field could only move the
-date, never unset it. Because auto reminders are regenerated from `due_date` (see
-`db._create_auto_reminders_for_existing`), deleting them by hand did not help either, so a date set
-by mistake, or by a bulk postpone across a backlog, kept its whole reminder cascade forever.
+`clear` unsets a task's due date and deletes the auto reminders regenerated from it (see
+`db._create_auto_reminders_for_existing`). Only an explicit clear touches the date, and it cannot
+be combined with a due-setting field.
 """
 
+from contextlib import closing
+
+import pytest
 from tasks_cli import commands, db
 from tasks_cli.config import Config
 
 
 def _pending_auto_reminders(config: Config, task_id: str) -> int:
-    with db.get_db(config.data_dir) as conn:
+    with closing(db.get_db(config.data_dir)) as conn:
         row = conn.execute(
             "SELECT COUNT(*) FROM reminders WHERE task_id = ? AND auto_generated = 1",
             (task_id,),
@@ -49,6 +51,15 @@ def test_clear_due_does_not_need_a_timezone(tmp_config: Config):
     updated = commands.update_task(config, task_id=task["id"], due=commands.DueSpec(clear=True))
 
     assert updated["due_date"] is None
+
+
+def test_clear_due_rejects_a_conflicting_due_offset(tmp_config: Config):
+    """`clear` and a due-setting field together are contradictory: reject, do not silently pick one."""
+    config = tmp_config
+    task = commands.add_task(config, title="item", due=commands.DueSpec(due_in_days=3))
+
+    with pytest.raises(ValueError, match="clear"):
+        commands.update_task(config, task_id=task["id"], due=commands.DueSpec(clear=True, due_in_days=10))
 
 
 def test_update_without_due_spec_leaves_the_date_alone(tmp_config: Config):
