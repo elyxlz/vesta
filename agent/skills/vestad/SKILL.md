@@ -66,6 +66,19 @@ The dashboard is private, and the app reaches it with a minted service key, so p
 only for something that must load with no credential at all, like a QR link a stranger's phone
 opens or a webhook an external service posts to.
 
+## Every skill command: the output contract
+
+stdout carries only a command's successful output. A command that cannot do its job exits
+non-zero and prints its failure on stderr, in the same shape it prints anything (a JSON
+`{"error": ...}` envelope or plain text). That keeps a failure visible when stdout is piped
+through `grep`, `head`, or `jq`, and makes an empty stdout with a non-zero exit mean "read
+stderr". Inside a binary, route the choice through one helper that picks the stream from the
+outcome rather than deciding at each print site. A command may document an exit code that is
+itself an answer (`plex has` exits 0 found / 1 not; `vestad-health` reports `DOWN` for a gateway
+it probed): a probe that determined the state has done its job and prints its answer on stdout.
+Hold every command you write to this contract, and read failures from stderr when you script
+around other commands. The daemon verbs below follow it.
+
 ## Giving a skill a daemon: the contract
 
 A skill that runs a background process owns its whole lifecycle itself, in its own language,
