@@ -14,7 +14,22 @@ export DOUBLETICK_API_KEY='wak_account-scoped-key'
 ```
 
 Set both or neither, and keep the key out of chat, logs, commits, and command
-output.
+output. Never ask the user to paste it into a conversation and never add it to
+`.bashrc`. If it is absent, ask the operator to set it outside chat and tell you
+when the environment is ready.
+
+For an already-running Vesta container, the operator can create a temporary
+mode-`0600` env file on the host containing the two values, then run:
+
+```bash
+docker exec --env-file /secure/path/doubletick.env <agent-container> \
+  whatsapp connect --source doubletick --opener '<text>'
+```
+
+The key enters only that CLI process, crosses the owner-only WhatsApp socket, and
+is saved in owner-only state for later daemon boots. Remove the temporary host file
+after the command. The agent should then use `whatsapp status`; do not ask for the
+file contents or repeat the connect command.
 
 Run `whatsapp status` first; stop if linked or connecting.
 
@@ -29,6 +44,10 @@ whatsapp connect --source doubletick --opener 'Hi, it is me, nice to meet you he
 The CLI authenticates to Double Tick with the `wak_` key, provisions or recovers
 the account, and pairs the companion over the account's
 [residential proxy lease](HEADLESS.md#residential-proxy-lease).
+
+`connect` carries credentials to an already-running daemon over its private Unix
+socket and saves them in mode-`0600` WhatsApp state. Do not restart the daemon to
+make new credentials visible.
 
 Follow the returned `next`. Reply-first behavior is in [SKILL.md](SKILL.md);
 recovery outcomes are in [SETUP.md](SETUP.md#status-and-recovery). Use the Double

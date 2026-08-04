@@ -80,6 +80,58 @@ func TestChooseLinkerKeepsNumberWhenReconcilingCreds(t *testing.T) {
 	}
 }
 
+// TestDoubletickProvisionSwitchesAWarmDaemon proves the exact boot-order case:
+// setup started a self-managed daemon before the credentials existed, then an
+// explicit Double Tick connect switches both pairing and messaging to managed.
+func TestDoubletickProvisionSwitchesAWarmDaemon(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	wac := &WhatsAppClient{
+		state:   store,
+		linker:  qrLinker{},
+		managed: newManagedAuth(managedConfig{}),
+	}
+
+	selected, finish, err := wac.provisionLinker(sourceDoubletick, "https://wa.example", "wak_secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish(true)
+	if selected.name() != "headless" || !wac.isManaged() || !wac.managed.isDirect() {
+		t.Fatalf("warm daemon did not switch to Double Tick: linker=%q managed=%v", selected.name(), wac.isManaged())
+	}
+	if state := store.snapshot(); state.DirectURL != "https://wa.example" || state.DirectKey != "wak_secret" {
+		t.Fatalf("direct credentials were not persisted: %+v", state)
+	}
+}
+
+func TestDoubletickProvisionDoesNotInstallFailedCredentials(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	wac := &WhatsAppClient{
+		state:   store,
+		linker:  qrLinker{},
+		managed: newManagedAuth(managedConfig{}),
+	}
+
+	_, finish, err := wac.provisionLinker(sourceDoubletick, "https://bad.example", "wak_bad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish(false)
+	if wac.isManaged() || wac.currentManaged().isDirect() {
+		t.Fatal("failed credentials replaced the daemon's working configuration")
+	}
+	if state := store.snapshot(); state.DirectURL != "" || state.DirectKey != "" {
+		t.Fatalf("failed credentials were persisted: %+v", state)
+	}
+}
+
+func TestDoubletickProvisionRejectsIncompleteSocketHandoff(t *testing.T) {
+	wac := &WhatsAppClient{state: newStateStore(t.TempDir()), linker: qrLinker{}}
+	if _, _, err := wac.provisionLinker(sourceDoubletick, "https://wa.example", ""); err == nil {
+		t.Fatal("an incomplete Double Tick credential handoff was accepted")
+	}
+}
+
 // TestGuardedPairPhoneBlocksAtCap proves the managed path is gated by the same
 // ban-avoidance rate-limit guard as the phone path: once the cap is reached the
 // guard returns errRateLimited and PairPhone is never called (no real pairing

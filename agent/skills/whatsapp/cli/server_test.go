@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,33 @@ import (
 
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
+
+func TestSocketIsOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(dir, "whatsapp.sock")
+	listener, err := startSocketServer(sockPath, &WhatsAppClient{store: newTestStore(t), logger: waLog.Noop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopSocketServer(listener, sockPath) })
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0700 {
+		t.Fatalf("WhatsApp state directory mode = %04o, want 0700", got)
+	}
+	info, err := os.Stat(sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("WhatsApp socket mode = %04o, want 0600", got)
+	}
+}
 
 // startTestSocket puts a command on the real path: client -> unix socket -> executeCommand -> response.
 func startTestSocket(t *testing.T, store *MessageStore) string {

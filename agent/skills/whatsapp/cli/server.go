@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 )
@@ -36,11 +37,25 @@ func (resp SocketResponse) render() ([]byte, int) {
 }
 
 func startSocketServer(sockPath string, wac *WhatsAppClient) (net.Listener, error) {
+	// Close the creation-time window too: net.Listen creates the socket before it
+	// can be chmodded, so the containing state directory must already exclude other
+	// local users.
+	if err := os.Chmod(filepath.Dir(sockPath), 0700); err != nil {
+		return nil, fmt.Errorf("secure socket directory %s: %v", filepath.Dir(sockPath), err)
+	}
 	os.Remove(sockPath)
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %v", sockPath, err)
+	}
+	// Socket requests can carry a direct API key during a warm-daemon connect.
+	// Restrict the endpoint before accepting anything so other local users cannot
+	// read credentials or issue WhatsApp commands through it.
+	if err := os.Chmod(sockPath, 0600); err != nil {
+		listener.Close()
+		os.Remove(sockPath)
+		return nil, fmt.Errorf("secure socket %s: %v", sockPath, err)
 	}
 
 	go func() {

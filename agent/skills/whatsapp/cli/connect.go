@@ -105,6 +105,8 @@ type connectRoute struct {
 	opener    string
 	linkPhone string
 	source    string
+	directURL string
+	directKey string
 }
 
 // resolveConnect validates --source against the box environment and returns the path
@@ -125,7 +127,13 @@ func resolveConnect(opts connectOptions, cfg managedConfig) (connectRoute, error
 		if !cfg.isDirect() {
 			return connectRoute{}, fmt.Errorf("--source doubletick needs DOUBLETICK_API_URL and DOUBLETICK_API_KEY set together")
 		}
-		return connectRoute{provision: true, opener: opts.opener, source: sourceDoubletick}, nil
+		return connectRoute{
+			provision: true,
+			opener:    opts.opener,
+			source:    sourceDoubletick,
+			directURL: cfg.directURL,
+			directKey: cfg.directKey,
+		}, nil
 	default: // sourceSelfManaged, already validated above
 		// A box on the managed-pool paradigm cannot link the user's own account:
 		// its daemon builds a managed linker that rejects a QR/phone link.
@@ -194,7 +202,7 @@ func runConnect() {
 func dispatchConnectRoute(route connectRoute) {
 	switch {
 	case route.provision:
-		connectProvision(route.source, route.opener)
+		connectProvision(route.source, route.opener, route.directURL, route.directKey)
 	case route.linkPhone != "":
 		connectLinkPhone(route.linkPhone)
 	default:

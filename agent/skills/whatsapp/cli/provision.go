@@ -8,7 +8,7 @@ package main
 // returns a terminal {status:"linked", number, next} (or {status:"provisioning"} /
 // {status:"blocked"}). No daemon management, no readiness polling, no code
 // shuttling. Idempotent, so re-running is always safe.
-func runProvision(source, opener string) {
+func runProvision(source, opener, directURL, directKey string) {
 	if err := ensureDaemon(linkServeArgs()); err != nil {
 		failJSON("%s", err.Error())
 	}
@@ -18,6 +18,13 @@ func runProvision(source, opener string) {
 	// token even on a warm daemon that also carries direct pool creds.
 	if source != "" {
 		args = append(args, "--source", source)
+	}
+	// A daemon may already be warm from boot before Double Tick credentials are
+	// configured. Carry the direct pair over its private Unix socket so this one
+	// connect call can switch the daemon to the requested source without a restart.
+	// These become fields in an in-process SocketRequest, not operating-system argv.
+	if directURL != "" && directKey != "" {
+		args = append(args, "--direct-url", directURL, "--direct-key", directKey)
 	}
 	if opener != "" {
 		args = append(args, "--opener", opener)

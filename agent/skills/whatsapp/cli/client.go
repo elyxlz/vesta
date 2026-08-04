@@ -65,6 +65,7 @@ type WhatsAppClient struct {
 	senderOrder      []string
 	sendersMutex     sync.RWMutex
 	state            *stateStore
+	linkerMu         sync.RWMutex // guards linker + managed during a live source change
 	linker           linker
 	// managed is the pool-API client when this box links a managed number (nil on a
 	// self-hosted QR box). It leases the residential proxy the cloud companion egresses
@@ -288,17 +289,24 @@ func datacenterEgress(info egressInfo) bool {
 // Every selected path is inspected through that path. Managed and proxy paths fail
 // closed when inspection is unavailable; plain QR boxes may connect with a warning.
 func (wac *WhatsAppClient) ensureManagedProxy() error {
-	if wac.managed == nil {
-		wac.managed = newManagedAuth(loadManagedConfig())
+	return wac.ensureManagedProxyFor(wac.currentManaged())
+}
+
+// ensureManagedProxyFor selects egress with the auth chosen for this operation.
+// Provisioning can therefore validate a newly supplied source before installing it
+// as the daemon's durable data path.
+func (wac *WhatsAppClient) ensureManagedProxyFor(auth *managedAuth) error {
+	if auth == nil {
+		auth = newManagedAuth(loadManagedConfig())
 	}
 	wac.proxyMu.Lock()
 	defer wac.proxyMu.Unlock()
 
-	selected := wac.managed.cfg.proxyURL
-	if selected == "" && wac.managed.usesResidentialProxy() {
+	selected := auth.cfg.proxyURL
+	if selected == "" && auth.usesResidentialProxy() {
 		selected = wac.proxyURL
 		if selected == "" {
-			leased, err := wac.managed.leaseProxy()
+			leased, err := auth.leaseProxy()
 			if err != nil {
 				return err
 			}
@@ -311,7 +319,7 @@ func (wac *WhatsAppClient) ensureManagedProxy() error {
 	if !cached {
 		info, err = lookupEgress(selected)
 		if err != nil {
-			if selected == "" && !wac.managed.isHosted() {
+			if selected == "" && !auth.isHosted() {
 				wac.logger.Warnf("Could not inspect direct WhatsApp egress; proceeding with plain QR connection: %v", err)
 				return nil
 			}
@@ -319,10 +327,10 @@ func (wac *WhatsAppClient) ensureManagedProxy() error {
 		}
 	}
 	if selected == "" && datacenterEgress(info) {
-		if !wac.managed.isHosted() {
+		if !auth.isHosted() {
 			return fmt.Errorf("WhatsApp egress IP %s is a datacenter/hosting exit; obtain a residential proxy and set WHATSAPP_PROXY_URL", info.Query)
 		}
-		leased, err := wac.managed.leaseProxy()
+		leased, err := auth.leaseProxy()
 		if err != nil {
 			return fmt.Errorf("datacenter egress detected and doubletick could not lease a residential proxy: %w", err)
 		}

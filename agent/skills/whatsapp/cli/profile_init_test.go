@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -140,6 +142,81 @@ func TestProvisionCommandRetriesPendingLinkedResult(t *testing.T) {
 	}
 	if st := wac.state.snapshot(); st.PendingLinkedResult || st.OnboardedMSISDN != "+15551230000" {
 		t.Fatalf("pending result was not completed: %+v", st)
+	}
+}
+
+func TestProvisionCommandConfiguresAlreadyLinkedWarmDaemon(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	wac.linker = qrLinker{}
+	wac.managed = newManagedAuth(managedConfig{})
+
+	_, err := cmdProvisionManaged([]string{
+		"--source", sourceDoubletick,
+		"--direct-url", "https://wa.example",
+		"--direct-key", "wak_secret",
+	}, wac)
+	if err != nil {
+		t.Fatalf("configure already-linked daemon: %v", err)
+	}
+	if !wac.isManaged() || !wac.currentManaged().isDirect() {
+		t.Fatal("already-linked warm daemon did not install Double Tick mode")
+	}
+	if state := wac.state.snapshot(); state.DirectURL != "https://wa.example" || state.DirectKey != "wak_secret" {
+		t.Fatalf("already-linked daemon lost direct credentials: %+v", state)
+	}
+}
+
+func TestProvisionCommandRecordsExplicitSourceOnResume(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	if _, err := cmdProvisionManaged([]string{"--source", sourceVestaCloud}, wac); err != nil {
+		t.Fatal(err)
+	}
+	if got := wac.state.snapshot().AccountSource; got != sourceVestaCloud {
+		t.Fatalf("recorded source = %q, want %q", got, sourceVestaCloud)
+	}
+}
+
+func TestProvisionCommandRecordsExplicitSourceBeforeNetworkFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+	wac := newLinkedTestClient(t)
+	wac.client.Store.ID = nil
+
+	_, err := cmdProvisionManaged([]string{
+		"--source", sourceDoubletick,
+		"--direct-url", server.URL,
+		"--direct-key", "wak_rejected",
+	}, wac)
+	if err == nil {
+		t.Fatal("rejected Double Tick credentials unexpectedly provisioned")
+	}
+	state := wac.state.snapshot()
+	if state.AccountSource != sourceDoubletick {
+		t.Fatalf("recorded source = %q, want %q", state.AccountSource, sourceDoubletick)
+	}
+	if state.DirectURL != "" || state.DirectKey != "" {
+		t.Fatalf("rejected credentials were persisted: %+v", state)
+	}
+}
+
+func TestProvisionRejectedBySingleFlightKeepsRecordedSource(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	wac.client.Store.ID = nil
+	wac.state.recordAccountSource(sourceDoubletick)
+	release, ok := wac.beginPairing()
+	if !ok {
+		t.Fatal("could not hold the pairing single-flight")
+	}
+	defer release()
+
+	_, err := cmdProvisionManaged([]string{"--source", sourceVestaCloud}, wac)
+	if !errors.Is(err, errPairingInProgress) {
+		t.Fatalf("expected errPairingInProgress, got %v", err)
+	}
+	if got := wac.state.snapshot().AccountSource; got != sourceDoubletick {
+		t.Fatalf("rejected provision changed AccountSource to %q", got)
 	}
 }
 

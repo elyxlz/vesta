@@ -56,7 +56,7 @@ func (wac *WhatsAppClient) classifySendError(action string, err error) string {
 // construction (chooseLinker), so ban-avoidance gating reads the constructed linker
 // instead of re-deriving the mode: the managed linker is the single source of truth.
 func (wac *WhatsAppClient) isManaged() bool {
-	_, ok := wac.linker.(*managedLinker)
+	_, ok := wac.currentLinker().(*managedLinker)
 	return ok
 }
 

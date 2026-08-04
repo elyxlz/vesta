@@ -76,8 +76,12 @@ func extractSkipSenders() map[string]bool {
 // stateDataDir is the per-instance data directory under ~/.whatsapp (the bare
 // directory for the default instance, a named subdirectory otherwise).
 func stateDataDir() string {
+	return stateDataDirFor(extractInstance())
+}
+
+func stateDataDirFor(instance string) string {
 	base := filepath.Join(os.Getenv("HOME"), ".whatsapp")
-	if instance := extractInstance(); instance != "" {
+	if instance != "" {
 		return filepath.Join(base, instance)
 	}
 	return base
@@ -533,9 +537,13 @@ func cleanupRejectedPairing(cleanup func(), activePort, requestedPort int) {
 // rate-limit slot or serves a blank QR). One call is the whole flow: no start/status/stop
 // trio and no client-side poll loop.
 func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
-	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
-		return wac.linker.linkQR(wac, port)
+	result, err := linkViaQR("link", args, wac, func(port int) (linkResult, error) {
+		return wac.currentLinker().linkQR(wac, port)
 	}, map[string]any{"status": string(AuthStatusAuthenticated)})
+	if err == nil {
+		wac.state.recordAccountSource(sourceSelfManaged)
+	}
+	return result, err
 }
 
 func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
@@ -1096,14 +1104,33 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 // cold-starts the daemon before dispatching this, so the agent runs one command
 // and never orchestrates the steps itself.
 func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
-	var opener, source string
+	var opener, source, directURL, directKey string
 	fs := flag.NewFlagSet("provision", flag.ContinueOnError)
 	fs.StringVar(&opener, "opener", "", "Agent-authored first-contact greeting prefilled in the wa.me link")
 	fs.StringVar(&source, "source", "", "Resolved account source; `cloud` pins the pairing auth to the server-identity token")
+	fs.StringVar(&directURL, "direct-url", "", "Internal Double Tick API URL handoff")
+	fs.StringVar(&directKey, "direct-key", "", "Internal Double Tick API key handoff")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
+	pairLinker, finishSource, err := wac.provisionLinker(source, directURL, directKey)
+	if err != nil {
+		return nil, err
+	}
+	finishedSource := false
+	finish := func(commit bool) {
+		if !finishedSource {
+			finishSource(commit)
+			finishedSource = true
+		}
+	}
+	defer finish(false)
 	if wac.client.Store.ID != nil {
+		// Configuration is useful even when no pairing is needed. In particular, a
+		// warm self-managed daemon may already hold the device produced by an earlier
+		// Double Tick connect but still need its managed data path installed.
+		wac.state.recordAccountSource(source)
+		finish(true)
 		// Already linked. If a takeover parked it, an explicit connect means
 		// "reclaim the session": clear the park and reconnect (a plain send never
 		// does this, so it can't ping-pong). If the other holder is still live it
@@ -1142,23 +1169,21 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, errPairingInProgress
 	}
 	defer release()
+	// Persist the explicit recovery intent inside the single-flight, before network
+	// or pairing work begins. This deliberately supersedes a prior source even when
+	// the attempt later fails: if pairing logs the device out, recovery must retry
+	// the source the user selected rather than silently infer another one from a
+	// mixed environment. Direct credentials themselves remain uncommitted until
+	// finish(true), so a rejected unlinked provision cannot replace working secrets.
+	wac.state.recordAccountSource(source)
 	// Capture the number we held BEFORE provisioning: a first-ever claim (no prior
 	// number) or a control-plane heal onto a different number is a genuinely new
 	// number that needs onboarding; re-linking the same established number is a
 	// resume that must not tell Vesta to stop initiating mid-relationship.
 	priorOnboardedMSISDN := wac.state.snapshot().OnboardedMSISDN
-	// Honor the agent's explicit --source over the daemon's boot-time linker: a warm
-	// daemon that booted with direct pool creds still pairs off the server-identity
-	// token when the agent says `--source vesta-cloud`. wac.managed is only read on this
-	// single-flighted pairing path, so overriding it for the call (and restoring it
-	// after) races nothing; wac.linker is left untouched (the data path reads it).
-	pairLinker := wac.linker
-	if effAuth := cloudSourceAuth(source); effAuth != nil {
-		saved := wac.managed
-		wac.managed = effAuth
-		defer func() { wac.managed = saved }()
-		pairLinker = &managedLinker{auth: effAuth, state: wac.state}
-	}
+	// Honor the agent's explicit source over the daemon's boot-time linker. This
+	// switches a pre-credential daemon into Double Tick mode, or temporarily pins
+	// Vesta Cloud token auth when both credential sources exist.
 	res, err := pairLinker.provision(wac)
 	if err != nil {
 		// A still-filling pool and a banned number are normal outcomes, not
@@ -1195,6 +1220,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		}
 		return nil, err
 	}
+	finish(true)
 	// A new number (first claim or a healed replacement) gets the reply-first
 	// onboarding; re-linking the same established number is a quiet resume.
 	if priorOnboardedMSISDN == "" || priorOnboardedMSISDN != res.MSISDN {
@@ -1232,8 +1258,8 @@ func managedProfileName(agentName string) string {
 func (wac *WhatsAppClient) completeFreshProfile() error {
 	if wac.state.snapshot().FreshNameSetPending {
 		agentName := ""
-		if wac.managed != nil {
-			agentName = wac.managed.cfg.agentName
+		if managed := wac.currentManaged(); managed != nil {
+			agentName = managed.cfg.agentName
 		}
 		setName := wac.SetProfileName
 		if wac.setFreshProfileName != nil {
@@ -1318,10 +1344,11 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	if err := checkPairAttempt(wac.state.snapshot().PairAttempts, time.Now(), acknowledged); err != nil {
 		return nil, err
 	}
-	code, err := wac.linker.pairCode(wac, phone)
+	code, err := wac.currentLinker().pairCode(wac, phone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
+	wac.state.recordAccountSource(sourceSelfManaged)
 	wac.markPhonePairingPending(time.Now())
 	return map[string]any{
 		"pairing_code": code,

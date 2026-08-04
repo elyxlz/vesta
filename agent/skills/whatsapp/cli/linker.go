@@ -76,6 +76,57 @@ func cloudSourceAuth(source string) *managedAuth {
 	return newManagedAuth(cfg)
 }
 
+// currentLinker and currentManaged read the live source as one synchronized pair.
+func (wac *WhatsAppClient) currentLinker() linker {
+	wac.linkerMu.RLock()
+	defer wac.linkerMu.RUnlock()
+	return wac.linker
+}
+
+func (wac *WhatsAppClient) currentManaged() *managedAuth {
+	wac.linkerMu.RLock()
+	defer wac.linkerMu.RUnlock()
+	return wac.managed
+}
+
+func (wac *WhatsAppClient) installManagedLinker(auth *managedAuth, selected linker) {
+	wac.linkerMu.Lock()
+	defer wac.linkerMu.Unlock()
+	wac.managed, wac.linker = auth, selected
+}
+
+// provisionLinker makes the explicit connect source authoritative inside an
+// already-running daemon. Cloud pins server-token auth to this pairing operation.
+// Double Tick is installed as the durable data path only when finish(true) is
+// called. The unlinked flow calls it after successful provisioning; an already-
+// linked resume calls it immediately because the explicit connect is a live source
+// reconfiguration and does not re-pair. Shape-invalid handoffs never reach finish,
+// while remote credential validation happens only when provisioning is required.
+func (wac *WhatsAppClient) provisionLinker(source, directURL, directKey string) (linker, func(bool), error) {
+	switch source {
+	case sourceVestaCloud:
+		auth := cloudSourceAuth(source)
+		return &managedLinker{auth: auth, state: wac.state}, func(bool) {}, nil
+	case sourceDoubletick:
+		if directURL == "" || directKey == "" {
+			return nil, func(bool) {}, fmt.Errorf("doubletick provision needs the direct API URL and key from the connect command")
+		}
+		cfg := loadManagedConfig()
+		cfg.directURL, cfg.directKey, cfg.configError = directURL, directKey, ""
+		auth := newManagedAuth(cfg)
+		selected := &managedLinker{auth: auth, state: wac.state}
+		return selected, func(commit bool) {
+			if !commit {
+				return
+			}
+			wac.state.update(func(s *daemonState) { s.DirectURL, s.DirectKey = directURL, directKey })
+			wac.installManagedLinker(auth, selected)
+		}, nil
+	default:
+		return wac.currentLinker(), func(bool) {}, nil
+	}
+}
+
 // qrLinker links the user's own WhatsApp account (self-hosted paradigm).
 type qrLinker struct{}
 
@@ -129,7 +180,7 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 
 	// Route the cloud companion through the residential proxy before the pairing WS
 	// comes up, so it never pairs from the datacenter IP. Fails closed.
-	if err := wac.ensureManagedProxy(); err != nil {
+	if err := wac.ensureManagedProxyFor(l.auth); err != nil {
 		return linkResult{}, err
 	}
 
