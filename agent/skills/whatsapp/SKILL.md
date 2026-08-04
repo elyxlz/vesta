@@ -112,9 +112,8 @@ Hold a live call in your own voice (the `voice` skill's TTS) and hear the other 
 
 - **Send one WhatsApp call at a time.** Never batch sends (or `say` lines) in a parallel tool-call
   block: if one fails you can't tell which landed, and a retry sends a duplicate; parallel `say` lines race.
-- **Run `whatsapp send` bare and check its exit status.** Never pipe it through `grep`, `head`, or
-  `jq`: a failed send exits non-zero and prints a JSON error object saying what to fix, and a filter
-  swallows that error text while replacing the exit status with the filter's own.
+- Success JSON prints on stdout; any failure exits non-zero and prints its error on stderr, so it
+  survives piping stdout through `grep`, `head`, or `jq`.
 - **Never re-link without the user's explicit go-ahead** (the linking rule). Pairing is rate-limited to
   about two attempts per hour because repeated attempts get accounts flagged and banned; if linking
   fails, report it and wait, never retry-loop.

@@ -322,7 +322,7 @@ func runLink() {
 		if registered && !terminal.connected && currentQRLink().port == 0 {
 			_ = unregisterVestadService(linkServiceName(), port)
 		}
-		fmt.Println(string(terminal.output))
+		emit(terminal.output, terminal.exitCode)
 		if terminal.exitCode == 0 {
 			return
 		}
@@ -352,6 +352,5 @@ func runLinkPhone(phone string) {
 	if !connected {
 		failJSON("daemon not running. Start with: whatsapp daemon start")
 	}
-	fmt.Println(string(output))
-	os.Exit(exitCode)
+	emitAndExit(output, exitCode)
 }

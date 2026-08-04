@@ -107,6 +107,24 @@ func resultFailure(result any) string {
 	return "command failed"
 }
 
+// emit is the one owner of which stream a command's answer takes: stdout
+// carries only success output, and anything paired with a non-zero exit prints
+// to stderr, so a filter piped onto stdout can never swallow a failure or its
+// explanation.
+func emit(data []byte, exitCode int) {
+	if exitCode == 0 {
+		fmt.Println(string(data))
+	} else {
+		fmt.Fprintln(os.Stderr, string(data))
+	}
+}
+
+func emitAndExit(data []byte, exitCode int) {
+	emit(data, exitCode)
+	os.Exit(exitCode)
+}
+
+// printJSON prints a success result; failures go through failJSON or failDaemon.
 func printJSON(v any) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -119,8 +137,8 @@ func printJSON(v any) {
 // failJSON prints an {"error": ...} object and exits nonzero, the single owner
 // of the print-error-then-exit pattern the daemon and link commands share.
 func failJSON(format string, args ...any) {
-	printJSON(map[string]any{"error": fmt.Sprintf(format, args...)})
-	os.Exit(1)
+	data, _ := json.MarshalIndent(map[string]any{"error": fmt.Sprintf(format, args...)}, "", "  ")
+	emitAndExit(data, 1)
 }
 
 func writeDeathNotification(notifDir string, sig string) {
@@ -346,8 +364,7 @@ func runOneShot(command string) {
 	if !connected {
 		failJSON("whatsapp daemon is not answering; run `whatsapp status`")
 	}
-	fmt.Println(string(output))
-	os.Exit(exitCode)
+	emitAndExit(output, exitCode)
 }
 
 // parseFlags parses a command's flags, returning what the FlagSet wrote about the problem: the
