@@ -120,25 +120,25 @@ func runRelease(args []string) {
 	printJSON(map[string]string{})
 }
 
-// failReserve turns reserve's terminal outcomes into a clean {error, next} status.
+// failReserve turns reserve's terminal outcomes into a clean {error, next} envelope.
 func failReserve(err error) {
 	switch {
 	case errors.Is(err, errQuotaExceeded):
-		printJSON(map[string]string{
+		failObject(map[string]string{
 			"error": "otp_quota_exceeded",
 			"next":  "the account's OTP allowance is spent; wait for it to reset, do not retry in a loop",
 		})
 	case errors.Is(err, errOutOfStock):
-		printJSON(map[string]string{
+		failObject(map[string]string{
 			"error": "out_of_stock",
 			"next":  "no number is free right now; retry shortly, or pass a different --country",
 		})
 	default:
-		printJSON(map[string]string{"error": err.Error()})
+		failObject(map[string]string{"error": err.Error()})
 	}
-	os.Exit(1)
 }
 
+// printJSON prints a success result; failures go through failJSON or failObject.
 func printJSON(v any) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -148,8 +148,16 @@ func printJSON(v any) {
 	fmt.Println(string(data))
 }
 
-// failJSON prints an {"error": ...} object and exits nonzero.
-func failJSON(format string, args ...any) {
-	printJSON(map[string]any{"error": fmt.Sprintf(format, args...)})
+// failObject is the one owner of the failure stream: the envelope prints on
+// stderr with a non-zero exit, so stdout carries only success output and a
+// filter piped onto stdout can never swallow a failure or its explanation.
+func failObject(v any) {
+	data, _ := json.MarshalIndent(v, "", "  ")
+	fmt.Fprintln(os.Stderr, string(data))
 	os.Exit(1)
+}
+
+// failJSON prints an {"error": ...} object on stderr and exits nonzero.
+func failJSON(format string, args ...any) {
+	failObject(map[string]any{"error": fmt.Sprintf(format, args...)})
 }

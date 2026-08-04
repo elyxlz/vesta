@@ -12,30 +12,33 @@ from app_chat_cli.bubblelint import bubble_lint_reason
 from app_chat_cli.store import Store, store_path
 
 
+def _fail(payload: dict[str, object]) -> None:
+    """The one failure printer: the payload goes to stderr so stdout carries only success output."""
+    print(json.dumps(payload), file=sys.stderr)
+    sys.exit(1)
+
+
 def cmd_send(args: argparse.Namespace) -> None:
     # `-` reads the body from stdin, so a reply with apostrophes, quotes or newlines can be passed
     # through a quoted heredoc instead of being escaped into an inline argument.
     message = sys.stdin.read().rstrip("\r\n") if args.message == "-" else args.message
     if not message:
-        print(json.dumps({"error": "--message is empty (pass '-' and a <<'MSG' heredoc to read the body from stdin)"}))
-        sys.exit(1)
+        _fail({"error": "--message is empty (pass '-' and a <<'MSG' heredoc to read the body from stdin)"})
 
     if not getattr(args, "longform", False):
         reason = bubble_lint_reason(message)
         if reason:
-            print(json.dumps({"error": reason}))
-            sys.exit(1)
+            _fail({"error": reason})
 
     sock_path = pl.Path(args.socket or (pl.Path.home() / ".app-chat" / "app-chat.sock"))
 
     if not sock_path.exists():
-        print(json.dumps({"error": f"daemon not running (no socket at {sock_path})"}))
-        sys.exit(1)
+        _fail({"error": f"daemon not running (no socket at {sock_path})"})
 
     result = asyncio.run(_send_via_socket(sock_path, message))
-    print(json.dumps(result))
     if "error" in result:
-        sys.exit(1)
+        _fail(result)
+    print(json.dumps(result))
 
 
 async def _send_via_socket(sock_path: pl.Path, message: str) -> dict[str, object]:
@@ -61,8 +64,7 @@ def cmd_history(args: argparse.Namespace) -> None:
         else:
             events, _ = store.page(limit=args.limit)
     except sqlite3.OperationalError as exc:
-        print(json.dumps({"error": f"invalid search query: {exc}"}))
-        sys.exit(1)
+        _fail({"error": f"invalid search query: {exc}"})
     finally:
         store.close()
     results = [{"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events]

@@ -9,8 +9,9 @@ Official Google REST APIs (Gmail + Calendar v3), authenticated with **your own
 Google Cloud OAuth client**: a `~/.google/credentials.json` is required, there is
 no shared sign-in. Only reach for this skill when the user genuinely needs
 Google-native APIs; for ordinary Gmail mail and calendar, the `email-client`
-skill is the right choice (zero-setup sign-in, no Google Cloud project). Every
-command prints JSON to stdout.
+skill is the right choice (zero-setup sign-in, no Google Cloud project). Success
+output is JSON on stdout; a failure exits non-zero and prints `{"error": ...}` on
+stderr, so it survives piping stdout through grep/head/jq.
 
 **Setup**: See [SETUP.md](SETUP.md)
 **Background**: `google daemon start`

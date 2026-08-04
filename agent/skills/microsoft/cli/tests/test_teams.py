@@ -330,8 +330,9 @@ def test_teams_capture_paste_rejects_garbage(tmp_path):
     from microsoft_cli import auth_commands
 
     cfg = Config(data_dir=tmp_path)
-    result = auth_commands.teams_capture(cfg, account_email="user@example.com", token="not-a-jwt")
-    assert result["status"] == "error"
+    # The raise reaches main, which prints the error on stderr and exits non-zero.
+    with pytest.raises(ValueError, match="does not look like a Teams access token"):
+        auth_commands.teams_capture(cfg, account_email="user@example.com", token="not-a-jwt")
     assert teams.has_token("user@example.com", cfg) is False
 
 

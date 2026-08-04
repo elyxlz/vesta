@@ -47,4 +47,6 @@ def test_history_reports_invalid_search_query(tmp_path, capsys):
         commands.cmd_history(_args(tmp_path, search='"bad'))
 
     assert exc.value.code == 1
-    assert "error" in json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)

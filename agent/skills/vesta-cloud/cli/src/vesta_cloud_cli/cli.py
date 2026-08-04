@@ -15,10 +15,11 @@ first (see `client.Client.mint_token`):
 - ``vesta-cloud referral``      — this box's referral code, credit earned, invites completed.
 - ``vesta-cloud set-referral``  — set/clear the code `onboard` sends on a completed invite.
 
-Output is always JSON on stdout. Exit codes: 0 success (`whoami` exits 0 even
-with `account: false`), 2 the control plane refused with a structured {error}
-(e.g. no billing yet, pairing refused), 3 no credential mintable or
-vestad/control plane unreachable (AccountError; includes running `token`/`plan`/
+Success output is JSON on stdout; a failure exits non-zero and prints its JSON on
+stderr, so it survives piping stdout through grep/head/jq. Exit codes: 0 success
+(`whoami` exits 0 even with `account: false`), 2 the control plane refused with a
+structured {error} (e.g. no billing yet, pairing refused), 3 no credential mintable
+or vestad/control plane unreachable (AccountError; includes running `token`/`plan`/
 `manage`/`referral` on a box with no account), 1 unexpected.
 """
 
@@ -37,6 +38,12 @@ from .config import Config
 
 def _print(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def _fail(payload: dict[str, Any], code: int) -> int:
+    """The one failure printer: the payload goes to stderr so stdout carries only success output."""
+    print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
+    return code
 
 
 def _cmd_whoami(_args: argparse.Namespace, client: Client, cfg: Config) -> int:
@@ -102,8 +109,7 @@ def _cmd_login(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     confirmation. Blocks up to the code's ~10 minute lifetime."""
     started = client.pair_start()
     if "error" in started:
-        _print(started)
-        return 2
+        return _fail(started, 2)
     _print(
         {
             "user_code": started.get("user_code"),
@@ -136,15 +142,14 @@ def _cmd_login(args: argparse.Namespace, client: Client, cfg: Config) -> int:
             time.sleep(interval)
             continue
         # Terminal refusal (expired / account already has a server / unknown).
-        _print(result)
-        return 2
-    _print(
+        return _fail(result, 2)
+    return _fail(
         {
             "error": "pairing timed out",
             "message": "the code expired before the owner approved. run `vesta-cloud login` again for a fresh code.",
-        }
+        },
+        2,
     )
-    return 2
 
 
 def _login_confirmation(args: argparse.Namespace, client: Client, cfg: Config, linked: dict[str, Any]) -> int:
@@ -172,16 +177,14 @@ def _cmd_logout(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     if result.get("status") == "unpaired":
         _print(result)
         return 0
-    _print(result)
-    return 2
+    return _fail(result, 2)
 
 
 def _cmd_plan(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     detail = client.mint_token_detail()
     summary = client.plan(detail["token"], detail.get("control_url"))
     if "error" in summary:
-        _print(summary)
-        return 2
+        return _fail(summary, 2)
     # Add a friendly dollar figure alongside the raw cents so the agent can quote
     # a price without doing arithmetic; leave everything else as the control plane
     # returned it.
@@ -197,8 +200,7 @@ def _cmd_manage(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     result = client.portal(detail["token"], detail.get("control_url"))
     if "url" not in result:
         # e.g. {"error": "no_billing_account"} — never completed checkout.
-        _print(result)
-        return 2
+        return _fail(result, 2)
     _print(
         {
             "url": result["url"],
@@ -214,7 +216,7 @@ def _cmd_referral(_args: argparse.Namespace, client: Client, _cfg: Config) -> in
     except AccountError:
         # A self-hosted box has no vesta-issued code; tell the agent what to do
         # instead of surfacing the raw mint-token error.
-        _print(
+        return _fail(
             {
                 "error": "not_hosted",
                 "message": (
@@ -222,13 +224,12 @@ def _cmd_referral(_args: argparse.Namespace, client: Client, _cfg: Config) -> in
                     "Ask the owner if they have one and set it with "
                     "`vesta-cloud set-referral --code <code>`."
                 ),
-            }
+            },
+            3,
         )
-        return 3
     summary = client.plan(detail["token"], detail.get("control_url"))
     if "error" in summary:
-        _print(summary)
-        return 2
+        return _fail(summary, 2)
     _print(
         {
             "referral_code": summary.get("referral_code"),
@@ -290,14 +291,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return handler(args, client, cfg)
     except AccountError as e:
-        _print({"error": str(e)})
-        return 3
+        return _fail({"error": str(e)}, 3)
     except KeyboardInterrupt:
-        _print({"error": "interrupted"})
-        return 130
+        return _fail({"error": "interrupted"}, 130)
     except Exception as e:  # last-resort net so the CLI never explodes raw
-        _print({"error": type(e).__name__, "message": str(e)})
-        return 1
+        return _fail({"error": type(e).__name__, "message": str(e)}, 1)
 
 
 if __name__ == "__main__":

@@ -127,7 +127,8 @@ cmd_proxy_url() {
 
 cmd_test() {
     local proxy_url
-    proxy_url=$(build_proxy_url) || { echo "$proxy_url"; return 1; }
+    # build_proxy_url printed its diagnostic on stderr; nothing goes to stdout on failure.
+    proxy_url=$(build_proxy_url) || return 1
     local provider
     provider=$(get_active_provider)
 
@@ -142,8 +143,8 @@ cmd_test() {
         ip=$(echo "$response" | python3 -c "import json,sys; print(json.load(sys.stdin)['ip'])" 2>/dev/null || echo "$response")
         echo "OK - External IP via proxy: $ip"
     else
-        echo "FAIL - Could not connect through proxy"
-        echo "  Error: $response"
+        echo "FAIL - Could not connect through proxy" >&2
+        echo "  Error: $response" >&2
         return 1
     fi
 
@@ -181,7 +182,7 @@ cmd_status() {
 
     # Quick connectivity test
     local proxy_url
-    proxy_url=$(build_proxy_url 2>/dev/null) || { echo "Status: MISCONFIGURED (cannot build proxy URL)"; return 1; }
+    proxy_url=$(build_proxy_url 2>/dev/null) || { echo "Status: MISCONFIGURED (cannot build proxy URL)" >&2; return 1; }
 
     echo -n "Connectivity:    "
     if curl -sk --proxy "$proxy_url" --connect-timeout 10 --max-time 15 "https://api.ipify.org?format=json" >/dev/null 2>&1; then

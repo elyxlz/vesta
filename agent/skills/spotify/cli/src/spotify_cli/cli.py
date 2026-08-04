@@ -195,7 +195,8 @@ def main():
     try:
         result = args.func(args, config)
     except Exception as e:
-        result = {"error": type(e).__name__, "message": str(e)}
+        print(json.dumps({"error": type(e).__name__, "message": str(e)}, indent=2), file=sys.stderr)
+        sys.exit(1)
 
     print(json.dumps(result, indent=2))
 

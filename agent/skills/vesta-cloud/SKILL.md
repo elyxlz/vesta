@@ -7,11 +7,13 @@ description: THIS box's Vesta Cloud account. Use whenever you need to know if th
 
 The single authority for **this** box's Vesta Cloud account: whether it has one, a
 credential to act as it against the control plane, its plan, and its referral code.
-Install the `vesta-cloud` command once from [SETUP.md](SETUP.md). Output is always JSON
-on stdout. Exit codes: 0 success (`whoami` exits 0 even with `account: false`), 2 the
-control plane refused with a structured `{error}` (no billing yet, pairing refused),
-3 no credential mintable or vestad/control plane unreachable (this includes running
-`token`/`plan`/`manage`/`referral` on a box with no account), 1 unexpected.
+Install the `vesta-cloud` command once from [SETUP.md](SETUP.md). Success output is
+JSON on stdout; a failure exits non-zero and prints its JSON on stderr, so it survives
+piping stdout through grep/head/jq. Exit codes: 0 success (`whoami` exits 0 even with
+`account: false`), 2 the control plane refused with a structured `{error}` (no billing
+yet, pairing refused), 3 no credential mintable or vestad/control plane unreachable
+(this includes running `token`/`plan`/`manage`/`referral` on a box with no account),
+1 unexpected.
 
 ## `whoami`: does this box have an account?
 

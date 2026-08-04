@@ -14,9 +14,11 @@ verification, then give the number back. Install the `otp` command once from
 3. `otp code --source <s> --id <id>` waits for the code the service texts, and prints it.
 4. `otp release --source <s> --id <id>` returns the number once you are done.
 
-Every command prints JSON. `--source` is required on every verb: you state where
-the number comes from (see below), the CLI never guesses, and `code`/`release`
-take the same source the number was reserved with. The number is temporary, so
+Every command prints JSON: success on stdout, and any failure on stderr with a
+non-zero exit, so it survives piping stdout through grep/head/jq. `--source` is
+required on every verb: you state where the number comes from (see below), the
+CLI never guesses, and `code`/`release` take the same source the number was
+reserved with. The number is temporary, so
 release it as soon as the code is used. Do not reuse an `id` for a second service.
 
 ## Choosing `--source`
@@ -52,7 +54,8 @@ Success prints the number to type into the service and the `id` to poll with:
 { "number": "+15550001111", "id": "lease_abc123" }
 ```
 
-Four outcomes are not errors to retry blindly:
+Four failures (each printed as JSON on stderr, exit non-zero) are not errors to
+retry blindly, so read the `error` key from stderr before deciding:
 
 - `{ "error": "otp_quota_exceeded", "next": "..." }`: the account's OTP allowance
   is spent. Wait for it to reset. Do not retry in a loop.

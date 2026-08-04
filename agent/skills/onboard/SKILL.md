@@ -188,7 +188,8 @@ onboard presets                                        # personalities + skills 
 onboard links                                          # marketing + app install URLs
 ```
 
-All commands print **JSON** to stdout. (There is no
+Success output is **JSON** on stdout; a failure exits non-zero and prints its JSON
+on stderr, so it survives piping stdout through grep/head/jq. (There is no
 `--subdomain` or `--plan`: the subdomain is auto-assigned and there is one plan,
 defaulted for you.)
 
