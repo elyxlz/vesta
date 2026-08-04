@@ -65,6 +65,15 @@ Example, for a request like "show me my running this week":
     Out of scope: No history beyond 7 days, no goals, no live device sync.
     Done when:    Health page shows the Running card and the dashboard serves.
 
+## Typechecking
+
+`vite build` does NOT typecheck: it strips types, so a data file that violates its own interface
+builds clean and renders wrong (a field under the wrong name reads as `undefined`). The symptom is a
+page showing empty cells or dead links from data that looks right; typecheck before debugging the
+page. The builder runs the real check before every build; if you ever check by hand, run
+`npx tsc --noEmit -p tsconfig.app.json` from `~/agent/skills/dashboard/app`. Never `-p .`: the root
+tsconfig is solution-style, so that compiles zero files and always passes.
+
 ## Verify and relay
 
 When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `dashboard daemon status` reports `running` and a port that answers, or reload the app. If the builder exercised pages backed by a live store (tasks, anything wired to a skill), also confirm that store is unchanged; a browser pass that clicked a control can silently write real user data. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
