@@ -22,9 +22,9 @@ Repository = "https://github.com/elyxlz/vesta"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.16.0",
+    "ruff>=0.16.1",
     "pytest>=9.1.1",
     "pytest-timeout>=2.4.0",
-    "hypothesis>=6.161.7",
-    "ty>=0.0.64",
+    "hypothesis>=6.164.0",
+    "ty>=0.0.65",
 ]
