@@ -45,15 +45,12 @@ tail -12 "$LOG" | awk -F'\t' '
 echo
 echo "daily PEAK free (each day's ceiling; a falling peak = a real multi-day slide):"
 # Print the TIME each peak occurred, and mark the current day as still OPEN. A peak read
-# before the day closes is a LOWER BOUND, not a peak: an agent read a peak 15 minutes into
-# the UTC day, saw it 38G below the previous day, and nearly recorded "the leak is back" as
-# a finding off that one reading. Nor can the hour be guessed: that same agent had written
-# in its own notes that peaks "land between 01:09 and 02:50 UTC", generalised from a four
-# day run, while the real spread over eight days was 01:16, 01:23, 02:34, 02:50, 09:13,
-# 12:51 and 23:12. Hence the asymmetry worth remembering: a HIGH peak is conclusive the
-# moment it appears, because a peak can only rise, and a LOW one is not conclusive at all
-# until the day closes. The time column and the OPEN marker show that without anyone having
-# to hold it in their head.
+# before the day closes is a LOWER BOUND: an agent read one 15 minutes into the UTC day,
+# saw it 38G below the previous day, and nearly filed "the leak is back" off that single
+# reading. The hour cannot be guessed either; over eight days the peaks landed at 01:16,
+# 01:23, 02:34, 02:50, 09:13, 12:51 and 23:12. Hence the asymmetry: a HIGH peak is
+# conclusive at once, because a peak can only rise, while a LOW one means nothing until the
+# day closes. The time column and the OPEN marker carry that instead of someone's memory.
 awk -F'\t' -v today="$(date -u +%Y-%m-%d)" '
     NR==1 && $1=="timestamp" { next }
     $4 == "" { next }
