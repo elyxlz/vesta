@@ -24,9 +24,16 @@ def _tmp_state(tmp_path, monkeypatch):
 
 
 def _run(argv, capsys):
+    """A failure prints on stderr with stdout untouched; success prints on stdout alone."""
     rc = cli_mod.main(argv)
-    out = capsys.readouterr().out
-    return rc, (json.loads(out) if out.strip() else None)
+    captured = capsys.readouterr()
+    if rc == 0:
+        assert captured.err == ""
+        payload = captured.out
+    else:
+        assert captured.out == ""
+        payload = captured.err
+    return rc, (json.loads(payload) if payload.strip() else None)
 
 
 def _verified(token="TOK"):
