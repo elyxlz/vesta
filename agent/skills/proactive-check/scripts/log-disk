@@ -44,13 +44,25 @@ tail -12 "$LOG" | awk -F'\t' '
 # slope you will not compute, so print it every time.
 echo
 echo "daily PEAK free (each day's ceiling; a falling peak = a real multi-day slide):"
-awk -F'\t' '
+# Print the TIME each peak occurred, and mark the current day as still OPEN. A peak read
+# before the day closes is a LOWER BOUND, not a peak: an agent read a peak 15 minutes into
+# the UTC day, saw it 38G below the previous day, and nearly recorded "the leak is back" as
+# a finding off that one reading. Nor can the hour be guessed: that same agent had written
+# in its own notes that peaks "land between 01:09 and 02:50 UTC", generalised from a four
+# day run, while the real spread over eight days was 01:16, 01:23, 02:34, 02:50, 09:13,
+# 12:51 and 23:12. Hence the asymmetry worth remembering: a HIGH peak is conclusive the
+# moment it appears, because a peak can only rise, and a LOW one is not conclusive at all
+# until the day closes. The time column and the OPEN marker show that without anyone having
+# to hold it in their head.
+awk -F'\t' -v today="$(date -u +%Y-%m-%d)" '
     NR==1 && $1=="timestamp" { next }
     $4 == "" { next }
     {
         split($1, t, "T"); day = t[1]
-        if (!(day in mx) || $4+0 > mx[day]) mx[day] = $4+0
+        hhmm = substr(t[2], 1, 5)
+        if (!(day in mx) || $4+0 > mx[day]) { mx[day] = $4+0; mxt[day] = hhmm }
         if (!(day in mn) || $4+0 < mn[day]) mn[day] = $4+0
+        cnt[day]++
         if (!(day in seen)) { order[++n] = day; seen[day] = 1 }
     }
     END {
@@ -58,6 +70,7 @@ awk -F'\t' '
         for (i = start; i <= n; i++) {
             day = order[i]
             chg = (i > start) ? sprintf("%+7d", mx[day] - mx[order[i-1]]) : "      -"
-            printf "  %s  peak %7d MB %s   intraday low %7d MB\n", day, mx[day], chg, mn[day]
+            open = (day == today) ? sprintf("  <- DAY OPEN, peak can still RISE (%d readings)", cnt[day]) : ""
+            printf "  %s  peak %7d MB at %s %s   intraday low %7d MB%s\n", day, mx[day], mxt[day], chg, mn[day], open
         }
     }' "$LOG"
