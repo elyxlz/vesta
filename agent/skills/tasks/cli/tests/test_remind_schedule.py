@@ -322,3 +322,35 @@ def test_remind_list_keeps_old_recurring_reminders_past_the_limit(tmp_config: Co
     assert listed[daily["id"]]["schedule"] == "daily at 09:00 Europe/Rome"
     assert listed[cron["id"]]["schedule"] == "cron: 0 9 * * 1-5 (Europe/Rome)"
     assert listed[hourly["id"]]["schedule"] == "hourly"
+
+
+def test_remind_list_next_run_survives_downtime_longer_than_the_period(tmp_config: Config):
+    """A plain cron reminder's scheduled_time column only advances when the job FIRES, so downtime
+    longer than one period strands it in the past. The listing must still report the real next
+    fire: a healthy daily rendering as "4d ago" invites re-arming a schedule that never broke."""
+    daily = commands.remind_set(
+        tmp_config,
+        commands.ReminderSpec(message="news brief", scheduled_datetime="2026-04-26T09:00:00", tz="Europe/Rome", recurring="daily"),
+    )
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", ("2020-01-01T09:00:00+00:00", daily["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+    next_run = datetime.fromisoformat(listed[daily["id"]]["next_run"])
+
+    assert next_run > datetime.now(UTC), "a stale scheduled_time column must not be reported as the next run"
+    assert next_run.astimezone(ZoneInfo("Europe/Rome")).hour == 9
+
+
+def test_remind_list_next_run_keeps_the_column_for_one_shots(tmp_config: Config):
+    """Only plain cron is recomputed. A date trigger's column IS the live answer, and a past-due
+    one-shot must keep reading as past-due rather than being silently pushed into the future."""
+    one_shot = commands.remind_set(tmp_config, commands.ReminderSpec(message="call back", in_hours=1))
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", ("2020-01-01T09:00:00+00:00", one_shot["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+
+    assert listed[one_shot["id"]]["next_run"] == "2020-01-01T09:00:00+00:00"
