@@ -201,6 +201,25 @@ func TestProvisionCommandRecordsExplicitSourceBeforeNetworkFailure(t *testing.T)
 	}
 }
 
+func TestProvisionRejectedBySingleFlightKeepsRecordedSource(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	wac.client.Store.ID = nil
+	wac.state.recordAccountSource(sourceDoubletick)
+	release, ok := wac.beginPairing()
+	if !ok {
+		t.Fatal("could not hold the pairing single-flight")
+	}
+	defer release()
+
+	_, err := cmdProvisionManaged([]string{"--source", sourceVestaCloud}, wac)
+	if !errors.Is(err, errPairingInProgress) {
+		t.Fatalf("expected errPairingInProgress, got %v", err)
+	}
+	if got := wac.state.snapshot().AccountSource; got != sourceDoubletick {
+		t.Fatalf("rejected provision changed AccountSource to %q", got)
+	}
+}
+
 func TestFreshPhotoWipeStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := newStateStore(dir)

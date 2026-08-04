@@ -1100,13 +1100,6 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Persist the explicit recovery intent once its shape is valid, before network
-	// or pairing work begins. This deliberately supersedes a prior source even when
-	// the attempt later fails: if pairing logs the device out, recovery must retry
-	// the source the user selected rather than silently infer another one from a
-	// mixed environment. Direct credentials themselves remain uncommitted until
-	// finish(true), so a rejected unlinked provision cannot replace working secrets.
-	wac.state.recordAccountSource(source)
 	finishedSource := false
 	finish := func(commit bool) {
 		if !finishedSource {
@@ -1119,6 +1112,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		// Configuration is useful even when no pairing is needed. In particular, a
 		// warm self-managed daemon may already hold the device produced by an earlier
 		// Double Tick connect but still need its managed data path installed.
+		wac.state.recordAccountSource(source)
 		finish(true)
 		// Already linked. If a takeover parked it, an explicit connect means
 		// "reclaim the session": clear the park and reconnect (a plain send never
@@ -1158,6 +1152,13 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, errPairingInProgress
 	}
 	defer release()
+	// Persist the explicit recovery intent inside the single-flight, before network
+	// or pairing work begins. This deliberately supersedes a prior source even when
+	// the attempt later fails: if pairing logs the device out, recovery must retry
+	// the source the user selected rather than silently infer another one from a
+	// mixed environment. Direct credentials themselves remain uncommitted until
+	// finish(true), so a rejected unlinked provision cannot replace working secrets.
+	wac.state.recordAccountSource(source)
 	// Capture the number we held BEFORE provisioning: a first-ever claim (no prior
 	// number) or a control-plane heal onto a different number is a genuinely new
 	// number that needs onboarding; re-linking the same established number is a
