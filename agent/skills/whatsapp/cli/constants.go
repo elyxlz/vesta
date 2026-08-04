@@ -50,6 +50,12 @@ const (
 	QRCodeSize                  = 256
 	MaxConcurrentTranscriptions = 3
 
+	// WhisperProcessTimeout bounds one whisper Process call, timed from when the
+	// call starts (after whisperProcessMu is acquired), so queued voice notes each
+	// get the full budget. A wedged call degrades to a failure notification
+	// instead of silently dropping the message forever.
+	WhisperProcessTimeout = 2 * time.Minute
+
 	TypingDelayPerChar = 25 * time.Millisecond
 	TypingDelayMin     = 1500 * time.Millisecond
 	TypingDelayMax     = 6 * time.Second

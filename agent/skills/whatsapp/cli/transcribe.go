@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 	wav "github.com/go-audio/wav"
@@ -17,6 +18,11 @@ var (
 	whisperModel     whisper.Model
 	whisperModelOnce sync.Once
 	whisperModelErr  error
+
+	// whisperProcessMu serializes all use of the whisper C context: model.NewContext
+	// hands out a fresh wrapper per call, but every wrapper shares the one underlying
+	// C model context, which whisper.cpp does not support calling concurrently.
+	whisperProcessMu sync.Mutex
 )
 
 func getModelPath() string {
@@ -86,11 +92,37 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 		return "", fmt.Errorf("failed to set language to auto: %w", err)
 	}
 
+	// The timeout clock starts only once the mutex is held, so each queued voice
+	// note gets the full budget. On timeout the goroutine keeps the mutex until
+	// Process returns, so a wedged call delays later transcriptions instead of
+	// racing them on the shared C context.
+	whisperProcessMu.Lock()
+	resCh := make(chan whisperResult, 1)
+	go func() {
+		defer whisperProcessMu.Unlock()
+		resCh <- processAndCollect(ctx, samples)
+	}()
+
+	select {
+	case res := <-resCh:
+		return res.text, res.err
+	case <-time.After(WhisperProcessTimeout):
+		return "", fmt.Errorf("whisper processing timed out after %v", WhisperProcessTimeout)
+	}
+}
+
+type whisperResult struct {
+	text string
+	err  error
+}
+
+// processAndCollect runs whisper_full and reads back the segments. Both touch the
+// shared C model context, so callers must hold whisperProcessMu throughout.
+func processAndCollect(ctx whisper.Context, samples []float32) whisperResult {
 	if err := ctx.Process(samples, nil, nil, nil); err != nil {
-		return "", fmt.Errorf("whisper processing failed: %w", err)
+		return whisperResult{err: fmt.Errorf("whisper processing failed: %w", err)}
 	}
 
-	// Collect segments
 	var parts []string
 	for {
 		segment, err := ctx.NextSegment()
@@ -98,12 +130,12 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 			break
 		}
 		if err != nil {
-			return "", fmt.Errorf("failed to get segment: %w", err)
+			return whisperResult{err: fmt.Errorf("failed to get segment: %w", err)}
 		}
 		parts = append(parts, segment.Text)
 	}
 
-	return strings.TrimSpace(strings.Join(parts, "")), nil
+	return whisperResult{text: strings.TrimSpace(strings.Join(parts, ""))}
 }
 
 func readWAVSamples(path string) ([]float32, error) {
