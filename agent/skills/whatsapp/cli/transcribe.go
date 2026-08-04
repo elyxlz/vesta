@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -52,6 +53,14 @@ func loadWhisperModel() (whisper.Model, error) {
 }
 
 // transcribeAudioBuiltIn transcribes audio using the built-in whisper.cpp bindings.
+// whisperThreads is the per-transcription thread budget: an even split of the machine across the
+// concurrent transcriptions we allow, clamped to at least 1 and at most WhisperMaxThreads. So the
+// whole transcription subsystem stays within one machine's worth of threads on a small box and does
+// not run away on a big one.
+func whisperThreads() uint {
+	return uint(min(max(runtime.NumCPU()/MaxConcurrentTranscriptions, 1), WhisperMaxThreads))
+}
+
 func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	model, err := loadWhisperModel()
 	if err != nil {
@@ -85,6 +94,13 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	if err := ctx.SetLanguage("auto"); err != nil {
 		return "", fmt.Errorf("failed to set language to auto: %w", err)
 	}
+
+	// Bound the compute threads. The binding otherwise gives every context runtime.NumCPU(), so
+	// MaxConcurrentTranscriptions voice notes at once ask for that many times more threads than the
+	// box has, and a single note can pin the whole machine for tens of minutes on a loaded host.
+	// Thread count only partitions the matmuls, it is not a decoding parameter, so the transcript
+	// is unaffected.
+	ctx.SetThreads(whisperThreads())
 
 	if err := ctx.Process(samples, nil, nil, nil); err != nil {
 		return "", fmt.Errorf("whisper processing failed: %w", err)

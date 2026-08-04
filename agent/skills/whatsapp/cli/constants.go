@@ -50,6 +50,13 @@ const (
 	QRCodeSize                  = 256
 	MaxConcurrentTranscriptions = 3
 
+	// WhisperMaxThreads caps the compute threads one transcription may use. The Go binding
+	// defaults each context to runtime.NumCPU(), which times MaxConcurrentTranscriptions
+	// oversubscribes the box several-fold and starves the daemon's own work; whisper.cpp gains
+	// little past a handful of threads anyway. 4 matches the whisper skill's own default
+	// (skills/whisper/scripts/whisper_transcribe.sh).
+	WhisperMaxThreads = 4
+
 	TypingDelayPerChar = 25 * time.Millisecond
 	TypingDelayMin     = 1500 * time.Millisecond
 	TypingDelayMax     = 6 * time.Second
