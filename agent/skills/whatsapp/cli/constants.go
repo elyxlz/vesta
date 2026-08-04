@@ -50,12 +50,6 @@ const (
 	QRCodeSize                  = 256
 	MaxConcurrentTranscriptions = 3
 
-	// WhisperProcessTimeout bounds one whisper Process call, timed from when the
-	// call starts (after whisperProcessMu is acquired), so queued voice notes each
-	// get the full budget. A wedged call degrades to a failure notification
-	// instead of silently dropping the message forever.
-	WhisperProcessTimeout = 2 * time.Minute
-
 	// WhisperMaxThreads caps the compute threads a transcription may use. The Go
 	// binding defaults each context to runtime.NumCPU(), which starves the
 	// daemon's own work on a big box; whisper.cpp gains little past a handful of

@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 	wav "github.com/go-audio/wav"
@@ -113,35 +112,13 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	// decoding parameter, so the transcript is unaffected.
 	ctx.SetThreads(whisperThreads(runtime.NumCPU()))
 
-	// The timeout clock starts only once the mutex is held, so each queued voice
-	// note gets the full budget. On timeout the goroutine keeps the mutex until
-	// Process returns, so a wedged call delays later transcriptions instead of
-	// racing them on the shared C context.
+	// Process and segment reads both touch the C model context shared by every
+	// context wrapper (see whisperProcessMu).
 	whisperProcessMu.Lock()
-	resCh := make(chan whisperResult, 1)
-	go func() {
-		defer whisperProcessMu.Unlock()
-		resCh <- processAndCollect(ctx, samples)
-	}()
+	defer whisperProcessMu.Unlock()
 
-	select {
-	case res := <-resCh:
-		return res.text, res.err
-	case <-time.After(WhisperProcessTimeout):
-		return "", fmt.Errorf("whisper processing timed out after %v", WhisperProcessTimeout)
-	}
-}
-
-type whisperResult struct {
-	text string
-	err  error
-}
-
-// processAndCollect runs whisper_full and reads back the segments. Both touch the
-// shared C model context, so callers must hold whisperProcessMu throughout.
-func processAndCollect(ctx whisper.Context, samples []float32) whisperResult {
 	if err := ctx.Process(samples, nil, nil, nil); err != nil {
-		return whisperResult{err: fmt.Errorf("whisper processing failed: %w", err)}
+		return "", fmt.Errorf("whisper processing failed: %w", err)
 	}
 
 	var parts []string
@@ -151,12 +128,12 @@ func processAndCollect(ctx whisper.Context, samples []float32) whisperResult {
 			break
 		}
 		if err != nil {
-			return whisperResult{err: fmt.Errorf("failed to get segment: %w", err)}
+			return "", fmt.Errorf("failed to get segment: %w", err)
 		}
 		parts = append(parts, segment.Text)
 	}
 
-	return whisperResult{text: strings.TrimSpace(strings.Join(parts, ""))}
+	return strings.TrimSpace(strings.Join(parts, "")), nil
 }
 
 func readWAVSamples(path string) ([]float32, error) {
