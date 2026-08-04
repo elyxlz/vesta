@@ -116,6 +116,12 @@ Work through them deliberately, not by reflexively replying to each:
 
 Spend effort proportional to value. If the same low-value thing keeps showing up snoozed, that's a signal to add a rule so it stops reaching you, or to ask the user whether it should interrupt instead.
 
+## A platform reminder is not a person writing to you
+
+**Platform notification emails about invitations are written in the FIRST PERSON, with subject lines like "I'm still waiting for your response", and they arrive from a no-reply address.** They read exactly like a person writing directly, and they are not: they are the platform re-announcing an action that person took days or weeks earlier. So the question "did a person act, or did the algorithm?" needs a third answer, **a person acted ONCE and the platform is re-announcing it**, which carries the same value as the original action, never more, and never urgency. Summarising it as new urgency is how you invent an obligation the source never carried and then hand it to the user as a priority, which is how an invitation reminder gets read as a person chasing them.
+
+**The check is mechanical and takes seconds: open the raw body and look at the template identifier and the call to action.** An accept-invitation link means it is a reminder; a reply link with quoted message text means a person actually wrote. Never let a first-person subject line stand in for a human sender, because that phrasing is chosen precisely to read as one.
+
 ## Learned Patterns
 
 ### Must always reach me
