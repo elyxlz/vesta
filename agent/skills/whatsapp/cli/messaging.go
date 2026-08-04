@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -18,6 +20,10 @@ import (
 
 // mentionPattern matches @word patterns in message text.
 var mentionPattern = regexp.MustCompile(`@(\+?\w+)`)
+
+// emailAtextSpecials are the printable specials RFC 5322 allows in an email
+// local part; an "@" preceded by one belongs to an address, not a mention.
+const emailAtextSpecials = "!#$%&'*+-/=?^_`{|}~."
 
 // WhatsApp spam filters silently drop messages containing user@IP patterns.
 var userAtIPPattern = regexp.MustCompile(`\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
@@ -442,6 +448,17 @@ func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
 		fullStart, fullEnd := matches[i][0], matches[i][1]
 		captureStart, captureEnd := matches[i][2], matches[i][3]
 		identifier := text[captureStart:captureEnd]
+
+		// A real mention starts the text or follows whitespace or plain
+		// punctuation. A preceding letter, digit, or atext rune means the "@"
+		// sits inside a larger token (an email local part such as
+		// S3044936@ed.ac.uk), and rewriting it would corrupt the address.
+		if fullStart > 0 {
+			prev, _ := utf8.DecodeLastRuneInString(text[:fullStart])
+			if unicode.IsLetter(prev) || unicode.IsDigit(prev) || strings.ContainsRune(emailAtextSpecials, prev) {
+				continue
+			}
+		}
 
 		jid, err := wac.ResolveRecipient(identifier)
 		if err != nil {
