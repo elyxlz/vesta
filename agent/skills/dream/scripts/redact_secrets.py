@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Scan the events DB for secrets, then scrub the real leaks in place by event id.
 Usage: redact_secrets.py            # scan, printing each hit with the value masked
+       redact_secrets.py --show ID  # print one event's full data with every detected secret masked
        redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
        redact_secrets.py --scrub-literal 'VALUE'   # redact one known value the scanner can't detect
 """
@@ -411,14 +412,32 @@ def _run_scrub_literal(conn: sqlite3.Connection, rest: list[str]) -> int:
     return 0
 
 
+def _run_show(conn: sqlite3.Connection, rest: list[str]) -> int:
+    """Print one event's full `data` with every scanner-detected secret masked, for judging a hit
+    whose scan snippet is too short. Runs through the same redaction pass as the scrub, so this
+    never emits a live value."""
+    if len(rest) != 1 or not rest[0].isdigit():
+        print("usage: redact_secrets.sh --show <event-id>", file=sys.stderr)
+        return 1
+    row = conn.execute("SELECT data FROM events WHERE id = ?", (int(rest[0]),)).fetchone()
+    if row is None or not row[0]:
+        print(f"no event with id {rest[0]}", file=sys.stderr)
+        return 1
+    print(_redact_text(row[0]))
+    return 0
+
+
 def main() -> int:
     if not DB.is_file():
-        print(f"No database at {DB}")
+        print(f"No database at {DB}", file=sys.stderr)
         return 1
 
     args = sys.argv[1:]
     conn = sqlite3.connect(DB)
     try:
+        if args[:1] == ["--show"]:
+            return _run_show(conn, args[1:])
+
         if args[:1] == ["--scrub"]:
             return _run_scrub(conn, [int(arg) for arg in args[1:]])
 

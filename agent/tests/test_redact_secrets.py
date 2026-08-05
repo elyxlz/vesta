@@ -371,6 +371,46 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     assert all(SECRET not in data for data in rows)
 
 
+# ---------------------------------------------------------------------------
+# --show: one event's full data, every detected secret masked
+# ---------------------------------------------------------------------------
+
+
+def test_main_show_prints_the_full_event_with_the_secret_masked(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"a long surrounding message where the aws key is {SECRET} for backups"))
+    row_id = db_conn.execute("SELECT id FROM events").fetchone()[0]
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--show", str(row_id)])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert SECRET not in out
+    assert "[REDACTED]" in out
+    assert "a long surrounding message" in out and "for backups" in out
+
+
+def test_main_show_unknown_id_errors_on_stderr(tmp_path, event_bus, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text="anything"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--show", "999999"])
+
+    assert redact.main() != 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "999999" in captured.err
+
+
+def test_main_show_rejects_a_non_numeric_id_with_usage_on_stderr(tmp_path, event_bus, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text="anything"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--show", "not-an-id"])
+
+    assert redact.main() != 0
+    assert "usage:" in capsys.readouterr().err
+
+
 def _insert_raw_event(conn, payload: dict) -> int:
     cursor = conn.execute("INSERT INTO events (ts, data) VALUES ('2026-01-01T00:00:00', ?)", (json.dumps(payload),))
     conn.commit()
@@ -695,3 +735,4 @@ def test_wrapper_behaves_the_same_whatever_the_caller_cwd(tmp_path):
 
     assert runs[0].stdout == runs[1].stdout
     assert runs[0].returncode == runs[1].returncode
+    assert all("No database at" in run.stderr for run in runs)
