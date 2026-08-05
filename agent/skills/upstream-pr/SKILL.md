@@ -57,6 +57,23 @@ Seven gates before opening a worktree.
 - The problem lives in `agent/core/`: **issue only**, however sure you are of the fix. Core is mounted read-only, so you cannot apply or run a core change on your box, and an untested engine PR costs more review than a precise issue. Describe the cause, the exact file and line, and the fix you would make; a maintainer lands it.
 - You don't have a fix yet: **issue only**.
 
+**Prefer the PR whenever any fixable artifact exists, down to a single docs line.** The two are not
+equivalent containers: the gap runs through the token's permissions and through GitHub's index at
+once.
+
+| | issue | pull request |
+|---|---|---|
+| create | yes | yes |
+| edit body (`PATCH`) | no, 403 | yes |
+| comment | no, 403 | yes (see "Commenting, and what the token can reach") |
+| findable via `/search/issues` | no | yes |
+
+So an issue is write-once into a container its author cannot read back: it cannot be found by
+search, corrected, or annotated after the fact, and it cannot be retracted either. A PR is all of
+those, and because its body accepts a `PATCH`, late evidence or a correction still has somewhere to
+go. Reserve **issue only** for a report where no fix exists to file, `agent/core/` included, and
+write it expecting a single shot at getting it right.
+
 **2b. Strip the story before you file.** Anything under `agent/` never describes a previous design, because the agent reads it cold and a description of the old system reads as a description of the current one (see `AGENTS.md`). The file carries the mechanism and the constraint only. Cut from the diff: what the wording used to say, the date, the box or version it was found on, the incident behind it, and any "previously this did X". That material is worth keeping, in the commit message and the PR body, where a reviewer wants it anyway. Litmus: read the added prose as an agent who has never seen the bug, and cut every sentence that only makes sense if you have. Watch it hardest when the fix came out of a retrospective, since you arrive holding the narrative and the narrative is the part that must not ship.
 
 **3. Strip personal information.** Upstream is public, so the user must not be identifiable: never file personal config, their own memory content, credentials, or user-specific customizations (a rule that names the user or their contacts, a preset drifted to one person's texting quirks). Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
