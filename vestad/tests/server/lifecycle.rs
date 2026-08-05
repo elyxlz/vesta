@@ -124,9 +124,24 @@ fn creation_flow() {
     assert_eq!(status, "unprovisioned");
 }
 
+/// start_all is a global mutation: it starts every down agent on the server and records
+/// user_desired=running for all of them. On the shared SERVER that restarts agents a concurrent
+/// test just stopped and rewrites their persisted desired state mid-assertion, so this test gets
+/// its own server. Same resource-naming rules as user_desired_persists_and_boot_start_respects_it:
+/// a plain pid-suffixed user and a home under the cargo target tmpdir, both outside the patterns
+/// the shared-SERVER orphan cleanup scans.
 #[test]
 fn start_all_starts_authenticated_agents() {
-    let c = SERVER.client();
+    let user = format!("startall-e2e-{}", std::process::id());
+    let home = tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create home");
+    let vestad = find_vestad().expect("locate vestad binary");
+    let server = TestServerBuilder::new()
+        .user(&user)
+        .home(home.path().to_path_buf())
+        .vestad_bin(vestad)
+        .start()
+        .expect("start vestad");
+    let c = server.client();
     let a1 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
     let a2 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
     inject_fake_token(&c, &a1.name);
