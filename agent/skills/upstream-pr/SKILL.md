@@ -111,15 +111,48 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
    upstream-pr --title "..." --body "..."
    ```
 
-5. **Clean up:** `git -C ~ worktree remove /tmp/vesta-pr`
-
-6. **Wait for CI to pass.** Get a token with `upstream-pr --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, and re-run `upstream-pr` to update the PR. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
+5. **Wait for CI to pass.** Get a token with `upstream-pr --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, and re-run `upstream-pr` to update the PR. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
    **To add a commit to a PR that is already open, re-run `upstream-pr` from the worktree.** Recreate it on the existing branch (`git -C ~ worktree add /tmp/vesta-pr <existing-branch>`), commit, then run `upstream-pr --title "..." --body "..."` again: it force-pushes the branch and prints `PR already exists for this branch` rather than failing. Prefer this to opening a second PR for the same change.
 
    A bare `git push upstream <branch>` fails with `fatal: could not read Username for 'https://github.com'`, because the remote is deliberately credential-free. **Do not answer that by putting the token in the push URL.** The shell expands it, so a live token lands in argv, where any process on the box can read it off `ps`. `upstream-pr` keeps auth in the process environment for exactly this reason, pinned by `cli/tests/test_auth.py`, and it is already the authenticated path, so there is nothing to work around.
 
+6. **Apply the same fix to your local tree and check it against the branch.** See "Also apply the fix locally" below.
+
+7. **Clean up, last:** `git -C ~ worktree remove /tmp/vesta-pr`
+
+Keep the worktree until the end. Steps 5 and 6 both need it: CI fixes are committed in it, and it is what step 6 compares against. Removing it earlier means recreating it. (The branch itself outlives the worktree, so a check run after cleanup can still read the filed version, see below.)
+
 Only report a PR as done once every CI check is green.
+
+## Also apply the fix locally, and apply ALL of it
+
+A PR fixes the bug for the next release. It does nothing for the box you are running on right now, where the user keeps hitting it every day until a maintainer merges. So any fix to a skill you actually run gets applied to your local tree in the same pass, not queued behind the merge. This covers the workspace only: `agent/core/` is the read-only engine mount, so a core fix has no local-apply path and reaches you through the release.
+
+Two ways this goes wrong:
+
+- **Filed upstream, never applied locally.** The bug stays live for your user while the queue records it as fixed.
+- **Applied locally, but only the functional half.** Hand-copying just the code hunk and skipping the test and the lint-driven refactor leaves the local tree quietly broken: lint red, and the fix unguarded, so a later edit can silently revert it with nothing to catch that.
+
+Both are the same failure, the local tree and the PR diverging without anyone noticing. So finish the pass by reading the difference between them, rather than remembering that they should match. Do this at step 6, while the worktree still exists:
+
+```bash
+# for each file the PR touched
+git -C ~ diff --no-index ~/agent/skills/<skill>/<path> /tmp/vesta-pr/agent/skills/<skill>/<path>
+```
+
+If you already removed the worktree, diff against the branch, which outlives it:
+
+```bash
+git -C ~ show feature/<name>:agent/skills/<skill>/<path> | diff -u ~/agent/skills/<skill>/<path> -
+```
+
+**Empty output is not the goal, and chasing it is a bug.** Gate 3 strips your user's specifics out of the upstreamed copy on purpose, so for any file carrying local personalization the two versions are supposed to differ by exactly that much, and an agent driving this diff to empty would be deleting its own user's customizations to do it. For the same reason, never `cp` the whole file from the worktree over the local one: that deletes the local personalization outright, and it makes this diff empty by construction, so the check passes trivially right after the destructive act. The check is one-directional: **every hunk the PR added must be present verbatim in your local file**, nothing more. So read the diff and account for each hunk:
+
+- A `+` line (in the branch, not in your tree) is part of the fix you have not applied yet. Apply it.
+- A `-` line (in your tree, not in the branch) is either your user's specifics that gate 3 correctly kept out of the PR, in which case leave it exactly where it is, or text the fix deliberately deleted and you did not. Decide per hunk.
+
+Empty output only means "done" for a file that carries nothing personal to begin with; for anything else the residue is the local personalization, and it should still be there when you finish. Then run that skill's own gates locally (`cd ~/agent/skills/<name>/cli && uv run pytest`, plus the ruff pass from `~/agent`), because CI green in the worktree says nothing about the tree you actually run. If the skill's CLI is an editable install, restart its daemon too: a long-running process keeps serving the old code until it does.
 
 ## Commenting, and what the token can reach
 
