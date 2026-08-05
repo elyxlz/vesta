@@ -83,8 +83,11 @@ def live_pid() -> int | None:
         os.kill(pid, 0)
     except (FileNotFoundError, IndexError, ValueError, ProcessLookupError, PermissionError):
         return None
-    # A pidfile written before this check existed carries no starttime. Trust it as before rather
-    # than reading the absence as a mismatch: an upgrade must not declare a live daemon dead.
+    # LEGACY(remove-when: no daemon record predating the release that ships this check remains, i.e.
+    # every box has restarted its daemons at least once on this version): a record written by the
+    # old code is a bare pid. Trust it as before rather than reading the absence of a starttime as a
+    # mismatch, because an upgrade must not declare a live daemon dead and let a second stack beside
+    # it. Once records have converged, an unparseable second field should read as dead, not as legacy.
     if len(record) > 1 and record[1].isdigit():
         current = _starttime(pid)
         if current is not None and current != int(record[1]):

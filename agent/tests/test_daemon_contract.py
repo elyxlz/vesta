@@ -437,6 +437,12 @@ def test_status_rejects_a_reused_pid(daemon):
     pidfile.write_text(record[0])
     assert _json(_verb(spec, env, "status"))["running"] is True
 
+    # And the half-written form: a pid, a space, and no starttime, which is what a launcher wrote
+    # when /proc was unreadable at start. Comparing a real starttime against an empty field would
+    # declare a live daemon dead, so an unparseable second field reads as legacy, not as mismatch.
+    pidfile.write_text(f"{record[0]} ")
+    assert _json(_verb(spec, env, "status"))["running"] is True
+
     pidfile.write_text(" ".join(record))
     assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
 

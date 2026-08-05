@@ -68,8 +68,18 @@ live_pid() {
   # reading the absence as a mismatch: an upgrade must not declare a live daemon dead.
   case "$record" in
     *" "*)
-      current=$(starttime_of "$pid")
-      if [ -n "$current" ] && [ "$current" != "${record#* }" ]; then return 1; fi
+      # The recorded field must be a NON-EMPTY run of digits before it is worth comparing. A record
+      # of the form "<pid> " (written when /proc was unreadable at start) would otherwise compare a
+      # real starttime against "" and declare a live daemon dead, letting a second stack beside it.
+      # This mirrors the python path, where the literal "None" fails isdigit() for the same reason.
+      recorded=${record#* }
+      case "$recorded" in
+        ""|*[!0-9]*) ;;
+        *)
+          current=$(starttime_of "$pid")
+          if [ -n "$current" ] && [ "$current" != "$recorded" ]; then return 1; fi
+          ;;
+      esac
       ;;
   esac
   printf %s "$pid"
