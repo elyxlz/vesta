@@ -93,3 +93,62 @@ func TestResolveRecipientRejectsSavedGroupIDContact(t *testing.T) {
 		t.Errorf("a previously saved group-ID contact must not resolve to a user JID, got %v", err)
 	}
 }
+
+// The peer whose LID the outgoing-chat-key harness maps to a phone JID, saved by that phone.
+const gatedPeerPhone = "+15559876543"
+
+// A peer addressed by their LID passes the same saved-contact gate as the same peer addressed by
+// their phone JID. Both forms are valid send targets, so gating only the phone form would let an
+// outbound reach a person the user never confirmed, which is the ban risk the gate exists for.
+func TestRequireManualContactGatesALIDLikeThePhoneJID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid, err := types.ParseJID(outgoingLIDJID)
+	if err != nil {
+		t.Fatalf("failed to parse lid: %v", err)
+	}
+	phone, err := types.ParseJID(outgoingPhoneJID)
+	if err != nil {
+		t.Fatalf("failed to parse phone jid: %v", err)
+	}
+
+	for _, jid := range []types.JID{lid, phone} {
+		err := wac.requireManualContact(jid)
+		if err == nil || !strings.Contains(err.Error(), "No saved contact found for "+gatedPeerPhone) {
+			t.Errorf("unsaved peer %s must be refused naming %s, got %v", jid, gatedPeerPhone, err)
+		}
+	}
+
+	if _, err := wac.store.SaveManualContact("Ana", gatedPeerPhone); err != nil {
+		t.Fatalf("failed to save contact: %v", err)
+	}
+
+	for _, jid := range []types.JID{lid, phone} {
+		if err := wac.requireManualContact(jid); err != nil {
+			t.Errorf("saved peer %s must pass the gate, got %v", jid, err)
+		}
+	}
+}
+
+// A LID with no phone mapping resolves to nobody, so it cannot have been confirmed and is refused.
+// Its user part is an internal id, never a phone, so the refusal must not render it as one.
+func TestRequireManualContactRefusesAnUnmappedLID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	unmapped := types.NewJID("99988877766655", types.HiddenUserServer)
+
+	err := wac.requireManualContact(unmapped)
+	if err == nil || !strings.Contains(err.Error(), "No saved contact found") {
+		t.Fatalf("an unmapped LID must be refused, got %v", err)
+	}
+	if strings.Contains(err.Error(), "99988877766655") {
+		t.Errorf("refusal must not render a LID as a phone number, got %v", err)
+	}
+}
+
+// Groups carry no saved-contact requirement; only people do.
+func TestRequireManualContactLeavesGroupsUngated(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+
+	if err := wac.requireManualContact(types.NewJID(groupIDDigits, types.GroupServer)); err != nil {
+		t.Errorf("a group must not require a saved contact, got %v", err)
+	}
+}

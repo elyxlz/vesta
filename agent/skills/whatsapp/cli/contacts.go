@@ -28,22 +28,26 @@ func errIfGroupIDDigits(digits string) error {
 	)
 }
 
+// requireManualContact is the saved-contact half of the ban gate: every person the device
+// messages must have been confirmed by the user first. It covers a direct chat addressed
+// either way, since WhatsApp addresses one peer both by phone JID and by LID, and looks the
+// contact up under the same canonical key storage files that chat under. A LID with no phone
+// mapping yet stays unconfirmed and is therefore refused. Groups carry no such requirement.
 func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
-	if jid.Server != types.DefaultUserServer {
+	if !isDirectChatJID(jid) {
 		return nil
 	}
 
-	contact, err := wac.store.GetManualContact(jid.String())
+	peer := wac.canonicalChatJID(jid)
+	contact, err := wac.store.GetManualContact(peer.String())
 	if err != nil {
 		return fmt.Errorf("failed to verify saved contacts: %v", err)
 	}
 
 	if contact == nil {
-		phone := jid.User
-		if phone != "" {
-			phone = "+" + phone
-		} else {
-			phone = "this contact"
+		phone := "this contact"
+		if peer.Server == types.DefaultUserServer && peer.User != "" {
+			phone = "+" + peer.User
 		}
 		return fmt.Errorf(
 			"No saved contact found for %s. Ask the user who this is, then run add-contact --name <name> --phone <number>.",
@@ -277,16 +281,22 @@ func (wac *WhatsAppClient) resolveSenderJID(sender, senderAlt types.JID) types.J
 	return sender
 }
 
-// canonicalChatKey returns the stable storage key for a chat. WhatsApp addresses a direct chat
+// canonicalChatJID returns the one JID that identifies a chat. WhatsApp addresses a direct chat
 // by the peer's LID (a privacy id), but a saved contact and any reply resolve to the peer's phone
-// JID; keying storage by the raw LID splits one person into two chats, which broke reply-first,
-// read-receipt targeting, and threading. Resolving the LID to its phone JID here (a group JID is
-// left unchanged) makes one person one chat key everywhere messages are stored or looked up.
-func (wac *WhatsAppClient) canonicalChatKey(chat types.JID) string {
+// JID; treating the raw LID as its own identity splits one person into two chats, which breaks
+// reply-first, read-receipt targeting, threading, and the saved-contact gate. Resolving the LID to
+// its phone JID here (a group JID is left unchanged) makes one person one identity everywhere.
+func (wac *WhatsAppClient) canonicalChatJID(chat types.JID) types.JID {
 	if wac.client == nil {
-		return chat.String()
+		return chat
 	}
-	return wac.resolveSenderJID(chat, types.JID{}).String()
+	return wac.resolveSenderJID(chat, types.JID{})
+}
+
+// canonicalChatKey is the storage-key form of canonicalChatJID, used everywhere messages and
+// chats are stored or looked up.
+func (wac *WhatsAppClient) canonicalChatKey(chat types.JID) string {
+	return wac.canonicalChatJID(chat).String()
 }
 
 // formatSenderForDisplay returns a user-friendly sender display string.
