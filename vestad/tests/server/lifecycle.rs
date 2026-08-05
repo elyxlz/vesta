@@ -2,8 +2,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use vesta_tests::{
-    agent_container_name, docker_cmd, find_vestad, inject_fake_token, is_up, unique_agent,
-    TestAgent, TestServerBuilder, SERVER, SHARED_RO_AGENT,
+    agent_container_name, docker_cmd, exec_in_container, find_vestad, inject_fake_token, is_up,
+    unique_agent, TestAgent, TestServerBuilder, FAKE_TOKEN, SERVER, SHARED_RO_AGENT,
 };
 
 #[test]
@@ -144,8 +144,16 @@ fn start_all_starts_authenticated_agents() {
     let c = server.client();
     let a1 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
     let a2 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
-    inject_fake_token(&c, &a1.name);
-    inject_fake_token(&c, &a2.name);
+    // inject_fake_token names containers by $USER; this server's containers carry the
+    // custom user, so write the credentials with explicitly built names.
+    let inject = |name: &str| {
+        let script = format!(
+            "mkdir -p /root/.claude && printf '%s' '{FAKE_TOKEN}' > /root/.claude/.credentials.json"
+        );
+        exec_in_container(&format!("vesta-{user}-{name}"), &script).expect("write fake credentials");
+    };
+    inject(&a1.name);
+    inject(&a2.name);
 
     c.start_all().unwrap();
 
