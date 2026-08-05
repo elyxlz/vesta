@@ -11,7 +11,9 @@ from .config import Config
 
 ORGANIZE_CONFIG = Path.home() / ".spotify" / "organize.json"
 WATCH_STATE_FILE = Path.home() / ".spotify" / "watch_state.json"
-NOTIFICATIONS_DIR = Path.home() / "notifications"
+# The directory the engine watches (config.notifications_dir). A notification written anywhere
+# else still succeeds: nothing is delivered and nothing errors.
+NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
 # Default skip list — playlists too ambiguous or personal for auto-sorting.
 # Customize this in ~/.spotify/organize.json after running: spotify organize config --init
@@ -286,10 +288,16 @@ def _save_watch_state(state: dict) -> None:
 
 
 def _write_notification(data: dict) -> None:
-    """Write a notification JSON file to the notifications directory."""
+    """Write a notification JSON file to the notifications directory atomically (a sibling temp
+    file renamed over the target), so a monitor tick globbing the directory never observes a
+    half-written file."""
     data.setdefault("source", "spotify")
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    _write_json(NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json", data)
+    path = NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.replace(path)
 
 
 def _log(msg: str) -> None:
