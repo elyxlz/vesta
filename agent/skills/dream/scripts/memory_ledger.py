@@ -20,18 +20,25 @@ import sys
 
 MEMORY = pl.Path("~/agent/MEMORY.md").expanduser()
 SNAPS = pl.Path("~/agent/data/memory-snapshots").expanduser()
-# The one section the dream skill explicitly tells you to replace wholesale each night.
-VOLATILE = "### User State"
+# The two places the dream skill orders rewritten every night: the User State section, and the
+# State paragraph opening the Self section (which runs to the --- before the standing lessons).
+# Their churn is intended, and a report mostly made of intended churn is one you learn to skim.
+VOLATILE_SECTION = "### User State"
+VOLATILE_PARA = "**State ("
 KEEP = 30
 
 
 def durable_lines(text: str) -> list[str]:
-    """Every non-blank line outside the volatile section, so churn there cannot mask a real loss."""
-    out, skipping = [], False
+    """Every non-blank line outside the nightly-rewritten parts, so their churn cannot mask a loss."""
+    out, in_section, in_para = [], False, False
     for line in text.splitlines():
         if line.startswith("### "):
-            skipping = line.strip() == VOLATILE
-        if not skipping and line.strip():
+            in_section = line.strip() == VOLATILE_SECTION
+        if line.startswith(VOLATILE_PARA):
+            in_para = True
+        elif in_para and line.strip() == "---":
+            in_para = False
+        if not in_section and not in_para and line.strip():
             out.append(line.rstrip())
     return out
 
