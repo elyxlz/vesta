@@ -95,3 +95,29 @@ def test_delete_folder(patched):
     assert result == {"status": "deleted", "id": "fid"}
     delete = next(c for c in patched if c["method"] == "DELETE")
     assert delete["path"] == "/me/mailFolders/fid"
+
+
+def test_read_paths_address_a_custom_folder_by_id(patched, monkeypatch):
+    """`email list`/`search` must resolve a user-created folder to its id, like `move` does.
+
+    Graph accepts a bare name in the URL path only for its own well-known folders, so putting a
+    display name such as `Newsletters` straight into the path returns 400. Reading and moving
+    therefore have to share one resolver.
+    """
+    from microsoft_cli import email
+
+    seen: list[str] = []
+
+    def fake_paginate(config, client, endpoint, account_id=None, **kwargs):
+        seen.append(endpoint)
+        return iter(())
+
+    monkeypatch.setattr(email.auth, "get_account_id_by_email", lambda e, c: "acct-1")
+    monkeypatch.setattr(email.graph, "paginate_cfg", fake_paginate)
+    monkeypatch.setattr(email.folders.graph, "request", lambda *a, **k: _FOLDERS_PAGE)
+
+    email.list_emails(Config(), None, account_email="me@example.com", folder="Newsletters")
+    email.search_emails(Config(), None, account_email="me@example.com", query="hi", folder="Newsletters")
+
+    assert seen == ["/me/mailFolders/news-id/messages"] * 2
+    assert all("Newsletters" not in endpoint for endpoint in seen)

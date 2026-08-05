@@ -273,19 +273,18 @@ _MSG_SELECT = (
 _MAX_PAGE_SIZE = 100
 
 
-def _folder_id(name: str | None) -> str:
-    key = (name or "inbox").casefold()
-    return _FOLDER_MAP.get(key, key)
-
-
 # ---------------------------------------------------------------------------
 # Mail: read
 # ---------------------------------------------------------------------------
 
+# Read paths resolve folders via `resolve_folder_id`, the same resolver `move` uses: OWA REST
+# accepts a bare name in the URL path only for well-known folders, so a user-created one such
+# as `Screened` has to be looked up and addressed by id.
+
 
 def list_messages(client: httpx.Client, account_email: str, config, *, folder: str = "inbox", limit: int = 10) -> list[dict]:
     token = load_token(account_email, config)
-    fid = _folder_id(folder)
+    fid = resolve_folder_id(client, account_email, config, folder=folder)
     params = {
         "$select": _MSG_SELECT,
         "$orderby": "ReceivedDateTime desc",
@@ -297,7 +296,7 @@ def list_messages(client: httpx.Client, account_email: str, config, *, folder: s
 def list_messages_since(client: httpx.Client, account_email: str, config, *, folder: str, since_utc: str, limit: int) -> list[dict]:
     """Ascending order makes a truncated read a resumable prefix of the window, not its newest slice."""
     token = load_token(account_email, config)
-    fid = _folder_id(folder)
+    fid = resolve_folder_id(client, account_email, config, folder=folder)
     params = {
         "$select": _MSG_SELECT,
         "$filter": f"ReceivedDateTime gt {since_utc}",
@@ -312,7 +311,7 @@ def filter_messages_by_date(
 ) -> list[dict]:
     """Fetch messages in a receivedDateTime range, newest first, via server-side $filter."""
     token = load_token(account_email, config)
-    fid = _folder_id(folder or "inbox")
+    fid = resolve_folder_id(client, account_email, config, folder=folder or "inbox")
     params = {
         "$select": _MSG_SELECT,
         "$filter": date_filter,
@@ -324,7 +323,7 @@ def filter_messages_by_date(
 
 def search_messages(client: httpx.Client, account_email: str, config, *, query: str, folder: str | None = None, limit: int = 10) -> list[dict]:
     token = load_token(account_email, config)
-    fid = _folder_id(folder or "inbox")
+    fid = resolve_folder_id(client, account_email, config, folder=folder or "inbox")
     params: dict = {
         "$select": _MSG_SELECT,
         "$search": f'"{query}"',
