@@ -334,10 +334,21 @@ def test_retitle_rewrites_armed_reminder_messages(tmp_config: Config):
     task = _add_task_due_in(tmp_config, "Chase the refund (never issued)", timedelta(days=10))
     commands.update_task(tmp_config, task_id=task["id"], title="Refund ALREADY PAID, close this")
 
-    messages = [r["message"] for r in _auto_reminders(tmp_config, task["id"])]
-    assert messages, "the ladder must survive a retitle"
-    assert all("Refund ALREADY PAID" in m for m in messages)
-    assert not any("never issued" in m for m in messages)
+    rows = _auto_reminders(tmp_config, task["id"])
+    assert rows, "the ladder must survive a retitle"
+    assert not any("never issued" in r["message"] for r in rows)
+
+    # Assert the exact text the db.py templates produce, not merely that the new title appears
+    # somewhere: a substring check still passes if the rewrite drifts from what
+    # create_auto_reminders writes, and that drift stays invisible until a reminder fires.
+    for row in rows:
+        schedule = row["schedule_type"]
+        if schedule == "auto: at due":
+            expected = db.DUE_NOW_MESSAGE.format(title="Refund ALREADY PAID, close this", task_id=task["id"])
+        else:
+            label = schedule[len("auto: ") : -len(" before due")]
+            expected = db.LEAD_TIME_MESSAGE.format(label=label, title="Refund ALREADY PAID, close this")
+        assert row["message"] == expected
 
 
 def test_retitle_keeps_the_tail_firing_at_the_same_instants(tmp_config: Config):
