@@ -103,6 +103,16 @@ def mark_device_account(account_email: str, config) -> None:
     p.write_text(json.dumps({"source": "device"}))
 
 
+def unmark_device_account(account_email: str, config) -> None:
+    """Drop a device marker so `has_token` stops claiming Teams for this account.
+
+    Leaves a browser-captured token alone: that marker holds a real token this function
+    has no reason to destroy."""
+    marker = _read_marker(account_email, config)
+    if marker is not None and _source(marker) == "device":
+        _token_path(account_email, config).unlink(missing_ok=True)
+
+
 def save_token(account_email: str, config, *, token: str, expires_at: float, source: str = "browser") -> None:
     """Persist a captured token. Never log the token value."""
     p = _token_path(account_email, config)
