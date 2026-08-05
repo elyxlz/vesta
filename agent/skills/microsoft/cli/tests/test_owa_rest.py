@@ -529,6 +529,38 @@ def test_resolve_folder_id_display_name(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"value": [{"Id": "news-id", "DisplayName": "Newsletters"}]})
     assert owa_rest.resolve_folder_id(client, "user@example.com", cfg, folder="Newsletters") == "news-id"
+    # A top-level hit costs the one listing; the child walk is only paid for on a miss.
+    assert client.get.call_count == 1
+
+
+def _folder_listing(payload: dict) -> MagicMock:
+    resp = MagicMock(status_code=200)
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = payload
+    return resp
+
+
+def test_resolve_folder_id_finds_a_folder_nested_under_a_top_level_one(tmp_path):
+    cfg = _patched_token(tmp_path)
+    mock = MagicMock(spec=httpx.Client)
+    mock.get.side_effect = [
+        _folder_listing({"value": [{"Id": "inbox-id", "DisplayName": "Inbox"}]}),
+        _folder_listing({"value": [{"Id": "screened-id", "DisplayName": "Screened"}]}),
+    ]
+
+    assert owa_rest.resolve_folder_id(mock, "user@example.com", cfg, folder="Screened") == "screened-id"
+    assert mock.get.call_args.args[0].endswith("/me/mailfolders/inbox-id/childfolders")
+
+
+def test_resolve_folder_id_returns_the_raw_name_when_no_folder_matches(tmp_path):
+    cfg = _patched_token(tmp_path)
+    mock = MagicMock(spec=httpx.Client)
+    mock.get.side_effect = [
+        _folder_listing({"value": [{"Id": "inbox-id", "DisplayName": "Inbox"}]}),
+        _folder_listing({"value": []}),
+    ]
+
+    assert owa_rest.resolve_folder_id(mock, "user@example.com", cfg, folder="Nowhere") == "Nowhere"
 
 
 def test_list_folders_flattens_children(tmp_path):

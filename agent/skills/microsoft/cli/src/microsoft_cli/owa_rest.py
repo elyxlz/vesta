@@ -564,16 +564,40 @@ def download_attachments(client: httpx.Client, account_email: str, config, *, em
 _FOLDER_SELECT = "id,displayName,parentFolderId,totalItemCount,unreadItemCount"
 
 
+def _values(resp: dict) -> list[dict]:
+    return resp["value"] if "value" in resp else []
+
+
+def _folder_id_by_name(candidates: list[dict], key: str) -> str | None:
+    for candidate in candidates:
+        name = candidate["displayName"] if "displayName" in candidate else ""
+        if (name or "").casefold() == key:
+            return candidate["id"]
+    return None
+
+
 def resolve_folder_id(client: httpx.Client, account_email: str, config, *, folder: str) -> str:
-    """Map a well-known key, a display name, or a raw folder id to an OWA folder path segment."""
+    """Map a well-known key, a display name, or a raw folder id to an OWA folder path segment.
+
+    A well-known key costs no request. A display name is matched against the top-level listing
+    first; only on a miss does it descend one level into each top-level folder's children, which
+    is where a nested folder such as Inbox/Screened lives and is the same depth ``list_folders``
+    reports, so every folder the CLI can list is a folder it can address.
+    """
     key = folder.casefold()
     if key in _FOLDER_MAP:
         return _FOLDER_MAP[key]
     token = load_token(account_email, config)
-    resp = _get(client, token, "/me/mailfolders", {"$select": "id,displayName", "$top": "100"})
-    for candidate in resp.get("value", []):
-        if (candidate.get("displayName") or "").casefold() == key:
-            return candidate["id"]
+    params = {"$select": "id,displayName", "$top": "100"}
+    top = _values(_get(client, token, "/me/mailfolders", params))
+    match = _folder_id_by_name(top, key)
+    if match is not None:
+        return match
+    for parent in top:
+        kids = _values(_get(client, token, f"/me/mailfolders/{parent['id']}/childfolders", params))
+        match = _folder_id_by_name(kids, key)
+        if match is not None:
+            return match
     return folder
 
 

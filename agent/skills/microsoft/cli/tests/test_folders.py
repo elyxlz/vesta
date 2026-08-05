@@ -59,6 +59,12 @@ def test_resolve_display_name_to_id(patched):
     assert any(c["path"] == "/me/mailFolders" for c in patched)
 
 
+def test_resolve_nested_display_name_to_id(patched):
+    # A folder nested under Inbox resolves too: the listing expands one level of children.
+    resolved = folders.resolve_folder_id_cfg(Config(), None, "acct-1", "Receipts")
+    assert resolved == "sub-id"
+
+
 def test_resolve_unknown_returns_token(patched):
     resolved = folders.resolve_folder_id_cfg(Config(), None, "acct-1", "already-an-id")
     assert resolved == "already-an-id"
