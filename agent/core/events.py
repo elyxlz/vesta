@@ -220,9 +220,13 @@ END;
 # guards the json_extract: a malformed historic row would otherwise abort every query built on this.
 _NOTIFICATION_CONDITION = "json_valid(data) AND json_extract(data, '$.type') = 'notification'"
 
-# The rows those triggers index, as a WHERE clause over `events`, for the v2 backfill.
+# The rows those triggers index, as a WHERE clause over `events`, for the v2 backfill. Spelled out
+# rather than composed from _NOTIFICATION_CONDITION: a released migration step has to stay frozen,
+# and a shared constant would let an edit meant for the history channel rewrite it. json_valid keeps
+# a malformed historic row from aborting the backfill, and with it the whole boot.
 _NOTIFICATION_FTS_CONDITION = (
-    f"{_NOTIFICATION_CONDITION} AND COALESCE(json_extract(data, '$.source'), '') <> 'core' AND json_extract(data, '$.summary') IS NOT NULL"
+    "json_valid(data) AND json_extract(data, '$.type') = 'notification'"
+    " AND COALESCE(json_extract(data, '$.source'), '') <> 'core' AND json_extract(data, '$.summary') IS NOT NULL"
 )
 
 _RECENCY_DECAY_RATE = 0.01

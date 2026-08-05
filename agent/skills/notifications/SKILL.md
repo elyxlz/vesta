@@ -38,15 +38,15 @@ notification's other fields. Every field/condition you set must hold (AND); what
   - `=` substring, e.g. `--match 'chat_name=Bride squad'`
   - `~=` regex (`re.search`), e.g. `--match 'subject~=invoice|payment'`
   - `!=` / `!~=` negate either, e.g. `--match 'chat_name!=Bride squad'` (everything but that chat)
-- `FIELD` is any field the notification carries. **Run `facets` first and target a field it actually
-  lists** (`facets` pools fields across sources, so check the field's values look like your source's),
-  because fields are per-source: a rule naming a field the notification does not carry is accepted,
-  appears in `list`, and never fires, so it reads as working while changing nothing. Negated it is
-  worse: a predicate over a missing field does not match, so its negation matches **everything** from
-  that source, and first-match-wins means it shadows every rule below it. Two aliases span a source's
-  synonym fields so you needn't know the exact name:
-  `sender` (identity) and `text` (body). `--sender X` and `--keyword RE` are shortcuts for
-  `--match 'sender=X'` and `--match 'text~=RE'`.
+- `FIELD` is any field the notification carries, and fields are per-source. **Run `facets` first and
+  target a field it lists** (`facets` pools fields across sources, so check the values look like your
+  source's): a rule naming a field the notification does not carry is accepted, appears in `list`, and
+  never fires, so it reads as working while changing nothing. Negated it is worse: a predicate over a
+  missing field does not match, so its negation matches **everything** from that source, and
+  first-match-wins means it shadows every rule below it.
+- Two aliases span a source's synonym fields so you needn't know the exact name: `sender` (identity)
+  and `text` (body). `--sender X` and `--keyword RE` are shortcuts for `--match 'sender=X'` and
+  `--match 'text~=RE'`.
 - **First match wins**: rules evaluate top to bottom and stop at the first match, so order is the only
   precedence; a later, more-specific rule never overrides an earlier, broader one. To OR across fields,
   write separate rules (one rule's conditions are all ANDed).

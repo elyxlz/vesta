@@ -32,5 +32,8 @@ def test_watcher_writes_into_the_directory_the_engine_watches(notifications_dir,
 
 
 def test_no_skill_writes_to_the_home_notifications_dir() -> None:
-    offenders = sorted(str(p.relative_to(SKILLS_DIR)) for p in SKILLS_DIR.rglob("*.py") if HOME_RELATIVE.search(p.read_text(errors="replace")))
+    # Skill sources only: each skill CLI grows a `.venv` the first time its suite runs, and scanning
+    # those reads tens of thousands of vendored files whose contents no rule here governs.
+    sources = (p for p in SKILLS_DIR.rglob("*.py") if ".venv" not in p.parts)
+    offenders = sorted(str(p.relative_to(SKILLS_DIR)) for p in sources if HOME_RELATIVE.search(p.read_text(errors="replace")))
     assert offenders == []

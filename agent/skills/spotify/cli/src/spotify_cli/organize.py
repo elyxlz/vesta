@@ -189,10 +189,13 @@ def _load_config() -> dict:
 
 
 def _write_json(path: Path, data: dict) -> None:
-    """Write data as pretty JSON, creating parent dirs."""
+    """Write data as pretty JSON, creating parent dirs. Atomic (a sibling temp file renamed over the
+    target), so no reader ever observes a half-written file: the monitor tick globbing the
+    notifications dir, and this module's own reads of the watch state and the config."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.replace(path)
 
 
 def _chunks(lst, n):
@@ -288,16 +291,10 @@ def _save_watch_state(state: dict) -> None:
 
 
 def _write_notification(data: dict) -> None:
-    """Write a notification JSON file to the notifications directory atomically (a sibling temp
-    file renamed over the target), so a monitor tick globbing the directory never observes a
-    half-written file."""
+    """Write a notification JSON file to the notifications directory."""
     data.setdefault("source", "spotify")
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    path = NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    tmp.replace(path)
+    _write_json(NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json", data)
 
 
 def _log(msg: str) -> None:
