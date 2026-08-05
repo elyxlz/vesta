@@ -20,7 +20,7 @@ Don't wait to stumble on things worth upstreaming: sweep for them. Your workspac
 ```bash
 VER=$(grep '^version = ' ~/agent/core/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 git -C ~ status --porcelain -- agent/                                    # untracked files
-git -C ~ diff --stat "agent-v$VER" -- agent/ ':(exclude)agent/core/**'   # tracked changes, vs stock
+git -C ~ diff --stat "agent-v$VER" -- agent/   # tracked changes, vs stock
 ```
 
 **Both commands are needed, and neither takes a `..HEAD`.** `TAG..HEAD` compares two commits, so it excludes the working tree, where an agent's edits live until something commits them; and when a release tag points at `HEAD`, that range is empty by construction and the sweep reports "nothing to upstream" every night. `git diff` also never lists untracked files, so a skill or script created locally is invisible to it. `git status --porcelain` is the half that lists those.
