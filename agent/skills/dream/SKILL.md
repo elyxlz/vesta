@@ -20,6 +20,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 4. **Workspace cleanup**
 5. **Sensitive data cleanup**
 6. **Summary**
+7. **Commit the day**
 
 ## Before you start
 
@@ -113,6 +114,10 @@ Update the "User State" section, your working model of where they're at. Write w
 
 **Every dream produces one person-fact: a value, a fear, a love, a person who matters and why, not an operational tell. If today taught you nothing about who they are, write that down and be more curious tomorrow.**
 
+**Get the denominator before you write it.** The nightly quota is pressure, and at 4am a manufactured fact feels exactly like a noticed one. So when a person-fact generalizes from things you observed: count those instances, count how often the opposite happened in the same window, and ask whether you found it by going looking for it, since a search confirms whatever it was pointed at. More counter-instances than instances means a one-off, not a pattern. A wrong person-fact is worse than none, because it loads into every message tomorrow and shapes how you read them.
+
+Real case: "writes careful emails and does not send them" was written from three unsent drafts. The recount gave two, composed two minutes apart in one sitting, against forty sent in the same window, and the search had been for unsent drafts. Two failures at once: no denominator, and an operational tell this section already excludes.
+
 **Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
 **Sentinel sweep.** If any identity slot is still `[Unknown]` (Name/Location/Timezone in §4, Primary Channel in §2) and you now know it, fill it; a slot still empty past onboarding is a birth that half-finished, so close it or flag it to the user.
@@ -136,6 +141,8 @@ Replace rather than append: it's a snapshot, not a log. The rolling fields refre
 ## Memory Curation
 
 MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate. Don't let it overflow.
+
+**Review what curation removed.** After curating, diff MEMORY.md against the last dream checkpoint: `git log -n1 --format=%H --grep '^dream: nightly checkpoint'`, then `git diff <sha> -- agent/MEMORY.md`. Every removed line needs an answer: graduated into a skill file (say where in tonight's summary), expired, or wrongly dropped, so restore it. `### User State` and the Self `**State**:` line are rewritten nightly by design; skip them. No prior checkpoint, no review. Old versions stay recoverable via `git show <sha>:agent/MEMORY.md`.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
@@ -176,7 +183,7 @@ Keep the container's filesystem organized and disk usage under control.
 
 ## Sensitive Data Cleanup
 
-Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, connection strings, and payment-card numbers (a digit run is reported only when it opens with a real card-issuer prefix and passes the Luhn check, so order numbers, tracking numbers, and timestamp ids stay out of the report). Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact, then verifies the committed rows and warns (exit 2) if a matched secret survived the rewrite. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, connection strings, and payment-card numbers (a digit run is reported only when it opens with a real card-issuer prefix and passes the Luhn check, so order numbers, tracking numbers, and timestamp ids stay out of the report). Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact, then verifies the committed rows and warns (exit 2) if a matched secret survived the rewrite. When a snippet is too short to judge, `redact_secrets.sh --show <id>` prints that event's full data with every detected secret masked. Read a stored event's raw data no other way: a raw row printed into your context re-leaks the live value into a new event. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
 
 **For a value the scanner cannot detect but you know exactly** (a human-chosen password matches no API-key shape, and `--scrub` on its events prints `0 event(s)` while the value stays put): `redact_secrets.sh --scrub-literal '<exact value>'` replaces every stored copy DB-wide, prints only counts and the value's length (never the value), keeps the search index in sync, and refuses values under 6 characters because the rewrite is DB-wide. The same command is the fix when `--scrub` exits 2 with a warning that a matched secret survived. `--scrub-literal` verifies the committed rows too, and exits 2 when a copy sits where a JSON rewrite cannot reach it (a bare JSON number): fix those events by hand and resync events_fts. After a literal scrub, re-run it once at the end of the night: the command that invoked it may itself be recorded as a new event.
 
@@ -189,6 +196,10 @@ The user reviews this summary, so it's an accountability record, not a private l
 Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
 
 **Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `tasks` skill on your own channel.
+
+## Commit the day
+
+One commit seals the whole day, so `git log` reads as a diary: `git add -A`, then `git commit -m 'dream: nightly checkpoint (<date>)' -m '<one or two sentences on what changed today>'`. Skip it while a merge is in progress (`git rev-parse -q --verify MERGE_HEAD` succeeds); nothing to commit is fine.
 
 ## Compaction on completion
 

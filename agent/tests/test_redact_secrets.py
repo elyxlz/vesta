@@ -305,6 +305,33 @@ def test_scan_still_ignores_the_news_slug_false_positive():
     assert redact.find_matches("read sk-hynix-raises-full-year-guidance-on-ai-demand today") == []
 
 
+# Namespaced identifiers: the digit run is the tail of a dotted id, not a PAN. These clear both the
+# IIN gate and Luhn, so the dot in the lookbehind is the only thing separating them from a card.
+NAMESPACED_IDS = ["mdp.39015017012900", "coo.31924002274110", "inu.30000047482611"]
+
+
+@pytest.mark.parametrize("ident", NAMESPACED_IDS)
+def test_namespaced_identifiers_are_not_read_as_cards(ident):
+    digits = ident.split(".", 1)[1]
+    # Guard: without the namespace these WOULD be flagged, so the test cannot pass by accident.
+    assert redact.luhn_valid(digits) and redact._has_card_iin(digits) and redact._is_card(digits)
+    assert redact.find_matches(f"fetch id={ident} now") == []
+    assert redact.redact_cards(ident) == ident
+
+
+def test_namespace_rejection_needs_the_dot_adjacent():
+    # A PAN after a sentence-ending period is still a PAN: the separating space breaks the binding.
+    assert redact.find_matches(f"paid. {VISA} cleared") != []
+    # And a PAN quoted or assigned normally is untouched by the change.
+    assert redact.find_matches(f'card="{VISA}"') != []
+
+
+def test_pan_glued_to_a_period_is_the_accepted_false_negative():
+    # A PAN hard against a sentence-ending period is indistinguishable from a namespaced id, so the
+    # dot lookbehind skips it. Accepted: a real PAN follows a space, a colon or a quote.
+    assert redact.find_matches(f"Done.{VISA}") == []
+
+
 def test_card_scan_is_idempotent_on_already_redacted_text():
     assert redact.find_matches(f"charge to {VISA} today") != []
     assert redact.find_matches("charge to [REDACTED] today") == []
@@ -342,6 +369,46 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
+
+
+# ---------------------------------------------------------------------------
+# --show: one event's full data, every detected secret masked
+# ---------------------------------------------------------------------------
+
+
+def test_main_show_prints_the_full_event_with_the_secret_masked(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"a long surrounding message where the aws key is {SECRET} for backups"))
+    row_id = db_conn.execute("SELECT id FROM events").fetchone()[0]
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--show", str(row_id)])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert SECRET not in out
+    assert "[REDACTED]" in out
+    assert "a long surrounding message" in out and "for backups" in out
+
+
+def test_main_show_unknown_id_errors_on_stderr(tmp_path, event_bus, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text="anything"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--show", "999999"])
+
+    assert redact.main() != 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "999999" in captured.err
+
+
+def test_main_show_rejects_a_non_numeric_id_with_usage_on_stderr(tmp_path, event_bus, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text="anything"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--show", "not-an-id"])
+
+    assert redact.main() != 0
+    assert "usage:" in capsys.readouterr().err
 
 
 def _insert_raw_event(conn, payload: dict) -> int:
@@ -668,3 +735,4 @@ def test_wrapper_behaves_the_same_whatever_the_caller_cwd(tmp_path):
 
     assert runs[0].stdout == runs[1].stdout
     assert runs[0].returncode == runs[1].returncode
+    assert all("No database at" in run.stderr for run in runs)

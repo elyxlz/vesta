@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Scan the events DB for secrets, then scrub the real leaks in place by event id.
 Usage: redact_secrets.py            # scan, printing each hit with the value masked
+       redact_secrets.py --show ID  # print one event's full data with every detected secret masked
        redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
        redact_secrets.py --scrub-literal 'VALUE'   # redact one known value the scanner can't detect
 """
@@ -124,8 +125,12 @@ def mask(match: re.Match[str]) -> str:
 # Payment-card PANs carry no fixed prefix to key a regex on, so this matches any candidate run and
 # `_is_card` decides. A run of 13 to 19 digits may be split into groups by single spaces or hyphens
 # (4111 1111 1111 1111, 3782-822463-10005). The lookarounds forbid a digit on either side so a
-# longer numeric id is never sliced into a fake PAN.
-CARD_CANDIDATE = re.compile(r"(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)")
+# longer numeric id is never sliced into a fake PAN, and forbid a preceding DOT so the numeric tail
+# of a dotted identifier is not read as one: namespaced catalogue ids (mdp.39015017012900) run 14
+# digits from MII 3, clearing the IIN gate, and pass Luhn about one time in ten. A PAN follows a
+# space, a colon or a quote, never a namespace, so the dot costs no real detection. The guard is
+# deliberately dot-only: hyphen/underscore-namespaced ids stay flagged, erring toward redaction.
+CARD_CANDIDATE = re.compile(r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)")
 # Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
 CONTEXT_CHARS = 40
 
@@ -407,14 +412,32 @@ def _run_scrub_literal(conn: sqlite3.Connection, rest: list[str]) -> int:
     return 0
 
 
+def _run_show(conn: sqlite3.Connection, rest: list[str]) -> int:
+    """Print one event's full `data` with every scanner-detected secret masked, for judging a hit
+    whose scan snippet is too short. Runs through the same redaction pass as the scrub, so no value
+    the scanner detects reaches the output."""
+    if len(rest) != 1 or not rest[0].isdigit():
+        print("usage: redact_secrets.sh --show <event-id>", file=sys.stderr)
+        return 1
+    row = conn.execute("SELECT data FROM events WHERE id = ?", (int(rest[0]),)).fetchone()
+    if row is None or not row[0]:
+        print(f"no event with id {rest[0]}", file=sys.stderr)
+        return 1
+    print(_redact_text(row[0]))
+    return 0
+
+
 def main() -> int:
     if not DB.is_file():
-        print(f"No database at {DB}")
+        print(f"No database at {DB}", file=sys.stderr)
         return 1
 
     args = sys.argv[1:]
     conn = sqlite3.connect(DB)
     try:
+        if args[:1] == ["--show"]:
+            return _run_show(conn, args[1:])
+
         if args[:1] == ["--scrub"]:
             return _run_scrub(conn, [int(arg) for arg in args[1:]])
 

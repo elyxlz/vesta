@@ -1,6 +1,6 @@
 #!/bin/sh
 # Scan events DB for secrets; scrub the real leaks in place.
-# Usage: redact_secrets.sh [--scrub ID ...] | redact_secrets.sh --scrub-literal 'VALUE'
+# Usage: redact_secrets.sh [--show ID | --scrub ID ... | --scrub-literal 'VALUE']
 #
 # `uv run` resolves its interpreter by walking up from the CURRENT working directory, and the dream
 # flow invokes this by absolute path from $HOME, where that walk finds a standalone Python too old
