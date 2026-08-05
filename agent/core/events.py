@@ -214,19 +214,18 @@ CREATE TRIGGER IF NOT EXISTS events_fts_ad_notif AFTER DELETE ON events BEGIN
 END;
 """
 
+# The notifications history channel: the arrivals list for the paginated view. Clears are not here —
+# pending state is seeded from the connect snapshot and kept live via broadcast notification_cleared
+# deltas, so the channel stays arrivals-only and pages aren't diluted by clear events. json_valid
+# guards the json_extract: a malformed historic row would otherwise abort every query built on this.
+_NOTIFICATION_CONDITION = "json_valid(data) AND json_extract(data, '$.type') = 'notification'"
+
 # The rows those triggers index, as a WHERE clause over `events`, for the v2 backfill.
 _NOTIFICATION_FTS_CONDITION = (
-    "json_extract(data, '$.type') = 'notification' "
-    "AND COALESCE(json_extract(data, '$.source'), '') <> 'core' "
-    "AND json_extract(data, '$.summary') IS NOT NULL"
+    f"{_NOTIFICATION_CONDITION} AND COALESCE(json_extract(data, '$.source'), '') <> 'core' AND json_extract(data, '$.summary') IS NOT NULL"
 )
 
 _RECENCY_DECAY_RATE = 0.01
-
-# The notifications history channel: the arrivals list for the paginated view. Clears are not here —
-# pending state is seeded from the connect snapshot and kept live via broadcast notification_cleared
-# deltas, so the channel stays arrivals-only and pages aren't diluted by clear events.
-_NOTIFICATION_CONDITION = "json_extract(data, '$.type') = 'notification'"
 
 # Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
 # version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an
@@ -424,7 +423,13 @@ class EventBus:
         rows = rows[:limit]
         events: list[StreamEvent] = []
         for row in reversed(rows):
-            event: StreamEvent = json.loads(row[1])
+            # A malformed historic row (pre-versioned history, disk damage) must cost one warning,
+            # not the whole page: the unconditioned channel has no SQL predicate to filter it.
+            try:
+                event: StreamEvent = json.loads(row[1])
+            except json.JSONDecodeError:
+                logger.warning("skipping malformed event row id=%s in history page", row[0])
+                continue
             event["id"] = row[0]
             events.append(event)
         return events, rows[-1][0] if has_older else None

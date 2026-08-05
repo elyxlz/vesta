@@ -401,6 +401,32 @@ def test_backfill_runs_once_across_reopens(tmp_path):
         assert indexed == [1]
 
 
+def test_paging_and_backfill_survive_a_malformed_row(tmp_path):
+    """events.db can hold a row whose data is not valid JSON (pre-trigger history, disk damage).
+    json_extract over such a row aborts the whole statement, so the notifications channel and the
+    v2 backfill guard it with json_valid in SQL, and the unconditioned page (which has no SQL
+    predicate at all) skips the row at parse time; one bad row must never take out paging or boot."""
+    _write_v1_db(tmp_path, ['{"type": "notification", "source": "whatsapp", "summary": "the porto keys arrived"}'])
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    # The insert trigger's own json_extract rejects a malformed insert, so a malformed row can only
+    # predate the triggers: model that history by dropping them around the write.
+    conn.execute("DROP TRIGGER events_fts_ai")
+    conn.execute("INSERT INTO events (ts, data) VALUES (?, ?)", ("2026-01-02T00:00:00+00:00", "{not json"))
+    conn.commit()
+    conn.close()
+
+    bus = EventBus(data_dir=tmp_path)
+    notif_events, _ = bus.recent(channel="notifications")
+    all_events, _ = bus.recent()
+    results = bus.search("porto")
+    bus.close()
+
+    assert _db_user_version(tmp_path) == _SCHEMA_VERSION
+    assert [event["type"] for event in notif_events] == ["notification"]
+    assert [event["type"] for event in all_events] == ["notification"]
+    assert len(results) == 1
+
+
 def test_corrupt_db_is_quarantined_and_boots_fresh(tmp_path):
     """A corrupt events.db (disk-full mid-write, bit rot, a restored hot backup) must not
     crash-loop the container: it is renamed aside intact and the agent boots with empty history."""
