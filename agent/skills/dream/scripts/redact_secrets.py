@@ -40,8 +40,10 @@ PATTERNS = [
     r"xox[bp]-[0-9A-Za-z-]+",
     # GitHub App installation tokens are ghs_<installation-id>_<jwt> (the format `upstream-pr
     # --token-only` hands out), so the class allows underscores and dots: without them the match
-    # dies at the first underscore and a truncated copy escapes entirely.
-    r"gh[posr]_[A-Za-z0-9_.\-]{36,}",
+    # dies at the first underscore and a truncated copy escapes entirely. The prefix class carries
+    # all five token families (p personal, o OAuth, u user-to-server, s server-to-server, r
+    # refresh); a prefix left out means that whole token type passes the sweep.
+    r"gh[posru]_[A-Za-z0-9_.\-]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
     r"(?-i:AKIA[0-9A-Z]{16})",  # case-sensitive: real AWS keys are uppercase. Under the outer
