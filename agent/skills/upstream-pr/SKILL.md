@@ -111,7 +111,7 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
    upstream-pr --title "..." --body "..."
    ```
 
-5. **Wait for CI to pass.** Get a token with `upstream-pr --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, and re-run `upstream-pr` to update the PR. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
+5. **Wait for CI to pass.** Capture a token with `TOKEN=$(upstream-pr --token-only)` (never bare, see "Handling the token"), then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, and re-run `upstream-pr` to update the PR. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
    **To add a commit to a PR that is already open, re-run `upstream-pr` from the worktree.** Recreate it on the existing branch (`git -C ~ worktree add /tmp/vesta-pr <existing-branch>`), commit, then run `upstream-pr --title "..." --body "..."` again: it force-pushes the branch and prints `PR already exists for this branch` rather than failing. Prefer this to opening a second PR for the same change.
 
@@ -171,7 +171,26 @@ Treat that table as perishable: permissions belong to the installed App and chan
 
 ## Filing an issue
 
-Get a token with `upstream-pr --token-only`, then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
+Capture a token with `TOKEN=$(upstream-pr --token-only)` (never bare, see "Handling the token"), then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
+
+## Handling the token (REQUIRED)
+
+`--token-only` writes a **live** GitHub App installation token to stdout, and your runtime persists tool output into the event store. So a bare `upstream-pr --token-only` deposits a working credential into your own searchable history, where it outlives the request that needed it.
+
+Always capture it into a shell variable in the same command that uses it, so the value never reaches stdout:
+
+```bash
+TOKEN=$(upstream-pr --token-only)
+curl -s -H "Authorization: token $TOKEN" https://api.github.com/repos/elyxlz/vesta/issues
+```
+
+To check only that the auth channel works, test the exit status, never the value:
+
+```bash
+upstream-pr --token-only >/dev/null && echo "auth ok"
+```
+
+If a token does reach your history, scrub it: `~/agent/skills/dream/scripts/redact_secrets.sh` then `--scrub <event id>`.
 
 ## upstream-pr reference
 
@@ -182,8 +201,9 @@ upstream-pr --title "fix: ..." --body "..."
 # Custom branch and base
 upstream-pr --title "..." --branch my-branch --base master
 
-# Short-lived GitHub API token (for issues, check-runs, PR status)
-upstream-pr --token-only
+# Short-lived GitHub API token (for issues, check-runs, PR status).
+# Always capture it, never run bare: stdout is persisted into the event store.
+TOKEN=$(upstream-pr --token-only)
 ```
 
 ## Running a skill's tests

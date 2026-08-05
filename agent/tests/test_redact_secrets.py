@@ -301,6 +301,17 @@ def test_scan_still_flags_existing_key_and_jwt_patterns():
     assert len(redact.find_matches(f"auth {jwt} header")) == 1
 
 
+# One case per GitHub token family, so no prefix can silently drop out of the character class.
+@pytest.mark.parametrize("prefix", ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"])
+def test_scan_flags_every_github_token_prefix(prefix):
+    token = prefix + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    matches = redact.find_matches(f"authorization: token {token} sent")
+
+    assert len(matches) == 1
+    assert token not in matches[0]
+    assert "[REDACTED]" in matches[0]
+
+
 def test_scan_still_ignores_the_news_slug_false_positive():
     assert redact.find_matches("read sk-hynix-raises-full-year-guidance-on-ai-demand today") == []
 
