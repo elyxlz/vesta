@@ -64,7 +64,7 @@ email-client search --account personal --folder INBOX --query 'SUBJECT "invoice"
 email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 ```
 
-`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body. `search --query` takes a raw IMAP SEARCH expression.
+`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body. `search --query` takes a raw IMAP SEARCH expression; a query the server rejects as malformed is retried as a plain-text phrase search, so `--query 'job alert'` works too.
 
 ## Attachments
 
