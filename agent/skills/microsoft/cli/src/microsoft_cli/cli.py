@@ -174,7 +174,7 @@ def _add_email_read_parsers(email_sub) -> None:
 
     p_get_email = email_sub.add_parser("get")
     p_get_email.add_argument("--account", required=True)
-    p_get_email.add_argument("--id", required=True, dest="email_id")
+    p_get_email.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_get_email.add_argument("--no-attachments", action="store_true")
     p_get_email.add_argument("--save-to", default=None)
 
@@ -196,7 +196,7 @@ def _add_email_read_parsers(email_sub) -> None:
 
     p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--account", required=True)
-    p_attachment.add_argument("--email-id", required=True)
+    p_attachment.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_attachment.add_argument("--attachment-id", default=None)
     p_attachment.add_argument("--save-path", default=None)
     p_attachment.add_argument("--list", action="store_true", dest="list_only", help="List attachment metadata only")
@@ -229,7 +229,7 @@ def _add_email_compose_parsers(email_sub) -> None:
 
     p_reply = email_sub.add_parser("reply")
     p_reply.add_argument("--account", required=True)
-    p_reply.add_argument("--id", required=True, dest="email_id")
+    p_reply.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_reply.add_argument("--body", required=True)
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
@@ -237,7 +237,7 @@ def _add_email_compose_parsers(email_sub) -> None:
 
     p_reply_draft = email_sub.add_parser("reply-draft")
     p_reply_draft.add_argument("--account", required=True)
-    p_reply_draft.add_argument("--id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
+    p_reply_draft.add_argument("--id", "--email-id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
     p_reply_draft.add_argument("--body", required=True, help="Reply text placed above the quoted history; '- ' lines become bullets")
     p_reply_draft.add_argument("--attachments", nargs="+", default=None)
     p_reply_draft.add_argument("--reply-all", action="store_true")
@@ -245,7 +245,7 @@ def _add_email_compose_parsers(email_sub) -> None:
 
     p_forward = email_sub.add_parser("forward")
     p_forward.add_argument("--account", required=True)
-    p_forward.add_argument("--id", required=True, dest="email_id")
+    p_forward.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_forward.add_argument("--to", nargs="+", required=True)
     p_forward.add_argument("--body", default="")
     p_forward.add_argument("--cc", nargs="+", default=None)
@@ -265,16 +265,16 @@ def _add_email_manage_parsers(email_sub) -> None:
 
     p_move = email_sub.add_parser("move")
     p_move.add_argument("--account", required=True)
-    p_move.add_argument("--id", required=True, dest="email_id")
+    p_move.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_move.add_argument("--to-folder", required=True, dest="to_folder")
 
     p_archive = email_sub.add_parser("archive")
     p_archive.add_argument("--account", required=True)
-    p_archive.add_argument("--id", required=True, dest="email_id")
+    p_archive.add_argument("--id", "--email-id", required=True, dest="email_id")
 
     p_update = email_sub.add_parser("update")
     p_update.add_argument("--account", required=True)
-    p_update.add_argument("--id", required=True, dest="email_id")
+    p_update.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_update.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
     p_update.add_argument("--categories", nargs="+", default=None)
     p_update_flag = p_update.add_mutually_exclusive_group()
@@ -284,7 +284,7 @@ def _add_email_manage_parsers(email_sub) -> None:
     p_delete = email_sub.add_parser("delete")
     p_delete.add_argument("--account", required=True)
     p_delete_group = p_delete.add_mutually_exclusive_group(required=True)
-    p_delete_group.add_argument("--id", default=None, dest="email_id", help="ID of a single message to delete")
+    p_delete_group.add_argument("--id", "--email-id", default=None, dest="email_id", help="ID of a single message to delete")
     p_delete_group.add_argument("--sender", default=None, help="Delete all messages from this sender address")
     p_delete.add_argument("--permanent", action="store_true", help="Hard delete instead of moving to Deleted Items")
 

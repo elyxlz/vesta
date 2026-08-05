@@ -192,9 +192,16 @@ def _scrub_email_snapshot(record: dict[str, Any]) -> None:
         record.setdefault("preview", record.pop("bodyPreview"))
 
 
-def _resolve_mail_endpoint(config: Config, folder: str | None) -> str:
+def _resolve_mail_endpoint(config: Config, client: httpx.Client, account_id: str, folder: str | None) -> str:
+    """Messages endpoint for a folder given as a well-known key, a display name, or a raw id.
+
+    Resolution goes through `folders.resolve_folder_id_cfg`, the same resolver `move_email` uses.
+    Graph accepts a bare name in the URL path only for its own well-known folders, so a
+    user-created one such as `Screened` has to be looked up and addressed by id; putting the
+    display name straight in the path returns 400.
+    """
     if folder:
-        folder_path = config.folders[folder.casefold()] if folder.casefold() in config.folders else folder
+        folder_path = folders.resolve_folder_id_cfg(config, client, account_id, folder)
         return f"/me/mailFolders/{folder_path}/messages"
     return "/me/messages"
 
@@ -231,8 +238,7 @@ def list_emails(
 ) -> list[dict[str, Any]]:
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
-    folder_path = config.folders[folder.casefold()] if folder.casefold() in config.folders else folder
-    endpoint = f"/me/mailFolders/{folder_path}/messages"
+    endpoint = _resolve_mail_endpoint(config, client, account_id, folder)
 
     if since or until:
         # Date-range path: $filter reaches ANY date directly, unlike relevance-ranked $search.
@@ -836,7 +842,7 @@ def search_emails(
     until: str | None = None,
 ) -> list[dict[str, Any]]:
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
-    endpoint = _resolve_mail_endpoint(config, folder)
+    endpoint = _resolve_mail_endpoint(config, client, account_id, folder)
     if since or until:
         # Graph forbids $search + $filter together, so a date range wins: filter by date, match text client-side.
         return _filter_mailbox_messages(config, client, account_id, endpoint, since=since, until=until, query=query, limit=limit)

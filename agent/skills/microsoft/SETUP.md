@@ -30,9 +30,10 @@ Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your
 
 ## Authentication
 
-**Run one command: `microsoft auth setup --account <email>`.** It provisions mail, calendar, and
-Teams together and picks the right path on its own; each step returns a `next:` command telling you
-exactly what to run.
+**Run one command: `microsoft auth setup --account <email>`.** It provisions mail and calendar,
+plus Teams on a work/school account (Teams Graph permissions are work/school only, so a personal
+account gets mail and calendar), and picks the right path on its own; each step returns a `next:`
+command telling you exactly what to run.
 
 ```bash
 microsoft auth setup --account you@example.com          # start (default depends on domain, see below)
@@ -43,7 +44,7 @@ microsoft auth setup --account you@example.com --capture             # finish af
 ```
 
 How it chooses (by the account's domain, no need to ask):
-- **Personal Microsoft account** (outlook.com, hotmail.*, live.*, msn.com, etc.): defaults to **device-code** sign-in. The user visits a URL and enters a code, once. Tokens auto-refresh via MSAL indefinitely.
+- **Personal Microsoft account** (outlook.com, hotmail.*, live.*, msn.com, etc.): defaults to **device-code** sign-in. The user visits a URL and enters a code, once. Tokens auto-refresh via MSAL indefinitely. The sign-in covers mail and calendar; Teams is work/school only.
 - **Work/school account** (any custom domain, e.g. a university or company like UCL): defaults to the **browser handover** up front, because the tenant almost always blocks the default public client and would reject a device code. `auth setup` hands the user **one URL** to sign into their own webmail (SSO + MFA), then captures the token. No admin consent needed. No wasted device-code round-trip.
 - **Escape hatches**: `--browser` forces the browser route for any account; `--device` forces device code even for a work/school domain (for a permissive tenant that still allows it). If a device-code sign-in is later walled by the tenant, `auth setup --flow-cache` still **automatically pivots** to the browser handover.
 
@@ -106,15 +107,21 @@ auto-refreshes that token.
 ## Microsoft Teams
 
 Teams uses the same client and daemon as mail, but has its **own** sign-in so a mail-only account is
-never prompted for Teams scopes. The Teams scopes (`Chat.ReadWrite`, `ChannelMessage.Send`,
-`Team.ReadBasic.All`, `Channel.ReadBasic.All`, `Presence.ReadWrite`) are all user-consentable, so no
-admin approval is needed for chats, channel posting, or presence:
+never prompted for Teams scopes. **Teams needs a work or school account**: every Teams Graph
+permission (`Chat.ReadWrite`, `ChannelMessage.Send`, `Team.ReadBasic.All`, `Channel.ReadBasic.All`,
+`Presence.ReadWrite`) is work/school only, so a personal Microsoft account cannot authorize Teams by
+any route (see [references/teams.md](references/teams.md)). On a work/school tenant the scopes are
+user-consentable, so no admin approval is needed for chats, channel posting, or presence:
 
 ```bash
 microsoft auth teams-login                           # device flow: gives a URL and code
 microsoft auth teams-complete --flow-cache <cache>   # complete after signing in
 microsoft teams chats --account you@company.com
 ```
+
+`teams-complete` reads the granted scopes, not the requested ones. When the sign-in grants no Teams
+permission it answers `status: teams_unavailable` and leaves the account unmarked. That is the answer,
+not a retryable failure: the account cannot hold Teams permissions.
 
 Locked tenant (blocks the CLI's app registration)? Capture a token from Teams on the web, the same
 mechanism as `owa-login`:

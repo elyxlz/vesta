@@ -18,6 +18,8 @@ NEW_ID = "fresh-999.apps.googleusercontent.com"
 RESP_DELETED_CLIENT = (401, {"error": "deleted_client", "error_description": "The OAuth client was deleted."})
 RESP_INVALID_CLIENT = (401, {"error": "invalid_client", "error_description": "The OAuth client was not found."})
 RESP_INVALID_GRANT = (400, {"error": "invalid_grant", "error_description": "Token has been expired or revoked."})
+# A LIVE client presented with the wrong secret: same error code, different meaning.
+RESP_BAD_CLIENT_SECRET = (401, {"error": "invalid_client", "error_description": "The provided client secret is invalid."})
 RESP_SUCCESS = (200, {"access_token": "ya29.new", "expires_in": 3599})
 
 
@@ -30,6 +32,32 @@ def test_classify_deleted_client_is_dead():
 
 def test_classify_invalid_client_not_found_is_dead():
     assert gh.classify_refresh_response(*RESP_INVALID_CLIENT) == gh.DEAD_CLIENT
+
+
+def test_classify_invalid_client_bad_secret_is_auth_rejected_not_dead():
+    # Google answers 401 invalid_client when a LIVE client is sent a wrong secret.
+    # Calling that client dead would notify the user their client was removed.
+    result = gh.classify_refresh_response(*RESP_BAD_CLIENT_SECRET)
+    assert result == gh.CLIENT_AUTH_REJECTED
+    assert result != gh.DEAD_CLIENT
+    # It is still a client-side fault, so it must stay on the self-heal path.
+    assert result in gh.CLIENT_FAULT_STATUSES
+
+
+def test_classify_invalid_client_bad_secret_matching_is_case_insensitive():
+    resp = (401, {"error": "INVALID_CLIENT", "error_description": "The Provided Client Secret Is Invalid."})
+    assert gh.classify_refresh_response(*resp) == gh.CLIENT_AUTH_REJECTED
+
+
+def test_classify_invalid_client_deleted_wins_over_secret_wording():
+    # If the description says the client is gone, it is dead even if it also
+    # mentions the secret.
+    resp = (401, {"error": "invalid_client", "error_description": "The OAuth client secret was not found."})
+    assert gh.classify_refresh_response(*resp) == gh.DEAD_CLIENT
+
+
+def test_classify_invalid_client_without_description_stays_dead():
+    assert gh.classify_refresh_response(401, {"error": "invalid_client"}) == gh.DEAD_CLIENT
 
 
 def test_classify_invalid_grant_is_bad_token_not_dead():
@@ -101,6 +129,15 @@ def _post_by_client(mapping):
     return post
 
 
+def _post_by_creds(mapping):
+    """Response keyed on ``(client_id, client_secret)``, for secret-rotation cases."""
+
+    def post(token_url, params):
+        return mapping[(params["client_id"], params.get("client_secret"))]
+
+    return post
+
+
 @pytest.fixture(autouse=True)
 def _isolate_notifs(tmp_path, monkeypatch):
     monkeypatch.setattr(gh, "NOTIF_DIR", tmp_path / "notifications")
@@ -135,6 +172,90 @@ def test_probe_account_bad_token_does_not_notify_or_heal(monkeypatch, tmp_path):
     assert res["status"] == gh.BAD_TOKEN
     assert called["heal"] is False
     assert not (gh.NOTIF_DIR).exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+
+def test_run_probe_bad_client_secret_reresolves_but_does_not_notify(monkeypatch):
+    # A stale secret on a still-live client id must keep the recovery path (the
+    # client re-resolve) and lose only the "client was removed upstream" notice.
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    called = {"heal": 0}
+
+    def _fake_heal(*a, **k):
+        called["heal"] += 1
+        return {"status": gh.CLIENT_AUTH_REJECTED, "healed": False}
+
+    monkeypatch.setattr(gh, "attempt_self_heal", _fake_heal)
+    res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
+    assert res["status"] == gh.CLIENT_AUTH_REJECTED
+    assert called["heal"] == 1
+    assert "notification" not in res
+    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+
+def test_run_probe_heals_rotated_client_secret_on_same_client_id(monkeypatch):
+    # Upstream rotated the shipped secret but kept the client id: the re-resolve
+    # picks up the new secret and the retry succeeds, silently.
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    post = _post_by_creds({(DEAD_ID, "sek"): RESP_BAD_CLIENT_SECRET, (DEAD_ID, "rotated"): RESP_SUCCESS})
+    monkeypatch.setattr(
+        "email_client.thunderbird_client.resolve_google_client",
+        lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "rotated", "source": "fetched"},
+    )
+    res = gh.run_probe("personal", post=post)
+    assert res["status"] == gh.HEALED
+    assert res["self_heal"]["healed"] is True
+    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+
+def test_run_probe_auth_rejected_unhealed_still_does_not_notify(monkeypatch):
+    # Upstream had nothing better to give, so the retry fails too. Still no
+    # notification: the client id is alive, it was never removed upstream.
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    monkeypatch.setattr(
+        "email_client.thunderbird_client.resolve_google_client",
+        lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "sek", "source": "fetched"},
+    )
+    res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
+    assert res["status"] == gh.CLIENT_AUTH_REJECTED
+    assert res["self_heal"]["healed"] is False
+    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+
+def test_self_heal_gives_up_when_nothing_fresh_was_fetched(monkeypatch):
+    # Same client id AND no upstream fetch (cache/fallback): there is nothing new
+    # to try, so do not spend a second token call on credentials known to fail.
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    calls = {"n": 0}
+
+    def _post(_url, _params):
+        calls["n"] += 1
+        return RESP_DELETED_CLIENT
+
+    monkeypatch.setattr(
+        "email_client.thunderbird_client.resolve_google_client",
+        lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "sek", "source": "cache-stale"},
+    )
+    heal = gh.attempt_self_heal("personal", {"client_id": DEAD_ID}, post=_post)
+    assert heal["healed"] is False
+    assert calls["n"] == 0
+
+
+def test_run_probe_deleted_client_reresolves_and_notifies(monkeypatch):
+    # The other direction: a genuinely deleted client keeps BOTH the re-resolve
+    # and the notification.
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    called = {"heal": 0}
+
+    def _fake_heal(*a, **k):
+        called["heal"] += 1
+        return {"status": gh.DEAD_CLIENT, "healed": False}
+
+    monkeypatch.setattr(gh, "attempt_self_heal", _fake_heal)
+    res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_DELETED_CLIENT}))
+    assert res["status"] == gh.DEAD_CLIENT
+    assert called["heal"] == 1
+    assert res["notification"]
+    assert len(list(gh.NOTIF_DIR.glob("*.json"))) == 1
 
 
 def test_run_probe_self_heals_with_fresh_client(monkeypatch):

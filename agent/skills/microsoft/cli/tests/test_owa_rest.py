@@ -231,6 +231,23 @@ def test_list_messages_folder_alias_deleted(tmp_path):
     assert "deleteditems" in call_args[0][0]
 
 
+def test_read_paths_address_a_custom_folder_by_id(tmp_path):
+    """`list`/`search` must resolve a user-created folder to its id, like `move` does.
+
+    OWA REST accepts a bare name in the URL path only for well-known folders, so putting a
+    display name such as `Newsletters` straight into the path fails; reading and moving
+    therefore have to share one resolver.
+    """
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"value": [{"Id": "news-id", "DisplayName": "Newsletters"}]})
+    owa_rest.list_messages(client, "user@example.com", cfg, folder="Newsletters", limit=5)
+    owa_rest.search_messages(client, "user@example.com", cfg, query="hi", folder="Newsletters", limit=5)
+    message_urls = [call.args[0] for call in client.get.call_args_list if "/messages" in call.args[0]]
+    assert len(message_urls) == 2
+    assert all("/me/mailfolders/news-id/messages" in url for url in message_urls)
+    assert all("Newsletters" not in url for url in message_urls)
+
+
 def test_list_messages_passes_select_in_pascal_case(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"value": []})

@@ -92,15 +92,16 @@ Delete soft-deletes to Deleted Items by default (moves to `deleteditems`); `--pe
 ## Attachments
 
 ```bash
-microsoft email attachment --account user@example.com --email-id '<email_id>' --list                                   # list attachment metadata
-microsoft email attachment --account user@example.com --email-id '<email_id>' --all                                     # download all (to ~/.microsoft/attachments/<id>)
-microsoft email attachment --account user@example.com --email-id '<email_id>' --all --out-dir /tmp/x                     # download all to a dir
-microsoft email attachment --account user@example.com --email-id '<email_id>' --attachment-id '<attachment_id>' --save-path /tmp/file.pdf  # one
+microsoft email attachment --account user@example.com --id '<email_id>' --list                                   # list attachment metadata
+microsoft email attachment --account user@example.com --id '<email_id>' --all                                     # download all (to ~/.microsoft/attachments/<id>)
+microsoft email attachment --account user@example.com --id '<email_id>' --all --out-dir /tmp/x                     # download all to a dir
+microsoft email attachment --account user@example.com --id '<email_id>' --attachment-id '<attachment_id>' --save-path /tmp/file.pdf  # one
 ```
 
 ## Notes
 
-- `--folder` on `email list`/`search` filters by folder (default "inbox").
+- **Message id: `--id` and `--email-id` are interchangeable** on every subcommand that takes one (`get`, `attachment`, `move`, `archive`, `update`, `delete`, `reply`, `reply-draft`, `forward`). Either spelling parses everywhere, so a wrong guess cannot exit 2 with a usage error that reads like an empty result when stderr is suppressed.
+- `--folder` on `email list`/`search` filters by folder (default "inbox"). It resolves a display name to the folder id the same way `--to-folder` does on `move`, so a user-created folder such as `Screened` works by name.
 - `--since YYYY-MM-DD` / `--until YYYY-MM-DD` on `email list`/`search` (both inclusive) reach mail by date. Plain `search` uses Graph `$search`, which ranks by relevance and buries old mail, so searching a large mailbox for old messages returns nothing useful; the date flags switch to a `$filter=receivedDateTime` range ordered newest-first, which reaches any date directly. Graph forbids combining `$search` with `$filter`, so when a `--query` and a date range are given together, the date range is applied server-side and the query is matched client-side (case-insensitive) against subject, sender, and body preview.
 - `--no-attachments` on `email get` skips attachment metadata; `--save-to` overrides the auto-save path for the body.
 - **`email get` always saves the body to disk** under `~/.microsoft/emails/<timestamp>_<subject>_<id>.txt` and strips it from the JSON response. The JSON returns `body: {saved_to, length, size_bytes, _note}` plus the legacy `body_saved_to`, `body_saved_size`, `body_length` fields, and a short `preview`. To inspect content, read the file at `body.saved_to`. The full `body.content` field is intentionally never returned inline to keep agent context small. Bodies over 5000 chars also surface a warning telling you to grep/crop before pasting snippets.
