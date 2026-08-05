@@ -30,6 +30,7 @@ Environment overrides (set in ``~/.bashrc``):
 from __future__ import annotations
 
 import argparse
+import imaplib
 import json
 import os
 import pathlib
@@ -38,7 +39,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from imap_tools import AND, MailBox, MailMessageFlags
+from imap_tools import AND, MailBox, MailboxUidsError, MailMessageFlags
 
 from . import daemon, pending_send
 from .providers import (
@@ -440,7 +441,7 @@ def cmd_folders(args):
             print(f'({flags}) "{fi.delim}" {fi.name}')
 
 
-def _fetch_summaries(args, *, include_to: bool, criteria) -> None:
+def _fetch_summaries(args, *, include_to: bool, criteria, charset: str = "US-ASCII") -> None:
     with connect(getattr(args, "account", None), initial_folder=None) as mb:
         mb.folder.set(args.folder)
         # imap_tools ``limit`` keeps the FIRST N; the original CLI keeps the
@@ -450,6 +451,7 @@ def _fetch_summaries(args, *, include_to: bool, criteria) -> None:
         msgs = list(
             mb.fetch(
                 criteria,
+                charset=charset,
                 limit=args.limit or None,
                 reverse=True,
                 mark_seen=False,
@@ -469,7 +471,27 @@ def cmd_list(args):
 
 
 def cmd_search(args):
-    _fetch_summaries(args, include_to=False, criteria=args.query)
+    # The server owns the SEARCH grammar, so ask it rather than guessing here: send the query as
+    # given, and only if it is rejected as malformed treat it as a phrase. IMAP4.abort is a dropped
+    # connection, not a bad query, so it must not trigger the retry. A NO reply (imap_tools raises
+    # MailboxUidsError, which does NOT subclass IMAP4.error) is a refusal such as [BADCHARSET],
+    # not malformed criteria, so it exits with the server's answer instead of retrying.
+    charset = "US-ASCII" if args.query.isascii() else "UTF-8"
+    try:
+        _fetch_summaries(args, include_to=False, criteria=args.query, charset=charset)
+        return
+    except imaplib.IMAP4.abort:
+        raise
+    except MailboxUidsError as exc:
+        sys.exit(f"search failed for {args.query!r}: {exc}")
+    except imaplib.IMAP4.error:
+        pass
+    try:
+        _fetch_summaries(args, include_to=False, criteria=AND(text=args.query), charset=charset)
+    except imaplib.IMAP4.abort:
+        raise
+    except (MailboxUidsError, imaplib.IMAP4.error) as exc:
+        sys.exit(f"search failed for {args.query!r}: {exc}")
 
 
 def cmd_get(args):
@@ -854,7 +876,11 @@ def _add_read_parsers(sub):
 
     p = sub.add_parser("search")
     p.add_argument("--folder", default="INBOX")
-    p.add_argument("--query", required=True)
+    p.add_argument(
+        "--query",
+        required=True,
+        help="raw IMAP criteria (e.g. 'SUBJECT \"invoice\"'), or a plain phrase, searched as text",
+    )
     p.add_argument("--limit", type=int, default=20)
     _add_account_arg(p)
 

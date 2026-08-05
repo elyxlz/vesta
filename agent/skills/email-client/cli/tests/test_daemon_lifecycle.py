@@ -59,9 +59,13 @@ def _install_imap_tools_stub():
             ANSWERED = "\\Answered"
             FLAGGED = "\\Flagged"
 
+        class MailboxUidsError(Exception):
+            pass
+
         it.AND = _and
         it.MailBox = MailBox
         it.MailMessageFlags = MailMessageFlags
+        it.MailboxUidsError = MailboxUidsError
         sys.modules["imap_tools"] = it
 
 

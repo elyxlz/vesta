@@ -37,10 +37,14 @@ def _install_stubs():
             ANSWERED = "\\Answered"
             FLAGGED = "\\Flagged"
 
+        class MailboxUidsError(Exception):
+            pass
+
         # The attribute mirrors the imap_tools API name.
         it.AND = _and
         it.MailBox = MailBox
         it.MailMessageFlags = MailMessageFlags
+        it.MailboxUidsError = MailboxUidsError
         sys.modules["imap_tools"] = it
 
 
