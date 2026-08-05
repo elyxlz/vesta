@@ -2,8 +2,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use vesta_tests::{
-    agent_container_name, docker_cmd, find_vestad, inject_fake_token, is_up, unique_agent,
-    TestAgent, TestServerBuilder, SERVER, SHARED_RO_AGENT,
+    agent_container_name, docker_cmd, exec_in_container, find_vestad, inject_fake_token, is_up,
+    unique_agent, TestAgent, TestServerBuilder, FAKE_TOKEN, SERVER, SHARED_RO_AGENT,
 };
 
 #[test]
@@ -124,13 +124,36 @@ fn creation_flow() {
     assert_eq!(status, "unprovisioned");
 }
 
+/// start_all is a global mutation: it starts every down agent on the server and records
+/// user_desired=running for all of them. On the shared SERVER that restarts agents a concurrent
+/// test just stopped and rewrites their persisted desired state mid-assertion, so this test gets
+/// its own server. Same resource-naming rules as user_desired_persists_and_boot_start_respects_it:
+/// a plain pid-suffixed user and a home under the cargo target tmpdir, both outside the patterns
+/// the shared-SERVER orphan cleanup scans.
 #[test]
 fn start_all_starts_authenticated_agents() {
-    let c = SERVER.client();
+    let user = format!("startall-e2e-{}", std::process::id());
+    let home = tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create home");
+    let vestad = find_vestad().expect("locate vestad binary");
+    let server = TestServerBuilder::new()
+        .user(&user)
+        .home(home.path().to_path_buf())
+        .vestad_bin(vestad)
+        .start()
+        .expect("start vestad");
+    let c = server.client();
     let a1 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
     let a2 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
-    inject_fake_token(&c, &a1.name);
-    inject_fake_token(&c, &a2.name);
+    // inject_fake_token names containers by $USER; this server's containers carry the
+    // custom user, so write the credentials with explicitly built names.
+    let inject = |name: &str| {
+        let script = format!(
+            "mkdir -p /root/.claude && printf '%s' '{FAKE_TOKEN}' > /root/.claude/.credentials.json"
+        );
+        exec_in_container(&format!("vesta-{user}-{name}"), &script).expect("write fake credentials");
+    };
+    inject(&a1.name);
+    inject(&a2.name);
 
     c.start_all().unwrap();
 
