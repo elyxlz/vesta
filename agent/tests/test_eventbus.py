@@ -427,6 +427,31 @@ def test_paging_and_backfill_survive_a_malformed_row(tmp_path):
     assert len(results) == 1
 
 
+def test_an_event_json_cannot_represent_is_dropped_not_stored(tmp_path):
+    """Python's json accepts NaN on both ends: an external notification payload can carry one
+    through json.loads, and a default json.dumps would store it as a row every json_valid reader
+    silently excludes. The writer refuses instead: the row is dropped like any failed write, the
+    event stays live-only, and the store never holds a row json_valid rejects."""
+    bus = EventBus(data_dir=tmp_path)
+    poisoned: NotificationEvent = {
+        "type": "notification",
+        "source": "finance",
+        "summary": "balance update",
+        "fields": {"amount": tp.cast(str, float("nan"))},
+    }
+    bus.emit(poisoned)
+    assert poisoned["id"] < 0, "a dropped row must still get a live id"
+
+    bus.emit(NotificationEvent(type="notification", source="finance", summary="card charged"))
+    events, _ = bus.recent(channel="notifications")
+    bus.close()
+
+    assert [tp.cast(tp.Any, event)["summary"] for event in events] == ["card charged"]
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    assert conn.execute("SELECT count(*) FROM events WHERE NOT json_valid(data)").fetchone()[0] == 0
+    conn.close()
+
+
 def test_corrupt_db_is_quarantined_and_boots_fresh(tmp_path):
     """A corrupt events.db (disk-full mid-write, bit rot, a restored hot backup) must not
     crash-loop the container: it is renamed aside intact and the agent boots with empty history."""

@@ -353,15 +353,17 @@ class EventBus:
             # held by a long maintenance op past the busy timeout) propagated out of emit
             # and took down the whole loop on every event, turning one stuck write into a
             # crash-restart storm. Drop the row with a warning and keep the agent alive.
+            # allow_nan=False makes a NaN smuggled in by an external JSON payload one more
+            # dropped row (ValueError) instead of a stored row json_valid readers exclude.
             try:
                 cursor = self._conn.execute(
                     "INSERT INTO events (ts, data) VALUES (?, ?)",
-                    (event["ts"], json.dumps(event)),
+                    (event["ts"], json.dumps(event, allow_nan=False)),
                 )
                 self._conn.commit()
                 rowid = cursor.lastrowid
                 event["id"] = rowid if rowid is not None else self._next_live_id()
-            except sqlite3.Error as e:
+            except (sqlite3.Error, ValueError) as e:
                 logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
                 event["id"] = self._next_live_id()
         else:
