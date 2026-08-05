@@ -141,6 +141,8 @@ Replace rather than append: it's a snapshot, not a log. The rolling fields refre
 
 MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate. Don't let it overflow.
 
+**After curating, run `~/agent/skills/dream/scripts/memory_ledger.py`, answer for every lost line, then run it again with `--snapshot`.** Curation rewrites MEMORY.md in place, and the file is committed only occasionally, so a rule written one night and compressed away the next leaves no trace in git or anywhere else: the loop silently deletes its own output, and every later retrospective grades a set that has quietly shrunk. The ledger diffs against the snapshot taken at the end of the previous dream, so one report spans the day's edits plus the curation you just ran, ignores the sections this skill orders rewritten nightly, and splits what left into reworded lines (read them to check the meaning survived, nothing more) and lost ones. For each lost line, say either which skill file the rule graduated into or why it expired. A class-level rule worth keeping belongs in a skill file as well, because a version-controlled file is the only thing here that reliably survives.
+
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
 - Relative dates ("tomorrow", "next week"). Convert to absolute
