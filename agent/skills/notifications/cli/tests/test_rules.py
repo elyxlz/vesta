@@ -158,3 +158,38 @@ def test_facets_reads_notification_history(monkeypatch, tmp_path, capsys):
     facets = json.loads(capsys.readouterr().out)
     assert set(facets["source"]) == {"whatsapp", "twitter"}
     assert facets["fields"]["chat_name"] == ["Bride squad"]
+
+
+def test_facets_skips_rows_whose_data_is_not_valid_json(monkeypatch, tmp_path, capsys):
+    """events.db can hold rows whose data is not valid JSON. Without a json_valid guard the first
+    such row aborts the whole query with sqlite3.OperationalError, so one bad row anywhere in the
+    table makes facets unusable. The bad rows must be skipped, not fatal."""
+    db = tmp_path / "events.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, data TEXT)")
+    conn.executemany(
+        "INSERT INTO events (data) VALUES (?)",
+        [
+            ("{not json",),
+            ("",),
+            (
+                json.dumps(
+                    {
+                        "type": "notification",
+                        "source": "whatsapp",
+                        "notif_type": "message",
+                        "sender": "bob",
+                        "fields": {"chat_name": "Bride squad"},
+                    }
+                ),
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(cli, "EVENTS_DB", db)
+    assert cli.cmd_facets(_args()) == 0
+    facets = json.loads(capsys.readouterr().out)
+    assert facets["source"] == ["whatsapp"]
+    assert facets["sender"] == ["bob"]
+    assert facets["fields"]["chat_name"] == ["Bride squad"]

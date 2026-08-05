@@ -125,7 +125,7 @@ class NotificationInterruptRule(pyd.BaseModel):
 def _coerce(value: object) -> str | None:
     """Render a notification field value as a string for matching, or None if absent. Datetimes drop
     microseconds (matching how format_for_display renders them); everything else is str()'d, so bools
-    and ints (`is_group`, `chat_id`) are matchable too."""
+    and ints (`contact_unknown`, `chat_id`) are matchable too."""
     if value is None:
         return None
     if isinstance(value, dt.datetime):
@@ -167,7 +167,7 @@ def _predicate_matches(predicate: FieldPredicate, notif: Notification) -> bool:
 # Extra keys NOT surfaced as discoverable facet fields: the identity fields (already surfaced as the
 # single `sender` facet), the free-text fields (reachable via the `text` alias / keyword, and too long
 # / private to list), and internals. Everything else scalar is a targetable structured attribute
-# (chat_name, chat_type, is_group, media_type, …).
+# (chat_name, chat_type, media_type, …).
 _FACET_EXCLUDE = frozenset({*_IDENTITY_FIELDS, *_BODY_FIELDS, "file_path"})
 # Skip a value too long to be a sane rule target (a pasted blob, a long quoted reply); keeps the facet
 # map and the event row small.

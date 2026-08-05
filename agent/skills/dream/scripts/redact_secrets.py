@@ -17,10 +17,18 @@ REDACTED = "[REDACTED]"
 # The shortest value --scrub-literal accepts: the rewrite is DB-wide, so a tiny literal ("a", "key")
 # would splice the placeholder through unrelated text across the entire history.
 MIN_LITERAL_LEN = 6
-# Event types indexed by events_fts (mirrors the triggers in core/events.py). The schema has
-# insert/delete triggers only, so an in-place UPDATE must resync the index itself: otherwise the
-# old text (with the secret) stays searchable and a later delete corrupts the external-content index.
-FTS_TYPES = ("user", "assistant", "chat")
+# The rows events_fts indexes, and the column each is indexed by (mirrors the triggers in
+# core/events.py): conversational events by $.text, non-core notifications by $.summary. The
+# schema has insert/delete triggers only, so an in-place UPDATE must resync the index itself:
+# otherwise the old text (with the secret) stays searchable and a later delete corrupts the
+# external-content index.
+FTS_INDEXED = (
+    "((json_extract(data, '$.type') IN ('user', 'assistant', 'chat') AND json_extract(data, '$.text') IS NOT NULL)"
+    " OR (json_extract(data, '$.type') = 'notification'"
+    " AND COALESCE(json_extract(data, '$.source'), '') <> 'core'"
+    " AND json_extract(data, '$.summary') IS NOT NULL))"
+)
+FTS_TEXT = "COALESCE(json_extract(data, '$.text'), json_extract(data, '$.summary'))"
 
 PATTERNS = [
     r"sk-[a-zA-Z0-9_-]{20,}",
@@ -337,19 +345,17 @@ def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str], json_ids: 
     if not changed:
         return 0
     id_marks = ",".join("?" * len(json_ids))
-    type_marks = ",".join("?" * len(FTS_TYPES))
-    fts_where = f"id IN ({id_marks}) AND json_extract(data, '$.type') IN ({type_marks}) AND json_extract(data, '$.text') IS NOT NULL"
+    fts_where = f"id IN ({id_marks}) AND {FTS_INDEXED}"
     if json_ids:
         conn.execute(
-            "INSERT INTO events_fts(events_fts, rowid, text_content) "
-            f"SELECT 'delete', id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
-            (*json_ids, *FTS_TYPES),
+            f"INSERT INTO events_fts(events_fts, rowid, text_content) SELECT 'delete', id, {FTS_TEXT} FROM events WHERE {fts_where}",
+            json_ids,
         )
     conn.executemany("UPDATE events SET data = ? WHERE id = ?", [(new_data, row_id) for row_id, new_data in changed.items()])
     if json_ids:
         conn.execute(
-            f"INSERT INTO events_fts(rowid, text_content) SELECT id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
-            (*json_ids, *FTS_TYPES),
+            f"INSERT INTO events_fts(rowid, text_content) SELECT id, {FTS_TEXT} FROM events WHERE {fts_where}",
+            json_ids,
         )
     conn.commit()
     return len(changed)

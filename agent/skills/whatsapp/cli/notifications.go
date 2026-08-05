@@ -29,9 +29,12 @@ type messageNotif struct {
 	Timestamp       string `json:"timestamp"`
 	MessageID       string `json:"message_id,omitempty"`
 	ChatJID         string `json:"chat_jid,omitempty"`
-	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
-	ReplyCommand    string `json:"reply_command,omitempty"`
-	ReplyHint       string `json:"reply_hint,omitempty"`
+	// "group" or "direct", always set: a notification rule on chat_type and its
+	// negation must both match on the field's value, never on its absence.
+	ChatType       string `json:"chat_type"`
+	ContactUnknown bool   `json:"contact_unknown,omitempty"`
+	ReplyCommand   string `json:"reply_command,omitempty"`
+	ReplyHint      string `json:"reply_hint,omitempty"`
 }
 
 type reactionNotif struct {
@@ -46,6 +49,7 @@ type reactionNotif struct {
 	IsRemoved       bool   `json:"is_removed,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
+	ChatType        string `json:"chat_type"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
@@ -67,6 +71,7 @@ type editNotif struct {
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
 	ChatJID         string `json:"chat_jid,omitempty"`
+	ChatType        string `json:"chat_type"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
@@ -118,6 +123,13 @@ func quoteReplyArg(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+func chatType(ctx NotifContext) string {
+	if ctx.IsDirectChat {
+		return "direct"
+	}
+	return "group"
+}
+
 // Every notification carries a complete reply command. The target is always the chat JID, which
 // ResolveRecipient matches first and which needs no saved contact, so there is no case where the
 // agent has to work the recipient out for itself. It stops at `--message -`: the notification is
@@ -166,6 +178,7 @@ func WriteNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
 		ChatJID:         ctx.ChatJID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "think about how you can best show your personality",
@@ -195,6 +208,7 @@ func WriteReactionNotification(
 		IsRemoved:       isRemoved,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 	}
 	if !ctx.IsDirectChat {
@@ -230,6 +244,7 @@ func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText s
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ChatJID:         ctx.ChatJID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
@@ -248,6 +263,7 @@ func WriteRevokeNotification(ctx NotifContext, targetMessageID, oldText string) 
 		OldText:         oldText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 		ReplyHint:       "they deleted this message, so treat it as unsaid and do not quote it back to them",
 	}

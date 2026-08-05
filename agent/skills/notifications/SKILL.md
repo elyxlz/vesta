@@ -37,11 +37,16 @@ notification's other fields. Every field/condition you set must hold (AND); what
 - Each `match` targets one field: `--match 'FIELD<op>VALUE'`, ops (case-insensitive):
   - `=` substring, e.g. `--match 'chat_name=Bride squad'`
   - `~=` regex (`re.search`), e.g. `--match 'subject~=invoice|payment'`
-  - `!=` / `!~=` negate either, e.g. `--match 'chat_type!=group'` (everything NOT a group)
-- `FIELD` is any field the notification carries; run `facets` to see what's there (`chat_name`, `chat_type`,
-  `media_type`, ...). Two aliases span a source's synonym fields so you needn't know the exact name:
-  `sender` (identity) and `text` (body). `--sender X` and `--keyword RE` are shortcuts for
-  `--match 'sender=X'` and `--match 'text~=RE'`.
+  - `!=` / `!~=` negate either, e.g. `--match 'chat_name!=Bride squad'` (everything but that chat)
+- `FIELD` is any field the notification carries, and fields are per-source. **Run `facets` first and
+  target a field it lists** (`facets` pools fields across sources, so check the values look like your
+  source's): a rule naming a field the notification does not carry is accepted, appears in `list`, and
+  never fires, so it reads as working while changing nothing. Negated it is worse: a predicate over a
+  missing field does not match, so its negation matches **everything** from that source, and
+  first-match-wins means it shadows every rule below it.
+- Two aliases span a source's synonym fields so you needn't know the exact name: `sender` (identity)
+  and `text` (body). `--sender X` and `--keyword RE` are shortcuts for `--match 'sender=X'` and
+  `--match 'text~=RE'`.
 - **First match wins**: rules evaluate top to bottom and stop at the first match, so order is the only
   precedence; a later, more-specific rule never overrides an earlier, broader one. To OR across fields,
   write separate rules (one rule's conditions are all ANDed).
@@ -85,7 +90,8 @@ notifications add --source whatsapp --match 'chat_name=Bride squad' --action sno
 # Still visible in history (marked "trashed"); only do this when the user has said to ignore it outright.
 notifications add --source whatsapp --match 'chat_name=status' --action trash
 
-# Combine conditions (AND): snooze only group chats from whatsapp, leaving DMs alone
+# Combine conditions (AND): snooze only group chats from whatsapp, leaving DMs alone.
+# WhatsApp chat notifications always carry chat_type (group or direct); check `facets` for your own fields.
 notifications add --source whatsapp --match 'chat_type=group' --action snooze
 
 # Negate: interrupt for any chat that is NOT that one group

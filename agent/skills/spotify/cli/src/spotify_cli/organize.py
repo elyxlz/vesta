@@ -11,7 +11,9 @@ from .config import Config
 
 ORGANIZE_CONFIG = Path.home() / ".spotify" / "organize.json"
 WATCH_STATE_FILE = Path.home() / ".spotify" / "watch_state.json"
-NOTIFICATIONS_DIR = Path.home() / "notifications"
+# The directory the engine watches (config.notifications_dir). A notification written anywhere
+# else still succeeds: nothing is delivered and nothing errors.
+NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
 # Default skip list — playlists too ambiguous or personal for auto-sorting.
 # Customize this in ~/.spotify/organize.json after running: spotify organize config --init
@@ -187,10 +189,13 @@ def _load_config() -> dict:
 
 
 def _write_json(path: Path, data: dict) -> None:
-    """Write data as pretty JSON, creating parent dirs."""
+    """Write data as pretty JSON, creating parent dirs. Atomic (a sibling temp file renamed over the
+    target), so no reader ever observes a half-written file: the monitor tick globbing the
+    notifications dir, and this module's own reads of the watch state and the config."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.replace(path)
 
 
 def _chunks(lst, n):

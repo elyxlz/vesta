@@ -190,29 +190,78 @@ CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
 END;
 """
 
-_RECENCY_DECAY_RATE = 0.01
+# Inbound messages (whatsapp, telegram, app-chat, email, tasks) reach history as `notification`
+# events carrying their body in `$.summary`, so the conversational triggers above miss them and
+# recall would search only the agent's own words. These index them by summary. `source = 'core'`
+# is excluded: those are the agent's own scheduler boilerplate (proactive checks, greetings,
+# migrations), repeated near-identically thousands of times, and indexing them buries every real
+# hit under duplicates of one string.
+_NOTIFICATION_FTS_SCHEMA = """
+CREATE TRIGGER IF NOT EXISTS events_fts_ai_notif AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts(rowid, text_content)
+    SELECT new.id, json_extract(new.data, '$.summary')
+    WHERE json_extract(new.data, '$.type') = 'notification'
+      AND COALESCE(json_extract(new.data, '$.source'), '') <> 'core'
+      AND json_extract(new.data, '$.summary') IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_fts_ad_notif AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, text_content)
+    SELECT 'delete', old.id, json_extract(old.data, '$.summary')
+    WHERE json_extract(old.data, '$.type') = 'notification'
+      AND COALESCE(json_extract(old.data, '$.source'), '') <> 'core'
+      AND json_extract(old.data, '$.summary') IS NOT NULL;
+END;
+"""
 
 # The notifications history channel: the arrivals list for the paginated view. Clears are not here —
 # pending state is seeded from the connect snapshot and kept live via broadcast notification_cleared
-# deltas, so the channel stays arrivals-only and pages aren't diluted by clear events.
-_NOTIFICATION_CONDITION = "json_extract(data, '$.type') = 'notification'"
+# deltas, so the channel stays arrivals-only and pages aren't diluted by clear events. json_valid
+# guards the json_extract: a malformed historic row would otherwise abort every query built on this.
+_NOTIFICATION_CONDITION = "json_valid(data) AND json_extract(data, '$.type') = 'notification'"
+
+# The rows those triggers index, as a WHERE clause over `events`, for the v2 backfill. Spelled out
+# rather than composed from _NOTIFICATION_CONDITION: a released migration step has to stay frozen,
+# and a shared constant would let an edit meant for the history channel rewrite it. json_valid keeps
+# a malformed historic row from aborting the backfill, and with it the whole boot.
+_NOTIFICATION_FTS_CONDITION = (
+    "json_valid(data) AND json_extract(data, '$.type') = 'notification'"
+    " AND COALESCE(json_extract(data, '$.source'), '') <> 'core' AND json_extract(data, '$.summary') IS NOT NULL"
+)
+
+_RECENCY_DECAY_RATE = 0.01
 
 # Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
 # version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an
 # ordered, version-gated list of (target_version, step) pairs applied in sequence at
-# construction. Each step is idempotent: version 1 runs the baseline `_EVENTS_SCHEMA`
-# (all `CREATE ... IF NOT EXISTS`), so a fresh db and a pre-versioned db with the
-# tables already present both converge to version 1 with no data loss, the latter
-# simply being stamped. Add future schema changes as version 2+ steps here; never
-# edit a released step (existing dbs have already run it).
-_SCHEMA_VERSION = 1
+# construction, each step running exactly once. Version 1 runs the baseline
+# `_EVENTS_SCHEMA` (all `CREATE ... IF NOT EXISTS`), so a fresh db and a pre-versioned
+# db with the tables already present both converge to version 1 with no data loss, the
+# latter simply being stamped. Add further schema changes as version 3+ steps here;
+# never edit a released step (existing dbs have already run it).
+_SCHEMA_VERSION = 2
 
 
 def _migrate_v1_baseline(conn: sqlite3.Connection) -> None:
     conn.executescript(_EVENTS_SCHEMA)
 
 
-_MIGRATIONS: tuple[tuple[int, tp.Callable[[sqlite3.Connection], None]], ...] = ((1, _migrate_v1_baseline),)
+def _migrate_v2_index_notifications(conn: sqlite3.Connection) -> None:
+    """Add the notification triggers, then index the notifications already stored: triggers only
+    fire on new rows, so without the backfill an existing db stays blind to its whole history.
+    The version gate is what keeps the backfill one-shot: re-indexing an already-indexed rowid
+    writes duplicate postings that desync the external-content index from its delete trigger."""
+    conn.executescript(_NOTIFICATION_FTS_SCHEMA)
+    conn.execute(
+        "INSERT INTO events_fts(rowid, text_content) "
+        f"SELECT id, json_extract(data, '$.summary') FROM events WHERE {_NOTIFICATION_FTS_CONDITION}"
+    )
+
+
+_MIGRATIONS: tuple[tuple[int, tp.Callable[[sqlite3.Connection], None]], ...] = (
+    (1, _migrate_v1_baseline),
+    (2, _migrate_v2_index_notifications),
+)
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -304,15 +353,17 @@ class EventBus:
             # held by a long maintenance op past the busy timeout) propagated out of emit
             # and took down the whole loop on every event, turning one stuck write into a
             # crash-restart storm. Drop the row with a warning and keep the agent alive.
+            # allow_nan=False makes a NaN smuggled in by an external JSON payload one more
+            # dropped row (ValueError) instead of a stored row json_valid readers exclude.
             try:
                 cursor = self._conn.execute(
                     "INSERT INTO events (ts, data) VALUES (?, ?)",
-                    (event["ts"], json.dumps(event)),
+                    (event["ts"], json.dumps(event, allow_nan=False)),
                 )
                 self._conn.commit()
                 rowid = cursor.lastrowid
                 event["id"] = rowid if rowid is not None else self._next_live_id()
-            except sqlite3.Error as e:
+            except (sqlite3.Error, ValueError) as e:
                 logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
                 event["id"] = self._next_live_id()
         else:
@@ -378,7 +429,13 @@ class EventBus:
         rows = rows[:limit]
         events: list[StreamEvent] = []
         for row in reversed(rows):
-            event: StreamEvent = json.loads(row[1])
+            # A malformed historic row (pre-versioned history, disk damage) must cost one warning,
+            # not the whole page: the unconditioned channel has no SQL predicate to filter it.
+            try:
+                event: StreamEvent = json.loads(row[1])
+            except json.JSONDecodeError:
+                logger.warning("skipping malformed event row id=%s in history page", row[0])
+                continue
             event["id"] = row[0]
             events.append(event)
         return events, rows[-1][0] if has_older else None

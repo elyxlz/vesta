@@ -6,10 +6,11 @@ import os
 import pathlib as pl
 import sqlite3
 import subprocess
+import typing as tp
 
 import pytest
 
-from core.events import AssistantEvent
+from core.events import AssistantEvent, NotificationEvent
 
 SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "dream" / "scripts" / "redact_secrets.py"
 
@@ -73,6 +74,19 @@ def test_scrub_keeps_fts_in_sync(event_bus, db_conn):
     db_conn.execute("DELETE FROM events")
     db_conn.commit()
     assert event_bus.search("backup") == []
+
+
+def test_scrub_keeps_fts_in_sync_for_an_inbound_message(event_bus, db_conn):
+    """An inbound message is indexed by its `summary`, so the resync has to cover that shape too:
+    a secret left in the index stays searchable long after it is gone from the event."""
+    event_bus.emit(NotificationEvent(type="notification", source="whatsapp", summary=f"the key is {SECRET} for backups"))
+
+    redact.scrub(db_conn, [row_id for row_id, _ in redact.scan(db_conn)])
+
+    assert event_bus.search(SECRET) == []
+    hits = event_bus.search("backups")
+    assert len(hits) == 1
+    assert "[REDACTED]" in tp.cast(tp.Any, hits[0])["summary"]
 
 
 def test_scrub_keeps_blob_valid_json_when_secret_abuts_escaped_quote(event_bus, db_conn):

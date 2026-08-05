@@ -15,6 +15,7 @@ from core.events import (
     AssistantEvent,
     EventBus,
     NotificationClearedEvent,
+    NotificationEvent,
     SubagentStartEvent,
 )
 
@@ -264,6 +265,48 @@ def test_search_limit(event_bus):
     assert len(results) == 3
 
 
+def test_search_finds_inbound_messages(event_bus):
+    """An inbound message reaches history as a notification carrying its body in `summary`, so the
+    index has to cover that shape: otherwise search returns only the agent's own words about the
+    user, never the user's own words."""
+    event_bus.emit(NotificationEvent(type="notification", source="whatsapp", summary="the flight to lisbon lands at noon"))
+    event_bus.emit(AssistantEvent(type="assistant", text="noted, i will be there"))
+
+    results = event_bus.search("lisbon")
+    assert len(results) == 1
+    assert results[0]["type"] == "notification"
+    assert tp.cast(tp.Any, results[0])["summary"] == "the flight to lisbon lands at noon"
+
+
+def test_search_skips_core_scheduler_notifications(event_bus):
+    """source=core notifications are the agent's own scheduler boilerplate, emitted thousands of
+    times with near-identical text; indexing them would bury every real hit under duplicates."""
+    for _ in range(3):
+        event_bus.emit(NotificationEvent(type="notification", source="core", summary="time for a proactive check"))
+    event_bus.emit(NotificationEvent(type="notification", source="tasks", summary="proactive dentist reminder"))
+
+    results = event_bus.search("proactive")
+    assert len(results) == 1
+    assert tp.cast(tp.Any, results[0])["source"] == "tasks"
+
+
+def _indexed_rowids(bus, query: str) -> list[int]:
+    """The rowids the FTS index itself holds for a query. Read straight from events_fts rather than
+    through search(), whose join to events hides an index entry whose row is gone."""
+    return [row[0] for row in bus._conn.execute("SELECT rowid FROM events_fts WHERE events_fts MATCH ?", (query,))]
+
+
+def test_deleting_a_notification_clears_it_from_the_index(event_bus):
+    """The delete trigger has to mirror the insert trigger, or the index keeps entries for rows
+    that no longer exist."""
+    event_bus.emit(NotificationEvent(type="notification", source="telegram", summary="dinner at eight in porto"))
+    assert len(_indexed_rowids(event_bus, "porto")) == 1
+
+    event_bus._conn.execute("DELETE FROM events")
+    event_bus._conn.commit()
+    assert _indexed_rowids(event_bus, "porto") == []
+
+
 def test_search_runs_off_the_connection_home_thread(event_bus):
     """Like recent(), search() must work from a worker thread so /history can offload it via
     asyncio.to_thread — an FTS MATCH over a years-old db must never block the event loop or
@@ -312,6 +355,101 @@ def test_pre_versioned_db_upgraded_in_place(tmp_path):
     assert _db_user_version(tmp_path) == _SCHEMA_VERSION
     assert len(events) == 1
     assert tp.cast(tp.Any, events[0])["text"] == "legacy"
+
+
+def _write_v1_db(tmp_path, rows: list[str]) -> None:
+    """A db at schema version 1: the baseline tables and conversational triggers, no notification
+    index, the shape every already-running agent has on disk."""
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    conn.executescript(_EVENTS_SCHEMA)
+    conn.executemany("INSERT INTO events (ts, data) VALUES (?, ?)", [("2026-01-01T00:00:00+00:00", row) for row in rows])
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+
+
+def test_existing_notifications_are_backfilled_into_the_index(tmp_path):
+    """The triggers only fire on new rows, so an existing db would stay blind to its whole history
+    of inbound messages. The v2 step indexes what is already stored, and leaves core boilerplate out
+    exactly as the trigger does."""
+    _write_v1_db(
+        tmp_path,
+        [
+            '{"type": "notification", "source": "whatsapp", "summary": "the keys are under the mat in madrid"}',
+            '{"type": "notification", "source": "core", "summary": "time for a proactive check in madrid"}',
+        ],
+    )
+
+    bus = EventBus(data_dir=tmp_path)
+    results = bus.search("madrid")
+    bus.close()
+
+    assert _db_user_version(tmp_path) == _SCHEMA_VERSION
+    assert len(results) == 1
+    assert tp.cast(tp.Any, results[0])["source"] == "whatsapp"
+
+
+def test_backfill_runs_once_across_reopens(tmp_path):
+    """The version gate is what keeps the backfill one-shot: indexing a rowid twice writes duplicate
+    postings, and the delete trigger only removes one copy, leaving a stale entry behind."""
+    _write_v1_db(tmp_path, ['{"type": "notification", "source": "app-chat", "summary": "remember the oslo booking"}'])
+
+    for _ in range(2):
+        bus = EventBus(data_dir=tmp_path)
+        indexed = _indexed_rowids(bus, "oslo")
+        bus.close()
+        assert indexed == [1]
+
+
+def test_paging_and_backfill_survive_a_malformed_row(tmp_path):
+    """events.db can hold a row whose data is not valid JSON (pre-trigger history, disk damage).
+    json_extract over such a row aborts the whole statement, so the notifications channel and the
+    v2 backfill guard it with json_valid in SQL, and the unconditioned page (which has no SQL
+    predicate at all) skips the row at parse time; one bad row must never take out paging or boot."""
+    _write_v1_db(tmp_path, ['{"type": "notification", "source": "whatsapp", "summary": "the porto keys arrived"}'])
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    # The insert trigger's own json_extract rejects a malformed insert, so a malformed row can only
+    # predate the triggers: model that history by dropping them around the write.
+    conn.execute("DROP TRIGGER events_fts_ai")
+    conn.execute("INSERT INTO events (ts, data) VALUES (?, ?)", ("2026-01-02T00:00:00+00:00", "{not json"))
+    conn.commit()
+    conn.close()
+
+    bus = EventBus(data_dir=tmp_path)
+    notif_events, _ = bus.recent(channel="notifications")
+    all_events, _ = bus.recent()
+    results = bus.search("porto")
+    bus.close()
+
+    assert _db_user_version(tmp_path) == _SCHEMA_VERSION
+    assert [event["type"] for event in notif_events] == ["notification"]
+    assert [event["type"] for event in all_events] == ["notification"]
+    assert len(results) == 1
+
+
+def test_an_event_json_cannot_represent_is_dropped_not_stored(tmp_path):
+    """Python's json accepts NaN on both ends: an external notification payload can carry one
+    through json.loads, and a default json.dumps would store it as a row every json_valid reader
+    silently excludes. The writer refuses instead: the row is dropped like any failed write, the
+    event stays live-only, and the store never holds a row json_valid rejects."""
+    bus = EventBus(data_dir=tmp_path)
+    poisoned: NotificationEvent = {
+        "type": "notification",
+        "source": "finance",
+        "summary": "balance update",
+        "fields": {"amount": tp.cast(str, float("nan"))},
+    }
+    bus.emit(poisoned)
+    assert poisoned["id"] < 0, "a dropped row must still get a live id"
+
+    bus.emit(NotificationEvent(type="notification", source="finance", summary="card charged"))
+    events, _ = bus.recent(channel="notifications")
+    bus.close()
+
+    assert [tp.cast(tp.Any, event)["summary"] for event in events] == ["card charged"]
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    assert conn.execute("SELECT count(*) FROM events WHERE NOT json_valid(data)").fetchone()[0] == 0
+    conn.close()
 
 
 def test_corrupt_db_is_quarantined_and_boots_fresh(tmp_path):

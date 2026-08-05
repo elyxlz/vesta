@@ -3,7 +3,7 @@
 import importlib.util
 import pathlib
 
-from core.events import AssistantEvent, EventBus
+from core.events import AssistantEvent, EventBus, NotificationEvent
 
 
 def _load_recall():
@@ -30,6 +30,23 @@ def test_recall_finds_events_written_by_eventbus(tmp_path):
 
     assert recall.search(db_path, "nonexistent", limit=20) == []
     assert recall.format_results([]) == "No results found."
+
+
+def test_recall_returns_the_body_of_an_inbound_message(tmp_path):
+    """An inbound message is stored as a notification whose body lives in `summary`, so recall reads
+    content from there as well as from `text`: a hit with no content is the same as no hit."""
+    bus = EventBus(data_dir=tmp_path)
+    bus.emit(NotificationEvent(type="notification", source="whatsapp", summary="can you book the trip to seville"))
+    bus.emit(AssistantEvent(type="assistant", text="she asked me to book something"))
+    bus.close()
+
+    recall = _load_recall()
+    results = recall.search(tmp_path / "events.db", "seville", limit=20)
+
+    assert len(results) == 1
+    assert results[0]["role"] == "notification"
+    assert results[0]["content"] == "can you book the trip to seville"
+    assert "can you book the trip to seville" in recall.format_results(results)
 
 
 def test_recall_missing_db_returns_empty(tmp_path):
