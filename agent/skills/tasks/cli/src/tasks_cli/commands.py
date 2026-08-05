@@ -372,7 +372,7 @@ def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status
         db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
 
 
-def _retitle_auto_reminder_messages(conn, task_id: str, old_title: str, new_title: str, *, task_row) -> None:
+def _retitle_auto_reminder_messages(conn, task_id: str, old_title: str, new_title: str) -> None:
     """Point every armed auto reminder at the new title without touching its schedule.
 
     Auto reminder bodies are generated from two templates in db.py (the lead-time one and the at-due
@@ -454,7 +454,7 @@ def update_task(
             # it disarmed OVERDUE tasks entirely (create skips past instants), destroyed a user's
             # snooze, and churned every reminder id on every call including a no-op retitle.
             # A title change only invalidates the text, so only the text changes.
-            _retitle_auto_reminder_messages(conn, task_id, result["title"], title, task_row=result)
+            _retitle_auto_reminder_messages(conn, task_id, result["title"], title)
 
         if updates:
             params.append(task_id)
