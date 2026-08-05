@@ -98,7 +98,7 @@ _MATCH_GRAMMAR = re.compile(r"^(?P<field>[^=!~]+)(?P<op>!?~?=)(?P<value>.*)$", r
 
 def _parse_match(spec: str) -> dict[str, object]:
     """Parse one --match FIELD<op>VALUE into a predicate. Ops: `=` contains, `~=` regex, `!=` not
-    contains, `!~=` not regex. e.g. `chat_name=Bride squad`, `chat_name~=^proj-`, `chat_jid!=@g.us`."""
+    contains, `!~=` not regex. e.g. `chat_name=Bride squad`, `chat_name~=^proj-`, `chat_type!=group`."""
     matched = _MATCH_GRAMMAR.match(spec)
     if matched is None:
         raise ValueError(f"--match must be FIELD=VALUE (=, ~= regex, != not, !~= not-regex): {spec!r}")
@@ -261,7 +261,7 @@ def cmd_clear(_: argparse.Namespace) -> int:
 
 def cmd_facets(_: argparse.Namespace) -> int:
     """List the values seen in past notifications, so you know what to target: source/type/sender plus
-    every structured extra field (e.g. chat_name, chat_jid, media_type) under a `fields` map.
+    every structured extra field (e.g. chat_name, chat_type, media_type) under a `fields` map.
 
     Reads the notification history in events.db directly (read-only), mirroring the distinct query
     EventBus would run; keep in step with core/events.py if the stored facet fields change."""
@@ -329,7 +329,7 @@ def main() -> int:
         metavar="FIELD<op>VALUE",
         help="Match ANY notification field (run `facets` to see them). Ops: '=' substring, '~=' regex, "
         "'!=' not, '!~=' not-regex. Repeatable (all must match). e.g. --match 'chat_name=Bride squad', "
-        "--match 'chat_jid=@g.us', --match 'chat_name~=^proj-'. Case-insensitive.",
+        "--match 'chat_type=group', --match 'chat_name~=^proj-'. Case-insensitive.",
     )
     add.add_argument(
         "--for",

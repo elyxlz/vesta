@@ -26,7 +26,7 @@ import pydantic as pyd
 
 from .notification import CORE_SOURCE, Notification
 
-# A predicate's `field` is the notification key it reads. Concrete keys (chat_name, chat_jid, …) read
+# A predicate's `field` is the notification key it reads. Concrete keys (chat_name, chat_type, …) read
 # that exact field; an alias here expands to a set of per-source synonyms and matches if ANY of them
 # satisfies the op. This is the single place cross-source field-name knowledge lives — a new source's
 # new field is targetable by its concrete name with no code change.
@@ -167,7 +167,7 @@ def _predicate_matches(predicate: FieldPredicate, notif: Notification) -> bool:
 # Extra keys NOT surfaced as discoverable facet fields: the identity fields (already surfaced as the
 # single `sender` facet), the free-text fields (reachable via the `text` alias / keyword, and too long
 # / private to list), and internals. Everything else scalar is a targetable structured attribute
-# (chat_name, chat_jid, media_type, …).
+# (chat_name, chat_type, media_type, …).
 _FACET_EXCLUDE = frozenset({*_IDENTITY_FIELDS, *_BODY_FIELDS, "file_path"})
 # Skip a value too long to be a sane rule target (a pasted blob, a long quoted reply); keeps the facet
 # map and the event row small.

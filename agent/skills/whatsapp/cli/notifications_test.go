@@ -84,6 +84,51 @@ func TestUnsavedContactIsIdentifiedByNumber(t *testing.T) {
 	}
 }
 
+func groupCtx(dir string) NotifContext {
+	ctx := savedCtx(dir)
+	ctx.IsDirectChat = false
+	ctx.ChatJID = "120363021234567890@g.us"
+	ctx.ChatName = "Bride squad"
+	return ctx
+}
+
+func notifChatType(t *testing.T, dir string) string {
+	t.Helper()
+	var chatType string
+	if err := json.Unmarshal(soleNotifFields(t, dir)["chat_type"], &chatType); err != nil {
+		t.Fatalf("chat_type missing or not a string: %v", err)
+	}
+	return chatType
+}
+
+func TestGroupNotificationsCarryChatTypeGroup(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteNotification(groupCtx(dir), "3EB0A1", "who booked the venue", "", false, "", ""); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if chatType := notifChatType(t, dir); chatType != "group" {
+		t.Errorf("chat_type = %q, want group: a chat_type=group rule must match group messages", chatType)
+	}
+
+	reactionDir := t.TempDir()
+	if err := WriteReactionNotification(groupCtx(reactionDir), "3EB0A1", "❤️", false); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if chatType := notifChatType(t, reactionDir); chatType != "group" {
+		t.Errorf("chat_type = %q on a group reaction, want group: a group rule must cover reactions too", chatType)
+	}
+}
+
+func TestDirectNotificationsCarryChatTypeDirect(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteNotification(savedCtx(dir), "3EB0A1", "are you coming", "", false, "", ""); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if chatType := notifChatType(t, dir); chatType != "direct" {
+		t.Errorf("chat_type = %q, want direct: the field is always set so a chat_type!=group rule matches on the value, not on absence", chatType)
+	}
+}
+
 func TestSavedContactReactionAlsoOmitsTheNumber(t *testing.T) {
 	dir := t.TempDir()
 

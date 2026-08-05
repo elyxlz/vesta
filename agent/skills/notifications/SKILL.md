@@ -91,8 +91,8 @@ notifications add --source whatsapp --match 'chat_name=Bride squad' --action sno
 notifications add --source whatsapp --match 'chat_name=status' --action trash
 
 # Combine conditions (AND): snooze only group chats from whatsapp, leaving DMs alone.
-# WhatsApp group JIDs end in @g.us, so match on chat_jid; check `facets` for your own fields.
-notifications add --source whatsapp --match 'chat_jid=@g.us' --action snooze
+# WhatsApp chat notifications always carry chat_type (group or direct); check `facets` for your own fields.
+notifications add --source whatsapp --match 'chat_type=group' --action snooze
 
 # Negate: interrupt for any chat that is NOT that one group
 notifications add --source whatsapp --match 'chat_name!=Bride squad' --action interrupt
