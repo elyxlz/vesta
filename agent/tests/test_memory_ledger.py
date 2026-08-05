@@ -109,6 +109,11 @@ def test_an_unchanged_file_reports_nothing():
     assert ledger.classify([RULE, OTHER], [RULE, OTHER]) == ([], [])
 
 
+def test_reordered_lines_report_nothing():
+    """Curation reorders every night, and a positional diff would pair each moved line with itself."""
+    assert ledger.classify([RULE, OTHER], [OTHER, RULE]) == ([], [])
+
+
 def test_report_names_the_lost_rule_and_not_the_reworded_one(memory, capsys):
     mem, _ = memory
     mem.write_text(f"## RULES\n{RULE}\n{OTHER}\n")
@@ -135,9 +140,9 @@ def test_report_is_clean_when_only_the_volatile_sections_changed(memory, capsys)
 
 
 def test_report_says_so_when_there_is_no_baseline_yet(memory, capsys):
-    mem, snaps = memory
+    """The first run on a new agent: no snapshot has ever been taken, so the directory is absent."""
+    mem, _ = memory
     mem.write_text(f"## RULES\n{RULE}\n")
-    snaps.mkdir()
 
     ledger.report()
 

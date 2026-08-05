@@ -68,10 +68,12 @@ def best_match(gone: str, added: list[str]) -> tuple[str, float]:
 
 
 def classify(before: list[str], after: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
-    """Split the departed lines into (rewritten, with what replaced them) and (lost)."""
-    diff = list(difflib.ndiff(before, after))
-    gone = [ln[2:] for ln in diff if ln.startswith("- ")]
-    added = [ln[2:] for ln in diff if ln.startswith("+ ")]
+    """Split the departed lines into (rewritten, with what replaced them) and (lost). Departure is
+    membership, not position: curation reorders constantly, and a positional diff calls a moved line
+    departed and re-arrived, pairing it with itself and burying the real losses under that noise."""
+    before_set, after_set = set(before), set(after)
+    gone = [line for line in before if line not in after_set]
+    added = [line for line in after if line not in before_set]
     rewritten, lost = [], []
     for line in gone:
         match, score = best_match(line, added)

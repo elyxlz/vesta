@@ -414,8 +414,8 @@ def _run_scrub_literal(conn: sqlite3.Connection, rest: list[str]) -> int:
 
 def _run_show(conn: sqlite3.Connection, rest: list[str]) -> int:
     """Print one event's full `data` with every scanner-detected secret masked, for judging a hit
-    whose scan snippet is too short. Runs through the same redaction pass as the scrub, so this
-    never emits a live value."""
+    whose scan snippet is too short. Runs through the same redaction pass as the scrub, so no value
+    the scanner detects reaches the output."""
     if len(rest) != 1 or not rest[0].isdigit():
         print("usage: redact_secrets.sh --show <event-id>", file=sys.stderr)
         return 1
