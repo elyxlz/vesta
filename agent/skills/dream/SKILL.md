@@ -142,7 +142,7 @@ Replace rather than append: it's a snapshot, not a log. The rolling fields refre
 
 MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate. Don't let it overflow.
 
-**Review what curation removed.** Curation rewrites MEMORY.md in place, so without this review the loop silently deletes its own output. After curating, find the last dream checkpoint with `git log -n1 --format=%H --grep '^dream: nightly checkpoint'` and review what left MEMORY.md since it: `git diff <sha> -- agent/MEMORY.md`, eyeballing the removed lines. Each removal needs an answer: it graduated into a skill file (say where in tonight's summary), it expired, or it should not have gone, in which case restore it. The `### User State` section and the Self `**State**:` line are rewritten nightly by design; their churn needs no answer. With no prior checkpoint, skip the review. Any old MEMORY.md is recoverable with `git show <sha>:agent/MEMORY.md`; tonight's version is sealed by the Commit the day step once the night's other work is done.
+**Review what curation removed.** After curating, diff MEMORY.md against the last dream checkpoint: `git log -n1 --format=%H --grep '^dream: nightly checkpoint'`, then `git diff <sha> -- agent/MEMORY.md`. Every removed line needs an answer: graduated into a skill file (say where in tonight's summary), expired, or wrongly dropped, so restore it. `### User State` and the Self `**State**:` line are rewritten nightly by design; skip them. No prior checkpoint, no review. Old versions stay recoverable via `git show <sha>:agent/MEMORY.md`.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
@@ -199,7 +199,7 @@ Cover the whole night, not just the fixes: record an outcome for **every** phase
 
 ## Commit the day
 
-One commit seals everything you changed today, memory curation and skill fixes alike, so `git log` reads as a diary. Run `git add -A`, then `git commit -m 'dream: nightly checkpoint (<date>)' -m '<one or two sentences: what curation changed plus anything else you edited today>'`. Skip the commit while a merge is in progress (`git rev-parse -q --verify MERGE_HEAD` succeeds), and nothing to commit is a fine outcome.
+One commit seals the whole day, so `git log` reads as a diary: `git add -A`, then `git commit -m 'dream: nightly checkpoint (<date>)' -m '<one or two sentences on what changed today>'`. Skip it while a merge is in progress (`git rev-parse -q --verify MERGE_HEAD` succeeds); nothing to commit is fine.
 
 ## Compaction on completion
 
