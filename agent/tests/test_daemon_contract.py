@@ -32,6 +32,9 @@ PID_CAPTURE_POLL_SECS = 0.02
 # Two starts, launched with no stagger: whoever wins the record is the one that spawns.
 RACE_STARTS = 2
 RACE_TIMEOUT = 120
+# Daemons whose pid record is still a bare pid, so a recycled pid reads as a live daemon. Named
+# here rather than left out, so the gap shows up as a skip in the run instead of as silence.
+PID_IDENTITY_TODO = {"whatsapp", "telegram"}
 # The whatsapp launcher answers --help off its cached binary, so this only has to outlast a cold
 # disk; the one path that would compile first is the one this probe is never taken on.
 WHATSAPP_PROBE_TIMEOUT = 120
@@ -346,9 +349,10 @@ def _error(stdout: str, stderr: str) -> str:
 def _pid(spec, home) -> int | None:
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
     try:
-        pid = int(pidfile.read_text().strip())
+        # The record is "<pid> <starttime>", so the pid is the first field, not the whole file.
+        pid = int(pidfile.read_text().split()[0])
         os.kill(pid, 0)
-    except (FileNotFoundError, ValueError, ProcessLookupError):
+    except (FileNotFoundError, IndexError, ValueError, ProcessLookupError):
         return None
     return pid
 
@@ -399,6 +403,42 @@ def test_two_starts_racing_leave_one_daemon_and_one_live_record(daemon):
     assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_status_rejects_a_reused_pid(daemon):
+    """A pid record outlives the container, and the fresh pid namespace renumbers from low values,
+    so the recorded pid can belong to an unrelated process by the next boot. os.kill(pid, 0) cannot
+    tell the two apart: it answers "does some process hold this pid", never "is this still mine".
+    Left undefended, status reports running, the idempotent restart block skips the start, and the
+    service is silently down with its one health check reporting health it never measured.
+
+    Standing in for a real reuse: the recorded starttime is edited to a value the live process
+    cannot have, which is exactly the state a recycled pid produces."""
+    spec, home, env = daemon
+    if spec.name in PID_IDENTITY_TODO:
+        pytest.skip(f"{spec.name} records a bare pid: still vulnerable to reuse, tracked separately")
+    assert _json(_verb(spec, env, "start")) == {"status": "started"}
+    pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
+
+    record = pidfile.read_text().split()
+    assert len(record) == 2, f"the record carries no starttime, so a reused pid is undetectable: {record}"
+    assert record[1].isdigit(), f"the recorded starttime is not a number: {record}"
+
+    pidfile.write_text(f"{record[0]} {int(record[1]) + 1}")
+    assert _json(_verb(spec, env, "status"))["running"] is False, "a reused pid reads as a healthy daemon"
+
+    # And the check is specific: restore the true identity and the same live daemon reads healthy,
+    # so this is not a status that simply always says False.
+    pidfile.write_text(" ".join(record))
+    assert _json(_verb(spec, env, "status"))["running"] is True
+
+    # A record written before this check existed carries a pid alone. It must still read as
+    # running, or an upgrade declares every live daemon dead and stacks a second one beside it.
+    pidfile.write_text(record[0])
+    assert _json(_verb(spec, env, "status"))["running"] is True
+
+    pidfile.write_text(" ".join(record))
+    assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
 
 
 def test_start_fails_closed_when_registration_fails(daemon):

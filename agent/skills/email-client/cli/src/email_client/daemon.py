@@ -44,12 +44,42 @@ def _fail(message: str) -> int:
     return 1
 
 
-def live_pid() -> int | None:
+def _starttime(pid: int) -> int | None:
+    """Field 22 of /proc/<pid>/stat: the process start time in clock ticks since boot.
+
+    A recycled pid cannot share the original's starttime, because the process that took the pid
+    necessarily started later, so (pid, starttime) is a stable identity. Returns None where /proc
+    is unreadable, which drops the caller back to a bare pid-existence check.
+    """
     try:
-        pid = int(PIDFILE.read_text().strip())
-        os.kill(pid, 0)
-    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
+        # comm is a bracketed field that may itself contain spaces and parentheses, so the
+        # numbered fields resume after the LAST ')'.
+        return int(stat[stat.rindex(")") + 2 :].split()[19])
+    except (OSError, ValueError, IndexError):
         return None
+
+
+def live_pid() -> int | None:
+    """The recorded pid, but only while it is still the process that was recorded.
+
+    os.kill(pid, 0) answers "does some process hold this pid", never "is this still mine". The
+    records outlive the container while a fresh pid namespace renumbers from low values, so a
+    reused pid otherwise reads as a healthy daemon, every idempotent start skips it, and the
+    service is silently down with its one health check reporting health it never measured.
+    """
+    try:
+        record = PIDFILE.read_text().split()
+        pid = int(record[0])
+        os.kill(pid, 0)
+    except (FileNotFoundError, IndexError, ValueError, ProcessLookupError, PermissionError):
+        return None
+    # A pidfile written before this check existed carries no starttime. Trust it as before rather
+    # than reading the absence as a mismatch: an upgrade must not declare a live daemon dead.
+    if len(record) > 1 and record[1].isdigit():
+        current = _starttime(pid)
+        if current is not None and current != int(record[1]):
+            return None
     return pid
 
 
@@ -96,7 +126,7 @@ def _start() -> int:
         return answer
     with LOG.open("ab") as log:
         child = subprocess.Popen([sys.argv[0], "poll"], start_new_session=True, stdout=log, stderr=log)
-    PIDFILE.write_text(str(child.pid))
+    PIDFILE.write_text(f"{child.pid} {_starttime(child.pid)}")
     time.sleep(SETTLE_SECS)
     if child.poll() is None:
         print(json.dumps({"status": "started"}))
