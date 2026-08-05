@@ -63,6 +63,30 @@ MSG
 ```
 - Before texting an unknown raw number, save it first with `add-contact` (name + phone).
 
+**Error 463, `no signal session for this device yet`.** The send fails for one recipient while
+everyone else succeeds on the same number and daemon, so it looks like local state you can repair.
+It usually is not. Make one further attempt at most, then say what you need to say on another
+channel; it clears by itself the moment that person sends you anything.
+
+**Never re-pair or restart the daemon to chase it.** Pairing is hard-capped per day and per week,
+and repeat pairing is what gets numbers banned.
+
+Rule out the local store without sending anything, since the obvious comparison test (message some
+other contact and see) is unavailable: cold-initiating anyone who has not written first is the
+behaviour that gets a fresh number banned.
+
+```bash
+sqlite3 ~/.whatsapp/whatsapp.db "select their_id from whatsmeow_sessions"
+```
+
+Rows are `<lid>_1:<device>`, one per device that recipient uses. Rows present for them means this
+is not a missing-session problem, so stop looking there.
+
+**On a managed number (Vesta Cloud, Double Tick) it is not yours to fix.** The prekey fetch for a
+device you hold no session for happens in the provider's infrastructure rather than in your client,
+so two agents holding an identical device set for the same recipient can get opposite results.
+Falling back to another channel is the entire remedy available to you.
+
 ## Read
 
 - `whatsapp messages [--to <name>] [--query <text>] [--after <RFC3339>] [--limit N]` reads the local DB.
