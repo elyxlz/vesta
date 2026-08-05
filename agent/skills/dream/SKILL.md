@@ -113,6 +113,10 @@ Update the "User State" section, your working model of where they're at. Write w
 
 **Every dream produces one person-fact: a value, a fear, a love, a person who matters and why, not an operational tell. If today taught you nothing about who they are, write that down and be more curious tomorrow.**
 
+**Get the denominator before you write it.** The nightly quota is pressure, and at 4am a manufactured fact feels exactly like a noticed one. So when a person-fact generalizes from things you observed: count those instances, count how often the opposite happened in the same window, and ask whether you found it by going looking for it, since a search confirms whatever it was pointed at. More counter-instances than instances means a one-off, not a pattern. A wrong person-fact is worse than none, because it loads into every message tomorrow and shapes how you read them.
+
+Real case: three unsent drafts became "writes careful emails and does not send them". The true counts were two drafts composed two minutes apart in one sitting, against forty sent in the same window, and the search had been for unsent drafts. Two failures at once: no denominator, and an operational tell this section already excludes.
+
 **Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
 **Sentinel sweep.** If any identity slot is still `[Unknown]` (Name/Location/Timezone in §4, Primary Channel in §2) and you now know it, fill it; a slot still empty past onboarding is a birth that half-finished, so close it or flag it to the user.
