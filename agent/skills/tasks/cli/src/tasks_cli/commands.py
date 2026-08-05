@@ -372,6 +372,32 @@ def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status
         db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
 
 
+def _retitle_auto_reminder_messages(conn, task_id: str, old_title: str, new_title: str, *, task_row) -> None:
+    """Point every armed auto reminder at the new title without touching its schedule.
+
+    Auto reminder bodies are generated from two templates in db.py (the lead-time one and the at-due
+    one), so the safe rewrite is to regenerate the body from the template rather than string-replace
+    the old title inside it: a title containing regex-ish or partial text would otherwise corrupt the
+    message. Completed rows are left alone, they are history."""
+    rows = conn.execute(
+        "SELECT id, message, schedule_type FROM reminders WHERE task_id = ? AND auto_generated = 1 AND completed = 0",
+        (task_id,),
+    ).fetchall()
+    for row in rows:
+        schedule = row["schedule_type"] or ""
+        if schedule.startswith("auto: ") and schedule.endswith(" before due"):
+            label = schedule[len("auto: ") : -len(" before due")]
+            message = f"Task due in {label}: {new_title}"
+        elif schedule == "auto: at due":
+            message = db.DUE_NOW_MESSAGE.format(title=new_title, task_id=task_id)
+        else:
+            # An unrecognised auto schedule: fall back to a literal swap, which is still better than
+            # leaving the retracted claim armed, and never worse than the pre-4-Aug behaviour.
+            message = (row["message"] or "").replace(old_title, new_title)
+        if message != row["message"]:
+            conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, row["id"]))
+
+
 def update_task(
     config: Config,
     *,
@@ -423,10 +449,12 @@ def update_task(
             updates.append("due_date = ?")
             params.append(new_due_date)
             _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=new_due_date)
-        elif title is not None and status != "done":
-            # A title change with the due date unchanged still has to refresh the reminder text,
-            # which embeds the title; the fixed tail keeps its instants, the checkpoints re-derive.
-            _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=result["due_date"])
+        elif title is not None and title != result["title"] and status != "done":
+            # Rewrite the text in place; do NOT rebuild. Delete-then-create was destructive:
+            # it disarmed OVERDUE tasks entirely (create skips past instants), destroyed a user's
+            # snooze, and churned every reminder id on every call including a no-op retitle.
+            # A title change only invalidates the text, so only the text changes.
+            _retitle_auto_reminder_messages(conn, task_id, result["title"], title, task_row=result)
 
         if updates:
             params.append(task_id)

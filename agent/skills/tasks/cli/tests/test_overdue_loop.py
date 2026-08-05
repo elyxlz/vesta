@@ -400,3 +400,75 @@ def test_retitling_an_undated_task_is_a_no_op(tmp_config: Config):
     task = commands.add_task(tmp_config, title="no due date")
     commands.update_task(tmp_config, task_id=task["id"], title="still no due date")
     assert _auto_reminders(tmp_config, task["id"]) == []
+
+
+def _armed(config: Config, task_id: str) -> list[dict]:
+    with closing(db.get_db(config.data_dir)) as conn:
+        rows = conn.execute("SELECT * FROM reminders WHERE task_id = ? AND auto_generated = 1 AND completed = 0", (task_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def test_retitle_does_not_disarm_an_overdue_task(tmp_config: Config):
+    """Rebuilding on retitle silently disarmed every overdue task.
+
+    create_auto_reminders skips any instant already past, so delete-then-create on a task whose due
+    date has gone turns a live ladder into nothing at all. Overdue tasks are exactly the ones a
+    retitle happens to ("chase invoice" -> "chase invoice (they replied)"), so the rebuild removed
+    the reminders from the tasks that needed them most."""
+    task = _add_task_due_in(tmp_config, "call the clinic", timedelta(hours=2))
+    before = len(_armed(tmp_config, task["id"]))
+    assert before >= 1
+    _force_due_date(tmp_config, task["id"], datetime.now(UTC) - timedelta(minutes=5))
+
+    commands.update_task(tmp_config, task_id=task["id"], title="call the clinic (they open at 9)")
+
+    after = _armed(tmp_config, task["id"])
+    assert len(after) == before, "an overdue task must keep its armed reminders through a retitle"
+    assert all("they open at 9" in r["message"] for r in after)
+
+
+def test_retitle_preserves_a_snoozed_reminder(tmp_config: Config):
+    """`remind snooze` explicitly supports auto reminders, so a retitle must not undo one."""
+    task = _add_task_due_in(tmp_config, "renew the passport (expires soon)", timedelta(days=10))
+    reminder_id = _armed(tmp_config, task["id"])[0]["id"]
+    commands.remind_snooze(tmp_config, reminder_id=reminder_id, in_days=1)
+    snoozed_to = next(r["scheduled_time"] for r in _armed(tmp_config, task["id"]) if r["id"] == reminder_id)
+
+    commands.update_task(tmp_config, task_id=task["id"], title="renew the passport (expires 12 Sep)")
+
+    row = next((r for r in _armed(tmp_config, task["id"]) if r["id"] == reminder_id), None)
+    assert row is not None, "the snoozed reminder must survive a retitle"
+    assert row["scheduled_time"] == snoozed_to, "the user's snooze must not be reset"
+    assert "12 Sep" in row["message"]
+
+
+def test_retitle_keeps_reminder_ids_stable(tmp_config: Config):
+    """A churned id 404s a `remind snooze <id>` taken off a notification still on screen."""
+    task = _add_task_due_in(tmp_config, "stable", timedelta(days=180))
+    before = {r["id"] for r in _armed(tmp_config, task["id"])}
+
+    commands.update_task(tmp_config, task_id=task["id"], title="stable renamed")
+
+    assert {r["id"] for r in _armed(tmp_config, task["id"])} == before
+
+
+def test_retitle_keeps_completed_reminders_as_history(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "history", timedelta(days=10))
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET completed = 1 WHERE task_id = ? AND schedule_type = 'auto: 1 week before due'", (task["id"],))
+        conn.commit()
+
+    commands.update_task(tmp_config, task_id=task["id"], title="history renamed")
+
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        done = conn.execute("SELECT count(*) FROM reminders WHERE task_id = ? AND completed = 1", (task["id"],)).fetchone()[0]
+    assert done == 1, "completed reminders are history and must not be swept by a retitle"
+
+
+def test_a_no_op_retitle_changes_nothing(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "same", timedelta(days=10))
+    before = {(r["id"], r["message"]) for r in _armed(tmp_config, task["id"])}
+
+    commands.update_task(tmp_config, task_id=task["id"], title="same")
+
+    assert {(r["id"], r["message"]) for r in _armed(tmp_config, task["id"])} == before
