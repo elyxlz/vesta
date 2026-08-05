@@ -372,6 +372,19 @@ def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status
         db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
 
 
+def _backburner_update(backburner: bool | None, new_due_date: str | None) -> int | None:
+    """The new value for the `backburner` column, or None to leave it alone.
+
+    Committing to a date is the opposite state to parking something, so setting a real due date
+    clears the flag rather than leaving a task both parked and deadlined. An explicit --backburner in
+    the same call still wins. Clearing a due date does NOT park the task: that would silence the
+    digest as an invisible side effect of an unrelated command.
+    """
+    if backburner is not None:
+        return int(backburner)
+    return 0 if new_due_date else None
+
+
 def update_task(
     config: Config,
     *,
@@ -380,6 +393,7 @@ def update_task(
     title: str | None = None,
     priority: int | str | None = None,
     due: DueSpec | None = None,
+    backburner: bool | None = None,
 ) -> dict:
     if status and status not in ("pending", "done"):
         raise ValueError(f"Status must be pending or done, got {status}")
@@ -414,7 +428,8 @@ def update_task(
                     if old_due:
                         db.create_auto_reminders(conn, task_id, result["title"], old_due)
 
-        for field, value in [("title", title), ("priority", priority)]:
+        new_backburner = _backburner_update(backburner, new_due_date if due_date_changed else None)
+        for field, value in [("title", title), ("priority", priority), ("backburner", new_backburner)]:
             if value is not None:
                 updates.append(f"{field} = ?")
                 params.append(value)
@@ -546,7 +561,7 @@ def build_digest(config: Config, *, now: datetime | None = None) -> str | None:
     """The daily digest message, or None when nothing needs attention."""
     now = now or _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        pending = conn.execute("SELECT id, title, priority, due_date, created_at FROM tasks WHERE status = 'pending'").fetchall()
+        pending = conn.execute("SELECT id, title, priority, due_date, created_at, backburner FROM tasks WHERE status = 'pending'").fetchall()
 
     overdue: list[tuple[dict, datetime]] = []
     stale: list[tuple[dict, datetime]] = []
@@ -555,7 +570,9 @@ def build_digest(config: Config, *, now: datetime | None = None) -> str | None:
             due = db.parse_datetime(row["due_date"])
             if due < now:
                 overdue.append((dict(row), due))
-        else:
+        elif not row["backburner"]:
+            # A backburner task is undated ON PURPOSE, so "stale" is the wrong word for it and the
+            # digest's three exits (set a deadline, do it now, drop it) are all wrong actions.
             created = db.parse_datetime(row["created_at"])
             if now - created > STALE_AFTER:
                 stale.append((dict(row), created))

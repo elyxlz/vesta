@@ -11,6 +11,10 @@ from .config import default_data_dir
 
 logger = logging.getLogger(__name__)
 
+# Head schema version. Bump this in the same commit as a new _migrate_vN_to_vN+1, and assert against
+# it in tests rather than hard-coding an integer, so adding a migration cannot break unrelated tests.
+SCHEMA_VERSION = 5
+
 
 class Task(TypedDict, total=False):
     id: str
@@ -18,6 +22,7 @@ class Task(TypedDict, total=False):
     status: str
     priority: int
     due_date: str | None
+    backburner: int
     metadata_path: str | None
     metadata_content: str | None
     created_at: str
@@ -284,6 +289,21 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection):
     logger.info("Migrated schema v3 -> v4")
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection):
+    """v4 -> v5: add the `backburner` flag.
+
+    A task deliberately kept without a due date (someone else drives it, or it is a genuine
+    someday-maybe) was re-listed by the stale-task digest every single day forever, and the digest's
+    three exits are all wrong for it: inventing a deadline, doing it now, or dropping it. The flag is
+    the missing fourth exit. It defers the nag, never the task: the task stays pending and stays
+    visible in `tasks list`.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+    if "backburner" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN backburner INTEGER NOT NULL DEFAULT 0")
+    logger.info("Migrated schema v4 -> v5")
+
+
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else None
@@ -319,7 +339,8 @@ def init_db(data_dir: Path):
                 due_date TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 completed_at TEXT,
-                notified_thresholds TEXT
+                notified_thresholds TEXT,
+                backburner INTEGER NOT NULL DEFAULT 0
             )
         """)
 
@@ -341,6 +362,11 @@ def init_db(data_dir: Path):
         if version < 4:
             _migrate_v3_to_v4(conn)
             conn.execute("UPDATE schema_version SET version = 4")
+            version = 4
+
+        if version < 5:
+            _migrate_v4_to_v5(conn)
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
         conn.commit()
 
