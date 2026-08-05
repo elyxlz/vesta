@@ -18,8 +18,9 @@ Auth strategies:
                        device-flow is restricted to TV / limited input
                        devices.
     "app-password"     Plain LOGIN with an app-specific password the
-                       user generates in their account settings (Yahoo,
-                       iCloud, Fastmail, custom IMAP servers).
+                       user generates in their account settings (Gmail
+                       with 2FA on, Yahoo, iCloud, Fastmail, custom
+                       IMAP servers).
 
 Defaults can be overridden per environment variable so any one
 profile can be reshaped without touching the dict (or use the
@@ -119,6 +120,20 @@ PROVIDERS: dict[str, dict] = {
         # CalDAV, not the Calendar REST API: Thunderbird's Cloud project has the
         # REST API disabled, while CalDAV needs only the scope above.
         "caldav_url": "https://apidata.googleusercontent.com/caldav/v2",
+    },
+    # Gmail / Google Workspace over an app password (requires 2FA on the account),
+    # the fallback when OAuth is unavailable or blocked. Mail only on purpose, no
+    # caldav_url: Google's CalDAV root is not verified against Basic auth here, so
+    # calendar stays off this profile and errors cleanly rather than guessing.
+    "gmail-app-password": {
+        "label": "Gmail / Google Workspace (app password)",
+        "auth_strategy": "app-password",
+        "imap_host": "imap.gmail.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_starttls": True,
+        "sent_folder": "[Gmail]/Sent Mail",
     },
     "yahoo-app-password": {
         "label": "Yahoo Mail (app password)",

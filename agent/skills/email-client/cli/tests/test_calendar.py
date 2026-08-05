@@ -305,6 +305,20 @@ def test_builtin_profiles_carry_caldav_endpoints():
     assert "caldav_url" not in providers.PROVIDERS["generic"]
 
 
+def test_gmail_app_password_profile_is_mail_only():
+    profile = providers.PROVIDERS["gmail-app-password"]
+    assert profile["auth_strategy"] == "app-password"
+    assert profile["imap_host"] == "imap.gmail.com"
+    assert profile["smtp_host"] == "smtp.gmail.com"
+    assert profile["sent_folder"] == "[Gmail]/Sent Mail"
+    # Mail only by design: Basic auth against Google CalDAV is not verified here,
+    # so the profile must not advertise a calendar endpoint.
+    assert "caldav_url" not in profile
+    # Autodetect must keep sending Gmail domains to the OAuth profile; the
+    # app-password profile is an explicit opt-in.
+    assert providers.detect_provider("someone@gmail.com") == "gmail"
+
+
 def test_auth_header_bearer_and_basic(monkeypatch):
     monkeypatch.setattr(imap_client, "get_access_token", lambda account: "TOKEN123")
     monkeypatch.setattr(imap_client, "get_app_password", lambda account: "app-pass")

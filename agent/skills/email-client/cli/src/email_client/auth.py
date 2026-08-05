@@ -8,8 +8,9 @@ Picks a flow based on the resolved provider:
     loopback-oauth   Gmail. Spins up a localhost listener, opens (or
                      prints) the consent URL, captures the redirect,
                      exchanges the code for tokens.
-    app-password     Yahoo / iCloud / Fastmail / generic IMAP. Prompts
-                     for the app password and stores it.
+    app-password     Gmail (via gmail-app-password) / Yahoo / iCloud /
+                     Fastmail / generic IMAP. Prompts for the app
+                     password and stores it.
 
 Multi-account: every credential lives at
 ``$EMAIL_CLIENT_DIR/accounts/<name>/token.json`` so the user can have
@@ -200,8 +201,9 @@ def auth_app_password(provider: str, profile: dict, user: str) -> dict:
     print(f"Account:  {user}")
     print(
         "\nGenerate an app password in your provider's account settings "
-        "(Yahoo, iCloud, Fastmail all have this under 'app-specific "
-        "passwords' or 'security'), then paste it below.\n"
+        "(Gmail, Yahoo, iCloud, Fastmail all have this under 'app-specific "
+        "passwords' or 'security'; Gmail only offers it once 2-Step "
+        "Verification is on), then paste it below.\n"
     )
     pw = os.environ.get("EMAIL_CLIENT_APP_PASSWORD") or getpass.getpass("App password: ")
     pw = pw.strip()
