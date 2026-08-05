@@ -305,6 +305,33 @@ def test_scan_still_ignores_the_news_slug_false_positive():
     assert redact.find_matches("read sk-hynix-raises-full-year-guidance-on-ai-demand today") == []
 
 
+# Namespaced identifiers: the digit run is the tail of a dotted id, not a PAN. These clear both the
+# IIN gate and Luhn, so the dot in the lookbehind is the only thing separating them from a card.
+NAMESPACED_IDS = ["mdp.39015017012900", "coo.31924002274110", "inu.30000047482611"]
+
+
+@pytest.mark.parametrize("ident", NAMESPACED_IDS)
+def test_namespaced_identifiers_are_not_read_as_cards(ident):
+    digits = ident.split(".", 1)[1]
+    # Guard: without the namespace these WOULD be flagged, so the test cannot pass by accident.
+    assert redact.luhn_valid(digits) and redact._has_card_iin(digits) and redact._is_card(digits)
+    assert redact.find_matches(f"fetch id={ident} now") == []
+    assert redact.redact_cards(ident) == ident
+
+
+def test_namespace_rejection_needs_the_dot_adjacent():
+    # A PAN after a sentence-ending period is still a PAN: the separating space breaks the binding.
+    assert redact.find_matches(f"paid. {VISA} cleared") != []
+    # And a PAN quoted or assigned normally is untouched by the change.
+    assert redact.find_matches(f'card="{VISA}"') != []
+
+
+def test_pan_glued_to_a_period_is_the_accepted_false_negative():
+    # A PAN hard against a sentence-ending period is indistinguishable from a namespaced id, so the
+    # dot lookbehind skips it. Accepted: a real PAN follows a space, a colon or a quote.
+    assert redact.find_matches(f"Done.{VISA}") == []
+
+
 def test_card_scan_is_idempotent_on_already_redacted_text():
     assert redact.find_matches(f"charge to {VISA} today") != []
     assert redact.find_matches("charge to [REDACTED] today") == []

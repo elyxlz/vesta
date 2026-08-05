@@ -124,8 +124,12 @@ def mask(match: re.Match[str]) -> str:
 # Payment-card PANs carry no fixed prefix to key a regex on, so this matches any candidate run and
 # `_is_card` decides. A run of 13 to 19 digits may be split into groups by single spaces or hyphens
 # (4111 1111 1111 1111, 3782-822463-10005). The lookarounds forbid a digit on either side so a
-# longer numeric id is never sliced into a fake PAN.
-CARD_CANDIDATE = re.compile(r"(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)")
+# longer numeric id is never sliced into a fake PAN, and forbid a preceding DOT so the numeric tail
+# of a dotted identifier is not read as one: namespaced catalogue ids (mdp.39015017012900) run 14
+# digits from MII 3, clearing the IIN gate, and pass Luhn about one time in ten. A PAN follows a
+# space, a colon or a quote, never a namespace, so the dot costs no real detection. The guard is
+# deliberately dot-only: hyphen/underscore-namespaced ids stay flagged, erring toward redaction.
+CARD_CANDIDATE = re.compile(r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)")
 # Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
 CONTEXT_CHARS = 40
 
