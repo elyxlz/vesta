@@ -14,6 +14,17 @@ Stealth is structural, not a flag: Camoufox is always fingerprint-spoofed, and h
 nothing (unlike stock Chromium). Each profile gets one coherent fingerprint, stable across
 restarts, different across profiles.
 
+**If `browser open` seems to stall, it is not a block and it is not wedged.** `open` calls
+`new_tab()` -> BiDi `browsingContext.create {"type":"tab"}`. In some containers that call gets no
+response, and the command sits for **60 seconds** before failing with `timeout: no response to
+'browsingContext.create' within 60.0s`. `browsingContext.navigate` is unaffected at every wait level
+(`none`/`interactive`/`complete` all return in under a second), so **`browser navigate <url>` is an
+instant drop-in**. `browser tabs` works too.
+
+Let it reach the timeout rather than killing it: the error names the exact failing call, so waiting
+tells you the cause in one go, whereas terminating at 30s leaves you with "it hung" and sends you
+looking for anti-bot causes that are not there.
+
 **Never assume you got caught by anti-bot.** Because the browser is genuinely stealth, a hang or
 a blank page is almost never a block. The overwhelmingly common cause is boring: `open`/`navigate`
 waits for the page `load` event, and heavy JS/SPA sites (airlines, banks, booking flows) fire it
