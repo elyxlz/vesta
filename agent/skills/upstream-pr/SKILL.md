@@ -130,6 +130,8 @@ Only report a PR as done once every CI check is green.
 
 A PR fixes the bug for the next release. It does nothing for the box you are running on right now, where the user keeps hitting it every day until a maintainer merges. So any fix to a skill you actually run gets applied to your local tree in the same pass, not queued behind the merge. This covers the workspace only: `agent/core/` is the read-only engine mount, so a core fix has no local-apply path and reaches you through the release.
 
+A local apply is a stopgap by design. Review often reshapes a fix before it merges, so the released form can differ from what you applied, and the next upstream sync then stops on a conflict in that file. Expect it and resolve toward the released side: it is your own fix, repaired.
+
 Two ways this goes wrong:
 
 - **Filed upstream, never applied locally.** The bug stays live for your user while the queue records it as fixed.
