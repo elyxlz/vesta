@@ -53,7 +53,8 @@ Seven gates before opening a worktree.
 - Infrastructure or tooling improvements
 
 **2. Issue, PR, or both?**
-- You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `upstream-pr --body "...fixes #N"` is enough.
+- You have a fix in the workspace (`~/agent/skills/`, prompts, MEMORY.md structure): **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `upstream-pr --body "...fixes #N"` is enough.
+- The problem lives in `agent/core/`: **issue only**, however sure you are of the fix. Core is mounted read-only, so you cannot apply or run a core change on your box, and an untested engine PR costs more review than a precise issue. Describe the cause, the exact file and line, and the fix you would make; a maintainer lands it.
 - You don't have a fix yet: **issue only**.
 
 **2b. Strip the story before you file.** Anything under `agent/` never describes a previous design, because the agent reads it cold and a description of the old system reads as a description of the current one (see `AGENTS.md`). The file carries the mechanism and the constraint only. Cut from the diff: what the wording used to say, the date, the box or version it was found on, the incident behind it, and any "previously this did X". That material is worth keeping, in the commit message and the PR body, where a reviewer wants it anyway. Litmus: read the added prose as an agent who has never seen the bug, and cut every sentence that only makes sense if you have. Watch it hardest when the fix came out of a retrospective, since you arrive holding the narrative and the narrative is the part that must not ship.
@@ -121,7 +122,7 @@ Only report a PR as done once every CI check is green.
 
 ## Apply the fix locally too
 
-A merged PR reaches you at the next release; your user keeps hitting the bug until then. So apply any workspace fix to your own tree in the same pass, all of it, tests and lint refactors included, since a half-applied fix leaves the tree lint-red and unguarded. `agent/core/` is the read-only engine mount, so a core fix reaches you through the release only. A local apply is a stopgap: review may reshape the fix before merging, the next sync then conflicts on that file, and the released side wins, it is your own fix repaired.
+A merged PR reaches you at the next release; your user keeps hitting the bug until then. So apply any workspace fix to your own tree in the same pass, all of it, tests and lint refactors included, since a half-applied fix leaves the tree lint-red and unguarded. A local apply is a stopgap: maintainers edit and consolidate PRs before merging, so the released form can differ from what you applied, the next sync then conflicts on that file, and the released side wins, it is your own fix repaired.
 
 Verify by diff instead of memory, at step 6 while the worktree exists:
 
