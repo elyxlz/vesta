@@ -223,6 +223,17 @@ def _starttime(pid: int) -> int | None:
         return None
 
 
+def _record(pid: int) -> str:
+    """The pid record: "<pid> <starttime>", or a bare pid where the starttime is unavailable.
+
+    A bare pid is the honest form of "identity unknown", and live_pid() reads it the legacy way
+    rather than as a mismatch. Writing the string "None" into the record would mean the same thing
+    while looking like data.
+    """
+    started = _starttime(pid)
+    return f"{pid} {started}" if started is not None else str(pid)
+
+
 def live_pid() -> int | None:
     """The recorded pid, but only while it is still the process that was recorded.
 
@@ -337,7 +348,7 @@ def _start() -> int:
     PORTFILE.write_text(port)
     with LOG.open("ab") as log:
         child = subprocess.Popen([sys.argv[0], "serve", "--port", port], start_new_session=True, stdout=log, stderr=log)
-    PIDFILE.write_text(f"{child.pid} {_starttime(child.pid)}")
+    PIDFILE.write_text(_record(child.pid))
     return _await_ready(child, port)
 
 

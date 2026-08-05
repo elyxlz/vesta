@@ -60,6 +60,14 @@ starttime_of() {
   awk '{ for (i = NF; i > 0; i--) if ($i ~ /\)$/) { print $(i + 20); exit } }' "/proc/$1/stat" 2>/dev/null || true
 }
 
+# The record is "<pid> <starttime>", or a bare pid where the starttime is unavailable: a bare pid
+# is the honest form of "identity unknown", and live_pid reads it the legacy way rather than as a
+# mismatch.
+record_for() {
+  st=$(starttime_of "$1")
+  if [ -n "$st" ]; then printf '%s %s' "$1" "$st"; else printf %s "$1"; fi
+}
+
 # The record is "<pid> <starttime>", and both halves have to match. kill -0 answers "does some
 # process hold this pid", never "is this still mine": the records outlive the container while a
 # fresh pid namespace renumbers from low values, so a reused pid otherwise reads as a healthy
@@ -107,7 +115,7 @@ do_start() {
   echo "$PORT" > "$PORTFILE"
   setsid python3 "$HOME/agent/skills/file-host/serve.py" --dir "$HOME/.file-host" --port "$PORT" >> "$LOG" 2>&1 &
   pid=$!
-  echo "$pid $(starttime_of "$pid")" > "$PIDFILE"
+  record_for "$pid" > "$PIDFILE"
   ready_by=$(deadline "$READY_BUDGET")
   until expired "$ready_by"; do
     kill -0 "$pid" 2>/dev/null || abandon "$pid" "file-host exited during startup; see $LOG"
