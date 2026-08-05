@@ -1,7 +1,9 @@
 """Tests for the dream skill's memory_ledger script: durable-line extraction + lost vs reworded."""
 
+import datetime as dt
 import importlib.util
 import pathlib as pl
+import subprocess
 
 import pytest
 
@@ -16,13 +18,26 @@ RULE = "- WHEN a probe's success is itself the damage -> there is no safe way to
 OTHER = "- WHEN a number moves and I reach for a cause -> check the number is even measuring me."
 
 
+def _run_git(repo: pl.Path, *args: str) -> str:
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True)
+    return done.stdout
+
+
 @pytest.fixture
 def memory(tmp_path, monkeypatch):
-    """Point the ledger at a throwaway MEMORY.md and snapshot dir, and hand back both paths."""
-    mem, snaps = tmp_path / "MEMORY.md", tmp_path / "snapshots"
+    """A throwaway git checkout holding agent/MEMORY.md (the box layout), the ledger pointed at it.
+    Signing is disabled locally so host git config can never interfere."""
+    (tmp_path / "agent").mkdir()
+    mem = tmp_path / "agent" / "MEMORY.md"
+    _run_git(tmp_path, "init", "-q")
+    for key, value in (("user.name", "test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false"), ("tag.gpgsign", "false")):
+        _run_git(tmp_path, "config", key, value)
+    mem.write_text("# MEMORY\n")
+    _run_git(tmp_path, "add", "-A")
+    _run_git(tmp_path, "commit", "-q", "-m", "birth")
+    monkeypatch.setattr(ledger, "REPO", tmp_path)
     monkeypatch.setattr(ledger, "MEMORY", mem)
-    monkeypatch.setattr(ledger, "SNAPS", snaps)
-    return mem, snaps
+    return mem
 
 
 def test_durable_lines_skips_the_user_state_section():
@@ -115,10 +130,9 @@ def test_reordered_lines_report_nothing():
 
 
 def test_report_names_the_lost_rule_and_not_the_reworded_one(memory, capsys):
-    mem, _ = memory
-    mem.write_text(f"## RULES\n{RULE}\n{OTHER}\n")
-    ledger.snapshot()
-    mem.write_text(f"## RULES\n{RULE.replace('no safe way', 'no defensible way')}\n")
+    memory.write_text(f"## RULES\n{RULE}\n{OTHER}\n")
+    assert ledger.snapshot("Wrote two rules.") == 0
+    memory.write_text(f"## RULES\n{RULE.replace('no safe way', 'no defensible way')}\n")
 
     ledger.report()
 
@@ -129,10 +143,9 @@ def test_report_names_the_lost_rule_and_not_the_reworded_one(memory, capsys):
 
 
 def test_report_is_clean_when_only_the_volatile_sections_changed(memory, capsys):
-    mem, _ = memory
-    mem.write_text(f"## RULES\n{RULE}\n### User State\n**Focus**: yesterday's read\n")
-    ledger.snapshot()
-    mem.write_text(f"## RULES\n{RULE}\n### User State\n**Focus**: a completely different read\n")
+    memory.write_text(f"## RULES\n{RULE}\n### User State\n**Focus**: yesterday's read\n")
+    assert ledger.snapshot("Refreshed the state.") == 0
+    memory.write_text(f"## RULES\n{RULE}\n### User State\n**Focus**: a completely different read\n")
 
     ledger.report()
 
@@ -140,24 +153,104 @@ def test_report_is_clean_when_only_the_volatile_sections_changed(memory, capsys)
 
 
 def test_report_says_so_when_there_is_no_baseline_yet(memory, capsys):
-    """The first run on a new agent: no snapshot has ever been taken, so the directory is absent."""
-    mem, _ = memory
-    mem.write_text(f"## RULES\n{RULE}\n")
+    """The first run on a new agent: commits exist but none carries the checkpoint prefix."""
+    memory.write_text(f"## RULES\n{RULE}\n")
+
+    assert ledger.report() == 0
+
+    assert "no checkpoint commit" in capsys.readouterr().out
+
+
+def test_a_checkpoint_commit_never_moves_the_baseline(memory, capsys):
+    """The report keys on the dream subject prefix, not HEAD: a `git add -A && git commit -m
+    checkpoint` between dreams (the upstream-sync flow) must not hide a loss it happened to commit."""
+    memory.write_text(f"## RULES\n{RULE}\n{OTHER}\n")
+    assert ledger.snapshot("Wrote two rules.") == 0
+    memory.write_text(f"## RULES\n{OTHER}\n")
+    _run_git(memory.parents[1], "add", "-A")
+    _run_git(memory.parents[1], "commit", "-q", "-m", "checkpoint")
 
     ledger.report()
 
-    assert "no prior snapshot" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "1 durable line(s) lost" in out
+    assert RULE in out
 
 
-def test_snapshot_prunes_beyond_the_keep_window(memory, capsys):
-    mem, snaps = memory
+def test_snapshot_commit_carries_the_date_and_the_summary(memory):
+    repo = memory.parents[1]
+    memory.write_text(f"## RULES\n{RULE}\n")
+
+    assert ledger.snapshot("Added the probe rule; tidied nothing else.") == 0
+
+    subject = _run_git(repo, "log", "-n1", "--format=%s").strip()
+    assert subject.startswith(ledger.SNAPSHOT_PREFIX)
+    assert dt.date.today().isoformat() in subject
+    assert _run_git(repo, "log", "-n1", "--format=%b").strip() == "Added the probe rule; tidied nothing else."
+
+
+def test_snapshot_checkpoints_the_whole_days_work(memory):
+    """The dream commit is the box's nightly checkpoint: every changed file rides in it, not just
+    MEMORY.md."""
+    repo = memory.parents[1]
+    memory.write_text(f"## RULES\n{RULE}\n")
+    (repo / "agent" / "notes.md").write_text("day work\n")
+
+    assert ledger.snapshot("Rules plus a day note.") == 0
+
+    files = _run_git(repo, "show", "--name-only", "--format=", "HEAD")
+    assert "agent/MEMORY.md" in files and "agent/notes.md" in files
+
+
+def test_main_snapshot_without_a_summary_is_a_usage_error_without_committing(memory, monkeypatch, capsys):
+    memory.write_text(f"## RULES\n{RULE}\n")
+    monkeypatch.setattr("sys.argv", ["memory_ledger.py", "--snapshot"])
+
+    assert ledger.main() != 0
+
+    assert "usage:" in capsys.readouterr().err
+    assert ledger.SNAPSHOT_PREFIX not in _run_git(memory.parents[1], "log", "--format=%s")
+
+
+def test_snapshot_is_a_quiet_noop_mid_merge(memory, capsys):
+    repo = memory.parents[1]
+    memory.write_text(f"## RULES\n{RULE}\n")
+    (repo / ".git" / "MERGE_HEAD").write_text(_run_git(repo, "rev-parse", "HEAD"))
+
+    assert ledger.snapshot("Never lands.") == 0
+
+    assert "merge in progress" in capsys.readouterr().out
+    assert ledger.SNAPSHOT_PREFIX not in _run_git(repo, "log", "--format=%s")
+
+
+def test_snapshot_is_a_quiet_noop_on_a_clean_tree(memory, capsys):
+    assert ledger.snapshot("Never lands.") == 0
+
+    assert "nothing changed" in capsys.readouterr().out
+    assert ledger.SNAPSHOT_PREFIX not in _run_git(memory.parents[1], "log", "--format=%s")
+
+
+def test_a_checkpoint_predating_the_file_reads_as_an_empty_baseline(memory, capsys):
+    repo = memory.parents[1]
+    _run_git(repo, "rm", "-q", ledger.REL)
+    _run_git(repo, "commit", "-q", "-m", f"{ledger.SNAPSHOT_PREFIX} (2020-01-01)", "-m", "Before the file existed.")
+    (repo / "agent").mkdir(exist_ok=True)
+    memory.write_text(f"## RULES\n{RULE}\n")
+
+    assert ledger.report() == 0
+
+    assert "0 durable line(s) lost" in capsys.readouterr().out
+
+
+def test_report_errors_on_stderr_outside_a_git_checkout(tmp_path, monkeypatch, capsys):
+    (tmp_path / "agent").mkdir()
+    mem = tmp_path / "agent" / "MEMORY.md"
     mem.write_text(f"## RULES\n{RULE}\n")
-    snaps.mkdir()
-    for day in range(1, ledger.KEEP + 2):
-        (snaps / f"2020-01-{day:02d}.md").write_text("old")
+    monkeypatch.setattr(ledger, "REPO", tmp_path)
+    monkeypatch.setattr(ledger, "MEMORY", mem)
 
-    ledger.snapshot()
+    assert ledger.report() != 0
 
-    kept = sorted(p.name for p in snaps.glob("*.md"))
-    assert len(kept) == ledger.KEEP
-    assert "2020-01-01.md" not in kept
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err != ""
