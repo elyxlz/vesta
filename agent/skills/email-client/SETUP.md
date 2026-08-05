@@ -61,7 +61,7 @@ The CLI prints a Google consent URL and listens on `http://127.0.0.1:<random-por
 email-client auth add --account personal --user you@gmail.com --provider gmail-app-password
 ```
 
-That needs 2FA enabled on the Google account (Google only shows the app-password option once 2FA is on) and covers mail only, no calendar: the `calendar` commands error on a missing `caldav_url` under this profile. Autodetect is unchanged, `gmail.com` still resolves to OAuth `gmail`, so the app-password profile only applies when you pass it explicitly.
+That needs 2FA enabled on the Google account (Google only shows the app-password option once 2FA is on) and covers mail only, no calendar: the `calendar` commands error on a missing `caldav_url` under this profile. Autodetect sends `gmail.com` to the OAuth `gmail` profile, so this one applies only when you pass `--provider gmail-app-password` yourself.
 
 ### Gmail / Yahoo / iCloud / Fastmail / generic - app password
 

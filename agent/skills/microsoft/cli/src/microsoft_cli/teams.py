@@ -36,12 +36,13 @@ from .settings import DEFAULT_CLIENT_ID
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
-# Delegated Graph scopes for Teams. Every one is user-consentable (no admin
-# consent), so `auth teams-login` works for non-admins. Chat.ReadWrite subsumes
-# read + send + create-chat + edit; ChannelMessage.Send covers channel posts and
-# replies. Reading channel *messages* needs the admin-only ChannelMessage.Read.All,
-# deliberately left out so it never blocks the consent bundle; grant it on your own
-# app registration (MICROSOFT_MCP_CLIENT_ID) if you need channel reads.
+# Delegated Graph scopes for Teams. All are work/school only: the consumer (MSA)
+# endpoint never grants them, so Teams needs a work or school account. On such a
+# tenant every one is user-consentable, so `auth teams-login` works for non-admins.
+# Chat.ReadWrite subsumes read + send + create-chat + edit; ChannelMessage.Send
+# covers channel posts and replies. Reading channel *messages* needs the admin-only
+# ChannelMessage.Read.All, deliberately left out so it never blocks the consent
+# bundle; grant it on your own app registration (MICROSOFT_MCP_CLIENT_ID) instead.
 TEAMS_SCOPES = [
     "https://graph.microsoft.com/Chat.ReadWrite",
     "https://graph.microsoft.com/ChannelMessage.Send",

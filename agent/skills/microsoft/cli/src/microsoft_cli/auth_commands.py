@@ -367,7 +367,9 @@ def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
         raise Exception("Teams authorization succeeded but no account was found")
     if not granted_teams_scope(result):
         # An answer, not a failure: the endpoint signed the account in and narrowed the grant,
-        # so this account cannot hold Teams permissions on this route.
+        # so this account cannot hold Teams permissions on this route. Dropping any stale device
+        # marker converges an account an earlier sign-in mis-marked as Teams-capable.
+        teams.unmark_device_account(username, config)
         return {
             "status": "teams_unavailable",
             "account": username,
@@ -483,10 +485,8 @@ def setup_scopes_for(account_email: str) -> list[str]:
     """Scopes to consent during `auth setup` for this account.
 
     Every Teams Graph permission (Chat.*, Team.*, Channel.*, Presence.*) is work/school only: the
-    consumer (MSA) token endpoint never grants them. Bundling them into a personal account's sign-in
-    therefore cannot help and can only hurt: at best the endpoint silently drops them and returns a
-    token with no Teams access, at worst consent fails outright and the user sees a bare sign-in
-    error. So ask a personal account for mail + calendar alone."""
+    consumer (MSA) token endpoint never grants them, so asking a personal account for them buys
+    nothing and risks a bare sign-in error. A personal account is asked for mail + calendar alone."""
     if _is_personal_ms_account(account_email):
         return list(DEFAULT_CLIENT_SCOPES)
     return list(_SETUP_SCOPES)

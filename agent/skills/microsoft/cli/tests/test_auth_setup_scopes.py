@@ -78,10 +78,14 @@ def test_setup_still_provisions_teams_when_the_grant_includes_it(monkeypatch: py
 
 
 def test_teams_complete_reports_the_real_reason_instead_of_marking_the_account(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    config = Config(data_dir=tmp_path)
+    teams.mark_device_account("a@hotmail.com", config)  # stale marker left by a sign-in that trusted the request scopes
     result = {"access_token": "t", "scope": NARROWED_GRANT, "id_token_claims": {"preferred_username": "a@hotmail.com"}}
     marked = _patch_device_flow(monkeypatch, result)
-    out = auth_commands.teams_complete(Config(data_dir=tmp_path), flow_cache="{}")
+    out = auth_commands.teams_complete(config, flow_cache="{}")
     # An answer about the account, not a command failure: the sign-in itself succeeded.
     assert out["status"] == "teams_unavailable"
     assert "work/school only" in out["message"]
     assert marked == []
+    # Same convergence as the `auth setup` path: has_token stops claiming Teams for this account.
+    assert teams.list_accounts(config) == []

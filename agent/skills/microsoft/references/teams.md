@@ -8,7 +8,7 @@ covers Teams too, and the daemon keeps its token fresh.
 `Channel.*`, `Presence.*`) is work/school only, so a personal Microsoft account (outlook.com,
 hotmail.\*, live.\*, msn.com) cannot authorize Teams by any route. `auth setup` handles this on its
 own: it signs a personal account in for mail and calendar only, and reports `provisioned:
-mail/calendar`. Do not go looking for a Teams workaround for a personal account, there isn't one.
+mail/calendar`. There is no workaround, so do not look for one.
 
 Every command takes `--backend {auto,graph,owa-rest}` (default `auto`): `graph` uses the device-flow
 token, `owa-rest` uses the browser-captured token, `auto` tries Graph then falls back. If a command

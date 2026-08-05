@@ -119,6 +119,10 @@ microsoft auth teams-complete --flow-cache <cache>   # complete after signing in
 microsoft teams chats --account you@company.com
 ```
 
+`teams-complete` reads the granted scopes, not the requested ones. When the sign-in grants no Teams
+permission it answers `status: teams_unavailable` and leaves the account unmarked. That is the answer,
+not a retryable failure: the account cannot hold Teams permissions.
+
 Locked tenant (blocks the CLI's app registration)? Capture a token from Teams on the web, the same
 mechanism as `owa-login`:
 

@@ -44,9 +44,9 @@ import uuid
 # Probe outcome classifications.
 HEALTHY = "healthy"
 DEAD_CLIENT = "dead_client"
-# The client id is alive but the credential we present with it is refused, i.e.
-# the shipped secret is out of date. Named without the word it holds so the
-# constant is not mistaken (by humans or by scanners) for the credential itself.
+# The client id is alive but the credential presented with it is refused: the
+# shipped secret is out of date. Named around the rejection rather than the
+# credential so neither a reader nor a secret scanner reads it as the secret.
 CLIENT_AUTH_REJECTED = "client_auth_rejected"
 BAD_TOKEN = "bad_token"
 UNKNOWN = "unknown"
@@ -79,12 +79,11 @@ def classify_refresh_response(_status_code: int | None, body: dict | None) -> st
     and deliberately NOT treated as a dead client, so a transient upstream blip
     never triggers a spurious client swap or notification.
 
-    One wrinkle: Google returns ``invalid_client`` for two different conditions.
-    A deleted/nonexistent client is genuinely dead, but a LIVE client presented
-    with the wrong secret answers HTTP 401 ``invalid_client`` with
-    "The provided client secret is invalid." That is a stale secret, not a dead
-    client, so it gets its own CLIENT_AUTH_REJECTED classification: it still needs
-    the client re-resolved (an upstream secret rotation is exactly how it
+    One wrinkle: ``invalid_client`` covers two conditions. A deleted client is
+    genuinely dead, but a LIVE client presented with the wrong secret answers 401
+    ``invalid_client`` with "The provided client secret is invalid." That is a
+    stale secret, so it classifies as CLIENT_AUTH_REJECTED: still worth
+    re-resolving the client (an upstream secret rotation is exactly how it
     happens), but the user must not be told their OAuth client was removed.
     """
     body = body or {}
@@ -199,14 +198,11 @@ def attempt_self_heal(account: str, failed_result: dict, *, post=None, allow_fet
     """Re-resolve Thunderbird's current client and retry the refresh once.
 
     Force-refreshes the dynamic client from comm-central, then retries the token
-    refresh with the fresh client id/secret. The retry is worth making whenever the
-    resolved client id differs from the failing one OR the force-refresh actually
-    pulled fresh credentials from upstream: upstream can rotate the shipped secret
-    while keeping the client id, so an unchanged id is not on its own a reason to
-    give up. Only when neither holds is there nothing new to try. A successful
-    retry means the freshly-fetched client is now cached, so every subsequent
-    profile build picks it up automatically: the swap is durable, not just for this
-    call.
+    refresh with the fresh client id/secret. Retrying is pointless only when the
+    resolved id equals the failing one AND nothing was fetched, since upstream can
+    rotate the shipped secret while keeping the client id. A successful retry leaves
+    the fresh client cached, so every subsequent profile build picks it up: the swap
+    is durable, not just for this call.
     """
     from . import providers
     from .thunderbird_client import resolve_google_client
@@ -219,7 +215,7 @@ def attempt_self_heal(account: str, failed_result: dict, *, post=None, allow_fet
     )
     new_id = creds["client_id"]
     new_secret = creds["client_secret"]
-    if new_id == failed_result.get("client_id") and creds.get("source") != "fetched":
+    if new_id == failed_result.get("client_id") and creds["source"] != "fetched":
         return {
             "status": UNKNOWN,
             "healed": False,
