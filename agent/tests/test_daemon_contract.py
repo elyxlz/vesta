@@ -77,6 +77,13 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _recorded_pid(pidfile: pl.Path) -> int:
+    """The pid a record names. The record is "<pid> <starttime>", so reading the whole file as a
+    number reaches a daemon only by accident. Raises the way int() and a missing file do, which is
+    what the callers already suppress."""
+    return int(pidfile.read_text().split()[0])
+
+
 def _rig_file_host(home: pl.Path, bin_dir: pl.Path) -> None:
     served = home / ".file-host"
     served.mkdir()
@@ -317,8 +324,8 @@ def daemon(request, tmp_path):
     # skill's, since one may run a second process (telegram's watchdog) that would outlive the
     # test and restart what this killed. Sorted order puts a "-watchdog" record first.
     for pidfile in sorted((home / "agent/data/daemons").glob("*.pid")):
-        with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
-            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+        with contextlib.suppress(FileNotFoundError, IndexError, ProcessLookupError, ValueError):
+            os.kill(_recorded_pid(pidfile), signal.SIGKILL)
 
 
 def _verb(spec, env, *args):
@@ -346,9 +353,9 @@ def _error(stdout: str, stderr: str) -> str:
 def _pid(spec, home) -> int | None:
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
     try:
-        pid = int(pidfile.read_text().strip())
+        pid = _recorded_pid(pidfile)
         os.kill(pid, 0)
-    except (FileNotFoundError, ValueError, ProcessLookupError):
+    except (FileNotFoundError, IndexError, ValueError, ProcessLookupError):
         return None
     return pid
 
@@ -401,6 +408,46 @@ def test_two_starts_racing_leave_one_daemon_and_one_live_record(daemon):
         os.kill(pid, 0)
 
 
+def test_status_rejects_a_reused_pid(daemon):
+    """A pid record outlives the container, and the fresh pid namespace renumbers from low values,
+    so the recorded pid can belong to an unrelated process by the next boot. os.kill(pid, 0) cannot
+    tell the two apart: it answers "does some process hold this pid", never "is this still mine".
+    Left undefended, status reports running, the idempotent restart block skips the start, and the
+    service is silently down with its one health check reporting health it never measured.
+
+    Standing in for a real reuse: the recorded starttime is edited to a value the live process
+    cannot have, which is exactly the state a recycled pid produces."""
+    spec, home, env = daemon
+    assert _json(_verb(spec, env, "start")) == {"status": "started"}
+    pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
+
+    record = pidfile.read_text().split()
+    assert len(record) == 2, f"the record carries no starttime, so a reused pid is undetectable: {record}"
+    assert record[1].isdigit(), f"the recorded starttime is not a number: {record}"
+
+    pidfile.write_text(f"{record[0]} {int(record[1]) + 1}")
+    assert _json(_verb(spec, env, "status"))["running"] is False, "a reused pid reads as a healthy daemon"
+
+    # And the check is specific: restore the true identity and the same live daemon reads healthy,
+    # so this is not a status that simply always says False.
+    pidfile.write_text(" ".join(record))
+    assert _json(_verb(spec, env, "status"))["running"] is True
+
+    # A record written before this check existed carries a pid alone. It must still read as
+    # running, or an upgrade declares every live daemon dead and stacks a second one beside it.
+    pidfile.write_text(record[0])
+    assert _json(_verb(spec, env, "status"))["running"] is True
+
+    # And a second field that is not a starttime, which no launcher writes but a reader still meets
+    # on a truncated or hand-edited record. Comparing a real starttime against it would declare a
+    # live daemon dead, so an unparseable second field reads as legacy, not as a mismatch.
+    pidfile.write_text(f"{record[0]} x")
+    assert _json(_verb(spec, env, "status"))["running"] is True
+
+    pidfile.write_text(" ".join(record))
+    assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
+
+
 def test_start_fails_closed_when_registration_fails(daemon):
     spec, home, env = daemon
     if not spec.serves_port:
@@ -419,8 +466,8 @@ def _spawned_pid(spec, home, start) -> int | None:
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
     spawned = None
     while start.poll() is None:
-        with contextlib.suppress(FileNotFoundError, ValueError):
-            spawned = int(pidfile.read_text().strip())
+        with contextlib.suppress(FileNotFoundError, IndexError, ValueError):
+            spawned = _recorded_pid(pidfile)
         time.sleep(PID_CAPTURE_POLL_SECS)
     return spawned
 
@@ -580,3 +627,53 @@ def test_usage_and_unknown_verbs(daemon):
     output = unknown.stdout + unknown.stderr
     assert "usage" in output.lower(), f"an unknown verb answered without usage: {output!r}"
     assert not _is_error_envelope(output), f"an unknown verb answered with the error envelope: {output!r}"
+
+
+def test_every_python_daemon_child_is_launched_unbuffered():
+    """A daemon that re-execs its own CLI must hand the child PYTHONUNBUFFERED.
+
+    CPython block-buffers stdout when it is a file rather than a tty, so a detached daemon writing
+    to `~/agent/logs/<name>.log` can print its startup line and poll for hours while the log stays
+    empty and its mtime stays stale. That is not a cosmetic loss: the log is the only evidence of a
+    daemon's liveness anyone reads, so a stale mtime gets diagnosed as a daemon that died. Observed
+    on a live box, where the finance watcher had been polling for over an hour with its log
+    untouched since the previous day.
+
+    Checked over the source rather than a running process because this file is duplicated per
+    skill, so the failure returns the moment a twelfth copy is added. A runtime check would have to
+    know which daemons print on startup, and a daemon that prints nothing would pass by saying
+    nothing, which is the shape of test that lets this class of bug through.
+    """
+    # Re-execing the CLI is what names the daemons this applies to: one that spawns a compiled
+    # binary is not running an interpreter, so its buffering is not in play. Matched over the whole
+    # file rather than the call, so a reformatted Popen cannot quietly stop being checked.
+    sources = {path: path.read_text() for path in sorted(SKILLS_DIR.rglob("daemon.py"))}
+    reexecs = {path: source for path, source in sources.items() if "[sys.argv[0]" in source}
+    assert reexecs, "no daemon re-execs its own CLI, so this check is matching nothing"
+    offenders = [str(path.relative_to(REPO_ROOT)) for path, source in reexecs.items() if "PYTHONUNBUFFERED" not in source]
+    assert offenders == [], f"daemon children launched with buffered stdout: {offenders}"
+
+
+def test_no_daemon_claims_the_pidfile_with_a_bare_pid():
+    """The claim writes the same self-verifying record the finished start does.
+
+    A start claims the pidfile, registers its port with vestad, then spawns and records the child.
+    A start killed inside that window leaves the record it claimed with standing. Written bare, it
+    names a dead starter with no starttime to check, so a pid recycled before the next boot reads
+    as a healthy daemon and every later start declines: the exact failure the record exists to
+    catch. Writing the full record at claim time is also what lets records converge, so the
+    bare-pid fallback can eventually be removed.
+    """
+    python = {path: path.read_text() for path in sorted(SKILLS_DIR.rglob("daemon.py"))}
+    python = {path: source for path, source in python.items() if "def _claim(" in source}
+    assert python, "no python daemon claims a pidfile, so this check is matching nothing"
+
+    # A skill with no CLI project is one executable named after its directory (AGENTS.md), which is
+    # what the sh launchers are; self-selecting on claim_start keeps this from drifting off a list.
+    launchers = {path: path.read_text() for path in sorted(SKILLS_DIR.glob("*/*")) if path.name == path.parent.name}
+    shell = {path: source for path, source in launchers.items() if "claim_start()" in source}
+    assert shell, "no sh launcher claims a pidfile, so this check is matching nothing"
+
+    bare = [str(path.relative_to(REPO_ROOT)) for path, source in python.items() if "handle.write(str(pid))" in source]
+    bare += [str(path.relative_to(REPO_ROOT)) for path, source in shell.items() if 'echo $$ > "$PIDFILE"' in source]
+    assert bare == [], f"a claim writing a bare pid leaves an unverifiable record if the start dies mid-window: {bare}"

@@ -134,7 +134,9 @@ def test_start_hands_the_registered_port_to_the_server_through_the_environment(
     assert argv == ["/usr/local/bin/voice-server"]
     assert kwargs["env"]["SKILL_PORT"] == "5150"
     assert kwargs["start_new_session"] is True
-    assert daemon.PIDFILE.read_text() == "4321"
+    # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is
+    # there at all depends on the fake pid happening to exist on this machine.
+    assert daemon.PIDFILE.read_text().split()[0] == "4321"
     assert daemon.PORTFILE.read_text() == "5150"
 
 

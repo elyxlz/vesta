@@ -113,7 +113,9 @@ def test_start_records_the_pid_and_port_of_a_daemon_that_answers(records, monkey
     assert daemon.daemon_cmd("start") == 0
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
     assert launched[0][1:] == ["serve", "--port", "5150"]
-    assert daemon.PIDFILE.read_text() == "4321"
+    # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is
+    # there at all depends on the fake pid happening to exist on this machine.
+    assert daemon.PIDFILE.read_text().split()[0] == "4321"
     assert daemon.PORTFILE.read_text() == "5150"
 
 

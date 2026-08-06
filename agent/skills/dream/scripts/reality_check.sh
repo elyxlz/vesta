@@ -12,11 +12,12 @@ bad() {
 }
 
 # Daemon records: boot clears stale records, so a recorded pid with no process died since boot and
-# nothing restarted it.
+# nothing restarted it. The record is "<pid> <starttime>", so the pid is its first field.
 for pid_file in "$HOME"/agent/data/daemons/*.pid; do
     [ -e "$pid_file" ] || continue
     name=$(basename "$pid_file" .pid)
-    if kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+    record=$(cat "$pid_file" 2>/dev/null)
+    if kill -0 "${record%% *}" 2>/dev/null; then
         ok "daemon $name is running"
     else
         bad "daemon $name has a record but no process: it died and nothing restarted it"

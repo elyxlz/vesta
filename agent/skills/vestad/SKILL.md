@@ -113,6 +113,12 @@ State lives in the same three places for every skill, under one name the daemon 
 (normally its command, `voice-keys` calling its daemon `voice`):
 
 - pid: `~/agent/data/daemons/<name>.pid`, port: `~/agent/data/daemons/<name>.port`
+  The pid record is **`<pid> <starttime>`**, two space-separated fields, where starttime is
+  field 22 of `/proc/<pid>/stat` (clock ticks since boot). A pid alone answers "does some
+  process hold this number"; the pair answers "is this still the process I started", which is
+  the question status actually needs. Write both fields, falling back to the pid alone only when
+  `/proc` is unreadable. Read the pid as the first field rather than as the whole file, and read
+  a record carrying a pid alone as trusted rather than as a mismatch.
 - log: `~/agent/logs/<name>.log`, appended, never truncated
 - budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start (default 30, and 300 for whatsapp and
   telegram, which compile their CLI on the way up), `DAEMON_STOP_TIMEOUT_SECS` bounds a stop
@@ -120,14 +126,17 @@ State lives in the same three places for every skill, under one name the daemon 
 
 Boot empties the records directory before any daemon runs, because a pid written by the previous
 container can already belong to something else in the fresh pid space, which would read as live
-and turn the next start into a silent no-op.
+and turn the next start into a silent no-op. That clears records across a restart; the recorded
+starttime is what protects a record whose daemon died mid-life, which boot never sees.
 
 Six properties, which are what make a restart file a plain list of starts:
 
 - **start is idempotent**: a recorded pid that is still alive answers `already_running` and
   spawns nothing, so re-running a start can never stack a second copy.
 - **start is exclusive**: the pid record is claimed with an exclusive create (the parent's own
-  pid) before anything is registered or spawned, so a start that loses that race answers
+  record, in the same two-field form as the final one, so a start killed before it records the
+  child still leaves a record a reader can verify) before anything is registered or spawned, so
+  a start that loses that race answers
   `already_running` instead of stacking a second daemon beside the winner's. A loser has three
   ways out: a record naming a live process is `already_running`, touching nothing; a record no
   process stands behind is cleared and taken over, which is the one path on which two starts can
@@ -225,6 +234,15 @@ vestad exposes registered services under the tunnel. The stable patterns:
 - **User-facing web app**: `$VESTAD_TUNNEL/app`.
 
 Reach for these instead of reverse-engineering the route when you need to hand the user a link.
+
+### Building an interactive web app served this way
+The browser sits at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/...`, so the prefix is a **client-side** concern only:
+- **Keep client URLs relative.** An absolute `fetch('/api/x')` resolves against the tunnel root rather than the service, and the same goes for asset and link hrefs. Use relative URLs, or derive a base from `location.pathname`.
+- **The server needs no prefix handling.** vestad splits the service name off and forwards the exact subpath, so a request to `<svc>/api/x` reaches the handler as `/api/x`. Match routes with `==`.
+- **WebSockets work for a registered service.** vestad upgrades the connection and bridges it, pinging the client on a keepalive interval so an idle socket survives the tunnel. Only the raw agent port refuses to upgrade, because that carries the internal event bus; use `/sync` for that. A browser `WebSocket` cannot set headers, so carry a private service's key as `?token=<key>`.
+- **Bind `0.0.0.0`, not `127.0.0.1`.** The container has its own network and vestad proxies in from outside, so a loopback-only bind answers 502.
+- **Default to private** and hand the user a minted `/k/<key>/` link, the shape the signature pad uses. `public: true` is only for a page that must load with no credential at all (the QR-link-page shape), carries nothing sensitive, and is the rare exception, never the convenient default.
+- A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in the restart skill's Daemons block, so the link survives reboots.
 
 ## Update vestad
 

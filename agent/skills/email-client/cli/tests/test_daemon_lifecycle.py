@@ -79,6 +79,7 @@ class _Spawned:
     detached: bool
     log_path: str
     record: str
+    env: dict[str, str]
 
 
 @pytest.fixture
@@ -137,13 +138,14 @@ def _capture_spawn(monkeypatch, *, exit_code: int | None = None) -> list[_Spawne
         def poll(self) -> int | None:
             return exit_code
 
-    def fake_popen(argv, *, start_new_session, stdout, stderr):
+    def fake_popen(argv, *, env, start_new_session, stdout, stderr):
         spawns.append(
             _Spawned(
                 argv=list(argv),
                 detached=start_new_session,
                 log_path=stdout.name,
                 record=dl.PIDFILE.read_text(),
+                env=dict(env),
             )
         )
         return _Child()
@@ -189,8 +191,15 @@ def test_start_claims_the_record_before_it_spawns_anything(records: pathlib.Path
     assert dl.daemon_cmd("start") == 0
 
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
-    assert [spawn.record for spawn in spawns] == [str(os.getpid())]
-    assert dl.PIDFILE.read_text() == str(CHILD_PID)
+    # The claim records the starter exactly as a finished start records the child, so a start
+    # killed between the two leaves a record a reader can still verify. This process is live, so
+    # its starttime is always readable here.
+    claims = [spawn.record.split() for spawn in spawns]
+    assert [claim[0] for claim in claims] == [str(os.getpid())]
+    assert all(len(claim) == 2 and claim[1].isdigit() for claim in claims), claims
+    # The pid is the record's first field; whether the second one is there at all depends on the
+    # fake child pid happening to exist on this machine.
+    assert dl.PIDFILE.read_text().split()[0] == str(CHILD_PID)
 
 
 def test_start_runs_the_poller_detached_and_names_no_cadence(records: pathlib.Path, monkeypatch, capsys):
@@ -204,6 +213,10 @@ def test_start_runs_the_poller_detached_and_names_no_cadence(records: pathlib.Pa
     assert [spawn.argv for spawn in spawns] == [[sys.argv[0], "poll"]]
     assert [spawn.detached for spawn in spawns] == [True]
     assert [spawn.log_path for spawn in spawns] == [str(dl.LOG)]
+    # stdout is that log file rather than a tty, so CPython would block-buffer the child and the
+    # log would sit empty while the daemon polls. The log is the only liveness evidence anyone
+    # reads, so an empty one gets diagnosed as a daemon that died.
+    assert [spawn.env["PYTHONUNBUFFERED"] for spawn in spawns] == ["1"]
 
 
 def test_start_answers_already_running_and_never_stacks(records: pathlib.Path, monkeypatch, capsys):
@@ -240,7 +253,7 @@ def test_start_takes_over_a_record_no_process_stands_behind(records: pathlib.Pat
 
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
     assert len(spawns) == 1
-    assert dl.PIDFILE.read_text() == str(CHILD_PID)
+    assert dl.PIDFILE.read_text().split()[0] == str(CHILD_PID)
 
 
 def test_start_that_gives_up_removes_its_own_record(records: pathlib.Path, monkeypatch, capsys):

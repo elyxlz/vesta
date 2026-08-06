@@ -48,7 +48,9 @@ def test_start_launches_the_organize_watcher_detached_and_records_its_pid(record
     argv, kwargs = launched[0]
     assert argv[1:] == ["organize", "watch"]
     assert kwargs["start_new_session"] is True
-    assert daemon.PIDFILE.read_text() == "4321"
+    # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is
+    # there at all depends on the fake pid happening to exist on this machine.
+    assert daemon.PIDFILE.read_text().split()[0] == "4321"
 
 
 def test_the_watcher_registers_no_vestad_port(records, monkeypatch):
