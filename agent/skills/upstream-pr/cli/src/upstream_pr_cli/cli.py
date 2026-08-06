@@ -161,21 +161,40 @@ def list_my_prs(token, agent_name, state, limit):
             print(f"  #{pr['number']}  opened by {originator}: {pr['title'][:56]}\n      {pr['html_url']}")
 
 
-def warn_if_branch_belongs_to_another_agent(token, branch, agent_name):
+GUARD_BRANCH_REF = "refs/vesta-guard/branch"
+GUARD_BASE_REF = "refs/vesta-guard/base"
+
+
+def branch_authors_ahead_of_base(branch, base, env):
+    """Commit-author names the remote branch adds on top of base, or None if there is no such branch.
+
+    Read with git rather than the REST API on purpose. The API version of this returned early on any
+    non-200, so a 403, a rate limit or an auth blip silently disabled the guard in exactly the way a
+    nonexistent branch legitimately does, and the caller could not tell the two apart. A guard whose
+    absence is indistinguishable from a pass is not a guard. git also answers the real question
+    directly: only the commits the branch adds, with no master ancestry to filter out."""
+    if run(["git", "fetch", "--quiet", "upstream", f"+refs/heads/{branch}:{GUARD_BRANCH_REF}"], env=env).returncode != 0:
+        return None
+    if run(["git", "fetch", "--quiet", "upstream", f"+refs/heads/{base}:{GUARD_BASE_REF}"], env=env).returncode != 0:
+        return None
+    log = run(["git", "log", "--format=%an", f"{GUARD_BASE_REF}..{GUARD_BRANCH_REF}"])
+    run(["git", "update-ref", "-d", GUARD_BRANCH_REF])
+    run(["git", "update-ref", "-d", GUARD_BASE_REF])
+    if log.returncode != 0:
+        return None
+    return {name.strip() for name in log.stdout.splitlines() if name.strip()}
+
+
+def warn_if_branch_belongs_to_another_agent(branch, base, agent_name, env):
     """Refuse to hand another agent's branch to --force. A remote branch that already carries
     commits by a different agent is somebody else's in-flight work, and the push below is a force
     push, so adopting it by accident silently discards their commits."""
-    resp = requests.get(
-        f"{GITHUB_API}/repos/{UPSTREAM_REPO}/commits",
-        headers=api_headers(token),
-        params={"sha": branch, "per_page": 20},
-        timeout=30,
-    )
-    if resp.status_code != 200:
+    authors = branch_authors_ahead_of_base(branch, base, env)
+    if authors is None:
         return
-    authors = {commit["commit"]["author"]["name"] for commit in resp.json()}
-    others = {name for name in authors if name != f"{agent_name} (vesta)" and name.endswith("(vesta)")}
-    if others and f"{agent_name} (vesta)" not in authors:
+    me = f"{agent_name} (vesta)"
+    others = {name for name in authors if name != me and name.endswith("(vesta)")}
+    if others and me not in authors:
         print(f"Error: remote branch '{branch}' carries commits by {', '.join(sorted(others))}.", file=sys.stderr)
         print("That is another agent's in-flight work and this push is a FORCE push.", file=sys.stderr)
         print("Push to a branch name of your own, or pass --adopt if you mean to take it over.", file=sys.stderr)
@@ -259,7 +278,7 @@ def main():
     auth_env = git_auth_env(token)
     ensure_shared_history(args.base, auth_env)
     if not args.adopt:
-        warn_if_branch_belongs_to_another_agent(token, branch, agent_name)
+        warn_if_branch_belongs_to_another_agent(branch, args.base, agent_name, auth_env)
 
     # Set commit author so pushes are attributed to this vesta instance
     run(["git", "config", "user.name", author_name])
