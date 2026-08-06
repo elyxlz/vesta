@@ -594,9 +594,25 @@ func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
 	return ms.getManualContact("jid", jid)
 }
 
-// DeleteManualContactsByName removes every contact row carrying name, reporting whether any did.
-func (ms *MessageStore) DeleteManualContactsByName(name string) (bool, error) {
-	return ms.deleteContacts(`DELETE FROM contacts WHERE name = ?`, name)
+// ManualContactJIDsByName returns the key of every contact row carrying name. A name matches the
+// name column alone, so a revoke reads the keys here and clears the peers behind them rather than
+// deleting by name, which would leave a peer's row under another key form standing.
+func (ms *MessageStore) ManualContactJIDsByName(name string) ([]string, error) {
+	rows, err := ms.db.Query(`SELECT jid FROM contacts WHERE name = ?`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jids []string
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			return nil, err
+		}
+		jids = append(jids, jid)
+	}
+	return jids, rows.Err()
 }
 
 // DeleteManualContactsByJID removes the contact rows under the given keys, reporting whether any

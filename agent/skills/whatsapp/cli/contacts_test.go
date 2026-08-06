@@ -225,17 +225,19 @@ const (
 // saveContactUnderBothKeys reaches the split state a box gets to on its own: the peer is confirmed
 // by chat id while they have no known number, whatsmeow then learns their number, and the peer is
 // confirmed again by that number, leaving the same person holding one contact row under each key.
-func saveContactUnderBothKeys(t *testing.T, wac *WhatsAppClient) (lid, phone types.JID) {
+// The two names are separate because the user answers "who is this" once per key form and can
+// answer differently, so the rows of one peer need not carry the same name.
+func saveContactUnderBothKeys(t *testing.T, wac *WhatsAppClient, chatName, phoneName string) (lid, phone types.JID) {
 	t.Helper()
 	lid, phone = types.NewJID("99988877766655", types.HiddenUserServer), types.NewJID("15551110000", types.DefaultUserServer)
 
-	if _, err := wac.AddContactByChat("Ana", lid.String()); err != nil {
+	if _, err := wac.AddContactByChat(chatName, lid.String()); err != nil {
 		t.Fatalf("failed to save the peer by chat id: %v", err)
 	}
 	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
 		t.Fatalf("failed to record the learned mapping: %v", err)
 	}
-	if _, err := wac.AddContact("Ana", "+"+phone.User); err != nil {
+	if _, err := wac.AddContact(phoneName, "+"+phone.User); err != nil {
 		t.Fatalf("failed to save the peer by phone: %v", err)
 	}
 
@@ -256,7 +258,7 @@ func TestRemoveContactClosesTheGateUnderEveryKeyForm(t *testing.T) {
 	for _, identifier := range []string{"Ana", "+15551110000", splitContactLID} {
 		t.Run(identifier, func(t *testing.T) {
 			wac := newOutgoingTestClient(t)
-			lid, phone := saveContactUnderBothKeys(t, wac)
+			lid, phone := saveContactUnderBothKeys(t, wac, "Ana", "Ana")
 
 			if _, err := cmdRemoveContact([]string{"--identifier", identifier}, wac); err != nil {
 				t.Fatalf("revoking by %q must succeed, got %v", identifier, err)
@@ -268,6 +270,25 @@ func TestRemoveContactClosesTheGateUnderEveryKeyForm(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A name matches on the name column alone, so in the split state it reaches only the rows carrying
+// that exact name and the peer's other row survives under a different one. That surviving row keeps
+// the gate open under BOTH key forms, because the gate passes on any one of them, so revoking by a
+// name the peer answers to must clear every key form of the peer behind the rows it matched.
+func TestRemoveContactByNameClosesTheGateWhenTheSplitRowsCarryDifferentNames(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid, phone := saveContactUnderBothKeys(t, wac, "Ana", "Ana Garcia")
+
+	if _, err := cmdRemoveContact([]string{"--identifier", "Ana"}, wac); err != nil {
+		t.Fatalf("revoking by name must succeed, got %v", err)
+	}
+
+	for _, jid := range []types.JID{phone, lid} {
+		if err := wac.requireManualContact(jid); err == nil {
+			t.Errorf("revoked peer addressed as %s still passes the gate", jid)
+		}
 	}
 }
 

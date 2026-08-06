@@ -42,29 +42,46 @@ func (wac *WhatsAppClient) AddContactByChat(name, chat string) (Contact, error) 
 }
 
 // RemoveContact revokes a user-confirmed contact, named by contact name, phone number, or chat id.
-// A name clears every row carrying it; an address clears every key form that peer can be filed
+// Whichever form names them, the revoke clears every key form the peers behind it can be filed
 // under, because the send gate passes on any one of them and a row left behind would keep sending
-// to someone the user just revoked.
+// to someone the user just revoked. A name reaches its peers through the rows carrying it, since
+// the user is asked to confirm a peer once per key form and the two rows can carry different names.
 func (wac *WhatsAppClient) RemoveContact(identifier string) error {
-	removed, err := wac.store.DeleteManualContactsByName(identifier)
+	named, err := wac.store.ManualContactJIDsByName(identifier)
 	if err != nil {
 		return err
 	}
-	if removed {
-		return nil
+
+	keys := wac.contactKeysOf(named)
+	if len(keys) == 0 {
+		jid, parseErr := contactIdentifierJID(identifier)
+		if parseErr != nil {
+			return fmt.Errorf("contact not found: %s", identifier)
+		}
+		keys = wac.contactKeys(jid)
 	}
 
-	if jid, parseErr := contactIdentifierJID(identifier); parseErr == nil {
-		removed, err = wac.store.DeleteManualContactsByJID(wac.contactKeys(jid))
-		if err != nil {
-			return err
-		}
-		if removed {
-			return nil
+	removed, err := wac.store.DeleteManualContactsByJID(keys)
+	if err != nil {
+		return err
+	}
+	if !removed {
+		return fmt.Errorf("contact not found: %s", identifier)
+	}
+	return nil
+}
+
+// contactKeysOf unions the key forms of the peers behind the given contact rows. Each row's own key
+// is kept as well, so a row whose peer no longer resolves to it is still cleared.
+func (wac *WhatsAppClient) contactKeysOf(rowJIDs []string) []string {
+	keys := make([]string, 0, len(rowJIDs)*2)
+	for _, raw := range rowJIDs {
+		keys = append(keys, raw)
+		if jid, err := types.ParseJID(raw); err == nil {
+			keys = append(keys, wac.contactKeys(jid)...)
 		}
 	}
-
-	return fmt.Errorf("contact not found: %s", identifier)
+	return keys
 }
 
 // contactIdentifierJID reads the address forms remove-contact accepts: a chat id as itself, and a
