@@ -18,11 +18,9 @@ Always start with `whatsapp status`:
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
 - previously linked, now logged out or lost: get the user's explicit approval before reconnecting.
-  **The logout notification's "needs no phone or QR step" is not permission**: it means they do
-  not have to scan anything, not that you may reconnect unasked. Ask anyway. On a managed number a
-  re-link also drops outbound to everyone who has not messaged you since, and only their next
-  inbound restores it, so reconnecting unasked can cost you the channel to the one person who
-  matters, at the moment you most need it.
+  On a managed number a re-link also drops outbound to everyone who has not messaged you since,
+  and only their next inbound restores it, so an unasked reconnect can cost the channel to the one
+  person who matters, at the moment you most need it.
 
 Never recover by manually re-pairing or restarting the daemon.
 
@@ -102,39 +100,13 @@ Falling back to another channel is the entire remedy available to you.
 - **One direct chat is stored under two keys** (the peer's phone JID and their LID). `messages --to`
   reads both; hand-written SQL against `messages.db` gets one side, which reads as "they never
   replied" rather than as missing data. Prefer the command.
-
-### One person can occupy TWO chats, and this makes reads look outbound-only
-
-WhatsApp may deliver a contact's **inbound** messages under a linked-device id (`<digits>@lid`)
-while your **outbound** replies are stored under their phone JID (`<number>@s.whatsapp.net`).
-The local DB then holds one conversation as two separate chats. `messages --to <name>` normally
-bridges this (it reads the phone JID and the LID whatsmeow maps to it, which is why the Read
-section says to prefer the command), but when whatsmeow holds no mapping for that contact yet,
-the union has one member and the command can return almost nothing but your own messages.
-
-This is easy to misread as a sync problem. It is not, and `backfill` will not change it, because
-nothing is missing: the inbound half is simply filed under the other id.
-
-The symptom is quiet, and it corrupts your model of the relationship rather than throwing an
-error. "They have not replied in a few hours" and "they have not replied in weeks" look identical
-if you only ever query one id.
-
-To ask **when someone last wrote**, or **how many messages you have sent into their silence**,
-query every id belonging to them rather than the contact name. This query against
-`~/.whatsapp/messages.db` makes a split identity obvious at a glance (run it through python3's
-sqlite3 module as in the 463 section; the sqlite3 CLI is not on the box):
-
-```sql
-SELECT chat_jid,
-       SUM(CASE WHEN is_from_me=0 THEN 1 ELSE 0 END) AS inbound,
-       SUM(CASE WHEN is_from_me=1 THEN 1 ELSE 0 END) AS outbound,
-       MAX(timestamp) AS last_activity
-FROM messages GROUP BY chat_jid ORDER BY last_activity DESC;
-```
-
-A chat showing `inbound=N, outbound=0` beside another showing `inbound=0, outbound=M` is one
-person split across two ids. Group chats (`<id>@g.us`) hold a third slice of the same
-relationship, so include them when computing "last heard from".
+- The one residual split: a LID whatsmeow holds no phone mapping for stands alone, so
+  `messages --to <name>` can look outbound-only for that contact and `backfill` will not change it
+  (nothing is missing, the inbound half is filed under the unmapped id). Before reading a silence as
+  real, sum both directions per chat id in `~/.whatsapp/messages.db` (python3's sqlite3 module, as
+  in the 463 section): `SELECT chat_jid, SUM(is_from_me=0), SUM(is_from_me=1), MAX(timestamp) FROM
+  messages GROUP BY chat_jid` shows a split identity at a glance. Group chats (`<id>@g.us`) hold a
+  third slice of the same relationship, so include them when computing "last heard from".
 
 ## Profile
 
