@@ -135,8 +135,9 @@ def mask(match: re.Match[str]) -> str:
 _DIGIT_RUN = r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)"
 # A messaging id is a digit run wearing a suffix. A WhatsApp LID collides with the Mastercard
 # 2-series head-on: 251638040256599 opens 2516 (inside 2221-2720), clears the IIN gate and passes
-# Luhn by chance, so it is indistinguishable from a PAN by digits alone, and one chat id produced
-# ~700 hits per nightly scan on a box using WhatsApp. The suffix is the only discriminator.
+# Luhn by chance, so it is indistinguishable from a PAN by digits alone and the suffix is the only
+# discriminator. Measured on one box: 76 suffixed runs in the event history, 2 clearing both gates.
+# The count scales with chat traffic, and every survivor costs a judgement call on a chat id.
 _MESSAGING_ID_SUFFIX = r"(?!@(?:lid|s\.whatsapp\.net|c\.us|g\.us)\b)"
 CARD_CANDIDATE = re.compile(_DIGIT_RUN + _MESSAGING_ID_SUFFIX)
 # Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
