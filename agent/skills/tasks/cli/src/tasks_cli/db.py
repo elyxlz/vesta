@@ -206,6 +206,8 @@ DUE_NOW_MESSAGE = (
     "`tasks delete {task_id}`. Never leave a task sitting overdue."
 )
 
+LEAD_TIME_MESSAGE = "Task due in {label}: {title}"
+
 
 def parse_datetime(s: str) -> datetime:
     parsed = datetime.fromisoformat(s)
@@ -250,7 +252,13 @@ def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, du
         fire_time = due_dt - delta
         if fire_time <= now or fire_time.isoformat() in taken:
             continue
-        _insert_auto_reminder(conn, task_id, f"Task due in {label}: {title}", f"auto: {label} before due", fire_time)
+        _insert_auto_reminder(
+            conn,
+            task_id,
+            LEAD_TIME_MESSAGE.format(label=label, title=title),
+            f"auto: {label} before due",
+            fire_time,
+        )
 
     if due_dt > now and due_dt.isoformat() not in taken:
         _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), "auto: at due", due_dt)

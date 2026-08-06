@@ -372,6 +372,28 @@ def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status
         db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
 
 
+def _retitle_auto_reminder_messages(conn, task_id: str, new_title: str) -> None:
+    """Point every armed auto reminder at the new title without touching its schedule.
+
+    Bodies are regenerated from the same db.py templates that produced them, rather than
+    string-replacing the old title inside the stored message, because a title containing partial or
+    punctuation-heavy text would corrupt the message. Completed rows are history and are left alone.
+    """
+    rows = conn.execute(
+        "SELECT id, message, schedule_type FROM reminders WHERE task_id = ? AND auto_generated = 1 AND completed = 0",
+        (task_id,),
+    ).fetchall()
+    for row in rows:
+        schedule = row["schedule_type"] or ""
+        if schedule == "auto: at due":
+            message = db.DUE_NOW_MESSAGE.format(title=new_title, task_id=task_id)
+        else:
+            label = schedule[len("auto: ") : -len(" before due")]
+            message = db.LEAD_TIME_MESSAGE.format(label=label, title=new_title)
+        if message != row["message"]:
+            conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, row["id"]))
+
+
 def update_task(
     config: Config,
     *,
@@ -423,10 +445,10 @@ def update_task(
             updates.append("due_date = ?")
             params.append(new_due_date)
             _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=new_due_date)
-        elif title is not None and status != "done":
-            # A title change with the due date unchanged still has to refresh the reminder text,
-            # which embeds the title; the fixed tail keeps its instants, the checkpoints re-derive.
-            _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=result["due_date"])
+        elif title is not None and title != result["title"] and status != "done":
+            # A title change invalidates the reminder TEXT and nothing else, so rewrite the text
+            # and leave fire times, ids, snoozes and completed history untouched.
+            _retitle_auto_reminder_messages(conn, task_id, title)
 
         if updates:
             params.append(task_id)
