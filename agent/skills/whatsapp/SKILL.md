@@ -103,6 +103,36 @@ Falling back to another channel is the entire remedy available to you.
   reads both; hand-written SQL against `messages.db` gets one side, which reads as "they never
   replied" rather than as missing data. Prefer the command.
 
+### One person can occupy TWO chats, and this makes reads look outbound-only
+
+WhatsApp may deliver a contact's **inbound** messages under a linked-device id (`<digits>@lid`)
+while your **outbound** replies are stored under their phone JID (`<number>@s.whatsapp.net`).
+The local DB then holds one conversation as two separate chats, and `messages --to <name>`
+resolves the NAME to the phone JID, so it can return almost nothing but your own messages.
+
+This is easy to misread as a sync problem. It is not, and `backfill` will not change it, because
+nothing is missing: the inbound half is simply filed under the other id.
+
+The symptom is quiet, and it corrupts your model of the relationship rather than throwing an
+error. "They have not replied in a few hours" and "they have not replied in weeks" look identical
+if you only ever query one id.
+
+To ask **when someone last wrote**, or **how many messages you have sent into their silence**,
+query every id belonging to them rather than the contact name. This query makes a split identity
+obvious at a glance:
+
+```sql
+SELECT chat_jid,
+       SUM(CASE WHEN is_from_me=0 THEN 1 ELSE 0 END) AS inbound,
+       SUM(CASE WHEN is_from_me=1 THEN 1 ELSE 0 END) AS outbound,
+       MAX(timestamp) AS last_activity
+FROM messages GROUP BY chat_jid ORDER BY last_activity DESC;
+```
+
+A chat showing `inbound=N, outbound=0` beside another showing `inbound=0, outbound=M` is one
+person split across two ids. Group chats (`<id>@g.us`) hold a third slice of the same
+relationship, so include them when computing "last heard from".
+
 ## Profile
 
 Change the agent's own WhatsApp name/picture from its own client (no phone, no QR, works while linked):
