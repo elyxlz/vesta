@@ -18,8 +18,8 @@ Always start with `whatsapp status`:
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
 - previously linked, now logged out or lost: get the user's explicit approval before reconnecting.
-  **The logout notification says "no user step needed" and that is not permission**: it means they
-  do not have to scan a QR, not that you may reconnect unasked. Ask anyway. On a managed number a
+  **The logout notification's "needs no phone or QR step" is not permission**: it means they do
+  not have to scan anything, not that you may reconnect unasked. Ask anyway. On a managed number a
   re-link also drops outbound to everyone who has not messaged you since, and only their next
   inbound restores it, so reconnecting unasked can cost you the channel to the one person who
   matters, at the moment you most need it.
@@ -81,7 +81,7 @@ other contact and see) is unavailable: cold-initiating anyone who has not writte
 behaviour that gets a fresh number banned.
 
 ```bash
-sqlite3 ~/.whatsapp/whatsapp.db "select their_id from whatsmeow_sessions"
+python3 -c 'import sqlite3, pathlib; print(*sqlite3.connect(pathlib.Path.home() / ".whatsapp/whatsapp.db").execute("select their_id from whatsmeow_sessions").fetchall(), sep="\n")'
 ```
 
 Rows are `<lid>_1:<device>`, one per device that recipient uses. Rows present for them means this
@@ -107,8 +107,10 @@ Falling back to another channel is the entire remedy available to you.
 
 WhatsApp may deliver a contact's **inbound** messages under a linked-device id (`<digits>@lid`)
 while your **outbound** replies are stored under their phone JID (`<number>@s.whatsapp.net`).
-The local DB then holds one conversation as two separate chats, and `messages --to <name>`
-resolves the NAME to the phone JID, so it can return almost nothing but your own messages.
+The local DB then holds one conversation as two separate chats. `messages --to <name>` normally
+bridges this (it reads the phone JID and the LID whatsmeow maps to it, which is why the Read
+section says to prefer the command), but when whatsmeow holds no mapping for that contact yet,
+the union has one member and the command can return almost nothing but your own messages.
 
 This is easy to misread as a sync problem. It is not, and `backfill` will not change it, because
 nothing is missing: the inbound half is simply filed under the other id.
@@ -118,8 +120,9 @@ error. "They have not replied in a few hours" and "they have not replied in week
 if you only ever query one id.
 
 To ask **when someone last wrote**, or **how many messages you have sent into their silence**,
-query every id belonging to them rather than the contact name. This query makes a split identity
-obvious at a glance:
+query every id belonging to them rather than the contact name. This query against
+`~/.whatsapp/messages.db` makes a split identity obvious at a glance (run it through python3's
+sqlite3 module as in the 463 section; the sqlite3 CLI is not on the box):
 
 ```sql
 SELECT chat_jid,
