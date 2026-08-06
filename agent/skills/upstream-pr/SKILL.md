@@ -108,7 +108,7 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
 
 5. **Wait for CI to pass.** Capture a token with `TOKEN=$(upstream-pr --token-only)` (never bare, see "Handling the token"), then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, and re-run `upstream-pr` to update the PR. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
-   **To add a commit to a PR that is already open, re-run `upstream-pr` from the worktree.** Recreate it on the existing branch (`git -C ~ worktree add /tmp/vesta-pr <existing-branch>`), commit, then run `upstream-pr --title "..." --body "..."` again: it force-pushes the branch and prints `PR already exists for this branch` rather than failing. Prefer this to opening a second PR for the same change.
+   **To add a commit to a PR that is already open, re-run `upstream-pr` from the worktree.** Recreate it on the existing branch (`git -C ~ worktree add /tmp/vesta-pr <existing-branch>`), and before committing anything, fetch and rebase onto the branch's remote tip: the re-run force-pushes your local copy, so any commits a maintainer or sibling added to the branch since your last push are silently discarded unless you picked them up first. Then commit and run `upstream-pr --title "..." --body "..."` again: it force-pushes the branch and prints `PR already exists for this branch` rather than failing. Prefer this to opening a second PR for the same change.
 
    A bare `git push upstream <branch>` fails with `fatal: could not read Username for 'https://github.com'`, because the remote is deliberately credential-free. **Do not answer that by putting the token in the push URL.** The shell expands it, so a live token lands in argv, where any process on the box can read it off `ps`. `upstream-pr` keeps auth in the process environment for exactly this reason, pinned by `cli/tests/test_auth.py`, and it is already the authenticated path, so there is nothing to work around.
 
@@ -199,8 +199,16 @@ fact to check, never a name to set as your own commit author.
 
 `upstream-pr` refuses to push to a remote branch whose commits are all somebody else's (another
 agent's or a human's), since the push is a **force** push and would discard their work. It also
-refuses when the remote branch exists but cannot be read, rather than guessing. Pass `--adopt` if
-taking over a branch is genuinely what you mean.
+refuses when the remote branch exists but cannot be read, rather than guessing; that refusal means
+the network or auth is broken, so wait and retry, and never reach for `--adopt` to get past it.
+Pass `--adopt` only on the ownership refusal, when taking over the named authors' branch is
+genuinely what you mean.
+
+The guard catches name collisions, not every overwrite: a branch you have commits on is yours to
+push, and the force push replaces the remote with your local copy. So before re-running
+`upstream-pr` on an existing branch, fetch and rebase onto its remote tip first; a maintainer or
+sibling may have pushed commits to it since your last push, and pushing without fetching silently
+discards those.
 
 If you do fix a sibling's broken PR, that is welcome, and say so in the body: what you changed, why
 you touched it, and that they should revert freely. Never restate their evidence as yours, and

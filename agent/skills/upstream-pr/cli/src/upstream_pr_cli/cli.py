@@ -192,7 +192,8 @@ def branch_authors_ahead_of_base(branch, base, env):
     run(["git", "update-ref", "-d", GUARD_BASE_REF])
     if log is None or log.returncode != 0:
         print(f"Error: could not read remote branch '{branch}' to check whose work it holds.", file=sys.stderr)
-        print("Refusing to force push blind. Retry, pick a fresh branch name, or pass --adopt.", file=sys.stderr)
+        print("Refusing to force push blind. Wait and retry, or pick a fresh branch name.", file=sys.stderr)
+        print("Do not use --adopt here: ownership is unknowable right now, not confirmed yours to take.", file=sys.stderr)
         sys.exit(1)
     return {name.strip() for name in log.stdout.splitlines() if name.strip()}
 
