@@ -52,12 +52,16 @@ func printCommandUsage(w io.Writer, name string) {
 	fmt.Fprintln(w, err)
 }
 
-// commandSignature renders one registry entry as `name (alias) <positional>`.
+// commandSignature renders one registry entry as `name (alias) <positional>`, or as its own
+// usageArgs where the positional names alone would hide an accepted form.
 func commandSignature(cmd command) string {
 	var sig strings.Builder
 	sig.WriteString(cmd.name)
 	if len(cmd.aliases) > 0 {
 		sig.WriteString(" (" + strings.Join(cmd.aliases, ", ") + ")")
+	}
+	if cmd.usageArgs != "" {
+		return sig.String() + " " + cmd.usageArgs
 	}
 	for _, positional := range cmd.positionals {
 		sig.WriteString(" <" + positional + ">")

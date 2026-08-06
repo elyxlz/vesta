@@ -414,6 +414,9 @@ type command struct {
 	name        string
 	aliases     []string
 	positionals []string
+	// usageArgs replaces the rendered `<positional>` list in the usage line where the positional
+	// names do not name every accepted form, so a caller reading only the list would miss one.
+	usageArgs string
 	// hidden keeps a command out of the usage list while it stays callable: the client-side
 	// provision/link/daemon wrappers drive these over the socket, and the header already documents
 	// them, so listing them again would only duplicate or invite a half-done call.
@@ -435,7 +438,7 @@ func commandTimeout(name string) time.Duration {
 
 var commands = []command{
 	{name: "list-contacts", aliases: []string{"contacts", "search-contacts"}, run: cmdListContacts},
-	{name: "add-contact", positionals: []string{"name", "phone"}, write: true, run: cmdAddContact},
+	{name: "add-contact", positionals: []string{"name", "phone"}, usageArgs: "<name> (<phone> | --chat <chat-id>)", write: true, run: cmdAddContact},
 	{name: "remove-contact", positionals: []string{"identifier"}, write: true, run: cmdRemoveContact},
 	{name: "list-messages", aliases: []string{"messages"}, positionals: []string{"to"}, run: cmdListMessages},
 	{name: "list-chats", aliases: []string{"chats"}, run: cmdListChats},
