@@ -441,7 +441,7 @@ def test_status_rejects_a_reused_pid(daemon):
     # And a second field that is not a starttime, which no launcher writes but a reader still meets
     # on a truncated or hand-edited record. Comparing a real starttime against it would declare a
     # live daemon dead, so an unparseable second field reads as legacy, not as a mismatch.
-    pidfile.write_text(f"{record[0]} ")
+    pidfile.write_text(f"{record[0]} x")
     assert _json(_verb(spec, env, "status"))["running"] is True
 
     pidfile.write_text(" ".join(record))
