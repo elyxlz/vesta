@@ -13,6 +13,25 @@ func (wac *WhatsAppClient) AddContact(name, phone string) (Contact, error) {
 	return wac.store.SaveManualContact(name, phone)
 }
 
+// AddContactByChat saves a contact for a chat given by its own id, the form for a peer WhatsApp
+// addresses only by a LID: there is no phone number to save them under. The key is the same
+// canonical identity requireManualContact checks, so a LID that does map to a phone saves under
+// the phone JID and stays one contact with one number.
+func (wac *WhatsAppClient) AddContactByChat(name, chat string) (Contact, error) {
+	jid, err := types.ParseJID(strings.TrimSpace(chat))
+	if err != nil {
+		return Contact{}, fmt.Errorf("invalid chat id '%s': %v", chat, err)
+	}
+	if !isDirectChatJID(jid) {
+		return Contact{}, fmt.Errorf("'%s' is a group, not a person; only people need a saved contact", chat)
+	}
+	peer := wac.canonicalChatJID(jid)
+	if peer.Server == types.DefaultUserServer {
+		return wac.store.SaveManualContact(name, "+"+peer.User)
+	}
+	return wac.store.SaveManualContactByChatJID(name, peer.String())
+}
+
 // MaxPhoneDigits is the E.164 ceiling on phone-number length. A WhatsApp
 // group ID renders as a longer all-digit string; sending to one as a user JID
 // makes the server log the device out and destroys the pairing (#1169).
@@ -32,7 +51,8 @@ func errIfGroupIDDigits(digits string) error {
 // messages must have been confirmed by the user first. It covers a direct chat addressed
 // either way, since WhatsApp addresses one peer both by phone JID and by LID, and looks the
 // contact up under the same canonical key storage files that chat under. A LID with no phone
-// mapping yet stays unconfirmed and is therefore refused. Groups carry no such requirement.
+// mapping is a peer with no number, so the refusal asks for it to be saved by chat id, which is
+// the key it is then found under. Groups carry no such requirement.
 func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 	if !isDirectChatJID(jid) {
 		return nil
@@ -45,13 +65,13 @@ func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 	}
 
 	if contact == nil {
-		phone := "this contact"
+		who, target := "this chat", "--chat "+peer.String()
 		if peer.Server == types.DefaultUserServer && peer.User != "" {
-			phone = "+" + peer.User
+			who, target = "+"+peer.User, "--phone +"+peer.User
 		}
 		return fmt.Errorf(
-			"No saved contact found for %s. Ask the user who this is, then run add-contact --name <name> --phone <number>.",
-			phone,
+			"No saved contact found for %s. Ask the user who this is, then run add-contact --name <name> %s.",
+			who, target,
 		)
 	}
 

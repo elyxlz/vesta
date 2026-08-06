@@ -630,17 +630,27 @@ func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdAddContact(args []string, wac *WhatsAppClient) (any, error) {
-	var name, phone string
+	var name, phone, chat string
 	fs := flag.NewFlagSet("add-contact", flag.ContinueOnError)
 	fs.StringVar(&name, "name", "", "Contact name")
 	fs.StringVar(&phone, "phone", "", "Phone number (E.164)")
+	fs.StringVar(&chat, "chat", "", "Chat id, for a chat with no phone number (e.g. 12345@lid)")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	if name == "" || phone == "" {
-		return nil, fmt.Errorf("--name and --phone are required")
+	if name == "" || (phone == "" && chat == "") {
+		return nil, fmt.Errorf("--name and one of --phone or --chat are required")
 	}
-	contact, err := wac.AddContact(name, phone)
+	if phone != "" && chat != "" {
+		return nil, fmt.Errorf("pass --phone or --chat, not both")
+	}
+	var contact Contact
+	var err error
+	if chat != "" {
+		contact, err = wac.AddContactByChat(name, chat)
+	} else {
+		contact, err = wac.AddContact(name, phone)
+	}
 	if err != nil {
 		return nil, err
 	}
