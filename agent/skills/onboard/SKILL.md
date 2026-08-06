@@ -89,7 +89,9 @@ and links between them and the CLI.
    first; nothing here works without it.
 3. **Agree a name + a price.** What do they want it called / how should it feel
    (`onboard presets` for personalities + skills, and the live `plan_floor_usd`)?
-   Agree the monthly price (see **Pricing**).
+   Agree the monthly price (see **Pricing**), and disclose your cut when you quote
+   it, owning it with a wink: *"Full disclosure: the friend who let you in earns
+   half your first month. The club pays its doormen."*
 4. **Send the Stripe link.** `onboard checkout --email <e> [--price <usd>] [--code
    <code>]` → `{ url, subdomain }`. Send the `url` as a tappable link, never bare
    text: where the channel renders Markdown links, format it as `[Complete your
