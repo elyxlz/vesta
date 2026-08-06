@@ -657,3 +657,28 @@ def test_every_python_daemon_child_is_launched_unbuffered():
     assert reexecs, "no daemon re-execs its own CLI, so this check is matching nothing"
     offenders = [str(path.relative_to(REPO_ROOT)) for path, source in reexecs.items() if "PYTHONUNBUFFERED" not in source]
     assert offenders == [], f"daemon children launched with buffered stdout: {offenders}"
+
+
+def test_no_daemon_claims_the_pidfile_with_a_bare_pid():
+    """The claim writes the same self-verifying record the finished start does.
+
+    A start claims the pidfile, registers its port with vestad, then spawns and records the child.
+    A start killed inside that window leaves the record it claimed with standing. Written bare, it
+    names a dead starter with no starttime to check, so a pid recycled before the next boot reads
+    as a healthy daemon and every later start declines: the exact failure the record exists to
+    catch. Writing the full record at claim time is also what lets records converge, so the
+    bare-pid fallback can eventually be removed.
+    """
+    python = {path: path.read_text() for path in sorted(SKILLS_DIR.rglob("daemon.py"))}
+    python = {path: source for path, source in python.items() if "def _claim(" in source}
+    assert python, "no python daemon claims a pidfile, so this check is matching nothing"
+
+    # A skill with no CLI project is one executable named after its directory (AGENTS.md), which is
+    # what the sh launchers are; self-selecting on claim_start keeps this from drifting off a list.
+    launchers = {path: path.read_text() for path in sorted(SKILLS_DIR.glob("*/*")) if path.name == path.parent.name}
+    shell = {path: source for path, source in launchers.items() if "claim_start()" in source}
+    assert shell, "no sh launcher claims a pidfile, so this check is matching nothing"
+
+    bare = [str(path.relative_to(REPO_ROOT)) for path, source in python.items() if "handle.write(str(pid))" in source]
+    bare += [str(path.relative_to(REPO_ROOT)) for path, source in shell.items() if 'echo $$ > "$PIDFILE"' in source]
+    assert bare == [], f"a claim writing a bare pid leaves an unverifiable record if the start dies mid-window: {bare}"

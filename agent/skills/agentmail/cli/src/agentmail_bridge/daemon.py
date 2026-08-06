@@ -149,7 +149,7 @@ def _claim(pid: int) -> bool:
     except FileExistsError:
         return False
     with os.fdopen(record, "w") as handle:
-        handle.write(str(pid))
+        handle.write(_record(pid))
     return True
 
 
