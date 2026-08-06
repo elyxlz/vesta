@@ -24,6 +24,16 @@ cause FIRST: (1) take a `snapshot` or `screenshot` anyway, the content is usuall
 (or `"wait":"none"`). Only after the page truly never renders across these should you even
 consider a block, and even then suspect a cookie/consent wall or a redirect before "anti-bot".
 
+**One concrete instance: a `browser open` that sits there.** `open` creates a tab (BiDi
+`browsingContext.create {"type":"tab"}`), and in some containers that one call never gets an
+answer. It waits the full **60s** response bound, then takes over a context the browser already
+has rather than failing, preferring one showing no page. So `open` still lands, just slowly, and
+what you get back is an existing context rather than a fresh tab: run `browser tabs` before
+assuming you have two. Let it reach the timeout instead of killing it, since the error names the
+exact call that stalled, while terminating early leaves you with "it hung" and sends you hunting
+a block that is not there. Once you have seen it on a box, reach for **`browser navigate <url>`**,
+which skips tab creation and returns at once.
+
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
 
 **And the harder version: a page that appears to have NO field at all is almost never a page that cannot be filled.** "There is nowhere to type it, so this needs the user's own device" is the most expensive wrong conclusion available, because it looks like diligence. Before writing that sentence, rule out five things, in this order:
