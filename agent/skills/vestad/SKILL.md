@@ -113,6 +113,12 @@ State lives in the same three places for every skill, under one name the daemon 
 (normally its command, `voice-keys` calling its daemon `voice`):
 
 - pid: `~/agent/data/daemons/<name>.pid`, port: `~/agent/data/daemons/<name>.port`
+  The pid record is **`<pid> <starttime>`**, two space-separated fields, where starttime is
+  field 22 of `/proc/<pid>/stat` (clock ticks since boot). A pid alone answers "does some
+  process hold this number"; the pair answers "is this still the process I started", which is
+  the question status actually needs. A daemon writes the bare pid when `/proc` is unreadable,
+  and a reader treats a bare pid as trusted rather than as a mismatch, so records written by
+  older code keep working. Anything writing this file must write both fields when it can.
 - log: `~/agent/logs/<name>.log`, appended, never truncated
 - budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start (default 30, and 300 for whatsapp and
   telegram, which compile their CLI on the way up), `DAEMON_STOP_TIMEOUT_SECS` bounds a stop
@@ -120,7 +126,8 @@ State lives in the same three places for every skill, under one name the daemon 
 
 Boot empties the records directory before any daemon runs, because a pid written by the previous
 container can already belong to something else in the fresh pid space, which would read as live
-and turn the next start into a silent no-op.
+and turn the next start into a silent no-op. That clears records across a restart; the recorded
+starttime is what protects a record whose daemon died mid-life, which boot never sees.
 
 Six properties, which are what make a restart file a plain list of starts:
 

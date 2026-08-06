@@ -207,12 +207,56 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
         await writer.wait_closed()
 
 
-def live_pid() -> int | None:
+def _starttime(pid: int) -> int | None:
+    """Field 22 of /proc/<pid>/stat: the process start time in clock ticks since boot.
+
+    A recycled pid cannot share the original's starttime, because the process that took the pid
+    necessarily started later, so (pid, starttime) is a stable identity. Returns None where /proc
+    is unreadable, which drops the caller back to a bare pid-existence check.
+    """
     try:
-        pid = int(PIDFILE.read_text().strip())
-        os.kill(pid, 0)
-    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        stat = pl.Path(f"/proc/{pid}/stat").read_text()
+        # comm is a bracketed field that may itself contain spaces and parentheses, so the
+        # numbered fields resume after the LAST ')'.
+        return int(stat[stat.rindex(")") + 2 :].split()[19])
+    except (OSError, ValueError, IndexError):
         return None
+
+
+def _record(pid: int) -> str:
+    """The pid record: "<pid> <starttime>", or a bare pid where the starttime is unavailable.
+
+    A bare pid is the honest form of "identity unknown", and live_pid() reads it the legacy way
+    rather than as a mismatch. Writing the string "None" into the record would mean the same thing
+    while looking like data.
+    """
+    started = _starttime(pid)
+    return f"{pid} {started}" if started is not None else str(pid)
+
+
+def live_pid() -> int | None:
+    """The recorded pid, but only while it is still the process that was recorded.
+
+    os.kill(pid, 0) answers "does some process hold this pid", never "is this still mine". The
+    records outlive the container while a fresh pid namespace renumbers from low values, so a
+    reused pid otherwise reads as a healthy daemon, every idempotent start skips it, and the
+    service is silently down with its one health check reporting health it never measured.
+    """
+    try:
+        record = PIDFILE.read_text().split()
+        pid = int(record[0])
+        os.kill(pid, 0)
+    except (FileNotFoundError, IndexError, ValueError, ProcessLookupError, PermissionError):
+        return None
+    # LEGACY(remove-when: no daemon record predating the release that ships this check remains, i.e.
+    # every box has restarted its daemons at least once on this version): a record written by the
+    # old code is a bare pid. Trust it as before rather than reading the absence of a starttime as a
+    # mismatch, because an upgrade must not declare a live daemon dead and let a second stack beside
+    # it. Once records have converged, an unparseable second field should read as dead, not as legacy.
+    if len(record) > 1 and record[1].isdigit():
+        current = _starttime(pid)
+        if current is not None and current != int(record[1]):
+            return None
     return pid
 
 
@@ -307,7 +351,7 @@ def _start() -> int:
     PORTFILE.write_text(port)
     with LOG.open("ab") as log:
         child = subprocess.Popen([sys.argv[0], "serve", "--port", port], start_new_session=True, stdout=log, stderr=log)
-    PIDFILE.write_text(str(child.pid))
+    PIDFILE.write_text(_record(child.pid))
     return _await_ready(child, port)
 
 
