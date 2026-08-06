@@ -907,8 +907,13 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
 def _next_run_for_row(row) -> str | None:
     """The next fire instant to report for a reminder row.
 
-    A plain cron row's `scheduled_time` only advances when the job fires, so it can lag the real
-    next fire; derive that live from the trigger. Every other row's column is the live answer.
+    A recurring row's `scheduled_time` only advances when the job fires, so downtime longer than one
+    period strands it in the past while the restored trigger is armed and correct. Plain cron is
+    recomputed exactly from its expression. An interval row's true next fire depends on when the
+    daemon restored it, which the row does not record, so a stale column is clamped to the upper
+    bound the restored `IntervalTrigger` can reach; that is imprecise but never in the past, and a
+    past instant is the one answer guaranteed to be wrong. Fuzzed cron, date and one-shot rows keep
+    the column, which the restore path does keep live for them.
     """
     if row["trigger_data"]:
         try:
@@ -918,6 +923,12 @@ def _next_run_for_row(row) -> str | None:
                 next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
                 if next_fire is not None:
                     return next_fire.isoformat()
+            if trigger_type == "interval":
+                now = _now_utc()
+                stored = db.parse_datetime(row["scheduled_time"]) if row["scheduled_time"] else None
+                if stored is None or stored < now:
+                    hours = trigger_data["hours"] if "hours" in trigger_data else 1
+                    return (now + timedelta(hours=hours)).isoformat()
         except (ValueError, KeyError):
             pass  # malformed trigger_data: fall back to the stored column rather than hiding the row
     return row["scheduled_time"]
