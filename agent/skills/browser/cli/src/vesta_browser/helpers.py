@@ -133,9 +133,35 @@ def forward() -> dict:
     return _go_history(1)
 
 
+def _reusable_context() -> str | None:
+    """A top-level context to take over when the browser will not create a tab.
+
+    Prefers one showing no page, so a page in use is never clobbered.
+    """
+    try:
+        contexts = bidi("browsingContext.getTree")["contexts"]
+    except RuntimeError:
+        return None
+    for node in contexts:
+        if (node["url"] if "url" in node else "").startswith(INTERNAL_URL_PREFIXES):
+            return node["context"]
+    return contexts[0]["context"] if contexts else None
+
+
 def new_tab(url: str = "about:blank") -> str:
-    """Create a new tab, switch to it, optionally navigate. Returns its context id."""
-    ctx = bidi("browsingContext.create", type="tab")["context"]
+    """Create a new tab, switch to it, optionally navigate. Returns its context id.
+
+    Some builds accept the BiDi connection and then never answer
+    browsingContext.create, which fails after the daemon's wait even though the browser
+    is healthy and its existing contexts navigate fine. Falling back to one of those
+    keeps the session usable; with none to take over, the create error stands.
+    """
+    try:
+        ctx = bidi("browsingContext.create", type="tab")["context"]
+    except RuntimeError:
+        ctx = _reusable_context()
+        if ctx is None:
+            raise
     _set_context(ctx)
     if url and url != "about:blank":
         goto(url)
