@@ -239,8 +239,9 @@ def test_run_probe_auth_rejected_unhealed_notifies_about_the_secret_not_a_remova
 
 
 def test_run_probe_auth_rejected_on_a_custom_client_names_the_fix_the_user_owns(monkeypatch):
-    # With EMAIL_CLIENT_OAUTH_CLIENT_* in play the client is the user's own, so the secret sits in a
+    # EMAIL_CLIENT_OAUTH_CLIENT_ID puts the user's own client in play, so the secret sits in a
     # Google Cloud project they control and correcting it plus re-authing genuinely fixes Gmail.
+    monkeypatch.setenv("EMAIL_CLIENT_OAUTH_CLIENT_ID", "mine.apps.googleusercontent.com")
     monkeypatch.setenv("EMAIL_CLIENT_OAUTH_CLIENT_SECRET", "mine")
     _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     monkeypatch.setattr(
@@ -255,6 +256,25 @@ def test_run_probe_auth_rejected_on_a_custom_client_names_the_fix_the_user_owns(
     assert "EMAIL_CLIENT_OAUTH_CLIENT_SECRET" in notif["message"]
     assert "your Google Cloud project" in notif["message"]
     assert "email-client auth add --account personal --provider gmail --reauth" in notif["message"]
+
+
+def test_run_probe_auth_rejected_with_only_a_secret_override_keeps_the_shipped_wording(monkeypatch):
+    # EMAIL_CLIENT_OAUTH_CLIENT_SECRET alone leaves the client id the shipped one, so the client is
+    # still Mozilla's: telling the user to fix it in their own Cloud project sends them after a
+    # client that is not in their console.
+    monkeypatch.setenv("EMAIL_CLIENT_OAUTH_CLIENT_SECRET", "mine")
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    monkeypatch.setattr(
+        "email_client.thunderbird_client.resolve_google_client",
+        lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "sek", "source": "fetched"},
+    )
+    res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
+    assert res["status"] == gh.CLIENT_AUTH_REJECTED
+
+    notif = json.loads(pathlib.Path(res["notification"]).read_text())
+    assert "rejecting the secret of the sign-in client this skill ships" in notif["message"]
+    assert "your Google Cloud project" not in notif["message"]
+    assert "--reauth" not in notif["message"]
 
 
 def test_self_heal_gives_up_when_nothing_fresh_was_fetched(monkeypatch):
