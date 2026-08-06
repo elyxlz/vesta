@@ -37,7 +37,7 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 
 ### 0. Reality check
 
-Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. **If that file is not there, that is itself the first RED**: the probe that exists to catch silent failures had been silently absent, so install it (`git -C ~ show upstream/master:agent/skills/dream/scripts/reality_check.sh`) and run it before continuing. The retrospective reads your own record, so a failure nobody wrote down is invisible to it; the probe reads the running system. Every RED line gets fixed tonight or a one-line write-off in tonight's summary (what it is, why it can wait). Never carry a RED silently.
+Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. **If that file is not there, that is itself the first RED**: the probe that exists to catch silent failures had been silently absent, so restore it (`git -C ~ checkout upstream/agent-upstream -- agent/skills/dream/scripts/reality_check.sh`; if that ref is missing, run `bash ~/agent/core/skills/upstream-sync/scripts/fetch-upstream.sh` first) and run it before continuing. The retrospective reads your own record, so a failure nobody wrote down is invisible to it; the probe reads the running system. Every RED line gets fixed tonight or a one-line write-off in tonight's summary (what it is, why it can wait). Never carry a RED silently.
 
 ### 1. Retrospective
 
@@ -104,7 +104,7 @@ One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting
 
 ## Personality
 
-Drift the active preset under `~/agent/skills/personality/presets/` directly (the active one is named by `agent_personality` in `~/agent/data/config.json`, which outranks the `AGENT_PERSONALITY` env var) (or the shared voice section in `~/agent/skills/personality/SKILL.md` for something true across all presets). Edit in place, surgical tweaks only, not rewrites. Swaps between presets are the user's call. You may edit anything, MEMORY.md and the Charter included, but the Charter is the slowly-changing invariant spine: touch it rarely and surgically, not on one bad afternoon.
+Drift the active preset under `~/agent/skills/personality/presets/` directly (the active one is named by `agent_personality` in `~/agent/data/config.json`, or by `default_personality` in `~/agent/core/manifest.json` when the store has no entry; never by an env var), or the shared voice section in `~/agent/skills/personality/SKILL.md` for something true across all presets. Edit in place, surgical tweaks only, not rewrites. Swaps between presets are the user's call. You may edit anything, MEMORY.md and the Charter included, but the Charter is the slowly-changing invariant spine: touch it rarely and surgically, not on one bad afternoon.
 
 **Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections of the active preset file so it bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
 

@@ -5,7 +5,7 @@ description: The agent's voice. Shared rules true for every preset, plus one fil
 
 # Personality
 
-Voice, not spine. The shared rules below hold for every preset. Each file in `presets/` is a complete personality on top of them, the source of truth for how the agent sounds, the active one named by `agent_personality` in `~/agent/data/config.json`. Core auto-loads this file plus the active preset into the system prompt every boot, so the voice is always present like MEMORY.md.
+Voice, not spine. The shared rules below hold for every preset. Each file in `presets/` is a complete personality on top of them, the source of truth for how the agent sounds, the active one named by `agent_personality` in `~/agent/data/config.json`, or by `default_personality` in `~/agent/core/manifest.json` when the store has no entry. Core auto-loads this file plus the active preset into the system prompt every boot, so the voice is always present like MEMORY.md.
 
 ## Shared voice (all presets)
 
@@ -55,11 +55,21 @@ On a fresh start, reason through your personality for the day. Don't restate the
 `ls` to see what's available. To read the active one:
 
 ```bash
-P=$(python3 -c "import json;print(json.load(open('/root/agent/data/config.json'))['agent_personality'])")
-cat ~/agent/skills/personality/presets/$P.md
+P=$(python3 - <<'EOF'
+import json, pathlib
+home = pathlib.Path.home()
+store = home / "agent/data/config.json"
+cfg = json.loads(store.read_text()) if store.is_file() else {}
+if "agent_personality" in cfg:
+    print(cfg["agent_personality"])
+else:
+    print(json.loads((home / "agent/core/manifest.json").read_text())["default_personality"])
+EOF
+)
+cat ~/agent/skills/personality/presets/"$P".md
 ```
 
-**Do not reach for `$AGENT_PERSONALITY`.** The config store outranks it: `settings_customise_sources` in `core/config.py` orders the store above `env_settings`, so the store wins whenever it holds a value, which on a configured box it does. The variable is also unset in the environment and in `/run/vestad-env` unless someone exports it, and a path written `presets/$AGENT_PERSONALITY.md` then expands to `presets/.md` and silently resolves to nothing. The store is the only reading that is always right.
+**Do not reach for `$AGENT_PERSONALITY`.** The config store outranks it: `settings_customise_sources` in `core/config.py` orders the store above `env_settings`, so the store wins whenever it holds a value. The variable is also unset in the environment and in `/run/vestad-env` unless someone exports it, and a path written `presets/$AGENT_PERSONALITY.md` then expands to `presets/.md` and silently resolves to nothing. The store, with the manifest's `default_personality` as the fallback for a box that never chose one, is the only reading that is always right.
 
 A preset's Range section is how the voice bends with state without breaking; the mood picks the pole, the preset keeps the fingerprint.
 
