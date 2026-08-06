@@ -34,6 +34,7 @@ and never touches the user's mailbox. EMAIL_DRAFT_ONLY is irrelevant here.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import time
 import urllib.error
@@ -259,16 +260,40 @@ _FAULT_NOTICE = {
     CLIENT_AUTH_REJECTED: (
         "google_client_secret_rejected",
         (
-            "Gmail stopped working: Google is rejecting the client secret configured for the Google "
-            "sign-in client. The client itself is still registered and was not withdrawn, and your "
-            "account and password are fine, but the secret paired with that client is wrong and "
+            "Gmail stopped working: Google is rejecting the secret of the sign-in client this skill "
+            "ships. The client itself is still registered and was not withdrawn, and your account and "
+            "password are fine, but the secret that ships with the skill no longer matches it, and "
             "re-resolving it from Thunderbird's published client did not produce a working one. Gmail "
-            "send/receive is down for account '{account}' until it is corrected. To fix it: check the "
-            "client's secret in the Google Cloud console, correct it, then re-run the auth setup for this "
-            "account with 'email-client auth add --account {account} --provider gmail --reauth'."
+            "send/receive is down for account '{account}'. Nothing you can change on your side fixes "
+            "this: the secret belongs to the shared public client, not to your account, so a re-auth "
+            "would replay the same rejected secret. It takes a newly published client from upstream, so "
+            "report it and use another way to reach this mailbox until then."
         ),
     ),
 }
+
+# The rejected-secret wording when this agent runs its OWN Google OAuth client through the
+# EMAIL_CLIENT_OAUTH_CLIENT_ID / EMAIL_CLIENT_OAUTH_CLIENT_SECRET overrides: that client lives in a
+# Google Cloud project the user controls, so unlike the shipped client its secret is theirs to fix.
+_CUSTOM_CLIENT_SECRET_REJECTED = (
+    "Gmail stopped working: Google is rejecting the client secret this agent is configured with. The "
+    "client itself is still registered and was not withdrawn, and your account and password are fine, "
+    "but the secret paired with it is wrong. That client comes from EMAIL_CLIENT_OAUTH_CLIENT_ID / "
+    "EMAIL_CLIENT_OAUTH_CLIENT_SECRET, so it is yours: check the client's secret in your Google Cloud "
+    "project, set the corrected value in EMAIL_CLIENT_OAUTH_CLIENT_SECRET, then re-run the auth setup "
+    "for this account with 'email-client auth add --account {account} --provider gmail --reauth'. Gmail "
+    "send/receive is down for account '{account}' until then."
+)
+
+# The two env overrides that put a user-owned OAuth client in play (providers.apply_env_overrides).
+_CUSTOM_CLIENT_ENV_VARS = ("EMAIL_CLIENT_OAUTH_CLIENT_ID", "EMAIL_CLIENT_OAUTH_CLIENT_SECRET")
+
+
+def _custom_client_configured(env: dict | None = None) -> bool:
+    """True when an OAuth client of the user's own is overriding the shipped one."""
+    env = env if env is not None else os.environ
+    return any(env[name].strip() for name in _CUSTOM_CLIENT_ENV_VARS if name in env)
+
 
 # Fields copied from the probe result onto the notification, when the probe recorded them.
 _DETAIL_KEYS = ("http_status", "error", "error_description", "client_id", "self_heal")
@@ -279,10 +304,13 @@ def write_client_fault_notification(account: str, result: dict) -> pathlib.Path:
 
     One writer for both faults, so they share a shape and a cadence; only the wording and the type
     differ, because a dead client and a rejected secret send the user after different fixes.
+    A rejected secret has two of them, since only a user-owned client is one the user can correct.
     Nothing dedupes by marker: the daily probe is the only caller, so a standing fault raises at
     most one alert a day.
     """
     notif_type, template = _FAULT_NOTICE[result["status"]]
+    if result["status"] == CLIENT_AUTH_REJECTED and _custom_client_configured():
+        template = _CUSTOM_CLIENT_SECRET_REJECTED
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
     notif = {
         "source": "email-client",
