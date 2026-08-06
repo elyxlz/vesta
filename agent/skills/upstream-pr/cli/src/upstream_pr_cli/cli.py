@@ -186,9 +186,12 @@ def branch_authors_ahead_of_base(branch, base, env):
 
 
 def warn_if_branch_belongs_to_another_agent(branch, base, agent_name, env):
-    """Refuse to hand another agent's branch to --force. A remote branch that already carries
-    commits by a different agent is somebody else's in-flight work, and the push below is a force
-    push, so adopting it by accident silently discards their commits."""
+    """Refuse to hand another agent's branch to --force. A remote branch carrying commits by a
+    different agent and none of your own is somebody else's in-flight work, and the push below is a
+    force push, so adopting it by accident silently discards their commits.
+
+    This catches a name collision, not every overwrite: a branch you have commits on stays yours to
+    push, so anything added to it since your last push still goes. Fetch before you force."""
     authors = branch_authors_ahead_of_base(branch, base, env)
     if authors is None:
         return
