@@ -24,8 +24,11 @@ mkdir -p "$(dirname "$STAMPS")"
 now() { date +%s; }
 
 daemon_alive() {
-  local pid
-  pid="$(cat "$PIDFILE" 2>/dev/null)" || return 1
+  local record pid
+  record="$(cat "$PIDFILE" 2>/dev/null)" || return 1
+  # The record is "<pid> <starttime>", so the pid is its first field. Passing the whole record to
+  # kill would fail on a healthy daemon and restart it on every tick.
+  pid="${record%% *}"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 

@@ -32,9 +32,6 @@ PID_CAPTURE_POLL_SECS = 0.02
 # Two starts, launched with no stagger: whoever wins the record is the one that spawns.
 RACE_STARTS = 2
 RACE_TIMEOUT = 120
-# Daemons whose pid record is still a bare pid, so a recycled pid reads as a live daemon. Named
-# here rather than left out, so the gap shows up as a skip in the run instead of as silence.
-PID_IDENTITY_TODO = {"whatsapp", "telegram"}
 # The whatsapp launcher answers --help off its cached binary, so this only has to outlast a cold
 # disk; the one path that would compile first is the one this probe is never taken on.
 WHATSAPP_PROBE_TIMEOUT = 120
@@ -421,8 +418,6 @@ def test_status_rejects_a_reused_pid(daemon):
     Standing in for a real reuse: the recorded starttime is edited to a value the live process
     cannot have, which is exactly the state a recycled pid produces."""
     spec, home, env = daemon
-    if spec.name in PID_IDENTITY_TODO:
-        pytest.skip(f"{spec.name} records a bare pid: still vulnerable to reuse, tracked separately")
     assert _json(_verb(spec, env, "start")) == {"status": "started"}
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
 

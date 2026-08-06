@@ -70,12 +70,25 @@ func livePid() (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(record)))
+	fields := strings.Fields(string(record))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 {
 		return 0, false
 	}
 	if err := syscall.Kill(pid, 0); err != nil {
 		return 0, false
+	}
+	// LEGACY(remove-when: no daemon record predating the release that ships this check remains, i.e.
+	// every box has restarted its daemons at least once on this version): a record written by the old
+	// code is a bare pid. Trust it rather than reading the absence of a starttime as a mismatch,
+	// because an upgrade must not declare a live daemon dead and let a second stack beside it.
+	if len(fields) > 1 && isDigits(fields[1]) {
+		if current := starttimeOf(pid); current != "" && current != fields[1] {
+			return 0, false
+		}
 	}
 	return pid, true
 }
@@ -195,8 +208,55 @@ func writePidRecord(pid int, flags int) error {
 		return err
 	}
 	defer file.Close()
-	_, err = file.WriteString(strconv.Itoa(pid))
+	_, err = file.WriteString(pidRecordFor(pid))
 	return err
+}
+
+// Field 22 of /proc/<pid>/stat is the process start time in clock ticks since boot. A recycled pid
+// cannot share the original's starttime, because the process that took the pid necessarily started
+// later, so (pid, starttime) is a stable identity. Empty where /proc cannot answer, which drops the
+// caller back to a bare pid-existence check.
+func starttimeOf(pid int) string {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	// comm is a bracketed field that may itself contain spaces and parentheses, so the numbered
+	// fields resume after the LAST ')'.
+	end := strings.LastIndex(string(data), ")")
+	if end < 0 {
+		return ""
+	}
+	fields := strings.Fields(string(data)[end+1:])
+	if len(fields) < 20 {
+		return ""
+	}
+	return fields[19]
+}
+
+// A starttime is only worth comparing when it is a plain run of digits. Any other second field,
+// from a writer this contract does not own, would compare a real starttime against a non-number and
+// declare a live daemon dead, letting a second stack beside it.
+func isDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// The record is "<pid> <starttime>", or a bare pid where the starttime is unavailable: a bare pid is
+// the honest form of "identity unknown", and the readers take it the legacy way rather than as a
+// mismatch.
+func pidRecordFor(pid int) string {
+	if started := starttimeOf(pid); started != "" {
+		return strconv.Itoa(pid) + " " + started
+	}
+	return strconv.Itoa(pid)
 }
 
 // ensureDaemon is the self-bootstrap every agent-facing command runs: a socket that answers is
