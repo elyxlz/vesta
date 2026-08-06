@@ -41,6 +41,46 @@ func (wac *WhatsAppClient) AddContactByChat(name, chat string) (Contact, error) 
 	return wac.store.SaveManualContactByChatJID(name, peer.String())
 }
 
+// RemoveContact revokes a user-confirmed contact, named by contact name, phone number, or chat id.
+// A name clears every row carrying it; an address clears every key form that peer can be filed
+// under, because the send gate passes on any one of them and a row left behind would keep sending
+// to someone the user just revoked.
+func (wac *WhatsAppClient) RemoveContact(identifier string) error {
+	removed, err := wac.store.DeleteManualContactsByName(identifier)
+	if err != nil {
+		return err
+	}
+	if removed {
+		return nil
+	}
+
+	if jid, parseErr := contactIdentifierJID(identifier); parseErr == nil {
+		removed, err = wac.store.DeleteManualContactsByJID(wac.contactKeys(jid))
+		if err != nil {
+			return err
+		}
+		if removed {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("contact not found: %s", identifier)
+}
+
+// contactIdentifierJID reads the address forms remove-contact accepts: a chat id as itself, and a
+// phone number as its phone JID.
+func contactIdentifierJID(identifier string) (types.JID, error) {
+	trimmed := strings.TrimSpace(identifier)
+	if strings.Contains(trimmed, "@") {
+		return types.ParseJID(trimmed)
+	}
+	digits, _, err := normalizePhoneInput(trimmed)
+	if err != nil {
+		return types.JID{}, err
+	}
+	return types.NewJID(digits, types.DefaultUserServer), nil
+}
+
 // MaxPhoneDigits is the E.164 ceiling on phone-number length. A WhatsApp
 // group ID renders as a longer all-digit string; sending to one as a user JID
 // makes the server log the device out and destroys the pairing (#1169).
@@ -56,30 +96,53 @@ func errIfGroupIDDigits(digits string) error {
 	)
 }
 
+// contactKeys returns every key one peer's saved contact can be filed under: their canonical
+// identity plus its LID<->PN counterpart. WhatsApp addresses one person both by phone JID and by
+// LID, and a contact is saved under whichever key was known when the user confirmed them, so this
+// is the one owner of "which rows are this peer's contact": the send gate, the inbound
+// notification, and a revoke all resolve a peer through here and therefore cannot disagree about
+// who is saved. A group has no counterpart and yields a single key.
+func (wac *WhatsAppClient) contactKeys(chat types.JID) []string {
+	peer := wac.canonicalChatJID(chat)
+	return storageKeys(peer, wac.mappedJID(peer))
+}
+
+// lookupManualContact loads a peer's saved contact under any of their key forms, nil when the user
+// has confirmed nobody at that identity.
+func (wac *WhatsAppClient) lookupManualContact(chat types.JID) (*Contact, error) {
+	for _, key := range wac.contactKeys(chat) {
+		contact, err := wac.store.GetManualContact(key)
+		if err != nil {
+			return nil, err
+		}
+		if contact != nil {
+			return contact, nil
+		}
+	}
+	return nil, nil
+}
+
 // requireManualContact is the saved-contact half of the ban gate: every person the device
 // messages must have been confirmed by the user first. It covers a direct chat addressed
-// either way, since WhatsApp addresses one peer both by phone JID and by LID, and looks the
-// contact up under every key that peer can be filed under: a peer confirmed by chat id while
-// they had no phone mapping is saved under their LID, and once whatsmeow learns the mapping the
-// canonical key becomes their phone JID, so checking one key alone would ask the user to confirm
-// the same person twice. A LID with no phone mapping is a peer with no number, so the refusal
-// asks for it to be saved by chat id. Groups carry no such requirement.
+// either way, since a peer confirmed by chat id while they had no phone mapping is saved under
+// their LID, and once whatsmeow learns the mapping the canonical key becomes their phone JID, so
+// checking one key alone would ask the user to confirm the same person twice. A LID with no phone
+// mapping is a peer with no number, so the refusal asks for it to be saved by chat id. Groups
+// carry no such requirement.
 func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 	if !isDirectChatJID(jid) {
 		return nil
 	}
 
-	peer := wac.canonicalChatJID(jid)
-	for _, key := range storageKeys(peer, wac.mappedJID(peer)) {
-		contact, err := wac.store.GetManualContact(key)
-		if err != nil {
-			return fmt.Errorf("failed to verify saved contacts: %v", err)
-		}
-		if contact != nil {
-			return nil
-		}
+	contact, err := wac.lookupManualContact(jid)
+	if err != nil {
+		return fmt.Errorf("failed to verify saved contacts: %v", err)
+	}
+	if contact != nil {
+		return nil
 	}
 
+	peer := wac.canonicalChatJID(jid)
 	who, target := "this chat", "--chat "+peer.String()
 	if peer.Server == types.DefaultUserServer && peer.User != "" {
 		who, target = "+"+peer.User, "--phone +"+peer.User

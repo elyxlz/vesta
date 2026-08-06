@@ -594,38 +594,36 @@ func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
 	return ms.getManualContact("jid", jid)
 }
 
-func (ms *MessageStore) DeleteManualContact(identifier string) error {
-	// Try by name first
-	result, err := ms.db.Exec(`DELETE FROM contacts WHERE name = ?`, identifier)
+// DeleteManualContactsByName removes every contact row carrying name, reporting whether any did.
+func (ms *MessageStore) DeleteManualContactsByName(name string) (bool, error) {
+	return ms.deleteContacts(`DELETE FROM contacts WHERE name = ?`, name)
+}
+
+// DeleteManualContactsByJID removes the contact rows under the given keys, reporting whether any
+// did. Callers pass every key form of one peer, so a revoke leaves nothing behind.
+func (ms *MessageStore) DeleteManualContactsByJID(jids []string) (bool, error) {
+	if len(jids) == 0 {
+		return false, nil
+	}
+	placeholders := strings.Repeat("?,", len(jids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(jids))
+	for i, jid := range jids {
+		args[i] = jid
+	}
+	return ms.deleteContacts(`DELETE FROM contacts WHERE jid IN (`+placeholders+`)`, args...)
+}
+
+func (ms *MessageStore) deleteContacts(query string, args ...any) (bool, error) {
+	result, err := ms.db.Exec(query, args...)
 	if err != nil {
-		return err
+		return false, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to check delete result: %v", err)
+		return false, fmt.Errorf("failed to check delete result: %v", err)
 	}
-	if rows > 0 {
-		return nil
-	}
-
-	// Try by phone number
-	normalized, _, err := normalizePhoneInput(identifier)
-	if err == nil {
-		jid := fmt.Sprintf("%s@%s", normalized, types.DefaultUserServer)
-		result, err = ms.db.Exec(`DELETE FROM contacts WHERE jid = ?`, jid)
-		if err != nil {
-			return err
-		}
-		rows, err = result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("failed to check delete result: %v", err)
-		}
-		if rows > 0 {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("contact not found: %s", identifier)
+	return rows > 0, nil
 }
 
 func digitsOnly(input string) string {

@@ -663,14 +663,14 @@ func cmdAddContact(args []string, wac *WhatsAppClient) (any, error) {
 func cmdRemoveContact(args []string, wac *WhatsAppClient) (any, error) {
 	var identifier string
 	fs := flag.NewFlagSet("remove-contact", flag.ContinueOnError)
-	fs.StringVar(&identifier, "identifier", "", "Contact name or phone")
+	fs.StringVar(&identifier, "identifier", "", "Contact name, phone, or chat id")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if identifier == "" {
 		return nil, fmt.Errorf("--identifier is required")
 	}
-	if err := wac.store.DeleteManualContact(identifier); err != nil {
+	if err := wac.RemoveContact(identifier); err != nil {
 		return nil, err
 	}
 	return map[string]any{"success": true, "message": "Contact removed"}, nil
