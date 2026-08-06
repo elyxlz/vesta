@@ -18,6 +18,11 @@ Always start with `whatsapp status`:
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
 - previously linked, now logged out or lost: get the user's explicit approval before reconnecting.
+  **The logout notification says "no user step needed" and that is not permission**: it means they
+  do not have to scan a QR, not that you may reconnect unasked. Ask anyway. On a managed number a
+  re-link also drops outbound to everyone who has not messaged you since, and only their next
+  inbound restores it, so reconnecting unasked can cost you the channel to the one person who
+  matters, at the moment you most need it.
 
 Never recover by manually re-pairing or restarting the daemon.
 
@@ -62,6 +67,30 @@ same here
 MSG
 ```
 - Before texting an unknown raw number, save it first with `add-contact` (name + phone). A chat WhatsApp shows only as an id (`...@lid`) has no number to save, so save it by that id instead: `add-contact --name <name> --chat <chat_jid>`.
+
+**Error 463, `no signal session for this device yet`.** The send fails for one recipient while
+everyone else succeeds on the same number and daemon, so it looks like local state you can repair.
+It usually is not. Make one further attempt at most, then say what you need to say on another
+channel; it clears by itself the moment that person sends you anything.
+
+**Never re-pair or restart the daemon to chase it.** Pairing is hard-capped per day and per week,
+and repeat pairing is what gets numbers banned.
+
+Rule out the local store without sending anything, since the obvious comparison test (message some
+other contact and see) is unavailable: cold-initiating anyone who has not written first is the
+behaviour that gets a fresh number banned.
+
+```bash
+sqlite3 ~/.whatsapp/whatsapp.db "select their_id from whatsmeow_sessions"
+```
+
+Rows are `<lid>_1:<device>`, one per device that recipient uses. Rows present for them means this
+is not a missing-session problem, so stop looking there.
+
+**On a managed number (Vesta Cloud, Double Tick) it is not yours to fix.** The prekey fetch for a
+device you hold no session for happens in the provider's infrastructure rather than in your client,
+so two agents holding an identical device set for the same recipient can get opposite results.
+Falling back to another channel is the entire remedy available to you.
 
 ## Read
 
