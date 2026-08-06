@@ -23,34 +23,3 @@ Keep every line in the one fenced block below, so a single read shows you every 
 # One line per daemon, e.g.:
 #   file-host daemon start
 ```
-
-## Two container facts, if you ever build your own boot-time guard
-
-Sooner or later you will want a belt-and-braces layer that brings daemons back without waiting for
-a turn, and the obvious shape is a "run once per boot" guard in `~/.bashrc` marked by a file in
-`/tmp`. Both halves of that instinct are wrong on this image, and neither failure announces itself:
-the guard simply stops running while continuing to look correct.
-
-**`/tmp` is NOT a tmpfs, so a restart does not clear it.** It is part of the container's writable
-layer, which `docker restart` preserves, so a marker written there survives every restart. A guard
-written as "once per boot" is therefore "once in the container's lifetime": it fires on the first
-boot and never again. Check yours rather than assuming:
-
-```bash
-findmnt -no FSTYPE,TARGET /tmp    # no output means /tmp is on the writable layer, not a tmpfs
-ls -lat --time-style=long-iso /tmp | tail -5   # entries older than this boot prove it persists
-```
-
-**`/proc/uptime` is the HOST kernel's, not this container's**, so it cannot tell you whether you
-just booted or have been up for weeks, and it will happily read in days while the container is
-minutes old. The oracle is PID 1's creation time:
-
-```bash
-stat -c %y /proc/1     # when THIS container actually started
-```
-
-If you do build such a guard, key it to something that really changes: a staleness window (re-run
-when the marker is older than N seconds), or PID 1's start time. And validate it by replay in both
-directions, since a guard that never fires and a guard that fires correctly look identical from
-outside: kill a daemon with a stale marker and confirm it comes back, then confirm a fresh marker
-does not re-run it on every shell.
