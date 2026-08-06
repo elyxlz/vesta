@@ -133,9 +133,38 @@ def forward() -> dict:
     return _go_history(1)
 
 
+def _reusable_context() -> str | None:
+    """A top-level context safe to take over when a new tab cannot be created.
+
+    Prefer a blank one so we never clobber a page in use; otherwise the first, since a
+    reused tab still beats no browser at all.
+    """
+    try:
+        contexts = bidi("browsingContext.getTree")["contexts"]
+    except RuntimeError:
+        return None
+    if not contexts:
+        return None
+    for node in contexts:
+        if (node["url"] if "url" in node else "").startswith(INTERNAL_URL_PREFIXES):
+            return node["context"]
+    return contexts[0]["context"]
+
+
 def new_tab(url: str = "about:blank") -> str:
-    """Create a new tab, switch to it, optionally navigate. Returns its context id."""
-    ctx = bidi("browsingContext.create", type="tab")["context"]
+    """Create a new tab, switch to it, optionally navigate. Returns its context id.
+
+    Some Camoufox builds accept the BiDi connection and then never answer
+    browsingContext.create, so every `open` died at tab creation with a 60s timeout even
+    though the browser was healthy and its existing context navigated perfectly. Reusing
+    that context keeps the session usable instead of failing the command outright.
+    """
+    try:
+        ctx = bidi("browsingContext.create", type="tab")["context"]
+    except RuntimeError:
+        ctx = _reusable_context()
+        if ctx is None:
+            raise
     _set_context(ctx)
     if url and url != "about:blank":
         goto(url)
