@@ -144,8 +144,15 @@ Read it one-directionally: every hunk the PR added must be present verbatim in y
 | `POST /issues/:n/comments` where `:n` is a **PR** | 201 |
 | `POST /issues/:n/comments` where `:n` is an **issue** | 403 |
 | `DELETE /issues/comments/:id` (a PR comment) | 204 |
+| `PATCH /issues/:n` (edit an **issue** body) | 403 |
+| `PATCH /pulls/:n` (edit a **PR** body) | 200 |
+| `GET /issues/:n` (read any issue) | 200 |
 
 So answer PR review feedback by commenting on the PR, which needs no workaround. Only a follow-up on a real issue has to become a new issue cross-referencing it (`Related to #N`); GitHub renders the backreference either way.
+
+**The same missing permission also means you cannot revise an issue after you post it.** Its body 403s on `PATCH` and its thread 403s on a comment, so an issue filed through this token is one shot: everything it needs to say, including the attribution footer, has to be in the body at create time. A PR is the opposite, since `PATCH /pulls/:n` succeeds, so a correction or late evidence can be edited into a PR body at any point.
+
+**`/search/issues` is filtered by the same permission, so it under-reports issues rather than being wrong about them.** A query whose words appear in an issue can return only the PRs that quote those words, and `is:issue` does not restore the missing item, so a `0` or a PR-only result set through this token is not evidence that the issue does not exist. Reading it as evidence turns a permission boundary into a false claim about GitHub. Check an issue you know the number of with `GET /issues/:n`, which succeeds on a public repo, and treat search through this token as a lower bound.
 
 Treat that table as perishable: permissions belong to the installed App and change when it does. Posting a throwaway comment and deleting it measures the current answer in seconds, which beats trusting any written claim, this one included.
 
