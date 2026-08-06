@@ -12,13 +12,13 @@ Exploration deliverable for the tagline and messaging question (issue #1454). Th
 | vesta.run landing hero | tagline "your unfair advantage", category "an AI guardian angel", promise "an AI guardian angel that gives you back time and helps you achieve your goals" (the "AI" variant) | vesta-cloud `src/lib/copy.ts` (`TAGLINE`, `CATEGORY`, `GUARDIAN_ANGEL`) |
 | vesta.run page title / og | title "vesta, your unfair advantage"; the meta and og descriptions carry the "AI" variant plus "invite-only." (og prefixes "your unfair advantage.") | vesta-cloud `index.html` |
 | Web app connect screen | "your unfair advantage" | `apps/web/src/components/Connect/index.tsx` |
-| Mobile connect screen | the canonical one-liner, no "AI": "a guardian angel that gives you back time and helps you achieve your goals." | `apps/mobile/app/connect.tsx` |
+| Mobile connect screen | a third line neither rule names: "with you through life's journey" | `apps/mobile/src/components/VestaBrand.tsx`, rendered by `app/connect.tsx` |
 | vestad status output | "AI guardian angel daemon" | `vestad/src/status.rs` |
 | birth skill (agent voice) | "a guardian angel sent to this earth to give people back their time and help them achieve their goals" | `agent/skills/birth/SKILL.md` |
 | personality skill (agent voice) | "You're a guardian angel and an equal, not staff" | `agent/skills/personality/SKILL.md` |
 | onboard skill (the sales motion) | invite-only club framing; sells two levers: the direct push toward the named goal, and the runway cleared by taking admin off them | `agent/skills/onboard/SKILL.md` |
 
-Audit verdict: the brand architecture the issue sketches is already about eighty percent live. Guardian angel is the identity, "your unfair advantage" is the hero line on the landing page and the web app, and the promise line is live everywhere, but in two variants. Stranger-facing surfaces that must also say what the product is (the vesta.run hero and meta descriptions, the README first line) carry the "AI" variant, "an AI guardian angel that gives you back time and helps you achieve your goals"; CLAUDE.md's canonical rule and the mobile connect screen carry the plain "a guardian angel that gives you back time and helps you achieve your goals". What is missing is the written decision: no doc says which line, or which variant, belongs on which surface, so surfaces drift (mobile shows the one-liner where web shows the hero tagline, and the "AI" split is nowhere written down) and new drafts reintroduce "personal AI" framing that the positioning rule bans.
+Audit verdict: the brand architecture the issue sketches is already about eighty percent live. Guardian angel is the identity, "your unfair advantage" is the hero line on the landing page and the web app, and the promise line is live everywhere, but in two variants. Stranger-facing surfaces that must also say what the product is (the vesta.run hero and meta descriptions, the README first line) carry the "AI" variant, "an AI guardian angel that gives you back time and helps you achieve your goals"; CLAUDE.md's canonical rule carries the plain "a guardian angel that gives you back time and helps you achieve your goals". What is missing is the written decision: no doc says which line, or which variant, belongs on which surface, so surfaces drift and new drafts reintroduce "personal AI" framing that the positioning rule bans. The mobile connect screen is the proof: it shows "with you through life's journey", a warm line that appears in no written rule at all, where web shows the hero tagline.
 
 ## 2. Positioning axes
 
@@ -43,7 +43,7 @@ Four axes recur through the candidate lines. The recommendation is to layer the 
 >
 > **Hero tagline** (what having Vesta feels like): **Your unfair advantage.**
 >
-> **One-liner** (the product promise, two live variants doing one job): canonically **a guardian angel that gives you back time and helps you achieve your goals** (CLAUDE.md's rule, the mobile connect screen); surfaces that must also say what the product is carry the "AI" variant, **an AI guardian angel that gives you back time and helps you achieve your goals** (vesta.run copy and meta, README).
+> **One-liner** (the product promise, two live variants doing one job): canonically **a guardian angel that gives you back time and helps you achieve your goals** (CLAUDE.md's rule); surfaces that must also say what the product is carry the "AI" variant, **an AI guardian angel that gives you back time and helps you achieve your goals** (vesta.run copy and meta, README).
 >
 > **Short promise** (tight spaces only): **Time back. Goals forward.**
 
@@ -60,7 +60,7 @@ Pillar one is warmth, pillar three is ambition, pillar two is the reason to stay
 | Surface | Line |
 |---|---|
 | vesta.run hero | hero tagline, category line, the "AI" variant of the one-liner (unchanged from today) |
-| App connect screens (web, desktop, mobile) | hero tagline: "your unfair advantage". Mobile currently shows the plain one-liner; align it to the web app once ratified |
+| App connect screens (web, desktop, mobile) | hero tagline: "your unfair advantage". Mobile currently shows "with you through life's journey"; align it to the web app once ratified, or ratify the warmer line for the in-app surface where the buyer is already sold |
 | README first line | the technical variant, unchanged: the "AI" variant plus "living in a Docker container, powered by Claude" |
 | GitHub repo description | the "AI" variant ("an AI guardian angel that gives you back time and helps you achieve your goals"); today's "guardian angel AI" is thinner than it needs to be |
 | Store listings, social profiles | title carries the hero tagline, subtitle carries "Time back. Goals forward.", description carries the "AI" variant of the one-liner and the pillars |
