@@ -132,7 +132,15 @@ def mask(match: re.Match[str]) -> str:
 # digits from MII 3, clearing the IIN gate, and pass Luhn about one time in ten. A PAN follows a
 # space, a colon or a quote, never a namespace, so the dot costs no real detection. The guard is
 # deliberately dot-only: hyphen/underscore-namespaced ids stay flagged, erring toward redaction.
-CARD_CANDIDATE = re.compile(r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)")
+# The trailing lookahead also rejects messaging identifiers. A WhatsApp LID is a bare 15-digit
+# run that collides with the Mastercard 2-series head-on: 251638040256599 opens 2516 (inside
+# 2221-2720), clears the IIN gate and passes Luhn by chance, so it is indistinguishable from a
+# PAN by digits alone. On a box using WhatsApp that single chat id produced ~700 hits per
+# nightly scan, burying the handful of candidates actually worth reviewing. The suffix is the
+# discriminator: nothing followed by @lid or a WhatsApp domain is a payment card.
+CARD_CANDIDATE = re.compile(
+    r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)(?!@(?:lid|s\.whatsapp\.net|c\.us|g\.us)\b)"
+)
 # Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
 CONTEXT_CHARS = 40
 
