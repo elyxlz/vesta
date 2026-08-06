@@ -192,7 +192,9 @@ def test_start_claims_the_record_before_it_spawns_anything(records: pathlib.Path
 
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
     assert [spawn.record for spawn in spawns] == [str(os.getpid())]
-    assert dl.PIDFILE.read_text() == str(CHILD_PID)
+    # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is
+    # there at all depends on the fake child pid happening to exist on this machine.
+    assert dl.PIDFILE.read_text().split()[0] == str(CHILD_PID)
 
 
 def test_start_runs_the_poller_detached_and_names_no_cadence(records: pathlib.Path, monkeypatch, capsys):
@@ -209,7 +211,7 @@ def test_start_runs_the_poller_detached_and_names_no_cadence(records: pathlib.Pa
     # stdout is that log file rather than a tty, so CPython would block-buffer the child and the
     # log would sit empty while the daemon polls. The log is the only liveness evidence anyone
     # reads, so an empty one gets diagnosed as a daemon that died.
-    assert [spawn.env.get("PYTHONUNBUFFERED") for spawn in spawns] == ["1"]
+    assert [spawn.env["PYTHONUNBUFFERED"] for spawn in spawns] == ["1"]
 
 
 def test_start_answers_already_running_and_never_stacks(records: pathlib.Path, monkeypatch, capsys):
@@ -246,7 +248,7 @@ def test_start_takes_over_a_record_no_process_stands_behind(records: pathlib.Pat
 
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
     assert len(spawns) == 1
-    assert dl.PIDFILE.read_text() == str(CHILD_PID)
+    assert dl.PIDFILE.read_text().split()[0] == str(CHILD_PID)
 
 
 def test_start_that_gives_up_removes_its_own_record(records: pathlib.Path, monkeypatch, capsys):

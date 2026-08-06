@@ -116,9 +116,9 @@ State lives in the same three places for every skill, under one name the daemon 
   The pid record is **`<pid> <starttime>`**, two space-separated fields, where starttime is
   field 22 of `/proc/<pid>/stat` (clock ticks since boot). A pid alone answers "does some
   process hold this number"; the pair answers "is this still the process I started", which is
-  the question status actually needs. A daemon writes the bare pid when `/proc` is unreadable,
-  and a reader treats a bare pid as trusted rather than as a mismatch, so records written by
-  older code keep working. Anything writing this file must write both fields when it can.
+  the question status actually needs. Write both fields, falling back to the pid alone only when
+  `/proc` is unreadable. Read the pid as the first field rather than as the whole file, and read
+  a record carrying a pid alone as trusted rather than as a mismatch.
 - log: `~/agent/logs/<name>.log`, appended, never truncated
 - budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start (default 30, and 300 for whatsapp and
   telegram, which compile their CLI on the way up), `DAEMON_STOP_TIMEOUT_SECS` bounds a stop

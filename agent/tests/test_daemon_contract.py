@@ -80,6 +80,13 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _recorded_pid(pidfile: pl.Path) -> int:
+    """The pid a record names. The record is "<pid> <starttime>", so reading the whole file as a
+    number reaches a daemon only by accident. Raises the way int() and a missing file do, which is
+    what the callers already suppress."""
+    return int(pidfile.read_text().split()[0])
+
+
 def _rig_file_host(home: pl.Path, bin_dir: pl.Path) -> None:
     served = home / ".file-host"
     served.mkdir()
@@ -320,8 +327,8 @@ def daemon(request, tmp_path):
     # skill's, since one may run a second process (telegram's watchdog) that would outlive the
     # test and restart what this killed. Sorted order puts a "-watchdog" record first.
     for pidfile in sorted((home / "agent/data/daemons").glob("*.pid")):
-        with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
-            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+        with contextlib.suppress(FileNotFoundError, IndexError, ProcessLookupError, ValueError):
+            os.kill(_recorded_pid(pidfile), signal.SIGKILL)
 
 
 def _verb(spec, env, *args):
@@ -349,8 +356,7 @@ def _error(stdout: str, stderr: str) -> str:
 def _pid(spec, home) -> int | None:
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
     try:
-        # The record is "<pid> <starttime>", so the pid is the first field, not the whole file.
-        pid = int(pidfile.read_text().split()[0])
+        pid = _recorded_pid(pidfile)
         os.kill(pid, 0)
     except (FileNotFoundError, IndexError, ValueError, ProcessLookupError):
         return None
@@ -437,9 +443,9 @@ def test_status_rejects_a_reused_pid(daemon):
     pidfile.write_text(record[0])
     assert _json(_verb(spec, env, "status"))["running"] is True
 
-    # And the half-written form: a pid, a space, and no starttime, which is what a launcher wrote
-    # when /proc was unreadable at start. Comparing a real starttime against an empty field would
-    # declare a live daemon dead, so an unparseable second field reads as legacy, not as mismatch.
+    # And a second field that is not a starttime, which no launcher writes but a reader still meets
+    # on a truncated or hand-edited record. Comparing a real starttime against it would declare a
+    # live daemon dead, so an unparseable second field reads as legacy, not as a mismatch.
     pidfile.write_text(f"{record[0]} ")
     assert _json(_verb(spec, env, "status"))["running"] is True
 
@@ -465,8 +471,8 @@ def _spawned_pid(spec, home, start) -> int | None:
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
     spawned = None
     while start.poll() is None:
-        with contextlib.suppress(FileNotFoundError, ValueError):
-            spawned = int(pidfile.read_text().strip())
+        with contextlib.suppress(FileNotFoundError, IndexError, ValueError):
+            spawned = _recorded_pid(pidfile)
         time.sleep(PID_CAPTURE_POLL_SECS)
     return spawned
 
@@ -643,15 +649,11 @@ def test_every_python_daemon_child_is_launched_unbuffered():
     know which daemons print on startup, and a daemon that prints nothing would pass by saying
     nothing, which is the shape of test that lets this class of bug through.
     """
-    offenders = []
-    for path in sorted(SKILLS_DIR.rglob("daemon.py")):
-        source = path.read_text()
-        start = source.find("subprocess.Popen([sys.argv[0]")
-        if start == -1:
-            start = source.find("subprocess.Popen(\n")
-            if start == -1 or "[sys.argv[0]" not in source[start : start + 400]:
-                continue  # launches a compiled binary, so the interpreter's buffering is not in play
-        call = source[start : start + 400]
-        if "PYTHONUNBUFFERED" not in call:
-            offenders.append(str(path.relative_to(REPO_ROOT)))
+    # Re-execing the CLI is what names the daemons this applies to: one that spawns a compiled
+    # binary is not running an interpreter, so its buffering is not in play. Matched over the whole
+    # file rather than the call, so a reformatted Popen cannot quietly stop being checked.
+    sources = {path: path.read_text() for path in sorted(SKILLS_DIR.rglob("daemon.py"))}
+    reexecs = {path: source for path, source in sources.items() if "[sys.argv[0]" in source}
+    assert reexecs, "no daemon re-execs its own CLI, so this check is matching nothing"
+    offenders = [str(path.relative_to(REPO_ROOT)) for path, source in reexecs.items() if "PYTHONUNBUFFERED" not in source]
     assert offenders == [], f"daemon children launched with buffered stdout: {offenders}"

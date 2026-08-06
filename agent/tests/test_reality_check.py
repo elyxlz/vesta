@@ -42,6 +42,18 @@ def test_healthy_box_exits_green(tmp_path):
     assert "all probes green" in run.stdout
 
 
+def test_live_daemon_record_stays_green(tmp_path):
+    # The record is "<pid> <starttime>", two fields. Reading the whole file as the pid hands kill a
+    # word it cannot parse, and every live daemon on the box reports RED on a healthy night.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "data" / "daemons" / "alive.pid").write_text(f"{os.getpid()} 12345")
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  daemon alive is running" in run.stdout
+
+
 def test_dead_daemon_record_goes_red(tmp_path):
     home = _healthy_home(tmp_path)
     (home / "agent" / "data" / "daemons" / "ghost.pid").write_text("99999999")

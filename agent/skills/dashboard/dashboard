@@ -76,14 +76,15 @@ live_pid() {
   record=$(cat "$PIDFILE" 2>/dev/null) || return 1
   pid=${record%% *}
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
-  # A record written before this check existed is a bare pid. Trust it as before rather than
-  # reading the absence as a mismatch: an upgrade must not declare a live daemon dead.
+  # LEGACY(remove-when: no daemon record predating the release that ships this check remains, i.e.
+  # every box has restarted its daemons at least once on this version): a record written by the old
+  # code is a bare pid. Trust it rather than reading the absence of a starttime as a mismatch,
+  # because an upgrade must not declare a live daemon dead and let a second stack beside it.
   case "$record" in
     *" "*)
-      # The recorded field must be a NON-EMPTY run of digits before it is worth comparing. A record
-      # of the form "<pid> " (written when /proc was unreadable at start) would otherwise compare a
-      # real starttime against "" and declare a live daemon dead, letting a second stack beside it.
-      # This mirrors the python path, where the literal "None" fails isdigit() for the same reason.
+      # Only a non-empty run of digits is worth comparing. Any other second field, from a writer
+      # this contract does not own, would otherwise compare a real starttime against a non-number
+      # and declare a live daemon dead, letting a second stack beside it.
       recorded=${record#* }
       case "$recorded" in
         ""|*[!0-9]*) ;;
