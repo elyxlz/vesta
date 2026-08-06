@@ -14,6 +14,19 @@ def test_format_task_list():
     assert "done" in lines[1] and "norm" in lines[1] and "-" in lines[1]
 
 
+def test_format_task_list_marks_parked_tasks():
+    """A parked task is the one the digest stops naming, so the list is the only place left that
+    says it exists. It must stay visible and it must say it is parked."""
+    tasks = [
+        {"id": "t1", "title": "waiting on legal", "status": "pending", "priority": 2, "due_date": None, "backburner": 1},
+        {"id": "t2", "title": "ship PR", "status": "pending", "priority": 2, "due_date": None, "backburner": 0},
+    ]
+    lines = fmt.format_task_list(tasks).splitlines()
+    assert lines[0].endswith("[parked] waiting on legal")
+    assert lines[1].endswith("ship PR")
+    assert "[parked]" not in lines[1]
+
+
 def test_format_reminder_list_renders_fields_and_markers():
     assert fmt.format_reminder_list([]) == "(no reminders)"
     reminders = [

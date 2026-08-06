@@ -377,48 +377,45 @@ def _retitle_auto_reminder_messages(conn, task_id: str, new_title: str) -> None:
 
     Bodies are regenerated from the same db.py templates that produced them, rather than
     string-replacing the old title inside the stored message, because a title containing partial or
-    punctuation-heavy text would corrupt the message. Completed rows are history and are left alone.
+    punctuation-heavy text would corrupt the message. A row whose label names no rung has nothing to
+    regenerate from and keeps its body. Completed rows are history and are left alone.
     """
     rows = conn.execute(
         "SELECT id, message, schedule_type FROM reminders WHERE task_id = ? AND auto_generated = 1 AND completed = 0",
         (task_id,),
     ).fetchall()
     for row in rows:
-        schedule = row["schedule_type"] or ""
-        if schedule == "auto: at due":
+        label = db.lead_time_label(row["schedule_type"])
+        if label is not None:
+            message = db.LEAD_TIME_MESSAGE.format(label=label, title=new_title)
+        elif row["schedule_type"] == db.AT_DUE_SCHEDULE:
             message = db.DUE_NOW_MESSAGE.format(title=new_title, task_id=task_id)
         else:
-            label = schedule[len("auto: ") : -len(" before due")]
-            message = db.LEAD_TIME_MESSAGE.format(label=label, title=new_title)
+            continue
         if message != row["message"]:
             conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, row["id"]))
 
 
-def _backburner_update(backburner: bool | None, new_due_date: str | None) -> int | None:
+def _backburner_update(
+    conn, row, *, backburner: bool | None, due_date_changed: bool, new_due_date: str | None, updates: list[str]
+) -> int | None:
     """The new value for the `backburner` column, or None to leave it alone.
 
-    Committing to a date is the opposite state to parking something, so a real due date clears the
-    flag, whether it arrives alongside --backburner in one call or on its own later. One rule for
-    both keeps parked-and-deadlined unrepresentable. Clearing a due date does NOT park the task:
-    that would silence the digest as an invisible side effect of an unrelated command.
+    Parked and deadlined cannot coexist, because the reminder ladder would keep firing on a task the
+    digest has been told to stop nagging about, which is the contradiction the flag exists to
+    remove. The date is the side that wins: a real due date clears the flag whether it arrives
+    alongside --backburner or on its own later, and parking a dated task drops the date and its
+    ladder. Clearing a due date does NOT park the task; that would silence the digest as an
+    invisible side effect of an unrelated command.
     """
     if new_due_date:
         return 0
-    if backburner is not None:
-        return int(backburner)
-    return None
-
-
-def _clear_due_if_parking(conn, task_id: str, row, new_backburner: int | None, due_date_changed: bool, updates: list[str]):
-    """Parking a dated task drops the date, so parked and deadlined cannot coexist.
-
-    Otherwise the reminder ladder keeps firing on a task the digest has been told to stop nagging
-    about, which is the contradiction the flag exists to remove. A due date set in the same call
-    wins instead: `_backburner_update` clears the flag, so `new_backburner` is never 1 here.
-    """
-    if new_backburner == 1 and not due_date_changed and row["due_date"]:
+    if backburner is None:
+        return None
+    if backburner and not due_date_changed and row["due_date"]:
         updates.append("due_date = NULL")
-        db.delete_auto_reminders(conn, task_id)
+        db.delete_auto_reminders(conn, row["id"])
+    return int(backburner)
 
 
 def update_task(
@@ -464,8 +461,9 @@ def update_task(
                     if old_due:
                         db.create_auto_reminders(conn, task_id, result["title"], old_due)
 
-        new_backburner = _backburner_update(backburner, new_due_date if due_date_changed else None)
-        _clear_due_if_parking(conn, task_id, result, new_backburner, due_date_changed, updates)
+        new_backburner = _backburner_update(
+            conn, result, backburner=backburner, due_date_changed=due_date_changed, new_due_date=new_due_date, updates=updates
+        )
         for field, value in [("title", title), ("priority", priority), ("backburner", new_backburner)]:
             if value is not None:
                 updates.append(f"{field} = ?")
@@ -523,6 +521,7 @@ TASK_FIELDS = (
     "status",
     "priority",
     "due_date",
+    "backburner",
     "created_at",
     "completed_at",
     "metadata_path",
@@ -590,9 +589,9 @@ _OVERDUE_HEADER = (
 )
 _STALE_HEADER = (
     "Stale tasks, pending 2+ weeks with no due date. Give each a deadline (`tasks postpone <id> --in-days N`), "
-    "do it now, or drop it with the user's knowledge. If it is undated on purpose, because someone else drives it "
-    "or it is a genuine someday, park it with `tasks update <id> --backburner`: it stays pending and still shows in "
-    "`tasks list` marked [parked], it just stops appearing here. Never invent a deadline to buy silence."
+    "do it now, drop it with the user's knowledge, or, when it is undated on purpose because someone else drives "
+    "it or it is a genuine someday, park it with `tasks update <id> --backburner`: it stays pending and stays in "
+    "`tasks list` marked [parked], it just stops being listed here. Never invent a deadline to buy silence."
 )
 
 

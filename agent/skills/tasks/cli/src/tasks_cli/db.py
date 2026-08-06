@@ -213,6 +213,26 @@ DUE_NOW_MESSAGE = (
 
 LEAD_TIME_MESSAGE = "Task due in {label}: {title}"
 
+# `schedule_type` labels for the two auto-reminder shapes. A rung's lead time is recoverable from
+# its label, which is what lets a retitle regenerate the body without rebuilding the ladder.
+AT_DUE_SCHEDULE = "auto: at due"
+_LEAD_SCHEDULE_PREFIX = "auto: "
+_LEAD_SCHEDULE_SUFFIX = " before due"
+
+
+def lead_time_schedule(label: str) -> str:
+    return f"{_LEAD_SCHEDULE_PREFIX}{label}{_LEAD_SCHEDULE_SUFFIX}"
+
+
+def lead_time_label(schedule_type: str | None) -> str | None:
+    """The lead time a rung's label names, or None when the label names no rung.
+
+    A row the user snoozed carries a `once at ...` label instead, so its lead time is gone.
+    """
+    if schedule_type and schedule_type.startswith(_LEAD_SCHEDULE_PREFIX) and schedule_type.endswith(_LEAD_SCHEDULE_SUFFIX):
+        return schedule_type[len(_LEAD_SCHEDULE_PREFIX) : -len(_LEAD_SCHEDULE_SUFFIX)]
+    return None
+
 
 def parse_datetime(s: str) -> datetime:
     parsed = datetime.fromisoformat(s)
@@ -257,16 +277,10 @@ def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, du
         fire_time = due_dt - delta
         if fire_time <= now or fire_time.isoformat() in taken:
             continue
-        _insert_auto_reminder(
-            conn,
-            task_id,
-            LEAD_TIME_MESSAGE.format(label=label, title=title),
-            f"auto: {label} before due",
-            fire_time,
-        )
+        _insert_auto_reminder(conn, task_id, LEAD_TIME_MESSAGE.format(label=label, title=title), lead_time_schedule(label), fire_time)
 
     if due_dt > now and due_dt.isoformat() not in taken:
-        _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), "auto: at due", due_dt)
+        _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), AT_DUE_SCHEDULE, due_dt)
 
 
 def delete_task_reminders(conn: sqlite3.Connection, task_id: str):
