@@ -552,6 +552,17 @@ def test_resolve_folder_id_finds_a_folder_nested_under_a_top_level_one(tmp_path)
     assert mock.get.call_args.args[0].endswith("/me/mailfolders/inbox-id/childfolders")
 
 
+def test_resolve_folder_id_takes_a_raw_folder_id_off_the_network(tmp_path):
+    # A folder id is a supported input that no display name can ever match, so looking one up would
+    # spend the listing plus a request per top-level folder only to hand the id straight back.
+    cfg = _patched_token(tmp_path)
+    mock = MagicMock(spec=httpx.Client)
+    folder_id = "AAMkAGVmMDEzMTM4LTZmYWUtNDdkNC1hMDZiLTU1OGY5OTZhZmY2OAAuAAAAAAAiQ8W967B7TKBjgx9rVEURAQ="
+
+    assert owa_rest.resolve_folder_id(mock, "user@example.com", cfg, folder=folder_id) == folder_id
+    mock.get.assert_not_called()
+
+
 def test_resolve_folder_id_returns_the_raw_name_when_no_folder_matches(tmp_path):
     cfg = _patched_token(tmp_path)
     mock = MagicMock(spec=httpx.Client)
