@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -185,6 +186,156 @@ func TestAddContactByChatSavesAMappedLIDUnderItsPhoneJID(t *testing.T) {
 		}
 		if err := wac.requireManualContact(jid); err != nil {
 			t.Errorf("peer addressed as %s must pass the gate, got %v", raw, err)
+		}
+	}
+}
+
+// A peer confirmed by chat id stays confirmed once whatsmeow learns their phone number. Learning
+// the mapping moves the canonical key from the LID to the phone JID, so a gate that read only the
+// canonical key would stop seeing the saved row and ask the user to confirm the same person twice.
+func TestRequireManualContactSurvivesTheLIDMappingBeingLearned(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid := types.NewJID("99988877766655", types.HiddenUserServer)
+	phone := types.NewJID("15551110000", types.DefaultUserServer)
+
+	if _, err := wac.AddContactByChat("Ana", lid.String()); err != nil {
+		t.Fatalf("failed to save contact by chat id: %v", err)
+	}
+	if err := wac.requireManualContact(lid); err != nil {
+		t.Fatalf("a peer confirmed by chat id must pass the gate, got %v", err)
+	}
+
+	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
+		t.Fatalf("failed to record the learned mapping: %v", err)
+	}
+
+	for _, jid := range []types.JID{lid, phone} {
+		if err := wac.requireManualContact(jid); err != nil {
+			t.Errorf("peer addressed as %s must still pass the gate, got %v", jid, err)
+		}
+	}
+}
+
+// splitContactLID and splitContactPhone are one peer addressed both ways, confirmed under each.
+const (
+	splitContactLID   = "99988877766655@lid"
+	splitContactPhone = "15551110000@s.whatsapp.net"
+)
+
+// saveContactUnderBothKeys reaches the split state a box gets to on its own: the peer is confirmed
+// by chat id while they have no known number, whatsmeow then learns their number, and the peer is
+// confirmed again by that number, leaving the same person holding one contact row under each key.
+// The two names are separate because the user answers "who is this" once per key form and can
+// answer differently, so the rows of one peer need not carry the same name.
+func saveContactUnderBothKeys(t *testing.T, wac *WhatsAppClient, chatName, phoneName string) (lid, phone types.JID) {
+	t.Helper()
+	lid, phone = types.NewJID("99988877766655", types.HiddenUserServer), types.NewJID("15551110000", types.DefaultUserServer)
+
+	if _, err := wac.AddContactByChat(chatName, lid.String()); err != nil {
+		t.Fatalf("failed to save the peer by chat id: %v", err)
+	}
+	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
+		t.Fatalf("failed to record the learned mapping: %v", err)
+	}
+	if _, err := wac.AddContact(phoneName, "+"+phone.User); err != nil {
+		t.Fatalf("failed to save the peer by phone: %v", err)
+	}
+
+	for _, key := range []string{splitContactLID, splitContactPhone} {
+		contact, err := wac.store.GetManualContact(key)
+		if err != nil || contact == nil {
+			t.Fatalf("the peer must hold a row under %s for this to be the split state, got %v (%v)", key, contact, err)
+		}
+	}
+	return lid, phone
+}
+
+// Revoking a contact must close the send gate for that peer under every form they can be addressed
+// by, whichever form the revoke names. The gate passes on any one of a peer's key forms, so a row
+// left behind keeps sending to someone the user just revoked, which is the ban risk the gate exists
+// for. Every accepted identifier is covered because they all revoke the same one person.
+func TestRemoveContactClosesTheGateUnderEveryKeyForm(t *testing.T) {
+	for _, identifier := range []string{"Ana", "+15551110000", splitContactLID} {
+		t.Run(identifier, func(t *testing.T) {
+			wac := newOutgoingTestClient(t)
+			lid, phone := saveContactUnderBothKeys(t, wac, "Ana", "Ana")
+
+			if _, err := cmdRemoveContact([]string{"--identifier", identifier}, wac); err != nil {
+				t.Fatalf("revoking by %q must succeed, got %v", identifier, err)
+			}
+
+			for _, jid := range []types.JID{phone, lid} {
+				if err := wac.requireManualContact(jid); err == nil {
+					t.Errorf("revoked peer addressed as %s still passes the gate", jid)
+				}
+			}
+		})
+	}
+}
+
+// A name matches on the name column alone, so in the split state it reaches only the rows carrying
+// that exact name and the peer's other row survives under a different one. That surviving row keeps
+// the gate open under BOTH key forms, because the gate passes on any one of them, so revoking by a
+// name the peer answers to must clear every key form of the peer behind the rows it matched.
+func TestRemoveContactByNameClosesTheGateWhenTheSplitRowsCarryDifferentNames(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid, phone := saveContactUnderBothKeys(t, wac, "Ana", "Ana Garcia")
+
+	if _, err := cmdRemoveContact([]string{"--identifier", "Ana"}, wac); err != nil {
+		t.Fatalf("revoking by name must succeed, got %v", err)
+	}
+
+	for _, jid := range []types.JID{phone, lid} {
+		if err := wac.requireManualContact(jid); err == nil {
+			t.Errorf("revoked peer addressed as %s still passes the gate", jid)
+		}
+	}
+}
+
+// The inbound notification and the send gate must agree about who is saved. A peer confirmed by
+// chat id keeps passing the gate once whatsmeow learns their number, so a notification reading one
+// key alone would report that same peer as unknown, and following that report saves the person a
+// second time under their other key.
+func TestNotificationNamesAPeerSavedByChatIDAfterTheMappingIsLearned(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid := types.NewJID("99988877766655", types.HiddenUserServer)
+	phone := types.NewJID("15551110000", types.DefaultUserServer)
+
+	if _, err := wac.AddContactByChat("Ana", lid.String()); err != nil {
+		t.Fatalf("failed to save the peer by chat id: %v", err)
+	}
+	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
+		t.Fatalf("failed to record the learned mapping: %v", err)
+	}
+
+	_, senderDisplay, contactName, contactPhone, contactSaved, _ := wac.prepareNotificationInfo(
+		types.MessageSource{Chat: lid, Sender: lid, SenderAlt: phone},
+	)
+
+	if !contactSaved {
+		t.Errorf("a peer the gate treats as confirmed must not be reported as unknown")
+	}
+	if contactName != "Ana" || senderDisplay != "Ana" {
+		t.Errorf("expected the saved name, got contact_name %q and sender %q", contactName, senderDisplay)
+	}
+	if contactPhone != "+"+phone.User {
+		t.Errorf("expected the learned number %q, got %q", "+"+phone.User, contactPhone)
+	}
+}
+
+// A token that is not a chat id at all must be named as one. Reporting a mistyped id as a group
+// is the one answer that stops the caller retrying, since a group genuinely needs no contact.
+func TestAddContactByChatRefusesAMalformedChatID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+
+	for _, chat := range []string{"Ana", "15551234567", "+15551234567"} {
+		_, err := wac.AddContactByChat("Ana", chat)
+		if err == nil || !strings.Contains(err.Error(), "is not a chat id") {
+			t.Errorf("AddContactByChat(%q) must be refused as a malformed chat id, got %v", chat, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "is a group") {
+			t.Errorf("AddContactByChat(%q) must not be reported as a group, got %v", chat, err)
 		}
 	}
 }

@@ -174,6 +174,18 @@ func TestUsageDoesNotOfferWrapperDrivenCommands(t *testing.T) {
 	}
 }
 
+// add-contact takes a phone number or a chat id in the same slot, so the usage line has to show
+// both: a caller who reads `add-contact <name> <phone>` has no way to learn the chat-id form, the
+// only way to save a peer WhatsApp addresses by LID alone.
+func TestUsageShowsTheChatIdFormOfAddContact(t *testing.T) {
+	var usage bytes.Buffer
+	printUsage(&usage)
+	want := "add-contact <name> (<phone> | --chat <chat-id>)"
+	if !strings.Contains(usage.String(), want) {
+		t.Errorf("`whatsapp --help` is missing %q:\n%s", want, usage.String())
+	}
+}
+
 func TestUsageShowsAliasesAndPositionals(t *testing.T) {
 	var usage bytes.Buffer
 	printUsage(&usage)

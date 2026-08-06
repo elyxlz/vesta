@@ -26,7 +26,14 @@ def patched(monkeypatch):
         return "acct-1"
 
     def fake_request(conn, method, path, account_id=None, **kwargs):
-        calls.append({"method": method, "path": path, "json": kwargs["json"] if "json" in kwargs else None})
+        calls.append(
+            {
+                "method": method,
+                "path": path,
+                "json": kwargs["json"] if "json" in kwargs else None,
+                "params": kwargs["params"] if "params" in kwargs else {},
+            }
+        )
         if method == "GET" and path == "/me/mailFolders":
             return _FOLDERS_PAGE
         if method == "GET" and path.startswith("/me/mailFolders/"):
@@ -59,10 +66,15 @@ def test_resolve_display_name_to_id(patched):
     assert any(c["path"] == "/me/mailFolders" for c in patched)
 
 
-def test_resolve_nested_display_name_to_id(patched):
-    # A folder nested under Inbox resolves too: the listing expands one level of children.
+def test_resolve_nested_display_name_costs_one_listing(patched):
+    # A folder nested under Inbox resolves from the single top-level listing, because that listing
+    # expands one level of children. Walking each folder's childFolders instead would cost one
+    # request per top-level folder, on every unresolved name.
     resolved = folders.resolve_folder_id_cfg(Config(), None, "acct-1", "Receipts")
     assert resolved == "sub-id"
+    assert [c["path"] for c in patched] == ["/me/mailFolders"]
+    params = patched[0]["params"]
+    assert "$expand" in params and params["$expand"] == "childFolders"
 
 
 def test_resolve_unknown_returns_token(patched):

@@ -594,38 +594,52 @@ func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
 	return ms.getManualContact("jid", jid)
 }
 
-func (ms *MessageStore) DeleteManualContact(identifier string) error {
-	// Try by name first
-	result, err := ms.db.Exec(`DELETE FROM contacts WHERE name = ?`, identifier)
+// ManualContactJIDsByName returns the key of every contact row carrying name. A name matches the
+// name column alone, so a revoke reads the keys here and clears the peers behind them rather than
+// deleting by name, which would leave a peer's row under another key form standing.
+func (ms *MessageStore) ManualContactJIDsByName(name string) ([]string, error) {
+	rows, err := ms.db.Query(`SELECT jid FROM contacts WHERE name = ?`, name)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jids []string
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			return nil, err
+		}
+		jids = append(jids, jid)
+	}
+	return jids, rows.Err()
+}
+
+// DeleteManualContactsByJID removes the contact rows under the given keys, reporting whether any
+// did. Callers pass every key form of one peer, so a revoke leaves nothing behind.
+func (ms *MessageStore) DeleteManualContactsByJID(jids []string) (bool, error) {
+	if len(jids) == 0 {
+		return false, nil
+	}
+	placeholders := strings.Repeat("?,", len(jids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(jids))
+	for i, jid := range jids {
+		args[i] = jid
+	}
+	return ms.deleteContacts(`DELETE FROM contacts WHERE jid IN (`+placeholders+`)`, args...)
+}
+
+func (ms *MessageStore) deleteContacts(query string, args ...any) (bool, error) {
+	result, err := ms.db.Exec(query, args...)
+	if err != nil {
+		return false, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to check delete result: %v", err)
+		return false, fmt.Errorf("failed to check delete result: %v", err)
 	}
-	if rows > 0 {
-		return nil
-	}
-
-	// Try by phone number
-	normalized, _, err := normalizePhoneInput(identifier)
-	if err == nil {
-		jid := fmt.Sprintf("%s@%s", normalized, types.DefaultUserServer)
-		result, err = ms.db.Exec(`DELETE FROM contacts WHERE jid = ?`, jid)
-		if err != nil {
-			return err
-		}
-		rows, err = result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("failed to check delete result: %v", err)
-		}
-		if rows > 0 {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("contact not found: %s", identifier)
+	return rows > 0, nil
 }
 
 func digitsOnly(input string) string {

@@ -273,8 +273,8 @@ _FAULT_NOTICE = {
 }
 
 # The rejected-secret wording when this agent runs its OWN Google OAuth client through the
-# EMAIL_CLIENT_OAUTH_CLIENT_ID / EMAIL_CLIENT_OAUTH_CLIENT_SECRET overrides: that client lives in a
-# Google Cloud project the user controls, so unlike the shipped client its secret is theirs to fix.
+# EMAIL_CLIENT_OAUTH_CLIENT_ID override: that client lives in a Google Cloud project the user
+# controls, so unlike the shipped client its secret is theirs to fix.
 _CUSTOM_CLIENT_SECRET_REJECTED = (
     "Gmail stopped working: Google is rejecting the client secret this agent is configured with. The "
     "client itself is still registered and was not withdrawn, and your account and password are fine, "
@@ -285,14 +285,16 @@ _CUSTOM_CLIENT_SECRET_REJECTED = (
     "send/receive is down for account '{account}' until then."
 )
 
-# The two env overrides that put a user-owned OAuth client in play (providers.apply_env_overrides).
-_CUSTOM_CLIENT_ENV_VARS = ("EMAIL_CLIENT_OAUTH_CLIENT_ID", "EMAIL_CLIENT_OAUTH_CLIENT_SECRET")
+# The env override that puts a user-owned OAuth client in play. Each EMAIL_CLIENT_OAUTH_CLIENT_*
+# var overrides its own field (providers.apply_env_overrides), and the client id is what decides
+# whose client is in use: EMAIL_CLIENT_OAUTH_CLIENT_SECRET alone only pairs a different secret with
+# the shipped client id, which is still Mozilla's and not the user's to correct.
+_CUSTOM_CLIENT_ENV_VAR = "EMAIL_CLIENT_OAUTH_CLIENT_ID"
 
 
-def _custom_client_configured(env: dict | None = None) -> bool:
+def _custom_client_configured() -> bool:
     """True when an OAuth client of the user's own is overriding the shipped one."""
-    env = env if env is not None else os.environ
-    return any(env[name].strip() for name in _CUSTOM_CLIENT_ENV_VARS if name in env)
+    return _CUSTOM_CLIENT_ENV_VAR in os.environ and bool(os.environ[_CUSTOM_CLIENT_ENV_VAR].strip())
 
 
 # Fields copied from the probe result onto the notification, when the probe recorded them.
@@ -302,11 +304,11 @@ _DETAIL_KEYS = ("http_status", "error", "error_description", "client_id", "self_
 def write_client_fault_notification(account: str, result: dict) -> pathlib.Path:
     """Write a clear, human-readable alert for an unhealed client fault (interrupt=true).
 
-    One writer for both faults, so they share a shape and a cadence; only the wording and the type
-    differ, because a dead client and a rejected secret send the user after different fixes.
-    A rejected secret has two of them, since only a user-owned client is one the user can correct.
-    Nothing dedupes by marker: the daily probe is the only caller, so a standing fault raises at
-    most one alert a day.
+    One writer for both faults, so they share a shape; only the wording and the type differ,
+    because a dead client and a rejected secret send the user after different fixes. A rejected
+    secret has two of them, since only a user-owned client is one the user can correct.
+    Nothing dedupes by marker, so every call writes an alert and the cadence is the caller's: the
+    daemon probes once a day, and ``auth probe`` writes one per run unless given ``--no-notify``.
     """
     notif_type, template = _FAULT_NOTICE[result["status"]]
     if result["status"] == CLIENT_AUTH_REJECTED and _custom_client_configured():

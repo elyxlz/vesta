@@ -414,6 +414,9 @@ type command struct {
 	name        string
 	aliases     []string
 	positionals []string
+	// usageArgs replaces the rendered `<positional>` list in the usage line where the positional
+	// names do not name every accepted form, so a caller reading only the list would miss one.
+	usageArgs string
 	// hidden keeps a command out of the usage list while it stays callable: the client-side
 	// provision/link/daemon wrappers drive these over the socket, and the header already documents
 	// them, so listing them again would only duplicate or invite a half-done call.
@@ -435,7 +438,7 @@ func commandTimeout(name string) time.Duration {
 
 var commands = []command{
 	{name: "list-contacts", aliases: []string{"contacts", "search-contacts"}, run: cmdListContacts},
-	{name: "add-contact", positionals: []string{"name", "phone"}, write: true, run: cmdAddContact},
+	{name: "add-contact", positionals: []string{"name", "phone"}, usageArgs: "<name> (<phone> | --chat <chat-id>)", write: true, run: cmdAddContact},
 	{name: "remove-contact", positionals: []string{"identifier"}, write: true, run: cmdRemoveContact},
 	{name: "list-messages", aliases: []string{"messages"}, positionals: []string{"to"}, run: cmdListMessages},
 	{name: "list-chats", aliases: []string{"chats"}, run: cmdListChats},
@@ -660,14 +663,14 @@ func cmdAddContact(args []string, wac *WhatsAppClient) (any, error) {
 func cmdRemoveContact(args []string, wac *WhatsAppClient) (any, error) {
 	var identifier string
 	fs := flag.NewFlagSet("remove-contact", flag.ContinueOnError)
-	fs.StringVar(&identifier, "identifier", "", "Contact name or phone")
+	fs.StringVar(&identifier, "identifier", "", "Contact name, phone, or chat id")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if identifier == "" {
 		return nil, fmt.Errorf("--identifier is required")
 	}
-	if err := wac.store.DeleteManualContact(identifier); err != nil {
+	if err := wac.RemoveContact(identifier); err != nil {
 		return nil, err
 	}
 	return map[string]any{"success": true, "message": "Contact removed"}, nil
