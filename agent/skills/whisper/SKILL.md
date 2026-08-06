@@ -48,3 +48,6 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
   Override with `WHISPER_MODEL` or `--model`. English-only `.en` models cannot
   transcribe other languages: whisper.cpp forces `--language en` and disables
   `--translate` on them
+- Language is auto-detected per file. Set `WHISPER_LANGUAGE` to a whisper.cpp
+  language code (`en`, `es`, `fr`, ...) to pin one for every run, the same
+  variable the whatsapp CLI reads; `--language` overrides it for a single run
