@@ -3,6 +3,7 @@ from typing import NamedTuple
 
 import msal
 
+from .backend import GraphUnavailableError
 from .settings import get_settings
 
 
@@ -86,6 +87,14 @@ def account_in_cache(cache_file: pl.Path, account_email: str, *, client_id: str 
 
 
 def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None) -> str:
+    """Mint a Graph token from the MSAL cache, silently.
+
+    Never starts an interactive sign-in: a data command must not mint a device code.
+    When no cached token can be refreshed this raises
+    :class:`backend.GraphUnavailableError`, which is what lets ``--backend auto``
+    fall through to the OWA REST path (see backend.run). Interactive sign-in lives in
+    the auth commands (`auth login`, `auth setup`, `auth teams-login`), which call
+    `_run_device_flow` directly."""
     app = get_app(cache_file)
 
     accounts = app.get_accounts()
@@ -94,15 +103,18 @@ def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None 
     result = app.acquire_token_silent(scopes, account=account)
 
     if not result:
-        result = _run_device_flow(app, scopes, cache_file)
-    else:
-        # Persist the cache after a silent acquisition. MSAL rotates the refresh
-        # token in-memory on refresh; if we never write it back, the on-disk token
-        # is never renewed, so its 90-day inactivity clock never advances and it
-        # eventually dies with AADSTS700082 even under constant daemon polling.
-        cache = app.token_cache
-        if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
-            _write_cache(cache_file, content=cache.serialize())
+        raise GraphUnavailableError(
+            "No Graph token available for these scopes (nothing in the MSAL cache to refresh). "
+            "Sign in with `microsoft auth setup --account <email>`, or pass `--backend owa-rest`."
+        )
+
+    # Persist the cache after a silent acquisition. MSAL rotates the refresh
+    # token in-memory on refresh; if we never write it back, the on-disk token
+    # is never renewed, so its 90-day inactivity clock never advances and it
+    # eventually dies with AADSTS700082 even under constant daemon polling.
+    cache = app.token_cache
+    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+        _write_cache(cache_file, content=cache.serialize())
 
     return result["access_token"]
 
