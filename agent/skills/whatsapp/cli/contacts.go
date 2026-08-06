@@ -50,32 +50,35 @@ func errIfGroupIDDigits(digits string) error {
 // requireManualContact is the saved-contact half of the ban gate: every person the device
 // messages must have been confirmed by the user first. It covers a direct chat addressed
 // either way, since WhatsApp addresses one peer both by phone JID and by LID, and looks the
-// contact up under the same canonical key storage files that chat under. A LID with no phone
-// mapping is a peer with no number, so the refusal asks for it to be saved by chat id, which is
-// the key it is then found under. Groups carry no such requirement.
+// contact up under every key that peer can be filed under: a peer confirmed by chat id while
+// they had no phone mapping is saved under their LID, and once whatsmeow learns the mapping the
+// canonical key becomes their phone JID, so checking one key alone would ask the user to confirm
+// the same person twice. A LID with no phone mapping is a peer with no number, so the refusal
+// asks for it to be saved by chat id. Groups carry no such requirement.
 func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 	if !isDirectChatJID(jid) {
 		return nil
 	}
 
 	peer := wac.canonicalChatJID(jid)
-	contact, err := wac.store.GetManualContact(peer.String())
-	if err != nil {
-		return fmt.Errorf("failed to verify saved contacts: %v", err)
-	}
-
-	if contact == nil {
-		who, target := "this chat", "--chat "+peer.String()
-		if peer.Server == types.DefaultUserServer && peer.User != "" {
-			who, target = "+"+peer.User, "--phone +"+peer.User
+	for _, key := range storageKeys(peer, wac.mappedJID(peer)) {
+		contact, err := wac.store.GetManualContact(key)
+		if err != nil {
+			return fmt.Errorf("failed to verify saved contacts: %v", err)
 		}
-		return fmt.Errorf(
-			"No saved contact found for %s. Ask the user who this is, then run add-contact --name <name> %s.",
-			who, target,
-		)
+		if contact != nil {
+			return nil
+		}
 	}
 
-	return nil
+	who, target := "this chat", "--chat "+peer.String()
+	if peer.Server == types.DefaultUserServer && peer.User != "" {
+		who, target = "+"+peer.User, "--phone +"+peer.User
+	}
+	return fmt.Errorf(
+		"No saved contact found for %s. Ask the user who this is, then run add-contact --name <name> %s.",
+		who, target,
+	)
 }
 
 func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error) {

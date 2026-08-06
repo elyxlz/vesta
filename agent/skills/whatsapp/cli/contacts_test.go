@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -185,6 +186,32 @@ func TestAddContactByChatSavesAMappedLIDUnderItsPhoneJID(t *testing.T) {
 		}
 		if err := wac.requireManualContact(jid); err != nil {
 			t.Errorf("peer addressed as %s must pass the gate, got %v", raw, err)
+		}
+	}
+}
+
+// A peer confirmed by chat id stays confirmed once whatsmeow learns their phone number. Learning
+// the mapping moves the canonical key from the LID to the phone JID, so a gate that read only the
+// canonical key would stop seeing the saved row and ask the user to confirm the same person twice.
+func TestRequireManualContactSurvivesTheLIDMappingBeingLearned(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid := types.NewJID("99988877766655", types.HiddenUserServer)
+	phone := types.NewJID("15551110000", types.DefaultUserServer)
+
+	if _, err := wac.AddContactByChat("Ana", lid.String()); err != nil {
+		t.Fatalf("failed to save contact by chat id: %v", err)
+	}
+	if err := wac.requireManualContact(lid); err != nil {
+		t.Fatalf("a peer confirmed by chat id must pass the gate, got %v", err)
+	}
+
+	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
+		t.Fatalf("failed to record the learned mapping: %v", err)
+	}
+
+	for _, jid := range []types.JID{lid, phone} {
+		if err := wac.requireManualContact(jid); err != nil {
+			t.Errorf("peer addressed as %s must still pass the gate, got %v", jid, err)
 		}
 	}
 }
