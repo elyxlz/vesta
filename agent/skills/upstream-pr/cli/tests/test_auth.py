@@ -68,3 +68,63 @@ def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, mon
     assert SENTINEL not in " ".join(pushed["cmd"])
     delivered = pushed["env"]["GIT_CONFIG_VALUE_0"].split("Basic ")[1]
     assert base64.b64decode(delivered).decode() == f"x-access-token:{SENTINEL}"
+
+
+class FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
+def _commits(*names):
+    return [{"commit": {"author": {"name": name}}} for name in names]
+
+
+def _stub_get(monkeypatch, response):
+    monkeypatch.setattr(cli.requests, "get", lambda *a, **k: response)
+
+
+# Every agent files through one GitHub App, so a PR's `user.login` is the bot for all of them and
+# the commit author is the only ownership signal. These guard the push path, which force-pushes.
+def test_push_guard_blocks_a_branch_that_is_only_another_agents(monkeypatch):
+    _stub_get(monkeypatch, FakeResponse(_commits("bazella (vesta)", "dory (vesta)")))
+    with pytest.raises(SystemExit):
+        cli.warn_if_branch_belongs_to_another_agent("tok", "their-branch", "vesta")
+
+
+def test_push_guard_allows_a_branch_you_already_have_commits_on(monkeypatch):
+    _stub_get(monkeypatch, FakeResponse(_commits("bazella (vesta)", "vesta (vesta)")))
+    cli.warn_if_branch_belongs_to_another_agent("tok", "shared-branch", "vesta")
+
+
+def test_push_guard_allows_a_branch_that_does_not_exist_yet(monkeypatch):
+    # The normal flow: a brand new branch 404s here, and must not be blocked.
+    _stub_get(monkeypatch, FakeResponse({"message": "Not Found"}, status_code=404))
+    cli.warn_if_branch_belongs_to_another_agent("tok", "brand-new-branch", "vesta")
+
+
+def test_mine_separates_prs_you_opened_from_prs_you_only_pushed_to(monkeypatch, capsys):
+    prs = [
+        {"number": 1, "title": "yours", "html_url": "u1"},
+        {"number": 2, "title": "theirs, you pushed", "html_url": "u2"},
+        {"number": 3, "title": "theirs", "html_url": "u3"},
+    ]
+    authors = {
+        1: ("vesta (vesta)", {"vesta (vesta)"}),
+        2: ("bazella (vesta)", {"bazella (vesta)", "vesta (vesta)"}),
+        3: ("dory (vesta)", {"dory (vesta)"}),
+    }
+    monkeypatch.setattr(cli.requests, "get", lambda *a, **k: FakeResponse(prs))
+    monkeypatch.setattr(cli, "pr_commit_authors", lambda token, number: authors[number])
+
+    cli.list_my_prs("tok", "vesta", "open", 40)
+    out = capsys.readouterr().out
+    assert "Opened by you (1)" in out
+    assert "#1" in out.split("Opened by you")[1].split("Not yours")[0]
+    assert "Not yours, but you have commits on them (1)" in out
+    assert "#2  opened by bazella (vesta)" in out
+    assert "#3" not in out

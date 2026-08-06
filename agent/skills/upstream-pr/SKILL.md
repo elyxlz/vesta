@@ -144,8 +144,11 @@ Read it one-directionally: every hunk the PR added must be present verbatim in y
 | `POST /issues/:n/comments` where `:n` is a **PR** | 201 |
 | `POST /issues/:n/comments` where `:n` is an **issue** | 403 |
 | `DELETE /issues/comments/:id` (a PR comment) | 204 |
+| `PATCH /pulls/:n` (edit a PR's own title or body) | 200 |
 
 So answer PR review feedback by commenting on the PR, which needs no workaround. Only a follow-up on a real issue has to become a new issue cross-referencing it (`Related to #N`); GitHub renders the backreference either way.
+
+`PATCH /pulls/:n` is the route for **correcting a PR body after the fact**, and it is worth knowing you have it: the body is the durable public claim about a change, so a wrong number there outlives every later commit that quietly contradicts it. Fix the body rather than hoping a follow-up commit message gets read.
 
 Treat that table as perishable: permissions belong to the installed App and change when it does. Posting a throwaway comment and deleting it measures the current answer in seconds, which beats trusting any written claim, this one included.
 
@@ -172,6 +175,34 @@ upstream-pr --token-only >/dev/null && echo "auth ok"
 
 If a token does reach your history, scrub it: `~/agent/skills/dream/scripts/redact_secrets.sh` then `--scrub <event id>`.
 
+## Whose PR is it? (check before you touch one)
+
+**Every agent files through the same GitHub App, so `pull.user.login` is `vesta-upstream[bot]` on
+every PR in this repo and tells you nothing.** The repo is shared by many vesta instances filing
+concurrently, so the newest open PRs are usually a mix of several agents' work, and "it appeared
+while I was awake" is not evidence it is yours. The only field that carries authorship is the
+**commit author**, `<agent-name> (vesta)`, and the FIRST commit's author is who opened it.
+
+```bash
+upstream-pr --mine              # PRs you opened, and separately ones you only pushed commits to
+upstream-pr --mine --state all --limit 60
+```
+
+Run this before a review sweep, before "fixing CI on my PRs", and before pushing to any branch you
+did not create in this session. Reading the author off a `git show` you scrolled past does not
+count: on 6 Aug 2026 an agent spent forty minutes fixing another agent's red PR, pushed two commits
+under that agent's name because it copied the name from the log to "match" instead of reading it,
+and publicly disputed a measurement from a box it had never seen.
+
+`upstream-pr` therefore refuses to push to a remote branch whose commits are all by a different
+agent, since the push is a **force** push and would discard their work. Pass `--adopt` if taking
+over a branch is genuinely what you mean.
+
+If you do fix a sibling's broken PR, that is welcome, and say so in the body: what you changed, why
+you touched it, and that they should revert freely. Never restate their evidence as yours, and
+never "correct" a measurement with numbers from your own box; their box has different traffic,
+different accounts and different history, so your count is not a check on theirs.
+
 ## upstream-pr reference
 
 ```bash
@@ -180,6 +211,12 @@ upstream-pr --title "fix: ..." --body "..."
 
 # Custom branch and base
 upstream-pr --title "..." --branch my-branch --base master
+
+# Which of these PRs are actually yours
+upstream-pr --mine
+
+# Take over a branch another agent started (force push, so this is deliberate)
+upstream-pr --title "..." --branch their-branch --adopt
 
 # Short-lived GitHub API token (for issues, check-runs, PR status).
 # Always capture it, never run bare: stdout is persisted into the event store.
