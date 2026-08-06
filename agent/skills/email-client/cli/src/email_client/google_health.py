@@ -304,11 +304,11 @@ _DETAIL_KEYS = ("http_status", "error", "error_description", "client_id", "self_
 def write_client_fault_notification(account: str, result: dict) -> pathlib.Path:
     """Write a clear, human-readable alert for an unhealed client fault (interrupt=true).
 
-    One writer for both faults, so they share a shape and a cadence; only the wording and the type
-    differ, because a dead client and a rejected secret send the user after different fixes.
-    A rejected secret has two of them, since only a user-owned client is one the user can correct.
-    Nothing dedupes by marker: the daily probe is the only caller, so a standing fault raises at
-    most one alert a day.
+    One writer for both faults, so they share a shape; only the wording and the type differ,
+    because a dead client and a rejected secret send the user after different fixes. A rejected
+    secret has two of them, since only a user-owned client is one the user can correct.
+    Nothing dedupes by marker, so every call writes an alert and the cadence is the caller's: the
+    daemon probes once a day, and ``auth probe`` writes one per run unless given ``--no-notify``.
     """
     notif_type, template = _FAULT_NOTICE[result["status"]]
     if result["status"] == CLIENT_AUTH_REJECTED and _custom_client_configured():
