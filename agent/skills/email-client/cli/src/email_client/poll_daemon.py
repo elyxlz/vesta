@@ -59,19 +59,6 @@ INDEX_CHECK_SECS = 10
 FETCH_BATCH_LIMIT = 500
 PENDING_POLL_SECONDS = 1
 
-# Every notification carries the handful of messages that arrived in the same account just before
-# it, because a notification delivers ONE email and nothing in it hints that a sibling exists: an
-# e-signature request and the covering email explaining it can land minutes apart from different
-# senders on different domains. Deliberately NOT a relatedness heuristic, because such siblings can
-# share no sender and no domain, so any matching rule would miss exactly the pairs that matter.
-# Showing what else landed recently costs nothing and lets the reader spot the connection.
-RECENT_PATH = pathlib.Path(os.environ.get("EMAIL_CLIENT_DIR") or (pathlib.Path.home() / ".email-client")) / "recent-notifications.json"
-RECENT_WINDOW_SECS = 3600
-# How many to show on a notification, and how many to retain on disk.
-RECENT_SHOW = 6
-RECENT_KEEP = 40
-_recent_lock = threading.Lock()
-
 
 def _sanitize_folder(folder: str) -> str:
     """Filesystem-safe token for a folder name (for the watermark filename)."""
@@ -92,59 +79,8 @@ def watermark_path(account: str, folder: str) -> pathlib.Path:
     return base / f"high_uid_{_sanitize_folder(folder)}.txt"
 
 
-_RECENT_FIELDS = ("ts", "account", "from", "subject", "uid")
-
-
-def _read_recent() -> list[dict]:
-    """Read back entries this daemon wrote, dropping anything malformed (a corrupt file, a foreign
-    write) at the boundary so the rest of the code can use direct access."""
-    try:
-        data = json.loads(RECENT_PATH.read_text())
-    except (FileNotFoundError, ValueError, OSError):
-        return []
-    if not isinstance(data, list):
-        return []
-    return [e for e in data if isinstance(e, dict) and all(f in e for f in _RECENT_FIELDS) and isinstance(e["ts"], (int, float))]
-
-
-def _recent_context(now: float, account: str) -> tuple[list[dict], list[dict]]:
-    """Return (entries to keep, context to attach) for a notification being written now.
-
-    Kept deliberately simple: time-ordered, same account, no relatedness matching. See RECENT_PATH.
-    """
-    kept = [e for e in _read_recent() if now - e["ts"] <= RECENT_WINDOW_SECS]
-    context = [
-        {
-            "from": e["from"],
-            "subject": e["subject"],
-            "uid": e["uid"],
-            "minutes_ago": max(0, round((now - e["ts"]) / 60)),
-        }
-        for e in kept
-        if e["account"] == account
-    ]
-    return kept, list(reversed(context))[:RECENT_SHOW]
-
-
 def write_notification(account: str, folder: str, meta: dict) -> None:
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
-    now = time.time()
-    with _recent_lock:
-        kept, context = _recent_context(now, account)
-        kept.append(
-            {
-                "ts": now,
-                "account": account,
-                "from": meta["from"],
-                "subject": meta["subject"],
-                "uid": meta["uid"],
-            }
-        )
-        with contextlib.suppress(OSError):
-            RECENT_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp_recent = RECENT_PATH.with_suffix(".json.tmp")
-            tmp_recent.write_text(json.dumps(kept[-RECENT_KEEP:], ensure_ascii=False))
-            tmp_recent.replace(RECENT_PATH)
     notif = {
         "source": "email-client",
         "type": "email",
@@ -159,9 +95,6 @@ def write_notification(account: str, folder: str, meta: dict) -> None:
         "subject": meta["subject"],
         "date": meta["date"],
         "uid": meta["uid"],
-        # What else landed in this account in the last hour, newest first. Read this before acting on
-        # the message above: it is the cheapest guard against treating one email as the whole story.
-        "also_arrived_recently": context,
     }
     fname = f"email-client-{account}-{_sanitize_folder(folder)}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
     # tmp + rename so the agent's watchfiles loop never reads a truncated file.
