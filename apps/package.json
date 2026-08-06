@@ -13,7 +13,7 @@
     "react-native": "0.86.2"
   },
   "devDependencies": {
-    "expo-router": "~57.0.9",
+    "expo-router": "~57.0.11",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
