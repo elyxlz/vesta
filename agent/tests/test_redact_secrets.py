@@ -330,6 +330,32 @@ def test_namespaced_identifiers_are_not_read_as_cards(ident):
     assert redact.redact_cards(ident) == ident
 
 
+# Messaging identifiers: a bare digit run wearing a suffix. Most fail Luhn or the IIN gate anyway;
+# the LID below is the one observed passing both, which is why the suffix has to do the work.
+MESSAGING_IDS = ["251638040256599@lid", "120363012345678901@g.us", "393331234567@s.whatsapp.net"]
+WHATSAPP_LID = "251638040256599"
+
+
+@pytest.mark.parametrize("ident", MESSAGING_IDS)
+def test_messaging_identifiers_are_not_read_as_cards(ident):
+    assert redact.find_matches(f"chat {ident} said hi") == []
+    assert redact.redact_cards(ident) == ident
+
+
+def test_the_lid_case_is_indistinguishable_from_a_card_without_its_suffix():
+    # Guard against a test that passes for the wrong reason: this LID clears Luhn AND the IIN gate
+    # (2516 sits inside the Mastercard 2-series), so bare digits ARE flagged and only the @lid
+    # suffix saves it. Delete the suffix from the regex and the parametrized test above goes red.
+    assert redact.luhn_valid(WHATSAPP_LID) and redact._has_card_iin(WHATSAPP_LID)
+    assert redact.find_matches(f"chat {WHATSAPP_LID} said hi") != []
+    assert redact.find_matches(f"chat {WHATSAPP_LID}@lid said hi") == []
+
+
+def test_a_pan_before_an_unrelated_email_is_still_flagged():
+    # The suffix must bind to the messaging domains only: an at-sign alone cannot launder a card.
+    assert redact.find_matches(f"{VISA}@example.com") != []
+
+
 def test_namespace_rejection_needs_the_dot_adjacent():
     # A PAN after a sentence-ending period is still a PAN: the separating space breaks the binding.
     assert redact.find_matches(f"paid. {VISA} cleared") != []
