@@ -5,7 +5,8 @@ a healthy daemon: `status` says running, the idempotent start declines, and the 
 its one health check reporting health it never measured.
 
 Every skill that ships with your box already writes and reads that record. This migration brings the
-skills you created yourself to the same contract. Every step checks before acting and no-ops when
+skills you created yourself to the same contract, and fixes the empty log a detached Python child
+leaves when its output stays block-buffered. Every step checks before acting and no-ops when
 already converged, so it is safe to run more than once.
 
 ### 1. Find every local daemon and everything that reads its record
@@ -67,7 +68,22 @@ one an older writer left, so trust it as before rather than reading a missing st
 mismatch, or the daemon you are converting is declared dead while it is running and a second copy
 stacks beside it. Any second field that is not a run of digits is treated the same way.
 
-### 5. Verify each converted daemon
+### 5. A detached Python child logs unbuffered
+
+A daemon spawned as `Popen([...], stdout=log_handle, ...)` hands the child a file rather than a
+terminal, so CPython block-buffers its output: the startup line sits in a 4KB buffer for hours and
+the log reads as a dead daemon while the process works fine. The log is the liveness evidence
+everyone reads, so this gets diagnosed as an outage that is not happening. Spawn Python children
+with buffering off:
+
+```python
+subprocess.Popen([...], env={**os.environ, "PYTHONUNBUFFERED": "1"}, ...)
+```
+
+Only Python children need this; a compiled binary manages its own buffering, which is why the stock
+voice skill does not set it.
+
+### 6. Verify each converted daemon
 
 ```bash
 <skill> daemon status
@@ -84,6 +100,8 @@ user-facing daemon to finish this.
 
 Commit your skill changes so the next upstream merge preserves them.
 
-### 6. Mark this migration applied
+### 7. Mark this migration applied
 
-Call `mark_migration_applied` with `name="2026-08-daemon-pid-starttime"`.
+Only when step 6 left nothing unconverted: call `mark_migration_applied` with
+`name="2026-08-daemon-pid-starttime"`. If anything remains, stop here without marking, so the
+migration retries on a later boot.

@@ -24,12 +24,19 @@ mkdir -p "$(dirname "$STAMPS")"
 now() { date +%s; }
 
 daemon_alive() {
-  local record pid
+  local record pid recorded actual
   record="$(cat "$PIDFILE" 2>/dev/null)" || return 1
   # The record is "<pid> <starttime>", so the pid is its first field. Passing the whole record to
   # kill would fail on a healthy daemon and restart it on every tick.
   pid="${record%% *}"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } || return 1
+  recorded="${record#* }"
+  # A bare pid or non-digit second field is a legacy record: identity unknown, trusted as before.
+  if [ "$recorded" = "$record" ] || ! [[ "$recorded" =~ ^[0-9]+$ ]]; then return 0; fi
+  # A recycled pid reads alive to kill -0 while telegram is down, the one outage this watchdog
+  # exists to end, so compare the recorded starttime against the live process.
+  actual="$(awk '{ for (i = NF; i > 0; i--) if ($i ~ /\)$/) { print $(i + 20); exit } }' "/proc/$pid/stat" 2>/dev/null)"
+  [ "$recorded" = "$actual" ]
 }
 
 # The notifications dir goes with it, so a daemon this brings back writes where the watchdog's
