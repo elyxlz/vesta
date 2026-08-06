@@ -29,6 +29,12 @@ def _notifs(notif_dir):
     return [json.loads(p.read_text()) for p in sorted(notif_dir.glob("*.json"))]
 
 
+def _notif(notif_dir, uid):
+    # Filenames tie on the millisecond under fast writes, so tests pick by uid, never by glob order.
+    (found,) = [n for n in _notifs(notif_dir) if n["uid"] == uid]
+    return found
+
+
 def test_first_notification_has_empty_context(dirs):
     pd.write_notification("personal", "INBOX", _meta("1", "a@x.com", "hello"))
     (sent,) = _notifs(dirs)
@@ -42,7 +48,7 @@ def test_the_grainger_case(dirs):
     pd.write_notification(
         "personal", "INBOX", _meta("204519", "Jemma Herring <jherring@graingerplc.co.uk>", "3D Webber Street | Tenancy Review")
     )
-    second = _notifs(dirs)[1]
+    second = _notif(dirs, "204519")
     context = second["also_arrived_recently"]
     assert len(context) == 1
     assert context[0]["uid"] == "204516"
@@ -54,7 +60,7 @@ def test_the_grainger_case(dirs):
 def test_newest_first_and_capped(dirs):
     for i in range(pd.RECENT_SHOW + 4):
         pd.write_notification("personal", "INBOX", _meta(str(i), f"s{i}@x.com", f"subject {i}"))
-    last = _notifs(dirs)[-1]
+    last = _notif(dirs, str(pd.RECENT_SHOW + 3))
     context = last["also_arrived_recently"]
     assert len(context) == pd.RECENT_SHOW
     # Newest first: the immediately preceding message leads.
@@ -72,7 +78,7 @@ def test_entries_older_than_the_window_drop_out(dirs, monkeypatch):
 def test_accounts_do_not_leak_into_each_other(dirs):
     pd.write_notification("work", "INBOX", _meta("1", "boss@work.com", "work thing"))
     pd.write_notification("personal", "INBOX", _meta("2", "friend@x.com", "personal thing"))
-    assert _notifs(dirs)[1]["also_arrived_recently"] == []
+    assert _notif(dirs, "2")["also_arrived_recently"] == []
 
 
 def test_survives_a_corrupt_recent_file(dirs):
