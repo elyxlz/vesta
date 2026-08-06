@@ -238,6 +238,8 @@ def test_luhn_valid_accepts_real_pans_and_rejects_a_tampered_one():
         f"amex {AMEX} expires soon",
         "amex 3782 822463 10005 expires soon",
         "amex 3782-822463-10005 expires soon",
+        "maestro 6799 9901 0000 0000 019 saved",  # grouping at the 19-digit ceiling
+        "maestro 6799-9901-0000-0000-019 saved",
     ],
 )
 def test_scan_flags_luhn_valid_cards_with_or_without_separators(text):
@@ -245,7 +247,7 @@ def test_scan_flags_luhn_valid_cards_with_or_without_separators(text):
 
     assert len(matches) == 1
     assert VISA not in matches[0] and AMEX not in matches[0]
-    assert "4111" not in matches[0] and "3782" not in matches[0]
+    assert "4111" not in matches[0] and "3782" not in matches[0] and "6799" not in matches[0]
     assert "[REDACTED]" in matches[0]
 
 
@@ -271,8 +273,15 @@ def test_scan_ignores_non_luhn_digit_runs(text):
 EPOCH_MILLIS = "1785121902428"  # 13-digit notification-id timestamp, passes Luhn by chance
 ORDER_16 = "1000000000000008"  # 16-digit order number, passes Luhn but opens with MII 1
 MC_2SERIES = "2223003122003222"  # Mastercard 2-series (2221 to 2720)
+MC_5SERIES = "5555555555554444"
 DISCOVER = "6011111111111117"
 JCB = "3530111333300000"
+VISA_13 = "4222222222222"  # the shortest PAN the detector admits
+DINERS_14 = "30569309025904"
+MAESTRO_16 = "6759649826438453"
+MAESTRO_19 = "6799990100000000019"  # the longest PAN the detector admits
+UNIONPAY = "6200000000000005"
+MAESTRO_12 = "503396198908"  # Luhn-valid and IIN-clearing, but below the 13-digit floor
 
 
 def test_iin_gate_rejects_luhn_passing_non_cards():
@@ -283,9 +292,11 @@ def test_iin_gate_rejects_luhn_passing_non_cards():
     assert redact.find_matches(f"order {ORDER_16} shipped") == []
 
 
+# Every major network at its real lengths: 13 (Visa legacy), 14 (Diners), 15 (Amex), 16 (Visa,
+# both Mastercard series, Discover, JCB, Maestro, UnionPay), and 19 (Maestro's ceiling).
 @pytest.mark.parametrize(
     "pan",
-    [VISA, AMEX, MC_2SERIES, DISCOVER, JCB],
+    [VISA, VISA_13, MC_5SERIES, MC_2SERIES, AMEX, DISCOVER, JCB, DINERS_14, MAESTRO_16, MAESTRO_19, UNIONPAY],
 )
 def test_iin_gate_still_flags_real_pans_across_networks(pan):
     assert redact._is_card(pan)
@@ -293,6 +304,14 @@ def test_iin_gate_still_flags_real_pans_across_networks(pan):
     assert len(matches) == 1
     assert pan not in matches[0]
     assert "[REDACTED]" in matches[0]
+
+
+def test_a_12_digit_maestro_is_below_the_deliberate_length_floor():
+    # Luhn-valid and IIN-clearing, so only the 13-digit floor excludes it. Deliberate: legacy
+    # 12-digit Maestro cards are near-extinct, while 12-digit runs are everyday phone numbers
+    # whose country codes clear the IIN gate, so admitting 12 would flag chats wholesale.
+    assert redact.luhn_valid(MAESTRO_12) and redact._has_card_iin(MAESTRO_12)
+    assert redact.find_matches(f"card {MAESTRO_12} on file") == []
 
 
 def test_scan_still_flags_existing_key_and_jwt_patterns():

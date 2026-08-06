@@ -170,7 +170,9 @@ def _has_card_iin(digits: str) -> bool:
 def _is_card(candidate: str) -> bool:
     """A candidate run is a real PAN only when its stripped digits count 13 to 19, pass Luhn, AND open
     with an assigned card issuer prefix. Luhn alone flags ~1 in 10 non-card digit runs (a 13-digit
-    timestamp can pass by chance); the IIN gate removes that class without dropping a major-network card."""
+    timestamp can pass by chance); the IIN gate removes that class without dropping a major-network card.
+    The 13 floor deliberately excludes legacy 12-digit Maestro: a 12-digit run is usually a phone
+    number, and country codes 30-69 clear the IIN gate, so admitting 12 would flag chats wholesale."""
     digits = candidate.replace(" ", "").replace("-", "")
     return 13 <= len(digits) <= 19 and _has_card_iin(digits) and luhn_valid(digits)
 
