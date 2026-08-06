@@ -23,12 +23,18 @@ for pid_file in "$HOME"/agent/data/daemons/*.pid; do
     fi
 done
 
-# Disk: a full disk fails writes quietly all over the box, never loudly in one place.
+# Disk: a full disk fails writes quietly all over the box, never loudly in one place. On a shared
+# host the filesystem under $HOME is the host's, so its percentage is mostly other tenants and no
+# amount of cleanup here moves it. RED only on what this agent can actually act on, and report the
+# host figure as context, so the probe never hands you a RED you cannot clear.
 usage=$(df -P "$HOME" | awk 'NR==2 {gsub("%","",$5); print $5}')
-if [ "${usage:-0}" -ge 90 ]; then
-    bad "disk at ${usage}%: clean up tonight (workspace cleanup)"
+mine=$(du -sm "$HOME" /tmp 2>/dev/null | awk '{t+=$1} END {print t+0}')
+if [ "${mine:-0}" -ge 20000 ]; then
+    bad "this agent is using ${mine}MB across \$HOME and /tmp: clean up tonight (workspace cleanup)"
+elif [ "${usage:-0}" -ge 90 ]; then
+    ok "disk at ${usage}% but only ${mine}MB is this agent's; the rest is the host, not yours to clear"
 else
-    ok "disk at ${usage:-unknown}%"
+    ok "disk at ${usage:-unknown}%, ${mine}MB of it this agent's"
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.

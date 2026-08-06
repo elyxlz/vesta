@@ -37,7 +37,7 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 
 ### 0. Reality check
 
-Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. The retrospective reads your own record, so a failure nobody wrote down is invisible to it; the probe reads the running system. Every RED line gets fixed tonight or a one-line write-off in tonight's summary (what it is, why it can wait). Never carry a RED silently.
+Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. **If that file is not there, that is itself the first RED**: the probe that exists to catch silent failures had been silently absent, so install it (`git -C ~ show upstream/master:agent/skills/dream/scripts/reality_check.sh`) and run it before continuing. The retrospective reads your own record, so a failure nobody wrote down is invisible to it; the probe reads the running system. Every RED line gets fixed tonight or a one-line write-off in tonight's summary (what it is, why it can wait). Never carry a RED silently.
 
 ### 1. Retrospective
 
