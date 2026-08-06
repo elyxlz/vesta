@@ -22,6 +22,14 @@ def _fake_disk_usage(home: pl.Path, percent: int) -> None:
     fake_df.chmod(0o755)
 
 
+def _fake_own_usage(home: pl.Path, megabytes: int) -> None:
+    # The probe sums `du -sm $HOME /tmp`, and the real /tmp belongs to the machine running the
+    # tests, so this is pinned for the same reason df is.
+    fake_du = home / "bin" / "du"
+    fake_du.write_text(f'#!/bin/sh\necho "{megabytes} {home}"\necho "0 /tmp"\n')
+    fake_du.chmod(0o755)
+
+
 def _healthy_home(tmp_path: pl.Path) -> pl.Path:
     (tmp_path / "bin").mkdir()
     (tmp_path / "agent" / "data" / "daemons").mkdir(parents=True)
@@ -29,6 +37,7 @@ def _healthy_home(tmp_path: pl.Path) -> pl.Path:
     (tmp_path / "agent" / "notifications").mkdir(parents=True)
     (tmp_path / "agent" / "data" / "events.db").write_text("stub")
     _fake_disk_usage(tmp_path, 42)
+    _fake_own_usage(tmp_path, 512)
     return tmp_path
 
 
@@ -74,14 +83,29 @@ def test_quiet_recent_log_stays_green(tmp_path):
     assert "OK  calm.log" in run.stdout
 
 
-def test_full_disk_goes_red(tmp_path):
+def test_this_agent_filling_the_disk_goes_red(tmp_path):
     home = _healthy_home(tmp_path)
     _fake_disk_usage(home, 95)
+    _fake_own_usage(home, 25_000)
 
     run = _run(home)
 
-    assert run.returncode == 1
-    assert "RED disk at 95%" in run.stdout
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "25000MB" in run.stdout
+
+
+def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
+    """A RED the agent cannot clear teaches it to carry REDs, which is the one thing the probe
+    forbids. The host figure still gets reported, as context rather than as a fault."""
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 95)
+    _fake_own_usage(home, 300)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "95%" in run.stdout
+    assert "300MB" in run.stdout
 
 
 def test_wal_only_writes_keep_events_db_green(tmp_path):
