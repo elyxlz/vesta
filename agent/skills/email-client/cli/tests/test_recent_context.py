@@ -1,9 +1,9 @@
-"""Every email notification carries what else arrived recently.
+"""Every email notification carries what else arrived recently in the same account.
 
-The incident: on 5 Aug 2026 a landlord sent an e-signature request at 15:16 and a plain covering
-email explaining it at 15:19. The agent got a notification for the first, acted on it alone, and had
-to retract four minutes later after reading the second. Both were already in the inbox. The two
-shared no sender and no domain, so a same-sender heuristic would not have helped.
+A notification delivers one email, and related messages can land minutes apart from senders that
+share nothing (an e-signature request from a signing service, then a covering email from the
+sender explaining it), so acting on either alone gets the story wrong. No relatedness heuristic
+is claimed: the context is simply what else landed recently, newest first.
 """
 
 import json
@@ -22,7 +22,7 @@ def dirs(tmp_path, monkeypatch):
 
 
 def _meta(uid, frm, subject):
-    return {"uid": uid, "from": frm, "to": "nour@example.com", "subject": subject, "date": "Wed, 5 Aug 2026"}
+    return {"uid": uid, "from": frm, "to": "user@example.com", "subject": subject, "date": "Wed, 5 Aug 2026"}
 
 
 def _notifs(notif_dir):
@@ -41,20 +41,18 @@ def test_first_notification_has_empty_context(dirs):
     assert sent["also_arrived_recently"] == []
 
 
-def test_the_grainger_case(dirs):
-    """Different senders, different domains, three minutes apart. The second must be visible."""
-    esign_subject = "Acknowledgement requested on 3D Webber Street | Section 13"
-    pd.write_notification("personal", "INBOX", _meta("204516", "Jemma via Adobe Sign <adobesign@adobesign.com>", esign_subject))
-    pd.write_notification(
-        "personal", "INBOX", _meta("204519", "Jemma Herring <jherring@graingerplc.co.uk>", "3D Webber Street | Tenancy Review")
-    )
+def test_unrelated_senders_minutes_apart_surface_each_other(dirs):
+    """Different senders, different domains, minutes apart. The second must surface the first."""
+    esign_subject = "Signature requested on 12 Elm Street | Lease renewal"
+    pd.write_notification("personal", "INBOX", _meta("204516", "Alex via ExampleSign <esign@examplesign.com>", esign_subject))
+    pd.write_notification("personal", "INBOX", _meta("204519", "Alex Doe <adoe@lettings.example.com>", "12 Elm Street | Tenancy Review"))
     second = _notif(dirs, "204519")
     context = second["also_arrived_recently"]
     assert len(context) == 1
     assert context[0]["uid"] == "204516"
-    assert "Section 13" in context[0]["subject"]
+    assert "Lease renewal" in context[0]["subject"]
     # No relatedness matching is claimed or required: the senders share nothing.
-    assert "adobesign" in context[0]["from"]
+    assert "examplesign" in context[0]["from"]
 
 
 def test_newest_first_and_capped(dirs):

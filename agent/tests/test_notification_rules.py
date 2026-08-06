@@ -199,9 +199,9 @@ def test_match_text_alias_searches_body_and_message():
 
 
 def test_match_text_alias_searches_email_subject_and_preview():
-    """Email notifications carry `subject` and `preview` and never body/message/content, so before
-    those were added to _BODY_FIELDS every `text` rule was silently dead against email: it looked
-    identical to a rule whose topic had simply never come up."""
+    """Email notifications carry `subject` and `preview` and never body/message/content: a `text`
+    alias that skipped them could never match an email, and a rule that never matches looks
+    identical to a rule whose topic never came up."""
     rule = _rule(match=[{"field": "text", "op": "regex", "value": "visa|overdue"}], action="interrupt")
     assert npn.notif_disposition(_notif(source="microsoft", type="email", subject="Your visa decision"), [rule]) == "interrupt"
     assert npn.notif_disposition(_notif(source="microsoft", type="email", preview="your account is overdue"), [rule]) == "interrupt"

@@ -92,9 +92,9 @@ def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None 
     Never starts an interactive sign-in: a data command must not mint a device code.
     When no cached token can be refreshed this raises
     :class:`backend.GraphUnavailableError`, which is what lets ``--backend auto``
-    fall through to the OWA REST path (see backend.run). Interactive sign-in lives in
-    the auth commands (`auth login`, `auth setup`, `auth teams-login`), which call
-    `_run_device_flow` directly."""
+    fall through to the OWA REST path (see backend.run). Interactive sign-in lives
+    only in the auth commands (`auth login`, `auth setup`, `auth teams-login`),
+    which run the device flow themselves."""
     app = get_app(cache_file)
 
     accounts = app.get_accounts()

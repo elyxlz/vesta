@@ -31,7 +31,7 @@ Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-
 
 Set `MICROSOFT_READ_ONLY=1` (same truthy values) to make **every connected account read-only**. This is the stronger setting and the right one when the account belongs to someone who did not ask you to act on their behalf, e.g. a work mailbox you were given so you could read it. It refuses every command that writes: `email send`/`reply`/`forward`/`draft`/`reply-draft`/`move`/`archive`/`update`/`delete`/`block`/`unblock`, `calendar create`/`update`/`delete`/`respond`, `folder create`/`rename`/`delete`, `teams send`/`start`/`post`/`reply`/`set-presence`/`clear-presence`, and `notify add`/`remove`. Reads are untouched.
 
-The check sits at the single dispatch point in `main()`, keyed by `(group, command)`, so a route added later cannot escape it by dispatching elsewhere. Still allowed on purpose: `email send-delay` and `email pending` configure and inspect the **local** outbox and are invisible to the account's owner, and `email undo` only ever cancels a queued send. Default off: unset/empty means today's behavior.
+The refusal happens in the CLI before any Graph or OWA-REST call, so it covers both backends. Still allowed on purpose: `email send-delay` and `email pending` configure and inspect the **local** outbox and are invisible to the account's owner, and `email undo` only ever cancels a queued send. Default off: unset/empty leaves every command allowed.
 
 ## Personalization
 

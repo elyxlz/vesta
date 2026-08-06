@@ -31,12 +31,9 @@ from .notification import CORE_SOURCE, Notification
 # satisfies the op. This is the single place cross-source field-name knowledge lives — a new source's
 # new field is targetable by its concrete name with no code change.
 _IDENTITY_FIELDS = ("sender", "contact_name", "handle", "from", "author")
-# `subject` and `preview` belong here: email notifications carry those two and never carry
-# body/message/content, so before they were added every `text` rule was silently dead against
-# email. On one box that killed four interrupt rules at once (payment-failure, visa/UKVI,
-# tenancy, and a specific property enquiry). They matched 0 of 103 stored email notifications,
-# and the mail fell through to the catch-all and was trashed. Nothing surfaces this: a rule that
-# never matches looks identical to a rule whose topic never came up.
+# `subject` and `preview` belong here: email notifications carry those two and never
+# body/message/content, so a `text` alias that skipped them could never match an email, and a
+# rule that never matches looks identical to a rule whose topic never came up.
 _BODY_FIELDS = ("body", "message", "content", "subject", "preview")
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {"sender": _IDENTITY_FIELDS, "text": _BODY_FIELDS}
 

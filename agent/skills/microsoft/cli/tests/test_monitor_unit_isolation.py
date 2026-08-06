@@ -1,22 +1,13 @@
 """One failing unit must not take the whole monitor cycle down with it.
 
-Observed on a live box with two accounts. The personal account carried a Teams marker written by
-`auth setup` saying it authorizes Teams by device flow, but no MSAL Teams token was ever obtained
-for it (the tenant walled Graph, so mail went over the OWA REST capture instead). Every cycle,
-`resolve_token` therefore reached `graph_token` and raised `backend.GraphUnavailableError`.
+`state["last_cycle"]` and the unit watermarks are persisted only after every unit has run, so an
+exception escaping one unit's poll to the loop-level handler would leave all of them unwritten:
+every account then re-reads its whole window next cycle and re-notifies the same messages, and a
+persistent failure in one unit (a mis-provisioned Teams account raising on every cycle) would
+freeze the fleet of watermarks indefinitely.
 
-Two things went wrong at once:
-
-1. `_poll_teams_account` catches `teams.TeamsError`, and `GraphUnavailableError` is not one of
-   those (it subclasses `Exception` directly), so the error escaped its handler.
-2. It then escaped `_poll_unit` to the loop-level `except`, which logs and retries the entire
-   cycle. Because `state["last_cycle"]` and the unit watermarks are only written after every unit
-   has run, *nothing* was persisted, so on the next cycle every account re-read its whole window
-   and re-notified the same messages. The watermark sat frozen for eighteen hours and the same
-   two dozen emails arrived over and over.
-
-The fix is per-unit isolation, which is what `_poll_unit`'s own docstring already promises: a poll
-that fails leaves its watermark where it was and the other units carry on.
+`_poll_unit` therefore contains any exception from its poll: the failing unit's watermark stays
+where it was, the other units carry on, and the cycle still persists.
 """
 
 from __future__ import annotations
@@ -51,7 +42,7 @@ def test_a_raising_poll_leaves_that_units_watermark_untouched() -> None:
 
 
 def test_a_raising_poll_does_not_propagate() -> None:
-    """The regression: this used to reach the loop-level handler and abandon the whole cycle."""
+    """An exception escaping to the loop-level handler would abandon the whole cycle."""
     now = datetime.now(UTC)
     state = _state(now - timedelta(minutes=5))
 
