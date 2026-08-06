@@ -2,12 +2,13 @@
   "version": 1,
   "appId": "com.vesta.mobile.visual",
   "flows": [
+    "maestro/visual/gateway-update.yml",
     "maestro/visual/connected.yml",
-    "maestro/visual/connect.yml",
-    "maestro/visual/connected-home-empty.yml",
     "maestro/visual/recent-gateways.yml",
     "maestro/visual/connected-whats-new-error.yml",
-    "maestro/visual/connected-whats-new-empty.yml"
+    "maestro/visual/connect.yml",
+    "maestro/visual/connected-whats-new-empty.yml",
+    "maestro/visual/connected-home-empty.yml"
   ],
   "scenarios": [
     {
@@ -240,6 +241,34 @@
       "description": "Connected gateway health, version, release channel, and update controls.",
       "group": "Settings",
       "screenshot": "settings-gateway.png"
+    },
+    {
+      "id": "gateway-update-required",
+      "title": "Gateway update required",
+      "description": "Compatibility gate shown when the app is newer than the connected gateway.",
+      "group": "Gateway update",
+      "screenshot": "gateway-update-required.png"
+    },
+    {
+      "id": "gateway-update-in-progress",
+      "title": "Gateway update in progress",
+      "description": "Compatibility gate while the gateway accepts and applies the update request.",
+      "group": "Gateway update",
+      "screenshot": "gateway-update-in-progress.png"
+    },
+    {
+      "id": "settings-gateway-update-available",
+      "title": "Gateway update available",
+      "description": "Gateway settings with a newer release ready to install.",
+      "group": "Gateway update",
+      "screenshot": "settings-gateway-update-available.png"
+    },
+    {
+      "id": "settings-gateway-update-confirm",
+      "title": "Confirm gateway update",
+      "description": "Native confirmation shown before the gateway and agents restart for an update.",
+      "group": "Gateway update",
+      "screenshot": "settings-gateway-update-confirm.png"
     },
     {
       "id": "diagnostics",

@@ -7,6 +7,7 @@ import { LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 
 export default function ScanScreen() {
   return <ScanContent />;
@@ -15,14 +16,20 @@ export default function ScanScreen() {
 function ScanContent() {
   const router = useRouter();
   const { colors, dark } = usePreferences();
+  const privacyBlocked = usePrivacyBlocked();
   const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
 
   useEffect(() => {
-    if (permission && !permission.granted && permission.canAskAgain) {
+    if (
+      !privacyBlocked &&
+      permission &&
+      !permission.granted &&
+      permission.canAskAgain
+    ) {
       void requestPermission();
     }
-  }, [permission, requestPermission]);
+  }, [permission, privacyBlocked, requestPermission]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -46,6 +53,8 @@ function ScanContent() {
       />
     </>
   );
+
+  if (privacyBlocked) return null;
 
   if (!permission) {
     return (

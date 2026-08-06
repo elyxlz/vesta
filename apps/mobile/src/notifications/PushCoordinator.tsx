@@ -10,6 +10,7 @@ import { registerMobileDevice, unregisterMobileDevice } from "@/api/endpoints";
 import { createApiClient, type ApiClient } from "@/api/client";
 import type { ConnectionConfig } from "@/api/types";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 import {
@@ -97,6 +98,7 @@ function EnabledPushCoordinator() {
   const session = useSession();
   const { reachable, agentsReady, agents } = useRoster();
   const preferences = usePreferences();
+  const privacyBlocked = usePrivacyBlocked();
   const [pending, setPending] = useState<PendingNotification | null>(null);
   const processingNotification = useRef<string | null>(null);
   const registrationChain = useRef<Promise<void>>(Promise.resolve());
@@ -193,7 +195,7 @@ function EnabledPushCoordinator() {
   }, []);
 
   useEffect(() => {
-    if (!pending) return;
+    if (privacyBlocked || !pending) return;
     const routeReady = !["/connect", "/connect-link", "/scan"].includes(
       pathname,
     );
@@ -230,6 +232,7 @@ function EnabledPushCoordinator() {
   }, [
     pathname,
     pending,
+    privacyBlocked,
     router,
     session,
     reachable,

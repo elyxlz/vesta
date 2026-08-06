@@ -1,19 +1,17 @@
 import { useState } from "react";
 import { Alert, StyleSheet, View } from "react-native";
+import { triggerGatewayUpdate } from "@vesta/core";
+import { AuthPrimaryButton } from "@/components/auth-primary-button";
+import { AuthSheet } from "@/components/auth-sheet";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
-import { VestaBrand } from "@/components/VestaBrand";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import { triggerGatewayUpdate } from "@vesta/core";
 
-// Shown when the sync socket reports "gateway_behind": this app runs a newer release than the
-// gateway. Drifting behind the gateway is fine (the served version window handles it); running
-// ahead is not. Unlike AppBehindScreen this recovers with no app restart: the button asks the gateway
-// to self-update, and the live socket re-hellos into "open" once the gateway restarts newer (its
-// reconnect backoff is the retry cadence), so no explicit reconnect is issued here.
-export function GatewayBehindScreen() {
+// The gateway update is complete when the sync socket reconnects and accepts the app version.
+// The socket's reconnect backoff is the retry cadence, so the update action does not reconnect it.
+export function GatewayUpdateSheet() {
   const { colors } = usePreferences();
   const { api, disconnect } = useSession();
   const [updating, setUpdating] = useState(false);
@@ -48,9 +46,8 @@ export function GatewayBehindScreen() {
   };
 
   return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <VestaBrand />
-      <View style={styles.message}>
+    <AuthSheet gap={20}>
+      <View style={styles.copy}>
         <Text
           accessibilityRole="header"
           family="heading"
@@ -63,18 +60,16 @@ export function GatewayBehindScreen() {
         </Text>
       </View>
       <View style={styles.actions}>
-        <Button
-          pill
-          size="large"
+        <AuthPrimaryButton
           loading={updating}
           loadingLabel="Updating…"
           disabled={disconnecting}
           onPress={handleUpdate}
         >
           Update gateway
-        </Button>
-        {/* Never gated on `updating`: vestad answers 200 for an update it had nothing to apply
-            (already newest for its channel), so leaving stays reachable after a spent update. */}
+        </AuthPrimaryButton>
+        {/* Keep disconnect available after an update starts. The gateway may return success when
+            it is already current, which leaves this sheet open and the connection reachable. */}
         <Button
           pill
           size="large"
@@ -82,23 +77,18 @@ export function GatewayBehindScreen() {
           icon="log-out-outline"
           iconColor={colors.danger}
           loading={disconnecting}
+          labelStyle={styles.actionLabel}
           onPress={confirmDisconnect}
         >
           Disconnect gateway
         </Button>
       </View>
-    </View>
+    </AuthSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    justifyContent: "center",
-    gap: 28,
-    paddingHorizontal: 28,
-  },
-  message: { alignItems: "center", gap: 7 },
+  copy: { alignItems: "center", gap: 7 },
   title: {
     fontSize: 25,
     lineHeight: 31,
@@ -107,4 +97,5 @@ const styles = StyleSheet.create({
   },
   detail: { fontSize: 15, lineHeight: 21, textAlign: "center" },
   actions: { gap: 12 },
+  actionLabel: { fontSize: 14.5, lineHeight: 18, fontWeight: "600" },
 });
