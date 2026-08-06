@@ -30,7 +30,7 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 
 | Flag | Description |
 |------|-------------|
-| `--language <code>` | Language code (en, es, fr, de, etc.). Default: auto, whisper detects it |
+| `--language <code>` | Language code (en, es, fr, de, etc.). Default: `WHISPER_LANGUAGE`, or auto-detect when it is unset |
 | `--translate` | Translate non-English audio to English text |
 | `--srt` | Output SRT subtitle format |
 | `--json` | Output JSON with timestamps |

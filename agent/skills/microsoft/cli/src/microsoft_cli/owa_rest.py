@@ -571,7 +571,7 @@ def _values(resp: dict) -> list[dict]:
 def _folder_id_by_name(candidates: list[dict], key: str) -> str | None:
     for candidate in candidates:
         name = candidate["displayName"] if "displayName" in candidate else ""
-        if (name or "").casefold() == key:
+        if name and name.casefold() == key:
             return candidate["id"]
     return None
 
@@ -608,7 +608,7 @@ def list_folders(client: httpx.Client, account_email: str, config) -> list[dict]
     for folder in top:
         out.append(folder)
         kids = _get(client, token, f"/me/mailfolders/{folder['id']}/childfolders", {"$select": _FOLDER_SELECT, "$top": "100"})
-        out.extend(kids.get("value", []))
+        out.extend(_values(kids))
     return out
 
 

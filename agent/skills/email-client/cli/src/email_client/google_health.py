@@ -244,25 +244,31 @@ def attempt_self_heal(account: str, failed_result: dict, *, post=None, allow_fet
 # -- notification ---------------------------------------------------
 
 
-_DEAD_CLIENT_TYPE = "google_client_dead"
-_SECRET_REJECTED_TYPE = "google_client_secret_rejected"
-
-_DEAD_CLIENT_MESSAGE = (
-    "Gmail stopped working: the shared Google sign-in client was removed upstream and needs "
-    "replacing. Automatic recovery via Thunderbird's latest published client did not succeed, so "
-    "Gmail send/receive is down for account '{account}' until a new verified public client is put "
-    "in place. This is not a problem with your account or password."
-)
-
-_SECRET_REJECTED_MESSAGE = (
-    "Gmail stopped working: Google is rejecting the client secret configured for the Google "
-    "sign-in client. The client itself is still registered and was not withdrawn, and your "
-    "account and password are fine, but the secret paired with that client is wrong and "
-    "re-resolving it from Thunderbird's published client did not produce a working one. Gmail "
-    "send/receive is down for account '{account}' until it is corrected. To fix it: check the "
-    "client's secret in the Google Cloud console, correct it, then re-run the auth setup for this "
-    "account with 'email-client auth add --account {account} --provider gmail --reauth'."
-)
+# The notification type and wording each client fault gets, keyed by the probe status that
+# produced it, so a fault with no entry here raises rather than borrowing the other one's words.
+_FAULT_NOTICE = {
+    DEAD_CLIENT: (
+        "google_client_dead",
+        (
+            "Gmail stopped working: the shared Google sign-in client was removed upstream and needs "
+            "replacing. Automatic recovery via Thunderbird's latest published client did not succeed, so "
+            "Gmail send/receive is down for account '{account}' until a new verified public client is put "
+            "in place. This is not a problem with your account or password."
+        ),
+    ),
+    CLIENT_AUTH_REJECTED: (
+        "google_client_secret_rejected",
+        (
+            "Gmail stopped working: Google is rejecting the client secret configured for the Google "
+            "sign-in client. The client itself is still registered and was not withdrawn, and your "
+            "account and password are fine, but the secret paired with that client is wrong and "
+            "re-resolving it from Thunderbird's published client did not produce a working one. Gmail "
+            "send/receive is down for account '{account}' until it is corrected. To fix it: check the "
+            "client's secret in the Google Cloud console, correct it, then re-run the auth setup for this "
+            "account with 'email-client auth add --account {account} --provider gmail --reauth'."
+        ),
+    ),
+}
 
 # Fields copied from the probe result onto the notification, when the probe recorded them.
 _DETAIL_KEYS = ("http_status", "error", "error_description", "client_id", "self_heal")
@@ -276,9 +282,7 @@ def write_client_fault_notification(account: str, result: dict) -> pathlib.Path:
     Nothing dedupes by marker: the daily probe is the only caller, so a standing fault raises at
     most one alert a day.
     """
-    dead = result["status"] == DEAD_CLIENT
-    notif_type = _DEAD_CLIENT_TYPE if dead else _SECRET_REJECTED_TYPE
-    template = _DEAD_CLIENT_MESSAGE if dead else _SECRET_REJECTED_MESSAGE
+    notif_type, template = _FAULT_NOTICE[result["status"]]
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
     notif = {
         "source": "email-client",

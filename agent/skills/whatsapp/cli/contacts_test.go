@@ -94,9 +94,6 @@ func TestResolveRecipientRejectsSavedGroupIDContact(t *testing.T) {
 	}
 }
 
-// The peer whose LID the outgoing-chat-key harness maps to a phone JID, saved by that phone.
-const gatedPeerPhone = "+15559876543"
-
 // A peer addressed by their LID passes the same saved-contact gate as the same peer addressed by
 // their phone JID. Both forms are valid send targets, so gating only the phone form would let an
 // outbound reach a person the user never confirmed, which is the ban risk the gate exists for.
@@ -110,15 +107,17 @@ func TestRequireManualContactGatesALIDLikeThePhoneJID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to parse phone jid: %v", err)
 	}
+	// The phone the harness maps the LID to: the one number both forms must be gated by.
+	peerPhone := "+" + phone.User
 
 	for _, jid := range []types.JID{lid, phone} {
 		err := wac.requireManualContact(jid)
-		if err == nil || !strings.Contains(err.Error(), "No saved contact found for "+gatedPeerPhone) {
-			t.Errorf("unsaved peer %s must be refused naming %s, got %v", jid, gatedPeerPhone, err)
+		if err == nil || !strings.Contains(err.Error(), "No saved contact found for "+peerPhone) {
+			t.Errorf("unsaved peer %s must be refused naming %s, got %v", jid, peerPhone, err)
 		}
 	}
 
-	if _, err := wac.store.SaveManualContact("Ana", gatedPeerPhone); err != nil {
+	if _, err := wac.store.SaveManualContact("Ana", peerPhone); err != nil {
 		t.Fatalf("failed to save contact: %v", err)
 	}
 
