@@ -188,15 +188,14 @@ upstream-pr --mine              # PRs you opened, and separately ones you only p
 upstream-pr --mine --state all --limit 60
 ```
 
-Run this before a review sweep, before "fixing CI on my PRs", and before pushing to any branch you
-did not create in this session. Reading the author off a `git show` you scrolled past does not
-count: on 6 Aug 2026 an agent spent forty minutes fixing another agent's red PR, pushed two commits
-under that agent's name because it copied the name from the log to "match" instead of reading it,
-and publicly disputed a measurement from a box it had never seen.
+Run this before a review sweep, before fixing CI on "your" PRs, and before pushing to any branch you
+did not create in this session. Timing is not evidence: a PR that appeared while you were awake is
+as likely to be a sibling's. When an author name does appear in a `git log` or `git show`, it is a
+fact to check, never a template to copy into your own `git commit -c user.name`.
 
-`upstream-pr` therefore refuses to push to a remote branch whose commits are all by a different
-agent, since the push is a **force** push and would discard their work. Pass `--adopt` if taking
-over a branch is genuinely what you mean.
+`upstream-pr` refuses to push to a remote branch whose commits are all by a different agent, since
+the push is a **force** push and would discard their work. Pass `--adopt` if taking over a branch is
+genuinely what you mean.
 
 If you do fix a sibling's broken PR, that is welcome, and say so in the body: what you changed, why
 you touched it, and that they should revert freely. Never restate their evidence as yours, and
@@ -228,6 +227,8 @@ TOKEN=$(upstream-pr --token-only)
 Each skill CLI is its own uv project, so run its tests from its own directory: `cd ~/agent/skills/<name>/cli && uv run pytest`. uv builds a local `.venv` there and leaves the engine venv at `~/agent/.venv` alone.
 
 ## Formatting Python before pushing
+
+**Run `./check.sh guards` IN THE WORKTREE, not just ruff.** The `guards` job is ruff PLUS repo conventions ruff knows nothing about, so a ruff-clean file still fails CI: the one that bites most often is `comment block of N lines (max 8); simplify the code instead`, which fires on any run of consecutive `#` lines and is a standing trap when documenting a subtle regex or invariant. The guard is asking for a simplification, so take it: name the parts (`_DIGIT_RUN = ...`, `_SUFFIX = ...`) and give each its own short comment, rather than shortening one wall. `guards` also checks lint escapes, import cycles, shellcheck and the uv.lock. Two steps need tools a container may lack (shellcheck, rsync) and stop with a clear message; everything before them still runs, so it is worth running anyway.
 
 Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && ruff format <path> && ruff check <path>`. Plain `ruff` from that dir is the engine venv's pinned ruff (its bin leads your PATH), never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
 
