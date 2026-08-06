@@ -17,7 +17,10 @@ restarts, different across profiles.
 **Never assume you got caught by anti-bot.** Because the browser is genuinely stealth, a hang or
 a blank page is almost never a block. The overwhelmingly common cause is boring: `open`/`navigate`
 waits for the page `load` event, and heavy JS/SPA sites (airlines, banks, booking flows) fire it
-late or never, so the command times out even though the page rendered fine. Rule out the boring
+late or never, so the command times out even though the page rendered fine. The same cause also
+returns **clean** with `document.body.innerText.length` at 0, and that second symptom is the one
+that fools you: the command SUCCEEDED, so "did it time out?" answers no and you walk straight past
+this paragraph. Re-navigating the same context with `"wait":"none"` renders it. Rule out the boring
 cause FIRST: (1) take a `snapshot` or `screenshot` anyway, the content is usually already there;
 (2) navigate via BiDi with a lighter wait so you return before full load:
 `browser bidi browsingContext.navigate '{"context":"<ctx>","url":"<url>","wait":"interactive"}'`
@@ -33,6 +36,13 @@ assuming you have two. Let it reach the timeout instead of killing it, since the
 exact call that stalled, while terminating early leaves you with "it hung" and sends you hunting
 a block that is not there. Once you have seen it on a box, reach for **`browser navigate <url>`**,
 which skips tab creation and returns at once.
+
+**FIRST, when a button does nothing: ask what is under the cursor.** One call, before any
+theorising: take the target's rect and pass its centre to `document.elementFromPoint`. If the answer
+is not your button, you are clicking an invisible overlay, and every retry, every coordinate
+fallback and every theory about validation is wasted. A modal can be absent from `innerText` and
+still sit over an enabled button. See
+[interaction-skills/clicking.md](interaction-skills/clicking.md).
 
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
 
@@ -188,6 +198,14 @@ Drop to **`click(x, y)` / `browser click --at X Y`** when:
 
 `input.performActions` dispatches a real pointer event at that viewport point regardless of DOM
 structure.
+
+**Both ref clicks and `--at` clicks are TRUSTED input; an `element.click()` from `browser js` is
+not**, and the difference is invisible until it matters. An untrusted click carries no user
+activation, so Firefox silently refuses anything gated on a gesture: `window.open` and
+`target="_blank"` popups, clipboard writes, fullscreen, file pickers. Nothing errors, the tab just
+stays `about:blank` or never appears. If the action NAVIGATES, OPENS, UPLOADS or writes outside the
+page, use a real click. For ordinary in-page handlers a JS click is fine. Full story in
+[interaction-skills/clicking.md](interaction-skills/clicking.md).
 
 ## When stealth isn't enough (escalation)
 
