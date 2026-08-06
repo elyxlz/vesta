@@ -319,7 +319,7 @@ def test_migration_v4_regenerates_auto_reminders_and_creates_meta(tmp_config: Co
     schedules = {r["schedule_type"] for r in _auto_reminders(tmp_config, task["id"])}
     assert "auto: at due" in schedules
     with closing(db.get_db(tmp_config.data_dir)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 4
+        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db.SCHEMA_VERSION
         assert db.get_meta(conn, "anything") is None
 
 
@@ -483,3 +483,97 @@ def test_a_no_op_retitle_changes_nothing(tmp_config: Config):
     commands.update_task(tmp_config, task_id=task["id"], title="same")
 
     assert {(r["id"], r["message"]) for r in _armed(tmp_config, task["id"])} == before
+
+# ---------------------------------------------------------------------------
+# Backburner: the fourth exit from the stale-task digest
+# ---------------------------------------------------------------------------
+
+
+def test_backburner_task_is_not_listed_as_stale(tmp_config: Config):
+    """A task parked on purpose must stop appearing in the digest, while an ordinary undated task
+    of the same age still appears. Without the second half this test would pass on a digest that
+    had simply stopped reporting stale tasks at all."""
+    parked = commands.add_task(tmp_config, title="parked task")
+    ordinary = commands.add_task(tmp_config, title="ordinary undated task")
+    for task in (parked, ordinary):
+        _force_created_at(tmp_config, task["id"], datetime.now(UTC) - timedelta(days=20))
+    commands.update_task(tmp_config, task_id=parked["id"], backburner=True)
+
+    message = commands.build_digest(tmp_config)
+
+    assert message is not None
+    assert ordinary["id"] in message
+    assert parked["id"] not in message
+
+
+def test_backburner_task_still_appears_in_task_list(tmp_config: Config):
+    """Parking defers the nag, never the task. A parked task that vanished from `tasks list` would
+    be a worse bug than the one this feature fixes."""
+    parked = commands.add_task(tmp_config, title="parked task")
+    commands.update_task(tmp_config, task_id=parked["id"], backburner=True)
+
+    listed = commands.list_tasks(tmp_config)
+
+    assert [t["id"] for t in listed] == [parked["id"]]
+    assert listed[0]["backburner"] == 1
+
+
+def test_setting_a_due_date_clears_backburner(tmp_config: Config):
+    """Committing to a date is the opposite state to parking, so the flag must not survive it."""
+    task = commands.add_task(tmp_config, title="parked then committed")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+
+    commands.update_task(tmp_config, task_id=task["id"], due=commands.DueSpec(due_in_days=3))
+
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 0
+
+
+def test_clearing_a_due_date_leaves_backburner_alone(tmp_config: Config):
+    """--clear-due removes a date; it must not silently park the task as a side effect."""
+    task = _add_task_due_in(tmp_config, "dated", timedelta(days=3))
+
+    commands.update_task(tmp_config, task_id=task["id"], due=commands.DueSpec(clear=True))
+
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 0
+
+
+def test_backburner_migration_is_idempotent(tmp_config: Config):
+    """init_db runs on every daemon start, so re-running the v4->v5 migration must be a no-op."""
+    db.init_db(tmp_config.data_dir)
+    db.init_db(tmp_config.data_dir)
+
+    task = commands.add_task(tmp_config, title="survives remigration")
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 0
+
+
+def test_parking_a_dated_task_drops_the_date_and_its_reminders(tmp_config: Config):
+    """Parked AND deadlined is the contradiction the flag exists to remove.
+
+    Caught in review of the original change: --backburner on a dated task left the due date in
+    place, so the reminder ladder kept firing on a task the digest had been told to stop nagging
+    about.
+    """
+    task = _add_task_due_in(tmp_config, "driven by someone else", timedelta(days=30))
+    assert task["due_date"]
+    assert _auto_reminders(tmp_config, task["id"])
+
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+
+    after = commands.get_task(tmp_config, task_id=task["id"])
+    assert after["backburner"] == 1
+    assert after["due_date"] is None
+    assert _auto_reminders(tmp_config, task["id"]) == []
+
+
+def test_setting_a_date_in_the_same_call_wins_over_parking(tmp_config: Config):
+    """Committing to a date is the opposite of parking, so the date unparks it."""
+    task = commands.add_task(tmp_config, title="undecided")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 1
+
+    due = (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True, due=commands.DueSpec(due_datetime=due, timezone="UTC"))
+
+    after = commands.get_task(tmp_config, task_id=task["id"])
+    assert after["due_date"] is not None
+    assert after["backburner"] == 1
