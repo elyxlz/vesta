@@ -191,9 +191,14 @@ def test_start_claims_the_record_before_it_spawns_anything(records: pathlib.Path
     assert dl.daemon_cmd("start") == 0
 
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
-    assert [spawn.record for spawn in spawns] == [str(os.getpid())]
-    # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is
-    # there at all depends on the fake child pid happening to exist on this machine.
+    # The claim records the starter exactly as a finished start records the child, so a start
+    # killed between the two leaves a record a reader can still verify. This process is live, so
+    # its starttime is always readable here.
+    claims = [spawn.record.split() for spawn in spawns]
+    assert [claim[0] for claim in claims] == [str(os.getpid())]
+    assert all(len(claim) == 2 and claim[1].isdigit() for claim in claims), claims
+    # The pid is the record's first field; whether the second one is there at all depends on the
+    # fake child pid happening to exist on this machine.
     assert dl.PIDFILE.read_text().split()[0] == str(CHILD_PID)
 
 
