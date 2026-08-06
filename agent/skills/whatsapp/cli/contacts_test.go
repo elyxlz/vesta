@@ -216,6 +216,23 @@ func TestRequireManualContactSurvivesTheLIDMappingBeingLearned(t *testing.T) {
 	}
 }
 
+// A token that is not a chat id at all must be named as one. Reporting a mistyped id as a group
+// is the one answer that stops the caller retrying, since a group genuinely needs no contact.
+func TestAddContactByChatRefusesAMalformedChatID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+
+	for _, chat := range []string{"Ana", "15551234567", "+15551234567"} {
+		_, err := wac.AddContactByChat("Ana", chat)
+		if err == nil || !strings.Contains(err.Error(), "is not a chat id") {
+			t.Errorf("AddContactByChat(%q) must be refused as a malformed chat id, got %v", chat, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "is a group") {
+			t.Errorf("AddContactByChat(%q) must not be reported as a group, got %v", chat, err)
+		}
+	}
+}
+
 // The gate still refuses an unmapped LID nobody confirmed, and a group id is not a person to save.
 func TestAddContactByChatRefusesAGroup(t *testing.T) {
 	wac := newOutgoingTestClient(t)

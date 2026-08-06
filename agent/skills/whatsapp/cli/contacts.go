@@ -22,6 +22,15 @@ func (wac *WhatsAppClient) AddContactByChat(name, chat string) (Contact, error) 
 	if err != nil {
 		return Contact{}, fmt.Errorf("invalid chat id '%s': %v", chat, err)
 	}
+	// A token with no '@' parses into a JID whose user part is empty rather than failing, so it
+	// has to be refused here; left to the group check below it would be reported as a group, the
+	// one answer that stops a caller from retrying with a corrected id.
+	if jid.User == "" {
+		return Contact{}, fmt.Errorf(
+			"'%s' is not a chat id: a chat id is a user part and a server, like 12345@lid or 15551234567@s.whatsapp.net. To save someone by phone number, use --phone +15551234567",
+			chat,
+		)
+	}
 	if !isDirectChatJID(jid) {
 		return Contact{}, fmt.Errorf("'%s' is a group, not a person; only people need a saved contact", chat)
 	}
