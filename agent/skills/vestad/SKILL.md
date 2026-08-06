@@ -241,7 +241,7 @@ The browser sits at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/...`, so the prefix
 - **The server needs no prefix handling.** vestad splits the service name off and forwards the exact subpath, so a request to `<svc>/api/x` reaches the handler as `/api/x`. Match routes with `==`.
 - **WebSockets work for a registered service.** vestad upgrades the connection and bridges it, pinging the client on a keepalive interval so an idle socket survives the tunnel. Only the raw agent port refuses to upgrade, because that carries the internal event bus; use `/sync` for that. A browser `WebSocket` cannot set headers, so carry a private service's key as `?token=<key>`.
 - **Bind `0.0.0.0`, not `127.0.0.1`.** The container has its own network and vestad proxies in from outside, so a loopback-only bind answers 502.
-- **Default to private** and hand the user a minted `/k/<key>/` link, the shape the signature pad uses; choose `public: true` only when the page genuinely should need no credential.
+- **Default to private** and hand the user a minted `/k/<key>/` link, the shape the signature pad uses. `public: true` is only for a page that must load with no credential at all (the QR-link-page shape), carries nothing sensitive, and is the rare exception, never the convenient default.
 - A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in the restart skill's Daemons block, so the link survives reboots.
 
 ## Update vestad
