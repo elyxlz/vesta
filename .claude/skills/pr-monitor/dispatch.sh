@@ -190,6 +190,23 @@ prune_worktrees() {
   git -C "$root" worktree prune 2>/dev/null || true
 }
 
+# A run's working directory is this checkout, so a stray `gh pr checkout` in one
+# moves the branch the dispatcher is executing from. Bash reads a running script
+# by byte offset, so rewriting dispatch.sh underneath it misparses the rest, and
+# a HEAD left on a PR branch quietly runs that branch's skills instead of the
+# deployed ones. Restore only with no run in flight, since that is the one moment
+# no agent is mid-checkout, and let `git checkout` refuse rather than discard
+# changes it would overwrite.
+restore_checkout() {
+  [ -z "$(jobs -rp)" ] || return 0
+  [ "$(git -C "$SKILL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)" = master ] && return 0
+  if git -C "$SKILL_DIR" checkout master >/dev/null 2>&1; then
+    echo "dispatch: restored checkout to master" >&2
+  else
+    echo "dispatch: WARN checkout is off master and would not restore" >&2
+  fi
+}
+
 handle() {
   local repo="$1" kind="$2" id="$3" pr="$4" prompt="$5"
   local sf sid out rc lock
@@ -251,10 +268,12 @@ handle() {
   prune_worktrees "$repo"
 }
 
+restore_checkout
 for repo in "${repos[@]}"; do prune_sessions "$repo"; prune_worktrees "$repo"; done
 
 bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
   while [ "$(jobs -rp | wc -l)" -ge "$PARALLEL" ]; do wait -n; done
+  restore_checkout
   case "$tag" in
     HIT)
       handle "$f1" "$f2" "$f3" "$f4" "$ROLE
