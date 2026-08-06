@@ -271,7 +271,9 @@ def cmd_click(args: argparse.Namespace) -> int:
         if not args.ref:
             print("click needs a ref or --at X Y", file=sys.stderr)
             return 2
-        helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
+        occluder = helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
+        if occluder:
+            print(f"# {args.ref} is covered by <{occluder}>, which took the click instead. See interaction-skills/clicking.md")
     helpers.wait(0.2)
     _print_feedback()
     return 0

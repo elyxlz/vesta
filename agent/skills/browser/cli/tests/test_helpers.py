@@ -355,3 +355,55 @@ def test_new_tab_reraises_when_the_tree_call_also_fails(monkeypatch):
     monkeypatch.setattr(helpers, "bidi", fake)
     with pytest.raises(RuntimeError, match=re.escape("browsingContext.create")):
         helpers.new_tab()
+
+
+# ── click_ref reports an overlay that intercepts the click ─────
+#
+# An overlay taking the click looks exactly like a button that does nothing: the
+# click reports success and the DOM shows nothing wrong. click_ref asks what is
+# actually on top and hands that back, so the caller can say so.
+
+
+def _click_probe(hit_expr_result, clicked=None):
+    """Stand in for the two evals click_ref makes: resolve the ref, then probe the point."""
+
+    def fake(expression, context=None):
+        if "__vestaResolveRef" in expression:
+            return {"found": True, "x": 10, "y": 20}
+        return hit_expr_result
+
+    return fake
+
+
+def test_click_ref_returns_none_when_the_ref_is_on_top(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval_value", _click_probe(None))
+    monkeypatch.setattr(helpers, "click", lambda x, y, button="left", clicks=1: None)
+    assert helpers.click_ref("e5") is None
+
+
+def test_click_ref_names_the_element_that_took_the_click(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval_value", _click_probe("div.modal-wrap"))
+    monkeypatch.setattr(helpers, "click", lambda x, y, button="left", clicks=1: None)
+    assert helpers.click_ref("e5") == "div.modal-wrap"
+
+
+def test_click_ref_still_clicks_when_something_is_on_top(monkeypatch):
+    """Reporting the overlay must not swallow the click; the caller decides what to do."""
+    landed: list[tuple[float, float]] = []
+    monkeypatch.setattr(helpers, "_eval_value", _click_probe("div.modal-wrap"))
+    monkeypatch.setattr(helpers, "click", lambda x, y, button="left", clicks=1: landed.append((x, y)))
+    helpers.click_ref("e5")
+    assert landed == [(10, 20)]
+
+
+def test_occluder_probe_asks_about_the_resolved_point(monkeypatch):
+    """The probe must test the point actually clicked, not the element's own opinion."""
+    seen: list[str] = []
+
+    def fake(expression, context=None):
+        seen.append(expression)
+
+    monkeypatch.setattr(helpers, "_eval_value", fake)
+    helpers._occluder_at("e5", 33, 44)
+    assert "elementFromPoint(33, 44)" in seen[0]
+    assert '"e5"' in seen[0]

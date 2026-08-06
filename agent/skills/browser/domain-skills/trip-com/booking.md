@@ -26,8 +26,8 @@ The `flights` skill treats trip.com as a primary booking path. This is the flow 
 6. **Email verification**: entering the contact address triggers a 6-digit code by email. Fetch it
    from the inbox and enter it.
 7. **Next**, at which point the **"Duplicate Bookings"** dialog fires if the passengers hold another
-   flight within 24h. It is invisible in `innerText` and eats every click on Next. `elementFromPoint`
-   finds it; "Continue booking" clears it.
+   flight within 24h. It is invisible in `innerText` and eats every click on Next, which `browser
+   click` reports as a cover; "Continue booking" clears it.
 8. **Seats**: "Skip seat selection", then "Next step".
 9. **Add-ons**: decline insurance ("I don't want to protect my trip"), then "Next step", then a
    second last-chance insurance modal wants "Not now".

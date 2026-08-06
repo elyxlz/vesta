@@ -31,7 +31,28 @@ synthetic event in its own framework handler, or want a full pointer/mouse chain
 `click`. See `domain-skills/github/repo-actions.md` and `domain-skills/framer/editor.md` for those.
 A real click fixes all three, which is why it is the right first move rather than the diagnosis.
 
-## 2. If a button does nothing, ask what is actually under the cursor
+## 2. An overlay intercepting the click
+
+`browser click <ref>` checks this for you. When something else is topmost at the point it clicks,
+it says so and names it:
+
+```
+# e14 is covered by <div.modal-wrap>, which took the click instead.
+```
+
+The click is still dispatched, because taking it is sometimes what you want; the line tells you
+where it went. When you see it, dismiss the overlay (below) and click again. Nothing else is worth
+trying first: every retry, every coordinate fallback and every theory about validation is wasted
+while something is on top.
+
+A modal can be invisible in `innerText` because it renders above the fold, and still sit over an
+enabled button that reports `disabled=false` with no validation error, no unticked checkbox and no
+missing required field. Upsell and confirmation dialogs on checkout flows do this repeatedly within
+one flow, so read the line each time rather than assuming one page has one modal.
+
+**`--at X Y` does not report this**, because there is no ref to compare against; a coordinate click
+lands on whatever is topmost exactly as a ref click does, so it is not a way around an overlay
+either. To check a point by hand, or to check a button you have not clicked yet:
 
 ```js
 (() => { const b = /* the button */; const r = b.getBoundingClientRect();
@@ -39,19 +60,9 @@ A real click fixes all three, which is why it is the right first move rather tha
          return hit === b || b.contains(hit) ? 'clear' : hit.tagName + '.' + hit.className; })()
 ```
 
-One call. If the answer is not your button, you are clicking an overlay, and every retry, every
-coordinate fallback and every theory about validation is wasted.
-
-A modal can be invisible in `innerText` because it renders above the fold, and still sit over an
-enabled button that reports `disabled=false` with no validation error, no unticked checkbox and no
-missing required field. Upsell and confirmation dialogs on checkout flows do this repeatedly within
-one session, so re-run the check each time a button stops responding rather than once per page.
-
-Run this check **before** the field-hunting checklist in SKILL.md's stuck-form paragraph. That
-checklist is good advice for a form that rejects you, and useless for a form you are not reaching.
-
-A coordinate click is not a way around an overlay: `--at X Y` lands on whatever is topmost at that
-point, exactly as a ref click does. Diagnose first, then choose the fallback.
+A button that does nothing with no such line is a different problem: go to the field-hunting
+checklist in SKILL.md's stuck-form paragraph, which is good advice for a form that rejects you and
+useless for a form you are not reaching.
 
 ### Dismissing the overlay once you have found it
 
@@ -74,6 +85,6 @@ broadly and filter on exact text; and it may sit BELOW the fold, where a click l
 
 Order that works:
 
-1. `elementFromPoint` on the target's centre. Overlay? Dismiss it (above), then click.
+1. Did `browser click <ref>` report a cover? Dismiss it (above), then click again.
 2. Does the action need a real gesture (opens, uploads, navigates)? Use `browser click`, not JS.
 3. Only then consider stale rects, shadow DOM, cross-origin iframes, or a genuine validation error.
