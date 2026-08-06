@@ -206,7 +206,13 @@ func recordedPid(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("start recorded no pid at %s: %v", daemonPidfile(), err)
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(record)))
+	// The record is "<pid> <starttime>", so the pid is its first field. Parsing the whole record
+	// is the mistake that makes a live daemon read as dead.
+	fields := strings.Fields(string(record))
+	if len(fields) != 2 || !isDigits(fields[1]) {
+		t.Fatalf("pid record %q carries no starttime, so a reused pid is undetectable", record)
+	}
+	pid, err := strconv.Atoi(fields[0])
 	if err != nil {
 		t.Fatalf("pid record %q is not a pid: %v", record, err)
 	}
