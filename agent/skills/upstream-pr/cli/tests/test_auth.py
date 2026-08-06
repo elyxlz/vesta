@@ -68,3 +68,101 @@ def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, mon
     assert SENTINEL not in " ".join(pushed["cmd"])
     delivered = pushed["env"]["GIT_CONFIG_VALUE_0"].split("Basic ")[1]
     assert base64.b64decode(delivered).decode() == f"x-access-token:{SENTINEL}"
+
+
+class FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
+def _commits(*names):
+    return [{"commit": {"author": {"name": name}}} for name in names]
+
+
+def _stub_get(monkeypatch, response):
+    monkeypatch.setattr(cli.requests, "get", lambda *a, **k: response)
+
+
+def _stub_authors(monkeypatch, authors):
+    monkeypatch.setattr(cli, "branch_authors_ahead_of_base", lambda branch, base, env: authors)
+
+
+# Every agent files through one GitHub App, so a PR's `user.login` is the bot for all of them and
+# the commit author is the only ownership signal. These guard the push path, which force-pushes.
+def test_push_guard_blocks_a_branch_that_is_only_another_agents(monkeypatch):
+    _stub_authors(monkeypatch, {"bazella (vesta)", "dory (vesta)"})
+    with pytest.raises(SystemExit):
+        cli.warn_if_branch_belongs_to_another_agent("their-branch", "master", "vesta", {})
+
+
+def test_push_guard_allows_a_branch_you_already_have_commits_on(monkeypatch):
+    _stub_authors(monkeypatch, {"bazella (vesta)", "vesta (vesta)"})
+    cli.warn_if_branch_belongs_to_another_agent("shared-branch", "master", "vesta", {})
+
+
+def test_push_guard_allows_a_branch_that_does_not_exist_yet(monkeypatch):
+    # The normal flow: a brand new branch has no remote ref, and must not be blocked.
+    _stub_authors(monkeypatch, None)
+    cli.warn_if_branch_belongs_to_another_agent("brand-new-branch", "master", "vesta", {})
+
+
+def test_a_failed_fetch_is_not_read_as_an_empty_branch(monkeypatch):
+    """The bug this replaced: the API version returned early on ANY non-200, so a 403 or a rate
+    limit disabled the guard exactly as a nonexistent branch did. Now the only thing that reads as
+    "no such branch" is a fetch that fails, and a fetch that SUCCEEDS with no new commits is a
+    different, non-blocking answer."""
+    calls = []
+
+    def fake_run(cmd, env=None):
+        calls.append(cmd)
+        rc = 1 if cmd[:2] == ["git", "fetch"] else 0
+        return subprocess.CompletedProcess(cmd, rc, "", "")
+
+    monkeypatch.setattr(cli, "run", fake_run)
+    assert cli.branch_authors_ahead_of_base("b", "master", {}) is None
+    # It gave up at the first failed fetch rather than reporting an empty author set.
+    assert sum(1 for c in calls if c[:2] == ["git", "fetch"]) == 1
+    assert not any(c[:2] == ["git", "log"] for c in calls)
+
+
+def test_guard_reads_only_the_commits_the_branch_adds(monkeypatch):
+    """Master ancestry must not leak in: a branch one commit ahead is judged on that one commit."""
+    logged = {}
+
+    def fake_run(cmd, env=None):
+        if cmd[:2] == ["git", "log"]:
+            logged["range"] = cmd[-1]
+            return subprocess.CompletedProcess(cmd, 0, "dory (vesta)\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(cli, "run", fake_run)
+    assert cli.branch_authors_ahead_of_base("theirs", "master", {}) == {"dory (vesta)"}
+    assert logged["range"] == f"{cli.GUARD_BASE_REF}..{cli.GUARD_BRANCH_REF}"
+
+
+def test_mine_separates_prs_you_opened_from_prs_you_only_pushed_to(monkeypatch, capsys):
+    prs = [
+        {"number": 1, "title": "yours", "html_url": "u1"},
+        {"number": 2, "title": "theirs, you pushed", "html_url": "u2"},
+        {"number": 3, "title": "theirs", "html_url": "u3"},
+    ]
+    authors = {
+        1: ("vesta (vesta)", {"vesta (vesta)"}),
+        2: ("bazella (vesta)", {"bazella (vesta)", "vesta (vesta)"}),
+        3: ("dory (vesta)", {"dory (vesta)"}),
+    }
+    monkeypatch.setattr(cli.requests, "get", lambda *a, **k: FakeResponse(prs))
+    monkeypatch.setattr(cli, "pr_commit_authors", lambda token, number: authors[number])
+
+    cli.list_my_prs("tok", "vesta", "open", 40)
+    out = capsys.readouterr().out
+    assert "Opened by you (1)" in out
+    assert "#1" in out.split("Opened by you")[1].split("Not yours")[0]
+    assert "Not yours, but you have commits on them (1)" in out
+    assert "#2  opened by bazella (vesta)" in out
+    assert "#3" not in out

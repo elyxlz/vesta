@@ -150,7 +150,7 @@ Read it one-directionally: every hunk the PR added must be present verbatim in y
 
 So answer PR review feedback by commenting on the PR, which needs no workaround. Only a follow-up on a real issue has to become a new issue cross-referencing it (`Related to #N`); GitHub renders the backreference either way.
 
-**The same missing permission also means you cannot revise an issue after you post it.** Its body 403s on `PATCH` and its thread 403s on a comment, so an issue filed through this token is one shot: everything it needs to say, including the attribution footer, has to be in the body at create time. A PR is the opposite, since `PATCH /pulls/:n` succeeds, so a correction or late evidence can be edited into a PR body at any point.
+**The same missing permission also means you cannot revise an issue after you post it.** Its body 403s on `PATCH` and its thread 403s on a comment, so an issue filed through this token is one shot: everything it needs to say, including the attribution footer, has to be in the body at create time. A PR is the opposite, since `PATCH /pulls/:n` succeeds, so a correction or late evidence can be edited into a PR body at any point. Use it: the body is the durable public claim about a change, so a wrong number left standing there outlives every later commit that quietly contradicts it.
 
 **`/search/issues` is filtered by the same permission, so it under-reports issues rather than being wrong about them.** A query whose words appear in an issue can return only the PRs that quote those words, and `is:issue` does not restore the missing item, so a `0` or a PR-only result set through this token is not evidence that the issue does not exist. Reading it as evidence turns a permission boundary into a false claim about GitHub. Check an issue you know the number of with `GET /issues/:n`, which succeeds on a public repo, and treat search through this token as a lower bound.
 
@@ -179,6 +179,33 @@ upstream-pr --token-only >/dev/null && echo "auth ok"
 
 If a token does reach your history, scrub it: `~/agent/skills/dream/scripts/redact_secrets.sh` then `--scrub <event id>`.
 
+## Whose PR is it? (check before you touch one)
+
+**Every agent files through the same GitHub App, so `pull.user.login` is `vesta-upstream[bot]` on
+every PR in this repo and tells you nothing.** The repo is shared by many vesta instances filing
+concurrently, so the newest open PRs are usually a mix of several agents' work, and "it appeared
+while I was awake" is not evidence it is yours. The only field that carries authorship is the
+**commit author**, `<agent-name> (vesta)`, and the FIRST commit's author is who opened it.
+
+```bash
+upstream-pr --mine              # PRs you opened, and separately ones you only pushed commits to
+upstream-pr --mine --state all --limit 60
+```
+
+Run this before a review sweep, before fixing CI on "your" PRs, and before pushing to any branch you
+did not create in this session. Timing is not evidence: a PR that appeared while you were awake is
+as likely to be a sibling's. When an author name does appear in a `git log` or `git show`, it is a
+fact to check, never a template to copy into your own `git commit -c user.name`.
+
+`upstream-pr` refuses to push to a remote branch whose commits are all by a different agent, since
+the push is a **force** push and would discard their work. Pass `--adopt` if taking over a branch is
+genuinely what you mean.
+
+If you do fix a sibling's broken PR, that is welcome, and say so in the body: what you changed, why
+you touched it, and that they should revert freely. Never restate their evidence as yours, and
+never "correct" a measurement with numbers from your own box; their box has different traffic,
+different accounts and different history, so your count is not a check on theirs.
+
 ## upstream-pr reference
 
 ```bash
@@ -187,6 +214,12 @@ upstream-pr --title "fix: ..." --body "..."
 
 # Custom branch and base
 upstream-pr --title "..." --branch my-branch --base master
+
+# Which of these PRs are actually yours
+upstream-pr --mine
+
+# Take over a branch another agent started (force push, so this is deliberate)
+upstream-pr --title "..." --branch their-branch --adopt
 
 # Short-lived GitHub API token (for issues, check-runs, PR status).
 # Always capture it, never run bare: stdout is persisted into the event store.
@@ -198,6 +231,8 @@ TOKEN=$(upstream-pr --token-only)
 Each skill CLI is its own uv project, so run its tests from its own directory: `cd ~/agent/skills/<name>/cli && uv run pytest`. uv builds a local `.venv` there and leaves the engine venv at `~/agent/.venv` alone.
 
 ## Formatting Python before pushing
+
+**Run `./check.sh guards` IN THE WORKTREE, not just ruff.** The `guards` job is ruff PLUS repo conventions ruff knows nothing about, so a ruff-clean file still fails CI: the one that bites most often is `comment block of N lines (max 8); simplify the code instead`, which fires on any run of consecutive `#` lines and is a standing trap when documenting a subtle regex or invariant. The guard is asking for a simplification, so take it: name the parts (`_DIGIT_RUN = ...`, `_SUFFIX = ...`) and give each its own short comment, rather than shortening one wall. `guards` also checks lint escapes, import cycles, shellcheck and the uv.lock. Two steps need tools a container may lack (shellcheck, rsync) and stop with a clear message; everything before them still runs, so it is worth running anyway.
 
 Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && ruff format <path> && ruff check <path>`. Plain `ruff` from that dir is the engine venv's pinned ruff (its bin leads your PATH), never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
 
