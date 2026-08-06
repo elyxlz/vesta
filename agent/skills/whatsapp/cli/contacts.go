@@ -434,6 +434,9 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 ) {
 	resolvedSender = wac.resolveSenderJID(info.Sender, info.SenderAlt)
 
+	// resolvedChat is the peer's number for display, read through the alt address the message
+	// itself carries, which the LID store need not hold. It never decides which rows are the
+	// peer's contact: contactKeys owns that, and unions both key forms rather than picking one.
 	resolvedChat := info.Chat
 	if isLIDServer(info.Chat.Server) {
 		resolvedChat = wac.resolveSenderJID(info.Chat, info.SenderAlt)
@@ -445,11 +448,12 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 	// second time. The chat comes first because in a direct chat it is the peer; a group chat
 	// holds no contact of its own, so it falls through to whoever sent the message.
 	for _, addressed := range []types.JID{info.Chat, info.Sender, info.SenderAlt} {
-		if contactSaved || addressed.IsEmpty() {
+		if addressed.IsEmpty() {
 			continue
 		}
 		if contact, err := wac.lookupManualContact(addressed); err == nil && contact != nil {
 			contactName, contactPhone, contactSaved = contact.Name, contact.PhoneNumber, true
+			break
 		}
 	}
 
