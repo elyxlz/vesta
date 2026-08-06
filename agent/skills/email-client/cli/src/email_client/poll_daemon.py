@@ -59,13 +59,12 @@ INDEX_CHECK_SECS = 10
 FETCH_BATCH_LIMIT = 500
 PENDING_POLL_SECONDS = 1
 
-# Every notification carries the handful of messages that arrived just before it, because a
-# notification delivers ONE email and nothing in it hints that a sibling exists. On 5 Aug 2026 a
-# landlord sent an e-signature request at 15:16 and a plain covering email explaining it at 15:19;
-# the agent acted on the first alone and had to retract four minutes later. Both were already in the
-# inbox. Deliberately NOT a relatedness heuristic: those two shared no sender and no domain (one came
-# from the e-sign provider), so any same-sender rule would have missed them. Showing what else landed
-# recently costs nothing and lets the reader spot the connection a matcher would not.
+# Every notification carries the handful of messages that arrived in the same account just before
+# it, because a notification delivers ONE email and nothing in it hints that a sibling exists: an
+# e-signature request and the covering email explaining it can land minutes apart from different
+# senders on different domains. Deliberately NOT a relatedness heuristic, because such siblings can
+# share no sender and no domain, so any matching rule would miss exactly the pairs that matter.
+# Showing what else landed recently costs nothing and lets the reader spot the connection.
 RECENT_PATH = pathlib.Path(os.environ.get("EMAIL_CLIENT_DIR") or (pathlib.Path.home() / ".email-client")) / "recent-notifications.json"
 RECENT_WINDOW_SECS = 3600
 # How many to show on a notification, and how many to retain on disk.
@@ -93,12 +92,19 @@ def watermark_path(account: str, folder: str) -> pathlib.Path:
     return base / f"high_uid_{_sanitize_folder(folder)}.txt"
 
 
+_RECENT_FIELDS = ("ts", "account", "from", "subject", "uid")
+
+
 def _read_recent() -> list[dict]:
+    """Read back entries this daemon wrote, dropping anything malformed (a corrupt file, a foreign
+    write) at the boundary so the rest of the code can use direct access."""
     try:
         data = json.loads(RECENT_PATH.read_text())
     except (FileNotFoundError, ValueError, OSError):
         return []
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    return [e for e in data if isinstance(e, dict) and all(f in e for f in _RECENT_FIELDS) and isinstance(e["ts"], (int, float))]
 
 
 def _recent_context(now: float, account: str) -> tuple[list[dict], list[dict]]:
@@ -106,16 +112,16 @@ def _recent_context(now: float, account: str) -> tuple[list[dict], list[dict]]:
 
     Kept deliberately simple: time-ordered, same account, no relatedness matching. See RECENT_PATH.
     """
-    kept = [e for e in _read_recent() if isinstance(e, dict) and now - e.get("ts", 0) <= RECENT_WINDOW_SECS]
+    kept = [e for e in _read_recent() if now - e["ts"] <= RECENT_WINDOW_SECS]
     context = [
         {
-            "from": e.get("from", ""),
-            "subject": e.get("subject", ""),
-            "uid": e.get("uid", ""),
-            "minutes_ago": max(0, round((now - e.get("ts", now)) / 60)),
+            "from": e["from"],
+            "subject": e["subject"],
+            "uid": e["uid"],
+            "minutes_ago": max(0, round((now - e["ts"]) / 60)),
         }
         for e in kept
-        if e.get("account") == account
+        if e["account"] == account
     ]
     return kept, list(reversed(context))[:RECENT_SHOW]
 
