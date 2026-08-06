@@ -257,7 +257,7 @@ def test_migration_v2_to_v3_rewrites_legacy_cron(tmp_path: Path):
     assert _read_trigger(data_dir, "interval1") == {"type": "interval", "hours": 1}  # non-cron untouched
     assert _read_trigger(data_dir, "date1") == {"type": "date", "run_date": "2026-01-01T00:00:00+00:00"}
     with closing(db.get_db(data_dir)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 4
+        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db.SCHEMA_VERSION
 
 
 def test_migration_preserves_firing_instant(tmp_path: Path):
@@ -389,3 +389,34 @@ def test_remind_list_next_run_keeps_the_column_for_one_shots(tmp_config: Config)
     listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
 
     assert listed[one_shot["id"]]["next_run"] == "2020-01-01T09:00:00+00:00"
+
+
+def test_remind_list_interval_row_never_reports_a_past_next_run(tmp_config: Config):
+    """An interval row's column also only advances on fire, so downtime strands it in the past while
+    the restored IntervalTrigger is armed and correct. The reported next_run must never be in the
+    past: that is the one answer guaranteed to be wrong."""
+    hourly = commands.remind_set(tmp_config, commands.ReminderSpec(message="ping", recurring="hourly"))
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", ("2020-01-01T09:00:00+00:00", hourly["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+    next_run = datetime.fromisoformat(listed[hourly["id"]]["next_run"])
+    now = datetime.now(UTC)
+
+    assert next_run > now, "a stranded interval row must not report a past next_run"
+    assert next_run <= now + timedelta(hours=1, seconds=5), "must not exceed the interval's upper bound"
+
+
+def test_remind_list_interval_row_keeps_a_live_future_column(tmp_config: Config):
+    """The clamp must only fire on a stale column. A future column is what the restore path wrote
+    and is the better answer, so it survives untouched."""
+    hourly = commands.remind_set(tmp_config, commands.ReminderSpec(message="ping", recurring="hourly"))
+    live = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", (live, hourly["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+
+    assert listed[hourly["id"]]["next_run"] == live

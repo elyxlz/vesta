@@ -2,6 +2,7 @@
 postpone/snooze verbs, the daily digest, and overdue ordering."""
 
 import json
+import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -319,7 +320,7 @@ def test_migration_v4_regenerates_auto_reminders_and_creates_meta(tmp_config: Co
     schedules = {r["schedule_type"] for r in _auto_reminders(tmp_config, task["id"])}
     assert "auto: at due" in schedules
     with closing(db.get_db(tmp_config.data_dir)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 4
+        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db.SCHEMA_VERSION
         assert db.get_meta(conn, "anything") is None
 
 
@@ -334,10 +335,21 @@ def test_retitle_rewrites_armed_reminder_messages(tmp_config: Config):
     task = _add_task_due_in(tmp_config, "Chase the refund (never issued)", timedelta(days=10))
     commands.update_task(tmp_config, task_id=task["id"], title="Refund ALREADY PAID, close this")
 
-    messages = [r["message"] for r in _auto_reminders(tmp_config, task["id"])]
-    assert messages, "the ladder must survive a retitle"
-    assert all("Refund ALREADY PAID" in m for m in messages)
-    assert not any("never issued" in m for m in messages)
+    rows = _auto_reminders(tmp_config, task["id"])
+    assert rows, "the ladder must survive a retitle"
+    assert not any("never issued" in r["message"] for r in rows)
+
+    # Assert the exact text the db.py templates produce, not merely that the new title appears
+    # somewhere: a substring check still passes if the rewrite drifts from what
+    # create_auto_reminders writes, and that drift stays invisible until a reminder fires.
+    for row in rows:
+        schedule = row["schedule_type"]
+        if schedule == "auto: at due":
+            expected = db.DUE_NOW_MESSAGE.format(title="Refund ALREADY PAID, close this", task_id=task["id"])
+        else:
+            label = schedule[len("auto: ") : -len(" before due")]
+            expected = db.LEAD_TIME_MESSAGE.format(label=label, title="Refund ALREADY PAID, close this")
+        assert row["message"] == expected
 
 
 def test_retitle_keeps_the_tail_firing_at_the_same_instants(tmp_config: Config):
@@ -400,3 +412,203 @@ def test_retitling_an_undated_task_is_a_no_op(tmp_config: Config):
     task = commands.add_task(tmp_config, title="no due date")
     commands.update_task(tmp_config, task_id=task["id"], title="still no due date")
     assert _auto_reminders(tmp_config, task["id"]) == []
+
+
+def _armed(config: Config, task_id: str) -> list[dict]:
+    with closing(db.get_db(config.data_dir)) as conn:
+        rows = conn.execute("SELECT * FROM reminders WHERE task_id = ? AND auto_generated = 1 AND completed = 0", (task_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def test_retitle_does_not_disarm_an_overdue_task(tmp_config: Config):
+    """An overdue task must keep its armed ladder through a retitle.
+
+    create_auto_reminders skips any instant already past, so rebuilding the ladder on a task whose
+    due date has gone would turn it into nothing at all. Overdue tasks are exactly the ones a
+    retitle happens to ("chase invoice" -> "chase invoice (they replied)"), so that would strip the
+    reminders from the tasks that need them most."""
+    task = _add_task_due_in(tmp_config, "call the clinic", timedelta(hours=2))
+    before = len(_armed(tmp_config, task["id"]))
+    assert before >= 1
+    _force_due_date(tmp_config, task["id"], datetime.now(UTC) - timedelta(minutes=5))
+
+    commands.update_task(tmp_config, task_id=task["id"], title="call the clinic (they open at 9)")
+
+    after = _armed(tmp_config, task["id"])
+    assert len(after) == before, "an overdue task must keep its armed reminders through a retitle"
+    assert all("they open at 9" in r["message"] for r in after)
+
+
+def test_retitle_preserves_a_snoozed_reminder(tmp_config: Config):
+    """`remind snooze` explicitly supports auto reminders, so a retitle must not undo one.
+
+    A snooze relabels the row `once at ...`, which names no rung, so there is no lead time left to
+    build a body from and the row keeps the one it has. Asserting the exact body is what makes this
+    a real check: a substring assertion on the new title also passes on a body assembled from a
+    label that is not a lead time.
+    """
+    task = _add_task_due_in(tmp_config, "renew the passport (expires soon)", timedelta(days=10))
+    reminder_id = _armed(tmp_config, task["id"])[0]["id"]
+    body_before = next(r["message"] for r in _armed(tmp_config, task["id"]) if r["id"] == reminder_id)
+    commands.remind_snooze(tmp_config, reminder_id=reminder_id, in_days=1)
+    snoozed_to = next(r["scheduled_time"] for r in _armed(tmp_config, task["id"]) if r["id"] == reminder_id)
+
+    commands.update_task(tmp_config, task_id=task["id"], title="renew the passport (expires 12 Sep)")
+
+    armed = _armed(tmp_config, task["id"])
+    row = next((r for r in armed if r["id"] == reminder_id), None)
+    assert row is not None, "the snoozed reminder must survive a retitle"
+    assert row["scheduled_time"] == snoozed_to, "the user's snooze must not be reset"
+    assert row["message"] == body_before
+    assert all("12 Sep" in r["message"] for r in armed if r["id"] != reminder_id), "every rung still labelled must be rewritten"
+
+
+def test_retitle_keeps_reminder_ids_stable(tmp_config: Config):
+    """A churned id 404s a `remind snooze <id>` taken off a notification still on screen."""
+    task = _add_task_due_in(tmp_config, "stable", timedelta(days=180))
+    before = {r["id"] for r in _armed(tmp_config, task["id"])}
+
+    commands.update_task(tmp_config, task_id=task["id"], title="stable renamed")
+
+    assert {r["id"] for r in _armed(tmp_config, task["id"])} == before
+
+
+def test_retitle_keeps_completed_reminders_as_history(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "history", timedelta(days=10))
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET completed = 1 WHERE task_id = ? AND schedule_type = 'auto: 1 week before due'", (task["id"],))
+        conn.commit()
+
+    commands.update_task(tmp_config, task_id=task["id"], title="history renamed")
+
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        done = conn.execute("SELECT count(*) FROM reminders WHERE task_id = ? AND completed = 1", (task["id"],)).fetchone()[0]
+    assert done == 1, "completed reminders are history and must not be swept by a retitle"
+
+
+def test_a_no_op_retitle_changes_nothing(tmp_config: Config):
+    task = _add_task_due_in(tmp_config, "same", timedelta(days=10))
+    before = {(r["id"], r["message"]) for r in _armed(tmp_config, task["id"])}
+
+    commands.update_task(tmp_config, task_id=task["id"], title="same")
+
+    assert {(r["id"], r["message"]) for r in _armed(tmp_config, task["id"])} == before
+
+
+# ---------------------------------------------------------------------------
+# Backburner: the fourth exit from the stale-task digest
+# ---------------------------------------------------------------------------
+
+
+def test_backburner_task_is_not_listed_as_stale(tmp_config: Config):
+    """A task parked on purpose must stop appearing in the digest, while an ordinary undated task
+    of the same age still appears. Without the second half this test would pass on a digest that
+    had simply stopped reporting stale tasks at all."""
+    parked = commands.add_task(tmp_config, title="parked task")
+    ordinary = commands.add_task(tmp_config, title="ordinary undated task")
+    for task in (parked, ordinary):
+        _force_created_at(tmp_config, task["id"], datetime.now(UTC) - timedelta(days=20))
+    commands.update_task(tmp_config, task_id=parked["id"], backburner=True)
+
+    message = commands.build_digest(tmp_config)
+
+    assert message is not None
+    assert ordinary["id"] in message
+    assert parked["id"] not in message
+
+
+def test_backburner_task_still_appears_in_task_list(tmp_config: Config):
+    """Parking defers the nag, never the task. A parked task that vanished from `tasks list` would
+    be a worse bug than the one this feature fixes."""
+    parked = commands.add_task(tmp_config, title="parked task")
+    commands.update_task(tmp_config, task_id=parked["id"], backburner=True)
+
+    listed = commands.list_tasks(tmp_config)
+
+    assert [t["id"] for t in listed] == [parked["id"]]
+    assert listed[0]["backburner"] == 1
+
+
+def test_setting_a_due_date_clears_backburner(tmp_config: Config):
+    """Committing to a date is the opposite state to parking, so the flag must not survive it."""
+    task = commands.add_task(tmp_config, title="parked then committed")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+
+    commands.update_task(tmp_config, task_id=task["id"], due=commands.DueSpec(due_in_days=3))
+
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 0
+
+
+def test_clearing_a_due_date_leaves_backburner_alone(tmp_config: Config):
+    """--clear-due removes a date; it must not silently park the task as a side effect."""
+    task = _add_task_due_in(tmp_config, "dated", timedelta(days=3))
+
+    commands.update_task(tmp_config, task_id=task["id"], due=commands.DueSpec(clear=True))
+
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 0
+
+
+def test_backburner_migration_adds_the_column_to_an_existing_v4_db(tmp_path: Path):
+    """Every fleet task predates the column, so the upgrade decides what they all start as.
+
+    init_db runs on every daemon start, so the second run must be a no-op rather than a duplicate
+    ALTER. Starting from a real v4 database is what makes this a migration test: rerunning init_db
+    on an already-current database never reaches the migration at all.
+    """
+    data_dir = tmp_path / "tasks"
+    data_dir.mkdir(parents=True)
+    with closing(sqlite3.connect(data_dir / "tasks.db")) as legacy:
+        legacy.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        legacy.execute("INSERT INTO schema_version (version) VALUES (4)")
+        legacy.execute(
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT DEFAULT 'pending', "
+            "priority INTEGER DEFAULT 2, due_date TEXT, created_at TEXT, completed_at TEXT)"
+        )
+        legacy.execute("INSERT INTO tasks (id, title, created_at) VALUES ('old1', 'predates the column', '2020-01-01 00:00:00')")
+        legacy.commit()
+
+    db.init_db(data_dir)
+    db.init_db(data_dir)
+
+    config = Config(data_dir=data_dir, log_dir=data_dir / "logs")
+    assert commands.get_task(config, task_id="old1")["backburner"] == 0, "an existing task starts unparked, so the digest keeps nagging"
+    with closing(db.get_db(data_dir)) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db.SCHEMA_VERSION
+
+
+def test_parking_a_dated_task_drops_the_date_and_its_reminders(tmp_config: Config):
+    """Parked AND deadlined is the contradiction the flag exists to remove.
+
+    A parked task that kept its due date would keep its reminder ladder firing while the digest had
+    been told to stop nagging about it, which is louder than not parking it at all.
+    """
+    task = _add_task_due_in(tmp_config, "driven by someone else", timedelta(days=30))
+    assert task["due_date"]
+    assert _auto_reminders(tmp_config, task["id"])
+
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+
+    after = commands.get_task(tmp_config, task_id=task["id"])
+    assert after["backburner"] == 1
+    assert after["due_date"] is None
+    assert _auto_reminders(tmp_config, task["id"]) == []
+
+
+def test_setting_a_date_in_the_same_call_wins_over_parking(tmp_config: Config):
+    """Committing to a date is the opposite of parking, so the date unparks it.
+
+    Passing both in one call is a contradiction, and leaving it parked AND deadlined is the one
+    outcome the flag exists to prevent: the digest goes quiet while the reminder ladder keeps
+    firing on the same task.
+    """
+    task = commands.add_task(tmp_config, title="undecided")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 1
+
+    due = (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True, due=commands.DueSpec(due_datetime=due, timezone="UTC"))
+
+    after = commands.get_task(tmp_config, task_id=task["id"])
+    assert after["due_date"] is not None
+    assert after["backburner"] == 0, "a real due date unparks the task, in the same call or a later one"
+    assert _auto_reminders(tmp_config, task["id"]), "an armed ladder is only coherent on an unparked task"

@@ -121,6 +121,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_update.add_argument("--priority", default=None)
     _add_due_args(p_update)
     p_update.add_argument("--clear-due", action="store_true", help="Remove the task's due date and its auto reminders")
+    p_update.add_argument(
+        "--backburner",
+        dest="backburner",
+        action="store_true",
+        default=None,
+        help="Park a deliberately undated task so the stale digest stops listing it (still pending, still in `tasks list`)",
+    )
+    p_update.add_argument(
+        "--no-backburner", dest="backburner", action="store_false", help="Undo --backburner; the digest will list it again once stale"
+    )
 
     # done
     p_done = sub.add_parser("done", help="Mark a task done")
@@ -394,6 +404,7 @@ def _handle_task(args, config: Config):
                 due_in_days=args.due_in_days,
                 clear=args.clear_due,
             ),
+            backburner=args.backburner,
         )
     elif args.command == "done":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks done <id> or tasks done --id <id>")
