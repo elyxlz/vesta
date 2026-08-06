@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 from zoneinfo import ZoneInfo
 
-from . import auth, backend, capture, folders, graph, notifications, notify, owa_rest, teams
+from . import auth, capture, folders, graph, notifications, notify, owa_rest, teams
 from .config import Config
 from .context import MicrosoftContext
 
@@ -420,9 +420,7 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
     logger = ctx.monitor_logger
     try:
         token = teams.resolve_token(config, account_email)
-    except (teams.TeamsError, backend.GraphUnavailableError) as e:
-        # GraphUnavailableError is not a TeamsError: an account marked device-authorized whose MSAL
-        # Teams token is absent raises it from graph_token, and it means the same thing here.
+    except teams.TeamsError as e:
         logger.info("Teams token unavailable for %s: %s", account_email, e)
         return False
     try:

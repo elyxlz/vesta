@@ -181,12 +181,17 @@ def captured_token(config, account_email: str) -> str:
 
 
 def resolve_token(config, account_email: str) -> str:
-    """Return any usable Teams token (device first, then captured). Used by the monitor."""
+    """Return any usable Teams token (device first, then captured), raising a TeamsError when there
+    is none. The monitor's single token entry point: a device-marked account whose MSAL token is
+    absent surfaces as TeamsNoTokenError here, so callers handle one failure type."""
     marker = _read_marker(account_email, config)
     if marker is None:
         raise TeamsNoTokenError(f"No Teams token for {account_email}. Run: microsoft auth teams-login")
     if _source(marker) == "device":
-        return graph_token(config, account_email)
+        try:
+            return graph_token(config, account_email)
+        except backend.GraphUnavailableError as exc:
+            raise TeamsNoTokenError(str(exc)) from exc
     return captured_token(config, account_email)
 
 
