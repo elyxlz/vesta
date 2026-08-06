@@ -626,3 +626,32 @@ def test_usage_and_unknown_verbs(daemon):
     output = unknown.stdout + unknown.stderr
     assert "usage" in output.lower(), f"an unknown verb answered without usage: {output!r}"
     assert not _is_error_envelope(output), f"an unknown verb answered with the error envelope: {output!r}"
+
+
+def test_every_python_daemon_child_is_launched_unbuffered():
+    """A daemon that re-execs its own CLI must hand the child PYTHONUNBUFFERED.
+
+    CPython block-buffers stdout when it is a file rather than a tty, so a detached daemon writing
+    to `~/agent/logs/<name>.log` can print its startup line and poll for hours while the log stays
+    empty and its mtime stays stale. That is not a cosmetic loss: the log is the only evidence of a
+    daemon's liveness anyone reads, so a stale mtime gets diagnosed as a daemon that died. Observed
+    on a live box, where the finance watcher had been polling for over an hour with its log
+    untouched since the previous day.
+
+    Checked over the source rather than a running process because this file is duplicated per
+    skill, so the failure returns the moment a twelfth copy is added. A runtime check would have to
+    know which daemons print on startup, and a daemon that prints nothing would pass by saying
+    nothing, which is the shape of test that lets this class of bug through.
+    """
+    offenders = []
+    for path in sorted(SKILLS_DIR.rglob("daemon.py")):
+        source = path.read_text()
+        start = source.find("subprocess.Popen([sys.argv[0]")
+        if start == -1:
+            start = source.find("subprocess.Popen(\n")
+            if start == -1 or "[sys.argv[0]" not in source[start : start + 400]:
+                continue  # launches a compiled binary, so the interpreter's buffering is not in play
+        call = source[start : start + 400]
+        if "PYTHONUNBUFFERED" not in call:
+            offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert offenders == [], f"daemon children launched with buffered stdout: {offenders}"
