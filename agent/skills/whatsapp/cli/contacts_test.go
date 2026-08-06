@@ -271,6 +271,37 @@ func TestRemoveContactClosesTheGateUnderEveryKeyForm(t *testing.T) {
 	}
 }
 
+// The inbound notification and the send gate must agree about who is saved. A peer confirmed by
+// chat id keeps passing the gate once whatsmeow learns their number, so a notification reading one
+// key alone would report that same peer as unknown, and following that report saves the person a
+// second time under their other key.
+func TestNotificationNamesAPeerSavedByChatIDAfterTheMappingIsLearned(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid := types.NewJID("99988877766655", types.HiddenUserServer)
+	phone := types.NewJID("15551110000", types.DefaultUserServer)
+
+	if _, err := wac.AddContactByChat("Ana", lid.String()); err != nil {
+		t.Fatalf("failed to save the peer by chat id: %v", err)
+	}
+	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
+		t.Fatalf("failed to record the learned mapping: %v", err)
+	}
+
+	_, senderDisplay, contactName, contactPhone, contactSaved, _ := wac.prepareNotificationInfo(
+		types.MessageSource{Chat: lid, Sender: lid, SenderAlt: phone},
+	)
+
+	if !contactSaved {
+		t.Errorf("a peer the gate treats as confirmed must not be reported as unknown")
+	}
+	if contactName != "Ana" || senderDisplay != "Ana" {
+		t.Errorf("expected the saved name, got contact_name %q and sender %q", contactName, senderDisplay)
+	}
+	if contactPhone != "+"+phone.User {
+		t.Errorf("expected the learned number %q, got %q", "+"+phone.User, contactPhone)
+	}
+}
+
 // A token that is not a chat id at all must be named as one. Reporting a mistyped id as a group
 // is the one answer that stops the caller retrying, since a group genuinely needs no contact.
 func TestAddContactByChatRefusesAMalformedChatID(t *testing.T) {

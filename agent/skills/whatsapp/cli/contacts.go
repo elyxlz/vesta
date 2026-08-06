@@ -422,20 +422,18 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 		resolvedChat = wac.resolveSenderJID(info.Chat, info.SenderAlt)
 	}
 
-	lookupContact := func(jid string) {
-		if contact, err := wac.store.GetManualContact(jid); err == nil && contact != nil {
-			contactName = contact.Name
-			contactPhone = contact.PhoneNumber
-			contactSaved = true
+	// Each address the message carries is expanded through contactKeys, the same resolution the
+	// send gate uses: a peer is saved under whichever key form was known when the user confirmed
+	// them, so reading one key alone reports a confirmed peer as unknown and gets them saved a
+	// second time. The chat comes first because in a direct chat it is the peer; a group chat
+	// holds no contact of its own, so it falls through to whoever sent the message.
+	for _, addressed := range []types.JID{info.Chat, info.Sender, info.SenderAlt} {
+		if contactSaved || addressed.IsEmpty() {
+			continue
 		}
-	}
-
-	lookupContact(resolvedChat.String())
-	if !contactSaved && resolvedSender.Server == types.DefaultUserServer {
-		lookupContact(resolvedSender.String())
-	}
-	if !contactSaved && !info.SenderAlt.IsEmpty() && info.SenderAlt.Server == types.DefaultUserServer {
-		lookupContact(info.SenderAlt.String())
+		if contact, err := wac.lookupManualContact(addressed); err == nil && contact != nil {
+			contactName, contactPhone, contactSaved = contact.Name, contact.PhoneNumber, true
+		}
 	}
 
 	// Fall back to a JID's user part as the phone, but only when that JID is a real
