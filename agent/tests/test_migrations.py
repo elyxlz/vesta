@@ -239,8 +239,12 @@ def test_workspace_repair_recovers_active_skills_without_activating_all_stock(tm
     archived = tmp_path / "archived/agent/skills/from-backup"
     archived.mkdir(parents=True)
     (archived / "SKILL.md").write_text("mine")
+    (archived.parent / "index.json").write_text("{}")
     with tarfile.open(home / "agent-backup.tar.gz", "w:gz") as archive:
-        archive.add(archived.parents[1], arcname="agent")
+        # File members only: a skill must be recovered from its nested path even when the archive
+        # carries no directory entries, and a plain file under agent/skills must not read as one.
+        archive.add(archived / "SKILL.md", arcname="agent/skills/from-backup/SKILL.md")
+        archive.add(archived.parent / "index.json", arcname="agent/skills/index.json")
 
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(home)
