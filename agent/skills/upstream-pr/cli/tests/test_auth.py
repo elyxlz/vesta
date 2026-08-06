@@ -46,6 +46,8 @@ def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, mon
     monkeypatch.setattr(cli, "ensure_shared_history", lambda base, env: None)
     monkeypatch.setattr(cli, "create_pr", lambda *a, **k: None)
     monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
+    # The ownership guard has its own tests below; unstubbed it would dial the real remote.
+    monkeypatch.setattr(cli, "warn_if_branch_belongs_to_another_agent", lambda *a, **k: None)
     monkeypatch.setattr(sys, "argv", ["upstream-pr", "--title", "t"])
 
     pushed = {}
@@ -94,55 +96,159 @@ def _stub_authors(monkeypatch, authors):
 
 # Every agent files through one GitHub App, so a PR's `user.login` is the bot for all of them and
 # the commit author is the only ownership signal. These guard the push path, which force-pushes.
-def test_push_guard_blocks_a_branch_that_is_only_another_agents(monkeypatch):
-    _stub_authors(monkeypatch, {"bazella (vesta)", "dory (vesta)"})
+@pytest.mark.parametrize(
+    "authors",
+    [
+        {"bazella (vesta)", "dory (vesta)"},  # only other agents' commits
+        {"Emilio Pascarelli"},  # a human's branch under the same name
+        {"vestal (vesta)"},  # a similar name is still not you
+    ],
+)
+def test_push_guard_blocks_a_branch_with_no_commit_of_yours(monkeypatch, authors):
+    _stub_authors(monkeypatch, authors)
     with pytest.raises(SystemExit):
         cli.warn_if_branch_belongs_to_another_agent("their-branch", "master", "vesta", {})
 
 
-def test_push_guard_allows_a_branch_you_already_have_commits_on(monkeypatch):
-    _stub_authors(monkeypatch, {"bazella (vesta)", "vesta (vesta)"})
-    cli.warn_if_branch_belongs_to_another_agent("shared-branch", "master", "vesta", {})
+@pytest.mark.parametrize(
+    "authors",
+    [
+        {"bazella (vesta)", "vesta (vesta)"},  # you have commits on it
+        {"vesta (vesta)"},
+        set(),  # exists but adds nothing on base: no work to lose
+        None,  # no such remote branch yet: the normal new-branch flow
+    ],
+)
+def test_push_guard_allows_a_branch_that_is_yours_or_holds_no_work(monkeypatch, authors):
+    _stub_authors(monkeypatch, authors)
+    cli.warn_if_branch_belongs_to_another_agent("some-branch", "master", "vesta", {})
 
 
-def test_push_guard_allows_a_branch_that_does_not_exist_yet(monkeypatch):
-    # The normal flow: a brand new branch has no remote ref, and must not be blocked.
-    _stub_authors(monkeypatch, None)
-    cli.warn_if_branch_belongs_to_another_agent("brand-new-branch", "master", "vesta", {})
-
-
-def test_a_failed_fetch_is_not_read_as_an_empty_branch(monkeypatch):
-    """The bug this replaced: the API version returned early on ANY non-200, so a 403 or a rate
-    limit disabled the guard exactly as a nonexistent branch did. Now the only thing that reads as
-    "no such branch" is a fetch that fails, and a fetch that SUCCEEDS with no new commits is a
-    different, non-blocking answer."""
+def _stub_git(monkeypatch, ls_remote_rc=0, fetch_rc=0, log_out="dory (vesta)\n"):
     calls = []
 
     def fake_run(cmd, env=None):
         calls.append(cmd)
-        rc = 1 if cmd[:2] == ["git", "fetch"] else 0
-        return subprocess.CompletedProcess(cmd, rc, "", "")
+        if cmd[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(cmd, ls_remote_rc, "", "")
+        if cmd[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(cmd, fetch_rc, "", "")
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.CompletedProcess(cmd, 0, log_out, "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(cli, "run", fake_run)
-    assert cli.branch_authors_ahead_of_base("b", "master", {}) is None
-    # It gave up at the first failed fetch rather than reporting an empty author set.
-    assert sum(1 for c in calls if c[:2] == ["git", "fetch"]) == 1
-    assert not any(c[:2] == ["git", "log"] for c in calls)
+    return calls
+
+
+def test_a_missing_remote_branch_is_the_only_silent_pass(monkeypatch):
+    # ls-remote --exit-code exits 2 exactly when the remote says the ref does not exist.
+    calls = _stub_git(monkeypatch, ls_remote_rc=2)
+    assert cli.branch_authors_ahead_of_base("brand-new", "master", {}) is None
+    assert not any(c[:2] == ["git", "fetch"] for c in calls)
+
+
+def test_an_unreachable_remote_refuses_instead_of_passing(monkeypatch):
+    """An auth failure or outage exits nonzero-but-not-2, and must not read as "no such branch":
+    ownership is unverifiable and the push about to happen is a force push."""
+    _stub_git(monkeypatch, ls_remote_rc=128)
+    with pytest.raises(SystemExit):
+        cli.branch_authors_ahead_of_base("b", "master", {})
+
+
+def test_a_failed_fetch_of_an_existing_branch_refuses_and_cleans_up(monkeypatch):
+    calls = _stub_git(monkeypatch, fetch_rc=1)
+    with pytest.raises(SystemExit):
+        cli.branch_authors_ahead_of_base("b", "master", {})
+    assert ["git", "update-ref", "-d", cli.GUARD_BRANCH_REF] in calls
+    assert ["git", "update-ref", "-d", cli.GUARD_BASE_REF] in calls
 
 
 def test_guard_reads_only_the_commits_the_branch_adds(monkeypatch):
     """Master ancestry must not leak in: a branch one commit ahead is judged on that one commit."""
-    logged = {}
+    calls = _stub_git(monkeypatch)
+    assert cli.branch_authors_ahead_of_base("theirs", "master", {}) == {"dory (vesta)"}
+    log_cmd = next(c for c in calls if c[:2] == ["git", "log"])
+    assert log_cmd[-1] == f"{cli.GUARD_BASE_REF}..{cli.GUARD_BRANCH_REF}"
+    assert ["git", "update-ref", "-d", cli.GUARD_BRANCH_REF] in calls
+    assert ["git", "update-ref", "-d", cli.GUARD_BASE_REF] in calls
+
+
+@pytest.fixture
+def remote_with_their_branch(tmp_path):
+    """A real local 'upstream' whose branch `theirs` carries one commit by another agent."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "master")
+    _git(src, "config", "user.email", "a@b.c")
+    _git(src, "config", "user.name", "init")
+    (src / "f").write_text("1")
+    _git(src, "add", "f")
+    _git(src, "commit", "-qm", "base")
+    _git(src, "checkout", "-qb", "theirs")
+    (src / "f").write_text("2")
+    _git(src, "commit", "-qam", "their work", "--author=dory (vesta) <d@vesta.noreply>")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-q")
+    _git(consumer, "remote", "add", "upstream", str(src))
+    return consumer
+
+
+def test_guard_reads_ownership_from_a_real_local_remote(remote_with_their_branch, monkeypatch):
+    monkeypatch.chdir(remote_with_their_branch)
+    env = os.environ | HERMETIC_GIT
+    assert cli.branch_authors_ahead_of_base("theirs", "master", env) == {"dory (vesta)"}
+    assert cli.branch_authors_ahead_of_base("no-such-branch", "master", env) is None
+    leftover = subprocess.run(["git", "for-each-ref", "refs/vesta-guard"], capture_output=True, text=True, env=env, check=True)
+    assert leftover.stdout == ""
+
+
+def _run_main_to_push(repo, monkeypatch, argv, guard_calls):
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(cli, "get_installation_token", lambda: SENTINEL)
+    monkeypatch.setattr(cli, "ensure_shared_history", lambda base, env: None)
+    monkeypatch.setattr(cli, "create_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
+    monkeypatch.setattr(cli, "warn_if_branch_belongs_to_another_agent", lambda *a: guard_calls.append(a))
+    monkeypatch.setattr(sys, "argv", argv)
+    real_run = cli.run
 
     def fake_run(cmd, env=None):
-        if cmd[:2] == ["git", "log"]:
-            logged["range"] = cmd[-1]
-            return subprocess.CompletedProcess(cmd, 0, "dory (vesta)\n", "")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return real_run(cmd, env=env)
 
     monkeypatch.setattr(cli, "run", fake_run)
-    assert cli.branch_authors_ahead_of_base("theirs", "master", {}) == {"dory (vesta)"}
-    assert logged["range"] == f"{cli.GUARD_BASE_REF}..{cli.GUARD_BRANCH_REF}"
+    cli.main()
+
+
+def test_push_runs_the_ownership_guard(repo, monkeypatch):
+    guard_calls = []
+    _run_main_to_push(repo, monkeypatch, ["upstream-pr", "--title", "t"], guard_calls)
+    assert len(guard_calls) == 1
+
+
+def test_adopt_skips_the_ownership_guard(repo, monkeypatch):
+    guard_calls = []
+    _run_main_to_push(repo, monkeypatch, ["upstream-pr", "--title", "t", "--adopt"], guard_calls)
+    assert guard_calls == []
+
+
+def test_pr_commit_authors_reads_the_first_commit_as_the_opener(monkeypatch):
+    _stub_get(monkeypatch, FakeResponse(_commits("dory (vesta)", "vesta (vesta)")))
+    assert cli.pr_commit_authors("tok", 7) == ("dory (vesta)", {"dory (vesta)", "vesta (vesta)"})
+
+
+def test_pr_commit_authors_reports_unknown_on_an_api_error(monkeypatch):
+    _stub_get(monkeypatch, FakeResponse([], status_code=403))
+    assert cli.pr_commit_authors("tok", 7) == (None, set())
+
+
+def test_agent_identity_rejects_a_blank_agent_name(monkeypatch):
+    monkeypatch.setenv("AGENT_NAME", "  ")
+    with pytest.raises(SystemExit):
+        cli.resolve_agent_identity()
 
 
 def test_mine_separates_prs_you_opened_from_prs_you_only_pushed_to(monkeypatch, capsys):
@@ -166,3 +272,44 @@ def test_mine_separates_prs_you_opened_from_prs_you_only_pushed_to(monkeypatch, 
     assert "Not yours, but you have commits on them (1)" in out
     assert "#2  opened by bazella (vesta)" in out
     assert "#3" not in out
+
+
+def test_mine_matches_the_full_author_name_never_a_prefix(monkeypatch, capsys):
+    # Agent "dor" must not claim PRs authored by "dory (vesta)".
+    prs = [{"number": 1, "title": "t", "html_url": "u"}]
+    monkeypatch.setattr(cli.requests, "get", lambda *a, **k: FakeResponse(prs))
+    monkeypatch.setattr(cli, "pr_commit_authors", lambda token, number: ("dory (vesta)", {"dory (vesta)"}))
+
+    cli.list_my_prs("tok", "dor", "open", 40)
+    out = capsys.readouterr().out
+    assert "Opened by you (0)" in out
+    assert "you have commits on them" not in out
+
+
+def test_mine_respects_the_limit_and_surfaces_unreadable_prs(monkeypatch, capsys):
+    prs = [{"number": n, "title": f"t{n}", "html_url": f"u{n}"} for n in (1, 2, 3)]
+    checked = []
+
+    def unreadable_authors(token, number):
+        checked.append(number)
+        return (None, set())
+
+    monkeypatch.setattr(cli.requests, "get", lambda *a, **k: FakeResponse(prs))
+    monkeypatch.setattr(cli, "pr_commit_authors", unreadable_authors)
+
+    cli.list_my_prs("tok", "vesta", "open", 2)
+    out = capsys.readouterr().out
+    assert checked == [1, 2]
+    assert "Could not read commit authors for 2 PR(s)" in out
+
+
+def test_mine_passes_the_requested_state_to_the_api(monkeypatch, capsys):
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen.update(kwargs)
+        return FakeResponse([])
+
+    monkeypatch.setattr(cli.requests, "get", fake_get)
+    cli.list_my_prs("tok", "vesta", "all", 40)
+    assert seen["params"]["state"] == "all"

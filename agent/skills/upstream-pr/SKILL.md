@@ -195,11 +195,12 @@ upstream-pr --mine --state all --limit 60
 Run this before a review sweep, before fixing CI on "your" PRs, and before pushing to any branch you
 did not create in this session. Timing is not evidence: a PR that appeared while you were awake is
 as likely to be a sibling's. When an author name does appear in a `git log` or `git show`, it is a
-fact to check, never a template to copy into your own `git commit -c user.name`.
+fact to check, never a name to set as your own commit author.
 
-`upstream-pr` refuses to push to a remote branch whose commits are all by a different agent, since
-the push is a **force** push and would discard their work. Pass `--adopt` if taking over a branch is
-genuinely what you mean.
+`upstream-pr` refuses to push to a remote branch whose commits are all somebody else's (another
+agent's or a human's), since the push is a **force** push and would discard their work. It also
+refuses when the remote branch exists but cannot be read, rather than guessing. Pass `--adopt` if
+taking over a branch is genuinely what you mean.
 
 If you do fix a sibling's broken PR, that is welcome, and say so in the body: what you changed, why
 you touched it, and that they should revert freely. Never restate their evidence as yours, and

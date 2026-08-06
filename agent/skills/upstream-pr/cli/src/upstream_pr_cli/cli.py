@@ -76,7 +76,7 @@ def git_auth_env(token):
 
 def resolve_agent_identity():
     """Agent name + vesta version for commit authorship and PR attribution."""
-    if "AGENT_NAME" not in os.environ:
+    if "AGENT_NAME" not in os.environ or not os.environ["AGENT_NAME"].strip():
         print("Error: AGENT_NAME is not set in env", file=sys.stderr)
         sys.exit(1)
     agent_name = os.environ["AGENT_NAME"]
@@ -122,9 +122,11 @@ def pr_commit_authors(token, number):
         params={"per_page": 100},
         timeout=30,
     )
-    if resp.status_code != 200 or not resp.json():
+    if resp.status_code != 200:
         return None, set()
     commits = resp.json()
+    if not commits:
+        return None, set()
     return commits[0]["commit"]["author"]["name"], {c["commit"]["author"]["name"] for c in commits}
 
 
@@ -141,17 +143,19 @@ def list_my_prs(token, agent_name, state, limit):
         print(f"Error: {resp.status_code} {resp.text}", file=sys.stderr)
         sys.exit(1)
     candidates = resp.json()[:limit]
-    opened, touched = [], []
+    opened, touched, unreadable = [], [], []
     for pr in candidates:
         originator, authors = pr_commit_authors(token, pr["number"])
         if originator == me:
             opened.append((pr, originator))
         elif me in authors:
             touched.append((pr, originator))
+        elif originator is None:
+            unreadable.append(pr)
 
     print(f"Checked the {len(candidates)} most recent {state} PR(s) as {me}.")
     print(f"\nOpened by you ({len(opened)}):")
-    for pr, _ in opened or []:
+    for pr, _ in opened:
         print(f"  #{pr['number']}  {pr['title'][:72]}\n      {pr['html_url']}")
     if not opened:
         print("  (none: every PR here was opened by a different agent through the same bot account)")
@@ -159,6 +163,10 @@ def list_my_prs(token, agent_name, state, limit):
         print(f"\nNot yours, but you have commits on them ({len(touched)}):")
         for pr, originator in touched:
             print(f"  #{pr['number']}  opened by {originator}: {pr['title'][:56]}\n      {pr['html_url']}")
+    if unreadable:
+        print(f"\nCould not read commit authors for {len(unreadable)} PR(s), so ownership is unknown, not ruled out:")
+        for pr in unreadable:
+            print(f"  #{pr['number']}  {pr['title'][:72]}")
 
 
 GUARD_BRANCH_REF = "refs/vesta-guard/branch"
@@ -166,29 +174,34 @@ GUARD_BASE_REF = "refs/vesta-guard/base"
 
 
 def branch_authors_ahead_of_base(branch, base, env):
-    """Commit-author names the remote branch adds on top of base, or None if there is no such branch.
-
-    Read with git rather than the REST API on purpose. The API version of this returned early on any
-    non-200, so a 403, a rate limit or an auth blip silently disabled the guard in exactly the way a
-    nonexistent branch legitimately does, and the caller could not tell the two apart. A guard whose
-    absence is indistinguishable from a pass is not a guard. git also answers the real question
-    directly: only the commits the branch adds, with no master ancestry to filter out."""
-    if run(["git", "fetch", "--quiet", "upstream", f"+refs/heads/{branch}:{GUARD_BRANCH_REF}"], env=env).returncode != 0:
+    """Commit-author names the remote branch adds on top of base, or None when the remote has no
+    such branch: the one case with nothing to protect, so the one silent pass (a brand-new branch
+    must never be blocked). Ownership is read with git, not the REST API, because a REST non-200
+    (403, rate limit, auth blip) is indistinguishable from a nonexistent branch. `ls-remote
+    --exit-code` separates the two answers: 2 means the remote says the branch does not exist, and
+    any other failure here (unreachable remote, failed fetch or log) exits instead of guessing,
+    because the caller is about to force push and an unverifiable branch must not read as a pass."""
+    probe = run(["git", "ls-remote", "--exit-code", "upstream", f"refs/heads/{branch}"], env=env)
+    if probe.returncode == 2:
         return None
-    if run(["git", "fetch", "--quiet", "upstream", f"+refs/heads/{base}:{GUARD_BASE_REF}"], env=env).returncode != 0:
-        return None
-    log = run(["git", "log", "--format=%an", f"{GUARD_BASE_REF}..{GUARD_BRANCH_REF}"])
+    branch_spec = f"+refs/heads/{branch}:{GUARD_BRANCH_REF}"
+    base_spec = f"+refs/heads/{base}:{GUARD_BASE_REF}"
+    fetched = probe.returncode == 0 and run(["git", "fetch", "--quiet", "upstream", branch_spec, base_spec], env=env).returncode == 0
+    log = run(["git", "log", "--format=%an", f"{GUARD_BASE_REF}..{GUARD_BRANCH_REF}"]) if fetched else None
     run(["git", "update-ref", "-d", GUARD_BRANCH_REF])
     run(["git", "update-ref", "-d", GUARD_BASE_REF])
-    if log.returncode != 0:
-        return None
+    if log is None or log.returncode != 0:
+        print(f"Error: could not read remote branch '{branch}' to check whose work it holds.", file=sys.stderr)
+        print("Refusing to force push blind. Retry, pick a fresh branch name, or pass --adopt.", file=sys.stderr)
+        sys.exit(1)
     return {name.strip() for name in log.stdout.splitlines() if name.strip()}
 
 
 def warn_if_branch_belongs_to_another_agent(branch, base, agent_name, env):
-    """Refuse to hand another agent's branch to --force. A remote branch carrying commits by a
-    different agent and none of your own is somebody else's in-flight work, and the push below is a
-    force push, so adopting it by accident silently discards their commits.
+    """Refuse to hand somebody else's branch to --force. A remote branch carrying commits by anyone
+    else (another agent, or a human whose branch shares the name) and none of your own is someone
+    else's in-flight work, and the push below is a force push, so adopting it by accident silently
+    discards their commits. A branch adding nothing on top of base holds no work to lose.
 
     This catches a name collision, not every overwrite: a branch you have commits on stays yours to
     push, so anything added to it since your last push still goes. Fetch before you force."""
@@ -196,10 +209,9 @@ def warn_if_branch_belongs_to_another_agent(branch, base, agent_name, env):
     if authors is None:
         return
     me = f"{agent_name} (vesta)"
-    others = {name for name in authors if name != me and name.endswith("(vesta)")}
-    if others and me not in authors:
-        print(f"Error: remote branch '{branch}' carries commits by {', '.join(sorted(others))}.", file=sys.stderr)
-        print("That is another agent's in-flight work and this push is a FORCE push.", file=sys.stderr)
+    if authors and me not in authors:
+        print(f"Error: remote branch '{branch}' carries commits by {', '.join(sorted(authors))}.", file=sys.stderr)
+        print("That is someone else's in-flight work and this push is a FORCE push.", file=sys.stderr)
         print("Push to a branch name of your own, or pass --adopt if you mean to take it over.", file=sys.stderr)
         sys.exit(1)
 
