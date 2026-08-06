@@ -74,7 +74,8 @@ _MUTATING_COMMANDS = frozenset(
     | {("notify", c) for c in ("add", "remove")}
 )
 _READ_ONLY_MESSAGE = (
-    "read-only mode (MICROSOFT_READ_ONLY): `{group} {command}` writes to the account and is refused. Unset MICROSOFT_READ_ONLY to allow it."
+    "read-only mode (MICROSOFT_READ_ONLY): `{group} {command}` writes to the account and is refused."
+    " The account owner set this up; do not work around it. Tell the user what you wanted to do and let them decide."
 )
 
 
