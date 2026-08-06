@@ -484,6 +484,7 @@ def test_a_no_op_retitle_changes_nothing(tmp_config: Config):
 
     assert {(r["id"], r["message"]) for r in _armed(tmp_config, task["id"])} == before
 
+
 # ---------------------------------------------------------------------------
 # Backburner: the fourth exit from the stale-task digest
 # ---------------------------------------------------------------------------
@@ -566,7 +567,12 @@ def test_parking_a_dated_task_drops_the_date_and_its_reminders(tmp_config: Confi
 
 
 def test_setting_a_date_in_the_same_call_wins_over_parking(tmp_config: Config):
-    """Committing to a date is the opposite of parking, so the date unparks it."""
+    """Committing to a date is the opposite of parking, so the date unparks it.
+
+    Passing both in one call is a contradiction, and leaving it parked AND deadlined is the one
+    outcome the flag exists to prevent: the digest goes quiet while the reminder ladder keeps
+    firing on the same task.
+    """
     task = commands.add_task(tmp_config, title="undecided")
     commands.update_task(tmp_config, task_id=task["id"], backburner=True)
     assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 1
@@ -576,4 +582,5 @@ def test_setting_a_date_in_the_same_call_wins_over_parking(tmp_config: Config):
 
     after = commands.get_task(tmp_config, task_id=task["id"])
     assert after["due_date"] is not None
-    assert after["backburner"] == 1
+    assert after["backburner"] == 0, "a real due date unparks the task, in the same call or a later one"
+    assert _auto_reminders(tmp_config, task["id"]), "an armed ladder is only coherent on an unparked task"

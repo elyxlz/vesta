@@ -393,18 +393,20 @@ def _retitle_auto_reminder_messages(conn, task_id: str, new_title: str) -> None:
         if message != row["message"]:
             conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, row["id"]))
 
+
 def _backburner_update(backburner: bool | None, new_due_date: str | None) -> int | None:
     """The new value for the `backburner` column, or None to leave it alone.
 
-    Committing to a date is the opposite state to parking something, so setting a real due date
-    clears the flag rather than leaving a task both parked and deadlined. An explicit --backburner in
-    the same call still wins, and the caller drops the due date to keep the two mutually exclusive.
-    Clearing a due date does NOT park the task: that would silence the digest as an invisible side
-    effect of an unrelated command.
+    Committing to a date is the opposite state to parking something, so a real due date clears the
+    flag, whether it arrives alongside --backburner in one call or on its own later. One rule for
+    both keeps parked-and-deadlined unrepresentable. Clearing a due date does NOT park the task:
+    that would silence the digest as an invisible side effect of an unrelated command.
     """
+    if new_due_date:
+        return 0
     if backburner is not None:
         return int(backburner)
-    return 0 if new_due_date else None
+    return None
 
 
 def _clear_due_if_parking(conn, task_id: str, row, new_backburner: int | None, due_date_changed: bool, updates: list[str]):
@@ -412,7 +414,7 @@ def _clear_due_if_parking(conn, task_id: str, row, new_backburner: int | None, d
 
     Otherwise the reminder ladder keeps firing on a task the digest has been told to stop nagging
     about, which is the contradiction the flag exists to remove. A due date set in the same call
-    wins instead, and `_backburner_update` unparks the task.
+    wins instead: `_backburner_update` clears the flag, so `new_backburner` is never 1 here.
     """
     if new_backburner == 1 and not due_date_changed and row["due_date"]:
         updates.append("due_date = NULL")
