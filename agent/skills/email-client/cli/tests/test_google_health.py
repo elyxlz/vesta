@@ -174,9 +174,9 @@ def test_probe_account_bad_token_does_not_notify_or_heal(monkeypatch, tmp_path):
     assert not (gh.NOTIF_DIR).exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
 
 
-def test_run_probe_bad_client_secret_reresolves_but_does_not_notify(monkeypatch):
-    # A stale secret on a still-live client id must keep the recovery path (the
-    # client re-resolve) and lose only the "client was removed upstream" notice.
+def test_run_probe_bad_client_secret_reresolves_before_notifying(monkeypatch):
+    # A stale secret on a still-live client id keeps the recovery path (the client
+    # re-resolve); the alert is only for what survives it.
     _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     called = {"heal": 0}
 
@@ -188,8 +188,6 @@ def test_run_probe_bad_client_secret_reresolves_but_does_not_notify(monkeypatch)
     res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
     assert res["status"] == gh.CLIENT_AUTH_REJECTED
     assert called["heal"] == 1
-    assert "notification" not in res
-    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
 
 
 def test_run_probe_heals_rotated_client_secret_on_same_client_id(monkeypatch):
@@ -204,12 +202,13 @@ def test_run_probe_heals_rotated_client_secret_on_same_client_id(monkeypatch):
     res = gh.run_probe("personal", post=post)
     assert res["status"] == gh.HEALED
     assert res["self_heal"]["healed"] is True
+    assert "notification" not in res
     assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
 
 
-def test_run_probe_auth_rejected_unhealed_still_does_not_notify(monkeypatch):
-    # Upstream had nothing better to give, so the retry fails too. Still no
-    # notification: the client id is alive, it was never removed upstream.
+def test_run_probe_auth_rejected_unhealed_notifies_about_the_secret_not_a_removal(monkeypatch):
+    # Upstream had nothing better to give, so the retry fails too. Gmail is now down with no other
+    # signal, so it alerts, and the wording must point at the secret rather than a removed client.
     _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     monkeypatch.setattr(
         "email_client.thunderbird_client.resolve_google_client",
@@ -218,7 +217,18 @@ def test_run_probe_auth_rejected_unhealed_still_does_not_notify(monkeypatch):
     res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
     assert res["status"] == gh.CLIENT_AUTH_REJECTED
     assert res["self_heal"]["healed"] is False
-    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+    files = list(gh.NOTIF_DIR.glob("*.json"))
+    assert len(files) == 1
+    assert res["notification"] == str(files[0])
+    notif = json.loads(files[0].read_text())
+    assert notif["type"] == "google_client_secret_rejected"
+    assert notif["interrupt"] is True
+    assert notif["account"] == "personal"
+    assert "rejecting the client secret" in notif["message"]
+    assert "removed upstream" not in notif["message"]
+    assert "Google Cloud console" in notif["message"]
+    assert "email-client auth add --account personal --provider gmail --reauth" in notif["message"]
 
 
 def test_self_heal_gives_up_when_nothing_fresh_was_fetched(monkeypatch):
