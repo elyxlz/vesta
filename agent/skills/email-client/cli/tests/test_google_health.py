@@ -7,6 +7,7 @@ network, and the imap account layer is monkeypatched per test.
 """
 
 import json
+import pathlib
 
 import pytest
 from email_client import google_health as gh
@@ -141,6 +142,9 @@ def _post_by_creds(mapping):
 @pytest.fixture(autouse=True)
 def _isolate_notifs(tmp_path, monkeypatch):
     monkeypatch.setattr(gh, "NOTIF_DIR", tmp_path / "notifications")
+    # No custom OAuth client unless a test asks for one, so the default is the shipped client.
+    monkeypatch.delenv("EMAIL_CLIENT_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("EMAIL_CLIENT_OAUTH_CLIENT_SECRET", raising=False)
 
 
 def test_probe_account_skips_non_google(monkeypatch):
@@ -174,9 +178,9 @@ def test_probe_account_bad_token_does_not_notify_or_heal(monkeypatch, tmp_path):
     assert not (gh.NOTIF_DIR).exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
 
 
-def test_run_probe_bad_client_secret_reresolves_but_does_not_notify(monkeypatch):
-    # A stale secret on a still-live client id must keep the recovery path (the
-    # client re-resolve) and lose only the "client was removed upstream" notice.
+def test_run_probe_bad_client_secret_reresolves_before_notifying(monkeypatch):
+    # A stale secret on a still-live client id keeps the recovery path (the client
+    # re-resolve); the alert is only for what survives it.
     _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     called = {"heal": 0}
 
@@ -188,8 +192,6 @@ def test_run_probe_bad_client_secret_reresolves_but_does_not_notify(monkeypatch)
     res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
     assert res["status"] == gh.CLIENT_AUTH_REJECTED
     assert called["heal"] == 1
-    assert "notification" not in res
-    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
 
 
 def test_run_probe_heals_rotated_client_secret_on_same_client_id(monkeypatch):
@@ -204,12 +206,13 @@ def test_run_probe_heals_rotated_client_secret_on_same_client_id(monkeypatch):
     res = gh.run_probe("personal", post=post)
     assert res["status"] == gh.HEALED
     assert res["self_heal"]["healed"] is True
+    assert "notification" not in res
     assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
 
 
-def test_run_probe_auth_rejected_unhealed_still_does_not_notify(monkeypatch):
-    # Upstream had nothing better to give, so the retry fails too. Still no
-    # notification: the client id is alive, it was never removed upstream.
+def test_run_probe_auth_rejected_unhealed_notifies_about_the_secret_not_a_removal(monkeypatch):
+    # Upstream had nothing better to give, so the retry fails too. Gmail is now down with no other
+    # signal, so it alerts, and the wording must point at the secret rather than a removed client.
     _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     monkeypatch.setattr(
         "email_client.thunderbird_client.resolve_google_client",
@@ -218,7 +221,40 @@ def test_run_probe_auth_rejected_unhealed_still_does_not_notify(monkeypatch):
     res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
     assert res["status"] == gh.CLIENT_AUTH_REJECTED
     assert res["self_heal"]["healed"] is False
-    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+    files = list(gh.NOTIF_DIR.glob("*.json"))
+    assert len(files) == 1
+    assert res["notification"] == str(files[0])
+    notif = json.loads(files[0].read_text())
+    assert notif["type"] == "google_client_secret_rejected"
+    assert notif["interrupt"] is True
+    assert notif["account"] == "personal"
+    assert "rejecting the secret of the sign-in client this skill ships" in notif["message"]
+    assert "removed upstream" not in notif["message"]
+    # The shipped client lives in Mozilla's Cloud project and its secret is hardcoded, so neither a
+    # console visit nor a re-auth can change it: naming either would send the user after nothing.
+    assert "Nothing you can change on your side fixes this" in notif["message"]
+    assert "Google Cloud" not in notif["message"]
+    assert "--reauth" not in notif["message"]
+
+
+def test_run_probe_auth_rejected_on_a_custom_client_names_the_fix_the_user_owns(monkeypatch):
+    # With EMAIL_CLIENT_OAUTH_CLIENT_* in play the client is the user's own, so the secret sits in a
+    # Google Cloud project they control and correcting it plus re-authing genuinely fixes Gmail.
+    monkeypatch.setenv("EMAIL_CLIENT_OAUTH_CLIENT_SECRET", "mine")
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    monkeypatch.setattr(
+        "email_client.thunderbird_client.resolve_google_client",
+        lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "sek", "source": "fetched"},
+    )
+    res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
+    assert res["status"] == gh.CLIENT_AUTH_REJECTED
+
+    notif = json.loads(pathlib.Path(res["notification"]).read_text())
+    assert notif["type"] == "google_client_secret_rejected"
+    assert "EMAIL_CLIENT_OAUTH_CLIENT_SECRET" in notif["message"]
+    assert "your Google Cloud project" in notif["message"]
+    assert "email-client auth add --account personal --provider gmail --reauth" in notif["message"]
 
 
 def test_self_heal_gives_up_when_nothing_fresh_was_fetched(monkeypatch):

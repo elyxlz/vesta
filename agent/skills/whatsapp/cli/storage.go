@@ -528,16 +528,8 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 		return Contact{}, err
 	}
 	jid := fmt.Sprintf("%s@%s", normalizedDigits, types.DefaultUserServer)
-	_, err = ms.db.Exec(`
-		INSERT INTO contacts (jid, phone_number, name, added_at, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT(jid) DO UPDATE SET
-			name = excluded.name,
-			phone_number = excluded.phone_number,
-			updated_at = CURRENT_TIMESTAMP
-	`, jid, displayNumber, trimmedName)
-	if err != nil {
-		return Contact{}, fmt.Errorf("failed to save contact: %v", err)
+	if err := ms.upsertManualContact(jid, displayNumber, trimmedName); err != nil {
+		return Contact{}, err
 	}
 
 	return Contact{
@@ -546,6 +538,39 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 		PhoneNumber: displayNumber,
 		IsManual:    true,
 	}, nil
+}
+
+// SaveManualContactByChatJID saves a user-confirmed contact under a chat's own JID, for a peer
+// WhatsApp addresses only by a LID: no phone number exists to key them under, and this is the key
+// the send gate looks them up by. Callers pass the canonical chat JID.
+func (ms *MessageStore) SaveManualContactByChatJID(name, chatJID string) (Contact, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return Contact{}, fmt.Errorf("contact name cannot be empty")
+	}
+	if strings.TrimSpace(chatJID) == "" {
+		return Contact{}, fmt.Errorf("chat id cannot be empty")
+	}
+	if err := ms.upsertManualContact(chatJID, "", trimmedName); err != nil {
+		return Contact{}, err
+	}
+
+	return Contact{JID: chatJID, Name: trimmedName, IsManual: true}, nil
+}
+
+func (ms *MessageStore) upsertManualContact(jid, phoneNumber, name string) error {
+	_, err := ms.db.Exec(`
+		INSERT INTO contacts (jid, phone_number, name, added_at, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(jid) DO UPDATE SET
+			name = excluded.name,
+			phone_number = excluded.phone_number,
+			updated_at = CURRENT_TIMESTAMP
+	`, jid, phoneNumber, name)
+	if err != nil {
+		return fmt.Errorf("failed to save contact: %v", err)
+	}
+	return nil
 }
 
 // getManualContact loads a manual contact by a single equality column (jid or

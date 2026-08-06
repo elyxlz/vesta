@@ -23,9 +23,9 @@ already-STORED refresh token and classifies the error. The key distinction is:
 
 Both client-side faults trigger self-heal: we re-resolve Thunderbird's current
 client from comm-central (via thunderbird_client) and retry the refresh once with
-the fresh credentials. Only a genuinely dead client also writes a clear,
-plain-English notification if that retry fails, because only then has the client
-actually been removed upstream.
+the fresh credentials. Either fault that survives that retry writes a clear,
+plain-English notification, worded for the fault it actually is: a dead client was
+removed upstream, a rejected secret was not, and each points at a different fix.
 
 This is strictly Google-specific and gated to Gmail accounts. It never sends mail
 and never touches the user's mailbox. EMAIL_DRAFT_ONLY is irrelevant here.
@@ -34,6 +34,7 @@ and never touches the user's mailbox. EMAIL_DRAFT_ONLY is irrelevant here.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import time
 import urllib.error
@@ -244,37 +245,85 @@ def attempt_self_heal(account: str, failed_result: dict, *, post=None, allow_fet
 # -- notification ---------------------------------------------------
 
 
-def write_dead_client_notification(account: str, result: dict) -> pathlib.Path:
-    """Write a clear, human-readable dead-client alert (interrupt=true).
+# The notification type and wording each client fault gets, keyed by the probe status that
+# produced it, so a fault with no entry here raises rather than borrowing the other one's words.
+_FAULT_NOTICE = {
+    DEAD_CLIENT: (
+        "google_client_dead",
+        (
+            "Gmail stopped working: the shared Google sign-in client was removed upstream and needs "
+            "replacing. Automatic recovery via Thunderbird's latest published client did not succeed, so "
+            "Gmail send/receive is down for account '{account}' until a new verified public client is put "
+            "in place. This is not a problem with your account or password."
+        ),
+    ),
+    CLIENT_AUTH_REJECTED: (
+        "google_client_secret_rejected",
+        (
+            "Gmail stopped working: Google is rejecting the secret of the sign-in client this skill "
+            "ships. The client itself is still registered and was not withdrawn, and your account and "
+            "password are fine, but the secret that ships with the skill no longer matches it, and "
+            "re-resolving it from Thunderbird's published client did not produce a working one. Gmail "
+            "send/receive is down for account '{account}'. Nothing you can change on your side fixes "
+            "this: the secret belongs to the shared public client, not to your account, so a re-auth "
+            "would replay the same rejected secret. It takes a newly published client from upstream, so "
+            "report it and use another way to reach this mailbox until then."
+        ),
+    ),
+}
 
-    Reserved for DEAD_CLIENT: it states the client was removed upstream, which is
-    false (and alarming) for a client that is alive but holding a stale secret.
+# The rejected-secret wording when this agent runs its OWN Google OAuth client through the
+# EMAIL_CLIENT_OAUTH_CLIENT_ID / EMAIL_CLIENT_OAUTH_CLIENT_SECRET overrides: that client lives in a
+# Google Cloud project the user controls, so unlike the shipped client its secret is theirs to fix.
+_CUSTOM_CLIENT_SECRET_REJECTED = (
+    "Gmail stopped working: Google is rejecting the client secret this agent is configured with. The "
+    "client itself is still registered and was not withdrawn, and your account and password are fine, "
+    "but the secret paired with it is wrong. That client comes from EMAIL_CLIENT_OAUTH_CLIENT_ID / "
+    "EMAIL_CLIENT_OAUTH_CLIENT_SECRET, so it is yours: check the client's secret in your Google Cloud "
+    "project, set the corrected value in EMAIL_CLIENT_OAUTH_CLIENT_SECRET, then re-run the auth setup "
+    "for this account with 'email-client auth add --account {account} --provider gmail --reauth'. Gmail "
+    "send/receive is down for account '{account}' until then."
+)
+
+# The two env overrides that put a user-owned OAuth client in play (providers.apply_env_overrides).
+_CUSTOM_CLIENT_ENV_VARS = ("EMAIL_CLIENT_OAUTH_CLIENT_ID", "EMAIL_CLIENT_OAUTH_CLIENT_SECRET")
+
+
+def _custom_client_configured(env: dict | None = None) -> bool:
+    """True when an OAuth client of the user's own is overriding the shipped one."""
+    env = env if env is not None else os.environ
+    return any(env[name].strip() for name in _CUSTOM_CLIENT_ENV_VARS if name in env)
+
+
+# Fields copied from the probe result onto the notification, when the probe recorded them.
+_DETAIL_KEYS = ("http_status", "error", "error_description", "client_id", "self_heal")
+
+
+def write_client_fault_notification(account: str, result: dict) -> pathlib.Path:
+    """Write a clear, human-readable alert for an unhealed client fault (interrupt=true).
+
+    One writer for both faults, so they share a shape and a cadence; only the wording and the type
+    differ, because a dead client and a rejected secret send the user after different fixes.
+    A rejected secret has two of them, since only a user-owned client is one the user can correct.
+    Nothing dedupes by marker: the daily probe is the only caller, so a standing fault raises at
+    most one alert a day.
     """
+    notif_type, template = _FAULT_NOTICE[result["status"]]
+    if result["status"] == CLIENT_AUTH_REJECTED and _custom_client_configured():
+        template = _CUSTOM_CLIENT_SECRET_REJECTED
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
     notif = {
         "source": "email-client",
-        "type": "google_client_dead",
+        "type": notif_type,
         # This is not routine mail — the whole Gmail integration is down and
-        # needs a human to swap in a new verified client, so it interrupts.
+        # needs a human before it can work again, so it interrupts.
         "interrupt": True,
         "account": account,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
-        "message": (
-            "Gmail stopped working: the shared Google sign-in client was removed "
-            "upstream and needs replacing. Automatic recovery via Thunderbird's "
-            "latest published client did not succeed, so Gmail send/receive is "
-            f"down for account '{account}' until a new verified public client is "
-            "put in place. This is not a problem with your account or password."
-        ),
-        "detail": {
-            "oauth_error": result.get("error"),
-            "oauth_error_description": result.get("error_description"),
-            "http_status": result.get("http_status"),
-            "dead_client_id": result.get("client_id"),
-            "self_heal": result.get("self_heal"),
-        },
+        "message": template.format(account=account),
+        "detail": {key: result[key] for key in _DETAIL_KEYS if key in result},
     }
-    fname = f"email-client-google_client_dead-{account}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+    fname = f"email-client-{notif_type}-{account}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
     final = NOTIF_DIR / fname
     tmp = NOTIF_DIR / f"{fname}.tmp"
     tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
@@ -288,10 +337,9 @@ def write_dead_client_notification(account: str, result: dict) -> pathlib.Path:
 def run_probe(account: str, *, post=None, notify: bool = True, allow_fetch: bool = True) -> dict:
     """Probe one account; on a client fault, self-heal, then notify if unhealed.
 
-    A stale client secret self-heals exactly like a dead client (both are fixed by
-    re-resolving the shipped client), but only a dead client gets the notification:
-    telling the user their OAuth client was removed upstream would be wrong when
-    the client id is still live.
+    A stale client secret self-heals exactly like a dead client, since both are fixed by
+    re-resolving the shipped client. A fault that survives the retry has stopped Gmail for that
+    account with no other signal, so both notify; the writer words each for the fault it is.
     """
     result = probe_account(account, post=post)
     if result["status"] not in CLIENT_FAULT_STATUSES:
@@ -303,8 +351,8 @@ def run_probe(account: str, *, post=None, notify: bool = True, allow_fetch: bool
         result["status"] = HEALED
         return result
 
-    if notify and result["status"] == DEAD_CLIENT:
-        path = write_dead_client_notification(account, result)
+    if notify:
+        path = write_client_fault_notification(account, result)
         result["notification"] = str(path)
     return result
 

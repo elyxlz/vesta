@@ -563,17 +563,58 @@ def download_attachments(client: httpx.Client, account_email: str, config, *, em
 
 _FOLDER_SELECT = "id,displayName,parentFolderId,totalItemCount,unreadItemCount"
 
+# What an OWA folder id is made of, and the length below which a token is read as a display name.
+# Real ids run past a hundred characters, so the floor sits well clear of any folder a user names.
+_FOLDER_ID_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=+/")
+_FOLDER_ID_MIN_LEN = 64
+
+
+def _values(resp: dict) -> list[dict]:
+    return resp["value"] if "value" in resp else []
+
+
+def _folder_id_by_name(candidates: list[dict], key: str) -> str | None:
+    for candidate in candidates:
+        name = candidate["displayName"] if "displayName" in candidate else ""
+        if name and name.casefold() == key:
+            return candidate["id"]
+    return None
+
+
+def _is_folder_id(folder: str) -> bool:
+    """True for a token that is already an OWA folder id rather than a name to look up.
+
+    A folder id is a long opaque base64 string (``AAMkAG...AAA=``); a display name is short and
+    written for a human. Nothing that long and that shape is a name any listing would match, so
+    treating it as an id keeps a caller passing an id off the network entirely.
+    """
+    return len(folder) >= _FOLDER_ID_MIN_LEN and not (set(folder) - _FOLDER_ID_CHARS)
+
 
 def resolve_folder_id(client: httpx.Client, account_email: str, config, *, folder: str) -> str:
-    """Map a well-known key, a display name, or a raw folder id to an OWA folder path segment."""
+    """Map a well-known key, a display name, or a raw folder id to an OWA folder path segment.
+
+    A well-known key and a raw folder id both cost no request. A display name is matched against
+    the top-level listing first; only on a miss does it descend one level into each top-level
+    folder's children, which is where a nested folder such as Inbox/Screened lives and is the same
+    depth ``list_folders`` reports, so every folder the CLI can list is a folder it can address.
+    """
     key = folder.casefold()
     if key in _FOLDER_MAP:
         return _FOLDER_MAP[key]
+    if _is_folder_id(folder):
+        return folder
     token = load_token(account_email, config)
-    resp = _get(client, token, "/me/mailfolders", {"$select": "id,displayName", "$top": "100"})
-    for candidate in resp.get("value", []):
-        if (candidate.get("displayName") or "").casefold() == key:
-            return candidate["id"]
+    params = {"$select": "id,displayName", "$top": "100"}
+    top = _values(_get(client, token, "/me/mailfolders", params))
+    match = _folder_id_by_name(top, key)
+    if match is not None:
+        return match
+    for parent in top:
+        kids = _values(_get(client, token, f"/me/mailfolders/{parent['id']}/childfolders", params))
+        match = _folder_id_by_name(kids, key)
+        if match is not None:
+            return match
     return folder
 
 
@@ -584,7 +625,7 @@ def list_folders(client: httpx.Client, account_email: str, config) -> list[dict]
     for folder in top:
         out.append(folder)
         kids = _get(client, token, f"/me/mailfolders/{folder['id']}/childfolders", {"$select": _FOLDER_SELECT, "$top": "100"})
-        out.extend(kids.get("value", []))
+        out.extend(_values(kids))
     return out
 
 

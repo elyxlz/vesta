@@ -392,13 +392,14 @@ def _run_scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
 
 def _run_scrub_literal(conn: sqlite3.Connection, rest: list[str]) -> int:
     if len(rest) != 1 or not rest[0]:
-        print("usage: redact_secrets.sh --scrub-literal '<exact value>'")
+        print("usage: redact_secrets.sh --scrub-literal '<exact value>'", file=sys.stderr)
         return 1
     secret = rest[0]
     if len(secret) < MIN_LITERAL_LEN:
         print(
             f"Refusing to scrub a literal shorter than {MIN_LITERAL_LEN} chars: the rewrite is "
-            "DB-wide, and a short value would splice the placeholder through unrelated text."
+            "DB-wide, and a short value would splice the placeholder through unrelated text.",
+            file=sys.stderr,
         )
         return 1
     scrubbed, remaining = scrub_literal(conn, secret)

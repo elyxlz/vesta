@@ -93,3 +93,119 @@ func TestResolveRecipientRejectsSavedGroupIDContact(t *testing.T) {
 		t.Errorf("a previously saved group-ID contact must not resolve to a user JID, got %v", err)
 	}
 }
+
+// A peer addressed by their LID passes the same saved-contact gate as the same peer addressed by
+// their phone JID. Both forms are valid send targets, so gating only the phone form would let an
+// outbound reach a person the user never confirmed, which is the ban risk the gate exists for.
+func TestRequireManualContactGatesALIDLikeThePhoneJID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid, err := types.ParseJID(outgoingLIDJID)
+	if err != nil {
+		t.Fatalf("failed to parse lid: %v", err)
+	}
+	phone, err := types.ParseJID(outgoingPhoneJID)
+	if err != nil {
+		t.Fatalf("failed to parse phone jid: %v", err)
+	}
+	// The phone the harness maps the LID to: the one number both forms must be gated by.
+	peerPhone := "+" + phone.User
+
+	for _, jid := range []types.JID{lid, phone} {
+		err := wac.requireManualContact(jid)
+		if err == nil || !strings.Contains(err.Error(), "No saved contact found for "+peerPhone) {
+			t.Errorf("unsaved peer %s must be refused naming %s, got %v", jid, peerPhone, err)
+		}
+	}
+
+	if _, err := wac.store.SaveManualContact("Ana", peerPhone); err != nil {
+		t.Fatalf("failed to save contact: %v", err)
+	}
+
+	for _, jid := range []types.JID{lid, phone} {
+		if err := wac.requireManualContact(jid); err != nil {
+			t.Errorf("saved peer %s must pass the gate, got %v", jid, err)
+		}
+	}
+}
+
+// A LID with no phone mapping resolves to nobody, so it cannot have been confirmed and is refused.
+// Its user part is an internal id, never a phone, so the refusal must not render it as one.
+func TestRequireManualContactRefusesAnUnmappedLID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	unmapped := types.NewJID("99988877766655", types.HiddenUserServer)
+
+	err := wac.requireManualContact(unmapped)
+	if err == nil || !strings.Contains(err.Error(), "No saved contact found") {
+		t.Fatalf("an unmapped LID must be refused, got %v", err)
+	}
+	if strings.Contains(err.Error(), "+99988877766655") {
+		t.Errorf("refusal must not render a LID as a phone number, got %v", err)
+	}
+}
+
+// The refusal for an unmapped LID must name a remedy that works: a peer with no phone number
+// cannot be saved by number, so the gate would otherwise refuse that chat forever and every reply
+// to it, since a reply targets the raw chat JID. This follows the printed command literally.
+func TestUnmappedLIDPassesTheGateAfterTheRefusalsOwnCommand(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	unmapped := types.NewJID("99988877766655", types.HiddenUserServer)
+
+	err := wac.requireManualContact(unmapped)
+	wanted := "run add-contact --name <name> --chat " + unmapped.String()
+	if err == nil || !strings.Contains(err.Error(), wanted) {
+		t.Fatalf("refusal must name %q, got %v", wanted, err)
+	}
+
+	if _, err := cmdAddContact([]string{"--name", "Ana", "--chat", unmapped.String()}, wac); err != nil {
+		t.Fatalf("the command the refusal names must work, got %v", err)
+	}
+
+	if err := wac.requireManualContact(unmapped); err != nil {
+		t.Errorf("a peer confirmed by chat id must pass the gate, got %v", err)
+	}
+}
+
+// Saving by chat id is confirmation of one identity, not a second one: a LID that does map to a
+// phone saves under the phone JID, so the peer stays one contact addressable either way.
+func TestAddContactByChatSavesAMappedLIDUnderItsPhoneJID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+
+	contact, err := wac.AddContactByChat("Ana", outgoingLIDJID)
+	if err != nil {
+		t.Fatalf("failed to save contact by chat id: %v", err)
+	}
+	if contact.JID != outgoingPhoneJID {
+		t.Errorf("expected the contact keyed by %q, got %q", outgoingPhoneJID, contact.JID)
+	}
+
+	for _, raw := range []string{outgoingLIDJID, outgoingPhoneJID} {
+		jid, err := types.ParseJID(raw)
+		if err != nil {
+			t.Fatalf("failed to parse %q: %v", raw, err)
+		}
+		if err := wac.requireManualContact(jid); err != nil {
+			t.Errorf("peer addressed as %s must pass the gate, got %v", raw, err)
+		}
+	}
+}
+
+// The gate still refuses an unmapped LID nobody confirmed, and a group id is not a person to save.
+func TestAddContactByChatRefusesAGroup(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+
+	if _, err := wac.AddContactByChat("Team", types.NewJID(groupIDDigits, types.GroupServer).String()); err == nil {
+		t.Error("a group must not be saveable as a contact")
+	}
+	if err := wac.requireManualContact(types.NewJID("12312312312312", types.HiddenUserServer)); err == nil {
+		t.Error("an unconfirmed LID must stay refused")
+	}
+}
+
+// Groups carry no saved-contact requirement; only people do.
+func TestRequireManualContactLeavesGroupsUngated(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+
+	if err := wac.requireManualContact(types.NewJID(groupIDDigits, types.GroupServer)); err != nil {
+		t.Errorf("a group must not require a saved contact, got %v", err)
+	}
+}

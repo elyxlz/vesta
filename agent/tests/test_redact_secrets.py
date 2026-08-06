@@ -703,7 +703,9 @@ def test_main_scrub_literal_rejects_a_missing_value(tmp_path, event_bus, monkeyp
     monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal"])
 
     assert redact.main() == 1
-    assert "usage:" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "usage:" in captured.err
+    assert captured.out == ""
 
 
 def test_main_scrub_literal_refuses_a_short_literal(tmp_path, event_bus, monkeypatch, capsys):
@@ -713,7 +715,9 @@ def test_main_scrub_literal_refuses_a_short_literal(tmp_path, event_bus, monkeyp
     monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal", "12345"])
 
     assert redact.main() == 1
-    assert "Refusing" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "Refusing" in captured.err
+    assert captured.out == ""
 
 
 def test_main_scrub_explains_a_zero_event_result(tmp_path, event_bus, db_conn, monkeypatch, capsys):

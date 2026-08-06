@@ -23,12 +23,16 @@ resolve_model() {
 }
 WHISPER_MODEL="${WHISPER_MODEL:-$(resolve_model)}"
 
+# Auto-detect per file unless WHISPER_LANGUAGE pins one whisper.cpp language code;
+# --language overrides either. Same variable the whatsapp CLI reads.
+LANGUAGE="${WHISPER_LANGUAGE:-auto}"
+
 usage() {
     echo "Usage: whisper_transcribe.sh <audio-file> [options]"
     echo ""
     echo "Options:"
     echo "  --model <path>     Model file (default: $WHISPER_MODEL)"
-    echo "  --language <lang>  Language code, e.g. en, es, fr (default: auto)"
+    echo "  --language <lang>  Language code, e.g. en, es, fr (default: $LANGUAGE)"
     echo "  --translate        Translate to English"
     echo "  --srt              Output SRT subtitles instead of plain text"
     echo "  --json             Output JSON with timestamps"
@@ -48,7 +52,6 @@ if [ ! -f "$INPUT_FILE" ]; then
     exit 1
 fi
 
-LANGUAGE="auto"
 TRANSLATE=""
 OUTPUT_FORMAT=""
 THREADS="4"
