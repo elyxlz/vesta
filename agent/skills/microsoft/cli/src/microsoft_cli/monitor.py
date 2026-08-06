@@ -84,10 +84,10 @@ def _poll_unit(
     try:
         read_through = poll(last_dt, catching_up)
     except Exception:
-        # One unit must never take the cycle down with it. Before this, a single account raising
-        # (a missing Teams token, an expired capture, a network blip) escaped to the loop-level
-        # handler, so `state["last_cycle"]` and EVERY unit watermark went unwritten: every account
-        # then re-read its whole window next cycle and re-notified the same messages forever.
+        # One unit must never take the cycle down with it. A single account raising (a missing
+        # Teams token, an expired capture, a network blip) would otherwise escape to the loop-level
+        # handler, leaving `state["last_cycle"]` and every unit watermark unwritten: each account
+        # then re-reads its whole window next cycle and re-notifies the same messages forever.
         # Treated as "read nothing", which is what read_through=None already means.
         ctx.monitor_logger.exception("Polling %s failed; leaving its watermark where it was", unit)
         read_through = None
@@ -422,7 +422,7 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
         token = teams.resolve_token(config, account_email)
     except (teams.TeamsError, backend.GraphUnavailableError) as e:
         # GraphUnavailableError is not a TeamsError: an account marked device-authorized whose MSAL
-        # Teams token is absent raises it from graph_token, and it used to escape this handler.
+        # Teams token is absent raises it from graph_token, and it means the same thing here.
         logger.info("Teams token unavailable for %s: %s", account_email, e)
         return False
     try:
