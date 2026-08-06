@@ -462,3 +462,36 @@ def test_backburner_migration_is_idempotent(tmp_config: Config):
 
     task = commands.add_task(tmp_config, title="survives remigration")
     assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 0
+
+
+def test_parking_a_dated_task_drops_the_date_and_its_reminders(tmp_config: Config):
+    """Parked AND deadlined is the contradiction the flag exists to remove.
+
+    Caught in review of the original change: --backburner on a dated task left the due date in
+    place, so the reminder ladder kept firing on a task the digest had been told to stop nagging
+    about.
+    """
+    task = _add_task_due_in(tmp_config, "driven by someone else", timedelta(days=30))
+    assert task["due_date"]
+    assert _auto_reminders(tmp_config, task["id"])
+
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+
+    after = commands.get_task(tmp_config, task_id=task["id"])
+    assert after["backburner"] == 1
+    assert after["due_date"] is None
+    assert _auto_reminders(tmp_config, task["id"]) == []
+
+
+def test_setting_a_date_in_the_same_call_wins_over_parking(tmp_config: Config):
+    """Committing to a date is the opposite of parking, so the date unparks it."""
+    task = commands.add_task(tmp_config, title="undecided")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True)
+    assert commands.get_task(tmp_config, task_id=task["id"])["backburner"] == 1
+
+    due = (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+    commands.update_task(tmp_config, task_id=task["id"], backburner=True, due=commands.DueSpec(due_datetime=due, timezone="UTC"))
+
+    after = commands.get_task(tmp_config, task_id=task["id"])
+    assert after["due_date"] is not None
+    assert after["backburner"] == 1

@@ -292,11 +292,9 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection):
 def _migrate_v4_to_v5(conn: sqlite3.Connection):
     """v4 -> v5: add the `backburner` flag.
 
-    A task deliberately kept without a due date (someone else drives it, or it is a genuine
-    someday-maybe) was re-listed by the stale-task digest every single day forever, and the digest's
-    three exits are all wrong for it: inventing a deadline, doing it now, or dropping it. The flag is
-    the missing fourth exit. It defers the nag, never the task: the task stays pending and stays
-    visible in `tasks list`.
+    Set on a task that is deliberately undated, because someone else drives it or it is a genuine
+    someday-maybe. It defers the nag, never the task: a parked task stays pending, stays visible in
+    `tasks list` marked [parked], and only stops appearing in the stale-task digest.
     """
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
     if "backburner" not in cols:
@@ -366,7 +364,8 @@ def init_db(data_dir: Path):
 
         if version < 5:
             _migrate_v4_to_v5(conn)
-            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+            conn.execute("UPDATE schema_version SET version = 5")
+            version = 5
 
         conn.commit()
 

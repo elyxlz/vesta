@@ -377,12 +377,25 @@ def _backburner_update(backburner: bool | None, new_due_date: str | None) -> int
 
     Committing to a date is the opposite state to parking something, so setting a real due date
     clears the flag rather than leaving a task both parked and deadlined. An explicit --backburner in
-    the same call still wins. Clearing a due date does NOT park the task: that would silence the
-    digest as an invisible side effect of an unrelated command.
+    the same call still wins, and the caller drops the due date to keep the two mutually exclusive.
+    Clearing a due date does NOT park the task: that would silence the digest as an invisible side
+    effect of an unrelated command.
     """
     if backburner is not None:
         return int(backburner)
     return 0 if new_due_date else None
+
+
+def _clear_due_if_parking(conn, task_id: str, row, new_backburner: int | None, due_date_changed: bool, updates: list[str]):
+    """Parking a dated task drops the date, so parked and deadlined cannot coexist.
+
+    Otherwise the reminder ladder keeps firing on a task the digest has been told to stop nagging
+    about, which is the contradiction the flag exists to remove. A due date set in the same call
+    wins instead, and `_backburner_update` unparks the task.
+    """
+    if new_backburner == 1 and not due_date_changed and row["due_date"]:
+        updates.append("due_date = NULL")
+        db.delete_auto_reminders(conn, task_id)
 
 
 def update_task(
@@ -429,6 +442,7 @@ def update_task(
                         db.create_auto_reminders(conn, task_id, result["title"], old_due)
 
         new_backburner = _backburner_update(backburner, new_due_date if due_date_changed else None)
+        _clear_due_if_parking(conn, task_id, result, new_backburner, due_date_changed, updates)
         for field, value in [("title", title), ("priority", priority), ("backburner", new_backburner)]:
             if value is not None:
                 updates.append(f"{field} = ?")
@@ -553,7 +567,9 @@ _OVERDUE_HEADER = (
 )
 _STALE_HEADER = (
     "Stale tasks, pending 2+ weeks with no due date. Give each a deadline (`tasks postpone <id> --in-days N`), "
-    "do it now, or drop it with the user's knowledge."
+    "do it now, or drop it with the user's knowledge. If it is undated on purpose, because someone else drives it "
+    "or it is a genuine someday, park it with `tasks update <id> --backburner`: it stays pending and still shows in "
+    "`tasks list` marked [parked], it just stops appearing here. Never invent a deadline to buy silence."
 )
 
 
