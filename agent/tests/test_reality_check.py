@@ -106,6 +106,22 @@ def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
     assert run.returncode == 0, run.stdout + run.stderr
     assert "95%" in run.stdout
     assert "300MB" in run.stdout
+    # Pins the context branch itself: dropping to the plain OK line would also pass the figures.
+    assert "not yours to clear" in run.stdout
+
+
+def test_a_du_walk_that_never_finishes_goes_red(tmp_path):
+    # The walk is bounded by `timeout`, so a pathological tree or a stuck filesystem cannot hang
+    # the dream; the shim stands in for the bound firing (exit 124) without waiting it out.
+    home = _healthy_home(tmp_path)
+    fake_timeout = home / "bin" / "timeout"
+    fake_timeout.write_text("#!/bin/sh\nexit 124\n")
+    fake_timeout.chmod(0o755)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED sizing" in run.stdout
 
 
 def test_wal_only_writes_keep_events_db_green(tmp_path):
