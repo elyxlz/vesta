@@ -37,6 +37,8 @@ Read the diff closely, then judge the thinking behind it:
 
 Try to break the change rather than reading it for plausibility. Find the input, state, or ordering where it misbehaves, and look hardest where there are no tests: a suite tells you what the author thought of, not what is true.
 
+Trust a test only once you have seen it fail. Revert the fix in your local copy, or flip the constant it pins, and confirm the right test goes red; a suite that stays green either way pins nothing. And when a pass could depend on timing, ordering, or filename sorting, run the test twenty times before crediting it: one pass proves it can pass, not that it passes.
+
 Never speculate about code you have not opened. Read the code paths the diff touches before saying anything about them, and where running something settles a question, run it. The `check.sh` subcommands in `CLAUDE.md` are the ones CI uses.
 
 Find everything first, then filter once. While reading, collect every concern at any severity rather than deciding as you go whether one is worth mentioning: judging severity while looking suppresses real findings. Then make one pass over the list and drop only what you could not substantiate, keeping anything real however small. Filter on "is this true", never on "is this important enough".
@@ -54,6 +56,18 @@ Press hardest when the code looks finished and the tests are green: that is exac
 - **The tests encode the author's assumptions.** Green proves their mental model, not the truth. Find the case the tests skip; when the PR touches a shared mechanism, exercise the paths its *other* users take, not the one the author wrote a test for. The bug the author would have tested for is not the one still in the diff.
 - **Right idea, wrong execution.** The direction is correct and the fix is worth having, and it still double-books, drops, or duplicates in case X. Name X. That is `BUGGED`, not `MERGE`: a needed fix carried in wrong is still carried in wrong.
 - **Stale base.** A PR correct when it was written can be wrong against today's `master`. Read the current code paths, including whatever merged *after* it was opened, since a later change may have repurposed a field it relies on. When another open PR touches the same function, read that diff too and say whether they compose, conflict, or need a merge order.
+- **The probe never reaches the branch.** A test can pass while its setup dies earlier: a "corrupt record" written as `"1234 "` splits back to a valid one, so the tolerance branch it claims to pin never runs. Check what the setup actually produces before crediting the assertion.
+- **Real people in fixtures.** Test data copied from a live incident carries real names, addresses, and employers into the repo forever. Flag it: fictional equivalents exercise the same code.
+
+## The runtime seat
+
+Most changes under `agent/` are consumed by Vesta at runtime, mid-conversation, sometimes on a weaker model than the one reviewing them. Judge them from that seat, not only as code:
+
+- **An error message that names its own override is a bypass instruction.** A refusal ending "unset X to allow it" or "pass --force" will be followed by exactly the model the guard exists to stop. The right refusal states what happened and the next step that stays inside the rules, usually: tell the user.
+- **Run every command the prose tells the agent to run**, against the box's real layout: the binary must be in the image, the path, table, git ref, and field must exist, and the output must mean what the doc says. A CLI the image does not ship, a ref that does not exist, and a snippet that crashes on default config have all passed review as prose. `Proof:` is the command run against a fabricated home.
+- **Sweep for contradictions.** Read the whole file the diff touches, not the hunks: a new paragraph that disagrees with a standing one gives the agent opposing instructions, and the weaker the model the more that costs. Two open PRs solving the same problem are the same hazard; say which one is law and what survives from the other.
+- **A changed format must find every reader.** When the diff changes a record, file, or wire shape, enumerate every consumer in every language, including tests, watchdogs, and shell scripts. The recurring defect is a reader still parsing the old shape; five hid in one PR this way.
+- **Say what the change costs a weak model.** Fewer decision points, refusals that state the next step, and rules an agent predicts without reading code are net gains worth extra implementation work; a subtler or wordier runtime surface is a loss even when the code got better. Name which the PR is.
 
 ## Was it already fixed?
 
@@ -68,6 +82,8 @@ Fold the report into the comment, not alongside it: a PR whose problem master al
 **It fixes the issue it claims to.** Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`) and read the issue itself, not the PR's description of it. Distinguish fixing it from fixing part of it, fixing something adjacent, and not addressing it at all. With no issue linked, say what problem the PR appears to solve and whether it is worth carrying.
 
 **It is right for this repository.** Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch for the repo-wide bans CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors (`.get()`/`getattr`/`hasattr`), `.unwrap()` on fallible Rust paths, `any` in TypeScript, and under `agent/` a docstring or comment that narrates a previous design or restates the PR's rationale (the agent reads it cold, so it must state the current mechanism only).
+
+**Shipped migrations are append-only.** A diff that edits a file under `agent/core/migrations/` already in a release reaches nobody who ran it; the fix is a new migration file. Walk any migration prompt as a literal-minded executor: every step checks before acting, is safe half-done twice, and the mark-applied step is gated on nothing remaining.
 
 **It is mergeable.** CI green, no conflicts, not draft, scoped to one concern.
 
@@ -89,7 +105,7 @@ Write every label every time, in this order. When a label has nothing under it, 
 
 **Non-blocking:** everything else worth saying, same two lines. Do not argue for them; a maintainer decides.
 
-**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. Judge the diff and nothing else. CI is not your business: a red check is on the PR page already, it says nothing about whether the change is right, and a sound change with a formatting failure is still `MERGE`. When a check is red, still name which kind in one line under **Non-blocking**, so the maintainer knows the move: a real failure the diff caused, a fixable nit one commit from green (a comment over the cap, a banned accessor, a format miss), or a flake unrelated to the change (often red on `master` too, green on a re-run).
+**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. Judge the diff and nothing else. CI is not your business: a red check is on the PR page already, it says nothing about whether the change is right, and a sound change with a formatting failure is still `MERGE`. When a check is red, still name which kind in one line under **Non-blocking**, so the maintainer knows the move: a real failure the diff caused, a fixable nit one commit from green (a comment over the cap, a banned accessor, a format miss), a flake unrelated to the change (often red on `master` too, green on a re-run), or a platform outage. Read the failing job's log tail before classifying: a job that dies before checkout ("Failed to resolve action download info", "Service Unavailable") is GitHub, not the PR, and a rerun is the whole fix.
 
 ## Proof
 
