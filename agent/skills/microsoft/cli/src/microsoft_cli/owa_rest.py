@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 
 from . import auth
-from .config import OWA_REST_SCOPES
+from .config import OWA_REST_SCOPES, read_json_marker
 from .payloads import EventFields, EventPatch, MailDraft
 from .settings import OWA_REST_CLIENT_ID
 
@@ -95,14 +95,7 @@ def list_accounts(config) -> list[str]:
 
 
 def _read_marker(account_email: str, config) -> dict | None:
-    # save_token rewrites this file every refresh and does not write atomically, so a read can catch
-    # it truncated. An unreadable or half-written marker is treated as absent, exactly as a missing
-    # one is: the routing that reads it runs outside per-account containment, so a raise here would
-    # take the whole poll cycle down over one torn file.
-    try:
-        return json.loads(_token_path(account_email, config).read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
+    return read_json_marker(_token_path(account_email, config))
 
 
 def _source(marker: dict) -> str:

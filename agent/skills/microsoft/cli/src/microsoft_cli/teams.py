@@ -32,6 +32,7 @@ from typing import Any
 import httpx
 
 from . import auth, backend
+from .config import read_json_marker
 from .settings import DEFAULT_CLIENT_ID
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -79,14 +80,7 @@ def _token_path(account_email: str, config) -> pl.Path:
 
 
 def _read_marker(account_email: str, config) -> dict | None:
-    # save_token rewrites this file on every silent refresh and does not write atomically, so a read
-    # can catch it truncated. An unreadable or half-written marker is treated as absent, exactly as a
-    # missing one is: the refresh loop reads it every cycle outside per-account containment, so a
-    # raise here would take the whole poll cycle down over one torn file.
-    try:
-        return json.loads(_token_path(account_email, config).read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
+    return read_json_marker(_token_path(account_email, config))
 
 
 def _source(marker: dict) -> str:
