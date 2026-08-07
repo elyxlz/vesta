@@ -18,6 +18,9 @@ Always start with `whatsapp status`:
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
 - previously linked, now logged out or lost: get the user's explicit approval before reconnecting.
+  On a managed number a re-link also drops outbound to everyone who has not messaged you since,
+  and only their next inbound restores it, so an unasked reconnect can cost the channel to the one
+  person who matters, at the moment you most need it.
 
 Never recover by manually re-pairing or restarting the daemon.
 
@@ -63,6 +66,30 @@ MSG
 ```
 - Before texting an unknown raw number, save it first with `add-contact` (name + phone). A chat WhatsApp shows only as an id (`...@lid`) has no number to save, so save it by that id instead: `add-contact --name <name> --chat <chat_jid>`.
 
+**Error 463, `no signal session for this device yet`.** The send fails for one recipient while
+everyone else succeeds on the same number and daemon, so it looks like local state you can repair.
+It usually is not. Make one further attempt at most, then say what you need to say on another
+channel; it clears by itself the moment that person sends you anything.
+
+**Never re-pair or restart the daemon to chase it.** Pairing is hard-capped per day and per week,
+and repeat pairing is what gets numbers banned.
+
+Rule out the local store without sending anything, since the obvious comparison test (message some
+other contact and see) is unavailable: cold-initiating anyone who has not written first is the
+behaviour that gets a fresh number banned.
+
+```bash
+python3 -c 'import sqlite3, pathlib; print(*sqlite3.connect(pathlib.Path.home() / ".whatsapp/whatsapp.db").execute("select their_id from whatsmeow_sessions").fetchall(), sep="\n")'
+```
+
+Rows are `<lid>_1:<device>`, one per device that recipient uses. Rows present for them means this
+is not a missing-session problem, so stop looking there.
+
+**On a managed number (Vesta Cloud, Double Tick) it is not yours to fix.** The prekey fetch for a
+device you hold no session for happens in the provider's infrastructure rather than in your client,
+so two agents holding an identical device set for the same recipient can get opposite results.
+Falling back to another channel is the entire remedy available to you.
+
 ## Read
 
 - `whatsapp messages [--to <name>] [--query <text>] [--after <RFC3339>] [--limit N]` reads the local DB.
@@ -73,6 +100,13 @@ MSG
 - **One direct chat is stored under two keys** (the peer's phone JID and their LID). `messages --to`
   reads both; hand-written SQL against `messages.db` gets one side, which reads as "they never
   replied" rather than as missing data. Prefer the command.
+- The one residual split: a LID whatsmeow holds no phone mapping for stands alone, so
+  `messages --to <name>` can look outbound-only for that contact and `backfill` will not change it
+  (nothing is missing, the inbound half is filed under the unmapped id). Before reading a silence as
+  real, sum both directions per chat id in `~/.whatsapp/messages.db` (python3's sqlite3 module, as
+  in the 463 section): `SELECT chat_jid, SUM(is_from_me=0), SUM(is_from_me=1), MAX(timestamp) FROM
+  messages GROUP BY chat_jid` shows a split identity at a glance. Group chats (`<id>@g.us`) hold a
+  third slice of the same relationship, so include them when computing "last heard from".
 
 ## Profile
 
