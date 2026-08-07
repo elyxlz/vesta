@@ -67,7 +67,8 @@ export type DeviceKind = "web" | "mobile" | "desktop" | "unknown"
 
 // One device in the gateway-global registry: identity plus whether it currently holds a live /sync
 // connection, or when it last did. The push token is never on the wire; `pushEnabled` is the only
-// push signal. `descriptor` is null until a device connects and names itself.
+// push signal. `descriptor` is null until a device connects and names itself. `location` is a coarse
+// "City, Country" the gateway resolves from the connection, null until resolved.
 export interface DeviceInfo {
   id: string
   kind: DeviceKind
@@ -75,6 +76,7 @@ export interface DeviceInfo {
   present: boolean
   lastSeen: string
   pushEnabled: boolean
+  location: string | null
 }
 
 export interface Tree {

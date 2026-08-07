@@ -10,6 +10,7 @@ function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     present: true,
     lastSeen: "2026-01-01T00:00:00Z",
     pushEnabled: false,
+    location: null,
     ...overrides,
   }
 }
