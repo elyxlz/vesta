@@ -30,6 +30,9 @@ export function AgentIslandModals() {
     deleteDialogOpen,
     setDeleteDialogOpen,
     handleDelete,
+    backupDialogOpen,
+    setBackupDialogOpen,
+    handleBackup,
   } = useModals();
 
   const [submitting, setSubmitting] = useState(false);
@@ -111,6 +114,28 @@ export function AgentIslandModals() {
               }}
             >
               delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={backupDialogOpen} onOpenChange={setBackupDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>back up {name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              this captures a snapshot of {name} now. {name} pauses briefly
+              while it runs.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                handleBackup();
+              }}
+            >
+              back up
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

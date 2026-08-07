@@ -143,7 +143,19 @@ export function BackupsSection() {
       <Button
         loading={action.isPending}
         icon="cloud-upload-outline"
-        onPress={() => action.mutate({ type: "create" })}
+        onPress={() =>
+          Alert.alert(
+            "Back up now?",
+            "The agent pauses briefly while the snapshot is captured.",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Back up",
+                onPress: () => action.mutate({ type: "create" }),
+              },
+            ],
+          )
+        }
       >
         Back up now
       </Button>

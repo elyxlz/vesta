@@ -27,9 +27,9 @@ export function AgentMenu() {
   const goTo = (path: string) => {
     if (location.pathname !== path) void navigate(path);
   };
-  const { name, agent, isBusy, start, stop, restart, backup } =
-    useSelectedAgent();
-  const { setDeleteDialogOpen, handleOpenAuth } = useModals();
+  const { name, agent, isBusy, start, stop, restart } = useSelectedAgent();
+  const { setDeleteDialogOpen, setBackupDialogOpen, handleOpenAuth } =
+    useModals();
   const gateway = useGateway();
   const appMode = useAppMode((s) => s.mode);
 
@@ -57,7 +57,7 @@ export function AgentMenu() {
     },
     onAgentSettings: () => goTo(`/agent/${encodeURIComponent(name)}/settings`),
     onRestart: () => void restart(),
-    onBackup: () => backup(),
+    onBackup: () => setBackupDialogOpen(true),
     onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
     isAuthenticated: !agentNeedsUser(agent.status),
     onDelete: () => setDeleteDialogOpen(true),

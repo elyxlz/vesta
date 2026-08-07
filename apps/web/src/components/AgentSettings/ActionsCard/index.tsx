@@ -18,9 +18,9 @@ export function ActionsCard() {
     start,
     stop,
     restart,
-    backup,
   } = useSelectedAgent();
-  const { handleOpenAuth, setDeleteDialogOpen } = useModals();
+  const { handleOpenAuth, setDeleteDialogOpen, setBackupDialogOpen } =
+    useModals();
 
   const isRunning = !agentIsDown(agent.status);
   const showAliveActions = agent.status === "alive";
@@ -60,7 +60,7 @@ export function ActionsCard() {
             else start();
           }}
           onRestart={() => void restart()}
-          onBackup={() => backup()}
+          onBackup={() => setBackupDialogOpen(true)}
           onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>
