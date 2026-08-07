@@ -106,17 +106,20 @@ enum Command {
         #[command(subcommand)]
         action: TunnelAction,
     },
-    /// Export or import agent backups as files
-    Backup {
-        #[command(subcommand)]
-        action: BackupAction,
-    },
     /// Export an agent to a portable bundle file (credentials are stripped)
     Export {
         /// Agent name
         name: String,
         /// Output file path (.tar.gz)
         output: std::path::PathBuf,
+    },
+    /// Import an agent from an export bundle
+    Import {
+        /// Bundle file path (.tar.gz)
+        input: std::path::PathBuf,
+        /// Agent name to create (defaults to the name embedded in the bundle)
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Update vestad to the latest version
     Update,
@@ -132,17 +135,6 @@ enum VestaCloudAction {
     Login,
     /// Unpair this box from its Vesta Cloud account
     Logout,
-}
-
-#[derive(clap::Subcommand)]
-enum BackupAction {
-    /// Import an agent from a compressed file
-    Import {
-        /// Agent name to create
-        name: String,
-        /// Input file path (.tar.gz)
-        input: std::path::PathBuf,
-    },
 }
 
 #[derive(clap::Subcommand)]
@@ -781,79 +773,62 @@ fn main() {
             docker_exec_inherit(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"]);
         }
 
-        Command::Backup { action } => {
+        Command::Import { input, name } => {
+            if !input.exists() {
+                die(format!("file not found: {}", input.display()));
+            }
+            let resolved_name = agent_bundle::peek_import_name(&input, name.as_deref()).unwrap_or_else(|e| die(&e));
+            let _lock = backup::agent_file_lock(&resolved_name).unwrap_or_else(|e| die(&e));
+
+            let config = config_dir();
+            let vestad_port = read_port_file(&config).unwrap_or(0);
+            let vestad_tunnel = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
+            let env_config = docker::AgentEnvConfig {
+                config_dir: config.clone(),
+                agents_dir: config.join("agents"),
+                vestad_port,
+                vestad_tunnel,
+            };
+            let code_dir = agent_code::ensure_agent_code(&config)
+                .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
+            // The container bind-mounts the upstream dir; build it here like server
+            // startup does, or rootful Docker would create the missing host path as
+            // root and the next vestad startup could no longer write into it.
+            upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
+
             let docker = docker::connect().unwrap_or_else(|e| die(&e));
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("tokio runtime builds");
+            let outcome = rt
+                .block_on(agent_bundle::import_agent(
+                    &docker,
+                    agent_bundle::ImportRequest {
+                        input: &input,
+                        name_override: name.as_deref(),
+                        env_config: &env_config,
+                    },
+                ))
+                .unwrap_or_else(|e| die(format!("import failed: {e}")));
 
-            match action {
-                BackupAction::Import { name, input } => {
-                    docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-                    let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
+            let mut settings = settings::load_settings();
+            let entry = settings.agents.entry(outcome.name.clone()).or_default();
+            if let Some(manifest) = &outcome.manifest {
+                entry.user_desired = manifest.user_desired;
+            }
+            settings::save_settings(&settings);
 
-                    if !input.exists() {
-                        die(format!("file not found: {}", input.display()));
+            if let Some(manifest) = &outcome.manifest {
+                if !manifest.mounts.is_empty() {
+                    eprintln!("the source agent had host folder access; re-grant from the app if wanted:");
+                    for mount in &manifest.mounts {
+                        let mode = if mount.writable { "read-write" } else { "read-only" };
+                        eprintln!("  {} -> {} ({mode})", mount.host_path, mount.container_path);
                     }
-
-                    let cname = docker::container_name(&name);
-
-                    rt.block_on(async {
-                        if docker::container_status(&docker, &cname).await != docker::ContainerStatus::NotFound {
-                            die(format!("agent '{name}' already exists — destroy it first or pick a different name"));
-                        }
-
-                        eprintln!("loading image from {}...", input.display());
-                        let loaded_image = docker::load_image_from_file(&docker, &input).await
-                            .unwrap_or_else(|e| die(format!("import failed: {e}")));
-                        let loaded_image = loaded_image.as_str();
-
-                        eprintln!("creating agent '{name}'...");
-                        let config = config_dir();
-                        let vestad_port = read_port_file(&config).unwrap_or(0);
-                        let vestad_tunnel = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
-                        let env_config = docker::AgentEnvConfig {
-                            config_dir: config.clone(),
-                            agents_dir: config.join("agents"),
-                            vestad_port,
-                            vestad_tunnel,
-                        };
-                        let code_dir = agent_code::ensure_agent_code(&config)
-                            .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
-                        // The container bind-mounts the upstream dir; build it here like server
-                        // startup does, or rootful Docker would create the missing host path as
-                        // root and the next vestad startup could no longer write into it.
-                        upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
-                        let port = docker::allocate_port().unwrap_or_else(|e| die(&e));
-                        docker::create_container(
-                            &docker,
-                            &env_config,
-                            docker::ContainerSpec {
-                                cname: &cname,
-                                image: loaded_image,
-                                port,
-                                agent_name: &name,
-                                user_mounts: &[],
-                            },
-                        )
-                        .await
-                        .unwrap_or_else(|e| die(&e));
-
-                        docker::handoff_boot_reason(
-                            &docker,
-                            &name,
-                            &cname,
-                            &lifecycle::BACKUP_IMPORT,
-                        )
-                        .await;
-                        if !docker::start_container(&docker, &cname).await {
-                            die("failed to start imported agent");
-                        }
-                        eprintln!("imported: {name} (port {port})");
-                    });
                 }
             }
+            eprintln!("imported: {} (port {}); the agent is signed out — sign in from the app", outcome.name, outcome.port);
         }
 
         Command::Export { name, output } => {

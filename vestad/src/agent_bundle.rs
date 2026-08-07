@@ -339,6 +339,183 @@ pub async fn export_agent(docker: &Docker, request: ExportRequest<'_>) -> Result
     export_from_snapshot(docker, request, &snapshot_tag).await
 }
 
+// --- Import ---
+
+pub struct ImportRequest<'a> {
+    pub input: &'a Path,
+    pub name_override: Option<&'a str>,
+    pub env_config: &'a crate::docker::AgentEnvConfig,
+}
+
+pub struct ImportOutcome {
+    pub name: String,
+    pub port: u16,
+    pub manifest: Option<BundleManifest>,
+}
+
+/// The name a new agent takes on import: the override always wins, a bundle otherwise falls
+/// back to its embedded manifest name, and a legacy plain-image file (no manifest) has no name
+/// to fall back to, so the override is mandatory there.
+pub fn resolve_import_name(
+    kind: BundleKind,
+    manifest_name: Option<&str>,
+    override_name: Option<&str>,
+) -> Result<String, DockerError> {
+    if let Some(name) = override_name {
+        return Ok(name.to_string());
+    }
+    match (kind, manifest_name) {
+        (BundleKind::Bundle, Some(name)) => Ok(name.to_string()),
+        (BundleKind::Bundle, None) => Err(DockerError::Failed("bundle manifest missing agent name".to_string())),
+        (BundleKind::Legacy, _) => {
+            Err(DockerError::Failed("legacy export file has no embedded name; pass --name".to_string()))
+        }
+    }
+}
+
+/// The name `import_agent` would create, without holding the per-agent file lock the caller
+/// takes once it knows that name. Cheap: a bundle's manifest is only its small tar head.
+pub fn peek_import_name(input: &Path, name_override: Option<&str>) -> Result<String, DockerError> {
+    let kind = sniff_bundle(input)?;
+    let manifest_name = match kind {
+        BundleKind::Bundle => Some(open_bundle(input)?.0.agent_name),
+        BundleKind::Legacy => None,
+    };
+    resolve_import_name(kind, manifest_name.as_deref(), name_override)
+}
+
+fn agent_exists_error(name: &str) -> DockerError {
+    DockerError::Failed(format!("agent '{name}' already exists — destroy it first or pass a different --name"))
+}
+
+/// Import a legacy plain-image export (a bare `docker save` tar, gzipped or not, with no
+/// manifest): load the image directly and create+start the agent, always running.
+async fn import_legacy(docker: &Docker, request: ImportRequest<'_>) -> Result<ImportOutcome, DockerError> {
+    let name = resolve_import_name(BundleKind::Legacy, None, request.name_override)?;
+    crate::docker::validate_name(&name)?;
+    let cname = crate::docker::container_name(&name);
+    if crate::docker::container_status(docker, &cname).await != crate::docker::ContainerStatus::NotFound {
+        return Err(agent_exists_error(&name));
+    }
+
+    eprintln!("loading image from {}...", request.input.display());
+    let image = crate::docker::load_image_from_file(docker, request.input).await?;
+
+    eprintln!("creating agent '{name}'...");
+    let port = crate::docker::allocate_port()?;
+    crate::docker::create_container(
+        docker,
+        request.env_config,
+        crate::docker::ContainerSpec {
+            cname: &cname,
+            image: &image,
+            port,
+            agent_name: &name,
+            user_mounts: &[],
+        },
+    )
+    .await?;
+
+    crate::docker::handoff_boot_reason(docker, &name, &cname, &crate::lifecycle::BACKUP_IMPORT).await;
+    if !crate::docker::start_container(docker, &cname).await {
+        return Err(DockerError::Failed("failed to start imported agent".to_string()));
+    }
+
+    Ok(ImportOutcome { name, port, manifest: None })
+}
+
+/// Spools the bundle's image entry to `spool_path` next to the input file, streaming rather
+/// than buffering the whole (potentially multi-GB) image tar in memory.
+fn spool_bundle_image(input: &Path, spool_path: &Path) -> Result<(), DockerError> {
+    let mut file = std::fs::File::create(spool_path).map_err(|err| docker_failed("creating image spool file", err))?;
+    read_bundle_image(input, |chunk| {
+        std::io::Write::write_all(&mut file, chunk).map_err(|err| docker_failed("writing image spool file", err))
+    })
+}
+
+/// Steps that follow a loaded image: write the constitution (before `create_container`, whose
+/// `ensure_constitution_file` only creates-if-missing), create the container, then start it
+/// only when the manifest says the source agent was running.
+async fn finish_bundle_import(
+    docker: &Docker,
+    request: &ImportRequest<'_>,
+    name: &str,
+    cname: &str,
+    manifest: &BundleManifest,
+    constitution: &str,
+    image: &str,
+) -> Result<ImportOutcome, DockerError> {
+    eprintln!("creating agent '{name}'...");
+    std::fs::write(crate::docker::constitution_host_path(&request.env_config.agents_dir, name), constitution)
+        .map_err(|err| docker_failed("writing constitution", err))?;
+
+    let port = crate::docker::allocate_port()?;
+    crate::docker::create_container(
+        docker,
+        request.env_config,
+        crate::docker::ContainerSpec {
+            cname,
+            image,
+            port,
+            agent_name: name,
+            user_mounts: &[],
+        },
+    )
+    .await?;
+
+    crate::docker::handoff_boot_reason(docker, name, cname, &crate::lifecycle::BACKUP_IMPORT).await;
+    if manifest.user_desired == crate::settings::UserDesired::Running && !crate::docker::start_container(docker, cname).await {
+        return Err(DockerError::Failed("failed to start imported agent".to_string()));
+    }
+
+    Ok(ImportOutcome { name: name.to_string(), port, manifest: Some(manifest.clone()) })
+}
+
+/// Import a bundle: warn on a manifest from a newer vestad, resolve and validate the name,
+/// spool and load the image, then hand off to `finish_bundle_import`. A failure anywhere past
+/// the load removes the freshly loaded image so a retry doesn't trip over it.
+async fn import_bundle(docker: &Docker, request: ImportRequest<'_>) -> Result<ImportOutcome, DockerError> {
+    let (manifest, constitution) = open_bundle(request.input)?;
+
+    if crate::update_check::version_less_than(env!("CARGO_PKG_VERSION"), &manifest.vestad_version) {
+        eprintln!(
+            "warning: this bundle was exported by vestad v{}, newer than this vestad v{}; the agent's first boot will converge it, but consider updating vestad first",
+            manifest.vestad_version,
+            env!("CARGO_PKG_VERSION"),
+        );
+    }
+
+    let name = resolve_import_name(BundleKind::Bundle, Some(&manifest.agent_name), request.name_override)?;
+    crate::docker::validate_name(&name)?;
+    let cname = crate::docker::container_name(&name);
+    if crate::docker::container_status(docker, &cname).await != crate::docker::ContainerStatus::NotFound {
+        return Err(agent_exists_error(&name));
+    }
+
+    let spool_path = spool_path_for(request.input);
+    eprintln!("loading image...");
+    let write_result = spool_bundle_image(request.input, &spool_path);
+    let image_result = match write_result {
+        Ok(()) => crate::docker::load_image_from_file(docker, &spool_path).await,
+        Err(err) => Err(err),
+    };
+    std::fs::remove_file(&spool_path).ok();
+    let image = image_result?;
+
+    let outcome = finish_bundle_import(docker, &request, &name, &cname, &manifest, &constitution, &image).await;
+    if outcome.is_err() {
+        crate::docker::remove_image(docker, &image).await.ok();
+    }
+    outcome
+}
+
+pub async fn import_agent(docker: &Docker, request: ImportRequest<'_>) -> Result<ImportOutcome, DockerError> {
+    match sniff_bundle(request.input)? {
+        BundleKind::Bundle => import_bundle(docker, request).await,
+        BundleKind::Legacy => import_legacy(docker, request).await,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,6 +628,19 @@ mod tests {
         std::fs::write(&truncated_path, &whole[..whole.len() / 2]).expect("write truncated");
         let result = read_bundle_image(&truncated_path, |_| Ok(()));
         assert!(result.is_err(), "truncated bundle must fail");
+    }
+
+    #[test]
+    fn resolve_import_name_prefers_override_then_manifest() {
+        assert_eq!(resolve_import_name(BundleKind::Bundle, Some("apollo"), Some("copy")).expect("ok"), "copy");
+        assert_eq!(resolve_import_name(BundleKind::Bundle, Some("apollo"), None).expect("ok"), "apollo");
+    }
+
+    #[test]
+    fn resolve_import_name_requires_override_for_legacy() {
+        assert_eq!(resolve_import_name(BundleKind::Legacy, None, Some("apollo")).expect("ok"), "apollo");
+        let err = resolve_import_name(BundleKind::Legacy, None, None).expect_err("must refuse");
+        assert!(err.to_string().contains("--name"), "got: {err}");
     }
 
     fn test_docker() -> bollard::Docker {

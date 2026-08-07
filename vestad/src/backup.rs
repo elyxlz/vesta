@@ -19,7 +19,7 @@ pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
 
 /// Acquire an exclusive file lock for the given agent. The lock is held for the
 /// lifetime of the returned Flock. Used to coordinate between the vestad API and
-/// the `vestad backup export/import` CLI which bypasses the server.
+/// the `vestad export`/`vestad import` CLI which bypasses the server.
 pub fn agent_file_lock(name: &str) -> Result<nix::fcntl::Flock<File>, DockerError> {
     let lock_dir = crate::paths::config_dir_or_relative().join("locks");
     std::fs::create_dir_all(&lock_dir)
