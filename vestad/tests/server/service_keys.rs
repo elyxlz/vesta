@@ -2,8 +2,9 @@
 //! container: a private service is reachable only with the api key or a live service key, the
 //! key works in the path prefix an iframe's sub-resources inherit and in the query string a
 //! WebSocket upgrade is limited to, revoking it takes effect immediately on both, the mint and
-//! revoke endpoints are authenticated and self-scoped to one agent, and vestad hands its
-//! inner-proxy agent token to the raw agent port alone.
+//! revoke endpoints are authenticated and self-scoped to one agent, vestad hands its
+//! inner-proxy agent token to the raw agent port alone, and the client credential the proxy
+//! consumed (Authorization header, `?token=` pair) never reaches an upstream.
 
 use vesta_tests::{
     agent_container_name, exec_in_container, unique_agent, ProxyAuth, TestAgent, SERVER,
@@ -11,8 +12,9 @@ use vesta_tests::{
 
 const AGENT_RUNNING_TIMEOUT_SECS: u64 = 60;
 
-/// A throwaway upstream that answers every GET with the request headers it received, as a JSON
-/// object keyed by lowercased header name. Lets a test assert on exactly what the proxy forwarded.
+/// A throwaway upstream that answers every GET with the request it received, as JSON:
+/// `path` (the request line's path and query, verbatim) and `headers` (keyed by lowercased
+/// name). Lets a test assert on exactly what the proxy forwarded.
 const HEADER_ECHO_UPSTREAM: &str = r#"cat > /tmp/header-echo.py <<'PY'
 import http.server
 import json
@@ -21,7 +23,7 @@ import sys
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps({k.lower(): v for k, v in self.headers.items()}).encode()
+        body = json.dumps({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -272,6 +274,74 @@ fn key_endpoints_are_authenticated_and_scoped_to_one_agent() {
     );
 }
 
+/// The `headers` object out of an echo-upstream response body.
+fn echoed_headers(body: &str) -> serde_json::Map<String, serde_json::Value> {
+    let echoed: serde_json::Value =
+        serde_json::from_str(body).expect("the upstream echoes its request as JSON");
+    echoed["headers"]
+        .as_object()
+        .expect("echoed headers object")
+        .clone()
+}
+
+/// The `path` (path and query, verbatim) out of an echo-upstream response body.
+fn echoed_path(body: &str) -> String {
+    let echoed: serde_json::Value =
+        serde_json::from_str(body).expect("the upstream echoes its request as JSON");
+    echoed["path"]
+        .as_str()
+        .expect("echoed request path")
+        .to_string()
+}
+
+/// The credential that authorizes a proxied request is consumed by vestad, whichever carrier
+/// it rode in: the Authorization header never reaches the upstream, and the `?token=` pair is
+/// dropped from the forwarded query while every other pair survives. A registered private
+/// service "verifies nothing itself", so nothing downstream may see a gateway-tier secret.
+#[test]
+fn the_consumed_client_credential_never_reaches_the_upstream() {
+    let client = SERVER.client();
+    let (agent, _) = agent_serving(&client, "svc-strip", "probe");
+
+    let (status, body) = client
+        .proxy_get(
+            &format!("/agents/{}/probe/echo?lang=en&fmt=json", agent.name),
+            ProxyAuth::ApiKey,
+        )
+        .expect("reach the registered service with the api key");
+    assert_eq!(status, 200, "the api key opens the service, got: {body}");
+    assert!(
+        !echoed_headers(&body).contains_key("authorization"),
+        "the Authorization header the proxy consumed must not be forwarded, got: {body}"
+    );
+    assert_eq!(
+        echoed_path(&body),
+        "/echo?lang=en&fmt=json",
+        "a credential-free query is forwarded verbatim"
+    );
+
+    let minted = client
+        .mint_service_key(&agent.name, "probe")
+        .expect("mint service key");
+    let key = minted["key"].as_str().expect("secret in mint response");
+    let (status, body) = client
+        .proxy_get(
+            &format!("/agents/{}/probe/echo?lang=en&token={key}&fmt=json", agent.name),
+            ProxyAuth::None,
+        )
+        .expect("reach the registered service with a query-string service key");
+    assert_eq!(status, 200, "the service key opens the service, got: {body}");
+    assert_eq!(
+        echoed_path(&body),
+        "/echo?lang=en&fmt=json",
+        "the token= pair is dropped from the forwarded query and the rest survives"
+    );
+    assert!(
+        !echoed_headers(&body).contains_key("authorization"),
+        "no Authorization header materializes upstream, got: {body}"
+    );
+}
+
 /// The agent token is vestad's inner-proxy credential for the raw agent port, never a
 /// credential a registered service receives. The service side is observed directly (the
 /// upstream echoes its request headers); the raw-port side is observed through the agent's own
@@ -285,8 +355,7 @@ fn only_the_raw_agent_port_receives_the_injected_agent_token() {
         .proxy_get(&format!("/agents/{}/probe/", agent.name), ProxyAuth::ApiKey)
         .expect("reach the registered service");
     assert_eq!(status, 200, "the api key opens the registered service");
-    let forwarded: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(&body).expect("the upstream echoes its request headers as JSON");
+    let forwarded = echoed_headers(&body);
     assert!(
         forwarded.contains_key("host"),
         "expected the echoed headers, got: {body}"
