@@ -11,8 +11,9 @@ use vesta_tests::{
 
 const AGENT_RUNNING_TIMEOUT_SECS: u64 = 60;
 
-/// A throwaway upstream that answers every GET with the request headers it received, as a JSON
-/// object keyed by lowercased header name. Lets a test assert on exactly what the proxy forwarded.
+/// A throwaway upstream that answers every GET with the request it received, as a JSON object:
+/// the headers keyed by lowercased name plus the full path under `"path"`. Lets a test assert
+/// on exactly what the proxy forwarded.
 const HEADER_ECHO_UPSTREAM: &str = r#"cat > /tmp/header-echo.py <<'PY'
 import http.server
 import json
@@ -21,7 +22,7 @@ import sys
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps({k.lower(): v for k, v in self.headers.items()}).encode()
+        body = json.dumps({**{k.lower(): v for k, v in self.headers.items()}, "path": self.path}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -269,6 +270,76 @@ fn key_endpoints_are_authenticated_and_scoped_to_one_agent() {
             .unwrap(),
         200,
         "and the refused revoke left that key live"
+    );
+}
+
+/// GET `path_and_query` through the proxy and return what the echo upstream saw.
+fn echoed_request(
+    client: &vesta_tests::client::Client,
+    path_and_query: &str,
+    auth: ProxyAuth,
+) -> serde_json::Value {
+    let (status, body) = client
+        .proxy_get(path_and_query, auth)
+        .expect("reach the echo upstream");
+    assert_eq!(status, 200, "expected the upstream's echo, got {status}: {body}");
+    serde_json::from_str(&body).expect("the upstream echoes its request as JSON")
+}
+
+/// The credential that authenticated the client to vestad must never reach the skill process
+/// in the container: not the `Authorization` header, not the `?token=` query pair, and not the
+/// `/k/{key}/` path prefix. The upstream echoes the request it received, so each carrier is
+/// observed directly on the other side of the proxy.
+#[test]
+fn gateway_credentials_never_reach_a_registered_service() {
+    let client = SERVER.client();
+    let (agent, _) = agent_serving(&client, "svc-cred", "dashboard");
+    let bare = format!("/agents/{}/dashboard/page", agent.name);
+
+    let minted = client
+        .mint_service_key(&agent.name, "dashboard")
+        .expect("mint service key");
+    let key = minted["key"]
+        .as_str()
+        .expect("secret in mint response")
+        .to_string();
+
+    let via_api_key = echoed_request(&client, &bare, ProxyAuth::ApiKey);
+    assert!(
+        via_api_key["authorization"].is_null(),
+        "the api key's Authorization header must not be forwarded, got: {via_api_key}"
+    );
+
+    let via_bearer_key = echoed_request(&client, &bare, ProxyAuth::Bearer(&key));
+    assert!(
+        via_bearer_key["authorization"].is_null(),
+        "a service key's Authorization header must not be forwarded, got: {via_bearer_key}"
+    );
+
+    let via_query = echoed_request(
+        &client,
+        &format!("{bare}?lang=en&token={key}"),
+        ProxyAuth::None,
+    );
+    assert_eq!(
+        via_query["path"].as_str(),
+        Some("/page?lang=en"),
+        "the token pair must be stripped while other query params survive, got: {via_query}"
+    );
+
+    let via_path = echoed_request(
+        &client,
+        &format!("/agents/{}/dashboard/k/{}/page", agent.name, key),
+        ProxyAuth::None,
+    );
+    assert_eq!(
+        via_path["path"].as_str(),
+        Some("/page"),
+        "the key prefix must be stripped from the forwarded path, got: {via_path}"
+    );
+    assert!(
+        !via_path.to_string().contains(&key),
+        "the service key must not appear anywhere in the forwarded request, got: {via_path}"
     );
 }
 

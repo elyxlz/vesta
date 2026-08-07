@@ -109,6 +109,17 @@ fn keyed_forward_path(
     keys.accepts(agent, service, key, now).then_some(forwarded)
 }
 
+/// The query forwarded upstream: the original minus every `token=` pair, the query carrier
+/// `auth::presented_tokens` reads. The credential that authenticated the client to vestad
+/// (api key, access token, or service key) must never reach a process in the container.
+fn query_without_token(query: &str) -> String {
+    query
+        .split('&')
+        .filter(|pair| !pair.starts_with("token="))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// The agent token vestad injects upstream. Only the raw agent port consumes it, so a
 /// registered service is never handed one.
 fn injected_agent_token(agent_token: Option<&str>, is_registered_service: bool) -> Option<&str> {
@@ -202,9 +213,12 @@ pub async fn agent_proxy_handler(
     }
 
     let mut target_path = stripped_path;
-    if let Some(q) = request.uri().query() {
-        target_path.push('?');
-        target_path.push_str(q);
+    if let Some(query) = request.uri().query() {
+        let forwarded_query = query_without_token(query);
+        if !forwarded_query.is_empty() {
+            target_path.push('?');
+            target_path.push_str(&forwarded_query);
+        }
     }
 
     let is_ws_upgrade = request
@@ -384,9 +398,11 @@ async fn forward_http_to_container(
     let mut req_builder = client.request(method, &url);
     for (name, value) in &parts.headers {
         let n = name.as_str().to_ascii_lowercase();
+        // `authorization` carries the credential that authenticated the client to vestad
+        // (api key, access token, or service key); the container must never see it.
         if matches!(
             n.as_str(),
-            "host" | "connection" | "transfer-encoding" | "content-length"
+            "host" | "connection" | "transfer-encoding" | "content-length" | "authorization"
         ) {
             continue;
         }
@@ -514,8 +530,8 @@ mod keyed_forward_path_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_target_url, injected_agent_token, pump_agent_to_client, split_key_subpath,
-        split_service_subpath, wait_for_upstream,
+        build_target_url, injected_agent_token, pump_agent_to_client, query_without_token,
+        split_key_subpath, split_service_subpath, wait_for_upstream,
     };
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
@@ -536,6 +552,19 @@ mod tests {
         assert_eq!(injected_agent_token(Some("tok"), false), Some("tok"));
         assert_eq!(injected_agent_token(None, false), None);
         assert_eq!(injected_agent_token(None, true), None);
+    }
+
+    #[test]
+    fn the_token_query_pair_never_rides_to_the_upstream() {
+        // `token=` is the query carrier `auth::presented_tokens` reads; every other pair is
+        // service input and survives untouched.
+        assert_eq!(query_without_token("lang=en&token=secret"), "lang=en");
+        assert_eq!(query_without_token("token=secret"), "");
+        assert_eq!(query_without_token("token=a&lang=en&token=b"), "lang=en");
+        assert_eq!(
+            query_without_token("mytoken=keep&lang=en"),
+            "mytoken=keep&lang=en"
+        );
     }
 
     #[test]
