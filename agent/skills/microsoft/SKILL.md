@@ -7,7 +7,7 @@ description: Use for any Microsoft account, personal or work (Outlook.com, Hotma
 
 **Setup / sign-in**: run **`microsoft auth setup --account <email>`**, one command provisions mail, calendar, and Teams and auto-picks device-code (personal / permissive) or a one-URL browser sign-in (locked work/school tenants), then auto-refreshes so the user signs in only once. Details and the two backends (Graph + browser-capture fallback): see [SETUP.md](SETUP.md).
 
-**Background daemon**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
+**Background daemon**: `microsoft daemon start`
 
 ## Command groups
 
@@ -20,14 +20,18 @@ Each area's detail lives in its own file, read it when you work in that area:
 
 ## Shared flags
 
-- `--account <email>` is required on every email/calendar/folder/teams command (list accounts with `microsoft auth list`; sign one out with `microsoft auth remove --account <email>`).
-- `--backend {auto,graph,owa-rest}` (default `auto`) picks the path; both backends support the full surface except `block`/`unblock` (Graph-only). See [SETUP.md](SETUP.md).
+- `--account <email>` is required on mailbox/calendar/folder/teams commands. Client-wide `email send-delay`, `email pending`, and `email undo` are the exceptions; `email pending` accepts an optional account filter. List accounts with `microsoft auth list`; sign one out with `microsoft auth remove --account <email>`.
+- `--backend {auto,graph,owa-rest}` (default `auto`) picks the path for mailbox operations; both backends support the full surface except `block`/`unblock` (Graph-only). Delayed-send management does not take this flag. See [SETUP.md](SETUP.md).
 - List commands (`email list`/`search`, `calendar list`/`calendars`, `folder list`, `teams chats`/`messages`/`teams`/`channels`) default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON. Graph `@odata.*` metadata is stripped from every result.
 - `email list`/`search` take `--since YYYY-MM-DD` / `--until YYYY-MM-DD` (both inclusive) to reach mail by date. Plain `search` uses relevance-ranked `$search`, which buries old mail; the date flags switch to a `receivedDateTime` range filter ordered newest-first. See [references/email.md](references/email.md).
 
 ## Draft-only mode
 
 Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode `email send`/`reply`/`forward` are refused before any Graph or OWA-REST call (non-zero exit with a clear message); only `email draft` works. This is a CLI-level safety guarantee, not a behavioral promise, and it covers **both** backends. Default off: unset/empty means today's behavior, no change.
+
+Set `MICROSOFT_READ_ONLY=1` (same truthy values) to make **every connected account read-only**. This is the stronger setting and the right one when the account belongs to someone who did not ask you to act on their behalf, e.g. a work mailbox you were given so you could read it. It refuses every command that writes: `email send`/`reply`/`forward`/`draft`/`reply-draft`/`move`/`archive`/`update`/`delete`/`block`/`unblock`, `calendar create`/`update`/`delete`/`respond`, `folder create`/`rename`/`delete`, `teams send`/`start`/`post`/`reply`/`set-presence`/`clear-presence`, and `notify add`/`remove`. Reads are untouched.
+
+The refusal happens in the CLI before any Graph or OWA-REST call, so it covers both backends. Still allowed on purpose: `email send-delay` and `email pending` configure and inspect the **local** outbox and are invisible to the account's owner, and `email undo` only ever cancels a queued send. Default off: unset/empty leaves every command allowed.
 
 ## Personalization
 

@@ -92,6 +92,19 @@ fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
     Err("server closed connection before completing".into())
 }
 
+/// Which credential a request presents, for `Client::proxy_get` and the service-key endpoints.
+#[derive(Debug, Clone, Copy)]
+pub enum ProxyAuth<'cred> {
+    /// No credential at all: the browser's plain iframe request.
+    None,
+    /// The vestad api key as a Bearer token.
+    ApiKey,
+    /// A minted service key as a Bearer token.
+    Bearer(&'cred str),
+    /// An agent's own `AGENT_TOKEN` (from `read_agent_token`) as `X-Agent-Token`.
+    AgentToken(&'cred str),
+}
+
 pub struct Client {
     agent: ureq::Agent,
     base_url: String,
@@ -506,7 +519,10 @@ impl Client {
 
     /// Open a WebSocket to `path_and_query` (already `?token=`-authed) over the fingerprint-pinned
     /// TLS the harness uses everywhere. Shared by the `/sync` state plane and the app-chat chat socket.
-    async fn connect_ws(&self, path_and_query: &str) -> Result<SyncSocket, String> {
+    /// Public for the proxy's own gate: a service route decides authorization before it upgrades, so
+    /// the handshake completing is that verdict, and a refusal arrives as `HTTP error: {status}` in
+    /// the error string rather than as a socket.
+    pub async fn connect_ws(&self, path_and_query: &str) -> Result<SyncSocket, String> {
         let url = format!("{}{}", ws_base_url(&self.base_url), path_and_query);
         let tls = make_ws_rustls_config(self.cert_fingerprint.clone());
         let connector = tokio_tungstenite::Connector::Rustls(tls);
@@ -554,6 +570,119 @@ impl Client {
             .map_err(|e| map_error(&e))?;
         check_response(resp)?;
         Ok(())
+    }
+
+    /// The single header a `ProxyAuth` credential presents, if any.
+    fn auth_header(&self, auth: ProxyAuth) -> Option<(&'static str, String)> {
+        match auth {
+            ProxyAuth::None => None,
+            ProxyAuth::ApiKey => Some(("Authorization", format!("Bearer {}", self.api_key))),
+            ProxyAuth::Bearer(token) => Some(("Authorization", format!("Bearer {token}"))),
+            ProxyAuth::AgentToken(token) => Some(("X-Agent-Token", token.to_string())),
+        }
+    }
+
+    /// GET a proxied path with a chosen credential, returning `(status, body)`. Never treats a
+    /// non-2xx as an error: the whole point is asserting on the refusals.
+    pub fn proxy_get(&self, path: &str, auth: ProxyAuth) -> Result<(u16, String), String> {
+        let mut request = self.agent.get(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// The status of a proxied GET, for the authorization table where the body is noise.
+    pub fn proxy_status(&self, path: &str, auth: ProxyAuth) -> Result<u16, String> {
+        Ok(self.proxy_get(path, auth)?.0)
+    }
+
+    /// Register a service via `POST /agents/{name}/services`, the agent-token tier the
+    /// in-container `register-service` script calls. Exposure is left unspecified, so the
+    /// response's `public` reports vestad's own default for a fresh registration.
+    pub fn register_service(&self, name: &str, service: &str) -> Result<serde_json::Value, String> {
+        let agent_token = self.read_agent_token(name)?;
+        let response = self
+            .agent
+            .post(&format!("{}/agents/{name}/services", self.base_url))
+            .header("X-Agent-Token", &agent_token)
+            .send_json(serde_json::json!({ "name": service }))
+            .map_err(|e| map_error(&e))?;
+        check_response(response)?
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Mint a service key scoped to one service on one agent via
+    /// `POST /agents/{name}/services/{service}/keys`. The `key` in the response is the secret,
+    /// returned exactly once.
+    pub fn mint_service_key(&self, name: &str, service: &str) -> Result<serde_json::Value, String> {
+        let (status, body) = self.mint_service_key_as(name, service, ProxyAuth::ApiKey)?;
+        if !(200..300).contains(&status) {
+            return Err(format!("mint service key failed: {status}: {body}"));
+        }
+        serde_json::from_str(&body).map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Mint with a chosen credential, returning `(status, body)` rather than mapping a refusal to
+    /// an error, so a test can assert who the endpoint accepts.
+    pub fn mint_service_key_as(
+        &self,
+        name: &str,
+        service: &str,
+        auth: ProxyAuth,
+    ) -> Result<(u16, String), String> {
+        let mut request = self.agent.post(&format!(
+            "{}/agents/{name}/services/{service}/keys",
+            self.base_url
+        ));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request
+            .send_json(serde_json::json!({}))
+            .map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    pub fn revoke_service_key(&self, name: &str, service: &str, id: &str) -> Result<(), String> {
+        let status = self.revoke_service_key_as(name, service, id, ProxyAuth::ApiKey)?;
+        if !(200..300).contains(&status) {
+            return Err(format!("revoke service key failed: {status}"));
+        }
+        Ok(())
+    }
+
+    /// Revoke with a chosen credential, returning the status rather than mapping a refusal to an
+    /// error.
+    pub fn revoke_service_key_as(
+        &self,
+        name: &str,
+        service: &str,
+        id: &str,
+        auth: ProxyAuth,
+    ) -> Result<u16, String> {
+        let mut request = self.agent.delete(&format!(
+            "{}/agents/{name}/services/{service}/keys/{id}",
+            self.base_url
+        ));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
+        Ok(response.status().as_u16())
     }
 
     pub fn stream_logs(&self, name: &str) -> Result<(), String> {

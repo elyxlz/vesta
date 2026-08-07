@@ -20,6 +20,9 @@ export interface Controller {
   subscribeDeltas: (listener: (delta: Delta) => void) => () => void
   getSyncState: () => SyncState
   subscribeSyncState: (listener: () => void) => () => void
+  reportPresence: (focused: boolean) => void
+  getAnyFocused: () => boolean
+  subscribeAnyFocused: (listener: () => void) => () => void
   close: () => void
 }
 
@@ -38,6 +41,12 @@ export function createController(deps: ControllerDeps): Controller {
     for (const listener of stateListeners) listener()
   }
 
+  let anyFocused = false
+  const anyFocusedListeners = new Set<() => void>()
+  const emitAnyFocused = (): void => {
+    for (const listener of anyFocusedListeners) listener()
+  }
+
   const socket = createSyncSocket(deps.sync, {
     onSnapshot: (tree) => {
       replica.applySnapshot(tree)
@@ -45,6 +54,10 @@ export function createController(deps: ControllerDeps): Controller {
     onDelta: (delta) => {
       replica.applyDelta(delta)
       for (const listener of deltaListeners) listener(delta)
+      if (delta.type === "presence") {
+        anyFocused = delta.anyFocused
+        emitAnyFocused()
+      }
     },
     onStateChange: (state) => {
       syncState = state
@@ -69,6 +82,16 @@ export function createController(deps: ControllerDeps): Controller {
       stateListeners.add(listener)
       return () => {
         stateListeners.delete(listener)
+      }
+    },
+    reportPresence: (focused) => {
+      socket.reportPresence(focused)
+    },
+    getAnyFocused: () => anyFocused,
+    subscribeAnyFocused: (listener) => {
+      anyFocusedListeners.add(listener)
+      return () => {
+        anyFocusedListeners.delete(listener)
       }
     },
     close: () => {

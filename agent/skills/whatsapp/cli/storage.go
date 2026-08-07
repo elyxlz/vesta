@@ -528,16 +528,8 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 		return Contact{}, err
 	}
 	jid := fmt.Sprintf("%s@%s", normalizedDigits, types.DefaultUserServer)
-	_, err = ms.db.Exec(`
-		INSERT INTO contacts (jid, phone_number, name, added_at, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT(jid) DO UPDATE SET
-			name = excluded.name,
-			phone_number = excluded.phone_number,
-			updated_at = CURRENT_TIMESTAMP
-	`, jid, displayNumber, trimmedName)
-	if err != nil {
-		return Contact{}, fmt.Errorf("failed to save contact: %v", err)
+	if err := ms.upsertManualContact(jid, displayNumber, trimmedName); err != nil {
+		return Contact{}, err
 	}
 
 	return Contact{
@@ -546,6 +538,39 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 		PhoneNumber: displayNumber,
 		IsManual:    true,
 	}, nil
+}
+
+// SaveManualContactByChatJID saves a user-confirmed contact under a chat's own JID, for a peer
+// WhatsApp addresses only by a LID: no phone number exists to key them under, and this is the key
+// the send gate looks them up by. Callers pass the canonical chat JID.
+func (ms *MessageStore) SaveManualContactByChatJID(name, chatJID string) (Contact, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return Contact{}, fmt.Errorf("contact name cannot be empty")
+	}
+	if strings.TrimSpace(chatJID) == "" {
+		return Contact{}, fmt.Errorf("chat id cannot be empty")
+	}
+	if err := ms.upsertManualContact(chatJID, "", trimmedName); err != nil {
+		return Contact{}, err
+	}
+
+	return Contact{JID: chatJID, Name: trimmedName, IsManual: true}, nil
+}
+
+func (ms *MessageStore) upsertManualContact(jid, phoneNumber, name string) error {
+	_, err := ms.db.Exec(`
+		INSERT INTO contacts (jid, phone_number, name, added_at, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(jid) DO UPDATE SET
+			name = excluded.name,
+			phone_number = excluded.phone_number,
+			updated_at = CURRENT_TIMESTAMP
+	`, jid, phoneNumber, name)
+	if err != nil {
+		return fmt.Errorf("failed to save contact: %v", err)
+	}
+	return nil
 }
 
 // getManualContact loads a manual contact by a single equality column (jid or
@@ -569,38 +594,52 @@ func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
 	return ms.getManualContact("jid", jid)
 }
 
-func (ms *MessageStore) DeleteManualContact(identifier string) error {
-	// Try by name first
-	result, err := ms.db.Exec(`DELETE FROM contacts WHERE name = ?`, identifier)
+// ManualContactJIDsByName returns the key of every contact row carrying name. A name matches the
+// name column alone, so a revoke reads the keys here and clears the peers behind them rather than
+// deleting by name, which would leave a peer's row under another key form standing.
+func (ms *MessageStore) ManualContactJIDsByName(name string) ([]string, error) {
+	rows, err := ms.db.Query(`SELECT jid FROM contacts WHERE name = ?`, name)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jids []string
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			return nil, err
+		}
+		jids = append(jids, jid)
+	}
+	return jids, rows.Err()
+}
+
+// DeleteManualContactsByJID removes the contact rows under the given keys, reporting whether any
+// did. Callers pass every key form of one peer, so a revoke leaves nothing behind.
+func (ms *MessageStore) DeleteManualContactsByJID(jids []string) (bool, error) {
+	if len(jids) == 0 {
+		return false, nil
+	}
+	placeholders := strings.Repeat("?,", len(jids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(jids))
+	for i, jid := range jids {
+		args[i] = jid
+	}
+	return ms.deleteContacts(`DELETE FROM contacts WHERE jid IN (`+placeholders+`)`, args...)
+}
+
+func (ms *MessageStore) deleteContacts(query string, args ...any) (bool, error) {
+	result, err := ms.db.Exec(query, args...)
+	if err != nil {
+		return false, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to check delete result: %v", err)
+		return false, fmt.Errorf("failed to check delete result: %v", err)
 	}
-	if rows > 0 {
-		return nil
-	}
-
-	// Try by phone number
-	normalized, _, err := normalizePhoneInput(identifier)
-	if err == nil {
-		jid := fmt.Sprintf("%s@%s", normalized, types.DefaultUserServer)
-		result, err = ms.db.Exec(`DELETE FROM contacts WHERE jid = ?`, jid)
-		if err != nil {
-			return err
-		}
-		rows, err = result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("failed to check delete result: %v", err)
-		}
-		if rows > 0 {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("contact not found: %s", identifier)
+	return rows > 0, nil
 }
 
 func digitsOnly(input string) string {
@@ -640,27 +679,58 @@ func normalizePhoneInput(input string) (string, string, error) {
 	return digits, "+" + digits, nil
 }
 
+// ListMessages reads stored messages. chatJIDs filters by chat; pass every storage key one
+// conversation can live under (a direct chat splits across the peer's phone JID and their LID),
+// or nil for no chat filter.
 func (ms *MessageStore) ListMessages(
 	after, before *time.Time,
-	senderPhone, chatJID, query string,
+	senderPhone string,
+	chatJIDs []string,
+	query string,
 	limit, offset int,
 ) ([]Message, error) {
 	// Try the FTS index first when searching; fall back to a LIKE scan if the
 	// FTS query errors (e.g. a syntactically invalid MATCH expression).
 	if query != "" {
-		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJID, query, limit, offset)
+		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJIDs, query, limit, offset)
 		if err == nil {
-			return messages, nil
+			return dedupeByID(messages, len(chatJIDs) > 1), nil
 		}
 	}
 
-	return ms.listMessagesQuery(false, after, before, senderPhone, chatJID, query, limit, offset)
+	messages, err := ms.listMessagesQuery(false, after, before, senderPhone, chatJIDs, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeByID(messages, len(chatJIDs) > 1), nil
+}
+
+// dedupeByID drops repeats of the same message id, keeping the first (most recent) copy. The
+// messages primary key is (id, chat_jid), so one message re-stored under a chat's other storage
+// key is two rows, and a union across both keys would show it twice. Only runs when more than one
+// key was queried, since a single key cannot repeat an id.
+func dedupeByID(messages []Message, active bool) []Message {
+	if !active || len(messages) < 2 {
+		return messages
+	}
+	seen := make(map[string]struct{}, len(messages))
+	out := messages[:0]
+	for _, m := range messages {
+		if _, dup := seen[m.ID]; dup {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		out = append(out, m)
+	}
+	return out
 }
 
 func (ms *MessageStore) listMessagesQuery(
 	useFTS bool,
 	after, before *time.Time,
-	senderPhone, chatJID, query string,
+	senderPhone string,
+	chatJIDs []string,
+	query string,
 	limit, offset int,
 ) ([]Message, error) {
 	qb := strings.Builder{}
@@ -690,9 +760,13 @@ func (ms *MessageStore) listMessagesQuery(
 		qb.WriteString(" AND m.sender LIKE ?")
 		args = append(args, "%"+senderPhone+"%")
 	}
-	if chatJID != "" {
-		qb.WriteString(" AND m.chat_jid = ?")
-		args = append(args, chatJID)
+	if len(chatJIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(chatJIDs))
+		placeholders = placeholders[:len(placeholders)-1]
+		qb.WriteString(" AND m.chat_jid IN (" + placeholders + ")")
+		for _, jid := range chatJIDs {
+			args = append(args, jid)
+		}
 	}
 	if !useFTS && query != "" {
 		qb.WriteString(" AND m.content LIKE ?")
@@ -969,7 +1043,7 @@ func (ms *MessageStore) GetLastMessageInfo(chatJID string) (time.Time, string, e
 func (ms *MessageStore) DeleteChatMessages(chatJID string) (int64, error) {
 	// Remove FTS entries for this chat before deleting messages.
 	// This is faster than letting the per-row AFTER DELETE trigger fire for each message,
-	// and avoids the old approach of wiping+rebuilding the entire FTS index.
+	// and avoids wiping and rebuilding the entire FTS index.
 	ms.db.Exec(`DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE chat_jid = ?)`, chatJID)
 
 	res, err := ms.db.Exec(`DELETE FROM messages WHERE chat_jid = ?`, chatJID)

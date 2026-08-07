@@ -187,7 +187,9 @@ vote_text = js("document.querySelector('[data-test=\"vote-button\"]').outerText.
 
 ### Get review count and rating
 ```python
-review_link = js("JSON.stringify(Array.from(document.querySelectorAll('a')).filter(a => a.href && a.href.includes('/reviews') && a.outerText.includes('review')).map(a => a.outerText.trim()).slice(0, 1))")
+review_link = js(
+    "JSON.stringify(Array.from(document.querySelectorAll('a')).filter(a => a.href && a.href.includes('/reviews') && a.outerText.includes('review')).map(a => a.outerText.trim()).slice(0, 1))"
+)
 # Returns: ["1 review"] or ["5.0\n(731 reviews)"]
 ```
 
@@ -300,6 +302,7 @@ JSON.stringify(
 )
 """)
 import json
+
 data = json.loads(products)
 print(f"Found {len(data)} products")
 for p in data:

@@ -6,7 +6,6 @@ import datetime as dt
 import json
 import pathlib as pl
 import time
-import typing as tp
 
 import pydantic
 from watchfiles import Change, awatch
@@ -21,15 +20,23 @@ from .client import (
     client_session,
     compact_session,
     process_message,
-    resolve_openrouter_max_tokens,
     send_preempt,
 )
 from .codex_proxy import start_codex_proxy
 from .diagnostics import format_crash_detail
 from .helpers import build_restart_context, clear_notifications, load_prompt
 from .model_access import model_access_available, wait_for_model_access
-from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, Notification
-from .openrouter_cache import start_cache_proxy
+from .notification import (
+    CORE_SNOOZE_TYPES,
+    CORE_SOURCE,
+    TYPE_COMPACTION_FOLLOWUP,
+    TYPE_NIGHTLY_DREAM,
+    TYPE_PROACTIVE_CHECK,
+    DeliveredDisposition,
+    Disposition,
+    Notification,
+)
+from .openrouter_cache import resolve_openrouter_max_tokens, start_cache_proxy
 from .provider import ProviderAuthState, is_unauthenticated
 
 
@@ -67,9 +74,7 @@ def drop_core_notification(*, type_: str, body: str, config: cfg.VestaConfig, na
     return path
 
 
-def _notif_disposition(
-    notif: Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]
-) -> tp.Literal["interrupt", "snooze", "trash"]:
+def _notif_disposition(notif: Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]) -> Disposition:
     """The notification's effective disposition: `interrupt`, `snooze`, or `trash`. Core notifications are
     exempt from the user's rules — their disposition is control-flow, derived from the type
     (CORE_SNOOZE_TYPES), and is never trashed; everything else goes through the ruleset (first match wins,
@@ -113,21 +118,29 @@ async def trash_notification_files(notifications: list[Notification], *, trash_d
     _trash_paths([n.file_path for n in notifications if n.file_path], trash_dir)
 
 
-def format_notification_batch(notifications: list[Notification]) -> str:
+def format_notification_batch(notifications: list[Notification], *, disposition: DeliveredDisposition | None = None) -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
     self-contained. All read-time guidance is producer-owned: executable reply syntax is carried in
     `reply_command`, while behavioral guidance such as the group-chat caveat stays in
-    `reply_hint`; core injects nothing."""
-    return "\n".join(n.format_for_display() for n in notifications)
+    `reply_hint`; core injects only delivery context (`disposition`, BATCH_TRIAGE_HINT)."""
+    return "\n".join(n.format_for_display(disposition=disposition) for n in notifications)
+
+
+# Prepended to a multi-notification snoozed section only; interrupt batches are delivered bare.
+# A pointer, not advice: the triage workflow itself is owned by the notifications skill.
+BATCH_TRIAGE_HINT = "[{count} snoozed notifications delivered as one batch; the notifications skill covers working through them.]"
 
 
 async def process_batch(
     notifications: list[Notification],
     *,
     queue: asyncio.Queue[vm.QueuedTurn],
+    disposition: DeliveredDisposition,
 ) -> None:
     """Render a batch as one prompt and queue it. Mixed batches render in two sections, system (`source=core`) first.
+    `disposition` is how the batch was routed, stamped on each external element; a multi-notification
+    snoozed section additionally opens with BATCH_TRIAGE_HINT.
 
     Preempt delivery is owned by the processor's queue-watcher (_run_messages_with_preempts):
     an item landing mid-turn is delivered as a priority:"now" message and consumed at delivery.
@@ -140,15 +153,17 @@ async def process_batch(
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
-    async def queue_section(group: list[Notification]) -> None:
-        text = format_notification_batch(group)
+    async def queue_section(group: list[Notification], *, disposition: DeliveredDisposition | None) -> None:
+        text = format_notification_batch(group, disposition=disposition)
+        if disposition == "snooze" and len(group) > 1:
+            text = f"{BATCH_TRIAGE_HINT.format(count=len(group))}\n{text}"
         paths = [n.file_path for n in group if n.file_path]
         await queue.put(vm.QueuedTurn(text, False, paths))
 
     if system:
-        await queue_section(system)
+        await queue_section(system, disposition=None)
     if external:
-        await queue_section(external)
+        await queue_section(external, disposition=disposition)
 
 
 def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, agent_message: str, first_start: bool) -> str | None:
@@ -478,10 +493,12 @@ DREAMER_CATCHUP_HOURS = 6
 
 
 def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
-    """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`)
+    """Drop a dream notification if this night's dream hasn't completed yet. Caller (`monitor_loop`)
     rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the
     configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but
-    cannot preempt the agent for the rest of the day."""
+    cannot preempt the agent for the rest of the day. Naming the file after its night makes a re-drop
+    over a still-pending dream an overwrite rather than a second queued turn; once consumed the file
+    is gone, so a later check inside the window recreates it."""
     if config.ephemeral or config.nightly_memory_hour is None:
         return
     # A brand-new agent has no history to curate; a catch-up dream firing inside the morning
@@ -493,12 +510,17 @@ def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
     hours_since_start = (now.hour - config.nightly_memory_hour) % 24
     if hours_since_start >= DREAMER_CATCHUP_HOURS:
         return
+    # The instant this night's window opened, and the one owner of which night this is. Checks land at
+    # an arbitrary minute, so the hour is truncated to match the hour-granular window: an unaligned
+    # boundary would read a completion earlier in the same hour as belonging to an older night.
+    night_start = now.replace(minute=0, second=0, microsecond=0) - dt.timedelta(hours=hours_since_start)
     last = state.persisted.last_dreamer_run
-    if last is not None and last.date() >= now.date():
+    if last is not None and last >= night_start:
         return
     logger.dreamer("Nightly dreamer starting...")
     prompt = load_prompt("nightly_dream", config) or ""
-    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config)
+    name = f"{TYPE_NIGHTLY_DREAM}-{night_start.date().isoformat()}"
+    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config, name=name)
     logger.dreamer("Dreamer notification dropped")
 
 
@@ -585,7 +607,7 @@ async def _scan_notifications(
     queued_paths.update(n.file_path for n, disposition in decisions if disposition != "trash" and n.file_path)
 
     if interrupt_notifs:
-        await process_batch(interrupt_notifs, queue=queue)
+        await process_batch(interrupt_notifs, queue=queue, disposition="interrupt")
     return new_snoozed
 
 
@@ -642,7 +664,7 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                 idle_since = None
 
             if pending_snoozed and idle_since is not None and (now - idle_since).total_seconds() >= config.notif_snooze_idle_grace_seconds:
-                await process_batch(pending_snoozed, queue=queue)
+                await process_batch(pending_snoozed, queue=queue, disposition="snooze")
                 pending_snoozed = []
     finally:
         await cancel_task(watcher_task)

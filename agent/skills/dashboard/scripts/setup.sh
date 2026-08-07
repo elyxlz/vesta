@@ -1,13 +1,17 @@
 #!/bin/sh
 set -eu
 
-# Idempotent one-shot dashboard setup: installs deps, builds, starts the
-# daemon, confirms it is actually serving, and appends the guarded
-# restart-skill daemon line once. Safe to re-run; every step is a no-op when
+# Idempotent dashboard setup: installs deps, builds, starts the daemon, and
+# confirms it is actually serving. Safe to re-run; every step is a no-op when
 # already done, and a real failure exits loudly instead of leaving a half
-# set-up dashboard that looks fine until the next restart.
+# set-up dashboard that looks fine until the next restart. Registering the
+# daemon in the restart skill is the agent's step, printed at the end.
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Put the dashboard command on PATH; the daemon verbs and the restart line call it by name.
+mkdir -p "$HOME/.local/bin"
+ln -sf "$DIR/../dashboard" "$HOME/.local/bin/dashboard"
 
 cd "$DIR/../app"
 
@@ -22,23 +26,26 @@ if [ ! -d dist ]; then
 fi
 
 echo "Starting daemon..."
-"$DIR/daemon" start
+"$DIR/../dashboard" daemon start
 
-STATUS=$("$DIR/daemon" status)
+STATUS=$("$DIR/../dashboard" daemon status)
 echo "$STATUS"
 case "$STATUS" in
-  *'"http_ok":true'*) ;;
+  *'"running":true'*) ;;
   *)
-    echo "ERROR: dashboard did not answer a 200 after start; see 'screen -r dashboard'" >&2
+    echo "ERROR: dashboard is not running after start; see ~/agent/logs/dashboard.log" >&2
     exit 1
     ;;
 esac
 
-RESTART_SKILL=~/agent/skills/restart/SKILL.md
-LINE='running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }'
-if [ -f "$RESTART_SKILL" ] && ! grep -qF "$LINE" "$RESTART_SKILL"; then
-  printf '\n```bash\n%s\n```\n' "$LINE" >> "$RESTART_SKILL"
-  echo "Appended dashboard daemon line to restart skill."
+PORT=$(printf '%s' "$STATUS" | sed -n 's/.*"port":\([0-9]*\).*/\1/p')
+if ! curl -fsS -o /dev/null "http://localhost:$PORT"; then
+  echo "ERROR: dashboard did not answer a 200 on port $PORT; see ~/agent/logs/dashboard.log" >&2
+  exit 1
 fi
 
 echo "Dashboard setup complete."
+echo
+echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
+echo "of ~/agent/skills/restart/SKILL.md, on its own line."
+echo '  dashboard daemon start'

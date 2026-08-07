@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -13,9 +14,10 @@ import time
 from pathlib import Path
 
 from .daemon import log_path, pid_path, socket_path
-from .launcher import RunningCamoufox, launch
+from .launcher import EPHEMERAL_ROOT, PROFILE_ROOT, RunningCamoufox, _profile_has_live_owner, launch
 
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
+PROC = Path("/proc")
 GRACEFUL_EXIT_POLLS = 25
 GRACEFUL_POLL_INTERVAL_S = 0.2
 # Above the daemon's largest per-command bound (the navigate wait), so its error (which names the method) wins the race.
@@ -129,6 +131,8 @@ def launch_browser(
         extra_args=extra_args,
         window_size=window_size,
     )
+    # After launch(), so a failed launch leaves the old records intact.
+    clear_session_endpoints(session)
     _session_file(session, "browser-pid").write_text(str(running.pid))
     _session_file(session, "bidi-ws").write_text(running.ws_url)
     return running
@@ -150,13 +154,28 @@ def read_session_cdp_ws(name: str | None = None) -> str | None:
         return None
 
 
+def clear_session_endpoints(name: str | None = None) -> None:
+    """Drop a session's recorded endpoints + browser pid, so no later call can pick up a
+    record that no longer describes the session's backend. Every writer (launch and both
+    recorders) clears before writing, so the records always describe exactly one backend,
+    and a recorded browser that is still running is terminated here so replacing a backend
+    never orphans the old one. Parallel backends belong in separate sessions."""
+    pid = read_session_browser_pid(name)
+    if pid is not None and _pid_alive(pid):
+        _terminate_pid(pid)
+    for suffix in ("bidi-ws", "cdp-ws", "browser-pid"):
+        _session_file(name, suffix).unlink(missing_ok=True)
+
+
 def record_bidi_endpoint(ws_url: str, name: str | None = None) -> None:
     """Record a connected Camoufox BiDi endpoint so the daemon (and restarts) find it."""
+    clear_session_endpoints(name)
     _session_file(name, "bidi-ws").write_text(ws_url)
 
 
 def record_cdp_endpoint(ws_url: str, name: str | None = None) -> None:
     """Record a connected Chrome CDP endpoint so the daemon (and restarts) find it."""
+    clear_session_endpoints(name)
     _session_file(name, "cdp-ws").write_text(ws_url)
 
 
@@ -183,18 +202,10 @@ def set_mode(mode: str, name: str | None = None) -> None:
 
 
 def stop_browser(name: str | None = None) -> None:
-    """Terminate the Camoufox process for a session, if we launched it."""
+    """Terminate the Camoufox process for a session, if we launched it, and drop its records."""
     session = _session_name(name)
-    pid = read_session_browser_pid(session)
-    if pid:
-        _terminate_pid(pid)
-    for p in (
-        _session_file(session, "browser-pid"),
-        _session_file(session, "bidi-ws"),
-        _session_file(session, "cdp-ws"),
-        _session_file(session, "mode"),
-    ):
-        p.unlink(missing_ok=True)
+    clear_session_endpoints(session)
+    _session_file(session, "mode").unlink(missing_ok=True)
 
 
 def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
@@ -210,6 +221,16 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     # recorded BiDi endpoint (launched Camoufox).
     env = {**os.environ, "BROWSER_SESSION": session}
     if "VESTA_BROWSER_CDP_WS" not in env and "VESTA_BROWSER_BIDI_WS" not in env:
+        # Endpoint records live in /tmp and outlive the browser (container restart, OOM,
+        # manual kill); dialing a stale one fails deep in the daemon as an opaque
+        # "Connect call failed", so check the recorded pid before handing the record over.
+        browser_pid = read_session_browser_pid(session)
+        if browser_pid is not None and not _pid_alive(browser_pid):
+            clear_session_endpoints(session)
+            raise RuntimeError(
+                f"The browser recorded for session {session!r} is gone (pid {browser_pid} is not running), "
+                "so its saved endpoint is stale. Run `browser launch` to start a new one."
+            )
         cdp_ws = read_session_cdp_ws(session)
         bidi_ws = read_session_ws_url(session)
         if cdp_ws is not None:
@@ -273,7 +294,7 @@ def list_sessions() -> list[dict]:
     for pid_f in Path("/tmp").glob("vesta-browser-*.browser-pid"):
         name = pid_f.name.removeprefix("vesta-browser-").removesuffix(".browser-pid")
         browser_pid = _read_pid(pid_f)
-        alive = _pid_alive(browser_pid) if browser_pid else False
+        alive = _pid_alive(browser_pid)
         out.append(
             {
                 "name": name,
@@ -286,12 +307,22 @@ def list_sessions() -> list[dict]:
     return out
 
 
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
+def _pid_alive(pid: int | None) -> bool:
+    """True only for a process that is actually running. A signal-0 probe cannot answer this:
+    a dead process whose pid lingers unreaped (a detached child reparented to init) answers the
+    probe like a live one. /proc's state code distinguishes the corpse; the comm field can hold
+    spaces and parens, so the state is read relative to its closing paren rather than by
+    splitting on whitespace."""
+    if pid is None:
         return False
+    try:
+        stat = (PROC / str(pid) / "stat").read_text()
+    except OSError:
+        return False
+    comm_end = stat.rfind(") ")
+    if comm_end == -1:
+        return False
+    return stat[comm_end + 2] != "Z"
 
 
 def stop_all() -> None:
@@ -300,9 +331,75 @@ def stop_all() -> None:
         shutdown(s["name"])
 
 
+def _dir_size(path: Path) -> int:
+    total = 0
+    for p in path.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink():
+                total += p.stat().st_size
+        except OSError:
+            continue  # vanished mid-walk
+    return total
+
+
+def ephemeral_profile_dir(name: str | None = None) -> Path:
+    """Path of the throwaway profile for a session. Created by launch, removed by shutdown."""
+    return EPHEMERAL_ROOT / _session_name(name)
+
+
+def prune_profiles(*, apply: bool = False) -> dict:
+    """Report (and optionally delete) leftover ephemeral profile dirs.
+
+    Ephemeral profiles are normally removed by `shutdown()`, so this only ever finds the
+    ones whose session died before it could clean up (an OOM-killed parent, a container
+    kill). Those leave no /tmp pid file to find them by, so this walks the filesystem
+    rather than the session registry: the registry is exactly what does not survive the
+    crash it would be needed for.
+
+    Scope is EPHEMERAL_ROOT and nothing else. It cannot reach the shared profile or a
+    durable `--user-data-dir` profile, because "no live owner" does not mean "orphaned":
+    a signed-in profile the agent means to reuse looks unowned every moment it is idle.
+    Intent is recorded at creation time, not guessed at deletion time.
+
+    A live-owner check still runs, so a running ephemeral session is never pulled out
+    from under itself.
+    """
+    candidates, kept = [], []
+    if EPHEMERAL_ROOT.is_dir():
+        for d in sorted(EPHEMERAL_ROOT.iterdir()):
+            if not d.is_dir():
+                continue
+            entry = {"name": d.name, "path": str(d), "bytes": _dir_size(d)}
+            if _profile_has_live_owner(d):
+                entry["reason"] = "live owner"
+                kept.append(entry)
+            else:
+                candidates.append(entry)
+    removed = []
+    if apply:
+        for entry in candidates:
+            try:
+                shutil.rmtree(entry["path"])
+                removed.append(entry)
+            except OSError as e:
+                entry["error"] = str(e)
+    return {
+        "applied": apply,
+        "root": str(EPHEMERAL_ROOT),
+        "reclaimable_bytes": sum(e["bytes"] for e in candidates),
+        "removable": candidates,
+        "removed": removed,
+        "kept": kept,
+        "never_pruned": [str(PROFILE_ROOT), "any --user-data-dir profile"],
+    }
+
+
 def shutdown(name: str | None = None) -> None:
     """Stop the daemon and Camoufox for a single session, clean up state files."""
     session = _session_name(name)
     restart_daemon(session)
     stop_browser(session)
     Path(log_path(session)).unlink(missing_ok=True)
+    # An ephemeral profile is owned by the session, so it dies with it. Durable profiles
+    # (the shared one, or any --user-data-dir path) are never touched here.
+    shutil.rmtree(ephemeral_profile_dir(session), ignore_errors=True)

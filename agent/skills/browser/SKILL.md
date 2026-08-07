@@ -17,23 +17,56 @@ restarts, different across profiles.
 **Never assume you got caught by anti-bot.** Because the browser is genuinely stealth, a hang or
 a blank page is almost never a block. The overwhelmingly common cause is boring: `open`/`navigate`
 waits for the page `load` event, and heavy JS/SPA sites (airlines, banks, booking flows) fire it
-late or never, so the command times out even though the page rendered fine. Rule out the boring
+late or never, so the command times out even though the page rendered fine. The same cause also
+returns **clean** with `document.body.innerText.length` at 0, and that second symptom is the one
+that fools you: the command SUCCEEDED, so "did it time out?" answers no and you walk straight past
+this paragraph. Re-navigating the same context with `"wait":"none"` renders it. Rule out the boring
 cause FIRST: (1) take a `snapshot` or `screenshot` anyway, the content is usually already there;
 (2) navigate via BiDi with a lighter wait so you return before full load:
 `browser bidi browsingContext.navigate '{"context":"<ctx>","url":"<url>","wait":"interactive"}'`
 (or `"wait":"none"`). Only after the page truly never renders across these should you even
 consider a block, and even then suspect a cookie/consent wall or a redirect before "anti-bot".
 
+**One concrete instance: a `browser open` that sits there.** `open` creates a tab (BiDi
+`browsingContext.create {"type":"tab"}`), and in some containers that one call never gets an
+answer. It waits the full **60s** response bound, then takes over a context the browser already
+has rather than failing, preferring one showing no page. So `open` still lands, just slowly, and
+what you get back is an existing context rather than a fresh tab: run `browser tabs` before
+assuming you have two. Let it reach the timeout instead of killing it, since the error names the
+exact call that stalled, while terminating early leaves you with "it hung" and sends you hunting
+a block that is not there. Once you have seen it on a box, reach for **`browser navigate <url>`**,
+which skips tab creation and returns at once.
+
+**When a button does nothing, read the click's own output first.** `browser click <ref>` reports
+what was topmost at the point it clicked when that is not your element (`# e14 is covered by
+<div.modal-wrap>, which took the click instead.`). That line means an invisible overlay ate it, and
+every retry, every coordinate fallback and every theory about validation is wasted until it is
+dismissed. A modal can be absent from `innerText` and still sit over an enabled button. See
+[interaction-skills/clicking.md](interaction-skills/clicking.md).
+
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
+
+**And the harder version: a page that appears to have NO field at all is almost never a page that cannot be filled.** "There is nowhere to type it, so this needs the user's own device" is the most expensive wrong conclusion available, because it looks like diligence. Before writing that sentence, rule out five things, in this order:
+1. **A cross-origin iframe.** Identity, payment and document-upload widgets are nearly always third-party iframes, so the parent document reads as empty while the screenshot plainly shows a form. Enumerating contexts and working inside one: [interaction-skills/cross-origin-iframes.md](interaction-skills/cross-origin-iframes.md).
+2. **A field behind a conditional render.** The input exists only after some control is clicked (a `v-if`/`x-show` toggled by a "Get a code" or "Enter it manually" link). If the visible call-to-action opens a new tab, click it with a capture-phase `preventDefault` so the framework's handler still runs and reveals the field without navigating away.
+3. **A selector that is too specific.** Framework-rendered inputs often carry no `type` attribute, so `input[type=text]` matches nothing even though `el.type === 'text'`. Query bare `input` and filter in JS, and include `[contenteditable]` and `[role=textbox]` for masked/custom widgets. A `contenteditable` rich-text editor needs [interaction-skills/prosemirror-tiptap-editors.md](interaction-skills/prosemirror-tiptap-editors.md).
+4. **A shadow root.** `querySelectorAll` never pierces one, so a web-component field is invisible to it. Walk recursively: collect matches, then recurse into every `el.shadowRoot`.
+5. **Hydration timing.** A code-split step component mounts late, so an immediate query legitimately returns 0 a moment before the field exists. Re-query after a short wait or a `wait_for_text` on the expected label before concluding anything.
+
+A genuine wall states a capability the machine lacks (a camera, a physical document, a biometric, an on-device 2FA), not merely a field you could not find.
+
+**Parallel agents must not share a browser session**: concurrent runs on one session share tabs and can navigate each other's pages or evict each other, so give each parallel run its own `BROWSER_SESSION` (isolation details in [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md)).
 
 **Setup**: [SETUP.md](SETUP.md)
 
 ## Search first
 
 Before inventing an approach to a site, check `domain-skills/<host>/` for saved recipes and
-`interaction-skills/` for reusable mechanics (dialogs, iframes, shadow DOM, uploads, scrolling,
-dropdowns). When you open or navigate to a URL, the CLI prepends a banner listing any matching
-recipes. Read them.
+`interaction-skills/` for reusable mechanics (dialogs, tabs, cross-origin iframes, screenshots,
+rich-text editors). When you open or navigate to a URL, the CLI prepends a banner listing any matching
+recipes. Read them. Also check for the site's own API first: many SPAs answer their own JSON or
+config endpoints with everything the page shows, so a job board, booking widget, or account flow
+is often one `curl` or `browser http-get` instead of a launch, a navigation, and a snapshot.
 
 ```bash
 # List everything we know about a site
@@ -83,13 +116,15 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 # Session
 browser launch                                    # fetch (first time) + launch Camoufox, headless
 browser launch --mode screenshot                  # ... and report back with screenshots, not the a11y tree
-browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
+browser launch --ephemeral-profile                # isolated throwaway profile, deleted on stop
+browser launch --user-data-dir ~/.browser/work    # isolated DURABLE profile, kept forever
 browser connect http://192.168.1.10:9222          # attach to the user's own Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
 browser mode screenshot                           # switch perception: a11y | screenshot | both
 browser stop                                      # stop this session
 browser stop-all                                  # stop everything
 browser sessions                                  # list active sessions
+browser prune                                     # report ephemeral profiles left by crashes (--yes deletes)
 browser doctor                                    # report Camoufox install + session health
 
 # Navigation
@@ -130,9 +165,8 @@ browser wait --load-state load
 
 ## Screenshots
 
-Screenshots are costly in context: prefer `--webp` (much smaller than PNG) and `--region` to
-clip to the part that matters. Use PNG only when you need lossless output (e.g. pixel-diffing UI
-state). Camoufox captures PNG and JPEG natively; `--webp` is encoded as JPEG.
+Screenshots are costly in context: prefer `--webp` and `--region` to keep them small. Format and
+clipping tradeoffs: [interaction-skills/screenshots.md](interaction-skills/screenshots.md).
 
 ## Perception: a11y tree or screenshots
 
@@ -165,6 +199,14 @@ Drop to **`click(x, y)` / `browser click --at X Y`** when:
 `input.performActions` dispatches a real pointer event at that viewport point regardless of DOM
 structure.
 
+**Both ref clicks and `--at` clicks are TRUSTED input; an `element.click()` from `browser js` is
+not**, and the difference is invisible until it matters. An untrusted click carries no user
+activation, so Firefox silently refuses anything gated on a gesture: `window.open` and
+`target="_blank"` popups, clipboard writes, fullscreen, file pickers. Nothing errors, the tab just
+stays `about:blank` or never appears. If the action NAVIGATES, OPENS, UPLOADS or writes outside the
+page, use a real click. For ordinary in-page handlers a JS click is fine. Full story in
+[interaction-skills/clicking.md](interaction-skills/clicking.md).
+
 ## When stealth isn't enough (escalation)
 
 Camoufox stealth handles the large majority of sites. When one still blocks you, escalate in this
@@ -181,12 +223,24 @@ order, most-preferred first:
    logged-in Chrome, drive it over a tunnel with `browser connect`. See
    [interaction-skills/remote-control.md](interaction-skills/remote-control.md).
 
+## Picking a profile
+
+- **Nothing** (default): the shared profile. Handover sign-ins persist here.
+- **`--ephemeral-profile`**: isolated, own fingerprint, **deleted on stop**. Use for one-off runs.
+- **`--user-data-dir <path>`**: isolated and **durable**, kept forever. Only for a profile you mean
+  to reuse, like an account you signed into once.
+
+`browser prune` exists for ephemeral profiles whose session was killed before it could clean up; it
+walks the filesystem rather than the session registry, since the registry dies with the session.
+It only ever touches the ephemeral root, never a `--user-data-dir` profile: an idle signed-in
+profile and an orphan look identical to any liveness check, so intent is recorded at creation.
+
 ## More
 
 Occasional topics live in their own files so this one stays lean:
 
 - [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md) : extending helpers, multi-session, the raw BiDi escape hatch, how stealth works, contributing back
-- [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, iframes, shadow DOM, uploads, tabs)
+- [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, tabs, cross-origin iframes, screenshots, connection)
 
 ## Troubleshooting
 

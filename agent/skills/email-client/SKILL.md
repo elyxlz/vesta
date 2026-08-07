@@ -47,7 +47,7 @@ Two binaries plus a daemon:
 
 - `email-client` - read (`list-folders`, `list`, `get`, `search`, `attachments`, `status`), manage messages (`mark`, `move`, `archive`, `delete`), manage folders (`folder create/rename/delete/subscribe`), and choose notify folders (`notify list/add/remove`)
 - `email-client-send` - outbound mail (send, reply, forward, save draft)
-- `poll_daemon.py` - watches each account's chosen folders (INBOX by default) and writes a notification per new message
+- `email-client daemon start` - runs the poll daemon that watches each account's chosen folders (INBOX by default) and writes a notification per new message
 
 Omit `--account` on any command to use the default account from `accounts.json`. All commands accept `--account` and (where relevant) `--folder` (default `INBOX`).
 
@@ -64,7 +64,7 @@ email-client search --account personal --folder INBOX --query 'SUBJECT "invoice"
 email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 ```
 
-`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body. `search --query` takes a raw IMAP SEARCH expression.
+`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body. `search --query` takes a raw IMAP SEARCH expression; a query the server rejects as malformed is retried as a plain-text phrase search, so `--query 'job alert'` works too.
 
 ## Attachments
 
@@ -129,6 +129,22 @@ email-client-send --account personal --to recipient@example.com --subject "Pics"
 Repeat `--cc` / `--bcc` / `--attach` for multiple values. `--body-html` sends HTML (combine with `--body` for multipart/alternative, or pass it alone for a synthesized plain-text fallback). Attachments are capped at 25 MB total; the send aborts with a clear error past that, since most providers reject larger.
 
 After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
+
+### Delayed send and undo
+
+Send, reply, and forward operations wait 30 seconds by default. The delay is one persisted setting for the entire email client, not an option on an individual send:
+
+```bash
+email-client send-delay
+email-client send-delay --seconds 60
+email-client pending
+email-client pending --account work
+email-client undo --id <pending_id>
+```
+
+`email-client-send` returns a `pending` status with the pending id and scheduled send time. Use that id with `undo` to cancel delivery: it works right up until the poll daemon starts dispatching that message, which is what delivers it, syncs it to Sent, and marks a replied-to original as answered. Only that daemon dispatches, so `email-client-send` refuses to queue while it is stopped; `email-client daemon start` or `email-client send-delay --seconds 0` unblocks it. Drafts and dry runs are never queued.
+
+`pending` also lists messages whose status is `failed`, with `last_error` saying why: delivery kept erroring, or it was cut off mid-dispatch. A message cut off mid-dispatch may already have reached the server, so read the Sent folder before you `undo` it or send it again.
 
 ### Reply
 
@@ -217,9 +233,9 @@ The first added account becomes the default. To change it, edit `default` in `$E
 
 ## Notifications
 
-Start the poll daemon with `email-client daemon start` (see SETUP.md); manage it only through `email-client daemon start|stop|restart|status`, never raw `screen` or signals. Start is idempotent (never stacks a duplicate daemon); `daemon status` reports process state and per-account auth health in one JSON blob, so there's no need to `screen -X hardcopy` or read the log by hand.
+Start the poll daemon with `email-client daemon start` (see SETUP.md); manage it only through `email-client daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate daemon) and `daemon status` answers `{"running": ...}` from the pid record, so there is no need to read the log by hand. Per-account auth health is `email-client auth list`.
 
-The daemon runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `--interval` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. The agent picks it up like any other notification source. If the daemon dies unexpectedly it writes a `daemon_died` notification with a `reason`; a deliberate `daemon stop`/`restart` never does.
+The daemon runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `$EMAIL_CLIENT_POLL_INTERVAL` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. The agent picks it up like any other notification source. If the daemon dies unexpectedly it writes a `daemon_died` notification with a `reason`; a deliberate `daemon stop`/`restart` never does.
 
 ### Choosing which folders notify
 

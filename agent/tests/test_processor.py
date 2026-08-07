@@ -354,9 +354,14 @@ async def test_notification_dropped_before_intentional_restart(tmp_path):
 # --- Em/en dash correction in process_message ---
 
 
+@pytest.mark.parametrize(
+    "response",
+    [["something \u2014 with an em dash"], ["clean narration", "final \u2014 with an em dash"]],
+    ids=["only-message", "last-message-of-several"],
+)
 @pytest.mark.anyio
-async def test_process_message_sends_correction_on_em_dash(tmp_path):
-    """process_message should call converse a second time when an em dash is detected."""
+async def test_process_message_sends_correction_on_em_dash(tmp_path, response):
+    """process_message should call converse a second time when the turn's last message has an em dash."""
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
@@ -364,7 +369,7 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
     async def mock_converse(prompt, *, state, config, show_output):
         converse_calls.append(prompt)
         if len(converse_calls) == 1:
-            return vm.TurnSignals(texts=["something \u2014 with an em dash"])
+            return vm.TurnSignals(texts=response)
         return vm.TurnSignals(texts=["corrected response"])
 
     with patch("core.client.converse", side_effect=mock_converse):
@@ -372,17 +377,17 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
 
     assert len(converse_calls) == 2
     assert "em dash" in converse_calls[1].lower()
-    assert responses == ["something \u2014 with an em dash"]
+    assert responses == response
 
 
 @pytest.mark.parametrize(
     "response",
-    [["clean response, no dashes here"], []],
-    ids=["no-dashes", "empty-response"],
+    [["clean response, no dashes here"], [], ["narrating \u2014 with an em dash", "clean final message"]],
+    ids=["no-dashes", "empty-response", "dash-only-in-an-earlier-message"],
 )
 @pytest.mark.anyio
 async def test_process_message_no_correction(tmp_path, response):
-    """process_message should not send a correction when no dashes are present (incl. an empty response)."""
+    """process_message should not send a correction unless the turn's last message has a dash (incl. an empty response)."""
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
@@ -536,8 +541,8 @@ async def test_notification_file_deleted_on_normal_processing(tmp_path):
 async def test_cancellation_triggers_restart(tmp_path):
     """If process_message raises CancelledError, restart_reason + graceful_shutdown must be set.
 
-    Regression test for a silent-death bug: CancelledError used to propagate uncaught,
-    bypassing the restart trigger and leaving the agent wedged until backup SIGTERM hours later.
+    An uncaught CancelledError bypasses the restart trigger and leaves the agent silently
+    wedged until the backup SIGTERM hours later.
     """
     from core.loops import _run_messages_with_preempts
 
@@ -594,8 +599,8 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
 
 @pytest.mark.anyio
 async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
-    """Regression: a cancelled processor task used to return silently, leaving the agent wedged.
-    Now it must log + set restart_reason + set graceful_shutdown."""
+    """A cancelled processor task must log + set restart_reason + set graceful_shutdown.
+    Returning silently leaves the agent wedged."""
     from core.main import handle_processor_done
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")

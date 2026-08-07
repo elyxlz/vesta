@@ -13,12 +13,12 @@ import json
 data = json.loads(http_get("https://gutendex.com/books/?search=pride+and+prejudice"))
 # data['count'] = 6 (total matches)
 # data['results'] = list of up to 32 book objects
-book = data['results'][0]
+book = data["results"][0]
 # book['id'] = 1342  ← use this ID for all further calls
 # book['formats']['text/plain; charset=utf-8'] = direct txt URL
 
 # Fetch the plain-text content of that book
-text = http_get(book['formats']['text/plain; charset=utf-8'])
+text = http_get(book["formats"]["text/plain; charset=utf-8"])
 # Returns 763 083 chars including Project Gutenberg header/footer boilerplate
 ```
 
@@ -36,11 +36,11 @@ book = json.loads(http_get("https://gutendex.com/books/1342/"))
 import json
 
 data = json.loads(http_get("https://gutendex.com/books/?search=frankenstein"))
-if data['results']:
-    b = data['results'][0]
-    print(b['id'], b['title'], b['authors'][0]['name'])
+if data["results"]:
+    b = data["results"][0]
+    print(b["id"], b["title"], b["authors"][0]["name"])
     # 84  Frankenstein; or, the modern prometheus  Shelley, Mary Wollstonecraft
-    txt_url = b['formats'].get('text/plain; charset=utf-8')
+    txt_url = b["formats"].get("text/plain; charset=utf-8")
     if txt_url:
         text = http_get(txt_url)
 ```
@@ -51,8 +51,8 @@ if data['results']:
 import json
 
 data = json.loads(http_get("https://gutendex.com/books/?sort=popular"))
-for b in data['results'][:10]:
-    authors = ', '.join(a['name'] for a in b['authors'])
+for b in data["results"][:10]:
+    authors = ", ".join(a["name"] for a in b["authors"])
     print(f"[{b['id']}] {b['title']} — {authors} ({b['download_count']:,} downloads)")
 # [84]    Frankenstein                      — Shelley, Mary Wollstonecraft  (178,271)
 # [45304] The City of God, Volume I         — Augustine, of Hippo, Saint    (147,663)
@@ -93,8 +93,8 @@ url = "https://gutendex.com/books/?topic=science+fiction"
 books = []
 while url:
     data = json.loads(http_get(url))
-    books.extend(data['results'])
-    url = data['next']   # None on last page
+    books.extend(data["results"])
+    url = data["next"]  # None on last page
     # data['previous'] is also populated after page 1
     # e.g. data['next'] = "https://gutendex.com/books/?page=3&topic=science+fiction"
 # All 3473 sci-fi books loaded across ~109 pages of 32 each
@@ -107,8 +107,8 @@ import json
 
 data = json.loads(http_get("https://gutendex.com/books/?ids=1342,11,84"))
 # Returns exactly those 3 books, count=3
-for b in data['results']:
-    print(b['id'], b['title'])
+for b in data["results"]:
+    print(b["id"], b["title"])
 # 84    Frankenstein; or, the modern prometheus
 # 1342  Pride and Prejudice
 # 11    Alice's Adventures in Wonderland
@@ -121,11 +121,11 @@ raw = http_get("https://www.gutenberg.org/cache/epub/1342/pg1342.txt")
 # 763 083 chars total including PG licence header and footer
 
 START = "*** START OF THE PROJECT GUTENBERG EBOOK"
-END   = "*** END OF THE PROJECT GUTENBERG EBOOK"
+END = "*** END OF THE PROJECT GUTENBERG EBOOK"
 s = raw.find(START)
 e = raw.find(END)
 if s != -1:
-    content = raw[raw.index('\n', s) + 1 : e].strip()
+    content = raw[raw.index("\n", s) + 1 : e].strip()
     # 743 241 chars of actual novel text
 ```
 
@@ -133,8 +133,8 @@ The cache URL is the most reliable direct path. The `formats` dict in Gutendex a
 
 ```python
 # Both of these return identical content (763 083 chars):
-http_get("https://www.gutenberg.org/ebooks/1342.txt.utf-8")          # redirect
-http_get("https://www.gutenberg.org/cache/epub/1342/pg1342.txt")     # direct cache
+http_get("https://www.gutenberg.org/ebooks/1342.txt.utf-8")  # redirect
+http_get("https://www.gutenberg.org/cache/epub/1342/pg1342.txt")  # direct cache
 ```
 
 ### Download formats available per book
@@ -156,8 +156,8 @@ import json
 
 b = json.loads(http_get("https://gutendex.com/books/1342/"))
 # Grab every downloadable format URL:
-for mime, url in b['formats'].items():
-    print(mime, '->', url)
+for mime, url in b["formats"].items():
+    print(mime, "->", url)
 # text/html                         -> https://www.gutenberg.org/ebooks/1342.html.images
 # application/epub+zip              -> https://www.gutenberg.org/ebooks/1342.epub3.images
 # application/x-mobipocket-ebook   -> https://www.gutenberg.org/ebooks/1342.kf8.images
@@ -175,23 +175,23 @@ import re
 rdf = http_get("https://www.gutenberg.org/cache/epub/1342/pg1342.rdf")
 # Also available as: http_get("https://www.gutenberg.org/ebooks/1342.rdf")
 
-title     = re.search(r'<dcterms:title>(.*?)</dcterms:title>', rdf, re.DOTALL)
-creator   = re.findall(r'<pgterms:name>(.*?)</pgterms:name>', rdf)
-birth     = re.findall(r'<pgterms:birthdate[^>]*>(\d+)', rdf)
-death     = re.findall(r'<pgterms:deathdate[^>]*>(\d+)', rdf)
-issued    = re.search(r'<dcterms:issued[^>]*>(.*?)</dcterms:issued>', rdf)
-rights    = re.search(r'<dcterms:rights>(.*?)</dcterms:rights>', rdf)
-downloads = re.search(r'<pgterms:downloads[^>]*>(\d+)</pgterms:downloads>', rdf)
-language  = re.search(r'<dcterms:language>.*?<rdf:value>(.*?)</rdf:value>', rdf, re.DOTALL)
-subjects  = re.findall(r'<dcterms:subject>.*?<rdf:value>(.*?)</rdf:value>.*?</dcterms:subject>', rdf, re.DOTALL)
+title = re.search(r"<dcterms:title>(.*?)</dcterms:title>", rdf, re.DOTALL)
+creator = re.findall(r"<pgterms:name>(.*?)</pgterms:name>", rdf)
+birth = re.findall(r"<pgterms:birthdate[^>]*>(\d+)", rdf)
+death = re.findall(r"<pgterms:deathdate[^>]*>(\d+)", rdf)
+issued = re.search(r"<dcterms:issued[^>]*>(.*?)</dcterms:issued>", rdf)
+rights = re.search(r"<dcterms:rights>(.*?)</dcterms:rights>", rdf)
+downloads = re.search(r"<pgterms:downloads[^>]*>(\d+)</pgterms:downloads>", rdf)
+language = re.search(r"<dcterms:language>.*?<rdf:value>(.*?)</rdf:value>", rdf, re.DOTALL)
+subjects = re.findall(r"<dcterms:subject>.*?<rdf:value>(.*?)</rdf:value>.*?</dcterms:subject>", rdf, re.DOTALL)
 
-print(title.group(1))          # Pride and Prejudice
-print(creator)                 # ['Austen, Jane']
-print(birth, death)            # ['1775'] ['1817']
-print(issued.group(1))         # 1998-06-01
-print(rights.group(1))         # Public domain in the USA.
-print(int(downloads.group(1))) # 107502
-print(subjects[:3])            # ['England -- Fiction', 'Young women -- Fiction', 'Love stories']
+print(title.group(1))  # Pride and Prejudice
+print(creator)  # ['Austen, Jane']
+print(birth, death)  # ['1775'] ['1817']
+print(issued.group(1))  # 1998-06-01
+print(rights.group(1))  # Public domain in the USA.
+print(int(downloads.group(1)))  # 107502
+print(subjects[:3])  # ['England -- Fiction', 'Young women -- Fiction', 'Love stories']
 ```
 
 Note: `<dcterms:language>` value is a subject string, not a language code. For language codes use the Gutendex `languages` field instead.
@@ -203,34 +203,30 @@ Use this only when you need to leverage Gutenberg's own search index (author:, t
 ```python
 import re, json
 
-html = http_get(
-    "https://www.gutenberg.org/ebooks/search/"
-    "?query=shakespeare&sort_order=downloads"
-)
+html = http_get("https://www.gutenberg.org/ebooks/search/?query=shakespeare&sort_order=downloads")
 # sort_order options: downloads, title, release_date, last_update, random
 
 entries = re.findall(r'<li class="booklink">(.*?)</li>', html, re.DOTALL)
 books = []
 for e in entries:
-    book_id   = re.search(r'/ebooks/(\d+)', e)
-    title     = re.search(r'<span class="title">(.*?)</span>', e)
-    author    = re.search(r'<span class="subtitle">(.*?)</span>', e)
+    book_id = re.search(r"/ebooks/(\d+)", e)
+    title = re.search(r'<span class="title">(.*?)</span>', e)
+    author = re.search(r'<span class="subtitle">(.*?)</span>', e)
     downloads = re.search(r'<span class="extra">([^<]+)</span>', e)
-    books.append({
-        'id':        int(book_id.group(1)) if book_id else None,
-        'title':     title.group(1) if title else '',
-        'author':    author.group(1) if author else '',
-        'downloads': downloads.group(1).strip() if downloads else '',
-    })
+    books.append(
+        {
+            "id": int(book_id.group(1)) if book_id else None,
+            "title": title.group(1) if title else "",
+            "author": author.group(1) if author else "",
+            "downloads": downloads.group(1).strip() if downloads else "",
+        }
+    )
 
 # books[0] = {'id': 1513, 'title': 'Romeo and Juliet',
 #             'author': 'William Shakespeare', 'downloads': '74316 downloads'}
 
 # Paginate with start_index (25 per page)
-html_p2 = http_get(
-    "https://www.gutenberg.org/ebooks/search/"
-    "?query=shakespeare&sort_order=downloads&start_index=26"
-)
+html_p2 = http_get("https://www.gutenberg.org/ebooks/search/?query=shakespeare&sort_order=downloads&start_index=26")
 ```
 
 ### Browse a bookshelf (curated genre list)
@@ -252,12 +248,12 @@ import re
 
 feed = http_get("https://www.gutenberg.org/ebooks/search.opds/?query=dracula")
 # Returns Atom XML, 7 entries per page (including 1 metadata entry)
-entries = re.findall(r'<entry>(.*?)</entry>', feed, re.DOTALL)
+entries = re.findall(r"<entry>(.*?)</entry>", feed, re.DOTALL)
 for e in entries:
-    title = re.search(r'<title>(.*?)</title>', e)
-    entry_id = re.search(r'<id>(.*?)</id>', e)
-    if title and entry_id and 'opds' in entry_id.group(1):
-        book_id = re.search(r'/ebooks/(\d+)\.opds', entry_id.group(1))
+    title = re.search(r"<title>(.*?)</title>", e)
+    entry_id = re.search(r"<id>(.*?)</id>", e)
+    if title and entry_id and "opds" in entry_id.group(1):
+        book_id = re.search(r"/ebooks/(\d+)\.opds", entry_id.group(1))
         print(book_id.group(1), title.group(1))
 # 345  Dracula
 ```
@@ -361,9 +357,9 @@ url = "https://gutendex.com/books/?sort=popular"
 while url:
     data = json.loads(http_get(url))
     # ... process data['results'] ...
-    url = data['next']
+    url = data["next"]
     if url:
-        time.sleep(0.5)   # be respectful — no published rate limit but timeouts observed
+        time.sleep(0.5)  # be respectful — no published rate limit but timeouts observed
 ```
 
 For gutenberg.org file downloads (txt, epub, etc.) there is no documented rate limit but Gutenberg asks not to use automated bulk downloading; use their [offline catalogs](https://www.gutenberg.org/ebooks/offline_catalogs.html) for bulk access.

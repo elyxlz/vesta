@@ -50,6 +50,7 @@ pub async fn invalidate_service_handler(
 pub async fn get_status(
     docker: &Docker,
     http_client: &reqwest::Client,
+    cache: &AgentStatusCache,
     name: &str,
     agents_dir: &std::path::Path,
     rebuilding: &docker::RebuildTracker,
@@ -61,7 +62,7 @@ pub async fn get_status(
     let status = if rebuilding.is_rebuilding(name) {
         docker::AgentStatus::Rebuilding
     } else {
-        combined_status(http_client, agents_dir, &cname, &info).await
+        combined_status(docker, http_client, agents_dir, cache, &cname, &info).await
     };
     Ok(docker::StatusJson {
         name: name.to_string(),
@@ -74,6 +75,7 @@ pub async fn get_status(
 pub async fn list_agents(
     docker: &Docker,
     http_client: &reqwest::Client,
+    cache: &AgentStatusCache,
     agents_dir: &std::path::Path,
     rebuilding: &docker::RebuildTracker,
 ) -> Vec<ListEntry> {
@@ -83,7 +85,7 @@ pub async fn list_agents(
         let info = docker::inspect_container(docker, cname, Some(agents_dir)).await;
         entries.push(ListEntry {
             name: agent_name.clone(),
-            status: combined_status(http_client, agents_dir, cname, &info).await,
+            status: combined_status(docker, http_client, agents_dir, cache, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
             started_at: info.started_at.clone(),
         });
@@ -112,23 +114,34 @@ fn apply_rebuilding(mut entries: Vec<ListEntry>, mut rebuilding: Vec<String>) ->
 }
 
 async fn combined_status(
+    docker: &Docker,
     http_client: &reqwest::Client,
     agents_dir: &std::path::Path,
+    cache: &AgentStatusCache,
     cname: &str,
     info: &docker::ContainerInfo,
 ) -> docker::AgentStatus {
     match info.status {
         docker::ContainerStatus::Running => {
+            let agent_name = docker::name_from_cname(cname);
+            // Unresolved right after a start/create races the caller (see
+            // AgentStatusCache::bridge_ip_or_resolve); the next ~3s poll retries.
+            let Some(host) = cache.bridge_ip_or_resolve(docker, cname, &agent_name).await else {
+                return docker::AgentStatus::Starting;
+            };
             // WS port not yet bound → agent still booting.
-            if !info.port.is_some_and(is_agent_ready) {
+            if !info.port.is_some_and(|port| is_agent_ready(&host, port)) {
                 return docker::AgentStatus::Starting;
             }
             // Agent's own GET /config is the source of truth for provider auth.
             // If the WS server is up but /config isn't responding yet (transient
             // mid-boot state), treat as Starting; the next ~3s poll will resolve.
-            let agent_name = docker::name_from_cname(cname);
-            let provider =
-                crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
+            let provider = crate::agent_provider::AgentProvider::new(
+                http_client,
+                agents_dir,
+                agent_name,
+                host,
+            );
             match provider.status().await {
                 Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
                 Err(_) => docker::AgentStatus::Starting,
@@ -159,9 +172,12 @@ fn status_from_readiness(
 /// The agent binds its WS port only once it's ready to serve requests.
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
 
-fn is_agent_ready(port: u16) -> bool {
+fn is_agent_ready(host: &str, port: u16) -> bool {
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return false;
+    };
     std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        &std::net::SocketAddr::new(ip, port),
         std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
     )
     .is_ok()
@@ -184,6 +200,10 @@ pub struct AgentStatusCache {
     /// The auto-update scheduler reads it to aim the fleet restart at each agent's local quiet window.
     timezones_tx: watch::Sender<HashMap<String, String>>,
     timezones_rx: watch::Receiver<HashMap<String, String>>,
+    /// Per-agent presence-notification preference (agent name -> enabled), reported on each agent's
+    /// connect snapshot. The push path reads it to suppress a push when the user is focused.
+    presence_notifications_tx: watch::Sender<HashMap<String, bool>>,
+    presence_notifications_rx: watch::Receiver<HashMap<String, bool>>,
     services_tx: watch::Sender<HashMap<String, HashMap<String, ServiceEntry>>>,
     services_rx: watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>>,
     /// Notification-only channel -- wakes WS loops when any invalidation occurs.
@@ -197,6 +217,14 @@ pub struct AgentStatusCache {
     /// phase even before the container exists (Pulling/Building run first). Entries exist only for
     /// the duration of a create and are removed when it settles.
     build_phases: Mutex<HashMap<String, docker::BuildPhase>>,
+    /// Each agent's address on its own private bridge network. Cached because the proxy needs
+    /// it per request and a live Docker lookup there would cost a round trip each time; the WS
+    /// tap and the config/provider relay read it too.
+    bridge_ips: Mutex<HashMap<String, String>>,
+    /// In-flight long-running operation per agent, keyed by normalized name. Written by the backup
+    /// and restore handlers for the duration of the work, so every connected client sees it and not
+    /// just the one holding the SSE stream.
+    operations: Mutex<HashMap<String, docker::AgentOperation>>,
 }
 
 impl AgentStatusCache {
@@ -205,6 +233,7 @@ impl AgentStatusCache {
         let (activity_tx, activity_rx) = watch::channel(HashMap::new());
         let (model_access_tx, model_access_rx) = watch::channel(HashMap::new());
         let (timezones_tx, timezones_rx) = watch::channel(HashMap::new());
+        let (presence_notifications_tx, presence_notifications_rx) = watch::channel(HashMap::new());
         let (services_tx, services_rx) = watch::channel(HashMap::new());
         let (invalidations_tx, invalidations_rx) = watch::channel(());
         Self {
@@ -216,12 +245,16 @@ impl AgentStatusCache {
             model_access_rx,
             timezones_tx,
             timezones_rx,
+            presence_notifications_tx,
+            presence_notifications_rx,
             services_tx,
             services_rx,
             invalidations_tx,
             invalidations_rx,
             revs: Mutex::new(HashMap::new()),
             build_phases: Mutex::new(HashMap::new()),
+            bridge_ips: Mutex::new(HashMap::new()),
+            operations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -242,9 +275,40 @@ impl AgentStatusCache {
         self.model_access_rx.clone()
     }
 
+    /// Whether every alive agent is currently idle. Gates the maintenance pass so snapshots and a
+    /// pending update land between turns; an agent with no reported activity counts as idle (the
+    /// tap resets activity to idle on disconnect).
+    pub fn all_alive_idle(&self) -> bool {
+        let states = self.activity_rx.borrow();
+        self.agents_rx
+            .borrow()
+            .iter()
+            .filter(|entry| entry.status == docker::AgentStatus::Alive)
+            .all(|entry| states.get(&entry.name).is_none_or(|state| state == "idle"))
+    }
+
     /// Snapshot of each alive agent's IANA timezone, as last reported on its connect snapshot.
     pub fn timezones(&self) -> HashMap<String, String> {
         self.timezones_rx.borrow().clone()
+    }
+
+    /// Whether the agent wants presence notifications, as last reported on its connect snapshot.
+    /// Absent (never reported) defaults to enabled, matching the config default.
+    pub fn presence_notifications_enabled(&self, agent: &str) -> bool {
+        self.presence_notifications_rx.borrow().get(agent).copied().unwrap_or(true)
+    }
+
+    /// Every agent that should receive the next global user-presence event: the tapped set, which is
+    /// both up to read the drop now and the set whose `presence_notifications` preference vestad
+    /// still holds (the tap supplies that preference and the poll loop drops the entry when the tap
+    /// closes, so an agent outside it would read as enabled and ignore an opt-out).
+    pub fn presence_notification_agents(&self) -> Vec<String> {
+        self.agents_rx
+            .borrow()
+            .iter()
+            .filter(|entry| entry.status.serves_ws() && self.presence_notifications_enabled(&entry.name))
+            .map(|entry| entry.name.clone())
+            .collect()
     }
 
     pub fn subscribe_services(
@@ -314,12 +378,84 @@ impl AgentStatusCache {
             .clone()
     }
 
+    /// Record the long-running operation now running against `name` and wake WS loops so every
+    /// client picks it up within a tick.
+    pub fn set_operation(&self, name: &str, operation: docker::AgentOperation) {
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_string(), operation);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Drop the operation entry for `name` once the work settles, success or error.
+    pub fn clear_operation(&self, name: &str) {
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Snapshot of every in-flight operation (normalized name -> operation).
+    pub fn operations(&self) -> HashMap<String, docker::AgentOperation> {
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Current revision for each agent+service.
     pub fn service_revs(&self) -> HashMap<String, HashMap<String, u64>> {
         self.revs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Record the resolved bridge IP for `agent`, replacing any prior value. Private: the cache
+    /// fills itself in `bridge_ip_or_resolve`, so no caller needs to push an address in.
+    fn set_bridge_ip(&self, agent: &str, ip: String) {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(agent.to_string(), ip);
+    }
+
+    /// The agent's current bridge IP, if resolved.
+    pub fn bridge_ip(&self, agent: &str) -> Option<String> {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(agent)
+            .cloned()
+    }
+
+    /// Drop the cached bridge IP (agent removed, or a resolve failed and the caller wants a
+    /// clean retry next time rather than an indefinitely stale address).
+    pub fn clear_bridge_ip(&self, agent: &str) {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(agent);
+    }
+
+    /// The agent's bridge IP: cached if already resolved, otherwise a live Docker resolve that
+    /// populates the cache on success. Every caller that needs this address hits the same narrow
+    /// race (a request landing between container start and the one-shot resolve that follows
+    /// it), so they share one retry policy here instead of each inventing its own.
+    pub async fn bridge_ip_or_resolve(
+        &self,
+        docker: &Docker,
+        cname: &str,
+        agent: &str,
+    ) -> Option<String> {
+        if let Some(ip) = self.bridge_ip(agent) {
+            return Some(ip);
+        }
+        let ip = docker::resolve_bridge_ip(docker, cname, agent).await?;
+        self.set_bridge_ip(agent, ip.clone());
+        Some(ip)
     }
 }
 
@@ -358,7 +494,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
 
         loop {
             // Poll agent list via async bollard
-            let agents = list_agents(&docker, &http_client, &agents_dir, &rebuilding).await;
+            let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
 
             // Mobile lifecycle notifications come from vestad's authoritative
             // agent list, never the agent EventBus's thinking/idle activity. The
@@ -404,6 +540,9 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                     cache.timezones_tx.send_modify(|zones| {
                         zones.remove(name);
                     });
+                    cache.presence_notifications_tx.send_modify(|map| {
+                        map.remove(name);
+                    });
                     sync_hub.forget_agent(name);
                     false
                 }
@@ -419,9 +558,10 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                 let tx = activity_event_tx.clone();
                 let dir = agents_dir.clone();
                 let hub = sync_hub.clone();
+                let listener_cache = cache.clone();
 
                 let join_handle = tokio::spawn(async move {
-                    agent_event_listener(agent_name, port, dir, tx, hub).await;
+                    agent_event_listener(agent_name, port, dir, tx, hub, listener_cache).await;
                 });
 
                 agent_ws_handles.insert(
@@ -452,12 +592,14 @@ struct AgentWsHandle {
     abort_handle: tokio::task::AbortHandle,
 }
 
-/// A change relayed from an agent's WS: its live activity state, or its IANA timezone (sent once
-/// per connect on the snapshot). Multiplexed over one channel so the listener needs no second wire.
+/// A change relayed from an agent's WS: its live activity state, or a value sent once per connect on
+/// the snapshot (its IANA timezone, its presence-notifications toggle). Multiplexed over one channel
+/// so the listener needs no second wire.
 enum AgentUpdate {
     Activity(String),
     ModelAccess(ModelAccess),
     Timezone(String),
+    PresenceNotificationsEnabled(bool),
 }
 
 fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdate) {
@@ -471,6 +613,9 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
         AgentUpdate::Timezone(zone) => cache.timezones_tx.send_modify(|zones| {
             zones.insert(name, zone);
         }),
+        AgentUpdate::PresenceNotificationsEnabled(enabled) => cache.presence_notifications_tx.send_modify(|map| {
+            map.insert(name, enabled);
+        }),
     }
 }
 
@@ -482,6 +627,7 @@ async fn agent_event_listener(
     agents_dir: PathBuf,
     tx: tokio::sync::mpsc::Sender<(String, AgentUpdate)>,
     hub: Arc<SyncHub>,
+    cache: Arc<AgentStatusCache>,
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
@@ -499,9 +645,18 @@ async fn agent_event_listener(
         .ok()
         .flatten();
 
+        // Read fresh each attempt: a container recreated between attempts (a rebuild, a network
+        // reattach) comes back on a different address, and this loop is what picks it up.
+        let Some(host) = cache.bridge_ip(&name) else {
+            tracing::debug!(agent = %name, "bridge IP not yet resolved; will retry");
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            delay_ms = (delay_ms * 2).min(RECONNECT_MAX_MS);
+            continue;
+        };
+
         let url = match &token {
-            Some(t) => format!("ws://localhost:{ws_port}/ws?agent_token={t}"),
-            None => format!("ws://localhost:{ws_port}/ws"),
+            Some(t) => format!("ws://{host}:{ws_port}/ws?agent_token={t}"),
+            None => format!("ws://{host}:{ws_port}/ws"),
         };
 
         match tokio_tungstenite::connect_async(&url).await {
@@ -546,6 +701,13 @@ async fn agent_event_listener(
                             .and_then(|value| value.as_str())
                         {
                             let _ = tx.send((name.clone(), AgentUpdate::Timezone(zone.to_string()))).await;
+                        }
+                        if let Some(enabled) = parsed
+                            .get("config")
+                            .and_then(|config| config.get("presence_notifications_enabled"))
+                            .and_then(serde_json::Value::as_bool)
+                        {
+                            let _ = tx.send((name.clone(), AgentUpdate::PresenceNotificationsEnabled(enabled))).await;
                         }
                         // Reseed pending notifications from the snapshot's authoritative id set,
                         // deduped by id against later live changes.
@@ -592,6 +754,55 @@ fn pending_ids(snapshot: &serde_json::Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_ip_round_trips_and_clears() {
+        let cache = AgentStatusCache::new();
+        assert_eq!(cache.bridge_ip("ada"), None);
+
+        cache.set_bridge_ip("ada", "172.20.0.5".to_string());
+        assert_eq!(cache.bridge_ip("ada"), Some("172.20.0.5".to_string()));
+
+        cache.set_bridge_ip("ada", "172.20.0.9".to_string());
+        assert_eq!(cache.bridge_ip("ada"), Some("172.20.0.9".to_string()));
+
+        cache.clear_bridge_ip("ada");
+        assert_eq!(cache.bridge_ip("ada"), None);
+    }
+
+    #[test]
+    fn all_alive_idle_reads_alive_agents_only() {
+        let cache = AgentStatusCache::new();
+        // No agents at all: vacuously idle.
+        assert!(cache.all_alive_idle());
+
+        cache.agents_tx.send_replace(vec![
+            ListEntry {
+                name: "apollo".into(),
+                status: docker::AgentStatus::Alive,
+                ws_port: 4200,
+                started_at: None,
+            },
+            ListEntry {
+                name: "hera".into(),
+                status: docker::AgentStatus::Stopped,
+                ws_port: 4201,
+                started_at: None,
+            },
+        ]);
+        // Alive agent with no reported activity counts as idle; stopped agents never count.
+        assert!(cache.all_alive_idle());
+
+        cache.activity_tx.send_replace(HashMap::from([("apollo".to_string(), "thinking".to_string())]));
+        assert!(!cache.all_alive_idle());
+
+        cache.activity_tx.send_replace(HashMap::from([
+            ("apollo".to_string(), "idle".to_string()),
+            ("hera".to_string(), "thinking".to_string()),
+        ]));
+        // A busy state on a non-alive agent (stale tap residue) does not block maintenance.
+        assert!(cache.all_alive_idle());
+    }
 
     #[test]
     fn apply_rebuilding_overrides_status_and_keeps_missing_agents_listed() {
@@ -665,6 +876,56 @@ mod tests {
         assert!(cache.service_revs().is_empty());
     }
 
+    #[test]
+    fn presence_notifications_default_enabled_until_reported() {
+        let cache = AgentStatusCache::new();
+        assert!(cache.presence_notifications_enabled("scout"));
+        cache.presence_notifications_tx.send_modify(|m| {
+            m.insert("scout".into(), false);
+        });
+        assert!(!cache.presence_notifications_enabled("scout"));
+    }
+
+    #[test]
+    fn presence_notification_agents_fans_out_to_enabled_agents() {
+        let cache = AgentStatusCache::new();
+        cache.agents_tx.send_modify(|agents| {
+            agents.extend([
+                ListEntry {
+                    name: "scout".into(),
+                    status: docker::AgentStatus::Alive,
+                    ws_port: 1,
+                    started_at: None,
+                },
+                ListEntry {
+                    name: "quiet".into(),
+                    status: docker::AgentStatus::Alive,
+                    ws_port: 2,
+                    started_at: None,
+                },
+                ListEntry {
+                    name: "asleep".into(),
+                    status: docker::AgentStatus::Stopped,
+                    ws_port: 3,
+                    started_at: None,
+                },
+                // Mid-restart: outside the tapped set, so its preference has been dropped and an
+                // opt-out would silently read as enabled again.
+                ListEntry {
+                    name: "booting".into(),
+                    status: docker::AgentStatus::Starting,
+                    ws_port: 4,
+                    started_at: None,
+                },
+            ]);
+        });
+        cache.presence_notifications_tx.send_modify(|preferences| {
+            preferences.insert("quiet".into(), false);
+        });
+
+        assert_eq!(cache.presence_notification_agents(), vec!["scout"]);
+    }
+
     use crate::sync::SyncHub;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -695,12 +956,15 @@ mod tests {
         let hub = std::sync::Arc::new(SyncHub::new());
         let dir = tempfile::tempdir().expect("tempdir");
         let port = fake_agent().await;
+        let cache = std::sync::Arc::new(AgentStatusCache::new());
+        cache.set_bridge_ip("fake", "127.0.0.1".to_string());
 
         let listener = tokio::spawn({
             let hub = hub.clone();
             let (tx, _rx) = tokio::sync::mpsc::channel::<(String, AgentUpdate)>(16);
             let dir = dir.path().to_path_buf();
-            async move { agent_event_listener("fake".into(), port, dir, tx, hub).await }
+            let cache = cache.clone();
+            async move { agent_event_listener("fake".into(), port, dir, tx, hub, cache).await }
         });
 
         // The tap seeds one pending notification from the snapshot's authoritative id set; the live

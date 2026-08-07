@@ -143,6 +143,20 @@ def test_resolve_token_prefers_device(tmp_path, monkeypatch):
     assert teams.resolve_token(cfg, "user@example.com") == "device-tok"
 
 
+def test_resolve_token_translates_graph_unavailable_to_teams_error(tmp_path, monkeypatch):
+    """A device-marked account whose MSAL Teams token is absent must fail as a TeamsError, the one
+    failure type resolve_token's callers (the monitor's pollers) handle."""
+    cfg = Config(data_dir=tmp_path)
+    teams.mark_device_account("user@example.com", cfg)
+
+    def _unavailable(*_a, **_k):
+        raise backend.GraphUnavailableError("no msal token")
+
+    monkeypatch.setattr(teams, "graph_token", _unavailable)
+    with pytest.raises(teams.TeamsNoTokenError):
+        teams.resolve_token(cfg, "user@example.com")
+
+
 def test_teams_no_token_is_runtime_error():
     assert isinstance(teams.TeamsNoTokenError("x"), RuntimeError)
 
@@ -330,8 +344,9 @@ def test_teams_capture_paste_rejects_garbage(tmp_path):
     from microsoft_cli import auth_commands
 
     cfg = Config(data_dir=tmp_path)
-    result = auth_commands.teams_capture(cfg, account_email="user@example.com", token="not-a-jwt")
-    assert result["status"] == "error"
+    # The raise reaches main, which prints the error on stderr and exits non-zero.
+    with pytest.raises(ValueError, match="does not look like a Teams access token"):
+        auth_commands.teams_capture(cfg, account_email="user@example.com", token="not-a-jwt")
     assert teams.has_token("user@example.com", cfg) is False
 
 

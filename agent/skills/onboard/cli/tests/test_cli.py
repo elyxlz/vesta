@@ -18,15 +18,22 @@ def _tmp_state(tmp_path, monkeypatch):
     """Point the session store at a throwaway dir so tests don't touch ~/.config."""
     monkeypatch.setattr(state_mod, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(state_mod, "_STATE_FILE", tmp_path / "sessions.json")
-    # Same for the shared referral file (written by the vesta-cloud-account skill): point it at
+    # Same for the shared referral file (written by the vesta-cloud skill): point it at
     # a throwaway path, absent by default, so tests never touch ~/.config.
     monkeypatch.setattr(referral_store, "PATH", tmp_path / "referral_code")
 
 
 def _run(argv, capsys):
+    """A failure prints on stderr with stdout untouched; success prints on stdout alone."""
     rc = cli_mod.main(argv)
-    out = capsys.readouterr().out
-    return rc, (json.loads(out) if out.strip() else None)
+    captured = capsys.readouterr()
+    if rc == 0:
+        assert captured.err == ""
+        payload = captured.out
+    else:
+        assert captured.out == ""
+        payload = captured.err
+    return rc, (json.loads(payload) if payload.strip() else None)
 
 
 def _verified(token="TOK"):
@@ -141,7 +148,7 @@ def test_verify_send_surfaces_precreate_error_without_sending(capsys, monkeypatc
 
 
 def test_verify_send_self_hosted_still_onboards(capsys, monkeypatch):
-    # No server-identity gate anymore (issue #79): a box with no VESTAD_PORT /
+    # There is no server-identity gate: a box with no VESTAD_PORT /
     # AGENT_TOKEN can still onboard through the public endpoint. create_account +
     # send_otp both run and it exits 0.
     _mock_precreate(monkeypatch)
@@ -171,8 +178,8 @@ def test_checkout_forwards_price_and_code_no_referral(capsys, monkeypatch):
     _verified()
     captured = {}
 
-    # checkout no longer takes/sends a referral (issue #79): attribution is bound
-    # at account-create, so its signature has no referral_code and no X-Vesta-Referral.
+    # checkout neither takes nor sends a referral: attribution is bound at
+    # account-create, so its signature has no referral_code and no X-Vesta-Referral.
     def fake_checkout(self, *, token, plan, price, discount_code):
         captured.update(token=token, plan=plan, price=price, discount_code=discount_code)
         return {"url": "https://checkout.stripe.com/x", "subdomain": "ada", "server_id": "srv1"}
@@ -244,7 +251,7 @@ def test_create_agent_stashes_personality_and_seed(capsys, monkeypatch):
         capsys,
     )
     assert rc == 0 and data["created"] is True and data["name"] == "ada"
-    # Create carries only the name now; vestad no longer accepts personality/seed at create time.
+    # Create carries only the name; vestad does not accept personality/seed at create time.
     assert captured == {"subdomain": "ada", "server_token": "VTOK", "name": "Ada"}
     # Personality + seed context are stashed for claude-finish to deliver via the config channel. The
     # NORMALIZED name vestad returned is stored so claude-finish addresses a path vestad accepts.

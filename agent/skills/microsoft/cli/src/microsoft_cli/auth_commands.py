@@ -160,7 +160,7 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
             "message": f"Successfully authenticated {account['username']}",
         }
 
-    return {"status": "error", "message": "Authentication succeeded but no account was found"}
+    raise Exception("Authentication succeeded but no account was found")
 
 
 def owa_login(config: Config, *, account_email: str, use_device: bool = False, token: str | None = None) -> dict[str, str]:
@@ -243,14 +243,10 @@ def _owa_login_paste(config: Config, *, account_email: str, token: str) -> dict[
     token = token.strip()
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {
-            "status": "error",
-            "message": (
-                "That does not look like an OWA access token (its expiry could not be decoded). "
-                "Re-copy the value the snippet put on the clipboard."
-            ),
-        }
+    except Exception as e:
+        raise ValueError(
+            "That does not look like an OWA access token (its expiry could not be decoded). Re-copy the value the snippet put on the clipboard."
+        ) from e
     owa_rest.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
         "status": "success",
@@ -294,8 +290,8 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
 
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {"status": "error", "message": "Token was captured but its expiry could not be decoded. The token may be malformed."}
+    except Exception as e:
+        raise ValueError("Token was captured but its expiry could not be decoded. The token may be malformed.") from e
 
     owa_rest.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
 
@@ -368,7 +364,21 @@ def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
     claims = result["id_token_claims"] if "id_token_claims" in result else {}
     username = claims["preferred_username"] if "preferred_username" in claims else ""
     if not username:
-        return {"status": "error", "message": "Teams authorization succeeded but no account was found"}
+        raise Exception("Teams authorization succeeded but no account was found")
+    if not granted_teams_scope(result):
+        # An answer, not a failure: the endpoint signed the account in and narrowed the grant,
+        # so this account cannot hold Teams permissions on this route. Dropping any stale device
+        # marker converges an account an earlier sign-in mis-marked as Teams-capable.
+        teams.unmark_device_account(username, config)
+        return {
+            "status": "teams_unavailable",
+            "account": username,
+            "message": (
+                f"{username} signed in, but no Teams permission was granted: Teams Graph permissions are work/school "
+                "only, so a personal Microsoft account (outlook.com, hotmail.*, live.*) cannot authorize Teams, and a "
+                "work/school tenant that narrows the grant withholds it the same way. Mail and calendar are unaffected."
+            ),
+        }
     teams.mark_device_account(username, config)
     return {
         "status": "success",
@@ -394,14 +404,11 @@ def _teams_capture_paste(config: Config, *, account_email: str, token: str) -> d
     token = token.strip()
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {
-            "status": "error",
-            "message": (
-                "That does not look like a Teams access token (its expiry could not be decoded). "
-                "Re-copy the value the snippet put on the clipboard."
-            ),
-        }
+    except Exception as e:
+        raise ValueError(
+            "That does not look like a Teams access token (its expiry could not be decoded). "
+            "Re-copy the value the snippet put on the clipboard."
+        ) from e
     teams.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
         "status": "success",
@@ -439,8 +446,8 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
 
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except Exception:
-        return {"status": "error", "message": "Token was captured but its expiry could not be decoded. The token may be malformed."}
+    except Exception as e:
+        raise ValueError("Token was captured but its expiry could not be decoded. The token may be malformed.") from e
 
     teams.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
@@ -454,8 +461,9 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
 # Unified onboarding: one command sets up mail, calendar, and Teams together.
 # ---------------------------------------------------------------------------
 
-# Device-code setup consents mail + calendar + Teams in one sign-in, so a personal or permissive
+# Device-code setup consents mail + calendar + Teams in one sign-in, so a permissive work/school
 # tenant is fully provisioned by a single code. Locked tenants fall through to the browser capture.
+# Personal accounts get the mail + calendar subset instead: see setup_scopes_for().
 _SETUP_SCOPES = [*DEFAULT_CLIENT_SCOPES, *teams.TEAMS_SCOPES]
 
 # Personal Microsoft consumer domains. Everything else is treated as a work/school (custom-domain)
@@ -471,6 +479,27 @@ def _is_personal_ms_account(email: str) -> bool:
     # Country variants: outlook.fr, hotmail.co.uk, live.de, etc.
     first = domain.split(".")[0]
     return first in {"outlook", "hotmail", "live"}
+
+
+def setup_scopes_for(account_email: str) -> list[str]:
+    """Scopes to consent during `auth setup` for this account.
+
+    Every Teams Graph permission (Chat.*, Team.*, Channel.*, Presence.*) is work/school only: the
+    consumer (MSA) token endpoint never grants them, so asking a personal account for them buys
+    nothing and risks a bare sign-in error. A personal account is asked for mail + calendar alone."""
+    if _is_personal_ms_account(account_email):
+        return list(DEFAULT_CLIENT_SCOPES)
+    return list(_SETUP_SCOPES)
+
+
+def granted_teams_scope(result: dict) -> bool:
+    """True if a token response actually carries a Teams permission.
+
+    The consumer endpoint answers an over-broad scope request with a *narrowed* grant rather than an
+    error, so "no error" does not mean Teams was consented. Trust the granted scope string, not the
+    request, before marking an account as Teams-capable."""
+    granted = (result["scope"] if "scope" in result else "").lower()
+    return any(scope.rsplit("/", 1)[-1].lower() in granted for scope in teams.TEAMS_SCOPES)
 
 
 def _setup_save_captured(config: Config, *, account_email: str, captured: dict) -> dict[str, str]:
@@ -521,6 +550,25 @@ def _setup_finish_device(config: Config, *, account_email: str, flow_cache: str)
     cache = app.token_cache
     if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
         auth._write_cache(config.cache_file, content=cache.serialize())
+    if not granted_teams_scope(result):
+        # Personal (MSA) accounts, and any tenant that narrowed the grant: mail and calendar are live,
+        # Teams over Graph is not. Say so instead of marking an account Teams-capable and letting every
+        # later Teams call fail with an opaque 403. Dropping any stale device marker converges an
+        # account that an earlier setup mis-marked as Teams-capable.
+        teams.unmark_device_account(account_email, config)
+        return {
+            "status": "success",
+            "account": account_email,
+            "provisioned": "mail/calendar",
+            "backend": "graph",
+            "message": (
+                f"{account_email} is set up over Graph (mail, calendar). Tokens auto-refresh; no re-auth needed. "
+                "Teams over Graph is not available for this account: the sign-in granted no Teams permission "
+                "(a personal Microsoft account cannot hold Teams Graph permissions, and a work/school tenant can "
+                "withhold them). For a work/school account that needs Teams, run: microsoft auth teams-capture "
+                f"--account {account_email}"
+            ),
+        }
     teams.mark_device_account(account_email, config)
     return {
         "status": "success",
@@ -544,7 +592,8 @@ def auth_setup(
 
     No flags: a work/school (custom-domain) account defaults to the browser handover, since its tenant
     usually blocks the default public client and would reject a device code; a personal Microsoft account
-    (outlook.com, hotmail.*, etc.) starts a device-code sign-in (auto-refreshes via MSAL). ``--flow-cache``:
+    (outlook.com, hotmail.*, etc.) starts a device-code sign-in (auto-refreshes via MSAL) for mail + calendar
+    only, since Teams Graph permissions are work/school only. ``--flow-cache``:
     finish a device-code sign-in; if the tenant walls it, pivot to the browser automatically. ``--browser``:
     force the browser capture (for a known locked tenant). ``--device`` (``force_device``): force device code
     even for a work/school domain (permissive tenants). ``--capture``: after signing in via the browser, lift
@@ -565,7 +614,7 @@ def auth_setup(
         return _setup_begin_browser(config, account_email=account_email)
 
     app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
-    flow = app.initiate_device_flow(scopes=_SETUP_SCOPES)
+    flow = app.initiate_device_flow(scopes=setup_scopes_for(account_email))
     if "user_code" not in flow:
         error_msg = flow["error_description"] if "error_description" in flow else "Unknown error"
         raise Exception(f"Failed to get device code: {error_msg}")

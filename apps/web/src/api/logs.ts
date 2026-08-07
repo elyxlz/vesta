@@ -1,5 +1,4 @@
 import type { SseHandle } from "@vesta/core";
-import { getConnection } from "@/lib/connection";
 import { replayTailLines } from "@/lib/log-stream-policy";
 import type { LogEvent } from "@/lib/types";
 import { openLogStream } from "./log-stream";
@@ -11,25 +10,22 @@ export function streamLogs(
   onEvent: (event: LogEvent) => void,
   opts?: { replay?: boolean },
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const conn = getConnection();
-    if (!conn) {
-      reject(new Error("not connected"));
-      return;
-    }
-
-    const params = new URLSearchParams({
-      token: conn.accessToken,
-      tail: String(replayTailLines(opts?.replay ?? true)),
-    });
-    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?${params.toString()}`;
+  const params = new URLSearchParams({
+    tail: String(replayTailLines(opts?.replay ?? true)),
+  });
+  return new Promise((resolve) => {
     logSources.get(name)?.cancel();
     logSources.set(
       name,
-      openLogStream(url, "agent_stopped", onEvent, () => {
-        logSources.delete(name);
-        resolve();
-      }),
+      openLogStream(
+        `/agents/${encodeURIComponent(name)}/logs?${params.toString()}`,
+        "agent_stopped",
+        onEvent,
+        () => {
+          logSources.delete(name);
+          resolve();
+        },
+      ),
     );
   });
 }

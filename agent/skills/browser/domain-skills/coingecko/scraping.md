@@ -8,8 +8,9 @@
 
 ```python
 import json
+
 data = json.loads(http_get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"))
-print(data['bitcoin']['usd'])   # 76286
+print(data["bitcoin"]["usd"])  # 76286
 ```
 
 **Rate limit is tight: ~3 calls per minute on the free tier.** The API returns HTTP 429 with `Retry-After: 60` when you exceed it. Always add `time.sleep(5)` between calls in a loop. Confirmed: rapid-fire calls hit 429 on call 3-4 with no delay; with 5s gaps you stay safe.
@@ -23,6 +24,7 @@ print(data['bitcoin']['usd'])   # 76286
 
 ```python
 import time, urllib.error, json
+
 
 def safe_get(url, retries=2):
     for attempt in range(retries + 1):
@@ -55,7 +57,7 @@ def safe_get(url, retries=2):
 coins_list = json.loads(http_get("https://api.coingecko.com/api/v3/coins/list"))
 # 17,564 entries as of April 2026
 # Each: {'id': 'bitcoin', 'symbol': 'btc', 'name': 'Bitcoin'}
-sol_coins = [c for c in coins_list if c['symbol'].lower() == 'sol']
+sol_coins = [c for c in coins_list if c["symbol"].lower() == "sol"]
 # Returns 5+ entries — pick by name to get the real Solana: id='solana'
 ```
 
@@ -65,15 +67,18 @@ sol_coins = [c for c in coins_list if c['symbol'].lower() == 'sol']
 
 ```python
 import json
-data = json.loads(http_get(
-    "https://api.coingecko.com/api/v3/simple/price"
-    "?ids=bitcoin,ethereum,solana"
-    "&vs_currencies=usd,eur"
-    "&include_market_cap=true"
-    "&include_24hr_change=true"
-))
+
+data = json.loads(
+    http_get(
+        "https://api.coingecko.com/api/v3/simple/price"
+        "?ids=bitcoin,ethereum,solana"
+        "&vs_currencies=usd,eur"
+        "&include_market_cap=true"
+        "&include_24hr_change=true"
+    )
+)
 for coin, info in data.items():
-    print(f"{coin}: ${info['usd']:,.0f} | 24h: {info['usd_24h_change']:.1f}% | MCap: ${info['usd_market_cap']/1e9:.1f}B")
+    print(f"{coin}: ${info['usd']:,.0f} | 24h: {info['usd_24h_change']:.1f}% | MCap: ${info['usd_market_cap'] / 1e9:.1f}B")
 # bitcoin: $76,286 | 24h: 1.4% | MCap: $1528.0B
 # ethereum: $2,361 | 24h: 0.8% | MCap: $284.9B
 # solana: $87 | 24h: -1.0% | MCap: $50.2B
@@ -86,15 +91,18 @@ Response keys for each coin (when all flags enabled):
 
 ```python
 import json
-data = json.loads(http_get(
-    "https://api.coingecko.com/api/v3/coins/markets"
-    "?vs_currency=usd"
-    "&order=market_cap_desc"
-    "&per_page=10"       # max 250
-    "&page=1"            # 1-indexed; page=2 gives ranks 11-20 etc.
-    "&sparkline=false"
-    "&price_change_percentage=1h,7d,30d"  # optional extra columns
-))
+
+data = json.loads(
+    http_get(
+        "https://api.coingecko.com/api/v3/coins/markets"
+        "?vs_currency=usd"
+        "&order=market_cap_desc"
+        "&per_page=10"  # max 250
+        "&page=1"  # 1-indexed; page=2 gives ranks 11-20 etc.
+        "&sparkline=false"
+        "&price_change_percentage=1h,7d,30d"  # optional extra columns
+    )
+)
 for c in data:
     print(f"#{c['market_cap_rank']} {c['symbol'].upper()} ${c['current_price']:,.2f} | {c['price_change_percentage_24h']:.1f}%")
 # #1 BTC $76,281.00 | 1.4%
@@ -111,22 +119,25 @@ Pagination: use `page=2`, `page=3`, etc. with `per_page` up to 250. Results are 
 
 ```python
 import json
-data = json.loads(http_get(
-    "https://api.coingecko.com/api/v3/coins/bitcoin"
-    "?localization=false"    # skip 40+ language translations
-    "&tickers=false"         # skip exchange ticker list (can be huge)
-    "&market_data=true"
-    "&community_data=false"
-    "&developer_data=false"
-))
-print(data['name'])                                    # Bitcoin
-print(data['symbol'])                                  # btc
-print(data['market_cap_rank'])                         # 1
-print(data['market_data']['current_price']['usd'])     # 76279
-print(data['market_data']['ath']['usd'])               # 126080
-print(data['market_data']['ath_date']['usd'])          # 2025-10-06T18:57:42.558Z
-print(data['market_data']['circulating_supply'])       # 20017459.0
-print(data['description']['en'][:200])
+
+data = json.loads(
+    http_get(
+        "https://api.coingecko.com/api/v3/coins/bitcoin"
+        "?localization=false"  # skip 40+ language translations
+        "&tickers=false"  # skip exchange ticker list (can be huge)
+        "&market_data=true"
+        "&community_data=false"
+        "&developer_data=false"
+    )
+)
+print(data["name"])  # Bitcoin
+print(data["symbol"])  # btc
+print(data["market_cap_rank"])  # 1
+print(data["market_data"]["current_price"]["usd"])  # 76279
+print(data["market_data"]["ath"]["usd"])  # 126080
+print(data["market_data"]["ath_date"]["usd"])  # 2025-10-06T18:57:42.558Z
+print(data["market_data"]["circulating_supply"])  # 20017459.0
+print(data["description"]["en"][:200])
 ```
 
 Top-level keys: `id`, `symbol`, `name`, `web_slug`, `asset_platform_id`, `platforms`, `categories`, `description`, `links`, `image`, `genesis_date`, `sentiment_votes_up_percentage`, `market_cap_rank`, `market_data`, `last_updated`
@@ -139,17 +150,17 @@ All price/market fields are objects keyed by currency code: `data['market_data']
 
 ```python
 import json
+
 # OHLCV candles: granularity auto-determined by `days`
 # 1d = 30-min candles, 7d = 4-hr candles, 14d+ = daily candles
-data = json.loads(http_get(
-    "https://api.coingecko.com/api/v3/coins/ethereum/ohlc?vs_currency=usd&days=7"
-))
-print(len(data))         # 42 candles for 7-day window
-print(data[-1])          # [1776499200000, 2407.32, 2412.96, 2402.21, 2405.03]
+data = json.loads(http_get("https://api.coingecko.com/api/v3/coins/ethereum/ohlc?vs_currency=usd&days=7"))
+print(len(data))  # 42 candles for 7-day window
+print(data[-1])  # [1776499200000, 2407.32, 2412.96, 2402.21, 2405.03]
 #                         [timestamp_ms,   open,    high,    low,     close]
 
 # Convert timestamp:
 import datetime
+
 ts_ms = data[-1][0]
 dt = datetime.datetime.fromtimestamp(ts_ms / 1000, tz=datetime.timezone.utc)
 ```
@@ -160,39 +171,38 @@ dt = datetime.datetime.fromtimestamp(ts_ms / 1000, tz=datetime.timezone.utc)
 
 ```python
 import json
+
 # interval='daily' gives one point per day; omit for auto (hourly for <=90 days)
-chart = json.loads(http_get(
-    "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-    "?vs_currency=usd&days=7&interval=daily"
-))
+chart = json.loads(http_get("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=7&interval=daily"))
 # Keys: 'prices', 'market_caps', 'total_volumes'
 # Each is a list of [timestamp_ms, value]
-print(len(chart['prices']))           # 8 points for 7-day daily
-print(chart['prices'][-1])            # [1776508393000, 76286.699...]
-print(chart['total_volumes'][-1])     # [1776508393000, 80459560788.47...]
+print(len(chart["prices"]))  # 8 points for 7-day daily
+print(chart["prices"][-1])  # [1776508393000, 76286.699...]
+print(chart["total_volumes"][-1])  # [1776508393000, 80459560788.47...]
 ```
 
 ### Market chart by date range
 
 ```python
 import json, time
+
 now = int(time.time())
 thirty_days_ago = now - 30 * 86400
-chart = json.loads(http_get(
-    f"https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range"
-    f"?vs_currency=usd&from={thirty_days_ago}&to={now}"
-))
+chart = json.loads(
+    http_get(f"https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from={thirty_days_ago}&to={now}")
+)
 # Granularity: <1 day → minutely, 1-90 days → hourly, >90 days → daily
-print(len(chart['prices']))    # 174 points for 7-day range (hourly)
+print(len(chart["prices"]))  # 174 points for 7-day range (hourly)
 ```
 
 ### Search
 
 ```python
 import json
+
 results = json.loads(http_get("https://api.coingecko.com/api/v3/search?query=solana"))
 # Top-level keys: 'coins', 'exchanges', 'icos', 'categories', 'nfts'
-for c in results['coins'][:3]:
+for c in results["coins"][:3]:
     print(f"{c['id']} | {c['symbol']} | rank {c['market_cap_rank']}")
 # solana | SOL | rank 7
 # solana-name-service | SNS | rank 1902
@@ -204,10 +214,11 @@ Search returns coins ordered by relevance, not market cap. First result is usual
 
 ```python
 import json
+
 trending = json.loads(http_get("https://api.coingecko.com/api/v3/search/trending"))
 # Top-level keys: 'coins', 'nfts', 'categories'
-for item in trending['coins']:
-    c = item['item']
+for item in trending["coins"]:
+    c = item["item"]
     print(f"{c['name']} ({c['symbol']}) #{c['market_cap_rank']}")
 # Item keys: id, coin_id, name, symbol, market_cap_rank, thumb, small, large,
 #            slug, price_btc, score, data
@@ -219,25 +230,25 @@ for item in trending['coins']:
 
 ```python
 import json
+
 global_data = json.loads(http_get("https://api.coingecko.com/api/v3/global"))
-gd = global_data['data']
-print(f"Total market cap: ${gd['total_market_cap']['usd']/1e12:.2f}T")   # $2.66T
-print(f"24h volume: ${gd['total_volume']['usd']/1e9:.1f}B")              # $156.6B
-print(f"BTC dominance: {gd['market_cap_percentage']['btc']:.1f}%")       # 57.3%
-print(f"Active coins: {gd['active_cryptocurrencies']}")                   # 17,564
-print(f"Active exchanges: {gd['markets']}")                               # 1,475
+gd = global_data["data"]
+print(f"Total market cap: ${gd['total_market_cap']['usd'] / 1e12:.2f}T")  # $2.66T
+print(f"24h volume: ${gd['total_volume']['usd'] / 1e9:.1f}B")  # $156.6B
+print(f"BTC dominance: {gd['market_cap_percentage']['btc']:.1f}%")  # 57.3%
+print(f"Active coins: {gd['active_cryptocurrencies']}")  # 17,564
+print(f"Active exchanges: {gd['markets']}")  # 1,475
 ```
 
 ### Coin categories (market cap by sector)
 
 ```python
 import json
-cats = json.loads(http_get(
-    "https://api.coingecko.com/api/v3/coins/categories?order=market_cap_desc"
-))
+
+cats = json.loads(http_get("https://api.coingecko.com/api/v3/coins/categories?order=market_cap_desc"))
 # 691 categories as of April 2026
 for cat in cats[:5]:
-    print(f"{cat['name']}: ${cat['market_cap']/1e9:.1f}B | 24h: {cat['market_cap_change_24h']:.1f}%")
+    print(f"{cat['name']}: ${cat['market_cap'] / 1e9:.1f}B | 24h: {cat['market_cap_change_24h']:.1f}%")
 # Smart Contract Platform: $2204.8B | 24h: 0.9%
 # Layer 1 (L1): $2171.5B | 24h: 1.1%
 
@@ -249,12 +260,15 @@ for cat in cats[:5]:
 
 ```python
 import json
+
 # Platform IDs: ethereum, binance-smart-chain, polygon-pos, avalanche, solana, etc.
-token = json.loads(http_get(
-    "https://api.coingecko.com/api/v3/simple/token_price/ethereum"
-    "?contract_addresses=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
-    "&vs_currencies=usd"
-))
+token = json.loads(
+    http_get(
+        "https://api.coingecko.com/api/v3/simple/token_price/ethereum"
+        "?contract_addresses=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+        "&vs_currencies=usd"
+    )
+)
 print(token)
 # {'0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': {'usd': 0.999861}}
 # Key is the lowercased contract address
@@ -290,8 +304,9 @@ Free tier alternatives:
 
 ```python
 import json
+
 ping = json.loads(http_get("https://api.coingecko.com/api/v3/ping"))
-print(ping)   # {'gecko_says': '(V3) To the Moon!'}
+print(ping)  # {'gecko_says': '(V3) To the Moon!'}
 ```
 
 Note: ping still counts against the rate limit. Don't use it to check if a 429 has resolved — just wait 65 seconds and retry your actual call.

@@ -20,20 +20,30 @@ class FakeSocket implements SocketLike {
 
 interface Harness {
   sockets: FakeSocket[]
+  urls: string[]
   timers: { fn: () => void; ms: number }[]
   states: ChatSocketState[]
   events: ChatMessage[]
+  refusals: number
   deps: Parameters<typeof createChatSocket>[0]
 }
 
 function harness(): Harness {
   const sockets: FakeSocket[] = []
+  const urls: string[] = []
   const timers: { fn: () => void; ms: number }[] = []
   const states: ChatSocketState[] = []
   const events: ChatMessage[] = []
+  let builds = 0
   const deps = {
-    buildUrl: () => "wss://vestad.test/agents/ada/app-chat/ws",
-    createSocket: () => {
+    // A fresh credential per attempt, as the real builder mints one: the counter makes it
+    // observable that the URL is re-derived rather than captured once.
+    buildUrl: () => {
+      builds += 1
+      return Promise.resolve(`wss://vestad.test/agents/ada/app-chat/ws?token=key-${String(builds)}`)
+    },
+    createSocket: (url: string) => {
+      urls.push(url)
       const socket = new FakeSocket()
       sockets.push(socket)
       return socket
@@ -44,56 +54,67 @@ function harness(): Harness {
     },
     clearTimer: () => undefined,
   }
-  return { sockets, timers, states, events, deps }
+  return { sockets, urls, timers, states, events, refusals: 0, deps }
 }
 
-function start(h: Harness): ReturnType<typeof createChatSocket> {
-  return createChatSocket(h.deps, {
+// The URL builder is async, so the socket is created a microtask after createChatSocket returns.
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}
+
+async function start(h: Harness): Promise<ReturnType<typeof createChatSocket>> {
+  const socket = createChatSocket(h.deps, {
     onEvent: (event) => h.events.push(event),
     onStateChange: (state) => h.states.push(state),
+    onClosedBeforeOpen: () => {
+      h.refusals += 1
+    },
   })
+  await flush()
+  return socket
 }
 
 describe("createChatSocket", () => {
-  it("reports connecting then open", () => {
+  it("reports connecting then open", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     expect(h.states).toEqual(["connecting"])
     h.sockets[0]?.onopen?.()
     expect(h.states).toEqual(["connecting", "open"])
   })
 
-  it("delivers each inbound JSON frame as a ChatMessage", () => {
+  it("delivers each inbound JSON frame as a ChatMessage", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     h.sockets[0]?.onopen?.()
     h.sockets[0]?.onmessage?.(JSON.stringify({ type: "chat", text: "hi", id: 7 }))
     expect(h.events).toEqual([{ type: "chat", text: "hi", id: 7 }])
   })
 
-  it("ignores malformed JSON", () => {
+  it("ignores malformed JSON", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     h.sockets[0]?.onopen?.()
     h.sockets[0]?.onmessage?.("not json")
     expect(h.events).toEqual([])
   })
 
-  it("reconnects after a close and re-signals open (the reseed trigger)", () => {
+  it("reconnects after a close and re-signals open (the reseed trigger)", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     h.sockets[0]?.onopen?.()
     h.sockets[0]?.onclose?.()
     expect(h.states).toEqual(["connecting", "open", "reconnecting"])
     expect(h.timers).toHaveLength(1)
     h.timers[0]?.fn()
+    await flush()
     h.sockets[1]?.onopen?.()
     expect(h.states).toEqual(["connecting", "open", "reconnecting", "connecting", "open"])
   })
 
-  it("does not reconnect after close() is terminal", () => {
+  it("does not reconnect after close() is terminal", async () => {
     const h = harness()
-    const socket = start(h)
+    const socket = await start(h)
     h.sockets[0]?.onopen?.()
     socket.close()
     expect(h.states.at(-1)).toBe("closed")
@@ -102,12 +123,82 @@ describe("createChatSocket", () => {
     expect(h.timers).toHaveLength(0)
   })
 
-  it("schedules a reconnect when buildUrl throws", () => {
+  // The credential rides in the URL, so a reconnect hours after mount must re-derive it. Capturing
+  // one URL at construction would dial the reconnect with a key that expired in the meantime.
+  it("re-derives the url on every reconnect", async () => {
     const h = harness()
-    h.deps.buildUrl = () => {
-      throw new Error("not connected")
-    }
-    start(h)
+    await start(h)
+    h.sockets[0]?.onopen?.()
+    h.sockets[0]?.onclose?.()
+    h.timers[0]?.fn()
+    await flush()
+
+    expect(h.urls).toEqual([
+      "wss://vestad.test/agents/ada/app-chat/ws?token=key-1",
+      "wss://vestad.test/agents/ada/app-chat/ws?token=key-2",
+    ])
+  })
+
+  // A refused handshake is indistinguishable from any other close here, so "never opened" is the
+  // signal the call site turns into dropping its cached key.
+  it("reports a socket that closed before opening", async () => {
+    const h = harness()
+    await start(h)
+    h.sockets[0]?.onclose?.()
+
+    expect(h.refusals).toBe(1)
+    expect(h.states).toEqual(["connecting", "reconnecting"])
+  })
+
+  it("does not report a close that follows an open", async () => {
+    const h = harness()
+    await start(h)
+    h.sockets[0]?.onopen?.()
+    h.sockets[0]?.onclose?.()
+
+    expect(h.refusals).toBe(0)
+  })
+
+  // The refusal need not be about the credential at all: a stopped agent 503s the upgrade for as
+  // long as it is down. Reporting every tick would have the call site mint a key per backoff for
+  // hours, so only the first of a streak reports: by the second the credential is already fresh.
+  it("reports only the first of a streak of pre-open closes", async () => {
+    const h = harness()
+    await start(h)
+    h.sockets[0]?.onclose?.()
+    h.timers[0]?.fn()
+    await flush()
+    h.sockets[1]?.onclose?.()
+    h.timers[1]?.fn()
+    await flush()
+    h.sockets[2]?.onclose?.()
+
+    expect(h.sockets).toHaveLength(3)
+    expect(h.refusals).toBe(1)
+  })
+
+  // Re-armed by a working connection, so a key that is refused a day later is still dropped.
+  it("reports again after a successful open in between", async () => {
+    const h = harness()
+    await start(h)
+    h.sockets[0]?.onclose?.()
+    expect(h.refusals).toBe(1)
+
+    h.timers[0]?.fn()
+    await flush()
+    h.sockets[1]?.onopen?.()
+    h.sockets[1]?.onclose?.()
+    h.timers[1]?.fn()
+    await flush()
+    h.sockets[2]?.onclose?.()
+
+    expect(h.refusals).toBe(2)
+  })
+
+  it("schedules a reconnect when the url builder rejects", async () => {
+    const h = harness()
+    h.deps.buildUrl = () => Promise.reject(new Error("not connected"))
+    await start(h)
     expect(h.states).toEqual(["connecting", "reconnecting"])
     expect(h.sockets).toHaveLength(0)
     expect(h.timers).toHaveLength(1)

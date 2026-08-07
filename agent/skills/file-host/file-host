@@ -1,0 +1,171 @@
+#!/bin/sh
+set -eu
+
+# `file-host` on PATH; the skill's whole surface is its daemon. Registered public
+# because the user's share links are fetched from outside the tunnel, and those links
+# stay stable across restarts because registration is idempotent.
+
+PIDFILE="$HOME/agent/data/daemons/file-host.pid"
+PORTFILE="$HOME/agent/data/daemons/file-host.port"
+LOG="$HOME/agent/logs/file-host.log"
+USAGE="Usage: file-host daemon <start|stop|restart|status>"
+READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-30}
+STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
+# SIGTERM is the deliberate stop, and this is the point in the one budget at which a daemon that
+# has not honoured it is killed instead, leaving the remainder to reap it.
+KILL_AFTER=$(( STOP_BUDGET * 2 / 3 ))
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_POLLS=6
+
+case "${1:-}" in
+  daemon) shift ;;
+  "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac
+
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+# The budgets are wall clock, never a count of sleeps: a probe that hangs for its own timeout
+# stretches a counted loop far past the seconds DAEMON_*_TIMEOUT_SECS names.
+deadline() { echo $(( $(date +%s) + $1 )); }
+expired() { [ "$(date +%s)" -ge "$1" ]; }
+
+# Waits out a pid until a deadline. Answers whether it is gone.
+await_gone() {
+  while kill -0 "$1" 2>/dev/null; do
+    if expired "$2"; then return 1; fi
+    sleep 0.5
+  done
+}
+
+# A start that gives up drops the records it claimed: a daemon nothing can reach, with records
+# that say it is up, reads as running and turns every later start into a no-op.
+give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
+
+# A start that gives up ends its child first: a daemon nothing can reach outlives the records.
+abandon() {
+  stop_by=$(deadline "$STOP_BUDGET")
+  kill -TERM "$1" 2>/dev/null || true
+  if ! await_gone "$1" "$(deadline "$KILL_AFTER")"; then
+    kill -KILL "$1" 2>/dev/null || true
+    await_gone "$1" "$stop_by" || true
+  fi
+  give_up "$2"
+}
+
+# Field 22 of /proc/<pid>/stat: the process start time in clock ticks since boot. comm is a
+# bracketed field that may itself contain spaces and parentheses, so the numbered fields resume
+# after the LAST ')', which is why this scans backwards for it rather than trusting $2.
+starttime_of() {
+  awk '{ for (i = NF; i > 0; i--) if ($i ~ /\)$/) { print $(i + 20); exit } }' "/proc/$1/stat" 2>/dev/null || true
+}
+
+# The record is "<pid> <starttime>", or a bare pid where the starttime is unavailable: a bare pid
+# is the honest form of "identity unknown", and live_pid reads it the legacy way rather than as a
+# mismatch.
+record_for() {
+  st=$(starttime_of "$1")
+  if [ -n "$st" ]; then printf '%s %s' "$1" "$st"; else printf %s "$1"; fi
+}
+
+# The record is "<pid> <starttime>", and both halves have to match. kill -0 answers "does some
+# process hold this pid", never "is this still mine": the records outlive the container while a
+# fresh pid namespace renumbers from low values, so a reused pid otherwise reads as a healthy
+# daemon, every idempotent start skips it, and the service is silently down.
+live_pid() {
+  record=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  pid=${record%% *}
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  # LEGACY(remove-when: no daemon record predating the release that ships this check remains, i.e.
+  # every box has restarted its daemons at least once on this version): a record written by the old
+  # code is a bare pid. Trust it rather than reading the absence of a starttime as a mismatch,
+  # because an upgrade must not declare a live daemon dead and let a second stack beside it.
+  case "$record" in
+    *" "*)
+      # Only a non-empty run of digits is worth comparing. Any other second field, from a writer
+      # this contract does not own, would otherwise compare a real starttime against a non-number
+      # and declare a live daemon dead, letting a second stack beside it.
+      recorded=${record#* }
+      case "$recorded" in
+        ""|*[!0-9]*) ;;
+        *)
+          current=$(starttime_of "$pid")
+          if [ -n "$current" ] && [ "$current" != "$recorded" ]; then return 1; fi
+          ;;
+      esac
+      ;;
+  esac
+  printf %s "$pid"
+}
+
+# The pid record is the mutual exclusion: a start claims it before spawning and drops it on every
+# failure, so a start that loses the claim answers already_running instead of stacking a daemon
+# beside the winner's. A record no process stands behind is cleared and taken over, which is the
+# one path on which two starts can both spawn, and the duplicate loses on its own resources.
+claim_start() {
+  if ( set -C; record_for $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
+  i=0
+  while [ "$i" -lt "$CLAIM_POLLS" ]; do
+    if live_pid >/dev/null; then echo running; return 0; fi
+    [ -f "$PIDFILE" ] || break
+    sleep 0.5; i=$((i + 1))
+  done
+  rm -f "$PIDFILE"
+  if ( set -C; record_for $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs" "$HOME/.file-host"
+  case "$(claim_start)" in
+    running) echo '{"status":"already_running"}'; return 0 ;;
+    lost) fail "another file-host start holds $PIDFILE" ;;
+  esac
+  PORT=$(register-service file-host --public) || give_up "could not register file-host with vestad"
+  [ -n "$PORT" ] || give_up "could not register file-host with vestad"
+  echo "$PORT" > "$PORTFILE"
+  setsid python3 "$HOME/agent/skills/file-host/serve.py" --dir "$HOME/.file-host" --port "$PORT" >> "$LOG" 2>&1 &
+  pid=$!
+  record_for "$pid" > "$PIDFILE"
+  ready_by=$(deadline "$READY_BUDGET")
+  until expired "$ready_by"; do
+    kill -0 "$pid" 2>/dev/null || abandon "$pid" "file-host exited during startup; see $LOG"
+    if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
+      echo '{"status":"started"}'; return 0
+    fi
+    sleep 0.5
+  done
+  abandon "$pid" "file-host never answered on port $PORT; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  stop_by=$(deadline "$STOP_BUDGET")
+  kill -TERM "$pid" 2>/dev/null || true
+  if ! await_gone "$pid" "$(deadline "$KILL_AFTER")"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    await_gone "$pid" "$stop_by" || fail "file-host still running ${STOP_BUDGET}s after SIGTERM then SIGKILL (pid=$pid)"
+  fi
+  rm -f "$PIDFILE" "$PORTFILE"
+  echo '{"status":"stopped"}'
+}
+
+# Reads the port start recorded, never registration: status stays a local read that
+# answers instantly and truthfully while vestad is down.
+do_status() {
+  if live_pid >/dev/null; then
+    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
+    printf '{"running":true,"port":%s}\n' "${port:-null}"
+  else
+    printf '{"running":false,"port":null}\n'
+  fi
+}
+
+case "${1:-}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop >/dev/null; do_start ;;
+  status) do_status ;;
+  "" | -h | --help | help) echo "$USAGE" ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac

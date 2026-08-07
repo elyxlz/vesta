@@ -76,7 +76,7 @@ def git_auth_env(token):
 
 def resolve_agent_identity():
     """Agent name + vesta version for commit authorship and PR attribution."""
-    if "AGENT_NAME" not in os.environ:
+    if "AGENT_NAME" not in os.environ or not os.environ["AGENT_NAME"].strip():
         print("Error: AGENT_NAME is not set in env", file=sys.stderr)
         sys.exit(1)
     agent_name = os.environ["AGENT_NAME"]
@@ -103,12 +103,122 @@ def ensure_shared_history(base, env):
         sys.exit(1)
 
 
-def create_pr(token, title, body, branch, base):
-    headers = {
+def api_headers(token):
+    return {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def pr_commit_authors(token, number):
+    """(originator, all authors) for one PR, by commit author name. Every agent pushes through the
+    same GitHub App, so `pull.user.login` is `vesta-upstream[bot]` on EVERY PR in the repo and
+    identifies nobody. The commit author is the only field carrying which agent wrote it, and the
+    FIRST commit's author is the one who opened the PR."""
+    resp = requests.get(
+        f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls/{number}/commits",
+        headers=api_headers(token),
+        params={"per_page": 100},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        return None, set()
+    commits = resp.json()
+    if not commits:
+        return None, set()
+    return commits[0]["commit"]["author"]["name"], {c["commit"]["author"]["name"] for c in commits}
+
+
+def list_my_prs(token, agent_name, state, limit):
+    """Print the PRs this agent opened, and separately the ones it only pushed commits to."""
+    me = f"{agent_name} (vesta)"
+    resp = requests.get(
+        f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls",
+        headers=api_headers(token),
+        params={"state": state, "per_page": 100, "sort": "created", "direction": "desc"},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        print(f"Error: {resp.status_code} {resp.text}", file=sys.stderr)
+        sys.exit(1)
+    candidates = resp.json()[:limit]
+    opened, touched, unreadable = [], [], []
+    for pr in candidates:
+        originator, authors = pr_commit_authors(token, pr["number"])
+        if originator == me:
+            opened.append((pr, originator))
+        elif me in authors:
+            touched.append((pr, originator))
+        elif originator is None:
+            unreadable.append(pr)
+
+    print(f"Checked the {len(candidates)} most recent {state} PR(s) as {me}.")
+    print(f"\nOpened by you ({len(opened)}):")
+    for pr, _ in opened:
+        print(f"  #{pr['number']}  {pr['title'][:72]}\n      {pr['html_url']}")
+    if not opened:
+        print("  (none: every PR here was opened by a different agent through the same bot account)")
+    if touched:
+        print(f"\nNot yours, but you have commits on them ({len(touched)}):")
+        for pr, originator in touched:
+            print(f"  #{pr['number']}  opened by {originator}: {pr['title'][:56]}\n      {pr['html_url']}")
+    if unreadable:
+        print(f"\nCould not read commit authors for {len(unreadable)} PR(s), so ownership is unknown, not ruled out:")
+        for pr in unreadable:
+            print(f"  #{pr['number']}  {pr['title'][:72]}")
+
+
+GUARD_BRANCH_REF = "refs/vesta-guard/branch"
+GUARD_BASE_REF = "refs/vesta-guard/base"
+
+
+def branch_authors_ahead_of_base(branch, base, env):
+    """Commit-author names the remote branch adds on top of base, or None when the remote has no
+    such branch: the one case with nothing to protect, so the one silent pass (a brand-new branch
+    must never be blocked). Ownership is read with git, not the REST API, because a REST non-200
+    (403, rate limit, auth blip) is indistinguishable from a nonexistent branch. `ls-remote
+    --exit-code` separates the two answers: 2 means the remote says the branch does not exist, and
+    any other failure here (unreachable remote, failed fetch or log) exits instead of guessing,
+    because the caller is about to force push and an unverifiable branch must not read as a pass."""
+    probe = run(["git", "ls-remote", "--exit-code", "upstream", f"refs/heads/{branch}"], env=env)
+    if probe.returncode == 2:
+        return None
+    branch_spec = f"+refs/heads/{branch}:{GUARD_BRANCH_REF}"
+    base_spec = f"+refs/heads/{base}:{GUARD_BASE_REF}"
+    fetched = probe.returncode == 0 and run(["git", "fetch", "--quiet", "upstream", branch_spec, base_spec], env=env).returncode == 0
+    log = run(["git", "log", "--format=%an", f"{GUARD_BASE_REF}..{GUARD_BRANCH_REF}"]) if fetched else None
+    run(["git", "update-ref", "-d", GUARD_BRANCH_REF])
+    run(["git", "update-ref", "-d", GUARD_BASE_REF])
+    if log is None or log.returncode != 0:
+        print(f"Error: could not read remote branch '{branch}' to check whose work it holds.", file=sys.stderr)
+        print("Refusing to force push blind. Wait and retry, or pick a fresh branch name.", file=sys.stderr)
+        print("Do not use --adopt here: ownership is unknowable right now, not confirmed yours to take.", file=sys.stderr)
+        sys.exit(1)
+    return {name.strip() for name in log.stdout.splitlines() if name.strip()}
+
+
+def warn_if_branch_belongs_to_another_agent(branch, base, agent_name, env):
+    """Refuse to hand somebody else's branch to --force. A remote branch carrying commits by anyone
+    else (another agent, or a human whose branch shares the name) and none of your own is someone
+    else's in-flight work, and the push below is a force push, so adopting it by accident silently
+    discards their commits. A branch adding nothing on top of base holds no work to lose.
+
+    This catches a name collision, not every overwrite: a branch you have commits on stays yours to
+    push, so anything added to it since your last push still goes. Fetch before you force."""
+    authors = branch_authors_ahead_of_base(branch, base, env)
+    if authors is None:
+        return
+    me = f"{agent_name} (vesta)"
+    if authors and me not in authors:
+        print(f"Error: remote branch '{branch}' carries commits by {', '.join(sorted(authors))}.", file=sys.stderr)
+        print("That is someone else's in-flight work and this push is a FORCE push.", file=sys.stderr)
+        print("Push to a branch name of your own, or pass --adopt if you mean to take it over.", file=sys.stderr)
+        sys.exit(1)
+
+
+def create_pr(token, title, body, branch, base):
+    headers = api_headers(token)
     resp = requests.post(
         f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls",
         headers=headers,
@@ -140,12 +250,21 @@ def main():
     parser.add_argument("--branch", default=None, help="Remote branch name (default: current branch)")
     parser.add_argument("--base", default="master", help="Base branch (default: master)")
     parser.add_argument("--token-only", action="store_true", help="Just print an installation token")
+    parser.add_argument("--mine", action="store_true", help="List the PRs this agent actually wrote")
+    parser.add_argument("--state", default="open", help="With --mine: open, closed or all (default: open)")
+    parser.add_argument("--limit", type=int, default=40, help="With --mine: how many recent PRs to check")
+    parser.add_argument("--adopt", action="store_true", help="Allow pushing to a branch another agent started")
     args = parser.parse_args()
 
     token = get_installation_token()
 
     if args.token_only:
         print(token)
+        return
+
+    if args.mine:
+        agent_name, _ = resolve_agent_identity()
+        list_my_prs(token, agent_name, args.state, args.limit)
         return
 
     if not args.title:
@@ -174,6 +293,8 @@ def main():
 
     auth_env = git_auth_env(token)
     ensure_shared_history(args.base, auth_env)
+    if not args.adopt:
+        warn_if_branch_belongs_to_another_agent(branch, args.base, agent_name, auth_env)
 
     # Set commit author so pushes are attributed to this vesta instance
     run(["git", "config", "user.name", author_name])

@@ -178,7 +178,7 @@ class Client:
     def create_agent(self, *, subdomain: str, server_token: str, name: str) -> dict[str, Any]:
         """POST <tenant>/agents — create the buyer's first (empty) agent. Personality and the
         freeform seed context are delivered later, once the agent is up, through set_provider's
-        config field (the agent owns its config store; vestad no longer accepts them at create)."""
+        config field (the agent owns its config store; vestad accepts only the name at create)."""
         url = f"{self._cfg.tenant_base(subdomain)}/agents"
         return self._json(self._raw_post(url, json={"name": name}, token=server_token, timeout=_CREATE_TIMEOUT))
 

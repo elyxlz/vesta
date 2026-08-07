@@ -37,27 +37,13 @@ pub fn parse_compact_utc_epoch(created_at: &str) -> Option<u64> {
     u64::try_from(dt.assume_utc().unix_timestamp()).ok()
 }
 
-fn local_tm(epoch_secs: u64) -> libc::tm {
-    let epoch = libc::time_t::try_from(epoch_secs).expect("epoch seconds fit in time_t");
-    // SAFETY: libc::tm is a plain-integer C struct for which an all-zero bit pattern is valid.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // SAFETY: &epoch and &mut tm are valid, non-overlapping, properly aligned pointers for the
-    // duration of the call.
-    unsafe { libc::localtime_r(&raw const epoch, &raw mut tm) };
-    tm
-}
-
-/// The host-local hour of day (0-23) right now.
-pub fn local_hour() -> u8 {
-    u8::try_from(local_tm(now_epoch_secs()).tm_hour).expect("tm_hour is 0-23")
-}
-
-/// Host-local calendar date (YYYYMMDD) for an epoch. Keying the once-per-day backup dedup to this
-/// same wall clock as the firing window avoids the UTC-vs-local day-boundary mismatch that could
-/// otherwise double or skip a daily near midnight.
-pub fn local_date_of_epoch(epoch_secs: u64) -> String {
-    let tm = local_tm(epoch_secs);
-    format!("{:04}{:02}{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday)
+/// The RFC3339 timestamp for an epoch, fallible so no unwrap rides the notification send path.
+pub fn epoch_to_rfc3339(epoch_secs: u64) -> Result<String, String> {
+    let epoch = i64::try_from(epoch_secs).map_err(|e| format!("epoch out of range: {e}"))?;
+    time::OffsetDateTime::from_unix_timestamp(epoch)
+        .map_err(|e| format!("epoch out of range: {e}"))?
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("format timestamp: {e}"))
 }
 
 #[cfg(test)]

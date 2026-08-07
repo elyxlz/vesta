@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -18,6 +20,10 @@ import (
 
 // mentionPattern matches @word patterns in message text.
 var mentionPattern = regexp.MustCompile(`@(\+?\w+)`)
+
+// emailAtextSpecials are the printable specials RFC 5322 allows in an email
+// local part; an "@" preceded by one belongs to an address, not a mention.
+const emailAtextSpecials = "!#$%&'*+-/=?^_`{|}~."
 
 // WhatsApp spam filters silently drop messages containing user@IP patterns.
 var userAtIPPattern = regexp.MustCompile(`\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
@@ -50,7 +56,7 @@ func (wac *WhatsAppClient) classifySendError(action string, err error) string {
 // construction (chooseLinker), so ban-avoidance gating reads the constructed linker
 // instead of re-deriving the mode: the managed linker is the single source of truth.
 func (wac *WhatsAppClient) isManaged() bool {
-	_, ok := wac.linker.(*managedLinker)
+	_, ok := wac.currentLinker().(*managedLinker)
 	return ok
 }
 
@@ -102,6 +108,35 @@ func (wac *WhatsAppClient) mappedJID(jid types.JID) types.JID {
 	return types.JID{}
 }
 
+// chatStorageKeys resolves a --to argument to every storage key that chat's history can live
+// under. WhatsApp addresses a direct chat by the peer's LID, while a saved contact and any reply
+// resolve to their phone JID, so a conversation is stored under both: messages received before
+// the LID<->PN mapping was known sit under the LID, everything else under the phone JID. Reading
+// only the resolved JID therefore returns a one-sided transcript of a two-sided conversation,
+// which reads as "they never replied" rather than as missing data. Returns nil for an empty
+// argument (no chat filter). A group JID has no counterpart, so it yields a single key.
+func (wac *WhatsAppClient) chatStorageKeys(to string) ([]string, error) {
+	if to == "" {
+		return nil, nil
+	}
+	jid, err := wac.ResolveRecipient(to)
+	if err != nil {
+		return nil, err
+	}
+	return storageKeys(jid, wac.mappedJID(jid)), nil
+}
+
+// storageKeys unions a resolved chat JID with its LID<->PN counterpart, skipping an empty
+// counterpart (a group, or a peer with no mapping yet). Kept free of the client so the union
+// itself is directly testable.
+func storageKeys(primary, alt types.JID) []string {
+	keys := []string{primary.String()}
+	if !alt.IsEmpty() && alt.String() != primary.String() {
+		keys = append(keys, alt.String())
+	}
+	return keys
+}
+
 // requireReplyFirst enforces reply-first onboarding on a managed (pooled) number: it
 // must never cold-initiate, so the first outbound to any peer or group requires a
 // prior inbound from that chat. A self-hosted (QR-linked) number carries no such rule.
@@ -110,7 +145,7 @@ func (wac *WhatsAppClient) requireReplyFirst(jid types.JID) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"cannot message %s first: this is a managed WhatsApp number and must never start a conversation (reply-first). Share your wa.me click-to-chat link, wait for them to message you, then reply",
+		"cannot message %s first: this is a headless account and must never start a conversation (reply-first). Share your wa.me click-to-chat link, wait for them to message you, then reply",
 		wac.getChatName(jid),
 	)
 }
@@ -414,6 +449,17 @@ func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
 		captureStart, captureEnd := matches[i][2], matches[i][3]
 		identifier := text[captureStart:captureEnd]
 
+		// A real mention starts the text or follows whitespace or plain
+		// punctuation. A preceding letter, digit, or atext rune means the "@"
+		// sits inside a larger token (an email local part such as
+		// S3044936@ed.ac.uk), and rewriting it would corrupt the address.
+		if fullStart > 0 {
+			prev, _ := utf8.DecodeLastRuneInString(text[:fullStart])
+			if unicode.IsLetter(prev) || unicode.IsDigit(prev) || strings.ContainsRune(emailAtextSpecials, prev) {
+				continue
+			}
+		}
+
 		jid, err := wac.ResolveRecipient(identifier)
 		if err != nil {
 			continue
@@ -473,11 +519,15 @@ func (wac *WhatsAppClient) recordOutgoingMessage(jid types.JID, p StoreMessagePa
 		p.ID = fmt.Sprintf("local-%d", time.Now().UnixNano())
 	}
 
-	p.ChatJID = jid.String()
+	// File under the canonical chat key: keyed by the raw JID, a send to a peer's
+	// LID and their phone-JID replies would split one conversation into two chats.
+	chatKey := wac.canonicalChatKey(jid)
+
+	p.ChatJID = chatKey
 	p.Timestamp = time.Now()
 	p.IsFromMe = true
 
-	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid), p.Timestamp); err != nil {
+	if err := wac.store.StoreChat(chatKey, wac.getChatName(jid), p.Timestamp); err != nil {
 		wac.logger.Warnf("Failed to store outgoing chat metadata: %v", err)
 	}
 

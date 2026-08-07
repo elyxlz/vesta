@@ -1,5 +1,6 @@
 import logging
 import threading
+from pathlib import Path
 from typing import Literal
 
 import uvicorn
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 
 from . import commands
 from .config import Config
+from .scheduler import write_notification
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class UpdateTaskBody(BaseModel):
     due_in_minutes: int | None = None
     due_in_hours: int | None = None
     due_in_days: int | None = None
+    clear_due: bool = False
 
 
 class UpdateReminderBody(BaseModel):
@@ -49,10 +52,38 @@ class SnoozeReminderBody(BaseModel):
     tz: str | None = None
 
 
+# --- Task update (app path) ---
+
+
+def _apply_task_update(config: Config, notif_dir: Path, task_id: str, body: UpdateTaskBody) -> dict:
+    """Apply a task update coming from the app. A pending->done transition here is the one completion
+    the agent does not already know about (its own CLI edits are self-evident), so it notifies,
+    snoozed (interrupt=False), which the CLI path never does."""
+    already_done = body.status == "done" and commands.get_task(config, task_id=task_id)["status"] == "done"
+    result = commands.update_task(
+        config,
+        task_id=task_id,
+        status=body.status,
+        title=body.title,
+        priority=body.priority,
+        due=commands.DueSpec(
+            due_datetime=body.due_datetime,
+            timezone=body.timezone,
+            due_in_minutes=body.due_in_minutes,
+            due_in_hours=body.due_in_hours,
+            due_in_days=body.due_in_days,
+            clear=body.clear_due,
+        ),
+    )
+    if body.status == "done" and not already_done:
+        write_notification(notif_dir, "task_completed", interrupt=False, task_id=task_id, message=f"Task completed: {result['title']}")
+    return result
+
+
 # --- App factory ---
 
 
-def _create_app(config: Config) -> FastAPI:
+def _create_app(config: Config, notif_dir: Path) -> FastAPI:
     app = FastAPI()
 
     @app.exception_handler(ValueError)
@@ -91,20 +122,7 @@ def _create_app(config: Config) -> FastAPI:
 
     @app.patch("/tasks/{task_id}")
     def update_task(task_id: str, body: UpdateTaskBody):
-        return commands.update_task(
-            config,
-            task_id=task_id,
-            status=body.status,
-            title=body.title,
-            priority=body.priority,
-            due=commands.DueSpec(
-                due_datetime=body.due_datetime,
-                timezone=body.timezone,
-                due_in_minutes=body.due_in_minutes,
-                due_in_hours=body.due_in_hours,
-                due_in_days=body.due_in_days,
-            ),
-        )
+        return _apply_task_update(config, notif_dir, task_id, body)
 
     @app.delete("/tasks/{task_id}")
     def delete_task(task_id: str):
@@ -143,8 +161,8 @@ def _create_app(config: Config) -> FastAPI:
     return app
 
 
-def start_server(config: Config, port: int) -> uvicorn.Server:
-    app = _create_app(config)
+def start_server(config: Config, port: int, notif_dir: Path) -> uvicorn.Server:
+    app = _create_app(config, notif_dir)
     uv_config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(uv_config)
     thread = threading.Thread(target=server.run, daemon=True)

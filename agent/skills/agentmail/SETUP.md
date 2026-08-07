@@ -64,19 +64,22 @@ The webhook reaches the local FastAPI service through the public vestad
 tunnel; that's why the service must be registered with `"public": true`.
 
 ```bash
-PORT=$(~/agent/skills/vestad/scripts/register-service agentmail --public)
-
-screen -dmS agentmail agentmail serve --port $PORT
+agentmail daemon start
 ```
 
-Register it for restart (see [vestad](../vestad/SKILL.md)) by adding this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+Start owns the public registration and waits until the service answers; stop is the deliberate
+shutdown, so it does not fire the `daemon_died` notification every other exit fires. Manage it with
+`daemon start|stop|restart|status`, never by launching `agentmail serve` yourself.
+
+Add this line yourself, inside the fenced block in the `## Daemons` section of
+`~/agent/skills/restart/SKILL.md`:
 
 ```
-PORT=$(~/agent/skills/vestad/scripts/register-service agentmail --public) && screen -dmS agentmail agentmail serve --port $PORT
+agentmail daemon start
 ```
 
-**Verify**: `curl http://127.0.0.1:$PORT/health` should return
-`{"ok": true, "address": "<your-address>"}`.
+**Verify**: `agentmail daemon status` reports the registered port; `curl http://127.0.0.1:<port>/health`
+returns `{"ok": true}`. Startup output lands in `~/agent/logs/agentmail.log`.
 
 ## 3. Send a test email
 

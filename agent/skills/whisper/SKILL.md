@@ -22,7 +22,7 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 ~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --translate
 ~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --srt
 ~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --json
-~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --model /usr/local/share/ggml-medium.en.bin
+~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --model /usr/local/share/ggml-medium.bin
 ~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --threads 8
 ```
 
@@ -30,7 +30,7 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 
 | Flag | Description |
 |------|-------------|
-| `--language <code>` | Language code (en, es, fr, de, etc.). Default: en |
+| `--language <code>` | Language code (en, es, fr, de, etc.). Default: `WHISPER_LANGUAGE`, or auto-detect when it is unset |
 | `--translate` | Translate non-English audio to English text |
 | `--srt` | Output SRT subtitle format |
 | `--json` | Output JSON with timestamps |
@@ -40,6 +40,14 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 ## Notes
 
 - Accepts any format ffmpeg can read: mp3, m4a, wav, ogg, flac, mp4, webm, etc.
-- small.en processes ~15-30x faster than real-time on ARM64
+- small processes ~15-30x faster than real-time on ARM64
 - For long recordings (1h+), expect a few minutes of processing
 - Output goes to stdout. Pipe or redirect as needed
+- Default model is the multilingual `/usr/local/share/ggml-small.bin`, falling back to
+  `ggml-small.en.bin`, `ggml-tiny.bin`, `ggml-tiny.en.bin` if that one is absent.
+  Override with `WHISPER_MODEL` or `--model`. English-only `.en` models cannot
+  transcribe other languages: whisper.cpp forces `--language en` and disables
+  `--translate` on them
+- Language is auto-detected per file. Set `WHISPER_LANGUAGE` to a whisper.cpp
+  language code (`en`, `es`, `fr`, ...) to pin one for every run, the same
+  variable the whatsapp CLI reads; `--language` overrides it for a single run

@@ -8,12 +8,16 @@ import {
   getPendingNotificationIds,
   mergeLiveNotifications,
 } from "@/agent/notification-list-model";
-import { parseNotificationContent, type NotificationView } from "@vesta/core";
+import {
+  notificationRowKey,
+  parseNotificationContent,
+  type NotificationView,
+} from "@vesta/core";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import { radii } from "@/theme/layout";
+import { navHeaderHeight, radii } from "@/theme/layout";
 
 function NotificationRow({
   event,
@@ -124,11 +128,7 @@ export default function NotificationsPage({
   });
   const lastReseedRevision = useRef(0);
   const items = useMemo(
-    () =>
-      mergeLiveNotifications(
-        data?.notifications ?? [],
-        socket.events,
-      ),
+    () => mergeLiveNotifications(data?.notifications ?? [], socket.events),
     [data?.notifications, socket.events],
   );
   const standalone = presentation === "standalone";
@@ -140,8 +140,7 @@ export default function NotificationsPage({
     displayItems.length,
   );
   const pendingIds = useMemo(
-    () =>
-      getPendingNotificationIds(socket.pendingNotifications, socket.events),
+    () => getPendingNotificationIds(socket.pendingNotifications, socket.events),
     [socket.events, socket.pendingNotifications],
   );
 
@@ -168,9 +167,7 @@ export default function NotificationsPage({
         ]}
         data={displayItems}
         inverted={!standalone}
-        keyExtractor={(event, index) =>
-          `${event.notif_id ?? `${event.ts}-${event.source}`}-${index}`
-        }
+        keyExtractor={notificationRowKey}
         renderItem={({ item }) => (
           <NotificationRow
             event={item}
@@ -178,11 +175,18 @@ export default function NotificationsPage({
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
-        automaticallyAdjustContentInsets={standalone}
-        contentInsetAdjustmentBehavior={standalone ? "automatic" : "never"}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={
           standalone
-            ? styles.listContent
+            ? [
+                styles.listContent,
+                {
+                  paddingTop: insets.top + navHeaderHeight,
+                  paddingBottom: insets.bottom,
+                },
+                displayItems.length > 0 ? styles.bottomAligned : null,
+              ]
             : [
                 styles.listContent,
                 {
@@ -213,6 +217,7 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   positioningList: { opacity: 0 },
   listContent: { paddingHorizontal: 12 },
+  bottomAligned: { flexGrow: 1, justifyContent: "flex-end" },
   notification: {
     borderRadius: 17,
     borderWidth: StyleSheet.hairlineWidth,
@@ -232,6 +237,7 @@ const styles = StyleSheet.create({
   decision: {
     width: 68,
     borderRadius: radii.pill,
+    borderCurve: "continuous",
     paddingHorizontal: 7,
     paddingVertical: 3,
     fontSize: 10,

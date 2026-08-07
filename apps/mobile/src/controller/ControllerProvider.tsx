@@ -1,20 +1,25 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Constants from "expo-constants";
-import type { Controller } from "@vesta/core";
+import { resolveClientVersion, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
 import { buildController } from "./build-controller";
+import { deviceIdentity } from "./device-identity";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
 import { createAppStateForegroundSignal } from "./foreground-signal";
+import { useOptionalControllerSyncState } from "./optional-controller-store";
 import { runReauthCheck } from "./reauth-poll";
 import { AppBehindScreen } from "./AppBehindScreen";
-import { GatewayBehindScreen } from "./GatewayBehindScreen";
+import { GatewayUpdateGate } from "./gateway-update-gate";
 
-// This app's own release version, used to block running ahead of the gateway. Undefined (or
-// non-semver) fails open in core, so a dev build never blocks.
-const CLIENT_VERSION = Constants.expoConfig?.version ?? undefined;
+// Development variants drift with source rather than releases, so they deliberately fail open.
+// Production variants compare their release against the gateway's compatibility window.
+const CLIENT_VERSION = resolveClientVersion(
+  Constants.expoConfig?.version,
+  Constants.expoConfig?.extra?.appVariant === "development",
+);
 
 export { useController } from "./context";
 export { useSyncState };
@@ -30,7 +35,21 @@ function ConnectedController({ children }: { children: ReactNode }) {
   const { connection, api, refreshAccessToken } = useSession();
   const [signal] = useState(createAppStateForegroundSignal);
   const [controller, setController] = useState<Controller | null>(null);
+  const [device, setDevice] = useState<{ id: string; descriptor: string } | undefined>(undefined);
   const connectionKey = connectionKeyOf(connection);
+
+  // Resolve this device's identity once (the id lives in AsyncStorage). When it lands it enters the
+  // build effect's deps, rebuilding the controller so /sync reports the device.
+  useEffect(() => {
+    let active = true;
+    void deviceIdentity().then((resolved) => {
+      if (active) setDevice(resolved);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const syncState = useOptionalControllerSyncState(controller);
 
   useEffect(() => {
     let prev: GateInput = { connected: false, foreground: false };
@@ -44,8 +63,10 @@ function ConnectedController({ children }: { children: ReactNode }) {
           {
             getConnection: api.getConnection,
             refreshAccessToken,
+            websocketUrl: api.websocketUrl,
           },
           CLIENT_VERSION,
+          device,
         );
         setController(current);
       } else if (action === "close") {
@@ -61,11 +82,14 @@ function ConnectedController({ children }: { children: ReactNode }) {
       current?.close();
       setController(null);
     };
-  }, [connectionKey, api, refreshAccessToken, signal]);
+  }, [connectionKey, api, refreshAccessToken, signal, device]);
 
   useEffect(() => {
     if (!controller) return;
-    const timer = setInterval(() => {
+    // Also on mount, not just every poll: a session restored (or returned to the foreground)
+    // with an already-expired token would otherwise keep retrying /sync with it for a whole
+    // interval.
+    const tick = () => {
       void runReauthCheck({
         getConnection: api.getConnection,
         refreshAccessToken,
@@ -75,42 +99,25 @@ function ConnectedController({ children }: { children: ReactNode }) {
       }).catch((err: unknown) =>
         console.warn("[controller] reauth failed:", err),
       );
-    }, REAUTH_POLL_MS);
+    };
+    tick();
+    const timer = setInterval(tick, REAUTH_POLL_MS);
     return () => {
       clearInterval(timer);
     };
   }, [controller, api, refreshAccessToken]);
 
-  if (!controller) {
-    return (
-      <ControllerContext.Provider value={null}>
-        {children}
-      </ControllerContext.Provider>
-    );
-  }
-  return <LiveController controller={controller}>{children}</LiveController>;
-}
-
-function LiveController({
-  controller,
-  children,
-}: {
-  controller: Controller;
-  children: ReactNode;
-}) {
-  const syncState = useSyncState(controller);
   return (
     <ControllerContext.Provider value={controller}>
-      {routeTakeover(syncState) ?? children}
+      {syncState === "app_behind" ? (
+        <AppBehindScreen />
+      ) : (
+        <GatewayUpdateGate blocked={syncState === "gateway_behind"}>
+          {children}
+        </GatewayUpdateGate>
+      )}
     </ControllerContext.Provider>
   );
-}
-
-// The two blocking sync states take over in place of the app; every other state renders it.
-function routeTakeover(syncState: string): ReactNode {
-  if (syncState === "app_behind") return <AppBehindScreen />;
-  if (syncState === "gateway_behind") return <GatewayBehindScreen />;
-  return null;
 }
 
 // Before connect (and on the connect screens) there is no gateway to talk to: render children

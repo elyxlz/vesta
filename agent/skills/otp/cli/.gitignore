@@ -1,0 +1,7 @@
+# Built binary
+otp
+
+# Go build/test artifacts
+*.exe
+*.test
+*.out

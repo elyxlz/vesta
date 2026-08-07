@@ -1,6 +1,6 @@
 import { Orb } from "@/components/Orb";
 import { cn } from "@/lib/utils";
-import type { OrbVisualState } from "@/components/Orb/styles";
+import type { OrbVisualState } from "@vesta/core";
 
 interface AgentIslandCollapsedProps {
   name: string;

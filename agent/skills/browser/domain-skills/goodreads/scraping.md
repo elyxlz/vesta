@@ -27,57 +27,55 @@ The slug is optional — numeric ID alone works and redirects cleanly.
 import re, json
 from helpers import http_get
 
+
 def parse_book(book_id):
     html = http_get(f"https://www.goodreads.com/book/show/{book_id}")
 
     # Parse Apollo state from Next.js page
     nd = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-    ap = json.loads(nd.group(1))['props']['pageProps']['apolloState']
+    ap = json.loads(nd.group(1))["props"]["pageProps"]["apolloState"]
 
     # The primary Book entity matches the URL's legacy ID
-    book = next(v for v in ap.values()
-                if v.get('__typename') == 'Book' and v.get('legacyId') == int(book_id))
-    work = next((v for v in ap.values() if v.get('__typename') == 'Work'), {})
-    author_ref = book['primaryContributorEdge']['node']['__ref']
+    book = next(v for v in ap.values() if v.get("__typename") == "Book" and v.get("legacyId") == int(book_id))
+    work = next((v for v in ap.values() if v.get("__typename") == "Work"), {})
+    author_ref = book["primaryContributorEdge"]["node"]["__ref"]
     author = ap.get(author_ref, {})
 
-    stats = work.get('stats', {})
-    work_details = work.get('details', {})
-    book_details = book.get('details', {})
+    stats = work.get("stats", {})
+    work_details = work.get("details", {})
+    book_details = book.get("details", {})
 
     return {
-        'title':            book['title'],
-        'title_complete':   book['titleComplete'],
-        'book_id':          book['legacyId'],
-        'url':              book['webUrl'],
-        'cover_url':        book['imageUrl'],
+        "title": book["title"],
+        "title_complete": book["titleComplete"],
+        "book_id": book["legacyId"],
+        "url": book["webUrl"],
+        "cover_url": book["imageUrl"],
         # Strip HTML tags from description
-        'description':      re.sub(r'<[^>]+>', '', book.get('description({"stripped":true})',
-                                   book.get('description', ''))).strip(),
-        'genres':           [g['genre']['name'] for g in book.get('bookGenres', [])],
-        'series':           [{'name': s['series']['title'], 'position': s.get('userPosition')}
-                             for s in book.get('bookSeries', [])],
+        "description": re.sub(r"<[^>]+>", "", book.get('description({"stripped":true})', book.get("description", ""))).strip(),
+        "genres": [g["genre"]["name"] for g in book.get("bookGenres", [])],
+        "series": [{"name": s["series"]["title"], "position": s.get("userPosition")} for s in book.get("bookSeries", [])],
         # Author
-        'author_name':      author.get('name'),
-        'author_url':       author.get('webUrl'),
+        "author_name": author.get("name"),
+        "author_url": author.get("webUrl"),
         # Edition details
-        'format':           book_details.get('format'),
-        'num_pages':        book_details.get('numPages'),
-        'publisher':        book_details.get('publisher'),
-        'language':         (book_details.get('language') or {}).get('name'),
-        'isbn':             book_details.get('isbn'),
-        'isbn13':           book_details.get('isbn13'),
-        'pub_timestamp_ms': book_details.get('publicationTime'),
+        "format": book_details.get("format"),
+        "num_pages": book_details.get("numPages"),
+        "publisher": book_details.get("publisher"),
+        "language": (book_details.get("language") or {}).get("name"),
+        "isbn": book_details.get("isbn"),
+        "isbn13": book_details.get("isbn13"),
+        "pub_timestamp_ms": book_details.get("publicationTime"),
         # Ratings (from Work, not Book)
-        'avg_rating':       stats.get('averageRating'),
-        'ratings_count':    stats.get('ratingsCount'),
-        'text_reviews':     stats.get('textReviewsCount'),
+        "avg_rating": stats.get("averageRating"),
+        "ratings_count": stats.get("ratingsCount"),
+        "text_reviews": stats.get("textReviewsCount"),
         # ratings_dist is list of counts for [1-star, 2-star, 3-star, 4-star, 5-star]
-        'ratings_dist':     stats.get('ratingsCountDist'),
+        "ratings_dist": stats.get("ratingsCountDist"),
         # Awards
-        'awards':           [a['name'] + (' — ' + a['category'] if a.get('category') else '')
-                             for a in work_details.get('awardsWon', [])],
+        "awards": [a["name"] + (" — " + a["category"] if a.get("category") else "") for a in work_details.get("awardsWon", [])],
     }
+
 
 # Example
 book = parse_book(149267)  # The Stand by Stephen King
@@ -105,6 +103,7 @@ Use when you only need title, author, rating, page count, and awards. ~3× less 
 import re, json
 from helpers import http_get
 
+
 def parse_book_fast(book_id):
     html = http_get(f"https://www.goodreads.com/book/show/{book_id}")
     blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
@@ -112,17 +111,18 @@ def parse_book_fast(book_id):
         return None
     ld = json.loads(blocks[0])
     return {
-        'title':        ld.get('name'),
-        'author':       ld['author'][0]['name'] if ld.get('author') else None,
-        'avg_rating':   ld.get('aggregateRating', {}).get('ratingValue'),
-        'ratings_count':ld.get('aggregateRating', {}).get('ratingCount'),
-        'review_count': ld.get('aggregateRating', {}).get('reviewCount'),
-        'num_pages':    ld.get('numberOfPages'),
-        'isbn':         ld.get('isbn'),
-        'cover_url':    ld.get('image'),
-        'awards':       ld.get('awards'),   # single string, comma-separated
-        'format':       ld.get('bookFormat'),
+        "title": ld.get("name"),
+        "author": ld["author"][0]["name"] if ld.get("author") else None,
+        "avg_rating": ld.get("aggregateRating", {}).get("ratingValue"),
+        "ratings_count": ld.get("aggregateRating", {}).get("ratingCount"),
+        "review_count": ld.get("aggregateRating", {}).get("reviewCount"),
+        "num_pages": ld.get("numberOfPages"),
+        "isbn": ld.get("isbn"),
+        "cover_url": ld.get("image"),
+        "awards": ld.get("awards"),  # single string, comma-separated
+        "format": ld.get("bookFormat"),
     }
+
 
 book = parse_book_fast(149267)
 # book['avg_rating']   => 4.35
@@ -144,40 +144,42 @@ Search uses server-rendered HTML with schema.org microdata `<tr>` rows. No `__NE
 import re, json
 from helpers import http_get
 
+
 def search_books(query, page=1):
     from urllib.parse import quote_plus
+
     url = f"https://www.goodreads.com/search?q={quote_plus(query)}&search_type=books&page={page}"
     html = http_get(url)
 
-    rows = re.findall(
-        r'<tr itemscope itemtype="http://schema.org/Book">(.*?)</tr>',
-        html, re.DOTALL
-    )
+    rows = re.findall(r'<tr itemscope itemtype="http://schema.org/Book">(.*?)</tr>', html, re.DOTALL)
 
     results = []
     for row in rows:
-        bid    = re.search(r'<div id="(\d+)" class="u-anchorTarget">', row)
-        title  = re.search(r"itemprop='name'[^>]*>([^<]+)</span>", row)
+        bid = re.search(r'<div id="(\d+)" class="u-anchorTarget">', row)
+        title = re.search(r"itemprop='name'[^>]*>([^<]+)</span>", row)
         author = re.search(r'class="authorName"[^>]*><span[^>]*>([^<]+)</span>', row)
-        avg    = re.search(r'(\d+\.\d+)\s*avg rating', row)
-        cnt    = re.search(r'(\d[\d,]*)\s*rating', row)
-        cover  = re.search(r'img alt="[^"]*" class="bookCover"[^>]*src="([^"]+)"', row)
+        avg = re.search(r"(\d+\.\d+)\s*avg rating", row)
+        cnt = re.search(r"(\d[\d,]*)\s*rating", row)
+        cover = re.search(r'img alt="[^"]*" class="bookCover"[^>]*src="([^"]+)"', row)
         if not (bid and title):
             continue
-        results.append({
-            'book_id':      bid.group(1),
-            'title':        title.group(1).strip(),
-            'author':       author.group(1).strip() if author else None,
-            'avg_rating':   float(avg.group(1)) if avg else None,
-            'ratings_count':cnt.group(1).replace(',', '') if cnt else None,
-            'cover_url':    cover.group(1) if cover else None,
-            'url':          f"https://www.goodreads.com/book/show/{bid.group(1)}",
-        })
+        results.append(
+            {
+                "book_id": bid.group(1),
+                "title": title.group(1).strip(),
+                "author": author.group(1).strip() if author else None,
+                "avg_rating": float(avg.group(1)) if avg else None,
+                "ratings_count": cnt.group(1).replace(",", "") if cnt else None,
+                "cover_url": cover.group(1) if cover else None,
+                "url": f"https://www.goodreads.com/book/show/{bid.group(1)}",
+            }
+        )
 
-    total_m = re.search(r'([\d,]+)\s+results', html)
-    total   = int(total_m.group(1).replace(',', '')) if total_m else None
+    total_m = re.search(r"([\d,]+)\s+results", html)
+    total = int(total_m.group(1).replace(",", "")) if total_m else None
 
-    return {'total': total, 'page': page, 'results': results}
+    return {"total": total, "page": page, "results": results}
+
 
 # Example
 r = search_books("dune")
@@ -205,49 +207,47 @@ The author ID and slug can be obtained from a book's `author_url` field.
 import re, json
 from helpers import http_get
 
+
 def parse_author(author_id_and_slug):
     # author_id_and_slug e.g. "58.Frank_Patrick_Herbert"
     html = http_get(f"https://www.goodreads.com/author/show/{author_id_and_slug}")
 
     # Name and basic info from OG/meta tags
-    name    = re.search(r"<meta content='([^']+)' property='og:title'>", html)
-    img     = re.search(r"<meta content='([^']+)' property='og:image'>", html)
+    name = re.search(r"<meta content='([^']+)' property='og:title'>", html)
+    img = re.search(r"<meta content='([^']+)' property='og:image'>", html)
     website = re.search(r"Website\s*</div>\s*<div[^>]*>\s*<a[^>]*href=\"([^\"]+)\"", html)
 
     # Full biography from hidden span (shown/hidden by "...more" toggle in browser)
-    bio_span = re.search(
-        r'<span id="freeText(?:author|long)\d+"[^>]*>(.*?)</span>',
-        html, re.DOTALL
-    )
-    bio = re.sub(r'<[^>]+>', '', bio_span.group(1)).strip() if bio_span else None
+    bio_span = re.search(r'<span id="freeText(?:author|long)\d+"[^>]*>(.*?)</span>', html, re.DOTALL)
+    bio = re.sub(r"<[^>]+>", "", bio_span.group(1)).strip() if bio_span else None
 
     # Top books listed on the page (10 rows, same microdata format as search)
-    rows = re.findall(
-        r'<tr itemscope itemtype="http://schema.org/Book">(.*?)</tr>',
-        html, re.DOTALL
-    )
+    rows = re.findall(r'<tr itemscope itemtype="http://schema.org/Book">(.*?)</tr>', html, re.DOTALL)
     books = []
     for row in rows:
-        bid   = re.search(r'<div id="(\d+)" class="u-anchorTarget">', row)
+        bid = re.search(r'<div id="(\d+)" class="u-anchorTarget">', row)
         title = re.search(r"itemprop='name'[^>]*>([^<]+)</span>", row)
-        avg   = re.search(r'(\d+\.\d+)\s*avg rating', row)
-        cnt   = re.search(r'(\d[\d,]*)\s*rating', row)
+        avg = re.search(r"(\d+\.\d+)\s*avg rating", row)
+        cnt = re.search(r"(\d[\d,]*)\s*rating", row)
         if bid and title:
-            books.append({
-                'book_id':      bid.group(1),
-                'title':        title.group(1).strip(),
-                'avg_rating':   float(avg.group(1)) if avg else None,
-                'ratings_count':cnt.group(1).replace(',', '') if cnt else None,
-                'url':          f"https://www.goodreads.com/book/show/{bid.group(1)}",
-            })
+            books.append(
+                {
+                    "book_id": bid.group(1),
+                    "title": title.group(1).strip(),
+                    "avg_rating": float(avg.group(1)) if avg else None,
+                    "ratings_count": cnt.group(1).replace(",", "") if cnt else None,
+                    "url": f"https://www.goodreads.com/book/show/{bid.group(1)}",
+                }
+            )
 
     return {
-        'name':         name.group(1) if name else None,
-        'profile_image':img.group(1) if img else None,
-        'bio':          bio,
-        'website':      website.group(1) if website else None,
-        'top_books':    books,
+        "name": name.group(1) if name else None,
+        "profile_image": img.group(1) if img else None,
+        "bio": bio,
+        "website": website.group(1) if website else None,
+        "top_books": books,
     }
+
 
 # Example
 author = parse_author("58.Frank_Patrick_Herbert")
@@ -276,36 +276,37 @@ Returns 100 books per page with rank numbers.
 import re, json
 from helpers import http_get
 
+
 def parse_list(list_id_and_slug, page=1):
     url = f"https://www.goodreads.com/list/show/{list_id_and_slug}?page={page}"
     html = http_get(url)
 
-    rows = re.findall(
-        r'<tr itemscope itemtype="http://schema.org/Book">(.*?)</tr>',
-        html, re.DOTALL
-    )
+    rows = re.findall(r'<tr itemscope itemtype="http://schema.org/Book">(.*?)</tr>', html, re.DOTALL)
 
     results = []
     for row in rows:
-        rank   = re.search(r'<td[^>]*class="number"[^>]*>(\d+)</td>', row)
-        bid    = re.search(r'<div id="(\d+)" class="u-anchorTarget">', row)
-        title  = re.search(r"itemprop='name'[^>]*>([^<]+)</span>", row)
+        rank = re.search(r'<td[^>]*class="number"[^>]*>(\d+)</td>', row)
+        bid = re.search(r'<div id="(\d+)" class="u-anchorTarget">', row)
+        title = re.search(r"itemprop='name'[^>]*>([^<]+)</span>", row)
         author = re.search(r'class="authorName"[^>]*><span[^>]*>([^<]+)</span>', row)
-        avg    = re.search(r'(\d+\.\d+)\s*avg rating', row)
-        cnt    = re.search(r'(\d[\d,]*)\s*rating', row)
+        avg = re.search(r"(\d+\.\d+)\s*avg rating", row)
+        cnt = re.search(r"(\d[\d,]*)\s*rating", row)
         if not (bid and title):
             continue
-        results.append({
-            'rank':         int(rank.group(1)) if rank else None,
-            'book_id':      bid.group(1),
-            'title':        title.group(1).strip(),
-            'author':       author.group(1).strip() if author else None,
-            'avg_rating':   float(avg.group(1)) if avg else None,
-            'ratings_count':cnt.group(1).replace(',', '') if cnt else None,
-            'url':          f"https://www.goodreads.com/book/show/{bid.group(1)}",
-        })
+        results.append(
+            {
+                "rank": int(rank.group(1)) if rank else None,
+                "book_id": bid.group(1),
+                "title": title.group(1).strip(),
+                "author": author.group(1).strip() if author else None,
+                "avg_rating": float(avg.group(1)) if avg else None,
+                "ratings_count": cnt.group(1).replace(",", "") if cnt else None,
+                "url": f"https://www.goodreads.com/book/show/{bid.group(1)}",
+            }
+        )
 
-    return {'page': page, 'results': results}
+    return {"page": page, "results": results}
+
 
 # Example
 lst = parse_list("1.Best_Books_Ever")
@@ -334,23 +335,27 @@ import json
 from urllib.parse import quote_plus
 from helpers import http_get
 
+
 def ol_search(query, limit=10):
     url = f"https://openlibrary.org/search.json?q={quote_plus(query)}&limit={limit}"
     data = json.loads(http_get(url))
     results = []
-    for doc in data.get('docs', []):
-        cover_id = doc.get('cover_i')
-        results.append({
-            'ol_key':           doc['key'],           # e.g. "/works/OL893415W"
-            'title':            doc.get('title'),
-            'author':           (doc.get('author_name') or [''])[0],
-            'author_key':       (doc.get('author_key') or [''])[0],
-            'first_pub_year':   doc.get('first_publish_year'),
-            'edition_count':    doc.get('edition_count'),
-            'series':           doc.get('series_name'),
-            'cover_url':        f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None,
-        })
-    return {'total': data.get('numFound'), 'results': results}
+    for doc in data.get("docs", []):
+        cover_id = doc.get("cover_i")
+        results.append(
+            {
+                "ol_key": doc["key"],  # e.g. "/works/OL893415W"
+                "title": doc.get("title"),
+                "author": (doc.get("author_name") or [""])[0],
+                "author_key": (doc.get("author_key") or [""])[0],
+                "first_pub_year": doc.get("first_publish_year"),
+                "edition_count": doc.get("edition_count"),
+                "series": doc.get("series_name"),
+                "cover_url": f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None,
+            }
+        )
+    return {"total": data.get("numFound"), "results": results}
+
 
 r = ol_search("dune frank herbert", limit=5)
 # r['results'][0]['ol_key']  => "/works/OL893415W"
@@ -362,19 +367,20 @@ r = ol_search("dune frank herbert", limit=5)
 ```python
 def ol_work(ol_key):
     # ol_key like "/works/OL893415W" or just "OL893415W"
-    key = ol_key if ol_key.startswith('/') else f'/works/{ol_key}'
+    key = ol_key if ol_key.startswith("/") else f"/works/{ol_key}"
     data = json.loads(http_get(f"https://openlibrary.org{key}.json"))
-    desc = data.get('description', '')
+    desc = data.get("description", "")
     if isinstance(desc, dict):
-        desc = desc.get('value', '')
+        desc = desc.get("value", "")
     return {
-        'title':    data.get('title'),
-        'subjects': data.get('subjects', []),
-        'series':   data.get('series', []),
-        'description': desc,
-        'covers':   data.get('covers', []),
-        'links':    data.get('links', []),
+        "title": data.get("title"),
+        "subjects": data.get("subjects", []),
+        "series": data.get("series", []),
+        "description": desc,
+        "covers": data.get("covers", []),
+        "links": data.get("links", []),
     }
+
 
 work = ol_work("OL893415W")
 # work['title']    => "Dune"
@@ -385,9 +391,10 @@ work = ol_work("OL893415W")
 
 ```python
 def ol_ratings(ol_key):
-    key = ol_key if ol_key.startswith('/') else f'/works/{ol_key}'
+    key = ol_key if ol_key.startswith("/") else f"/works/{ol_key}"
     data = json.loads(http_get(f"https://openlibrary.org{key}/ratings.json"))
-    return data.get('summary', {})
+    return data.get("summary", {})
+
 
 # {'average': 4.30, 'count': 414, 'sortable': 4.21}
 ```
@@ -398,16 +405,17 @@ def ol_ratings(ol_key):
 def ol_author(author_key):
     # author_key like "OL79034A"
     data = json.loads(http_get(f"https://openlibrary.org/authors/{author_key}.json"))
-    bio = data.get('bio', '')
+    bio = data.get("bio", "")
     if isinstance(bio, dict):
-        bio = bio.get('value', '')
+        bio = bio.get("value", "")
     return {
-        'name':        data.get('name'),
-        'birth_date':  data.get('birth_date'),
-        'death_date':  data.get('death_date'),
-        'bio':         bio,
-        'ol_key':      data.get('key'),
+        "name": data.get("name"),
+        "birth_date": data.get("birth_date"),
+        "death_date": data.get("death_date"),
+        "bio": bio,
+        "ol_key": data.get("key"),
     }
+
 
 author = ol_author("OL79034A")
 # author['name']       => "Frank Herbert"
@@ -426,9 +434,9 @@ def get_book_full(goodreads_book_id, ol_work_key=None):
     result = dict(gr)
     if ol_work_key:
         ol = ol_work(ol_work_key)
-        result['ol_subjects']    = ol['subjects']
-        result['ol_description'] = ol['description']
-        result['ol_covers']      = ol['covers']
+        result["ol_subjects"] = ol["subjects"]
+        result["ol_description"] = ol["description"]
+        result["ol_covers"] = ol["covers"]
     return result
 ```
 

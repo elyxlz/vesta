@@ -7,6 +7,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { agentIsDown, agentNeedsUser } from "@vesta/core";
 
 export function ActionsCard() {
   const navigate = useNavigate();
@@ -17,17 +18,13 @@ export function ActionsCard() {
     start,
     stop,
     restart,
-    backup,
   } = useSelectedAgent();
-  const { handleOpenAuth, setDeleteDialogOpen } = useModals();
+  const { handleOpenAuth, setDeleteDialogOpen, setBackupDialogOpen } =
+    useModals();
 
-  const isRunning =
-    agent.status !== "stopped" &&
-    agent.status !== "dead" &&
-    agent.status !== "not_found";
+  const isRunning = !agentIsDown(agent.status);
   const showAliveActions = agent.status === "alive";
-  const isAuthenticated =
-    agent.status !== "not_authenticated" && agent.status !== "unprovisioned";
+  const isAuthenticated = !agentNeedsUser(agent.status);
 
   // On mobile (no navbar sign-in button) an agent that needs auth is an urgent
   // action: lift "sign in" to a primary button at the top and drop the routine
@@ -63,7 +60,7 @@ export function ActionsCard() {
             else start();
           }}
           onRestart={() => void restart()}
-          onBackup={() => backup()}
+          onBackup={() => setBackupDialogOpen(true)}
           onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>

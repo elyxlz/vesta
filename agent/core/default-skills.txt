@@ -6,6 +6,7 @@ contacts
 dashboard
 dream
 email-client
+emergency
 microsoft
 nap
 notifications
@@ -19,6 +20,6 @@ skills-registry
 tasks
 timezone
 upstream-pr
-vesta-cloud-account
+vesta-cloud
 voice
 what-day

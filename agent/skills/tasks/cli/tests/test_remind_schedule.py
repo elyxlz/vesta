@@ -257,7 +257,7 @@ def test_migration_v2_to_v3_rewrites_legacy_cron(tmp_path: Path):
     assert _read_trigger(data_dir, "interval1") == {"type": "interval", "hours": 1}  # non-cron untouched
     assert _read_trigger(data_dir, "date1") == {"type": "date", "run_date": "2026-01-01T00:00:00+00:00"}
     with closing(db.get_db(data_dir)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 4
+        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db.SCHEMA_VERSION
 
 
 def test_migration_preserves_firing_instant(tmp_path: Path):
@@ -292,3 +292,131 @@ def test_migration_is_idempotent(tmp_path: Path):
     first = _read_trigger(data_dir, "daily1")
     db.init_db(data_dir)  # second run must not touch already-migrated rows
     assert _read_trigger(data_dir, "daily1") == first == {"type": "cron", "expr": "0 9 * * *", "tz": "UTC"}
+
+
+# ---------------------------------------------------------------------------
+# remind list: recurring reminders stay visible past the one-shot limit
+# ---------------------------------------------------------------------------
+
+
+def _backdate(config: Config, reminder_ids: list[str]) -> None:
+    with closing(db.get_db(config.data_dir)) as conn:
+        for reminder_id in reminder_ids:
+            conn.execute("UPDATE reminders SET created_at = '2026-01-01 00:00:00' WHERE id = ?", (reminder_id,))
+        conn.commit()
+
+
+def test_remind_list_keeps_old_recurring_reminders_past_the_limit(tmp_config: Config):
+    daily = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-04-26T09:00:00", tz="Europe/Rome", recurring="daily")
+    )
+    cron = commands.remind_set(tmp_config, commands.ReminderSpec(message="weekdays", cron="0 9 * * 1-5", tz="Europe/Rome"))
+    hourly = commands.remind_set(tmp_config, commands.ReminderSpec(message="ping", recurring="hourly"))
+    _backdate(tmp_config, [daily["id"], cron["id"], hourly["id"]])
+    for index in range(5):
+        commands.remind_set(tmp_config, commands.ReminderSpec(message=f"one-shot {index}", in_hours=1))
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config, limit=5)}
+
+    assert len(listed) == 5
+    assert listed[daily["id"]]["schedule"] == "daily at 09:00 Europe/Rome"
+    assert listed[cron["id"]]["schedule"] == "cron: 0 9 * * 1-5 (Europe/Rome)"
+    assert listed[hourly["id"]]["schedule"] == "hourly"
+
+
+def test_remind_list_shows_the_soonest_one_shots_not_the_newest(tmp_config: Config):
+    """The limit must trim the furthest-out reminders, never the imminent ones.
+
+    Creation order and fire order are unrelated. Ordering the one-shot tail by created_at meant a
+    reminder written weeks ago and firing within the hour sat below every newer row, so on a real
+    store it was invisible at the default limit: the exact false negative this ordering exists to
+    prevent, and worse here, because "what fires next" is the question the list is asked.
+    """
+    imminent = commands.remind_set(tmp_config, commands.ReminderSpec(message="fires first", in_hours=1))
+    _backdate(tmp_config, [imminent["id"]])  # oldest row, soonest fire
+    for index in range(5):
+        commands.remind_set(tmp_config, commands.ReminderSpec(message=f"later {index}", in_days=10 + index))
+
+    listed = commands.remind_list(tmp_config, limit=3)
+
+    assert [r["message"] for r in listed] == ["fires first", "later 0", "later 1"]
+
+
+def test_remind_list_still_puts_recurring_ahead_of_a_sooner_one_shot(tmp_config: Config):
+    """Fire-time ordering applies WITHIN the one-shot tail only.
+
+    A plain cron row's scheduled_time records its last advance rather than its next fire, so it is
+    not a sound sort key for recurring rows; they keep their own group at the top.
+    """
+    daily = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-04-26T09:00:00", tz="Europe/Rome", recurring="daily")
+    )
+    _backdate(tmp_config, [daily["id"]])
+    commands.remind_set(tmp_config, commands.ReminderSpec(message="one-shot in a minute", in_minutes=1))
+
+    listed = commands.remind_list(tmp_config, limit=1)
+
+    assert [r["id"] for r in listed] == [daily["id"]]
+
+
+def test_remind_list_next_run_survives_downtime_longer_than_the_period(tmp_config: Config):
+    """A plain cron reminder's scheduled_time column only advances when the job FIRES, so downtime
+    longer than one period strands it in the past. The listing must still report the real next
+    fire: a healthy daily rendering as "4d ago" invites re-arming a schedule that never broke."""
+    daily = commands.remind_set(
+        tmp_config,
+        commands.ReminderSpec(message="news brief", scheduled_datetime="2026-04-26T09:00:00", tz="Europe/Rome", recurring="daily"),
+    )
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", ("2020-01-01T09:00:00+00:00", daily["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+    next_run = datetime.fromisoformat(listed[daily["id"]]["next_run"])
+
+    assert next_run > datetime.now(UTC), "a stale scheduled_time column must not be reported as the next run"
+    assert next_run.astimezone(ZoneInfo("Europe/Rome")).hour == 9
+
+
+def test_remind_list_next_run_keeps_the_column_for_one_shots(tmp_config: Config):
+    """Only plain cron is recomputed. A date trigger's column IS the live answer, and a past-due
+    one-shot must keep reading as past-due rather than being silently pushed into the future."""
+    one_shot = commands.remind_set(tmp_config, commands.ReminderSpec(message="call back", in_hours=1))
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", ("2020-01-01T09:00:00+00:00", one_shot["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+
+    assert listed[one_shot["id"]]["next_run"] == "2020-01-01T09:00:00+00:00"
+
+
+def test_remind_list_interval_row_never_reports_a_past_next_run(tmp_config: Config):
+    """An interval row's column also only advances on fire, so downtime strands it in the past while
+    the restored IntervalTrigger is armed and correct. The reported next_run must never be in the
+    past: that is the one answer guaranteed to be wrong."""
+    hourly = commands.remind_set(tmp_config, commands.ReminderSpec(message="ping", recurring="hourly"))
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", ("2020-01-01T09:00:00+00:00", hourly["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+    next_run = datetime.fromisoformat(listed[hourly["id"]]["next_run"])
+    now = datetime.now(UTC)
+
+    assert next_run > now, "a stranded interval row must not report a past next_run"
+    assert next_run <= now + timedelta(hours=1, seconds=5), "must not exceed the interval's upper bound"
+
+
+def test_remind_list_interval_row_keeps_a_live_future_column(tmp_config: Config):
+    """The clamp must only fire on a stale column. A future column is what the restore path wrote
+    and is the better answer, so it survives untouched."""
+    hourly = commands.remind_set(tmp_config, commands.ReminderSpec(message="ping", recurring="hourly"))
+    live = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", (live, hourly["id"]))
+        conn.commit()
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
+
+    assert listed[hourly["id"]]["next_run"] == live

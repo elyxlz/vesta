@@ -9,7 +9,6 @@ import pathlib as pl
 import time
 import typing as tp
 
-import aiohttp
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -45,7 +44,6 @@ from .provider import (
 )
 from .tools import build_vesta_tools_server
 
-OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 ZAI_ANTHROPIC_URL = "https://api.z.ai/api/anthropic"
 KIMI_ANTHROPIC_URL = "https://api.kimi.com/coding/"
 
@@ -54,38 +52,6 @@ KIMI_ANTHROPIC_URL = "https://api.kimi.com/coding/"
 # never imports claude_agent_sdk itself.
 SDK_ERRORS: tuple[type[Exception], ...] = (ClaudeSDKError, OSError, RuntimeError)
 ThinkingConfig = ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled
-
-
-async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
-    """Look up the OpenRouter model's real context window. claude-code assumes a
-    200k window for non-Anthropic models (claude-code#46416), so the value passed
-    via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
-    The caller caps this at config.provider.max_context_tokens before passing it to the SDK
-    (cache-read cost scales with context size). Metadata failure is fatal for the session: guessing
-    can overrun a small model or silently expand an explicit user cap."""
-    if not isinstance(config.provider, cfg.OpenRouterConfig):
-        return None
-    try:
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(
-                OPENROUTER_MODELS_URL,
-                headers={"Authorization": f"Bearer {config.provider.key.get_secret_value()}"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp,
-        ):
-            if resp.status != 200:
-                raise RuntimeError(f"OpenRouter model metadata returned HTTP {resp.status}")
-            body = await resp.json()
-    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
-        raise RuntimeError(f"OpenRouter context-window lookup failed: {e}") from e
-    models = body["data"] if isinstance(body, dict) and "data" in body else []
-    for entry in models:
-        if "id" in entry and entry["id"] == config.provider.model and "context_length" in entry:
-            ctx = entry["context_length"]
-            if isinstance(ctx, int) and ctx > 0:
-                return ctx
-    raise RuntimeError(f"OpenRouter model metadata has no valid context_length for {config.provider.model}")
 
 
 async def attempt_interrupt(state: vm.State, *, config: cfg.VestaConfig, reason: str) -> bool:
@@ -495,13 +461,14 @@ _DASH_WARNING = (
 )
 
 
-def _contains_dashes(texts: list[str]) -> bool:
-    return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
+def _contains_dashes(text: str) -> bool:
+    return _EM_DASH in text or _EN_DASH in text or " - " in text
 
 
 async def process_message(msg: str, *, state: vm.State, config: cfg.VestaConfig) -> tuple[list[str], vm.State]:
     turn = await converse(msg, state=state, config=config, show_output=True)
-    if config.block_dashes and turn.texts and _contains_dashes(turn.texts) and not turn.preempted:
+    # turn.texts holds one entry per assistant message of the turn, and the warning can only ask for the last message back.
+    if config.block_dashes and turn.texts and _contains_dashes(turn.texts[-1]) and not turn.preempted:
         # A preempted turn's reply was cut short at a step boundary; correcting a truncated
         # reply would re-send it after the preempting prompt's work, so skip it.
         logger.warning("Em/en dash detected in response, sending correction")
@@ -545,6 +512,19 @@ def _read_compaction_summary(session_id: str) -> str | None:
         return None
 
 
+# Appended to every /compact's guidance, whatever the caller supplied. The summarizer reads the raw
+# context, which can still hold a credential the events-DB scrub already removed, and a value
+# reproduced into the summary lands in the ACTIVE context, where every later turn re-emits it into
+# fresh events and scrubbing never converges. Core owns this so no caller can forget it. It guards
+# only compactions issued through compact_session: the CLI's own auto-compaction
+# (CLAUDE_CODE_AUTO_COMPACT_WINDOW) never routes through here and summarizes without it.
+COMPACTION_CREDENTIAL_GUARD = (
+    "Never reproduce a credential in the summary: no password, API key, token, OTP, card number, or "
+    "recovery code, even one quoted verbatim in the conversation. Say a credential was involved and "
+    "how it was handled, never what it was."
+)
+
+
 async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: str | None = None) -> None:
     """Compact the live conversation in place and block until it finishes.
 
@@ -564,7 +544,8 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
         # appended draft) reaches the summarizer intact instead of being truncated at the first newline.
         # The send is a stdin write to the CLI subprocess: bound it like every other query so a wedged
         # CLI fails the compaction instead of wedging the message processor.
-        query = "/compact" if prompt is None else f"/compact {' '.join(prompt.split())}"
+        guidance = COMPACTION_CREDENTIAL_GUARD if prompt is None else f"{' '.join(prompt.split())} {COMPACTION_CREDENTIAL_GUARD}"
+        query = f"/compact {guidance}"
         await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
         await asyncio.wait_for(turn.done.wait(), timeout=_COMPACT_TIMEOUT_S)
         if turn.error is not None:

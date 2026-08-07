@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/providers/AuthProvider";
 import { ControllerProvider } from "@/providers/ControllerProvider";
 import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
+import { PresenceReporter } from "@/providers/PresenceReporter";
 import { InsetFrame } from "@/components/InsetFrame";
 import { WhatsNewDialog } from "@/components/WhatsNew";
 import { router } from "@/router";
@@ -59,6 +60,7 @@ export default function App() {
               <ControllerProvider>
                 <GatewayProvider>
                   <NotificationProvider onOpenAgent={openAgent}>
+                    <PresenceReporter />
                     <AppContent />
                   </NotificationProvider>
                 </GatewayProvider>

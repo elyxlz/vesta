@@ -5,13 +5,7 @@ description: Recall past conversations from long-term memory. Use to look up spe
 
 # Recall
 
-Search every past conversation with full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what is in context now.
-
-## Setup
-
-```bash
-uv tool install --editable ~/agent/skills/recall/cli
-```
+Search every past conversation with full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what is in context now. Install the `recall` command once from [SETUP.md](SETUP.md).
 
 ## Usage
 
@@ -23,6 +17,8 @@ recall "wifi password" --snippet 10
 ```
 
 Results are ranked by relevance with a recency boost, so recent conversations surface higher.
+
+Both sides of the conversation are searchable: your own messages, and the inbound ones that arrive as notifications (whatsapp, telegram, app-chat, email, tasks). An inbound hit comes back as role `notification`, with the channel and sender carried inside the message itself. Internal notifications (`source=core`: proactive checks, greetings, migrations) are not indexed, since thousands of near-identical copies of one string would bury every real hit.
 
 ## Flags
 

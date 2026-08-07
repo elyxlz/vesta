@@ -42,24 +42,25 @@ export function parseConnectLink(input: string): ConnectLinkResult {
   } catch {
     return {
       ok: false,
-      message: "Paste the complete connection link shown by vestad.",
+      message: "Paste the complete connection link shown by vestad",
     };
   }
 
   const key = new URLSearchParams(parsed.hash.slice(1)).get("k")?.trim();
   if (!key) {
-    return { ok: false, message: "This connection link has no key." };
+    return { ok: false, message: "This connection link has no key" };
   }
   if (parsed.protocol !== "https:") {
     return {
       ok: false,
-      message: "Mobile connections require a trusted HTTPS tunnel.",
+      message: "Mobile connections require a trusted HTTPS tunnel",
     };
   }
   if (isPrivateHost(parsed.hostname)) {
     return {
       ok: false,
-      message: "Direct LAN pairing is not supported. Use a public HTTPS tunnel.",
+      message:
+        "Direct LAN pairing isn’t supported — use a public HTTPS tunnel",
     };
   }
 

@@ -1,13 +1,16 @@
 """Poll Enable Banking for new transactions and write notifications."""
 
 import json
+import signal
 import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 SEEN_FILE = Path.home() / ".finance" / "seen_transactions.json"
-NOTIFICATIONS_DIR = Path.home() / "notifications"
+# The directory the engine watches (config.notifications_dir). A notification written anywhere
+# else still succeeds: nothing is delivered and nothing errors.
+NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 POLL_INTERVAL = 300  # 5 minutes
 
 
@@ -145,22 +148,69 @@ def seed_seen() -> None:
     print(f"Seeded {len(seen)} existing transactions")
 
 
+def write_died_notification(reason: str) -> None:
+    """Announce that this watcher is going away without having been asked to.
+
+    A poller's silence is indistinguishable from a quiet period, so a watcher that dies simply
+    stops producing spending notifications and nobody learns until a human checks by hand; the
+    `daemon_died` notification in the daemon contract (`skills/vestad/SKILL.md`) exists for
+    exactly this.
+
+    interrupt=True, unlike the transaction notification above: a transaction is a record to review
+    when idle, whereas a dead watcher means every FUTURE record is silently lost.
+    """
+    notification = {
+        "type": "daemon_died",
+        "source": "finance",
+        "interrupt": True,
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "message": f"finance watcher exited unexpectedly ({reason}). Spending notifications are "
+        "stopped until it is restarted with `finance daemon start`.",
+    }
+    filename = f"{time.time_ns()}-finance-daemon_died.json"
+    atomic_write_text(NOTIFICATIONS_DIR / filename, json.dumps(notification, indent=2))
+
+
 def serve() -> None:
-    """Run the polling loop."""
+    """Run the polling loop, reporting any death nobody asked for."""
     print(f"Transaction watcher started, polling every {POLL_INTERVAL}s")
 
-    # Seed on first run if no seen file
-    if not SEEN_FILE.exists():
-        print("First run — seeding existing transactions...")
-        seed_seen()
+    # A deliberate stop must never be reported as a crash, which is the half of the contract that
+    # is easy to miss. `finance daemon stop` sends SIGTERM, so SIGTERM alone is the quiet exit.
+    asked_to_stop = False
 
+    def _on_sigterm(_signum, _frame):
+        nonlocal asked_to_stop
+        asked_to_stop = True
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+    try:
+        _poll_forever()
+    except BaseException as exc:
+        # Deliberately BaseException: the poll loop already swallows every `Exception`, so anything
+        # reaching here is a SystemExit, a KeyboardInterrupt, a MemoryError or similar, a death
+        # that would otherwise be totally silent. Re-raised after the notification is written, so
+        # the process still exits and a supervisor still sees it.
+        if not asked_to_stop:
+            write_died_notification(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)
+        raise
+
+
+def _poll_forever() -> None:
     while True:
         try:
-            new_txs = poll_once()
-            for tx in new_txs:
-                formatted = format_tx(tx)
-                print(f"New: {formatted}")
-                write_notification(tx)
+            # The seed is what keeps the first poll quiet, and it needs the config a watcher
+            # started before sign-in does not have yet, so a failure just waits a cycle.
+            if SEEN_FILE.exists():
+                for tx in poll_once():
+                    formatted = format_tx(tx)
+                    print(f"New: {formatted}")
+                    write_notification(tx)
+            else:
+                print("First run — seeding existing transactions...")
+                seed_seen()
         except Exception as e:
             print(f"Poll error: {e}", file=sys.stderr)
 

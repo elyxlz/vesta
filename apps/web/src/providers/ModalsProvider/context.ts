@@ -12,6 +12,10 @@ export interface ModalsContextValue {
   deleteDialogOpen: boolean;
   setDeleteDialogOpen: (open: boolean) => void;
   handleDelete: () => Promise<void>;
+
+  backupDialogOpen: boolean;
+  setBackupDialogOpen: (open: boolean) => void;
+  handleBackup: () => void;
 }
 
 export const ModalsContext = createContext<ModalsContextValue | null>(null);

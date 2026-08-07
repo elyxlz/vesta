@@ -1,8 +1,17 @@
 """Behavior-locking tests for the transaction watcher's notification write path."""
 
 import json
+from pathlib import Path
 
 from finance_cli import transaction_watcher as tw
+
+
+def test_notifications_go_to_the_directory_the_engine_watches():
+    """A notification written into any other directory still succeeds: no exception, no log line,
+    only silence, which is indistinguishable from a watcher with nothing to say. The engine watches
+    ~/agent/notifications, so the destination is locked here."""
+    engine_dir = Path.home() / "agent" / "notifications"
+    assert engine_dir == tw.NOTIFICATIONS_DIR
 
 
 def test_atomic_write_creates_parent_and_leaves_no_tmp(tmp_path):

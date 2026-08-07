@@ -14,7 +14,7 @@ MAILTO = "mailto=your@email.com"  # set once, append to every URL
 
 # Single DOI lookup — fastest way to get metadata for a known paper
 data = json.loads(http_get(f"https://api.crossref.org/works/10.1038/s41586-021-03819-2?{MAILTO}"))
-msg = data['message']
+msg = data["message"]
 # msg keys: DOI, title, author, published, type, container-title, volume, issue,
 #           page, is-referenced-by-count, references-count, abstract (optional), ...
 ```
@@ -29,36 +29,41 @@ import json, re
 
 MAILTO = "mailto=your@email.com"
 
+
 def fetch_work(doi):
     data = json.loads(http_get(f"https://api.crossref.org/works/{doi}?{MAILTO}"))
-    return data['message']
+    return data["message"]
+
 
 def parse_date(d):
     """[[2021, 7, 15]] -> '2021-7-15'. Handles partial dates like [[2021]]."""
-    if not d: return None
-    parts = d.get('date-parts', [[]])[0]
-    return '-'.join(str(p) for p in parts if p is not None)
+    if not d:
+        return None
+    parts = d.get("date-parts", [[]])[0]
+    return "-".join(str(p) for p in parts if p is not None)
+
 
 def clean_abstract(raw):
     """Strip JATS XML tags. Abstract field contains tags like <jats:p>, <jats:italic>."""
-    return re.sub(r'<[^>]+>', ' ', raw).strip() if raw else None
+    return re.sub(r"<[^>]+>", " ", raw).strip() if raw else None
+
 
 w = fetch_work("10.1038/s41586-021-03819-2")  # AlphaFold2
 
-print("DOI:", w['DOI'])                                    # 10.1038/s41586-021-03819-2
-print("Title:", w['title'][0])                             # Highly accurate protein structure...
-print("Type:", w['type'])                                  # journal-article
-print("Publisher:", w['publisher'])                        # Springer Science and Business Media LLC
-print("Journal:", w.get('container-title', [''])[0])      # Nature
-print("Volume:", w.get('volume'))                          # 596
-print("Issue:", w.get('issue'))                            # 7873
-print("Page:", w.get('page'))                              # 583-589
-print("published:", parse_date(w.get('published')))        # 2021-7-15  (online date)
-print("published-online:", parse_date(w.get('published-online')))  # 2021-7-15
-print("published-print:", parse_date(w.get('published-print')))    # 2021-8-26
-print("Citations:", w.get('is-referenced-by-count'))       # 40260
-print("References:", w.get('references-count'))            # 84
-print("Abstract:", clean_abstract(w.get('abstract', ''))[:100] if w.get('abstract') else None)
+print("DOI:", w["DOI"])  # 10.1038/s41586-021-03819-2
+print("Title:", w["title"][0])  # Highly accurate protein structure...
+print("Type:", w["type"])  # journal-article
+print("Publisher:", w["publisher"])  # Springer Science and Business Media LLC
+print("Journal:", w.get("container-title", [""])[0])  # Nature
+print("Volume:", w.get("volume"))  # 596
+print("Issue:", w.get("issue"))  # 7873
+print("Page:", w.get("page"))  # 583-589
+print("published:", parse_date(w.get("published")))  # 2021-7-15  (online date)
+print("published-online:", parse_date(w.get("published-online")))  # 2021-7-15
+print("published-print:", parse_date(w.get("published-print")))  # 2021-8-26
+print("Citations:", w.get("is-referenced-by-count"))  # 40260
+print("References:", w.get("references-count"))  # 84
+print("Abstract:", clean_abstract(w.get("abstract", ""))[:100] if w.get("abstract") else None)
 # Confirmed output (2026-04-18):
 # DOI: 10.1038/s41586-021-03819-2
 # Title: Highly accurate protein structure prediction with AlphaFold
@@ -77,15 +82,15 @@ import json
 
 MAILTO = "mailto=your@email.com"
 data = json.loads(http_get(f"https://api.crossref.org/works/10.1038/s41586-021-03819-2?{MAILTO}"))
-authors = data['message'].get('author', [])
+authors = data["message"].get("author", [])
 
 for a in authors[:3]:
     name = f"{a.get('given', '')} {a.get('family', '')}".strip()
     # ORCID is a full URL, not a bare ID — strip the prefix
-    orcid_url = a.get('ORCID')  # e.g. 'https://orcid.org/0000-0001-6169-6580'
-    orcid_id = orcid_url.replace('https://orcid.org/', '') if orcid_url else None
-    authenticated = a.get('authenticated-orcid', False)  # False = self-reported, True = verified
-    affiliations = [aff.get('name', '') for aff in a.get('affiliation', [])]
+    orcid_url = a.get("ORCID")  # e.g. 'https://orcid.org/0000-0001-6169-6580'
+    orcid_id = orcid_url.replace("https://orcid.org/", "") if orcid_url else None
+    authenticated = a.get("authenticated-orcid", False)  # False = self-reported, True = verified
+    affiliations = [aff.get("name", "") for aff in a.get("affiliation", [])]
     print(f"{name} | ORCID: {orcid_id} | auth={authenticated} | seq={a['sequence']}")
 # Confirmed output:
 # John Jumper | ORCID: 0000-0001-6169-6580 | auth=False | seq=first
@@ -102,19 +107,21 @@ import json
 
 MAILTO = "mailto=your@email.com"
 
+
 def fetch_work(doi):
     try:
         data = json.loads(http_get(f"https://api.crossref.org/works/{doi}?{MAILTO}"))
-        msg = data['message']
+        msg = data["message"]
         return {
-            'doi': doi,
-            'title': msg.get('title', [''])[0],
-            'year': (msg.get('published', {}).get('date-parts') or [[None]])[0][0],
-            'citations': msg.get('is-referenced-by-count'),
-            'type': msg.get('type'),
+            "doi": doi,
+            "title": msg.get("title", [""])[0],
+            "year": (msg.get("published", {}).get("date-parts") or [[None]])[0][0],
+            "citations": msg.get("is-referenced-by-count"),
+            "type": msg.get("type"),
         }
     except Exception as e:
-        return {'doi': doi, 'error': str(e)}
+        return {"doi": doi, "error": str(e)}
+
 
 dois = [
     "10.1038/nature12345",
@@ -129,7 +136,7 @@ with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(fetch_work, dois))
 
 for r in results:
-    print(r['year'], f"cites={r['citations']}", r['title'][:50])
+    print(r["year"], f"cites={r['citations']}", r["title"][:50])
 # Confirmed output (2026-04-18, ~0.296s total):
 # 2013 cites=465 LRG1 promotes angiogenesis by modulating endotheli
 # 2021 cites=40260 Highly accurate protein structure prediction with
@@ -147,16 +154,14 @@ import json
 MAILTO = "mailto=your@email.com"
 
 # Broad keyword search
-data = json.loads(http_get(
-    f"https://api.crossref.org/works?query=machine+learning&rows=5&{MAILTO}"
-))
-msg = data['message']
-print("Total results:", msg['total-results'])   # 2,805,391
-for item in msg['items']:
-    title = item.get('title', ['(no title)'])[0][:60]
-    doi   = item.get('DOI', '')
-    year  = (item.get('published', {}).get('date-parts') or [[None]])[0][0]
-    type_ = item.get('type', '')
+data = json.loads(http_get(f"https://api.crossref.org/works?query=machine+learning&rows=5&{MAILTO}"))
+msg = data["message"]
+print("Total results:", msg["total-results"])  # 2,805,391
+for item in msg["items"]:
+    title = item.get("title", ["(no title)"])[0][:60]
+    doi = item.get("DOI", "")
+    year = (item.get("published", {}).get("date-parts") or [[None]])[0][0]
+    type_ = item.get("type", "")
     print(f"  [{type_}] {year} {title}")
     print(f"    DOI: {doi}")
 ```
@@ -169,15 +174,13 @@ import json
 
 MAILTO = "mailto=your@email.com"
 
-data = json.loads(http_get(
-    f"https://api.crossref.org/works?query.author=Lecun&query.title=deep+learning&rows=5&{MAILTO}"
-))
-msg = data['message']
-print("Total results:", msg['total-results'])   # 62
-for item in msg['items'][:3]:
-    title   = item.get('title', [''])[0][:60]
-    authors = ', '.join(a.get('family', '') for a in item.get('author', [])[:2])
-    year    = (item.get('published', {}).get('date-parts') or [[None]])[0][0]
+data = json.loads(http_get(f"https://api.crossref.org/works?query.author=Lecun&query.title=deep+learning&rows=5&{MAILTO}"))
+msg = data["message"]
+print("Total results:", msg["total-results"])  # 62
+for item in msg["items"][:3]:
+    title = item.get("title", [""])[0][:60]
+    authors = ", ".join(a.get("family", "") for a in item.get("author", [])[:2])
+    year = (item.get("published", {}).get("date-parts") or [[None]])[0][0]
     print(f"  {year} {title}")
     print(f"    Authors: {authors}  DOI: {item.get('DOI')}")
 # Confirmed output:
@@ -193,17 +196,19 @@ import json
 
 MAILTO = "mailto=your@email.com"
 
-data = json.loads(http_get(
-    f"https://api.crossref.org/works"
-    f"?filter=from-pub-date:2024-01-01,type:journal-article"
-    f"&rows=5&sort=is-referenced-by-count&order=desc&{MAILTO}"
-))
-msg = data['message']
-print("Total 2024+ journal articles:", msg['total-results'])   # 14,565,456
-for item in msg['items'][:3]:
-    title  = item.get('title', [''])[0][:60]
-    cites  = item.get('is-referenced-by-count', 0)
-    year   = (item.get('published', {}).get('date-parts') or [[None]])[0][0]
+data = json.loads(
+    http_get(
+        f"https://api.crossref.org/works"
+        f"?filter=from-pub-date:2024-01-01,type:journal-article"
+        f"&rows=5&sort=is-referenced-by-count&order=desc&{MAILTO}"
+    )
+)
+msg = data["message"]
+print("Total 2024+ journal articles:", msg["total-results"])  # 14,565,456
+for item in msg["items"][:3]:
+    title = item.get("title", [""])[0][:60]
+    cites = item.get("is-referenced-by-count", 0)
+    year = (item.get("published", {}).get("date-parts") or [[None]])[0][0]
     print(f"  {year} cites={cites} {title}")
 # Confirmed output:
 # 2024 cites=17371 Global cancer statistics 2022: GLOBOCAN estimates...
@@ -219,16 +224,18 @@ import json
 MAILTO = "mailto=your@email.com"
 
 # Only return works that have an abstract (useful since ~30-70% do not)
-data = json.loads(http_get(
-    f"https://api.crossref.org/works"
-    f"?filter=from-pub-date:2023-01-01,until-pub-date:2023-12-31"
-    f",type:journal-article,has-abstract:true"
-    f"&rows=3&sort=is-referenced-by-count&order=desc&{MAILTO}"
-))
-msg = data['message']
-print("2023 journal articles with abstract:", msg['total-results'])   # 3,041,841
-for item in msg['items']:
-    print(item.get('title', [''])[0][:60], '| cites:', item.get('is-referenced-by-count'))
+data = json.loads(
+    http_get(
+        f"https://api.crossref.org/works"
+        f"?filter=from-pub-date:2023-01-01,until-pub-date:2023-12-31"
+        f",type:journal-article,has-abstract:true"
+        f"&rows=3&sort=is-referenced-by-count&order=desc&{MAILTO}"
+    )
+)
+msg = data["message"]
+print("2023 journal articles with abstract:", msg["total-results"])  # 3,041,841
+for item in msg["items"]:
+    print(item.get("title", [""])[0][:60], "| cites:", item.get("is-referenced-by-count"))
 # Confirmed output:
 # Cancer statistics, 2023 | cites: 12919
 # Evolutionary-scale prediction of atomic-level protein struct | cites: 4352
@@ -246,23 +253,18 @@ import json
 MAILTO = "mailto=your@email.com"
 
 # First page: cursor=*
-data = json.loads(http_get(
-    f"https://api.crossref.org/works?query=covid&rows=100&cursor=*&{MAILTO}"
-))
-msg = data['message']
-print("Total results:", msg['total-results'])   # 897,660
-items = msg['items']
-next_cursor = msg['next-cursor']   # base64 string like "DnF1ZXJ5VGhlbkZldGNoJA..."
+data = json.loads(http_get(f"https://api.crossref.org/works?query=covid&rows=100&cursor=*&{MAILTO}"))
+msg = data["message"]
+print("Total results:", msg["total-results"])  # 897,660
+items = msg["items"]
+next_cursor = msg["next-cursor"]  # base64 string like "DnF1ZXJ5VGhlbkZldGNoJA..."
 
 # Next pages: pass URL-encoded cursor
 while next_cursor and items:
-    data = json.loads(http_get(
-        f"https://api.crossref.org/works?query=covid&rows=100"
-        f"&cursor={quote(next_cursor)}&{MAILTO}"
-    ))
-    msg = data['message']
-    items = msg.get('items', [])
-    next_cursor = msg.get('next-cursor')
+    data = json.loads(http_get(f"https://api.crossref.org/works?query=covid&rows=100&cursor={quote(next_cursor)}&{MAILTO}"))
+    msg = data["message"]
+    items = msg.get("items", [])
+    next_cursor = msg.get("next-cursor")
     # process items...
     break  # remove for full sweep
 ```
@@ -277,13 +279,10 @@ import json
 
 MAILTO = "mailto=your@email.com"
 
-data = json.loads(http_get(
-    f"https://api.crossref.org/works?query=cancer&rows=5"
-    f"&select=DOI,title,author&{MAILTO}"
-))
+data = json.loads(http_get(f"https://api.crossref.org/works?query=cancer&rows=5&select=DOI,title,author&{MAILTO}"))
 # Warning: if a field is absent for a record, it simply won't appear in that item
-for item in data['message']['items']:
-    print(list(item.keys()))   # only ['DOI', 'title'] or ['DOI', 'title', 'author']
+for item in data["message"]["items"]:
+    print(list(item.keys()))  # only ['DOI', 'title'] or ['DOI', 'title', 'author']
     # Note: select= does NOT guarantee the field appears — absent fields are just omitted
 ```
 
@@ -295,13 +294,10 @@ import json
 
 MAILTO = "mailto=your@email.com"
 
-data = json.loads(http_get(
-    f"https://api.crossref.org/works?query=machine+learning&rows=0"
-    f"&facet=type-name:*&{MAILTO}"
-))
-msg = data['message']
-type_facet = msg['facets']['type-name']
-for k, v in sorted(type_facet['values'].items(), key=lambda x: -x[1]):
+data = json.loads(http_get(f"https://api.crossref.org/works?query=machine+learning&rows=0&facet=type-name:*&{MAILTO}"))
+msg = data["message"]
+type_facet = msg["facets"]["type-name"]
+for k, v in sorted(type_facet["values"].items(), key=lambda x: -x[1]):
     print(f"  {k}: {v:,}")
 # Confirmed output (all CrossRef, 2026-04-18):
 # Journal Article: 1,628,997 (for query=machine+learning scope)
@@ -321,16 +317,16 @@ MAILTO = "mailto=your@email.com"
 
 # Nature (ISSN 0028-0836)
 data = json.loads(http_get(f"https://api.crossref.org/journals/0028-0836?{MAILTO}"))
-msg = data['message']
-print("Title:", msg['title'])                          # Nature
-print("Publisher:", msg['publisher'])                  # Springer Science and Business Media LLC
-print("ISSN:", msg['ISSN'])                            # ['0028-0836', '1476-4687']
-print("Total DOIs:", msg['counts']['total-dois'])       # 445,417
-print("Subjects:", msg.get('subjects', []))             # [] (not always populated)
+msg = data["message"]
+print("Title:", msg["title"])  # Nature
+print("Publisher:", msg["publisher"])  # Springer Science and Business Media LLC
+print("ISSN:", msg["ISSN"])  # ['0028-0836', '1476-4687']
+print("Total DOIs:", msg["counts"]["total-dois"])  # 445,417
+print("Subjects:", msg.get("subjects", []))  # [] (not always populated)
 
 # Search journals by name
 data2 = json.loads(http_get(f"https://api.crossref.org/journals?query=nature&rows=3&{MAILTO}"))
-for j in data2['message']['items']:
+for j in data2["message"]["items"]:
     print(f"{j.get('title')} | ISSN: {j.get('ISSN')} | DOIs: {j.get('counts', {}).get('total-dois')}")
 # Confirmed output:
 # NatureJobs | ISSN: [] | DOIs: 0
@@ -345,12 +341,10 @@ import json
 
 MAILTO = "mailto=your@email.com"
 
-data = json.loads(http_get(
-    f"https://api.crossref.org/funders?query=national+science+foundation&rows=3&{MAILTO}"
-))
-msg = data['message']
-print("Total funders:", msg['total-results'])   # 108
-for f in msg['items']:
+data = json.loads(http_get(f"https://api.crossref.org/funders?query=national+science+foundation&rows=3&{MAILTO}"))
+msg = data["message"]
+print("Total funders:", msg["total-results"])  # 108
+for f in msg["items"]:
     print(f"  ID: {f['id']} | {f['name']}")
     print(f"    Alt names: {f.get('alt-names', [])[:2]}")
     print(f"    URI: {f.get('uri')}")
@@ -366,28 +360,26 @@ The `doi.org` resolver can return formatted metadata directly via `Accept` heade
 ```python
 import urllib.request, json
 
+
 def doi_to_csl(doi):
     """Fetch CSL-JSON via DOI content negotiation. Same data as CrossRef API."""
     req = urllib.request.Request(
-        f"https://doi.org/{doi}",
-        headers={"Accept": "application/vnd.citationstyles.csl+json",
-                 "User-Agent": "Mozilla/5.0"}
+        f"https://doi.org/{doi}", headers={"Accept": "application/vnd.citationstyles.csl+json", "User-Agent": "Mozilla/5.0"}
     )
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode())
 
+
 def doi_to_bibtex(doi):
     """Fetch BibTeX via DOI content negotiation."""
-    req = urllib.request.Request(
-        f"https://doi.org/{doi}",
-        headers={"Accept": "application/x-bibtex", "User-Agent": "Mozilla/5.0"}
-    )
+    req = urllib.request.Request(f"https://doi.org/{doi}", headers={"Accept": "application/x-bibtex", "User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return r.read().decode()
 
+
 csl = doi_to_csl("10.1038/nature12345")
-print("Title:", csl['title'])   # LRG1 promotes angiogenesis...
-print("Type:", csl['type'])     # journal-article
+print("Title:", csl["title"])  # LRG1 promotes angiogenesis...
+print("Type:", csl["type"])  # journal-article
 
 bib = doi_to_bibtex("10.1038/nature12345")
 print(bib[:200])
@@ -457,14 +449,16 @@ All fields are potentially absent unless marked required. Fields marked (R) are 
 date_obj = {
     "date-parts": [[2021, 7, 15]],  # [[year, month, day]] — month/day may be absent
     "date-time": "2021-07-15T00:00:00Z",  # not always present
-    "timestamp": 1626307200000               # not always present
+    "timestamp": 1626307200000,  # not always present
 }
+
 
 # Safe extraction (handles [[2021]] or [[2021, 7]] partial dates):
 def parse_date(d):
-    if not d: return None
-    parts = (d.get('date-parts') or [[]])[0]
-    return '-'.join(str(p) for p in parts if p is not None)
+    if not d:
+        return None
+    parts = (d.get("date-parts") or [[]])[0]
+    return "-".join(str(p) for p in parts if p is not None)
 ```
 
 ### Type identifiers (filter param values vs facet display names)

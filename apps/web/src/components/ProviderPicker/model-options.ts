@@ -21,7 +21,7 @@ export function providerModelOptions(
   if (models.length === 0) return undefined;
   return models.map((slug) => ({
     slug,
-    label: slug.toUpperCase(),
+    label: entry?.model_names?.[slug] ?? slug,
     author: entry?.display ?? provider,
   }));
 }

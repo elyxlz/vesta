@@ -9,26 +9,25 @@ import { createRnSocket } from "./rn-socket";
 export interface ControllerSession {
   getConnection: () => ConnectionConfig | null;
   refreshAccessToken: () => Promise<boolean>;
+  // The api client's URL builder, which stamps the token and refreshes an expiring one first.
+  websocketUrl: (path: string) => Promise<string>;
 }
 
 export function buildController(
   session: ControllerSession,
   clientVersion?: string,
+  device?: { id: string; descriptor: string },
 ): Controller {
   const conn = () => session.getConnection();
-  const syncUrl = () => {
-    const current = conn();
-    if (!current) throw new Error("not connected to a Vesta gateway");
-    const base = current.url.replace(/^http/, "ws");
-    return `${base}/sync?token=${encodeURIComponent(current.accessToken)}`;
-  };
   return createController({
     sync: {
-      buildUrl: syncUrl,
+      buildUrl: () => session.websocketUrl("/sync"),
       createSocket: createRnSocket,
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (handle) => clearTimeout(handle),
       clientVersion,
+      clientKind: "mobile",
+      device,
     },
     http: {
       baseUrl: () => conn()?.url ?? "",

@@ -23,6 +23,11 @@ export type ModelAccess =
       window: string | null
     }
 
+// A long-running operation vestad is running against an existing agent. Distinct from AgentStatus,
+// which describes the container: both of these run against an agent whose container state barely
+// changes, so only the roster reveals them, and to every client rather than just the initiator.
+export type AgentOperation = "backing_up" | "restoring"
+
 // Coarse, ordered stages of first-time agent creation, computed server-side and
 // carried in the tree (the old build-phase polling endpoint is retired).
 export type BuildPhase = "pulling" | "building" | "preparing" | "creating" | "starting"
@@ -39,6 +44,7 @@ export interface AgentInfo {
   activityState: AgentActivityState
   modelAccess?: ModelAccess
   buildPhase: BuildPhase | null
+  operation: AgentOperation | null
   startedAt: string | null
   services: Record<string, ServiceInfo>
 }
@@ -65,7 +71,24 @@ export interface AgentNode {
   notifications: { pending: NotificationEvent[] }
 }
 
+// The kind vestad reports for a known device. Unlike the client-reported ClientKind (frames.ts),
+// this can be "unknown" for a device that connected without identifying its surface.
+export type DeviceKind = "web" | "mobile" | "desktop" | "unknown"
+
+// One device in the gateway-global registry: identity plus whether it currently holds a live /sync
+// connection, or when it last did. The push token is never on the wire; `pushEnabled` is the only
+// push signal. `descriptor` is null until a device connects and names itself.
+export interface DeviceInfo {
+  id: string
+  kind: DeviceKind
+  descriptor: string | null
+  present: boolean
+  lastSeen: string
+  pushEnabled: boolean
+}
+
 export interface Tree {
   gateway: GatewayInfo
   agents: Record<string, AgentNode>
+  devices: DeviceInfo[]
 }

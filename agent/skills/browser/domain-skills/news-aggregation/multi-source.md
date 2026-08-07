@@ -31,29 +31,31 @@ from concurrent.futures import ThreadPoolExecutor
 import xml.etree.ElementTree as ET
 
 RSS_FEEDS = [
-    ("TechCrunch",     "https://techcrunch.com/feed/"),
-    ("Ars Technica",   "https://feeds.arstechnica.com/arstechnica/index"),
-    ("BBC News",       "http://feeds.bbci.co.uk/news/rss.xml"),
+    ("TechCrunch", "https://techcrunch.com/feed/"),
+    ("Ars Technica", "https://feeds.arstechnica.com/arstechnica/index"),
+    ("BBC News", "http://feeds.bbci.co.uk/news/rss.xml"),
     ("Guardian World", "https://www.theguardian.com/world/rss"),
-    ("Wired",          "https://www.wired.com/feed/rss"),
-    ("NPR",            "https://feeds.npr.org/1001/rss.xml"),
-    ("Wired",          "https://www.wired.com/feed/rss"),
+    ("Wired", "https://www.wired.com/feed/rss"),
+    ("NPR", "https://feeds.npr.org/1001/rss.xml"),
+    ("Wired", "https://www.wired.com/feed/rss"),
 ]
+
 
 def fetch_rss(name_url):
     name, url = name_url
     xml_data = http_get(url)
     root = ET.fromstring(xml_data)
-    items = root.findall('.//item')
+    items = root.findall(".//item")
     return name, items
+
 
 with ThreadPoolExecutor(max_workers=len(RSS_FEEDS)) as ex:
     results = list(ex.map(fetch_rss, RSS_FEEDS))
 
 for name, items in results:
     for item in items[:5]:
-        title = item.find('title').text
-        link  = item.find('link').text
+        title = item.find("title").text
+        link = item.find("link").text
         print(f"[{name}] {title}")
 ```
 
@@ -64,15 +66,15 @@ The Verge's feed is Atom format, not RSS 2.0. The naive `.//item` selector retur
 ```python
 import xml.etree.ElementTree as ET
 
-NS = {'atom': 'http://www.w3.org/2005/Atom'}
+NS = {"atom": "http://www.w3.org/2005/Atom"}
 
 xml_data = http_get("https://www.theverge.com/rss/index.xml")
 root = ET.fromstring(xml_data)
-entries = root.findall('.//atom:entry', NS)   # 10 entries
+entries = root.findall(".//atom:entry", NS)  # 10 entries
 
 for e in entries:
-    title = e.find('atom:title', NS).text
-    link  = e.find('atom:link', NS).get('href')
+    title = e.find("atom:title", NS).text
+    link = e.find("atom:link", NS).get("href")
     print(title, link)
 ```
 
@@ -95,12 +97,13 @@ NYT, Guardian, HN, CNN all return full HTML via `http_get` without issues. The U
 ```python
 headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 html = http_get("https://www.nytimes.com", headers=headers)  # 1.1MB, works
-html = http_get("https://news.ycombinator.com")               # 34KB, works without UA
+html = http_get("https://news.ycombinator.com")  # 34KB, works without UA
 ```
 
 **HN parsing via regex (no HTML parser needed):**
 ```python
 import re
+
 html = http_get("https://news.ycombinator.com")
 stories = re.findall(r'class="titleline"><a href="([^"]+)"[^>]*>([^<]+)<', html)
 # Returns list of (url, title) tuples — 30 stories on the front page

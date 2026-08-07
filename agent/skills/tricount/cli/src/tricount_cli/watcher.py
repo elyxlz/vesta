@@ -333,10 +333,14 @@ def serve(notif_dir: Path, interval: int = DEFAULT_INTERVAL) -> None:
 
     stop = threading.Event()
     shutdown_reason = "unknown"
+    asked_to_stop = False
 
     def handle_signal(signum: int, _frame: object) -> None:
-        nonlocal shutdown_reason
+        # SIGTERM is what `tricount daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of the loop below is news the agent needs.
+        nonlocal shutdown_reason, asked_to_stop
         shutdown_reason = signal.Signals(signum).name
+        asked_to_stop = signum == signal.SIGTERM
         stop.set()
 
     signal.signal(signal.SIGINT, handle_signal)
@@ -352,4 +356,5 @@ def serve(notif_dir: Path, interval: int = DEFAULT_INTERVAL) -> None:
             stop.wait(interval)
     finally:
         # interrupt off: a stale expense feed is not worth preempting the agent mid-task.
-        write_notification(notif_dir, "daemon_died", reason=shutdown_reason, interrupt=False)
+        if not asked_to_stop:
+            write_notification(notif_dir, "daemon_died", reason=shutdown_reason, interrupt=False)

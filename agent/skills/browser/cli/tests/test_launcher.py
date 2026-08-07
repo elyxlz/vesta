@@ -84,6 +84,67 @@ def test_extract_preserving_mode_restores_exec_bit(tmp_path):
     assert (dest / "data.txt").read_text() == "plain"
 
 
+# ── search-config stub repair ───────────────────────
+
+
+def _omni_with_selector(path, source):
+    with zipfile.ZipFile(path, "w") as z:
+        info = zipfile.ZipInfo(launcher._OMNI_SEARCH_SELECTOR)
+        info.external_attr = 0o644 << 16
+        z.writestr(info, source)
+        z.writestr("chrome/other.txt", "untouched")
+
+
+def _selector_source(path):
+    with zipfile.ZipFile(path) as z:
+        return z.read(launcher._OMNI_SEARCH_SELECTOR).decode()
+
+
+def test_repair_search_stub_rewrites_the_broken_record(tmp_path):
+    omni = tmp_path / "omni.ja"
+    _omni_with_selector(omni, f"prefix\n{launcher._BROKEN_SEARCH_STUB}\nsuffix")
+    launcher.repair_search_stub(tmp_path)
+    source = _selector_source(omni)
+    assert '"recordType": "engine"' in source
+    assert '"recordType": "defaultEngines"' in source
+    assert "none@mozilla.org" not in source
+    assert source.startswith("prefix\n")
+    assert source.endswith("\nsuffix")
+    with zipfile.ZipFile(omni) as z:
+        assert z.read("chrome/other.txt") == b"untouched"
+
+
+def test_repair_search_stub_is_idempotent(tmp_path):
+    omni = tmp_path / "omni.ja"
+    _omni_with_selector(omni, launcher._BROKEN_SEARCH_STUB)
+    launcher.repair_search_stub(tmp_path)
+    first = omni.read_bytes()
+    launcher.repair_search_stub(tmp_path)
+    assert omni.read_bytes() == first
+
+
+def test_repair_search_stub_ignores_unknown_layouts(tmp_path):
+    omni = tmp_path / "omni.ja"
+    with zipfile.ZipFile(omni, "w") as z:
+        z.writestr("chrome/other.txt", "no selector here")
+    before = omni.read_bytes()
+    launcher.repair_search_stub(tmp_path)
+    assert omni.read_bytes() == before
+    launcher.repair_search_stub(tmp_path / "no-such-install")  # no omni.ja at all
+
+
+def test_ensure_camoufox_heals_an_existing_install(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "CACHE_ROOT", tmp_path)
+    home = launcher.camoufox_home()
+    home.mkdir(parents=True)
+    exe = home / "camoufox"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    _omni_with_selector(home / "omni.ja", launcher._BROKEN_SEARCH_STUB)
+    assert launcher.ensure_camoufox() == str(exe)
+    assert '"recordType": "engine"' in _selector_source(home / "omni.ja")
+
+
 def _dummy_proc(returncode):
     class Proc:
         def poll(self):

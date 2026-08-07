@@ -102,6 +102,6 @@ can coexist; each inbound notification is tagged with its `source` for routing.
 | Send fails: "official AgentMail CLI not installed" | Setup never ran, or its npm install failed | Re-run `agentmail setup`; check the npm install log |
 | Send fails with 401 | `AGENTMAIL_API_KEY` missing or rotated | Re-run `agentmail setup`, or `source ~/.bashrc` if just rotated |
 | Send fails with 429 | Hit the 100/day or 3,000/month cap | Wait, or upgrade to a paid plan |
-| Inbound never arrives | Webhook can't reach the local service | `agentmail status` must show `webhook_url`; `screen -ls` must show the `agentmail` session (registered with `"public": true`) |
+| Inbound never arrives | Webhook can't reach the local service | `agentmail status` must show `webhook_url`; `agentmail daemon status` must report it running on a port (registered public) |
 | Send fails: `string was used where mapping is expected` on `--headers` | Upstream bug: an angle-bracketed Message-Id (`In-Reply-To=<msg-id>`) makes the CLI read the leading `<` as a YAML list | Use `inboxes:messages reply --message-id "<parent-id>"`; it sets `In-Reply-To`/`References` server-side |
 | Send fails: `Invalid input: expected string, received object` on `subject` | Upstream bug: a `": "` in `--subject` is parsed as a YAML mapping | Drop the space (`Re:topic`) or avoid `": "`; or use `inboxes:messages reply`, which derives the subject from the parent |

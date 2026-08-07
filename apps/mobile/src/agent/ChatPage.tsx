@@ -21,15 +21,14 @@ import {
   type ListRenderItem,
 } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import {
-  KeyboardStickyView,
-} from "react-native-keyboard-controller";
+import { KeyboardStickyView } from "react-native-keyboard-controller";
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 import Markdown, {
+  MarkdownIt,
   type ASTNode,
   type RenderRules,
 } from "react-native-markdown-display";
@@ -48,6 +47,7 @@ import {
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input";
 import { ChatLoadingSkeleton } from "@/components/chat-loading-skeleton";
+import { useToast } from "@/components/native-toast";
 import { Text } from "@/components/ui/Typography";
 import {
   MessageContextMenu,
@@ -60,10 +60,7 @@ import { fontNames } from "@/theme/typography";
 import { radii } from "@/theme/layout";
 import { triggerTranscriptHaptic } from "@/voice/recording-haptics";
 import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
-import {
-  createInvertedChatRows,
-  type ChatRow,
-} from "@/agent/chat-list-model";
+import { createInvertedChatRows, type ChatRow } from "@/agent/chat-list-model";
 import {
   messageActionIds,
   quotedReply,
@@ -76,6 +73,10 @@ const COMPOSER_RESIZE_DURATION = 250;
 const COMPOSER_SURFACE_PADDING = 4;
 const CHAT_COMPOSER_GAP = 6;
 const TRANSCRIPT_HAPTIC_INTERVAL_MS = 110;
+const CHAT_MARKDOWN = new MarkdownIt({
+  linkify: true,
+  typographer: true,
+});
 
 const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
   reply: {
@@ -103,10 +104,7 @@ const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
 
 type ReplyTarget = { text: string; sender: string };
 
-function isFinalMarkdownNode(
-  node: ASTNode,
-  parentNodes: ASTNode[],
-): boolean {
+function isFinalMarkdownNode(node: ASTNode, parentNodes: ASTNode[]): boolean {
   let child = node;
   for (const parent of parentNodes) {
     if (parent.children[parent.children.length - 1]?.key !== child.key) {
@@ -182,8 +180,10 @@ function isSameCalendarDay(left: Date, right: Date): boolean {
   );
 }
 
-function chatDateLabel(timestamp: string): string {
+function chatDateLabel(timestamp: string | null): string {
+  if (!timestamp) return "Earlier";
   const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Earlier";
   const today = new Date();
   if (isSameCalendarDay(date, today)) return "Today";
 
@@ -202,7 +202,7 @@ function chatDateLabel(timestamp: string): string {
 const ChatDateHeader = memo(function ChatDateHeader({
   timestamp,
 }: {
-  timestamp: string;
+  timestamp: string | null;
 }) {
   const { colors } = usePreferences();
   return (
@@ -243,16 +243,14 @@ const ChatEvent = memo(function ChatEvent({
         minute: "2-digit",
       })
     : null;
+  const user = event.type === "user";
   const markdownRules = useMemo<RenderRules>(
     () => ({
       textgroup: (node, children, parentNodes, markdownStyles) => (
         <Text key={node.key} style={markdownStyles.textgroup}>
           {children}
           {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
-            <Text
-              key="timestamp-spacer"
-              style={styles.timestampSpacer}
-            >
+            <Text key="timestamp-spacer" style={styles.timestampSpacer}>
               {"\u00A0\u00A0\u00A0\u00A0"}
               {timestamp}
             </Text>
@@ -465,7 +463,18 @@ const ChatEvent = memo(function ChatEvent({
     }),
     [colors],
   );
-  const user = event.type === "user";
+  const userMarkdownStyles = useMemo(
+    () => ({
+      ...markdownStyles,
+      body: { ...markdownStyles.body, color: colors.accentText },
+      link: {
+        ...markdownStyles.link,
+        color: colors.accentText,
+        textDecorationColor: colors.accentText,
+      },
+    }),
+    [colors.accentText, markdownStyles],
+  );
   const sendState = event.type === "user" ? event.send_state : undefined;
   const intentId = event.type === "user" ? event.intent_id : undefined;
   const messageText = "text" in event ? event.text : "";
@@ -501,8 +510,15 @@ const ChatEvent = memo(function ChatEvent({
     [messageText, onEditAndResend, onReadAloud, onReply, user],
   );
   if (event.type === "error" || event.type === "rate_limited") {
-    const text = event.type === "rate_limited" ? "Rate limited. Vesta will be back soon." : "This message may not have gone through.";
-    return <Text style={[styles.systemMessage, { color: colors.tertiaryText }]}>{text}</Text>;
+    const text =
+      event.type === "rate_limited"
+        ? "Rate limited. Vesta will be back soon."
+        : "This message may not have gone through.";
+    return (
+      <Text style={[styles.systemMessage, { color: colors.tertiaryText }]}>
+        {text}
+      </Text>
+    );
   }
   if (event.type !== "user" && event.type !== "chat") return null;
   const bubbleColor = user ? colors.accent : colors.card;
@@ -528,25 +544,14 @@ const ChatEvent = memo(function ChatEvent({
       {endsBubbleGroup && !USES_NATIVE_BUBBLE_SHAPE ? (
         <BubbleTail user={user} fill={bubbleColor} stroke={colors.border} />
       ) : null}
-      {user ? (
-        <Text style={[styles.userText, { color: colors.accentText }]}>
-          {event.text}
-          {timestamp ? (
-            <Text style={styles.timestampSpacer}>
-              {"\u00A0\u00A0\u00A0\u00A0"}
-              {timestamp}
-            </Text>
-          ) : null}
-        </Text>
-      ) : (
-        <Markdown
-          onLinkPress={openMarkdownLink}
-          rules={markdownRules}
-          style={markdownStyles}
-        >
-          {event.text}
-        </Markdown>
-      )}
+      <Markdown
+        markdownit={CHAT_MARKDOWN}
+        onLinkPress={openMarkdownLink}
+        rules={markdownRules}
+        style={user ? userMarkdownStyles : markdownStyles}
+      >
+        {event.text}
+      </Markdown>
       {timestamp ? (
         <Text
           style={[
@@ -580,9 +585,7 @@ const ChatEvent = memo(function ChatEvent({
         previewCornerRadius={radii.bubble}
         style={styles.bubbleMenu}
         tailOverhang={endsBubbleGroup ? (user ? 5 : 6) : 0}
-        tailSide={
-          endsBubbleGroup ? (user ? "trailing" : "leading") : "none"
-        }
+        tailSide={endsBubbleGroup ? (user ? "trailing" : "leading") : "none"}
       >
         {bubble}
       </MessageContextMenu>
@@ -715,17 +718,9 @@ const ReplyPreview = memo(function ReplyPreview({
   );
 
   return (
-    <View
-      style={[
-        styles.replyPreview,
-        { backgroundColor: colors.input },
-      ]}
-    >
+    <View style={[styles.replyPreview, { backgroundColor: colors.input }]}>
       <View
-        style={[
-          styles.replyAccent,
-          { backgroundColor: colors.interactive },
-        ]}
+        style={[styles.replyAccent, { backgroundColor: colors.interactive }]}
       />
       <View style={styles.replyCopy}>
         <Text
@@ -963,6 +958,7 @@ export default function ChatPage() {
   const insets = useSafeAreaInsets();
   const { agent, socket, name } = useAgent();
   const { api } = useSession();
+  const { showError } = useToast();
   const preferences = usePreferences();
   const { colors } = preferences;
   const [input, setInputState] = useState("");
@@ -972,7 +968,6 @@ export default function ChatPage() {
     setInputState(value);
   }, []);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
-  const [voiceError, setVoiceError] = useState("");
   const notifyTranscriptWords = useTranscriptWordHaptics();
   const handleTranscript = useCallback(
     (text: string) => {
@@ -1050,7 +1045,7 @@ export default function ChatPage() {
     enabled: voiceEnabled,
     onTranscript: handleTranscript,
     onTurnEnd: () => sendCurrentInput("voice"),
-    onError: setVoiceError,
+    onError: showError,
   });
 
   const focusComposer = useCallback(() => {
@@ -1126,13 +1121,12 @@ export default function ChatPage() {
         () => undefined,
       );
     }
-    setVoiceError("");
     if (voice.active) {
       voice.stop();
     } else {
       stopSpeech();
       void voice.start().catch((cause) => {
-        setVoiceError(cause instanceof Error ? cause.message : "Voice could not start.");
+        showError(cause, "Voice could not start");
       });
     }
   };
@@ -1169,8 +1163,17 @@ export default function ChatPage() {
         ListEmptyComponent={
           socket.historyLoaded ? (
             <View style={styles.empty}>
-              <Text family="heading" style={[styles.emptyTitle, { color: colors.text }]}>Start a conversation</Text>
-              <Text style={[styles.emptyDetail, { color: colors.secondaryText }]}>Tell {name} what you want to accomplish.</Text>
+              <Text
+                family="heading"
+                style={[styles.emptyTitle, { color: colors.text }]}
+              >
+                Start a conversation
+              </Text>
+              <Text
+                style={[styles.emptyDetail, { color: colors.secondaryText }]}
+              >
+                Tell {name} what you want to accomplish.
+              </Text>
             </View>
           ) : null
         }
@@ -1189,59 +1192,49 @@ export default function ChatPage() {
         style={styles.composerOverlay}
       >
         <View onLayout={handleComposerLayout}>
-        {voiceError ? (
           <View
-            style={[styles.voiceError, { backgroundColor: colors.elevated }]}
+            style={[
+              styles.composerDock,
+              { paddingBottom: Math.max(insets.bottom, 8) },
+            ]}
           >
-            <Text style={{ color: colors.danger }}>{voiceError}</Text>
-          </View>
-        ) : null}
-        <View
-          style={[
-            styles.composerDock,
-            { paddingBottom: Math.max(insets.bottom, 8) },
-          ]}
-        >
-          {isAwayFromLatest ? (
-            <View pointerEvents="box-none" style={styles.scrollToBottomSlot}>
-              <ScrollToBottomButton onPress={scrollToLatest} />
-            </View>
-          ) : null}
-          <ComposerSurface>
-            {replyTarget ? (
-              <ReplyPreview
-                target={replyTarget}
-                onCancel={cancelReply}
-              />
+            {isAwayFromLatest ? (
+              <View pointerEvents="box-none" style={styles.scrollToBottomSlot}>
+                <ScrollToBottomButton onPress={scrollToLatest} />
+              </View>
             ) : null}
-            <View style={styles.composerRow}>
-              <ChatComposerInput
-                ref={inputRef}
-                maxLength={20_000}
-                onChangeText={setInput}
-                placeholder={
-                  voice.active
-                    ? "Listening…"
-                    : canSend
-                      ? `Message ${name}`
-                      : "Waiting for agent…"
-                }
-                placeholderTextColor={colors.tertiaryText}
-                selectionColor={colors.accent}
-                textColor={colors.text}
-                value={input}
-              />
-              <ComposerActionButton
-                canSend={canSend}
-                hasDraft={hasDraft}
-                voiceActive={voice.active}
-                voiceEnabled={voiceEnabled}
-                onSend={send}
-                onToggleVoice={toggleVoice}
-              />
-            </View>
-          </ComposerSurface>
-        </View>
+            <ComposerSurface>
+              {replyTarget ? (
+                <ReplyPreview target={replyTarget} onCancel={cancelReply} />
+              ) : null}
+              <View style={styles.composerRow}>
+                <ChatComposerInput
+                  ref={inputRef}
+                  maxLength={20_000}
+                  onChangeText={setInput}
+                  placeholder={
+                    voice.active
+                      ? "Listening…"
+                      : canSend
+                        ? `Message ${name}`
+                        : "Waiting for agent…"
+                  }
+                  placeholderTextColor={colors.tertiaryText}
+                  selectionColor={colors.accent}
+                  textColor={colors.text}
+                  value={input}
+                />
+                <ComposerActionButton
+                  canSend={canSend}
+                  hasDraft={hasDraft}
+                  voiceActive={voice.active}
+                  voiceEnabled={voiceEnabled}
+                  onSend={send}
+                  onToggleVoice={toggleVoice}
+                />
+              </View>
+            </ComposerSurface>
+          </View>
         </View>
       </KeyboardStickyView>
     </View>
@@ -1308,9 +1301,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   typingDot: { width: 6, height: 6, borderRadius: 3 },
-  userText: { fontSize: 16, lineHeight: 22 },
   timestampSpacer: { fontSize: 12, opacity: 0 },
-  bubbleTimestamp: { position: "absolute", right: 12, bottom: 10, fontSize: 12 },
+  bubbleTimestamp: {
+    position: "absolute",
+    right: 12,
+    bottom: 10,
+    fontSize: 12,
+  },
   finalMarkdownParagraph: { marginBottom: 0 },
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
@@ -1324,15 +1321,44 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   loadingMore: { height: 44, alignItems: "center", justifyContent: "center" },
-  empty: { minHeight: 300, justifyContent: "center", alignItems: "center", gap: 7, padding: 30 },
+  empty: {
+    minHeight: 300,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 7,
+    padding: 30,
+  },
   emptyTitle: { fontSize: 21, fontWeight: "500" },
   emptyDetail: { fontSize: 14, textAlign: "center" },
-  voiceError: { marginHorizontal: 12, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 12 },
-  composerOverlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 2, justifyContent: "flex-end" },
+  composerOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 2,
+    justifyContent: "flex-end",
+  },
   composerDock: { paddingHorizontal: 22, paddingTop: 8 },
-  scrollToBottomSlot: { position: "absolute", top: -36, right: 0, left: 0, zIndex: 3, alignItems: "center" },
-  scrollToBottomButton: { width: 34, height: 34, borderRadius: 17, overflow: "hidden" },
-  scrollToBottomPressable: { flex: 1, alignItems: "center", justifyContent: "center" },
+  scrollToBottomSlot: {
+    position: "absolute",
+    top: -36,
+    right: 0,
+    left: 0,
+    zIndex: 3,
+    alignItems: "center",
+  },
+  scrollToBottomButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    overflow: "hidden",
+  },
+  scrollToBottomPressable: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   scrollToBottomFallback: { borderWidth: StyleSheet.hairlineWidth },
   composerSurface: {
     padding: COMPOSER_SURFACE_PADDING,
@@ -1341,12 +1367,29 @@ const styles = StyleSheet.create({
   },
   composerRow: { flexDirection: "row", alignItems: "flex-end" },
   composerFallback: { borderWidth: StyleSheet.hairlineWidth },
-  replyPreview: { flexDirection: "row", alignItems: "center", gap: 8, margin: 3, marginBottom: 6, paddingLeft: 9, paddingRight: 3, paddingVertical: 7, borderRadius: 16, borderCurve: "continuous" },
+  replyPreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    margin: 3,
+    marginBottom: 6,
+    paddingLeft: 9,
+    paddingRight: 3,
+    paddingVertical: 7,
+    borderRadius: 16,
+    borderCurve: "continuous",
+  },
   replyAccent: { alignSelf: "stretch", width: 3, borderRadius: 2 },
   replyCopy: { flex: 1, minWidth: 0, gap: 1 },
   replyLabel: { fontSize: 12, fontWeight: "600" },
   replyText: { fontSize: 13, lineHeight: 17 },
-  replyClose: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  replyClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   roundButton: {
     width: 32,
     height: 32,

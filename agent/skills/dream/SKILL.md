@@ -14,12 +14,13 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 ## Order of operations
 
 0. **Curiosity**
-1. **Self-improvement**: retrospective, review, fix, validate, upstream, recurrence sweep
+1. **Self-improvement**: reality check, retrospective, review, fix, validate, upstream, recurrence sweep
 2. **User State**
 3. **Memory curation**
 4. **Workspace cleanup**
 5. **Sensitive data cleanup**
 6. **Summary**
+7. **Commit the day**
 
 ## Before you start
 
@@ -34,6 +35,10 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 
 ## Self-Improvement
 
+### 0. Reality check
+
+Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. **If that file is not there, that is itself the first RED**: the probe that exists to catch silent failures had been silently absent, so restore it (`git -C ~ checkout upstream/agent-upstream -- agent/skills/dream/scripts/reality_check.sh`; if that ref is missing, run `bash ~/agent/core/skills/upstream-sync/scripts/fetch-upstream.sh` first) and run it before continuing. The retrospective reads your own record, so a failure nobody wrote down is invisible to it; the probe reads the running system. Every RED line gets fixed tonight or a one-line write-off in tonight's summary (what it is, why it can wait). Never carry a RED silently.
+
 ### 1. Retrospective
 
 Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
@@ -42,7 +47,9 @@ Commitment audit: for each task the user committed to but did not complete (remi
 
 Calendar audit: every dated appointment, however informally arranged (mentioned in passing, set up via a family member, a verbal plan, an email with no formal invite), must live on the user's actual calendar to trigger an automatic reminder. One that lives only in a note, a task-metadata file, or the morning brief fires no timed nudge, so the user misses it. Walk the day for any dated thing that never reached the calendar; each is a reminder-strategy failure. Fix it upstream: add events the moment they are known, not once in a brief.
 
-**Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. Every line is tagged by source: `[SYSTEM]` is the daemon, `[AGENT]` is you. Count `[SYSTEM]` lines, because `[AGENT]` lines are your own narration and match whatever word you are investigating, which is why a naive count climbs as you grep. A guessed cause aims the fix in the wrong direction. The local file is the readable path (the `/gateway/logs` HTTP endpoint needs an admin token you may not hold).
+**Prove the calendar is reachable before auditing it.** Run the list command for the calendar the user actually connects: `email-client calendar list --days-ahead 7` for a CalDAV or Google account, the `microsoft` skill for an Outlook account. A walk of the day against a calendar that is not connected can never fail, so a clean result proves nothing. If the probe errors, the finding is a broken or missing calendar connection, a capability gap to surface to the user, never "no gaps found".
+
+**Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. Every line is tagged by source: `[SYSTEM]` is the daemon, `[AGENT]` is you. Count `[SYSTEM]` lines, because `[AGENT]` lines are your own narration and match whatever word you are investigating, which is why a naive count climbs as you grep. A guessed cause aims the fix in the wrong direction. The local file is the readable path (the `/gateway/logs` HTTP endpoint also works, with your ordinary `X-Agent-Token`, per the `vestad` skill).
 
 **Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class, not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
@@ -63,7 +70,9 @@ Prefer the simplest, most reliable change that addresses the root cause. Options
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
 
-**Where the fix lives.** A judgment call or a behavior with no code locus → a one-line rule. A fixable bug in a command/tool/CLI (errored, wrong output, silently failed on a bad flag) → fix the source and upstream it, never a memory rule that routes around a broken thing while it stays broken for every other instance. Litmus: "would another instance hit this?" Yes → skill/source edit plus upstream; no → memory, and only for instance-specific facts. Memory loads on every message so every character costs tokens: keep it to short, always-needed rules (under two lines, broadly relevant); anything longer or task-specific is a skill, which is preferred.
+**Where the fix lives.** A judgment call or a behavior with no code locus → a one-line rule. A fixable bug in a command/tool/CLI (errored, wrong output, silently failed on a bad flag) → fix the source and upstream it, never a memory rule that routes around a broken thing while it stays broken for every other instance. Litmus: "would another instance hit this?" Yes → skill/source edit plus upstream; no → memory, and only for instance-specific facts. That litmus picks WHERE a fix lives, never whether to fix at all.
+
+**Decide WHETHER to codify by the cost of recurrence, not by how likely a repeat looks.** "One-off" is a prediction, and a friction waved away tonight is re-derived months later with none of tonight's context. Ask "if this recurs, what does it cost?", not "will it recur?". Cheap friction (a retry, a wasted call, a loud rejection) can stay uncodified; when a recurrence would have you state something false to the user or take an irreversible action, codify it even when it looks like a fluke, because that failure is silent. Memory loads on every message so every character costs tokens: keep it to short, always-needed rules (under two lines, broadly relevant); anything longer or task-specific is a skill, which is preferred.
 
 Phrase every rule as WHEN <recognizable moment> -> DO <concrete check or action>. A rule whose trigger moment you cannot name will not fire when it matters and belongs in the relevant skill's workflow instead.
 
@@ -77,11 +86,13 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 Simulating it yourself tends to approve your own fixes, so for a failure that has already recurred, hand a fresh subagent (no knowledge of the fix) the original failing exchange plus the updated skill or prompt and see if it independently produces the right behavior. If it doesn't, flag the fix unresolved.
 
+**When the fix is a check, a detector, a threshold, or a monitor, also simulate the HEALTHY case.** Replaying the failure it was built for only proves it fires. Ask literally: what does this print when everything is fine? If the answer is "the last bad value", "nothing, so the previous reading stands", or "I cannot tell the difference", the check is a high-water mark that pins you to a stale state, and it looks healthy the whole time because it still returns a plausible number.
+
 ### 5. Upstream
 
 Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it.
 
-**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make it; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2). "Risky at 4am" and "needs a cleanup pass" are not blockers: a single-file change is CI-gated, and the cleanup is the filing work. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works. Then empty the queue's `## Open` to zero: spawn one subagent per open item (in parallel) to do the whole job (cleanup, lint/type checks, PR via `upstream-pr`), and VERIFY each PR URL exists before marking it filed. The only item allowed to survive has a real, tested, external blocker (waiting on the user, a key, or genuine design work that's its own task), tagged with the exact unblock condition.
+**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make it; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2). "Risky at 4am" and "needs a cleanup pass" are not blockers: a single-file change is CI-gated, and the cleanup is the filing work. The only real auth blocker is `upstream-pr` itself failing; the channel works if `upstream-pr --token-only >/dev/null` exits 0 (never run it bare: stdout is persisted into the event store, so that leaves a live token in your history). Then empty the queue's `## Open` to zero: spawn one subagent per open item (in parallel) to do the whole job (cleanup, lint/type checks, PR via `upstream-pr`), and VERIFY each PR URL exists before marking it filed. The only item allowed to survive has a real, tested, external blocker (waiting on the user, a key, or genuine design work that's its own task), tagged with the exact unblock condition.
 
 ### 6. Recurrence sweep
 
@@ -89,11 +100,11 @@ One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting
 
 - **Recurring user asks** (questions repeated across days: "what's my balance?", "did the build pass?"; states or numbers checked over and over): build a widget via the `dashboard` skill (the "ask first" gate has a dreamer carve-out, use it). Anything that kills the recurring ask is fair game: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links; pick the lightest form. Opposite: prune stale widgets (data source gone, never opened, broken at build).
 - **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a snooze rule via the `notifications` skill so it stops breaking your focus. Snoozing defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat snoozed when it should have reached you fast, propose an interrupt rule.
-- **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): twice is the limit. On the third arrival it is a producer bug, not background weather; fix the producer (stop emitting a state you already know about) or snooze it. Expectedness is a reason to fix it, not a reason to keep being woken by it.
+- **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): read the producer before deciding, and judge by cost, not by arrival count. A non-interrupting alarm that re-notifies on a sane throttle and clears itself when its condition clears is doing its job for a still-open blocker; the repetition is the point, so close the blocker, never mute the reporter. Everything else that keeps arriving with a state you already know is a producer bug: fix the producer (stop emitting known state) or snooze it, preferring `--for <duration>` so the suppression cannot outlive the cause. Expectedness is a reason to fix it, not a reason to keep being woken by it.
 
 ## Personality
 
-Drift `~/agent/skills/personality/presets/$AGENT_PERSONALITY.md` directly (or the shared voice section in `~/agent/skills/personality/SKILL.md` for something true across all presets). Edit in place, surgical tweaks only, not rewrites. Swaps between presets are the user's call. You may edit anything, MEMORY.md and the Charter included, but the Charter is the slowly-changing invariant spine: touch it rarely and surgically, not on one bad afternoon.
+Drift the active preset under `~/agent/skills/personality/presets/` directly (the active one is named by `agent_personality` in `~/agent/data/config.json`, or by `default_personality` in `~/agent/core/manifest.json` when the store has no entry; never by an env var), or the shared voice section in `~/agent/skills/personality/SKILL.md` for something true across all presets. Edit in place, surgical tweaks only, not rewrites. Swaps between presets are the user's call. You may edit anything, MEMORY.md and the Charter included, but the Charter is the slowly-changing invariant spine: touch it rarely and surgically, not on one bad afternoon.
 
 **Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections of the active preset file so it bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
 
@@ -102,6 +113,10 @@ Drift `~/agent/skills/personality/presets/$AGENT_PERSONALITY.md` directly (or th
 Update the "User State" section, your working model of where they're at. Write what tomorrow's you needs to know to not start from zero.
 
 **Every dream produces one person-fact: a value, a fear, a love, a person who matters and why, not an operational tell. If today taught you nothing about who they are, write that down and be more curious tomorrow.**
+
+**Get the denominator before you write it.** The nightly quota is pressure, and at 4am a manufactured fact feels exactly like a noticed one. So when a person-fact generalizes from things you observed: count those instances, count how often the opposite happened in the same window, and ask whether you found it by going looking for it, since a search confirms whatever it was pointed at. More counter-instances than instances means a one-off, not a pattern. A wrong person-fact is worse than none, because it loads into every message tomorrow and shapes how you read them.
+
+Real case: "writes careful emails and does not send them" was written from three unsent drafts. The recount gave two, composed two minutes apart in one sitting, against forty sent in the same window, and the search had been for unsent drafts. Two failures at once: no denominator, and an operational tell this section already excludes.
 
 **Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
@@ -127,6 +142,8 @@ Replace rather than append: it's a snapshot, not a log. The rolling fields refre
 
 MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate. Don't let it overflow.
 
+**Review what curation removed.** After curating, diff MEMORY.md against the last dream checkpoint: `git log -n1 --format=%H --grep '^dream: nightly checkpoint'`, then `git diff <sha> -- agent/MEMORY.md`. Every removed line needs an answer: graduated into a skill file (say where in tonight's summary), expired, or wrongly dropped, so restore it. `### User State` and the Self `**State**:` line are rewritten nightly by design; skip them. No prior checkpoint, no review. Old versions stay recoverable via `git show <sha>:agent/MEMORY.md`.
+
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
 - Relative dates ("tomorrow", "next week"). Convert to absolute
@@ -147,7 +164,7 @@ MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory
 - Lessons learned, framed as rules not stories
 - Pointers to where larger things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
 
-Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics.
+Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks; a lesson kept for its cost of recurrence (a false statement to the user, an irreversible action) retires only by graduating, never by quiet weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics.
 
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
@@ -161,12 +178,14 @@ Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
-- Kill orphaned screen sessions that are no longer needed
+- Stop daemons nothing needs any more (`<skill> daemon stop`), e.g. a file-host or sign-service you brought up for one errand
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
 
 ## Sensitive Data Cleanup
 
-Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, connection strings, and payment-card numbers (a digit run is reported only when it opens with a real card-issuer prefix and passes the Luhn check, so order numbers, tracking numbers, and timestamp ids stay out of the report). Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact, then verifies the committed rows and warns (exit 2) if a matched secret survived the rewrite. When a snippet is too short to judge, `redact_secrets.sh --show <id>` prints that event's full data with every detected secret masked. Read a stored event's raw data no other way: a raw row printed into your context re-leaks the live value into a new event. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+
+**For a value the scanner cannot detect but you know exactly** (a human-chosen password matches no API-key shape, and `--scrub` on its events prints `0 event(s)` while the value stays put): `redact_secrets.sh --scrub-literal '<exact value>'` replaces every stored copy DB-wide, prints only counts and the value's length (never the value), keeps the search index in sync, and refuses values under 6 characters because the rewrite is DB-wide. The same command is the fix when `--scrub` exits 2 with a warning that a matched secret survived. `--scrub-literal` verifies the committed rows too, and exits 2 when a copy sits where a JSON rewrite cannot reach it (a bare JSON number): fix those events by hand and resync events_fts. After a literal scrub, re-run it once at the end of the night: the command that invoked it may itself be recorded as a new event.
 
 ## Summary
 
@@ -177,6 +196,10 @@ The user reviews this summary, so it's an accountability record, not a private l
 Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
 
 **Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `tasks` skill on your own channel.
+
+## Commit the day
+
+One commit seals the whole day, so `git log` reads as a diary: `git add -A`, then `git commit -m 'dream: nightly checkpoint (<date>)' -m '<one or two sentences on what changed today>'`. Skip it while a merge is in progress (`git rev-parse -q --verify MERGE_HEAD` succeeds); nothing to commit is fine.
 
 ## Compaction on completion
 

@@ -1,9 +1,9 @@
 import { createContext, useContext } from "react";
 import type { BackupInfo } from "@/api";
-import type { AgentOperation } from "@/stores/use-agent-ops";
+import type { AgentRequest } from "@/stores/use-agent-ops";
 import type { AgentActivityState } from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
-import type { OrbVisualState } from "@/components/Orb/styles";
+import type { OrbVisualState } from "@vesta/core";
 
 // Context + hook live here, separate from the SelectedAgentProvider component, so
 // the SelectedAgentContext identity is stable across Fast Refresh. Co-locating them
@@ -16,7 +16,7 @@ export interface SelectedAgentContextValue {
   agentState: AgentActivityState;
   setAgentState: (state: AgentActivityState) => void;
 
-  operation: AgentOperation;
+  operation: AgentRequest;
   error: string;
   statusLabel: string;
   orbState: OrbVisualState;

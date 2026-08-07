@@ -101,7 +101,7 @@ def test_duplicate_intent_id_is_dropped_whole(tmp_path):
     state.store.close()
 
 
-def test_intent_id_rides_along_on_the_event_and_notification(tmp_path):
+def test_intent_id_stays_on_event_and_out_of_model_notification(tmp_path):
     state, notif_dir = _service_state(tmp_path)
     queue = _subscribe(state)
 
@@ -109,7 +109,7 @@ def test_intent_id_rides_along_on_the_event_and_notification(tmp_path):
 
     assert _drain(queue)[0]["intent_id"] == "xyz"
     notif = json.loads(next(iter(notif_dir.glob("*-app-chat-message.json"))).read_text())
-    assert notif["intent_id"] == "xyz"
+    assert "intent_id" not in notif
     state.store.close()
 
 

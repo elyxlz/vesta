@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { ReleaseChannel } from "@vesta/core";
+import type { DeviceInfo, ReleaseChannel } from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
 
 // Context + hook live here, separate from the GatewayProvider component, so the
@@ -19,6 +19,7 @@ export interface GatewayContextValue {
   latestVersion: string | null;
   agents: AgentRow[];
   agentsFetched: boolean;
+  devices: DeviceInfo[];
   triggerGatewayUpdate: () => Promise<boolean>;
   triggerGatewayRestart: () => Promise<boolean>;
   checkForUpdate: () => Promise<void>;
@@ -38,6 +39,7 @@ export const disconnectedValue: GatewayContextValue = {
   latestVersion: null,
   agents: [],
   agentsFetched: false,
+  devices: [],
   triggerGatewayUpdate: () => Promise.resolve(false),
   triggerGatewayRestart: () => Promise.resolve(false),
   checkForUpdate: () => Promise.resolve(),

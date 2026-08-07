@@ -81,7 +81,16 @@ def _poll_unit(
     catching_up = gap_seconds > _CATCHUP_GAP_SECONDS
     if catching_up:
         ctx.monitor_logger.info("Catching up %s from %s, %.0fs behind", unit, last_dt.isoformat(), gap_seconds)
-    read_through = poll(last_dt, catching_up)
+    try:
+        read_through = poll(last_dt, catching_up)
+    except Exception:
+        # One unit must never take the cycle down with it. A single account raising (a missing
+        # Teams token, an expired capture, a network blip) would otherwise escape to the loop-level
+        # handler, leaving `state["last_cycle"]` and every unit watermark unwritten: each account
+        # then re-reads its whole window next cycle and re-notifies the same messages forever.
+        # Treated as "read nothing", which is what read_through=None already means.
+        ctx.monitor_logger.exception("Polling %s failed; leaving its watermark where it was", unit)
+        read_through = None
     units[unit] = last_dt.isoformat() if read_through is None else read_through.isoformat()
 
 

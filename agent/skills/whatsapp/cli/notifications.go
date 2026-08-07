@@ -29,9 +29,12 @@ type messageNotif struct {
 	Timestamp       string `json:"timestamp"`
 	MessageID       string `json:"message_id,omitempty"`
 	ChatJID         string `json:"chat_jid,omitempty"`
-	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
-	ReplyCommand    string `json:"reply_command,omitempty"`
-	ReplyHint       string `json:"reply_hint,omitempty"`
+	// "group" or "direct", always set: a notification rule on chat_type and its
+	// negation must both match on the field's value, never on its absence.
+	ChatType       string `json:"chat_type"`
+	ContactUnknown bool   `json:"contact_unknown,omitempty"`
+	ReplyCommand   string `json:"reply_command,omitempty"`
+	ReplyHint      string `json:"reply_hint,omitempty"`
 }
 
 type reactionNotif struct {
@@ -46,6 +49,7 @@ type reactionNotif struct {
 	IsRemoved       bool   `json:"is_removed,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
+	ChatType        string `json:"chat_type"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
@@ -67,17 +71,21 @@ type editNotif struct {
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
 	ChatJID         string `json:"chat_jid,omitempty"`
+	ChatType        string `json:"chat_type"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
 }
 
 type authNotif struct {
-	Source    string `json:"source"`
-	Type      string `json:"type"`
-	Instance  string `json:"instance,omitempty"`
-	Message   string `json:"message"`
-	Timestamp string `json:"timestamp"`
+	Source               string `json:"source"`
+	Type                 string `json:"type"`
+	Instance             string `json:"instance,omitempty"`
+	Message              string `json:"message"`
+	Recovery             string `json:"recovery,omitempty"`
+	NextCommand          string `json:"next_command,omitempty"`
+	RequiresUserApproval bool   `json:"requires_user_approval,omitempty"`
+	Timestamp            string `json:"timestamp"`
 }
 
 // A live voice call surfaces to the agent as whatsapp notifications, reaching the model through the
@@ -113,6 +121,13 @@ func notifPhone(ctx NotifContext) string {
 
 func quoteReplyArg(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func chatType(ctx NotifContext) string {
+	if ctx.IsDirectChat {
+		return "direct"
+	}
+	return "group"
 }
 
 // Every notification carries a complete reply command. The target is always the chat JID, which
@@ -163,6 +178,7 @@ func WriteNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
 		ChatJID:         ctx.ChatJID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "think about how you can best show your personality",
@@ -192,6 +208,7 @@ func WriteReactionNotification(
 		IsRemoved:       isRemoved,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 	}
 	if !ctx.IsDirectChat {
@@ -227,6 +244,7 @@ func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText s
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ChatJID:         ctx.ChatJID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
@@ -245,6 +263,7 @@ func WriteRevokeNotification(ctx NotifContext, targetMessageID, oldText string) 
 		OldText:         oldText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
+		ChatType:        chatType(ctx),
 		ContactUnknown:  !ctx.ContactSaved,
 		ReplyHint:       "they deleted this message, so treat it as unsaid and do not quote it back to them",
 	}
@@ -259,15 +278,13 @@ func writeCallNotification(notifDir, instance string, n callNotif) error {
 	return writeNotificationFile(notifDir, n, n.Type)
 }
 
-// managedParadigm reports whether this box runs a managed (pooled) WhatsApp number,
-// mirroring the resolution runConnect and chooseLinker use: env creds first, filled
-// from persisted state so an env scrub still resolves the managed path. The auth
-// notifications read it because they run without a *WhatsAppClient (so without the
-// constructed linker) yet must still tell a managed agent to reauth autonomously.
-func managedParadigm() bool {
+// notificationManagedConfig mirrors runConnect's persisted-credential recovery for
+// auth notifications, which run without a *WhatsAppClient. The explicit source is
+// stored separately so a mixed cloud/direct environment stays unambiguous.
+func notificationManagedConfig(instance string) managedConfig {
 	cfg := loadManagedConfig()
 	if cfg.directURL == "" || cfg.directKey == "" {
-		st := loadStateFromDisk(stateDataDir())
+		st := loadStateFromDisk(stateDataDirFor(instance))
 		if cfg.directURL == "" {
 			cfg.directURL = st.DirectURL
 		}
@@ -275,24 +292,94 @@ func managedParadigm() bool {
 			cfg.directKey = st.DirectKey
 		}
 	}
-	return newManagedAuth(cfg).isHosted()
+	return cfg
+}
+
+func wasPreviouslyLinked(instance string) bool {
+	st := loadStateFromDisk(stateDataDirFor(instance))
+	return st.OnboardedMSISDN != "" || !st.LinkedAt.IsZero() || st.AuthStatus == "logged_out" || st.ExitStatus != ""
+}
+
+func notificationSource(instance string) (string, string) {
+	st := loadStateFromDisk(stateDataDirFor(instance))
+	cfg := notificationManagedConfig(instance)
+	switch st.AccountSource {
+	case sourceVestaCloud:
+		if cfg.isManagedVM() {
+			return sourceVestaCloud, ""
+		}
+	case sourceDoubletick:
+		if cfg.isDirect() {
+			return sourceDoubletick, ""
+		}
+	case sourceSelfManaged:
+		if !cfg.isManagedVM() && !cfg.isDirect() && cfg.configError == "" {
+			return sourceSelfManaged, ""
+		}
+	}
+	// Migration fallback follows the setup decision order. A managed VM uses its
+	// cloud entitlement even when stale direct credentials are also present.
+	if cfg.isManagedVM() {
+		return sourceVestaCloud, ""
+	}
+	if cfg.isDirect() {
+		return sourceDoubletick, ""
+	}
+	if cfg.configError != "" {
+		return "", cfg.configError
+	}
+	return sourceSelfManaged, ""
+}
+
+func connectCommand(instance string) string {
+	source, _ := notificationSource(instance)
+	if source == "" {
+		return ""
+	}
+	command := "whatsapp connect --source " + source
+	if instance != "" {
+		command += " --instance " + quoteReplyArg(instance)
+	}
+	return command
 }
 
 // WriteUnpairedNotification tells the agent the WhatsApp daemon came up without a
 // device session and needs re-pairing. Called once per unpaired daemon boot. A
-// managed number reclaims itself autonomously (no user step), so only self-hosted QR
-// linking, which needs the human to scan, is gated on the user being ready.
+// managed flow needs no phone or QR step, but a prior link still requires approval
+// under the linking rule. A self-managed first link waits for user participation.
 func WriteUnpairedNotification(notifDir, instance string) error {
-	message := "WhatsApp daemon started without a paired device session. Run `whatsapp connect` to link (when the user is ready)."
-	if managedParadigm() {
-		message = "WhatsApp daemon started without a paired device session. Run `whatsapp connect` now to re-link your managed number; it reclaims the number autonomously and needs no user step."
+	priorLink := wasPreviouslyLinked(instance)
+	source, configError := notificationSource(instance)
+	managed := source == sourceVestaCloud || source == sourceDoubletick
+	command := connectCommand(instance)
+	recovery := "first_link"
+	message := "WhatsApp daemon started without a paired device session. Run the exact next_command when the user is ready."
+	if managed {
+		message = "WhatsApp daemon started without a paired device session. Run the exact next_command now."
+	}
+	if priorLink {
+		recovery = "relink"
+		message = "WhatsApp lost a previously linked device session. Ask the user for explicit approval before reconnecting, then run the exact next_command once."
+	}
+	if configError != "" {
+		recovery = "configuration_error"
+		message = "WhatsApp cannot choose a safe reconnect method: " + configError + ". Fix the operator-managed configuration outside chat before connecting."
+		if priorLink {
+			message += " After it is fixed, ask the user for explicit approval before reconnecting."
+		}
+	}
+	if managed {
+		message += " The headless flow needs no phone or QR step."
 	}
 	n := authNotif{
-		Source:    "whatsapp",
-		Type:      "unpaired",
-		Instance:  instance,
-		Message:   message,
-		Timestamp: time.Now().Format(time.RFC3339),
+		Source:               "whatsapp",
+		Type:                 "unpaired",
+		Instance:             instance,
+		Message:              message,
+		Recovery:             recovery,
+		NextCommand:          command,
+		RequiresUserApproval: priorLink,
+		Timestamp:            time.Now().Format(time.RFC3339),
 	}
 	return writeNotificationFile(notifDir, n, "unpaired")
 }
@@ -305,17 +392,23 @@ func WriteLoggedOutNotification(notifDir, instance, reason string) error {
 	if reason != "" {
 		message += " (" + reason + ")"
 	}
-	if managedParadigm() {
-		message += ". This is NOT re-linked automatically, but a managed number reauthorizes autonomously: run `whatsapp connect` now to re-link the SAME number, no user step needed. Do not retry-loop pairing."
+	source, configError := notificationSource(instance)
+	if configError != "" {
+		message += ". Reconnect is blocked because " + configError + ". Fix the operator-managed configuration outside chat, then ask the user for explicit approval before reconnecting. Do not retry-loop pairing."
+	} else if source == sourceVestaCloud || source == sourceDoubletick {
+		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. The headless flow needs no phone or QR step. Do not retry-loop pairing."
 	} else {
-		message += ". This is NOT re-linked automatically. When the user is ready, run `whatsapp connect` to re-link. Do not retry-loop pairing."
+		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. Do not retry-loop pairing."
 	}
 	n := authNotif{
-		Source:    "whatsapp",
-		Type:      "logged_out",
-		Instance:  instance,
-		Message:   message,
-		Timestamp: time.Now().Format(time.RFC3339),
+		Source:               "whatsapp",
+		Type:                 "logged_out",
+		Instance:             instance,
+		Message:              message,
+		Recovery:             "relink",
+		NextCommand:          connectCommand(instance),
+		RequiresUserApproval: true,
+		Timestamp:            time.Now().Format(time.RFC3339),
 	}
 	return writeNotificationFile(notifDir, n, "logged_out")
 }

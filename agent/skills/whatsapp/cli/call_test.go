@@ -102,7 +102,7 @@ func TestPlaceBlocksManagedColdCall(t *testing.T) {
 	}
 
 	// After an inbound the gate passes; the call then fails on the nil meowcaller
-	// client, which proves dialing was reached (the gate no longer blocks).
+	// client, which proves dialing was reached rather than blocked at the gate.
 	storeInbound(t, wac)
 	if err := wac.requireSendAllowed(types.NewJID("15557654321", types.DefaultUserServer)); err != nil {
 		t.Errorf("managed number must be allowed to call once the peer has messaged first: %v", err)

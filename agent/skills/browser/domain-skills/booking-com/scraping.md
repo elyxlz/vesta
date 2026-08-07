@@ -46,10 +46,11 @@ non-browser UA strings.
 ```python
 def is_waf_blocked(html: str) -> bool:
     return (
-        'AwsWafIntegration' in html
-        or 'awsWafCookieDomainList' in html
-        or 'challenge.js' in html
-        or len(html) < 10_000 and '<title></title>' in html
+        "AwsWafIntegration" in html
+        or "awsWafCookieDomainList" in html
+        or "challenge.js" in html
+        or len(html) < 10_000
+        and "<title></title>" in html
     )
 ```
 
@@ -84,28 +85,25 @@ import gzip, re, urllib.request
 
 GOOGLEBOT = {"User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)"}
 
+
 def fetch_sitemap_index(url: str) -> list[str]:
     """Returns list of child sitemap URLs from an index sitemap."""
     xml = http_get(url, headers=GOOGLEBOT)
-    return re.findall(r'<loc>(https://[^<]+)</loc>', xml)
+    return re.findall(r"<loc>(https://[^<]+)</loc>", xml)
+
 
 def fetch_sitemap_gz(gz_url: str) -> list[str]:
     """Decompresses a gzipped sitemap and returns all <loc> URLs."""
     req = urllib.request.Request(gz_url, headers=GOOGLEBOT)
     with urllib.request.urlopen(req, timeout=30) as r:
         data = gzip.decompress(r.read())
-    return re.findall(r'<loc>(https://[^<]+)</loc>', data.decode())
+    return re.findall(r"<loc>(https://[^<]+)</loc>", data.decode())
+
 
 # Example: get all en-gb hotel URLs
-hotel_idx = http_get(
-    "https://www.booking.com/sitembk-hotel-index.xml",
-    headers=GOOGLEBOT
-)
+hotel_idx = http_get("https://www.booking.com/sitembk-hotel-index.xml", headers=GOOGLEBOT)
 # 74 shards for en-gb; each shard has ~45,000-50,000 property URLs
-en_gb_shards = re.findall(
-    r'<loc>(https://www\.booking\.com/sitembk-hotel-en-gb\.\d+\.xml\.gz)</loc>',
-    hotel_idx
-)
+en_gb_shards = re.findall(r"<loc>(https://www\.booking\.com/sitembk-hotel-en-gb\.\d+\.xml\.gz)</loc>", hotel_idx)
 # hotel_urls = fetch_sitemap_gz(en_gb_shards[0])  # ~50K URLs per shard
 ```
 
@@ -153,16 +151,12 @@ GQL_HEADERS = {
     "x-booking-site-type-id": "1",
 }
 
+
 def gql(operation_name: str, query: str, variables: dict = None) -> dict:
     payload = {"operationName": operation_name, "query": query}
     if variables:
         payload["variables"] = variables
-    req = urllib.request.Request(
-        GQL_URL,
-        data=json.dumps(payload).encode(),
-        headers=GQL_HEADERS,
-        method="POST"
-    )
+    req = urllib.request.Request(GQL_URL, data=json.dumps(payload).encode(), headers=GQL_HEADERS, method="POST")
     with urllib.request.urlopen(req, timeout=20) as r:
         data = r.read()
         if r.headers.get("Content-Encoding") == "gzip":
@@ -281,7 +275,9 @@ Since `http_get` is blocked, all actual data extraction requires the browser
 
 ```python
 # Always use new_tab() for the first Booking.com load in a session
-tid = new_tab("https://www.booking.com/searchresults.html?ss=Paris&checkin=2026-05-01&checkout=2026-05-03&group_adults=2&no_rooms=1&selected_currency=USD")
+tid = new_tab(
+    "https://www.booking.com/searchresults.html?ss=Paris&checkin=2026-05-01&checkout=2026-05-03&group_adults=2&no_rooms=1&selected_currency=USD"
+)
 wait_for_load()
 wait(3)  # React hydration takes ~3s after readyState=complete
 
@@ -310,6 +306,7 @@ def dismiss_cookie_banner():
         })()
     """)
     return accepted
+
 
 # Call immediately after load if you have an EU IP
 if dismiss_cookie_banner():
@@ -435,8 +432,8 @@ Booking.com's React app may embed search state in `window.__NEXT_DATA__` or
 legacy `b_hotel_data` globals. Access via:
 
 ```python
-next_data = js("window.__NEXT_DATA__")    # dict or None
-b_hotel   = js("window.b_hotel_data")    # dict or None — legacy pages
+next_data = js("window.__NEXT_DATA__")  # dict or None
+b_hotel = js("window.b_hotel_data")  # dict or None — legacy pages
 ```
 
 These globals are not present in the WAF stub and their availability depends
@@ -487,20 +484,19 @@ something went wrong:
 def check_booking_waf():
     url = page_info()["url"]
     html_snippet = js("document.body?.innerHTML?.slice(0, 500)") or ""
-    return (
-        "chal_t=" in url
-        or "AwsWafIntegration" in html_snippet
-        or "challenge-container" in html_snippet
-    )
+    return "chal_t=" in url or "AwsWafIntegration" in html_snippet or "challenge-container" in html_snippet
+
 
 def wait_past_waf(timeout=15):
     import time
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         if not check_booking_waf():
             return True
         wait(1)
     return False  # timed out — WAF didn't resolve
+
 
 # Use after goto():
 goto("https://www.booking.com/searchresults.html?ss=London&checkin=2026-06-01&checkout=2026-06-03&group_adults=2&no_rooms=1")
@@ -521,23 +517,25 @@ import gzip, re, urllib.request
 
 GOOGLEBOT = {"User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)"}
 
+
 def get_hotel_urls_for_country(cc: str, lang: str = "en-gb", max_shards: int = 2) -> list[str]:
     """Returns property page URLs for a country from sitemaps. No browser needed."""
     idx_url = f"https://www.booking.com/sitembk-hotel-index.xml"
     idx = http_get(idx_url, headers=GOOGLEBOT)
-    pattern = rf'<loc>(https://www\.booking\.com/sitembk-hotel-{lang}\.\d+\.xml\.gz)</loc>'
+    pattern = rf"<loc>(https://www\.booking\.com/sitembk-hotel-{lang}\.\d+\.xml\.gz)</loc>"
     shards = re.findall(pattern, idx)[:max_shards]
-    
+
     urls = []
     for shard_url in shards:
         req = urllib.request.Request(shard_url, headers=GOOGLEBOT)
         with urllib.request.urlopen(req, timeout=60) as r:
             xml = gzip.decompress(r.read()).decode()
-        all_urls = re.findall(r'<loc>(https://[^<]+)</loc>', xml)
+        all_urls = re.findall(r"<loc>(https://[^<]+)</loc>", xml)
         # Filter by country code
         country_urls = [u for u in all_urls if f"/hotel/{cc}/" in u]
         urls.extend(country_urls)
     return urls
+
 
 # Example: get French hotel URLs (no browser needed, instant)
 # french_hotels = get_hotel_urls_for_country("fr", max_shards=1)

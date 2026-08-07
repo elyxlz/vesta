@@ -1,8 +1,9 @@
-import type { AgentRow } from "@vesta/core";
+import type { AgentRow, ReleaseChannel } from "@vesta/core";
 
 export interface RosterSnapshot {
   agents: AgentRow[];
   gatewayVersion: string;
+  gatewayChannel: ReleaseChannel;
   managed: boolean;
   updateAvailable: boolean;
   latestVersion: string | null;
@@ -13,6 +14,7 @@ export interface RosterHold {
   agents: AgentRow[];
   agentsReady: boolean;
   gatewayVersion: string | undefined;
+  gatewayChannel: ReleaseChannel | undefined;
   managed: boolean;
   updateAvailable: boolean;
   latestVersion: string | null;
@@ -23,6 +25,7 @@ export const emptyRosterHold: RosterHold = {
   agents: [],
   agentsReady: false,
   gatewayVersion: undefined,
+  gatewayChannel: undefined,
   managed: false,
   updateAvailable: false,
   latestVersion: null,
@@ -44,6 +47,7 @@ export function reconcileRosterHold(
     agents: fresh.agents,
     agentsReady: true,
     gatewayVersion: fresh.gatewayVersion,
+    gatewayChannel: fresh.gatewayChannel,
     managed: fresh.managed,
     updateAvailable: fresh.updateAvailable,
     latestVersion: fresh.latestVersion,

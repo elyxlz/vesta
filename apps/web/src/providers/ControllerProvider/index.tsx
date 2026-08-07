@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
-import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
+import { getConnection } from "@/lib/connection";
+import { websocketUrl } from "@/lib/authed-url";
+import { native } from "@/lib/native";
+import { deviceIdentity } from "@/lib/device-identity";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
-import { AppBehindScreen } from "@/components/AppBehindScreen";
-import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import { createBrowserSocket } from "./browser-socket";
+import { runReauthCheck } from "./reauth-poll";
 import { ControllerContext, ControllerReconnectContext } from "./context";
 
 export {
@@ -21,21 +23,16 @@ export { useSyncState };
 const DISCONNECT_GRACE_MS = 750;
 const REAUTH_POLL_MS = 60000;
 
-function syncUrl(): string {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vesta gateway");
-  const base = conn.url.replace(/^http/, "ws");
-  return `${base}/sync?token=${encodeURIComponent(conn.accessToken)}`;
-}
-
 function buildController(): Controller {
   return createController({
     sync: {
-      buildUrl: syncUrl,
+      buildUrl: () => websocketUrl("/sync"),
       createSocket: createBrowserSocket,
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (handle) => window.clearTimeout(handle),
-      clientVersion: __APP_VERSION__,
+      clientVersion: __CLIENT_VERSION__,
+      clientKind: native.runtime === "electron" ? "desktop" : "web",
+      device: deviceIdentity(),
     },
     http: {
       baseUrl: () => getConnection()?.url ?? "",
@@ -62,21 +59,13 @@ function ActiveController({ children }: { children: ReactNode }) {
   );
 }
 
-// The two blocking sync states take over the whole app in place of children; every other
-// state renders the app (a transient disconnect shows the overlay on top instead).
-function routeTakeover(syncState: string): ReactNode {
-  if (syncState === "app_behind") return <AppBehindScreen />;
-  if (syncState === "gateway_behind") return <GatewayBehindScreen />;
-  return null;
-}
-
 // One live controller for the lifetime of a session mount. Built once via a lazy useState
 // initializer (run exactly once per mount and never discarded, so it avoids the
 // useMemo-side-effect-in-render caveat), closed on unmount. Reauth rotates the socket's token
 // in-band before it expires; the overlay tracks the sync sub-store. Like mobile, the desktop
 // app is a drifting client: it opens /sync and the served version window (min_supported..version)
-// decides compatibility. A client below the window takes over with AppBehindScreen (the app must
-// update); a client ahead of the gateway takes over with GatewayBehindScreen.
+// decides compatibility. GatewayProvider turns incompatible states into blocking screens while
+// keeping the gateway context mounted for their shared UI.
 function ControllerSession({ children }: { children: ReactNode }) {
   const [controller] = useState(buildController);
   const syncState = useSyncState(controller);
@@ -89,18 +78,17 @@ function ControllerSession({ children }: { children: ReactNode }) {
   }, [controller]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          if (isTokenExpiringSoon() && (await ensureFreshToken()) === "ok") {
-            const conn = getConnection();
-            if (conn) controller.reauth(conn.accessToken);
-          }
-        } catch (err) {
-          console.warn("[controller] reauth failed:", err);
-        }
-      })();
-    }, REAUTH_POLL_MS);
+    // Also on mount, not just every poll: a session restored with an already-expired token
+    // would otherwise keep retrying /sync with it for a whole interval.
+    const tick = () => {
+      void runReauthCheck((token) => {
+        controller.reauth(token);
+      }).catch((err: unknown) =>
+        console.warn("[controller] reauth failed:", err),
+      );
+    };
+    tick();
+    const timer = window.setInterval(tick, REAUTH_POLL_MS);
     return () => {
       window.clearInterval(timer);
     };
@@ -122,7 +110,7 @@ function ControllerSession({ children }: { children: ReactNode }) {
 
   return (
     <ControllerContext.Provider value={controller}>
-      {routeTakeover(syncState) ?? children}
+      {children}
       {showDisconnected && <DisconnectedOverlay />}
     </ControllerContext.Provider>
   );

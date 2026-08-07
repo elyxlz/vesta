@@ -6,6 +6,8 @@ import Stack from "expo-router/stack";
 import { readFile, writeFile } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import { Screen } from "@/components/layout/Screen";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
+import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState, LoadingState } from "@/components/ui/States";
@@ -23,6 +25,7 @@ function AgentFileContent() {
   const path = typeof parameters.path === "string" ? parameters.path : "";
   const { api } = useSession();
   const { name } = useAgent();
+  const { showError } = useToast();
   const { colors } = usePreferences();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const file = useQuery({
@@ -42,6 +45,7 @@ function AgentFileContent() {
         file.data ? { ...file.data, content: draft } : file.data,
       );
     },
+    onError: (error) => showError(error, "The file could not be saved"),
   });
 
   if (!path) return <ErrorState message="No file path was provided." />;
@@ -64,6 +68,7 @@ function AgentFileContent() {
   return (
     <>
       <Stack.Title>{fileName(path)}</Stack.Title>
+      <NativeSheetCloseButton accessibilityLabel="Close file" />
       <Screen contentStyle={styles.content}>
         <Card>
           <Text
@@ -120,13 +125,6 @@ function AgentFileContent() {
               Save file
             </Button>
           </View>
-        ) : null}
-        {save.error ? (
-          <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-            {save.error instanceof Error
-              ? save.error.message
-              : "The file could not be saved."}
-          </Text>
         ) : null}
       </Screen>
     </>

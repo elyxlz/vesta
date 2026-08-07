@@ -231,6 +231,23 @@ def test_list_messages_folder_alias_deleted(tmp_path):
     assert "deleteditems" in call_args[0][0]
 
 
+def test_read_paths_address_a_custom_folder_by_id(tmp_path):
+    """`list`/`search` must resolve a user-created folder to its id, like `move` does.
+
+    OWA REST accepts a bare name in the URL path only for well-known folders, so putting a
+    display name such as `Newsletters` straight into the path fails; reading and moving
+    therefore have to share one resolver.
+    """
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"value": [{"Id": "news-id", "DisplayName": "Newsletters"}]})
+    owa_rest.list_messages(client, "user@example.com", cfg, folder="Newsletters", limit=5)
+    owa_rest.search_messages(client, "user@example.com", cfg, query="hi", folder="Newsletters", limit=5)
+    message_urls = [call.args[0] for call in client.get.call_args_list if "/messages" in call.args[0]]
+    assert len(message_urls) == 2
+    assert all("/me/mailfolders/news-id/messages" in url for url in message_urls)
+    assert all("Newsletters" not in url for url in message_urls)
+
+
 def test_list_messages_passes_select_in_pascal_case(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"value": []})
@@ -512,6 +529,49 @@ def test_resolve_folder_id_display_name(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"value": [{"Id": "news-id", "DisplayName": "Newsletters"}]})
     assert owa_rest.resolve_folder_id(client, "user@example.com", cfg, folder="Newsletters") == "news-id"
+    # A top-level hit costs the one listing; the child walk is only paid for on a miss.
+    assert client.get.call_count == 1
+
+
+def _folder_listing(payload: dict) -> MagicMock:
+    resp = MagicMock(status_code=200)
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = payload
+    return resp
+
+
+def test_resolve_folder_id_finds_a_folder_nested_under_a_top_level_one(tmp_path):
+    cfg = _patched_token(tmp_path)
+    mock = MagicMock(spec=httpx.Client)
+    mock.get.side_effect = [
+        _folder_listing({"value": [{"Id": "inbox-id", "DisplayName": "Inbox"}]}),
+        _folder_listing({"value": [{"Id": "screened-id", "DisplayName": "Screened"}]}),
+    ]
+
+    assert owa_rest.resolve_folder_id(mock, "user@example.com", cfg, folder="Screened") == "screened-id"
+    assert mock.get.call_args.args[0].endswith("/me/mailfolders/inbox-id/childfolders")
+
+
+def test_resolve_folder_id_takes_a_raw_folder_id_off_the_network(tmp_path):
+    # A folder id is a supported input that no display name can ever match, so looking one up would
+    # spend the listing plus a request per top-level folder only to hand the id straight back.
+    cfg = _patched_token(tmp_path)
+    mock = MagicMock(spec=httpx.Client)
+    folder_id = "AAMkAGVmMDEzMTM4LTZmYWUtNDdkNC1hMDZiLTU1OGY5OTZhZmY2OAAuAAAAAAAiQ8W967B7TKBjgx9rVEURAQ="
+
+    assert owa_rest.resolve_folder_id(mock, "user@example.com", cfg, folder=folder_id) == folder_id
+    mock.get.assert_not_called()
+
+
+def test_resolve_folder_id_returns_the_raw_name_when_no_folder_matches(tmp_path):
+    cfg = _patched_token(tmp_path)
+    mock = MagicMock(spec=httpx.Client)
+    mock.get.side_effect = [
+        _folder_listing({"value": [{"Id": "inbox-id", "DisplayName": "Inbox"}]}),
+        _folder_listing({"value": []}),
+    ]
+
+    assert owa_rest.resolve_folder_id(mock, "user@example.com", cfg, folder="Nowhere") == "Nowhere"
 
 
 def test_list_folders_flattens_children(tmp_path):
@@ -681,8 +741,9 @@ def test_owa_login_paste_rejects_garbage(tmp_path):
     from microsoft_cli.config import Config
 
     cfg = Config(data_dir=tmp_path)
-    result = auth_commands.owa_login(cfg, account_email="user@example.com", token="not-a-jwt")
-    assert result["status"] == "error"
+    # The raise reaches main, which prints the error on stderr and exits non-zero.
+    with pytest.raises(ValueError, match="does not look like an OWA access token"):
+        auth_commands.owa_login(cfg, account_email="user@example.com", token="not-a-jwt")
     assert owa_rest.has_valid_token("user@example.com", cfg) is False
 
 

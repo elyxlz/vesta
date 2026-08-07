@@ -23,6 +23,11 @@ ESCAPE_PATTERNS: list[tuple[str, re.Pattern[str], tuple[str, ...]]] = [
     ("shellcheck disable", re.compile(r"#\s*shellcheck\s+disable"), (".sh",)),
 ]
 
+# An extensionless tracked file is still Python or shell when its shebang says so. Several skill CLIs
+# are bare command names (hue, daemon, skills-install) and must keep those names to stay invocable, so
+# language is resolved from the shebang rather than by renaming them.
+SHEBANG_SUFFIXES = ((re.compile(r"^#!.*\bpython[\d.]*\b"), ".py"), (re.compile(r"^#!.*\b(ba|da|k|z)?sh\b"), ".sh"))
+
 COMMENT_MARKERS = {
     ".py": "#",
     ".sh": "#",
@@ -44,13 +49,26 @@ def tracked_files() -> list[str]:
     return [line for line in out.stdout.splitlines() if not line.startswith(SKIP_PREFIXES)]
 
 
+def effective_suffix(path: pl.Path) -> str:
+    """The suffix deciding a file's language, read from the shebang when the name carries none."""
+    if path.suffix:
+        return path.suffix
+    with path.open(errors="replace") as handle:
+        first_line = handle.readline()
+    for pattern, suffix in SHEBANG_SUFFIXES:
+        if pattern.search(first_line):
+            return suffix
+    return ""
+
+
 def check_escapes(files: list[str]) -> list[str]:
     errors = []
     for rel in files:
         path = pl.Path(rel)
         if not path.exists():
             continue
-        patterns = [(name, rx) for name, rx, exts in ESCAPE_PATTERNS if path.suffix in exts]
+        suffix = effective_suffix(path)
+        patterns = [(name, rx) for name, rx, exts in ESCAPE_PATTERNS if suffix in exts]
         if not patterns:
             continue
         for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
@@ -81,8 +99,11 @@ def check_comment_blocks(files: list[str]) -> list[str]:
     errors = []
     for rel in files:
         path = pl.Path(rel)
-        marker = COMMENT_MARKERS.get(path.suffix, "")
-        if not marker or not path.exists():
+        if not path.exists():
+            continue
+        suffix = effective_suffix(path)
+        marker = COMMENT_MARKERS[suffix] if suffix in COMMENT_MARKERS else ""
+        if not marker:
             continue
         for start, length in file_comment_blocks(path, marker):
             errors.append(f"{rel}:{start}: comment block of {length} lines (max {MAX_COMMENT_BLOCK}); simplify the code instead")

@@ -22,6 +22,7 @@ function agentInfo(overrides: Partial<AgentInfo> = {}): AgentInfo {
     status: "alive",
     activityState: "idle",
     buildPhase: null,
+    operation: null,
     startedAt: "2026-01-01T00:00:00Z",
     services: {},
     ...overrides,
@@ -37,6 +38,7 @@ function tree(agents: Record<string, { info: AgentInfo; pending?: NotificationEv
         { info: node.info, notifications: { pending: node.pending ?? [] } },
       ]),
     ),
+    devices: [],
   }
 }
 
@@ -120,6 +122,12 @@ describe("rostersEqual", () => {
           },
         }),
       ),
+      expected: false,
+    },
+    {
+      name: "changed operation is unequal",
+      a: rosterFromTree(tree({ aria: { info: agentInfo({ operation: null }) } })),
+      b: rosterFromTree(tree({ aria: { info: agentInfo({ operation: "backing_up" }) } })),
       expected: false,
     },
     {

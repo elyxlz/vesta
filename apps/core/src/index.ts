@@ -2,7 +2,16 @@ export {
   clientAheadOfGateway,
   clientBelowMinimum,
   compareReleaseVersions,
+  resolveClientVersion,
 } from "./protocol/release-version"
+
+export {
+  extractWhatsNew,
+  fetchReleaseNotes,
+  filterReleaseNotes,
+  parseReleaseNotes,
+} from "./release-notes/release-notes"
+export type { ReleaseNote } from "./release-notes/release-notes"
 
 export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi"
 export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"
@@ -12,8 +21,11 @@ export type {
   AgentInfo,
   ModelAccess,
   AgentNode,
+  AgentOperation,
   AgentStatus,
   BuildPhase,
+  DeviceInfo,
+  DeviceKind,
   GatewayInfo,
   GatewayLan,
   ReleaseChannel,
@@ -21,7 +33,8 @@ export type {
   Tree,
 } from "./protocol/tree"
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
-export type { UserNotificationDelta, Delta } from "./protocol/deltas"
+export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
+export { selectDevices, devicesEqual } from "./tree/devices"
 
 export { createReplica } from "./replica/store"
 export type { Replica } from "./replica/store"
@@ -39,7 +52,10 @@ export { PACING, typingDelay } from "./pacing/pacing"
 export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons"
 export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons"
 
-export { parseNotificationContent } from "./notification-content/notification-content"
+export {
+  notificationRowKey,
+  parseNotificationContent,
+} from "./notification-content/notification-content"
 export type {
   NotificationContent,
   NotificationView,
@@ -80,15 +96,42 @@ export {
   triggerGatewayUpdate,
 } from "./intents/gateway-update"
 
+export {
+  createServiceKeyCache,
+  isKeyFresh,
+  mintServiceKey,
+  serviceKeyPathUrl,
+  serviceKeyQueryUrl,
+  serviceKeySocketUrl,
+} from "./service-keys/service-keys"
+export type { CachedServiceKey, ServiceKey, ServiceKeyCache } from "./service-keys/service-keys"
+
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
 
-export { normalizeProviderInfo, providerPutBody } from "./provider/provider"
+export {
+  agentIsConnectable,
+  agentIsDown,
+  agentNeedsUser,
+  agentOperationLabel,
+  agentOrbState,
+  agentStatusKind,
+  agentStatusLabel,
+  orbIsLive,
+} from "./agent-status/agent-status"
+export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
+
+export {
+  normalizeProviderInfo,
+  providerPutBody,
+  resolveProviderIdentity,
+} from "./provider/provider"
 export type {
   ProviderAuthKind,
   ProviderContextPolicy,
   ProviderContextPreset,
   ProviderInfo,
+  ProviderIdentity,
   ProviderInfoWire,
   ProviderKind,
   ProviderManifest,

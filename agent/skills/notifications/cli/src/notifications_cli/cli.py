@@ -261,7 +261,7 @@ def cmd_clear(_: argparse.Namespace) -> int:
 
 def cmd_facets(_: argparse.Namespace) -> int:
     """List the values seen in past notifications, so you know what to target: source/type/sender plus
-    every structured extra field (e.g. chat_name, chat_type, is_group) under a `fields` map.
+    every structured extra field (e.g. chat_name, chat_type, media_type) under a `fields` map.
 
     Reads the notification history in events.db directly (read-only), mirroring the distinct query
     EventBus would run; keep in step with core/events.py if the stored facet fields change."""
@@ -274,7 +274,7 @@ def cmd_facets(_: argparse.Namespace) -> int:
         for label, field in FACET_FIELDS:
             rows = conn.execute(
                 f"SELECT json_extract(data, '$.{field}') AS v FROM events "
-                "WHERE json_extract(data, '$.type') = 'notification' AND v IS NOT NULL AND v != '' "
+                "WHERE json_valid(data) AND json_extract(data, '$.type') = 'notification' AND v IS NOT NULL AND v != '' "
                 "GROUP BY v ORDER BY MAX(id) DESC LIMIT ?",
                 (FACET_LIMIT,),
             ).fetchall()
@@ -283,7 +283,7 @@ def cmd_facets(_: argparse.Namespace) -> int:
         # field name. json_each walks the map's keys so a new source's new field needs no code change.
         field_rows = conn.execute(
             "SELECT je.key AS field, je.value AS value FROM events, json_each(json_extract(data, '$.fields')) AS je "
-            "WHERE json_extract(data, '$.type') = 'notification' AND je.value IS NOT NULL AND je.value != '' "
+            "WHERE json_valid(data) AND json_extract(data, '$.type') = 'notification' AND je.value IS NOT NULL AND je.value != '' "
             "GROUP BY je.key, je.value ORDER BY MAX(events.id) DESC"
         ).fetchall()
         fields: dict[str, list[str]] = {}
@@ -329,7 +329,7 @@ def main() -> int:
         metavar="FIELD<op>VALUE",
         help="Match ANY notification field (run `facets` to see them). Ops: '=' substring, '~=' regex, "
         "'!=' not, '!~=' not-regex. Repeatable (all must match). e.g. --match 'chat_name=Bride squad', "
-        "--match 'chat_type!=group', --match 'chat_name~=^proj-'. Case-insensitive.",
+        "--match 'chat_type=group', --match 'chat_name~=^proj-'. Case-insensitive.",
     )
     add.add_argument(
         "--for",

@@ -39,6 +39,7 @@ export function Card({ children, glass = false, style }: CardProps) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radii.card,
+    borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     padding: 16,
     gap: 12,

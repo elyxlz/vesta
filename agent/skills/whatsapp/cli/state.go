@@ -24,6 +24,9 @@ type daemonState struct {
 	MSISDN    string `json:"msisdn,omitempty"`
 	DirectURL string `json:"api_url,omitempty"`
 	DirectKey string `json:"api_key,omitempty"`
+	// AccountSource records the explicit connect choice so recovery notifications
+	// never infer cloud vs. Double Tick from an ambiguous mixed environment.
+	AccountSource string `json:"account_source,omitempty"`
 	// OnboardedMSISDN marks the number whose first-link profile and result finished.
 	// PendingLinkedOpener preserves first-link output across profile-init retries.
 	OnboardedMSISDN     string `json:"onboarded_msisdn,omitempty"`
@@ -88,14 +91,6 @@ func defaultNotificationsDir() string {
 	return filepath.Join(os.Getenv("HOME"), "agent", "notifications")
 }
 
-// stopRequestedPath is a standalone 0-byte IPC marker, not part of state.json: it
-// is the one signal the transient `daemon stop` process writes and the dying serve
-// process reads. Folding it in would make a second process a blob writer and
-// reintroduce the cross-process clobber consolidation removes, so it stays a marker.
-func stopRequestedPath(dataDir string) string {
-	return filepath.Join(dataDir, "stop-requested")
-}
-
 // stateStore owns state.json for the serve process: the authoritative in-memory
 // copy, every mutation serialized behind one mutex and persisted atomically. The
 // single writer.
@@ -142,6 +137,13 @@ func (s *stateStore) snapshot() daemonState {
 
 func (s *stateStore) persistLocked() error { return atomicWriteJSON(s.path, s.st) }
 
+func (s *stateStore) recordAccountSource(source string) {
+	switch source {
+	case sourceVestaCloud, sourceDoubletick, sourceSelfManaged:
+		s.update(func(st *daemonState) { st.AccountSource = source })
+	}
+}
+
 // tryRecordPairAttempt checks the ban-avoidance rate limit and, when allowed,
 // records an attempt, atomically. For callers where initiating the flow IS the
 // attempt (a QR link session).
@@ -185,7 +187,7 @@ func atomicWriteJSON(path string, v any) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Chmod(tmp, 0644); err != nil {
+	if err := os.Chmod(tmp, 0600); err != nil {
 		os.Remove(tmp)
 		return err
 	}

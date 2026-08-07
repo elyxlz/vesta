@@ -1,9 +1,9 @@
-import { readSse } from "@vesta/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
 import { useAgent } from "@/agent/AgentProvider";
+import { openAgentLogStream } from "@/agent/agent-log-stream";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { subscribeLogs } from "@/agent/log-stream-subscription";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
@@ -12,6 +12,7 @@ import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
+import { navHeaderHeight } from "@/theme/layout";
 
 const LOG_RETRY_DELAY_MS = 1_000;
 
@@ -53,17 +54,7 @@ function LiveLogs({
     () =>
       subscribeLogs({
         open: (reconnect, onEvent) =>
-          readSse(
-            {
-              fetch: (url, init) => fetch(url, init),
-              url: api.mediaUrl(
-                `/agents/${encodeURIComponent(name)}/logs`,
-                reconnect ? new URLSearchParams({ tail: "0" }) : undefined,
-              ),
-              stoppedEvent: "agent_stopped",
-            },
-            onEvent,
-          ),
+          openAgentLogStream(api, name, reconnect, onEvent),
         onLine: (text) => {
           setLogError("");
           const id = nextLogId.current;
@@ -119,11 +110,18 @@ function LogList({
         renderItem={({ item }) => (
           <AnsiText value={item.text} selectable style={styles.logLine} />
         )}
-        automaticallyAdjustContentInsets={standalone}
-        contentInsetAdjustmentBehavior={standalone ? "automatic" : "never"}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={
           standalone
-            ? styles.listContent
+            ? [
+                styles.listContent,
+                {
+                  paddingTop: insets.top + navHeaderHeight,
+                  paddingBottom: insets.bottom,
+                },
+                displayLogs.length > 0 ? styles.bottomAligned : null,
+              ]
             : [
                 styles.listContent,
                 {
@@ -159,6 +157,7 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   positioningList: { opacity: 0 },
   listContent: { paddingHorizontal: 12 },
+  bottomAligned: { flexGrow: 1, justifyContent: "flex-end" },
   logLine: { fontSize: 13, lineHeight: 18 },
   logError: { paddingBottom: 8, paddingHorizontal: 2, fontSize: 12 },
   empty: { textAlign: "center", padding: 40, fontSize: 14 },

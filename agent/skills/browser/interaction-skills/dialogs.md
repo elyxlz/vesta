@@ -12,15 +12,15 @@ Works even when JS is frozen. Handles all dialog types including `beforeunload`.
 
 ```python
 # Dismiss and read the message (the daemon injects the current context)
-bidi("browsingContext.handleUserPrompt", accept=True)                 # accept / click OK
-bidi("browsingContext.handleUserPrompt", accept=False)                # cancel / click Cancel
+bidi("browsingContext.handleUserPrompt", accept=True)  # accept / click OK
+bidi("browsingContext.handleUserPrompt", accept=False)  # cancel / click Cancel
 bidi("browsingContext.handleUserPrompt", accept=True, userText="hi")  # answer a prompt()
 
 # Read what the dialog said (from buffered BiDi events)
 events = drain_events()
 for e in events:
     if e["method"] == "browsingContext.userPromptOpened":
-        print(e["params"]["type"])     # "alert", "confirm", "prompt", "beforeunload"
+        print(e["params"]["type"])  # "alert", "confirm", "prompt", "beforeunload"
         print(e["params"]["message"])  # the dialog text
 ```
 

@@ -7,6 +7,7 @@ import {
   type AgentSocketValue,
 } from "@/providers/AgentSocketProvider/context";
 import type { ChatMessage } from "@/lib/types";
+import type { NotificationEvent } from "@/api/agents";
 import { NotificationsCard } from "./index";
 
 // A fake AgentSocket context: `pending` is the connect-snapshot seed; `messages` carries any live
@@ -226,5 +227,56 @@ describe("NotificationsCard pending", () => {
     );
 
     await waitFor(() => expect(screen.queryByText("pending")).toBeNull());
+  });
+});
+
+describe("NotificationsCard arrival identity", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterEach(cleanup);
+
+  const dream = (ts: string): NotificationEvent => ({
+    type: "notification",
+    source: "core",
+    summary:
+      '<channel source="core" type="nightly_dream">time to dream</channel>',
+    notif_type: "nightly_dream",
+    id: 201,
+    notif_id: "nightly_dream-2026-01-01",
+    ts,
+  });
+
+  it("renders a re-arrival of the same notif_id at a later ts as its own row", async () => {
+    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
+      notifications: [dream("2026-01-01T03:00:00Z")],
+      cursor: null,
+    });
+    render(
+      <AgentSocketContext.Provider
+        value={socketValue([dream("2026-01-01T05:00:00Z")])}
+      >
+        <NotificationsCard />
+      </AgentSocketContext.Provider>,
+    );
+
+    await waitFor(() => expect(screen.getAllByText("core")).toHaveLength(2));
+  });
+
+  it("still folds a replay of the same notif_id at the same ts into one row", async () => {
+    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
+      notifications: [dream("2026-01-01T03:00:00Z")],
+      cursor: null,
+    });
+    render(
+      <AgentSocketContext.Provider
+        value={socketValue([dream("2026-01-01T03:00:00Z")])}
+      >
+        <NotificationsCard />
+      </AgentSocketContext.Provider>,
+    );
+    await screen.findByText("core");
+
+    expect(screen.getAllByText("core")).toHaveLength(1);
   });
 });

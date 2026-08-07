@@ -59,7 +59,7 @@ tricount add-expense "Trip to Berlin" \
 Like the other daemon skills (microsoft/telegram/tasks), tricount can run a background watcher that polls all joined tricounts and writes a notification whenever an expense is added, edited, deleted, or settled.
 
 ```bash
-screen -dmS tricount tricount serve --notifications-dir ~/agent/notifications
+tricount daemon start
 ```
 
 The first poll seeds current state silently (no notifications for pre-existing expenses); only later changes notify. State is kept in `~/.tricount/watch-state.json`. See SKILL.md for the notification schema and options.

@@ -11,14 +11,18 @@ interface FieldProps extends ComponentProps<typeof TextInput> {
   label?: string;
   description?: string;
   error?: string;
+  errorTone?: "danger" | "secondary";
   accessory?: ReactNode;
+  accessoryWidth?: number;
 }
 
 export function Field({
   label,
   description,
   error,
+  errorTone = "danger",
   accessory,
+  accessoryWidth,
   ...inputProps
 }: FieldProps) {
   const { colors } = usePreferences();
@@ -44,7 +48,7 @@ export function Field({
               borderColor: error ? colors.danger : colors.border,
               color: colors.text,
             },
-            accessory ? styles.inputWithAccessory : null,
+            accessory ? { paddingRight: (accessoryWidth ?? 40) + 12 } : null,
             inputProps.multiline ? styles.multiline : null,
             inputProps.style,
           ]}
@@ -56,7 +60,17 @@ export function Field({
       {error ? (
         <Text
           accessibilityRole="alert"
-          style={[styles.error, { color: colors.danger }]}
+          selectable
+          style={[
+            styles.error,
+            errorTone === "secondary" ? styles.secondaryError : null,
+            {
+              color:
+                errorTone === "secondary"
+                  ? colors.secondaryText
+                  : colors.danger,
+            },
+          ]}
         >
           {error}
         </Text>
@@ -68,10 +82,16 @@ export function Field({
 interface SectionProps {
   title?: string;
   footer?: string;
-  children: ReactNode;
+  children?: ReactNode;
+  actions?: ReactNode;
 }
 
-export function FormSection({ title, footer, children }: SectionProps) {
+export function FormSection({
+  title,
+  footer,
+  children,
+  actions,
+}: SectionProps) {
   const { colors } = usePreferences();
   return (
     <View style={styles.section}>
@@ -83,14 +103,17 @@ export function FormSection({ title, footer, children }: SectionProps) {
           {title}
         </Text>
       ) : null}
-      <View
-        style={[
-          styles.sectionBody,
-          { backgroundColor: colors.card, borderColor: colors.border },
-        ]}
-      >
-        {children}
-      </View>
+      {children ? (
+        <View
+          style={[
+            styles.sectionBody,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          {children}
+        </View>
+      ) : null}
+      {actions ? <View style={styles.sectionActions}>{actions}</View> : null}
       {footer ? (
         <Text style={[styles.footer, { color: colors.secondaryText }]}>
           {footer}
@@ -105,6 +128,8 @@ interface RowProps {
   detail?: string;
   icon?: IconName;
   value?: string;
+  valueIcon?: IconName;
+  valueIconLabel?: string;
   onPress?: () => void;
   destructive?: boolean;
   destructiveIcon?: boolean;
@@ -116,6 +141,8 @@ export function FormRow({
   detail,
   icon,
   value,
+  valueIcon,
+  valueIconLabel,
   onPress,
   destructive = false,
   destructiveIcon = false,
@@ -129,7 +156,9 @@ export function FormRow({
           <Ionicons
             name={icon}
             size={18}
-            color={destructive || destructiveIcon ? colors.danger : colors.accent}
+            color={
+              destructive || destructiveIcon ? colors.danger : colors.accent
+            }
           />
         </View>
       ) : null}
@@ -143,17 +172,31 @@ export function FormRow({
           {label}
         </Text>
         {detail ? (
-          <Text style={[styles.rowDetail, { color: colors.secondaryText }]}>
+          <Text style={[styles.rowDetail, { color: colors.tertiaryText }]}>
             {detail}
           </Text>
         ) : null}
       </View>
-      {value ? (
+      {valueIcon ? (
+        <View style={styles.valueWithIcon}>
+          <Ionicons
+            accessibilityLabel={valueIconLabel}
+            name={valueIcon}
+            size={17}
+            color={colors.secondaryText}
+          />
+          {value ? (
+            <Text style={[styles.value, { color: colors.secondaryText }]}>
+              {value}
+            </Text>
+          ) : null}
+        </View>
+      ) : value ? (
         <Text style={[styles.value, { color: colors.secondaryText }]}>
           {value}
         </Text>
       ) : null}
-      {trailing}
+      {trailing ? <View style={styles.rowTrailing}>{trailing}</View> : null}
       {onPress ? (
         <Ionicons
           name="chevron-forward"
@@ -213,13 +256,13 @@ const styles = StyleSheet.create({
   description: { fontSize: 13, lineHeight: 18 },
   input: {
     minHeight: 48,
-    borderRadius: radii.control,
+    borderRadius: radii.pill,
+    borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 14,
     fontSize: 16,
   },
   inputContainer: { position: "relative" },
-  inputWithAccessory: { paddingRight: 52 },
   inputAccessory: {
     position: "absolute",
     top: 0,
@@ -227,8 +270,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: "center",
   },
-  multiline: { minHeight: 120, paddingTop: 13, textAlignVertical: "top" },
-  error: { fontSize: 13, fontWeight: "600" },
+  multiline: {
+    minHeight: 120,
+    borderRadius: radii.control,
+    paddingTop: 13,
+    textAlignVertical: "top",
+  },
+  error: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
+  secondaryError: { fontWeight: "400" },
   section: { gap: 8 },
   sectionTitle: {
     fontSize: 15,
@@ -239,14 +288,16 @@ const styles = StyleSheet.create({
   },
   sectionBody: {
     borderRadius: radii.card,
+    borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
-    paddingVertical: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
+  sectionActions: { gap: 10 },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16 },
   row: {
     minHeight: 54,
-    paddingHorizontal: 14,
     paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
@@ -260,7 +311,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   rowText: { flex: 1, gap: 2 },
-  rowLabel: { fontSize: 16, fontWeight: "600" },
-  rowDetail: { fontSize: 12, lineHeight: 16 },
+  rowTrailing: {
+    alignSelf: "stretch",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowLabel: { fontSize: 16, fontWeight: "500" },
+  rowDetail: { fontSize: 14, lineHeight: 20 },
   value: { fontSize: 15 },
+  valueWithIcon: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
 });

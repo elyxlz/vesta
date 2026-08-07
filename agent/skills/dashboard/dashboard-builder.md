@@ -66,25 +66,34 @@ Subagent (general-purpose):
     ## Build and verify (required before you report)
 
     ```bash
-    cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
-    ~/agent/skills/dashboard/scripts/daemon stop
-    ~/agent/skills/dashboard/scripts/daemon start
-    STATUS=$(~/agent/skills/dashboard/scripts/daemon status); echo "$STATUS"
+    cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx tsc --noEmit -p tsconfig.app.json && npx vite build
+    dashboard daemon restart
+    STATUS=$(dashboard daemon status); echo "$STATUS"
     PORT=$(echo "$STATUS" | python3 -c 'import sys, json; print(json.load(sys.stdin)["port"])')
     curl -s "http://localhost:$PORT/" | head -50 | grep -q '<div id="root"' || echo "ERROR: dashboard failed to load, check the build output"
-    curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
+    curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
     ```
+
+    The `tsc` step is what catches a data file that violates its own interface; `vite build` alone
+    strips types without checking them, and `tsc -p .` compiles zero files (solution-style root
+    tsconfig) so it passes without measuring anything. Point tsc only at `tsconfig.app.json`.
 
     Do NOT pass `--base` to vite preview: the proxy strips the prefix, so assets would 404. If the
     build fails or a page is blank, fix the reported errors and confirm `app/dist/` exists before
     starting the preview. `UNRESOLVED_IMPORT` means deps were never installed.
+
+    Pages are backed by live user stores (the tasks page reads and writes the user's real tasks),
+    so any browser pass over the served pages is read-only: load, render, and measure, never
+    click, submit, or toggle a control that can write. If verifying genuinely requires an
+    interaction, create throwaway data yourself, interact only with that, and delete it before
+    you report.
 
     ## Before you report: self-review
 
     - Completeness: did you build everything in the spec? Any content or interaction missed?
     - Quality: is it your best work, dense, and consistent with the app's theme?
     - Discipline: did you stay inside the spec (YAGNI) and touch no synced files?
-    - Verified: did the build succeed and the daemon report `http_ok`?
+    - Verified: did the build succeed, the daemon report `running`, and the page load?
 
     Fix anything you find before reporting.
 
@@ -94,7 +103,8 @@ Subagent (general-purpose):
 
     - Status: DONE | DONE_WITH_CONCERNS | BLOCKED
     - What you built, and which files you changed
-    - The daemon status line (`running`, `port`, `http_ok`) as evidence it serves
+    - The daemon status line (`running`, `port`) as evidence it serves
+    - Which live-data pages you exercised in a browser, so the requester knows what to re-verify
     - Any concern, or if BLOCKED, exactly what was underspecified or what failed
 
     Never claim success without the serve evidence. If the spec was genuinely ambiguous, do not

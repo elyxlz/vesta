@@ -31,22 +31,22 @@ Use this header bundle for all requests:
 ```python
 import urllib.request, gzip, json, re
 
-CHROME_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/123.0.0.0 Safari/537.36"
-)
+CHROME_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+
 
 def quora_get(url):
     """Fetch any public Quora page. Returns HTML string.
     Requires Chrome/Firefox UA — bare Mozilla/5.0 returns 403.
     """
-    req = urllib.request.Request(url, headers={
-        "User-Agent": CHROME_UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip",
-        "Accept-Language": "en-US,en;q=0.9",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": CHROME_UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Encoding": "gzip",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
     with urllib.request.urlopen(req, timeout=20) as r:
         data = r.read()
         if r.headers.get("Content-Encoding") == "gzip":
@@ -70,8 +70,8 @@ def extract_quora_payloads(html):
     for raw in raw_payloads:
         try:
             # Two levels of encoding: outer JS string escape, inner JSON
-            inner = json.loads('"' + raw + '"')   # decode JS string escaping
-            results.append(json.loads(inner))      # decode actual JSON
+            inner = json.loads('"' + raw + '"')  # decode JS string escaping
+            results.append(json.loads(inner))  # decode actual JSON
         except Exception:
             pass
     return results
@@ -103,69 +103,71 @@ def quora_question(url):
         try:
             doc = json.loads(json_str)
             parts = []
-            for sec in doc.get('sections', []):
-                for span in sec.get('spans', []):
-                    if span.get('text'):
-                        parts.append(span['text'])
-                parts.append('\n')
-            return ''.join(parts).strip()
+            for sec in doc.get("sections", []):
+                for span in sec.get("spans", []):
+                    if span.get("text"):
+                        parts.append(span["text"])
+                parts.append("\n")
+            return "".join(parts).strip()
         except Exception:
             return json_str
 
     def author_display_name(author_dict):
-        names = author_dict.get('names', [])
+        names = author_dict.get("names", [])
         if names:
             n = names[0]
             return f"{n.get('givenName', '')} {n.get('familyName', '')}".strip()
         return None
 
-    result = {'question': {}, 'answers': [], 'answer_count': None, 'related_questions': []}
+    result = {"question": {}, "answers": [], "answer_count": None, "related_questions": []}
 
     for payload in payloads:
-        data = payload.get('data', payload)
+        data = payload.get("data", payload)
 
         # Question metadata — keyed by presence of 'qid' inside 'question'
-        if 'question' in data and isinstance(data['question'], dict):
-            q = data['question']
-            if q.get('qid') and not result['question']:
-                result['question'] = {
-                    'qid':   q.get('qid'),
-                    'id':    q.get('id'),
-                    'title': spans_to_text(q.get('title', '')),
-                    'url':   q.get('url'),
-                    'slug':  q.get('slug'),
-                    'topics': [t['name'] for t in q.get('navigationTopics', [])],
+        if "question" in data and isinstance(data["question"], dict):
+            q = data["question"]
+            if q.get("qid") and not result["question"]:
+                result["question"] = {
+                    "qid": q.get("qid"),
+                    "id": q.get("id"),
+                    "title": spans_to_text(q.get("title", "")),
+                    "url": q.get("url"),
+                    "slug": q.get("slug"),
+                    "topics": [t["name"] for t in q.get("navigationTopics", [])],
                 }
 
         # Total answer count — keyed by 'answerCount'
-        if 'answerCount' in data:
-            result['answer_count'] = data['answerCount']
-            rq = (data.get('bottomRelatedQuestionsInfo') or {}).get('relatedQuestions', [])
-            result['related_questions'] = [spans_to_text(r['title']) for r in rq]
+        if "answerCount" in data:
+            result["answer_count"] = data["answerCount"]
+            rq = (data.get("bottomRelatedQuestionsInfo") or {}).get("relatedQuestions", [])
+            result["related_questions"] = [spans_to_text(r["title"]) for r in rq]
 
         # Answer nodes — keyed by node.__typename == 'QuestionAnswerItem2'
-        node = data.get('node', {})
-        if isinstance(node, dict) and node.get('__typename') == 'QuestionAnswerItem2':
-            answer = node.get('answer', {})
-            if answer.get('aid'):
-                a_author = answer.get('author') or {}
-                cred = answer.get('authorCredential') or {}
-                result['answers'].append({
-                    'aid':              answer.get('aid'),
-                    'index':            node.get('index'),
-                    'author_name':      author_display_name(a_author),
-                    'author_profile':   a_author.get('profileUrl'),
-                    'author_uid':       a_author.get('uid'),
-                    'author_credential': cred.get('translatedString'),
-                    'num_upvotes':      answer.get('numUpvotes'),
-                    'num_views':        answer.get('numViews'),
-                    'num_shares':       answer.get('numShares'),
-                    'num_comments':     answer.get('numDisplayComments'),
-                    'creation_time_us': answer.get('creationTime'),  # microseconds since epoch
-                    'viewer_has_access': answer.get('viewerHasAccess'),
-                    'perma_url':        answer.get('permaUrl'),
-                    'text':             spans_to_text(answer.get('content', '{}')),
-                })
+        node = data.get("node", {})
+        if isinstance(node, dict) and node.get("__typename") == "QuestionAnswerItem2":
+            answer = node.get("answer", {})
+            if answer.get("aid"):
+                a_author = answer.get("author") or {}
+                cred = answer.get("authorCredential") or {}
+                result["answers"].append(
+                    {
+                        "aid": answer.get("aid"),
+                        "index": node.get("index"),
+                        "author_name": author_display_name(a_author),
+                        "author_profile": a_author.get("profileUrl"),
+                        "author_uid": a_author.get("uid"),
+                        "author_credential": cred.get("translatedString"),
+                        "num_upvotes": answer.get("numUpvotes"),
+                        "num_views": answer.get("numViews"),
+                        "num_shares": answer.get("numShares"),
+                        "num_comments": answer.get("numDisplayComments"),
+                        "creation_time_us": answer.get("creationTime"),  # microseconds since epoch
+                        "viewer_has_access": answer.get("viewerHasAccess"),
+                        "perma_url": answer.get("permaUrl"),
+                        "text": spans_to_text(answer.get("content", "{}")),
+                    }
+                )
 
     return result
 ```
@@ -210,7 +212,8 @@ result = quora_question("https://www.quora.com/What-is-the-meaning-of-life")
 
 ```python
 from datetime import datetime, timezone
-ts_sec = result['answers'][0]['creation_time_us'] / 1_000_000
+
+ts_sec = result["answers"][0]["creation_time_us"] / 1_000_000
 dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
 # datetime(2013, 7, 9, 9, 31, 21, tzinfo=timezone.utc)
 ```
@@ -232,21 +235,22 @@ def quora_answer(answer_url):
     payloads = extract_quora_payloads(html)
 
     for payload in payloads:
-        data = payload.get('data', {})
-        if 'answer' in data and isinstance(data['answer'], dict):
-            a = data['answer']
-            author = a.get('author') or {}
-            names = author.get('names', [{}])
+        data = payload.get("data", {})
+        if "answer" in data and isinstance(data["answer"], dict):
+            a = data["answer"]
+            author = a.get("author") or {}
+            names = author.get("names", [{}])
             n = names[0] if names else {}
             return {
-                'aid':          a.get('aid'),
-                'num_upvotes':  a.get('numUpvotes'),
-                'num_views':    a.get('numViews'),
-                'author_name':  f"{n.get('givenName','')} {n.get('familyName','')}".strip(),
-                'author_uid':   author.get('uid'),
-                'text':         _spans_to_text(a.get('content', '{}')),
+                "aid": a.get("aid"),
+                "num_upvotes": a.get("numUpvotes"),
+                "num_views": a.get("numViews"),
+                "author_name": f"{n.get('givenName', '')} {n.get('familyName', '')}".strip(),
+                "author_uid": author.get("uid"),
+                "text": _spans_to_text(a.get("content", "{}")),
             }
     return {}
+
 
 # Example:
 # quora_answer("https://www.quora.com/What-is-the-meaning-of-life/answer/Pararth-Shah")
@@ -270,21 +274,22 @@ def quora_topic(topic_url):
     payloads = extract_quora_payloads(html)
 
     for payload in payloads:
-        data = payload.get('data', {})
-        if 'topic' in data and isinstance(data['topic'], dict):
-            t = data['topic']
+        data = payload.get("data", {})
+        if "topic" in data and isinstance(data["topic"], dict):
+            t = data["topic"]
             return {
-                'tid':           t.get('tid'),
-                'id':            t.get('id'),
-                'name':          t.get('name'),
-                'url':           t.get('url'),
-                'num_followers': t.get('numFollowers'),
-                'is_following':  t.get('isFollowing'),
-                'has_leaderboard': t.get('hasLeaderboard'),
-                'photo_url':     t.get('photoUrl'),
-                'is_locked':     t.get('isLocked'),
+                "tid": t.get("tid"),
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "url": t.get("url"),
+                "num_followers": t.get("numFollowers"),
+                "is_following": t.get("isFollowing"),
+                "has_leaderboard": t.get("hasLeaderboard"),
+                "photo_url": t.get("photoUrl"),
+                "is_locked": t.get("isLocked"),
             }
     return {}
+
 
 # Example:
 # quora_topic("https://www.quora.com/topic/Python-programming-language")
@@ -305,27 +310,28 @@ def quora_profile(profile_url):
     payloads = extract_quora_payloads(html)
 
     for payload in payloads:
-        data = payload.get('data', {})
-        if 'user' in data and isinstance(data['user'], dict):
-            u = data['user']
-            names = u.get('names', [{}])
+        data = payload.get("data", {})
+        if "user" in data and isinstance(data["user"], dict):
+            u = data["user"]
+            names = u.get("names", [{}])
             n = names[0] if names else {}
-            cred = u.get('profileCredential') or {}
+            cred = u.get("profileCredential") or {}
             return {
-                'uid':             u.get('uid'),
-                'id':              u.get('id'),
-                'name':            f"{n.get('givenName','')} {n.get('familyName','')}".strip(),
-                'profile_url':     u.get('profileUrl'),
-                'follower_count':  u.get('followerCount'),
-                'following_count': u.get('followingCount'),
-                'profile_image':   u.get('profileImageUrl'),
-                'credential':      cred.get('experience'),
-                'is_verified':     u.get('isVerified'),
-                'is_anon':         u.get('isAnon'),
-                'is_ai_account':   u.get('isAiAccount'),
-                'deactivated':     u.get('deactivated'),
+                "uid": u.get("uid"),
+                "id": u.get("id"),
+                "name": f"{n.get('givenName', '')} {n.get('familyName', '')}".strip(),
+                "profile_url": u.get("profileUrl"),
+                "follower_count": u.get("followerCount"),
+                "following_count": u.get("followingCount"),
+                "profile_image": u.get("profileImageUrl"),
+                "credential": cred.get("experience"),
+                "is_verified": u.get("isVerified"),
+                "is_anon": u.get("isAnon"),
+                "is_ai_account": u.get("isAiAccount"),
+                "deactivated": u.get("deactivated"),
             }
     return {}
+
 
 # Example:
 # quora_profile("https://www.quora.com/profile/Pararth-Shah")

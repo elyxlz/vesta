@@ -1,0 +1,122 @@
+appId: ${APP_ID}
+name: Recent gateways and reconnection
+tags:
+  - visual
+  - onboarding
+---
+- launchApp:
+    clearState: true
+    permissions:
+      camera: deny
+- extendedWaitUntil:
+    visible: "Try again"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-initialization-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-initialization-error.png
+- tapOn:
+    text: "Try again"
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Unlock with Face ID"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-locked
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-locked.png
+- tapOn:
+    text: "Unlock with Face ID"
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Device authentication is temporarily locked.*"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-unlock-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-unlock-error.png
+- clearState
+- setPermissions:
+    permissions:
+      camera: deny
+- openLink:
+    link: "vesta-dev://connect?visualPrivacy=unlocked"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Recent gateways"
+    timeout: 30000
+- tapOn:
+    text: "Recent gateways"
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Connect to home.vesta.run"
+    timeout: 10000
+- takeScreenshot: recent-gateways
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: recent-gateways.png
+
+- tapOn:
+    text: "Connect to home.vesta.run"
+    point: "50%,50%"
+    waitToSettleTimeoutMs: 1
+- takeScreenshot: recent-gateway-connecting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: recent-gateway-connecting.png
+
+- extendedWaitUntil:
+    visible: "Retry"
+    timeout: 20000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: recent-gateway-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: recent-gateway-error.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: "^Manage backups,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "^Manage backups,.*"
+- extendedWaitUntil:
+    visible: "Available backups"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "2"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-backups
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-backups.png

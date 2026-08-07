@@ -298,9 +298,9 @@ async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path, state, 
 
 @pytest.mark.anyio
 async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path, state, event_bus):
-    """attempt_interrupt still asks the SDK to interrupt while a tool is executing. The SDK
-    services the request at its next yield point; a timeout no longer SIGTERMs (see issue #737),
-    so there is no reason to suppress the interrupt during tool work."""
+    """attempt_interrupt asks the SDK to interrupt while a tool is executing. The SDK services
+    the request at its next yield point; a timeout does not SIGTERM (see issue #737), so there
+    is no reason to suppress the interrupt during tool work."""
     from core.client import attempt_interrupt
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
@@ -548,7 +548,7 @@ async def test_compact_session_waits_for_result(config):
     """compact_session blocks until the compaction turn's ResultMessage closes the turn."""
     from claude_agent_sdk import SystemMessage
 
-    from core.client import compact_session
+    from core.client import COMPACTION_CREDENTIAL_GUARD, compact_session
 
     state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
 
@@ -558,7 +558,7 @@ async def test_compact_session_waits_for_result(config):
         await message_queue.put(result_msg())
         await asyncio.wait_for(compact_session(state=state, config=config), timeout=5.0)
 
-    mock_client.query.assert_awaited_once_with("/compact")
+    mock_client.query.assert_awaited_once_with(f"/compact {COMPACTION_CREDENTIAL_GUARD}")
     assert state.turn is None
 
 
@@ -568,7 +568,7 @@ async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
     first newline is truncated by the CLI parser."""
     from claude_agent_sdk import SystemMessage
 
-    from core.client import compact_session
+    from core.client import COMPACTION_CREDENTIAL_GUARD, compact_session
 
     state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
 
@@ -579,8 +579,30 @@ async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
         multiline = "keep open threads\nand this draft:\nline two"
         await asyncio.wait_for(compact_session(state=state, config=config, prompt=multiline), timeout=5.0)
 
-    mock_client.query.assert_awaited_once_with("/compact keep open threads and this draft: line two")
+    mock_client.query.assert_awaited_once_with(f"/compact keep open threads and this draft: line two {COMPACTION_CREDENTIAL_GUARD}")
     assert state.turn is None
+
+
+@pytest.mark.anyio
+async def test_compact_session_always_carries_the_credential_guard(config):
+    """Every compaction's guidance ends with the credential guard, caller prompt or not: the
+    summarizer reads raw context that can still hold a credential the events-DB scrub removed, and
+    a value reproduced into the summary re-enters the active context on every later turn."""
+    from claude_agent_sdk import SystemMessage
+
+    from core.client import COMPACTION_CREDENTIAL_GUARD, compact_session
+
+    state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
+
+    async with consuming(state, config):
+        boundary = SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
+        await message_queue.put(boundary)
+        await message_queue.put(result_msg())
+        await asyncio.wait_for(compact_session(state=state, config=config, prompt="keep the open threads"), timeout=5.0)
+
+    (query,) = mock_client.query.await_args.args
+    assert query.startswith("/compact keep the open threads")
+    assert query.endswith(COMPACTION_CREDENTIAL_GUARD)
 
 
 @pytest.mark.anyio

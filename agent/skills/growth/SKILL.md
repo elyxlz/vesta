@@ -25,7 +25,7 @@ Vesta: candidate, touches 3, pitched 2026-07-05
 ## The two loops
 
 - **Friend:** a warm candidate getting real value from you, offer them their own, a little reluctant ("you know you can have your own of me?"), then read the `onboard` skill and follow it to set them up inline. Mark them `member` when done.
-- **Owner:** when you spot a good candidate, tell the user, with the real money from `vesta-cloud-account` ("want me to set sarah up? you've made $X so far, half her first month"). Let them say go.
+- **Owner:** when you spot a good candidate, tell the user, with the real money from `vesta-cloud` ("want me to set sarah up? you've made $X so far, half her first month"). Let them say go.
 
 ## [Your setup]
 

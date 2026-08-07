@@ -10,6 +10,7 @@ import { registerMobileDevice, unregisterMobileDevice } from "@/api/endpoints";
 import { createApiClient, type ApiClient } from "@/api/client";
 import type { ConnectionConfig } from "@/api/types";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 import {
@@ -66,7 +67,9 @@ function configuredProjectId(): string | null {
   return typeof eas.projectId === "string" ? eas.projectId : null;
 }
 
-async function pushInstallationId(): Promise<string> {
+// The stable per-install id, reused as this device's id in both push registration and the device
+// registry so one install is one device across both.
+export async function pushInstallationId(): Promise<string> {
   const stored = await AsyncStorage.getItem(PUSH_INSTALLATION_ID_KEY);
   if (stored) return stored;
   const installationId = Crypto.randomUUID();
@@ -95,6 +98,7 @@ function EnabledPushCoordinator() {
   const session = useSession();
   const { reachable, agentsReady, agents } = useRoster();
   const preferences = usePreferences();
+  const privacyBlocked = usePrivacyBlocked();
   const [pending, setPending] = useState<PendingNotification | null>(null);
   const processingNotification = useRef<string | null>(null);
   const registrationChain = useRef<Promise<void>>(Promise.resolve());
@@ -191,7 +195,7 @@ function EnabledPushCoordinator() {
   }, []);
 
   useEffect(() => {
-    if (!pending) return;
+    if (privacyBlocked || !pending) return;
     const routeReady = !["/connect", "/connect-link", "/scan"].includes(
       pathname,
     );
@@ -228,6 +232,7 @@ function EnabledPushCoordinator() {
   }, [
     pathname,
     pending,
+    privacyBlocked,
     router,
     session,
     reachable,

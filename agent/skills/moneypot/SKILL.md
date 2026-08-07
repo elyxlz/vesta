@@ -1,13 +1,19 @@
 ---
 name: moneypot
-description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get a compact set of payments to settle up. Also exposes an optional HTTP/JSON API. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
+description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get a compact set of payments to settle up. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
 ---
 
 # Moneypot
 
-A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up. CLI plus an optional HTTP API. Data lives in `~/agent/data/moneypot.json` (shared by both).
+A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up.
 
-Run the CLI with `python3 ~/agent/skills/moneypot/moneypot.py <command>`.
+Run it with `moneypot <command>`. Put the command on PATH once:
+
+```bash
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
+```
+
+The CLI needs nothing running: it reads and writes `~/agent/data/moneypot.json` directly, created on first write, and touches the network only for the optional live exchange-rate lookup. The HTTP API below is separate and optional, and is the only part that starts a daemon or registers a port.
 
 ## Model
 
@@ -21,7 +27,7 @@ Amounts are stored as integer minor units (pence/cents), so there's no float dri
 ## CLI
 
 ```bash
-PY="python3 ~/agent/skills/moneypot/moneypot.py"
+PY="moneypot"
 
 # create a pot
 $PY pot create trip --name "Ski Trip" --currency GBP --members "Alice,Bob,Cara"
@@ -77,7 +83,22 @@ contributions into 'Joint':
 
 ## HTTP API (optional)
 
-`server.py` is a stdlib JSON API over the same data, for dashboards or other apps. Mutations are lock-serialized. See `SETUP.md` to run it as a vestad service. Routes:
+`moneypot daemon start|stop|restart|status` serves the same pot data as JSON over HTTP, for another app that needs to read or write pots without shelling out to the CLI. Nothing in the CLI needs it.
+
+Start is idempotent (a live daemon is a no-op) and owns the port registration with vestad; stop is the deliberate shutdown; status reads the pid and port records under `~/agent/data/daemons/`, so it answers while vestad is down. Logs go to `~/agent/logs/moneypot.log`. Manage the daemon only through these commands, never by launching `server.py` yourself.
+
+The port is registered private, so vestad is the gate in front of it and the API itself checks no credential. Reach it at `$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/...` with the app api key, or mint a service key for a caller that holds no app credential:
+
+```bash
+service-key mint moneypot --label "what it is for"
+```
+
+Add this line yourself, inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+```
+moneypot daemon start
+```
+
+Routes:
 
 ```
 GET    /health
@@ -94,13 +115,11 @@ GET    /pots/{id}/balance
 GET    /pots/{id}/contributions?account=X
 ```
 
-Errors return `{"error": "..."}` with HTTP 400 (bad input), 404 (no route), or 401 (bad key).
-
-**Authentication.** Inside vesta, the API automatically requires the vestad agent token (`AGENT_TOKEN`) on every route except `/health`. A separate app key can be added with `--api-key KEY` (or `MONEYPOT_API_KEY`) and sent as `Authorization: Bearer KEY` or `X-API-Key: KEY`. Outside vesta, with neither credential configured, the API is open.
+Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route). API mutations are serialized with a lock; the CLI writes the same file without one, so do not drive mutations through the CLI and the API at the same moment.
 
 ## Notes
 
 - `--currency` accepts any label; `GBP/USD/EUR/JPY` print with a symbol, others print the code.
 - "How much each person put in" = the **paid** figure shown next to each balance.
-- No setup needed for CLI use; the data file is created on first write. The API needs the one-time service registration in `SETUP.md`.
+- Every view takes `--json`, which is the form to read when you are acting on the numbers rather than showing them.
 - Self-contained, stdlib only, no personal data baked in.

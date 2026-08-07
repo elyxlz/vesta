@@ -8,7 +8,7 @@ Run this once and the daemon and both binaries share the same per-account token 
 
 - **Microsoft personal** (`outlook.com`, `hotmail.com`, `live.com`): OAuth2 **device flow**.
 - **Microsoft 365 work** (custom domain on Exchange Online): OAuth2 **device flow** via `--provider microsoft-work`.
-- **Gmail**: OAuth2 **loopback flow** (`http://127.0.0.1:<port>/`).
+- **Gmail**: OAuth2 **loopback flow** (`http://127.0.0.1:<port>/`), or **app password** via `--provider gmail-app-password` when the loopback flow is unavailable. The app-password path needs 2FA on the Google account (Google only offers app passwords once 2FA is on) and is mail only, no calendar.
 - **Yahoo / iCloud / Fastmail / generic IMAP**: **app password**.
 
 Both OAuth flows reuse Mozilla Thunderbird's published public client IDs (Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com` plus its published desktop-app secret `kSmqreRr0qwBWJgbf5Y-PjSU`). These are public, not secrets, and are the canonical open-source-mail-client choice. The reason: Microsoft killed basic-auth IMAP for personal accounts in late 2024 and deprecated tenantless Azure app registrations mid-2025, so reusing a published client ID is the only OAuth path that doesn't require the user to register an Azure tenant. Google deprecated the device flow for desktop apps, so its supported equivalent is the loopback redirect, which the skill captures via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600).
@@ -22,24 +22,10 @@ This is why both OAuth consent screens say "Mozilla Thunderbird". That is expect
 ## 1. Install
 
 ```bash
-mkdir -p ~/.email-client/runtime
-cd ~/.email-client/runtime
-uv init --bare --python 3.11
-uv add imap_tools msal aiohttp
-ln -sf ~/agent/skills/email-client/imap_client.py ~/.email-client/imap_client.py
-ln -sf ~/agent/skills/email-client/smtp_send.py ~/.email-client/smtp_send.py
-ln -sf ~/agent/skills/email-client/poll_daemon.py ~/.email-client/poll_daemon.py
-ln -sf ~/agent/skills/email-client/providers.py ~/.email-client/providers.py
-ln -sf ~/agent/skills/email-client/auth.py ~/.email-client/auth.py
-ln -sf ~/agent/skills/email-client/thunderbird_client.py ~/.email-client/thunderbird_client.py
-ln -sf ~/agent/skills/email-client/calendar_client.py ~/.email-client/calendar_client.py
-ln -sf ~/agent/skills/email-client/google_health.py ~/.email-client/google_health.py
-sudo cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client
-sudo cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send
-chmod +x /usr/local/bin/email-client /usr/local/bin/email-client-send
+uv tool install --editable ~/agent/skills/email-client/cli
 ```
 
-`imap_tools` wraps the IMAP read/manage layer. `msal` is only for Microsoft OAuth refresh; the Gmail loopback flow uses stdlib `urllib`.
+This puts both console scripts, `email-client` and `email-client-send`, on `~/.local/bin`. `imap_tools` wraps the IMAP read/manage layer. `msal` is only for Microsoft OAuth refresh; the Gmail loopback flow uses stdlib `urllib`.
 
 ## 2. Add the first account
 
@@ -69,12 +55,19 @@ The user opens the URL on any device, enters the code, and signs in with the rig
 
 ### Gmail - loopback OAuth
 
-The CLI prints a Google consent URL and listens on `http://127.0.0.1:<random-port>/`. The user opens the URL in any browser that can reach this host (same machine, same LAN, or via SSH tunnel: `ssh -L <port>:127.0.0.1:<port> <host>`), signs in, and approves. The CLI captures the code, exchanges it, and writes tokens to `token.json`. On a headless box where the browser can't reach the loopback port, forward the port first or run auth on a workstation and copy the token file over.
+The CLI prints a Google consent URL and listens on `http://127.0.0.1:<random-port>/`. The user opens the URL in any browser that can reach this host (same machine, same LAN, or via SSH tunnel: `ssh -L <port>:127.0.0.1:<port> <host>`), signs in, and approves. The CLI captures the code, exchanges it, and writes tokens to `token.json`. On a headless box where the browser can't reach the loopback port, forward the port first, run auth on a workstation and copy the token file over, or skip OAuth entirely with an app password:
 
-### Yahoo / iCloud / Fastmail / generic - app password
+```bash
+email-client auth add --account personal --user you@gmail.com --provider gmail-app-password
+```
+
+That needs 2FA enabled on the Google account (Google only shows the app-password option once 2FA is on) and covers mail only, no calendar: the `calendar` commands error on a missing `caldav_url` under this profile. Autodetect sends `gmail.com` to the OAuth `gmail` profile, so this one applies only when you pass `--provider gmail-app-password` yourself.
+
+### Gmail / Yahoo / iCloud / Fastmail / generic - app password
 
 The CLI prompts for an app password. Generate one in the provider's security settings:
 
+- Gmail (`--provider gmail-app-password`): myaccount.google.com → Security → 2-Step Verification → App passwords. The entry only exists once 2-Step Verification is on.
 - Yahoo: Account Info → Account security → Generate app password
 - iCloud: appleid.apple.com → Sign-In and Security → App-Specific Passwords
 - Fastmail: Settings → Privacy & Security → App passwords (scope: IMAP/SMTP)
@@ -150,9 +143,9 @@ If a Gmail `list-calendars` reports a refused request or a scope error, the acco
 email-client daemon start
 ```
 
-Idempotent (a running daemon is a no-op) and defaults `--interval` to `$EMAIL_CLIENT_POLL_INTERVAL` or 15 seconds. Check with `email-client daemon status`, which reports process state plus per-account auth health in one JSON blob, so there's no need to `screen -X hardcopy` or read the log by hand. `email-client daemon stop` and `email-client daemon restart` are also available; a deliberate stop or restart marks itself intentional first, so it never fires the `daemon_died` notification the agent would otherwise investigate.
+Idempotent (a running daemon is a no-op) and polls every `$EMAIL_CLIENT_POLL_INTERVAL` seconds, 15 by default. Check with `email-client daemon status`, which answers `{"running": ...}` from the pid record at `~/agent/data/daemons/email-client.pid`; the daemon's output is at `~/agent/logs/email-client.log`. `email-client daemon stop` and `email-client daemon restart` are also available; stop is a SIGTERM, which the daemon reads as the exit it was asked for, so it never fires the `daemon_died` notification the agent would otherwise investigate.
 
-The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls every `--interval` seconds (the flag is the fallback cadence, not the primary mechanism). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart.
+The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls on that interval (the fallback cadence, not the primary mechanism). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart, and it waits rather than exiting while no account is configured.
 
 **Ask the user which folders they want to be notified about, per account.** If they have no preference, default to **all** folders. Then set the watch list (see SKILL.md "Choosing which folders notify"):
 
@@ -172,7 +165,7 @@ connects out to IMAP and writes notification files, so it needs no inbound port:
 daemon, not a vestad service.
 
 ```
-running email-client || { email-client daemon start; sleep 1; }
+email-client daemon start
 ```
 
 ## 6. Wire the rules into MEMORY.md
@@ -240,10 +233,9 @@ $EMAIL_CLIENT_DIR/                # default ~/.email-client
       high_uid.txt                # INBOX watermark
       high_uid_Archive.txt        # per-folder watermark (one per extra watched folder)
     work/ ...
-  daemon.pid                      # poll daemon pid; owned by `email-client daemon start|stop|restart|status`
-  daemon-info.json                # {"interval", "started_at"} of the running daemon, for `daemon restart`
-  stop-requested                  # marker `daemon stop`/`restart` writes so a deliberate exit skips daemon_died
 ```
+
+The daemon's own records live with every other daemon's: the pid at `~/agent/data/daemons/email-client.pid`, the log at `~/agent/logs/email-client.log`.
 
 `token.json` always carries a `provider` key alongside the credential (access/refresh token for OAuth, `app_password` otherwise), so the daemon knows the auth strategy even if env vars change later.
 

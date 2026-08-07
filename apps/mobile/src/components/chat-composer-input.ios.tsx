@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef } from "react";
+import { useCallback, useImperativeHandle, useRef } from "react";
 import { StyleSheet } from "react-native";
 import {
   Host,
@@ -23,6 +23,7 @@ import {
   type ChatComposerInputProps,
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input.types";
+import { useChatComposerLifecycle } from "@/components/chat-composer-input-lifecycle";
 import { fontNames } from "@/theme/typography";
 
 const fontModifier = font({
@@ -42,10 +43,17 @@ export function ChatComposerInput({
 }: ChatComposerInputProps) {
   const nativeValue = useNativeState(value);
   const nativeRef = useRef<TextFieldRef>(null);
-
-  useEffect(() => {
-    if (nativeValue.get() !== value) nativeValue.set(value);
-  }, [nativeValue, value]);
+  const restoreNativeValue = useCallback(
+    (nextValue: string) => {
+      if (nativeValue.get() !== nextValue) nativeValue.set(nextValue);
+    },
+    [nativeValue],
+  );
+  const lifecycle = useChatComposerLifecycle({
+    value,
+    onChangeText,
+    restoreNativeValue,
+  });
 
   useImperativeHandle(
     ref,
@@ -67,7 +75,8 @@ export function ChatComposerInput({
         ref={nativeRef}
         axis="vertical"
         maxLength={maxLength}
-        onTextChange={onChangeText}
+        onFocusChange={lifecycle.onFocusChange}
+        onTextChange={lifecycle.onNativeTextChange}
         placeholder={placeholder}
         text={nativeValue}
         modifiers={[
@@ -84,10 +93,7 @@ export function ChatComposerInput({
       >
         <TextField.Placeholder>
           <Text
-            modifiers={[
-              fontModifier,
-              foregroundStyle(placeholderTextColor),
-            ]}
+            modifiers={[fontModifier, foregroundStyle(placeholderTextColor)]}
           >
             {placeholder}
           </Text>

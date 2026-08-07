@@ -8,6 +8,7 @@
 
 ```python
 import json
+
 articles = json.loads(http_get("https://dev.to/api/articles?per_page=10&tag=python"))
 # Each article: id, title, description, url, cover_image, tag_list, tags,
 #               published_at, published_timestamp, readable_publish_date,
@@ -23,6 +24,7 @@ The API serves **V0 (beta) by default** and emits a `Warning: 299` header on eve
 import json
 import urllib.request, gzip
 
+
 def dev_get(url):
     h = {
         "User-Agent": "Mozilla/5.0",
@@ -34,6 +36,7 @@ def dev_get(url):
         if r.headers.get("Content-Encoding") == "gzip":
             data = gzip.decompress(data)
         return data.decode()
+
 
 articles = json.loads(dev_get("https://dev.to/api/articles?per_page=10&tag=python"))
 ```
@@ -48,10 +51,11 @@ Or just use `http_get` directly if you don't care about the warning header noise
 
 ```python
 import json
+
 articles = json.loads(http_get("https://dev.to/api/articles?per_page=10&tag=python"))
 # Paginate with &page=2, &page=3 etc. (1-indexed)
 for a in articles:
-    print(a['id'], a['positive_reactions_count'], a['title'][:60])
+    print(a["id"], a["positive_reactions_count"], a["title"][:60])
 ```
 
 Confirmed working tags: `python`, `javascript`, `typescript`, `rust`, `go`, `webdev`, `tutorial`, `react`, `devops`, `ai`, `beginners`.
@@ -60,17 +64,19 @@ Confirmed working tags: `python`, `javascript`, `typescript`, `rust`, `go`, `web
 
 ```python
 import json
+
 # top=N means "top articles from the last N days"
-top_day   = json.loads(http_get("https://dev.to/api/articles?per_page=10&top=1"))
-top_week  = json.loads(http_get("https://dev.to/api/articles?per_page=10&top=7"))
+top_day = json.loads(http_get("https://dev.to/api/articles?per_page=10&top=1"))
+top_week = json.loads(http_get("https://dev.to/api/articles?per_page=10&top=7"))
 top_month = json.loads(http_get("https://dev.to/api/articles?per_page=10&top=30"))
-top_year  = json.loads(http_get("https://dev.to/api/articles?per_page=10&top=365"))
+top_year = json.loads(http_get("https://dev.to/api/articles?per_page=10&top=365"))
 ```
 
 ### Articles by username
 
 ```python
 import json
+
 articles = json.loads(http_get("https://dev.to/api/articles?per_page=10&username=ben"))
 # Paginates cleanly: page=1, page=2 etc. Return distinct IDs, no overlap.
 ```
@@ -79,7 +85,8 @@ articles = json.loads(http_get("https://dev.to/api/articles?per_page=10&username
 
 ```python
 import json
-fresh  = json.loads(http_get("https://dev.to/api/articles?per_page=10&state=fresh"))   # very new
+
+fresh = json.loads(http_get("https://dev.to/api/articles?per_page=10&state=fresh"))  # very new
 rising = json.loads(http_get("https://dev.to/api/articles?per_page=10&state=rising"))  # gaining traction
 # state=all returns 0 results (requires auth, not useful unauthenticated)
 ```
@@ -88,17 +95,19 @@ rising = json.loads(http_get("https://dev.to/api/articles?per_page=10&state=risi
 
 ```python
 import json
+
 article = json.loads(http_get("https://dev.to/api/articles/3442047"))
 # Full article adds two fields not in list response:
 #   body_html     — rendered HTML (safe to display directly)
 #   body_markdown — raw Markdown source
-print(len(article['body_html']), len(article['body_markdown']))
+print(len(article["body_html"]), len(article["body_markdown"]))
 ```
 
 ### Single article by username/slug
 
 ```python
 import json
+
 # path field from list response is "/username/slug"
 article = json.loads(http_get("https://dev.to/api/articles/ben/some-article-slug"))
 ```
@@ -107,11 +116,12 @@ article = json.loads(http_get("https://dev.to/api/articles/ben/some-article-slug
 
 ```python
 import json
+
 tags = json.loads(http_get("https://dev.to/api/tags?per_page=10"))
 # Fields: id, name, bg_color_hex, text_color_hex, short_summary
 # Sorted by popularity. Paginate with &page=2 etc.
 for t in tags:
-    print(t['name'], t['bg_color_hex'], t['text_color_hex'])
+    print(t["name"], t["bg_color_hex"], t["text_color_hex"])
 # e.g. webdev  #562765  #ffffff
 #      javascript  #f7df1e  #000000
 #      ai  #17fd1a  #ffffff
@@ -121,10 +131,11 @@ for t in tags:
 
 ```python
 import json
+
 user = json.loads(http_get("https://dev.to/api/users/by_username?url=ben"))
 # Fields: type_of, id, username, name, twitter_username, github_username,
 #         summary, location, website_url, joined_at, profile_image
-print(user['id'], user['username'], user['summary'])
+print(user["id"], user["username"], user["summary"])
 # e.g. 1  ben  "A Canadian software developer who thinks he's funny."
 ```
 
@@ -134,20 +145,22 @@ print(user['id'], user['username'], user['summary'])
 
 ```python
 import json
+
 comments = json.loads(http_get("https://dev.to/api/comments?a_id=3442047"))
 # Returns top-level comments only (replies nested under children key)
 # Fields per comment: id_code (string, not int!), type_of, body_html,
 #                     created_at, user (dict), children (list of same shape)
 for c in comments:
-    print(c['id_code'], c['user']['username'], c['created_at'])
-    for reply in c.get('children', []):
-        print("  reply:", reply['id_code'], reply['user']['username'])
+    print(c["id_code"], c["user"]["username"], c["created_at"])
+    for reply in c.get("children", []):
+        print("  reply:", reply["id_code"], reply["user"]["username"])
 ```
 
 ### Single comment by id_code
 
 ```python
 import json
+
 comment = json.loads(http_get("https://dev.to/api/comments/36lnc"))
 # Same fields as above: id_code, body_html, created_at, user, children
 ```
@@ -158,12 +171,13 @@ comment = json.loads(http_get("https://dev.to/api/comments/36lnc"))
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-tags = ['python', 'javascript', 'typescript', 'rust', 'go',
-        'devops', 'webdev', 'tutorial', 'productivity', 'react']
+tags = ["python", "javascript", "typescript", "rust", "go", "devops", "webdev", "tutorial", "productivity", "react"]
+
 
 def fetch_tag(tag):
     data = json.loads(http_get(f"https://dev.to/api/articles?per_page=5&tag={tag}"))
     return tag, data
+
 
 with ThreadPoolExecutor(max_workers=3) as ex:
     results = dict(ex.map(lambda t: fetch_tag(t), tags))
@@ -196,12 +210,11 @@ All list endpoints paginate with `page=` (1-indexed) and `per_page=`:
 ```python
 import json
 
+
 def get_all_articles_by_tag(tag, max_pages=5):
     results = []
     for page in range(1, max_pages + 1):
-        batch = json.loads(http_get(
-            f"https://dev.to/api/articles?per_page=30&tag={tag}&page={page}"
-        ))
+        batch = json.loads(http_get(f"https://dev.to/api/articles?per_page=30&tag={tag}&page={page}"))
         if not batch:
             break
         results.extend(batch)
@@ -269,21 +282,20 @@ Safe pattern for bulk fetching:
 import json, time
 from concurrent.futures import ThreadPoolExecutor
 
+
 def safe_fetch(url):
     for attempt in range(3):
         try:
             return json.loads(http_get(url))
         except Exception as e:
-            if '429' in str(e):
-                time.sleep(1)   # Retry-After is 1s
+            if "429" in str(e):
+                time.sleep(1)  # Retry-After is 1s
                 continue
             raise
     return []
 
-urls = [
-    f"https://dev.to/api/articles?per_page=10&tag={tag}"
-    for tag in ['python', 'javascript', 'typescript', 'rust']
-]
+
+urls = [f"https://dev.to/api/articles?per_page=10&tag={tag}" for tag in ["python", "javascript", "typescript", "rust"]]
 with ThreadPoolExecutor(max_workers=3) as ex:
     results = list(ex.map(safe_fetch, urls))
 ```

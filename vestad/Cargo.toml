@@ -21,7 +21,7 @@ unimplemented = "deny"
 
 [package]
 name = "vestad"
-version = "0.1.180"
+version = "0.1.186"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
@@ -48,7 +48,7 @@ tracing-appender = "0.2"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 rcgen = "0.14"
 ring = "0.17"
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -70,7 +70,7 @@ flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }
 rust-embed = { version = "8", features = ["compression", "include-exclude", "debug-embed"] }
 mime_guess = "2"
-base64 = "0.22"
+base64 = "0.23"
 hex = "0.4"
 qrcode = { version = "0.14", default-features = false }
 jiff = "0.2"
@@ -78,9 +78,6 @@ jiff = "0.2"
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
-# The port-reuse tests' corpse socket: bound, never listened on, the one shape std/tokio
-# cannot build. Already in the tree via tokio.
-socket2 = "0.6"
 # Integration/live e2e tests live here (in vestad's own tests/) so `cargo test -p vestad
 # --test <name>` builds the vestad binary and exposes its path via CARGO_BIN_EXE_vestad —
 # no separate build step, no stale-binary risk. They reuse the shared harness from vesta-tests.

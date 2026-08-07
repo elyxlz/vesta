@@ -10,9 +10,8 @@ use crate::docker::{
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
-pub const DEFAULT_RETENTION_DAILY: usize = 3;
-pub const DEFAULT_RETENTION_WEEKLY: usize = 2;
-pub const DEFAULT_RETENTION_MONTHLY: usize = 1;
+pub const DEFAULT_RETENTION_PERIODIC: usize = 2;
+pub const DEFAULT_RETENTION_PRE_UPDATE_VERSIONS: usize = 2;
 const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
 pub const BACKUP_STOP_TIMEOUT_SECS: i32 = 30;
@@ -80,148 +79,55 @@ fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
     u64::try_from(dt.unix_timestamp()).ok()
 }
 
-/// Stop (if running), run `op`, restart. Writes `resume_reason` into the agent's boot inbox for
-/// the restart. The write happens AFTER `op` — writing before the stop would bake the reason into
-/// the snapshot `op` takes, and a restore of that backup would replay it as a stale greeting.
-async fn with_container_paused<F, Fut, T>(
-    docker: &Docker,
-    name: &str,
-    cs: ContainerStatus,
-    resume_reason: &crate::lifecycle::LifecycleReason,
-    op: F,
-) -> Result<T, DockerError>
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = T>,
-{
-    let cname = container_name(name);
-    let was_running = cs == ContainerStatus::Running;
-    if was_running {
-        tracing::info!(agent = %name, "stopping agent for backup");
-        handoff_shutdown_reason(docker, name, &cname, resume_reason).await;
-        // A failed stop can leave the container's events.db WAL mid-checkpoint; running the
-        // snapshot against that live, inconsistent state would produce a backup that looks
-        // fine but restores malformed. Bail here so the cycle is retried instead. The stop
-        // error can be client-side after dockerd already stopped the container, so
-        // best-effort resume first: skipping the backup is correct, stranding the agent
-        // down until the next vestad boot is not.
-        if let Err(err) =
-            stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await
-        {
-            handoff_boot_reason(docker, name, &cname, resume_reason).await;
-            start_container(docker, &cname).await;
-            return Err(err);
-        }
-    }
+const TEMP_IMAGE_REPO_PREFIX: &str = "vesta-backup-tmp";
+const TEMP_IMAGE_TAG: &str = "latest";
 
-    let result = op().await;
-
-    if was_running {
-        tracing::info!(agent = %name, "restarting agent");
-        handoff_boot_reason(docker, name, &cname, resume_reason).await;
-        if !start_container(docker, &cname).await {
-            tracing::error!(agent = %name, "failed to restart agent after backup");
-        }
-    }
-    Ok(result)
+/// Best-effort removal of the throwaway commit container/image (leftovers included).
+async fn remove_temp_artifacts(docker: &Docker, temp_cname: &str, image: &str) {
+    crate::docker::remove_container_force(docker, temp_cname).await.ok();
+    crate::docker::remove_image(docker, image).await.ok();
 }
 
-/// The boot reason for the restart after a backup pause, by what triggered the backup.
-fn backup_resume_reason(
-    backup_type: &BackupType,
-) -> &'static crate::lifecycle::LifecycleReason {
-    match backup_type {
-        BackupType::Manual => &crate::lifecycle::MANUAL_BACKUP,
-        BackupType::PreRestore => &crate::lifecycle::PRE_RESTORE_BACKUP,
-        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => {
-            &crate::lifecycle::SCHEDULED_BACKUP
-        }
-    }
-}
-
-/// Validate the agent, confirm its container is backup-able (not NotFound/Dead),
-/// and verify disk headroom. Returns the container's status for the stop/start cycle.
-async fn backup_preflight(docker: &Docker, name: &str) -> Result<ContainerStatus, DockerError> {
-    validate_name(name)?;
-    let cname = container_name(name);
-    let cs = guard_alive(container_status(docker, &cname).await, name)?;
-    check_disk_space(docker, name, &cname).await?;
-    Ok(cs)
-}
-
-/// Create a backup of the given agent. Stops the container during the snapshot, then restarts.
+/// Create a backup of the given agent without ever stopping it. A running container is captured
+/// via `docker commit` (Docker pauses it for the seconds the commit takes), then the committed
+/// image is exported through a temp container into restic; a stopped container exports directly.
 pub async fn create_backup(
     docker: &Docker,
     name: &str,
     backup_type: BackupType,
+    from_version: Option<&str>,
 ) -> Result<BackupInfo, DockerError> {
-    let cs = backup_preflight(docker, name).await?;
+    validate_name(name)?;
+    let cname = container_name(name);
+    let cs = guard_alive(container_status(docker, &cname).await, name)?;
+    check_disk_space(docker, name, &cname).await?;
 
-    let result = with_container_paused(
-        docker,
-        name,
-        cs,
-        backup_resume_reason(&backup_type),
-        || async {
-            tracing::info!(agent = %name, backup_type = %backup_type, "snapshotting backup");
-            crate::restic::snapshot(name, &backup_type).await
-        },
-    )
-    .await
-    .and_then(std::convert::identity);
+    let result = if cs == ContainerStatus::Running {
+        // One shared name for the throwaway image repo and export container.
+        let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
+        let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
+        // A leftover temp container/image from a crashed run must not fail this one.
+        remove_temp_artifacts(docker, &temp_cname, &image).await;
+        tracing::info!(agent = %name, backup_type = %backup_type, "committing running container for backup");
+        crate::docker::commit_container_to_image(docker, &cname, &temp_cname, TEMP_IMAGE_TAG).await?;
+        let snap = match crate::docker::create_plain_container(docker, &image, &temp_cname).await {
+            Ok(()) => crate::restic::snapshot(name, &backup_type, from_version, &temp_cname).await,
+            Err(e) => Err(e),
+        };
+        remove_temp_artifacts(docker, &temp_cname, &image).await;
+        snap
+    } else {
+        crate::restic::snapshot(name, &backup_type, from_version, &cname).await
+    };
 
     match &result {
         Ok(info) => {
-            tracing::info!(agent = %name, backup_id = %info.id, size = info.size, "backup created");
+            tracing::info!(agent = %name, backup_type = %info.backup_type, backup_id = %info.id, size = info.size, "backup created");
         }
         Err(e) => tracing::error!(agent = %name, error = %e, "backup failed"),
     }
 
     result
-}
-
-/// Create multiple backup types in one stop/start cycle (separate restic
-/// snapshots, deduplicated). Returns a result per type; failures don't block others.
-pub async fn create_backups_batch(
-    docker: &Docker,
-    name: &str,
-    types: Vec<BackupType>,
-) -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
-    let fail_all = |types: Vec<BackupType>,
-                    e: DockerError|
-     -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
-        types.into_iter().map(|bt| (bt, Err(e.clone()))).collect()
-    };
-
-    if types.is_empty() {
-        return Vec::new();
-    }
-
-    let cs = match backup_preflight(docker, name).await {
-        Ok(cs) => cs,
-        Err(e) => return fail_all(types, e),
-    };
-    let types_for_stop_failure = types.clone();
-
-    // Batch backups are only ever the auto-backup's scheduled set, so one scheduled reason fits.
-    let paused_result = with_container_paused(docker, name, cs, &crate::lifecycle::SCHEDULED_BACKUP, || async {
-        let mut results = Vec::new();
-        for bt in types {
-            let result = crate::restic::snapshot(name, &bt).await;
-            match &result {
-                Ok(info) => tracing::info!(agent = %name, backup_type = %bt, backup_id = %info.id, "backup created"),
-                Err(e) => tracing::error!(agent = %name, backup_type = %bt, error = %e, "backup failed"),
-            }
-            results.push((bt, result));
-        }
-        results
-    })
-    .await;
-
-    match paused_result {
-        Ok(results) => results,
-        Err(e) => fail_all(types_for_stop_failure, e),
-    }
 }
 
 /// List all backups for the given agent, sorted by date descending. Agent identity
@@ -289,7 +195,7 @@ pub async fn restore_backup(
                 .ok();
         }
         tracing::info!(agent = %name, "creating pre-restore safety backup");
-        if let Err(e) = crate::restic::snapshot(name, &BackupType::PreRestore).await {
+        if let Err(e) = crate::restic::snapshot(name, &BackupType::PreRestore, None, &cname).await {
             if status == ContainerStatus::Running {
                 handoff_boot_reason(docker, name, &cname, &crate::lifecycle::RESTORE_ABORTED).await;
                 start_container(docker, &cname).await;
@@ -366,18 +272,30 @@ pub fn compute_backups_to_delete(
 ) -> Vec<String> {
     let mut to_delete = Vec::new();
 
-    for (backup_type, keep) in [
-        (BackupType::Daily, retention.daily),
-        (BackupType::Weekly, retention.weekly),
-        (BackupType::Monthly, retention.monthly),
-    ] {
-        let mut typed: Vec<&BackupInfo> = backups
-            .iter()
-            .filter(|b| b.backup_type == backup_type)
-            .collect();
-        typed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        for excess in typed.into_iter().skip(keep) {
-            to_delete.push(excess.id.clone());
+    let mut periodic: Vec<&BackupInfo> = backups
+        .iter()
+        .filter(|b| b.backup_type == BackupType::Periodic)
+        .collect();
+    periodic.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    to_delete.extend(periodic.into_iter().skip(retention.periodic).map(|b| b.id.clone()));
+
+    // Pre-update snapshots are retained as whole version sets: the newest
+    // `pre_update_versions` distinct from-versions survive, older versions go.
+    let mut pre_update: Vec<&BackupInfo> = backups
+        .iter()
+        .filter(|b| b.backup_type == BackupType::PreUpdate)
+        .collect();
+    pre_update.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let mut kept_versions: Vec<String> = Vec::new();
+    for info in pre_update {
+        let version = info.from_version.clone().unwrap_or_default();
+        if kept_versions.contains(&version) {
+            continue;
+        }
+        if kept_versions.len() < retention.pre_update_versions {
+            kept_versions.push(version);
+        } else {
+            to_delete.push(info.id.clone());
         }
     }
 
@@ -445,13 +363,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn create_backup_never_stops_or_starts_containers() {
+        // Backups are restart-free by design: a running container is captured via
+        // docker commit (pause), never stopped. Only restore may stop a container.
+        let src = include_str!("backup.rs");
+        let create_start = src
+            .find("pub async fn create_backup")
+            .expect("create_backup present");
+        let restore_start = src
+            .find("pub async fn restore_backup")
+            .expect("restore_backup present");
+        assert!(create_start < restore_start, "create_backup precedes restore_backup");
+        let backup_paths = &src[create_start..restore_start];
+        assert!(
+            !backup_paths.contains("stop_container_with_timeout")
+                && !backup_paths.contains("start_container("),
+            "no backup path may stop or start a container"
+        );
+        // Built at runtime so this test's own source can't satisfy the search.
+        let banned_cycle_fn = ["with_container", "_paused"].concat();
+        assert!(
+            !src[..create_start].contains(&banned_cycle_fn) && !backup_paths.contains(&banned_cycle_fn),
+            "the stop/restart backup cycle must stay deleted"
+        );
+    }
+
     // ── Retention policy tests ────────────────────────────────────
 
-    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
-        daily: DEFAULT_RETENTION_DAILY,
-        weekly: DEFAULT_RETENTION_WEEKLY,
-        monthly: DEFAULT_RETENTION_MONTHLY,
-    };
+    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy { periodic: 2, pre_update_versions: 2 };
 
     fn make_backup(agent: &str, bt: BackupType, ts: &str) -> BackupInfo {
         BackupInfo {
@@ -460,80 +400,36 @@ mod tests {
             backup_type: bt,
             created_at: ts.to_string(),
             size: 1000,
+            from_version: None,
         }
     }
 
-    #[test]
-    fn retention_empty_list() {
-        let to_delete = compute_backups_to_delete(&[], &DEFAULT_RETENTION);
-        assert!(to_delete.is_empty());
+    fn make_pre_update(agent: &str, version: &str, ts: &str) -> BackupInfo {
+        BackupInfo { from_version: Some(version.to_string()), ..make_backup(agent, BackupType::PreUpdate, ts) }
     }
 
     #[test]
-    fn retention_under_limit() {
+    fn retention_keeps_newest_periodic() {
         let backups = vec![
-            make_backup("a", BackupType::Daily, "20260401-120000"),
-            make_backup("a", BackupType::Daily, "20260402-120000"),
+            make_backup("a", BackupType::Periodic, "20260401-120000"),
+            make_backup("a", BackupType::Periodic, "20260404-120000"),
+            make_backup("a", BackupType::Periodic, "20260407-120000"),
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert!(to_delete.is_empty());
+        assert_eq!(to_delete, vec![backups[0].id.clone()]);
     }
 
     #[test]
-    fn retention_daily_over_limit() {
+    fn retention_keeps_newest_distinct_pre_update_versions() {
         let backups = vec![
-            make_backup("a", BackupType::Daily, "20260401-120000"),
-            make_backup("a", BackupType::Daily, "20260402-120000"),
-            make_backup("a", BackupType::Daily, "20260403-120000"),
-            make_backup("a", BackupType::Daily, "20260404-120000"),
-            make_backup("a", BackupType::Daily, "20260405-120000"),
+            make_pre_update("a", "v0.1.180", "20260401-120000"),
+            make_pre_update("a", "v0.1.181", "20260404-120000"),
+            make_pre_update("a", "v0.1.182", "20260407-120000"),
+            // A second snapshot of a kept version stays (same set).
+            make_pre_update("a", "v0.1.182", "20260407-130000"),
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete.len(), 2);
-        // Oldest two should be deleted
-        assert!(to_delete.contains(&make_backup("a", BackupType::Daily, "20260401-120000").id));
-        assert!(to_delete.contains(&make_backup("a", BackupType::Daily, "20260402-120000").id));
-    }
-
-    #[test]
-    fn retention_weekly_over_limit() {
-        let backups = vec![
-            make_backup("a", BackupType::Weekly, "20260301-120000"),
-            make_backup("a", BackupType::Weekly, "20260308-120000"),
-            make_backup("a", BackupType::Weekly, "20260315-120000"),
-            make_backup("a", BackupType::Weekly, "20260322-120000"),
-        ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete.len(), 2);
-        assert!(to_delete.contains(&make_backup("a", BackupType::Weekly, "20260301-120000").id));
-        assert!(to_delete.contains(&make_backup("a", BackupType::Weekly, "20260308-120000").id));
-    }
-
-    #[test]
-    fn retention_monthly_over_limit() {
-        let backups = vec![
-            make_backup("a", BackupType::Monthly, "20260101-120000"),
-            make_backup("a", BackupType::Monthly, "20260201-120000"),
-            make_backup("a", BackupType::Monthly, "20260301-120000"),
-        ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete.len(), 2);
-    }
-
-    #[test]
-    fn retention_mixed_types() {
-        let backups = vec![
-            make_backup("a", BackupType::Daily, "20260401-120000"),
-            make_backup("a", BackupType::Daily, "20260402-120000"),
-            make_backup("a", BackupType::Daily, "20260403-120000"),
-            make_backup("a", BackupType::Weekly, "20260322-120000"),
-            make_backup("a", BackupType::Weekly, "20260329-120000"),
-            make_backup("a", BackupType::Monthly, "20260301-120000"),
-            make_backup("a", BackupType::Manual, "20260404-120000"),
-        ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        // 3 daily (keep all), 2 weekly (keep all), 1 monthly (keep all), manual not touched
-        assert!(to_delete.is_empty());
+        assert_eq!(to_delete, vec![backups[0].id.clone()]);
     }
 
     #[test]
@@ -542,11 +438,15 @@ mod tests {
             make_backup("a", BackupType::Manual, "20260401-120000"),
             make_backup("a", BackupType::Manual, "20260402-120000"),
             make_backup("a", BackupType::Manual, "20260403-120000"),
-            make_backup("a", BackupType::Manual, "20260404-120000"),
             make_backup("a", BackupType::PreRestore, "20260401-120000"),
             make_backup("a", BackupType::PreRestore, "20260402-120000"),
+            make_backup("a", BackupType::PreRestore, "20260403-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert!(to_delete.is_empty());
+        assert!(compute_backups_to_delete(&backups, &DEFAULT_RETENTION).is_empty());
+    }
+
+    #[test]
+    fn retention_empty_list() {
+        assert!(compute_backups_to_delete(&[], &DEFAULT_RETENTION).is_empty());
     }
 }

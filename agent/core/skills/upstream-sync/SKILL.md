@@ -1,6 +1,6 @@
 ---
 name: upstream-sync
-description: Sync your workspace after a Vesta upgrade by merging the new stock snapshot into your own history. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes.
+description: Sync your workspace after a Vesta upgrade. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes.
 ---
 
 # Upstream Sync
@@ -37,7 +37,7 @@ git -C ~ rev-parse -q --verify HEAD >/dev/null 2>&1 || \
 
 Then fetch the stock snapshots from Vesta's read-only local repository. A normal current
 container has the mount and uses plain `git fetch`; the fallback exists only for a fleet box
-whose container rebuild was deferred before this mount shipped:
+whose container is still awaiting the rebuild that adds the mount:
 
 ```bash
 cd ~
@@ -73,8 +73,10 @@ If the merge stops on a conflict, the resolution is yours:
   AND the stock change, not pick a winner. Do NOT reflexively `git checkout --ours/--theirs`
   or blanket-take one side: that silently drops real work. Even a file you upstreamed comes
   back genericized, so take stock's form and re-apply your local specifics on top rather
-  than discarding either. Edit each conflicted file so both sides survive, `git add <file>`,
-  then `git commit --no-edit`. `git merge --abort` restores
+  than discarding either. A fix you applied locally while its PR was in review is the same
+  case: review usually reshaped it, so the released form supersedes your stopgap copy; take
+  stock's side and keep only genuine personalization. Edit each conflicted file so both
+  sides survive, `git add <file>`, then `git commit --no-edit`. `git merge --abort` restores
   exactly the pre-sync state.
 - For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure.
 - If the merge brought changes, call `restart_vesta` so the new skills load. Completion is

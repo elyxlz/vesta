@@ -14,11 +14,13 @@ from helpers import http_get
 
 UA = "Mozilla/5.0"
 
+
 def get_token():
     """Fetch a fresh session token. Token encodes IP+UA+timestamp, reusable for ~15 min."""
-    url = f"https://howlongtobeat.com/api/find/init?t={int(time.time()*1000)}"
+    url = f"https://howlongtobeat.com/api/find/init?t={int(time.time() * 1000)}"
     data = http_get(url, headers={"Referer": "https://howlongtobeat.com/"})
     return json.loads(data)  # {token, hpKey, hpVal}
+
 
 def search_hltb(title, size=20, page=1, token_data=None):
     """
@@ -28,7 +30,7 @@ def search_hltb(title, size=20, page=1, token_data=None):
     """
     if token_data is None:
         token_data = get_token()
-    hp_key, hp_val = token_data['hpKey'], token_data['hpVal']
+    hp_key, hp_val = token_data["hpKey"], token_data["hpVal"]
     payload = {
         "searchType": "games",
         "searchTerms": title.split(),
@@ -36,17 +38,23 @@ def search_hltb(title, size=20, page=1, token_data=None):
         "size": size,
         "searchOptions": {
             "games": {
-                "userId": 0, "platform": "", "sortCategory": "popular",
-                "rangeCategory": "main", "rangeTime": {"min": None, "max": None},
+                "userId": 0,
+                "platform": "",
+                "sortCategory": "popular",
+                "rangeCategory": "main",
+                "rangeTime": {"min": None, "max": None},
                 "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
-                "rangeYear": {"min": "", "max": ""}, "modifier": ""
+                "rangeYear": {"min": "", "max": ""},
+                "modifier": "",
             },
             "users": {"sortCategory": "postcount"},
             "lists": {"sortCategory": "follows"},
-            "filter": "", "sort": 0, "randomizer": 0
+            "filter": "",
+            "sort": 0,
+            "randomizer": 0,
         },
         "useCache": True,
-        hp_key: hp_val      # honeypot field — key and value vary per token
+        hp_key: hp_val,  # honeypot field — key and value vary per token
     }
     req = urllib.request.Request(
         "https://howlongtobeat.com/api/find",
@@ -56,22 +64,23 @@ def search_hltb(title, size=20, page=1, token_data=None):
             "Content-Type": "application/json",
             "Origin": "https://howlongtobeat.com",
             "Referer": "https://howlongtobeat.com/",
-            "x-auth-token": token_data['token'],
+            "x-auth-token": token_data["token"],
             "x-hp-key": hp_key,
             "x-hp-val": hp_val,
         },
-        method="POST"
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode())
+
 
 # Usage
 tok = get_token()
 
 result = search_hltb("elden ring", token_data=tok, size=3)
-for g in result['data']:
-    print(g['game_id'], g['game_name'], g['release_world'])
-    print(f"  Main: {g['comp_main']/3600:.1f}h  +Extras: {g['comp_plus']/3600:.1f}h  100%: {g['comp_100']/3600:.1f}h")
+for g in result["data"]:
+    print(g["game_id"], g["game_name"], g["release_world"])
+    print(f"  Main: {g['comp_main'] / 3600:.1f}h  +Extras: {g['comp_plus'] / 3600:.1f}h  100%: {g['comp_100'] / 3600:.1f}h")
 
 # Confirmed output (2026-04-18):
 # 68151 Elden Ring 2022
@@ -94,29 +103,50 @@ from helpers import http_get
 
 UA = "Mozilla/5.0"
 
+
 def hltb_search(title, size=5):
     """One-shot: get token + search, return list of dicts with hours."""
-    url = f"https://howlongtobeat.com/api/find/init?t={int(time.time()*1000)}"
+    url = f"https://howlongtobeat.com/api/find/init?t={int(time.time() * 1000)}"
     tok = json.loads(http_get(url, headers={"Referer": "https://howlongtobeat.com/"}))
-    hp_key, hp_val = tok['hpKey'], tok['hpVal']
+    hp_key, hp_val = tok["hpKey"], tok["hpVal"]
     payload = {
-        "searchType": "games", "searchTerms": title.split(), "searchPage": 1, "size": size,
+        "searchType": "games",
+        "searchTerms": title.split(),
+        "searchPage": 1,
+        "size": size,
         "searchOptions": {
-            "games": {"userId": 0, "platform": "", "sortCategory": "popular",
-                      "rangeCategory": "main", "rangeTime": {"min": None, "max": None},
-                      "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
-                      "rangeYear": {"min": "", "max": ""}, "modifier": ""},
-            "users": {"sortCategory": "postcount"}, "lists": {"sortCategory": "follows"},
-            "filter": "", "sort": 0, "randomizer": 0
+            "games": {
+                "userId": 0,
+                "platform": "",
+                "sortCategory": "popular",
+                "rangeCategory": "main",
+                "rangeTime": {"min": None, "max": None},
+                "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
+                "rangeYear": {"min": "", "max": ""},
+                "modifier": "",
+            },
+            "users": {"sortCategory": "postcount"},
+            "lists": {"sortCategory": "follows"},
+            "filter": "",
+            "sort": 0,
+            "randomizer": 0,
         },
-        "useCache": True, hp_key: hp_val
+        "useCache": True,
+        hp_key: hp_val,
     }
     req = urllib.request.Request(
-        "https://howlongtobeat.com/api/find", data=json.dumps(payload).encode(),
-        headers={"User-Agent": UA, "Content-Type": "application/json",
-                 "Origin": "https://howlongtobeat.com", "Referer": "https://howlongtobeat.com/",
-                 "x-auth-token": tok['token'], "x-hp-key": hp_key, "x-hp-val": hp_val},
-        method="POST"
+        "https://howlongtobeat.com/api/find",
+        data=json.dumps(payload).encode(),
+        headers={
+            "User-Agent": UA,
+            "Content-Type": "application/json",
+            "Origin": "https://howlongtobeat.com",
+            "Referer": "https://howlongtobeat.com/",
+            "x-auth-token": tok["token"],
+            "x-hp-key": hp_key,
+            "x-hp-val": hp_val,
+        },
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.loads(r.read().decode())
@@ -126,24 +156,25 @@ def hltb_search(title, size=5):
 
     return [
         {
-            "game_id":      g["game_id"],
-            "name":         g["game_name"],
-            "type":         g["game_type"],         # "game" | "dlc" | "expansion" | "hack"
-            "year":         g["release_world"],
-            "platforms":    g["profile_platform"],
-            "main":         h(g["comp_main"]),       # Main Story hours (polled average)
-            "main_plus":    h(g["comp_plus"]),       # Main + Extras hours
-            "completionist":h(g["comp_100"]),        # Completionist hours
-            "all_styles":   h(g["comp_all"]),        # All playstyles combined
-            "main_count":   g["comp_main_count"],    # Number of submissions
-            "plus_count":   g["comp_plus_count"],
-            "comp_count":   g["comp_100_count"],
-            "review_score": g["review_score"],       # 0–100
-            "image_url":    f"https://howlongtobeat.com/games/{g['game_image']}",
-            "page_url":     f"https://howlongtobeat.com/game/{g['game_id']}",
+            "game_id": g["game_id"],
+            "name": g["game_name"],
+            "type": g["game_type"],  # "game" | "dlc" | "expansion" | "hack"
+            "year": g["release_world"],
+            "platforms": g["profile_platform"],
+            "main": h(g["comp_main"]),  # Main Story hours (polled average)
+            "main_plus": h(g["comp_plus"]),  # Main + Extras hours
+            "completionist": h(g["comp_100"]),  # Completionist hours
+            "all_styles": h(g["comp_all"]),  # All playstyles combined
+            "main_count": g["comp_main_count"],  # Number of submissions
+            "plus_count": g["comp_plus_count"],
+            "comp_count": g["comp_100_count"],
+            "review_score": g["review_score"],  # 0–100
+            "image_url": f"https://howlongtobeat.com/games/{g['game_image']}",
+            "page_url": f"https://howlongtobeat.com/game/{g['game_id']}",
         }
         for g in data["data"]
     ]
+
 
 # Verified results (2026-04-18):
 print(hltb_search("the witcher 3")[0])
@@ -165,76 +196,77 @@ When you have a `game_id`, fetch the game page and extract `__NEXT_DATA__` for t
 import json, re
 from helpers import http_get
 
+
 def get_game_detail(game_id):
     """
     Fetch complete game data from the HLTB game page.
     Returns pageProps['game']['data'] with keys: 'game', 'individuality', 'relationships'.
     """
     html = http_get(f"https://howlongtobeat.com/game/{game_id}")
-    nd = json.loads(re.search(
-        r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL
-    ).group(1))
-    return nd['props']['pageProps']['game']['data']
+    nd = json.loads(re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL).group(1))
+    return nd["props"]["pageProps"]["game"]["data"]
 
-data = get_game_detail(10270)   # Witcher 3
-g = data['game'][0]
+
+data = get_game_detail(10270)  # Witcher 3
+g = data["game"][0]
 
 # Core completion times (all in seconds — divide by 3600 for hours)
-print(g['comp_main'] / 3600)       # 51.6  — Main Story (polled avg)
-print(g['comp_main_med'] / 3600)   # 50.0  — Main Story median
-print(g['comp_main_l'] / 3600)     # 32.7  — Main Story low
-print(g['comp_main_h'] / 3600)     # 85.8  — Main Story high
-print(g['comp_main_count'])        # 2681  — submission count
+print(g["comp_main"] / 3600)  # 51.6  — Main Story (polled avg)
+print(g["comp_main_med"] / 3600)  # 50.0  — Main Story median
+print(g["comp_main_l"] / 3600)  # 32.7  — Main Story low
+print(g["comp_main_h"] / 3600)  # 85.8  — Main Story high
+print(g["comp_main_count"])  # 2681  — submission count
 
-print(g['comp_plus'] / 3600)       # 103.8 — Main + Extras
-print(g['comp_100'] / 3600)        # 174.4 — Completionist
-print(g['comp_all'] / 3600)        # 103.8 — All Styles
+print(g["comp_plus"] / 3600)  # 103.8 — Main + Extras
+print(g["comp_100"] / 3600)  # 174.4 — Completionist
+print(g["comp_all"] / 3600)  # 103.8 — All Styles
 
 # Speedrun times
-print(g['comp_lvl_spd'])           # 1 if speedrun data exists, 0 if not
-print(g['comp_speed'] / 3600)      # 19.2  — any% (polled avg)
-print(g['comp_speed_min'] / 3600)  # 3.2   — fastest submission
-print(g['comp_speed_max'] / 3600)  # 30.0  — slowest speedrun
-print(g['comp_speed_count'])       # 15    — speedrun submissions
+print(g["comp_lvl_spd"])  # 1 if speedrun data exists, 0 if not
+print(g["comp_speed"] / 3600)  # 19.2  — any% (polled avg)
+print(g["comp_speed_min"] / 3600)  # 3.2   — fastest submission
+print(g["comp_speed_max"] / 3600)  # 30.0  — slowest speedrun
+print(g["comp_speed_count"])  # 15    — speedrun submissions
 
-print(g['comp_speed100'] / 3600)   # 59.4  — 100% speedrun
-print(g['comp_speed100_count'])    # 4
+print(g["comp_speed100"] / 3600)  # 59.4  — 100% speedrun
+print(g["comp_speed100_count"])  # 4
 
 # Multiplayer / co-op invested time
-print(g['comp_lvl_co'])            # 1 if co-op data exists
-print(g['comp_lvl_mp'])            # 1 if multiplayer data exists
-print(g['invested_co'] / 3600)     # hours in co-op mode
-print(g['invested_mp'] / 3600)     # hours in competitive multiplayer
-print(g['invested_co_count'])      # submission count
+print(g["comp_lvl_co"])  # 1 if co-op data exists
+print(g["comp_lvl_mp"])  # 1 if multiplayer data exists
+print(g["invested_co"] / 3600)  # hours in co-op mode
+print(g["invested_mp"] / 3600)  # hours in competitive multiplayer
+print(g["invested_co_count"])  # submission count
 
 # Metadata
-print(g['profile_dev'])            # "CD Projekt RED"
-print(g['profile_pub'])            # "CD Projekt, Warner Bros..."
-print(g['profile_platform'])       # "Nintendo Switch, PC, PlayStation 4, ..."
-print(g['profile_genre'])          # "Third-Person, Action, Open World, Role-Playing"
-print(g['profile_steam'])          # 292030  — Steam App ID (0 if not on Steam)
-print(g['release_world'])          # "2015-05-19"
-print(g['rating_esrb'])            # "M"
-print(g['review_score'])           # 93  (0–100)
-print(g['count_comp'])             # 26007  — times completed
-print(g['count_backlog'])          # 31083
+print(g["profile_dev"])  # "CD Projekt RED"
+print(g["profile_pub"])  # "CD Projekt, Warner Bros..."
+print(g["profile_platform"])  # "Nintendo Switch, PC, PlayStation 4, ..."
+print(g["profile_genre"])  # "Third-Person, Action, Open World, Role-Playing"
+print(g["profile_steam"])  # 292030  — Steam App ID (0 if not on Steam)
+print(g["release_world"])  # "2015-05-19"
+print(g["rating_esrb"])  # "M"
+print(g["review_score"])  # 93  (0–100)
+print(g["count_comp"])  # 26007  — times completed
+print(g["count_backlog"])  # 31083
 
 # Per-platform breakdown (individuality)
-for plat in data['individuality']:
-    print(plat['platform'],
-          int(plat['comp_main'])/3600,    # main hours
-          int(plat['comp_plus'])/3600,    # +extras hours
-          int(plat['comp_100'])/3600,     # 100% hours
-          plat['count_comp'])             # completions on this platform
+for plat in data["individuality"]:
+    print(
+        plat["platform"],
+        int(plat["comp_main"]) / 3600,  # main hours
+        int(plat["comp_plus"]) / 3600,  # +extras hours
+        int(plat["comp_100"]) / 3600,  # 100% hours
+        plat["count_comp"],
+    )  # completions on this platform
 # Example:
 # Nintendo Switch  57.0h  112.3h  194.9h  236
 # PC, PS4, Xbox One  52.9h  110.0h  179.4h  11136
 # PS5, Xbox Series X/S  52.1h  92.5h  168.8h  343
 
 # DLC / expansion completion times
-for rel in data['relationships'][:3]:
-    print(rel['game_id'], rel['game_name'], rel['game_type'],
-          rel['comp_main']/3600 if rel['comp_main'] else None)
+for rel in data["relationships"][:3]:
+    print(rel["game_id"], rel["game_name"], rel["game_type"], rel["comp_main"] / 3600 if rel["comp_main"] else None)
 ```
 
 ---
@@ -249,41 +281,65 @@ from helpers import http_get
 
 UA = "Mozilla/5.0"
 
+
 def get_times(title):
     """Return Main/+Extras/100% hours for the top search match."""
-    tok_url = f"https://howlongtobeat.com/api/find/init?t={int(time.time()*1000)}"
+    tok_url = f"https://howlongtobeat.com/api/find/init?t={int(time.time() * 1000)}"
     tok = json.loads(http_get(tok_url, headers={"Referer": "https://howlongtobeat.com/"}))
-    hp_key, hp_val = tok['hpKey'], tok['hpVal']
+    hp_key, hp_val = tok["hpKey"], tok["hpVal"]
     payload = {
-        "searchType": "games", "searchTerms": title.split(), "searchPage": 1, "size": 1,
+        "searchType": "games",
+        "searchTerms": title.split(),
+        "searchPage": 1,
+        "size": 1,
         "searchOptions": {
-            "games": {"userId": 0, "platform": "", "sortCategory": "popular",
-                      "rangeCategory": "main", "rangeTime": {"min": None, "max": None},
-                      "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
-                      "rangeYear": {"min": "", "max": ""}, "modifier": ""},
-            "users": {"sortCategory": "postcount"}, "lists": {"sortCategory": "follows"},
-            "filter": "", "sort": 0, "randomizer": 0
+            "games": {
+                "userId": 0,
+                "platform": "",
+                "sortCategory": "popular",
+                "rangeCategory": "main",
+                "rangeTime": {"min": None, "max": None},
+                "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
+                "rangeYear": {"min": "", "max": ""},
+                "modifier": "",
+            },
+            "users": {"sortCategory": "postcount"},
+            "lists": {"sortCategory": "follows"},
+            "filter": "",
+            "sort": 0,
+            "randomizer": 0,
         },
-        "useCache": True, hp_key: hp_val
+        "useCache": True,
+        hp_key: hp_val,
     }
     req = urllib.request.Request(
-        "https://howlongtobeat.com/api/find", data=json.dumps(payload).encode(),
-        headers={"User-Agent": UA, "Content-Type": "application/json",
-                 "Origin": "https://howlongtobeat.com", "Referer": "https://howlongtobeat.com/",
-                 "x-auth-token": tok['token'], "x-hp-key": hp_key, "x-hp-val": hp_val},
-        method="POST"
+        "https://howlongtobeat.com/api/find",
+        data=json.dumps(payload).encode(),
+        headers={
+            "User-Agent": UA,
+            "Content-Type": "application/json",
+            "Origin": "https://howlongtobeat.com",
+            "Referer": "https://howlongtobeat.com/",
+            "x-auth-token": tok["token"],
+            "x-hp-key": hp_key,
+            "x-hp-val": hp_val,
+        },
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.loads(r.read().decode())
-    if not data['data']:
+    if not data["data"]:
         return None
-    g = data['data'][0]
-    h = lambda s: round(s/3600, 1) if s else None
+    g = data["data"][0]
+    h = lambda s: round(s / 3600, 1) if s else None
     return {
-        "id": g['game_id'], "name": g['game_name'],
-        "main": h(g['comp_main']), "main_plus": h(g['comp_plus']),
-        "completionist": h(g['comp_100'])
+        "id": g["game_id"],
+        "name": g["game_name"],
+        "main": h(g["comp_main"]),
+        "main_plus": h(g["comp_plus"]),
+        "completionist": h(g["comp_100"]),
     }
+
 
 # Verified:
 print(get_times("celeste"))
@@ -301,42 +357,62 @@ print(get_times("hades"))
 ```python
 def search_all_pages(title, size=20):
     """Yield every search result for a query across all pages."""
-    tok_url = f"https://howlongtobeat.com/api/find/init?t={int(time.time()*1000)}"
+    tok_url = f"https://howlongtobeat.com/api/find/init?t={int(time.time() * 1000)}"
     tok = json.loads(http_get(tok_url, headers={"Referer": "https://howlongtobeat.com/"}))
-    hp_key, hp_val = tok['hpKey'], tok['hpVal']
+    hp_key, hp_val = tok["hpKey"], tok["hpVal"]
 
     page = 1
     while True:
         payload = {
-            "searchType": "games", "searchTerms": title.split(),
-            "searchPage": page, "size": size,
+            "searchType": "games",
+            "searchTerms": title.split(),
+            "searchPage": page,
+            "size": size,
             "searchOptions": {
-                "games": {"userId": 0, "platform": "", "sortCategory": "popular",
-                          "rangeCategory": "main", "rangeTime": {"min": None, "max": None},
-                          "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
-                          "rangeYear": {"min": "", "max": ""}, "modifier": ""},
-                "users": {"sortCategory": "postcount"}, "lists": {"sortCategory": "follows"},
-                "filter": "", "sort": 0, "randomizer": 0
+                "games": {
+                    "userId": 0,
+                    "platform": "",
+                    "sortCategory": "popular",
+                    "rangeCategory": "main",
+                    "rangeTime": {"min": None, "max": None},
+                    "gameplay": {"perspective": "", "flow": "", "genre": "", "difficulty": ""},
+                    "rangeYear": {"min": "", "max": ""},
+                    "modifier": "",
+                },
+                "users": {"sortCategory": "postcount"},
+                "lists": {"sortCategory": "follows"},
+                "filter": "",
+                "sort": 0,
+                "randomizer": 0,
             },
-            "useCache": True, hp_key: hp_val
+            "useCache": True,
+            hp_key: hp_val,
         }
         req = urllib.request.Request(
-            "https://howlongtobeat.com/api/find", data=json.dumps(payload).encode(),
-            headers={"User-Agent": UA, "Content-Type": "application/json",
-                     "Origin": "https://howlongtobeat.com", "Referer": "https://howlongtobeat.com/",
-                     "x-auth-token": tok['token'], "x-hp-key": hp_key, "x-hp-val": hp_val},
-            method="POST"
+            "https://howlongtobeat.com/api/find",
+            data=json.dumps(payload).encode(),
+            headers={
+                "User-Agent": UA,
+                "Content-Type": "application/json",
+                "Origin": "https://howlongtobeat.com",
+                "Referer": "https://howlongtobeat.com/",
+                "x-auth-token": tok["token"],
+                "x-hp-key": hp_key,
+                "x-hp-val": hp_val,
+            },
+            method="POST",
         )
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read().decode())
-        yield from data['data']
-        if page >= data['pageTotal']:
+        yield from data["data"]
+        if page >= data["pageTotal"]:
             break
         page += 1
 
+
 # "mario" returns 308 results across 16 pages (size=20)
 mario_games = list(search_all_pages("mario", size=20))
-print(len(mario_games))   # 308
+print(len(mario_games))  # 308
 ```
 
 ### Batch lookup by game ID (parallel)
@@ -346,20 +422,21 @@ import json, re, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from helpers import http_get
 
+
 def fetch_game(game_id):
     html = http_get(f"https://howlongtobeat.com/game/{game_id}")
-    nd = json.loads(re.search(
-        r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL
-    ).group(1))
-    g = nd['props']['pageProps']['game']['data']['game'][0]
+    nd = json.loads(re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL).group(1))
+    g = nd["props"]["pageProps"]["game"]["data"]["game"][0]
     return {
-        "id": g['game_id'], "name": g['game_name'],
-        "main": round(g['comp_main']/3600, 1) if g['comp_main'] else None,
-        "main_plus": round(g['comp_plus']/3600, 1) if g['comp_plus'] else None,
-        "completionist": round(g['comp_100']/3600, 1) if g['comp_100'] else None,
+        "id": g["game_id"],
+        "name": g["game_name"],
+        "main": round(g["comp_main"] / 3600, 1) if g["comp_main"] else None,
+        "main_plus": round(g["comp_plus"] / 3600, 1) if g["comp_plus"] else None,
+        "completionist": round(g["comp_100"] / 3600, 1) if g["comp_100"] else None,
     }
 
-ids = [10270, 68151, 42818, 26803, 34716]   # Witcher3, Elden Ring, Celeste, DS3, Stardew
+
+ids = [10270, 68151, 42818, 26803, 34716]  # Witcher3, Elden Ring, Celeste, DS3, Stardew
 with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(fetch_game, ids))
 

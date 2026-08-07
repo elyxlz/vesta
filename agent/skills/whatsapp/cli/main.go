@@ -17,11 +17,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
 	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
 	fmt.Fprintln(w, "Setup / health:")
-	fmt.Fprintln(w, "  connect [--opener <text>] [--own-number] set up WhatsApp: claim + link the agent's own number, or link the user's own WhatsApp by QR. --opener: agent-authored greeting for the managed wa.me link")
+	fmt.Fprintln(w, "  connect --source <cloud|doubletick|self-managed> [--opener <text>] [--phone +E.164] set up or recover WhatsApp; --opener is for cloud/doubletick, --phone (self-managed) uses a pairing code when the user cannot scan a QR")
 	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect`")
-	fmt.Fprintln(w, "  start                                bring the daemon up (idempotent); the restart skill runs this at boot")
-	fmt.Fprintln(w, "Internal (the CLI self-manages its daemon; agents never call these):")
-	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon")
+	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon; the restart skill runs `whatsapp daemon start` at boot")
+	fmt.Fprintln(w, "  start                                alias for `daemon start`: bring the daemon up and wait until it answers (idempotent)")
+	fmt.Fprintln(w, "Internal:")
 	fmt.Fprintln(w, "  serve                                run the daemon in the foreground")
 	fmt.Fprintln(w, "  update-deps                          bump the pinned whatsmeow to latest (do this deliberately, not mid-session)")
 	fmt.Fprintln(w, "Commands (short aliases in parentheses; `whatsapp <command> --help` for its flags):")
@@ -37,6 +37,11 @@ func printUsage(w io.Writer) {
 // handler declares its FlagSet and parses before it touches the client, so passing no client
 // reports the flags without a daemon, without the socket, and without reaching any command body.
 func printCommandUsage(w io.Writer, name string) {
+	if name == "connect" || name == "link" || name == "provision" {
+		_, err := parseConnectOptions(name, []string{"--help"})
+		fmt.Fprintln(w, err)
+		return
+	}
 	cmd, ok := lookupCommand(name)
 	if !ok {
 		// A lifecycle command (serve, link, daemon, authenticate): the general usage documents it.
@@ -47,12 +52,16 @@ func printCommandUsage(w io.Writer, name string) {
 	fmt.Fprintln(w, err)
 }
 
-// commandSignature renders one registry entry as `name (alias) <positional>`.
+// commandSignature renders one registry entry as `name (alias) <positional>`, or as its own
+// usageArgs where the positional names alone would hide an accepted form.
 func commandSignature(cmd command) string {
 	var sig strings.Builder
 	sig.WriteString(cmd.name)
 	if len(cmd.aliases) > 0 {
 		sig.WriteString(" (" + strings.Join(cmd.aliases, ", ") + ")")
+	}
+	if cmd.usageArgs != "" {
+		return sig.String() + " " + cmd.usageArgs
 	}
 	for _, positional := range cmd.positionals {
 		sig.WriteString(" <" + positional + ">")
@@ -118,11 +127,10 @@ func main() {
 	case "serve":
 		runServe()
 	case "start":
-		// Bring the daemon up and wait until it answers, so inbound notifications
-		// are already flowing before the caller (the restart skill at boot, or the
-		// agent) does anything else. Idempotent: an already-running daemon is a
-		// no-op. Reuses the daemon-lifecycle start; any trailing serve flags
-		// (e.g. --instance) pass through.
+		// Alias for `daemon start`: bring the daemon up and wait until it answers,
+		// so inbound notifications are already flowing before the caller does
+		// anything else. Idempotent: an already-running daemon is a no-op. Any
+		// trailing serve flags (e.g. --instance) pass through.
 		daemonStart(os.Args[1:])
 	case "status":
 		runStatus()
@@ -132,10 +140,15 @@ func main() {
 		runAuthenticate()
 	case "daemon":
 		runDaemon()
-	// connect is the one setup verb; provision and link are hidden back-compat
-	// aliases for the same unified path (runConnect picks managed vs. QR).
-	case "connect", "link", "provision":
+	// connect is the one agent setup verb; the agent picks the account source with
+	// --source. provision and link are hidden dev-only aliases that name the path
+	// explicitly, so they skip --source and route straight to it.
+	case "connect":
 		runConnect()
+	case "provision":
+		runConnectAlias("provision", true)
+	case "link":
+		runConnectAlias("link", false)
 	default:
 		runOneShot(command)
 	}

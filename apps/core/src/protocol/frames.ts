@@ -19,10 +19,39 @@ export interface ReauthFrame {
   token: string
 }
 
-export type ClientFrame = ReauthFrame
+// `resync` is true when the socket replays its cached context on reconnect (not a fresh user focus),
+// so vestad never fires the return-to-focus notification on a mere reconnect or a gateway restart.
+export interface ClientContextFrame {
+  type: "client_context"
+  focused: boolean
+  client: ClientKind
+  resync: boolean
+  // The device's stable installation id and the label it composes for itself. Both optional so a
+  // build that does not report them is simply untracked in the device registry.
+  deviceId?: string
+  descriptor?: string
+}
+
+export type ClientKind = "web" | "mobile" | "desktop"
+
+export type ClientFrame = ReauthFrame | ClientContextFrame
 
 export function reauthFrame(token: string): ReauthFrame {
   return { type: "reauth", token }
+}
+
+export function clientContextFrame(
+  focused: boolean,
+  client: ClientKind,
+  resync: boolean,
+  device?: { id: string; descriptor: string },
+): ClientContextFrame {
+  const frame: ClientContextFrame = { type: "client_context", focused, client, resync }
+  if (device !== undefined) {
+    frame.deviceId = device.id
+    frame.descriptor = device.descriptor
+  }
+  return frame
 }
 
 export function encodeFrame(frame: ClientFrame): string {

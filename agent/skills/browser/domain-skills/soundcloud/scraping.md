@@ -15,6 +15,7 @@ Returns JSON in ~0.3s. Works for **tracks, playlists/sets, and user profiles**. 
 from helpers import http_get
 import json
 
+
 def soundcloud_oembed(resource_url):
     """Fetch oEmbed metadata for any public SoundCloud URL.
 
@@ -25,6 +26,7 @@ def soundcloud_oembed(resource_url):
     """
     url = f"https://soundcloud.com/oembed?url={resource_url}&format=json"
     return json.loads(http_get(url))
+
 
 # Track
 track = soundcloud_oembed("https://soundcloud.com/forss/flickermood")
@@ -75,20 +77,23 @@ Every SoundCloud page embeds a JSON array in a `<script>` tag as `window.__sc_hy
 from helpers import http_get
 import json, re
 
+
 def extract_hydration(page_url):
     """Extract __sc_hydration JSON from any SoundCloud page."""
     html = http_get(page_url)
-    match = re.search(r'window\.__sc_hydration\s*=\s*(\[.*?\]);\s*<', html, re.DOTALL)
+    match = re.search(r"window\.__sc_hydration\s*=\s*(\[.*?\]);\s*<", html, re.DOTALL)
     if not match:
         return []
     return json.loads(match.group(1))
 
+
 def get_hydration_by_type(page_url, hydratable):
     """Get the 'data' dict for a specific hydratable type."""
     for obj in extract_hydration(page_url):
-        if obj.get('hydratable') == hydratable:
-            return obj.get('data')
+        if obj.get("hydratable") == hydratable:
+            return obj.get("data")
     return None
+
 
 # Track page — hydration key is 'sound'
 track = get_hydration_by_type("https://soundcloud.com/forss/flickermood", "sound")
@@ -155,22 +160,25 @@ The `client_id` lives in every page's `__sc_hydration` under the `apiClient` key
 from helpers import http_get
 import json, re
 
+
 def get_client_id(page_url="https://soundcloud.com"):
     """Extract client_id from any SoundCloud page's __sc_hydration."""
     html = http_get(page_url)
-    match = re.search(r'window\.__sc_hydration\s*=\s*(\[.*?\]);\s*<', html, re.DOTALL)
+    match = re.search(r"window\.__sc_hydration\s*=\s*(\[.*?\]);\s*<", html, re.DOTALL)
     if not match:
         raise ValueError("No hydration found")
     for obj in json.loads(match.group(1)):
-        if obj.get('hydratable') == 'apiClient':
-            return obj['data']['id']
+        if obj.get("hydratable") == "apiClient":
+            return obj["data"]["id"]
     raise ValueError("apiClient not found in hydration")
+
 
 CLIENT_ID = get_client_id()  # "efg2kjLJnAJpInbN6P3hsHzispI1SKQH" (example — extract fresh)
 
+
 def sc_api(path, **params):
     """Call api-v2.soundcloud.com. Returns parsed JSON."""
-    params['client_id'] = CLIENT_ID
+    params["client_id"] = CLIENT_ID
     qs = "&".join(f"{k}={v}" for k, v in params.items())
     return json.loads(http_get(f"https://api-v2.soundcloud.com/{path}?{qs}"))
 ```
@@ -196,7 +204,7 @@ track = sc_api("tracks/293")
 tracks = sc_api("tracks", ids="293,290,48031525")
 # Returns a JSON array directly (not wrapped in 'collection')
 for t in tracks:
-    print(t['id'], t['title'], t['playback_count'])
+    print(t["id"], t["title"], t["playback_count"])
 ```
 
 ### Search
@@ -214,25 +222,25 @@ results = sc_api("search/users", q="jazz", limit=10)
 # Playlists/sets
 results = sc_api("search/playlists", q="jazz", limit=10)
 
+
 # Paginate with next_href
 def paginate(first_response):
     """Yield all pages of a collection response."""
-    yield from first_response.get('collection', [])
-    next_href = first_response.get('next_href')
+    yield from first_response.get("collection", [])
+    next_href = first_response.get("next_href")
     while next_href:
         page = json.loads(http_get(f"{next_href}&client_id={CLIENT_ID}"))
-        yield from page.get('collection', [])
-        next_href = page.get('next_href')
+        yield from page.get("collection", [])
+        next_href = page.get("next_href")
 ```
 
 ### Trending charts
 
 ```python
 # Trending tracks across all genres
-trending = sc_api("charts", kind="trending",
-                  genre="soundcloud:genres:all-music", limit=20)
-for item in trending['collection']:
-    t = item['track']
+trending = sc_api("charts", kind="trending", genre="soundcloud:genres:all-music", limit=20)
+for item in trending["collection"]:
+    t = item["track"]
     print(f"{t['title']} — score={item['score']:.4f}")
 
 # Genre options: soundcloud:genres:all-music, soundcloud:genres:electronic,

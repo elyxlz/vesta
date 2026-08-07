@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::docker::{AgentStatus, BuildPhase};
+use crate::device_registry::DeviceInfo;
+use crate::docker::{AgentOperation, AgentStatus, BuildPhase};
+use crate::types::ClientKind;
 
 /// The gateway (host) branch of the state tree. camelCase on the wire to match
 /// `apps/core/src/protocol/tree.ts` `GatewayInfo`.
@@ -75,6 +77,7 @@ pub(crate) struct AgentInfo {
     pub activity_state: String,
     pub model_access: ModelAccess,
     pub build_phase: Option<BuildPhase>,
+    pub operation: Option<AgentOperation>,
     pub started_at: Option<String>,
     pub services: BTreeMap<String, ServiceInfo>,
 }
@@ -98,6 +101,8 @@ pub(crate) struct NotificationsBranch {
 pub(crate) struct Tree {
     pub gateway: GatewayInfo,
     pub agents: BTreeMap<String, AgentNode>,
+    #[serde(default)]
+    pub devices: Vec<DeviceInfo>,
 }
 
 /// The `state` delta's scope: the gateway branch is the only one, replaced whole.
@@ -120,6 +125,8 @@ pub(crate) enum Frame {
     AgentRemoved { name: String },
     Notifications { agent: String, pending: Vec<serde_json::Value> },
     UserNotification { agent: String, kind: String, title: String, body: String },
+    Presence { any_focused: bool },
+    Devices { devices: Vec<DeviceInfo> },
 }
 
 impl Frame {
@@ -136,6 +143,28 @@ impl Frame {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ClientFrame {
     Reauth { token: String },
+    ClientContext(ClientContext),
+}
+
+/// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
+/// web visibility/window focus or mobile foreground state. `client` identifies the surface that
+/// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
+/// reconnect never looks like the user returning.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClientContext {
+    pub focused: bool,
+    #[serde(default)]
+    pub client: ClientKind,
+    #[serde(default)]
+    pub resync: bool,
+    /// The client-minted installation id identifying the device across reconnects. Absent from
+    /// older clients, which are simply not tracked in the device registry.
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// A human label the client composes for itself, e.g. "Chrome on macOS".
+    #[serde(default)]
+    pub descriptor: Option<String>,
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -162,6 +191,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         activity_state: "thinking".into(),
         model_access: ModelAccess::default(),
         build_phase: None,
+        operation: Some(AgentOperation::BackingUp),
         started_at: Some("2026-01-01T00:00:00Z".into()),
         services,
     };
@@ -174,7 +204,15 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         "sample-agent".to_string(),
         AgentNode { info: info.clone(), notifications: NotificationsBranch { pending: vec![notification.clone()] } },
     );
-    let tree = Tree { gateway: gateway.clone(), agents };
+    let devices = vec![DeviceInfo {
+        id: "device-1".into(),
+        kind: ClientKind::Desktop,
+        descriptor: Some("Vesta Desktop on macOS".into()),
+        present: true,
+        last_seen: "2026-01-01T00:00:00Z".into(),
+        push_enabled: false,
+    }];
+    let tree = Tree { gateway: gateway.clone(), agents, devices: devices.clone() };
 
     serde_json::json!({
         "hello": to_value(Frame::Hello {
@@ -190,6 +228,8 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "user_notification": to_value(Frame::UserNotification {
                 agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize user_notification"),
+            "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
+            "devices": to_value(Frame::Devices { devices }).expect("serialize devices"),
         }
     })
 }
@@ -230,6 +270,7 @@ mod tests {
             activity_state: "idle".into(),
             model_access: ModelAccess::default(),
             build_phase: None,
+            operation: None,
             started_at: Some("2026-07-18T00:00:00Z".into()),
             services: std::collections::BTreeMap::new(),
         };
@@ -237,6 +278,7 @@ mod tests {
         assert_eq!(value["status"], serde_json::json!("alive"));
         assert!(value.get("activityState").is_some());
         assert!(value.get("buildPhase").is_some());
+        assert!(value.get("operation").is_some());
         assert!(value.get("startedAt").is_some());
     }
 
@@ -246,6 +288,7 @@ mod tests {
             activity_state: "idle".into(),
             model_access: ModelAccess::default(),
             build_phase: None,
+            operation: None,
             started_at: None,
             services: BTreeMap::new(),
         }
@@ -255,12 +298,13 @@ mod tests {
     fn every_frame_variant_uses_its_wire_tag() {
         let cases = [
             (Frame::Hello { version: "0.1.0".into(), min_supported: "0.0.0".into() }, "hello"),
-            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default() } }, "snapshot"),
+            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default(), devices: Default::default() } }, "snapshot"),
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
             (Frame::UserNotification { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
+            (Frame::Presence { any_focused: true }, "presence"),
         ];
         for (frame, tag) in cases {
             let value = serde_json::to_value(&frame).expect("serialize frame");
@@ -284,5 +328,65 @@ mod tests {
         assert_eq!(reauth, ClientFrame::Reauth { token: "tok".into() });
         // An unknown client frame is a parse error the handler treats as "ignore".
         assert!(serde_json::from_str::<ClientFrame>(r#"{"type":"future"}"#).is_err());
+    }
+
+    #[test]
+    fn client_context_frame_round_trips() {
+        // resync defaults to false when the field is absent (older clients, additive-safe).
+        let parsed: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"desktop"}"#,
+        )
+        .expect("parse client_context");
+        assert_eq!(
+            parsed,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Desktop,
+                resync: false,
+                ..Default::default()
+            })
+        );
+        // A shipped client still sends the retired `active_agent`; unknown fields are ignored by
+        // rule, which is what keeps this removal off `MIN_SUPPORTED_CLIENT_VERSION`.
+        let legacy: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":true,"active_agent":"scout"}"#)
+                .expect("parse legacy client_context");
+        assert_eq!(
+            legacy,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Unknown,
+                resync: false,
+                ..Default::default()
+            })
+        );
+        let resync: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":false,"resync":true}"#,
+        )
+        .expect("parse client_context resync");
+        assert_eq!(
+            resync,
+            ClientFrame::ClientContext(ClientContext {
+                focused: false,
+                client: ClientKind::Unknown,
+                resync: true,
+                ..Default::default()
+            })
+        );
+    }
+
+    #[test]
+    fn client_kinds_have_user_facing_app_names() {
+        assert_eq!(ClientKind::Web.display_name(), "Vesta Web App");
+        assert_eq!(ClientKind::Mobile.display_name(), "Vesta Mobile App");
+        assert_eq!(ClientKind::Desktop.display_name(), "Vesta Desktop App");
+        assert_eq!(ClientKind::Unknown.display_name(), "Vesta App");
+    }
+
+    #[test]
+    fn presence_frame_uses_its_wire_tag() {
+        let value = serde_json::to_value(Frame::Presence { any_focused: true }).expect("serialize presence");
+        assert_eq!(value["type"], serde_json::json!("presence"));
+        assert_eq!(value["any_focused"], serde_json::json!(true));
     }
 }

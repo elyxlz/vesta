@@ -28,6 +28,7 @@ Every browse URL has an `.xml` RSS variant. Returns price, pub/update dates, pla
 import re
 from helpers import http_get
 
+
 def parse_rss(url):
     """
     Parse any itch.io RSS listing feed.
@@ -42,26 +43,27 @@ def parse_rss(url):
     """
     xml = http_get(url)
     items = []
-    for m in re.finditer(r'<item>(.*?)</item>', xml, re.DOTALL):
+    for m in re.finditer(r"<item>(.*?)</item>", xml, re.DOTALL):
         ix = m.group(1)
+
         def get(tag, s=ix):
-            tm = re.search(rf'<{tag}>(.*?)</{tag}>', s, re.DOTALL)
+            tm = re.search(rf"<{tag}>(.*?)</{tag}>", s, re.DOTALL)
             return tm.group(1).strip() if tm else None
-        items.append({
-            'url':         get('guid'),
-            'title':       get('plainTitle'),          # clean title, no [tags]
-            'price':       get('price'),               # "$0.00", "$7.99", etc.
-            'currency':    get('currency'),            # "USD"
-            'pub_date':    get('pubDate'),
-            'update_date': get('updateDate'),
-            'image':       get('imageurl'),            # 315x250 thumbnail
-            'platforms': {
-                k: get(k) == 'yes'
-                for k in ['windows', 'osx', 'linux', 'android', 'html']
-                if get(k) is not None
-            },
-        })
+
+        items.append(
+            {
+                "url": get("guid"),
+                "title": get("plainTitle"),  # clean title, no [tags]
+                "price": get("price"),  # "$0.00", "$7.99", etc.
+                "currency": get("currency"),  # "USD"
+                "pub_date": get("pubDate"),
+                "update_date": get("updateDate"),
+                "image": get("imageurl"),  # 315x250 thumbnail
+                "platforms": {k: get(k) == "yes" for k in ["windows", "osx", "linux", "android", "html"] if get(k) is not None},
+            }
+        )
     return items
+
 
 # Confirmed output:
 items = parse_rss("https://itch.io/games/top-rated.xml")
@@ -87,6 +89,7 @@ items = parse_rss("https://itch.io/games/top-rated.xml")
 import re
 from helpers import http_get
 
+
 def parse_game_cards(html):
     """
     Extract all game cards from any itch.io browse/listing/search/profile HTML page.
@@ -105,39 +108,36 @@ def parse_game_cards(html):
     for m in re.finditer(r'data-game_id="(\d+)"', html):
         game_id = m.group(1)
         start = m.start()
-        chunk = html[start:start + 3000]
+        chunk = html[start : start + 3000]
 
         # Title + URL — attribute order differs between page 1 and pages 2+
-        title_m = re.search(
-            r'class="title game_link"[^>]*href="([^"]+)"[^>]*>([^<]+)</a>', chunk
-        )
+        title_m = re.search(r'class="title game_link"[^>]*href="([^"]+)"[^>]*>([^<]+)</a>', chunk)
         if not title_m:
-            title_m = re.search(
-                r'href="([^"]+)"[^>]*class="title game_link"[^>]*>([^<]+)</a>', chunk
-            )
+            title_m = re.search(r'href="([^"]+)"[^>]*class="title game_link"[^>]*>([^<]+)</a>', chunk)
 
-        rating_m  = re.search(
-            r'data-tooltip="([\d.]+) average rating from ([\d,]+) total ratings"', chunk
-        )
-        genre_m   = re.search(r'class="game_genre">([^<]+)</div>', chunk)
-        price_m   = re.search(r'class="price_value">([^<]+)</div>', chunk)
-        desc_m    = re.search(r'class="game_text" title="([^"]+)"', chunk)
-        img_m     = re.search(r'data-lazy_src="([^"]+)"', chunk)
+        rating_m = re.search(r'data-tooltip="([\d.]+) average rating from ([\d,]+) total ratings"', chunk)
+        genre_m = re.search(r'class="game_genre">([^<]+)</div>', chunk)
+        price_m = re.search(r'class="price_value">([^<]+)</div>', chunk)
+        desc_m = re.search(r'class="game_text" title="([^"]+)"', chunk)
+        img_m = re.search(r'data-lazy_src="([^"]+)"', chunk)
         platforms = re.findall(r'title="Download for ([^"]+)"', chunk)
 
-        games.append({
-            'id':           game_id,
-            'url':          title_m.group(1) if title_m else None,
-            'title':        title_m.group(2).strip() if title_m else None,
-            'rating':       float(rating_m.group(1)) if rating_m else None,
-            'rating_count': int(rating_m.group(2).replace(',', '')) if rating_m else None,
-            'genre':        genre_m.group(1) if genre_m else None,
-            'price':        price_m.group(1) if price_m else 'Free',
-            'description':  desc_m.group(1) if desc_m else None,
-            'thumbnail':    img_m.group(1) if img_m else None,
-            'platforms':    platforms,      # ['Windows', 'macOS', 'Linux', 'Android']
-        })
+        games.append(
+            {
+                "id": game_id,
+                "url": title_m.group(1) if title_m else None,
+                "title": title_m.group(2).strip() if title_m else None,
+                "rating": float(rating_m.group(1)) if rating_m else None,
+                "rating_count": int(rating_m.group(2).replace(",", "")) if rating_m else None,
+                "genre": genre_m.group(1) if genre_m else None,
+                "price": price_m.group(1) if price_m else "Free",
+                "description": desc_m.group(1) if desc_m else None,
+                "thumbnail": img_m.group(1) if img_m else None,
+                "platforms": platforms,  # ['Windows', 'macOS', 'Linux', 'Android']
+            }
+        )
     return games
+
 
 # Usage:
 html = http_get("https://itch.io/games/top-rated")
@@ -187,6 +187,7 @@ The cleanest source for individual game data. All confirmed fields:
 import json, re
 from helpers import http_get
 
+
 def extract_game_detail(url):
     """
     Fetch full metadata for a single itch.io game.
@@ -196,48 +197,40 @@ def extract_game_detail(url):
 
     # --- JSON-LD (always present, covers name/description/price/rating) ---
     ld_product = None
-    for block in re.findall(
-        r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
-        html, re.DOTALL
-    ):
+    for block in re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL):
         ld = json.loads(block.strip())
-        if ld.get('@type') == 'Product':
+        if ld.get("@type") == "Product":
             ld_product = ld
             break
 
     # --- Info panel table (Status, Platforms, Genre, Tags, Author, etc.) ---
     info = {}
-    panel_m = re.search(
-        r'class="game_info_panel_widget[^"]*"[^>]*><table>(.*?)</table>',
-        html, re.DOTALL
-    )
+    panel_m = re.search(r'class="game_info_panel_widget[^"]*"[^>]*><table>(.*?)</table>', html, re.DOTALL)
     if panel_m:
-        for row in re.finditer(
-            r'<tr><td>([^<]+)</td><td>(.*?)</td></tr>',
-            panel_m.group(1), re.DOTALL
-        ):
+        for row in re.finditer(r"<tr><td>([^<]+)</td><td>(.*?)</td></tr>", panel_m.group(1), re.DOTALL):
             key = row.group(1).strip()
-            val = re.sub(r'<[^>]+>', '', row.group(2)).strip()
+            val = re.sub(r"<[^>]+>", "", row.group(2)).strip()
             # Multi-value fields become lists (Tags, Platforms, Genre, Links)
-            info[key] = [v.strip() for v in val.split(',')] if ',' in val else val
+            info[key] = [v.strip() for v in val.split(",")] if "," in val else val
 
     # --- Cover image ---
     cover_m = re.search(r'<meta property="og:image" content="([^"]+)"', html)
 
-    offers = (ld_product or {}).get('offers', {})
-    agg    = (ld_product or {}).get('aggregateRating', {})
+    offers = (ld_product or {}).get("offers", {})
+    agg = (ld_product or {}).get("aggregateRating", {})
 
     return {
-        'url':          url,
-        'name':         (ld_product or {}).get('name'),
-        'description':  (ld_product or {}).get('description'),
-        'price':        offers.get('price'),          # "0.00" for free, "7.99" for paid
-        'currency':     offers.get('priceCurrency'),  # "USD"
-        'rating':       agg.get('ratingValue'),       # "4.9" string
-        'rating_count': agg.get('ratingCount'),       # int
-        'cover':        cover_m.group(1) if cover_m else None,
-        'info':         info,
+        "url": url,
+        "name": (ld_product or {}).get("name"),
+        "description": (ld_product or {}).get("description"),
+        "price": offers.get("price"),  # "0.00" for free, "7.99" for paid
+        "currency": offers.get("priceCurrency"),  # "USD"
+        "rating": agg.get("ratingValue"),  # "4.9" string
+        "rating_count": agg.get("ratingCount"),  # int
+        "cover": cover_m.group(1) if cover_m else None,
+        "info": info,
     }
+
 
 # Free game:
 r = extract_game_detail("https://gbpatch.itch.io/our-life")
@@ -304,6 +297,7 @@ Browse pages: `?page=N`. Detect end of results by HTTP 404 (page too high) or ab
 import re
 from helpers import http_get
 
+
 def paginate_listing(base_url, max_pages=10):
     """
     Scrape multiple pages from any itch.io browse URL.
@@ -318,12 +312,13 @@ def paginate_listing(base_url, max_pages=10):
         try:
             html = http_get(url)
         except Exception:
-            break   # 404 = past last page
+            break  # 404 = past last page
         all_games.extend(parse_game_cards(html))
         if not re.search(r'<link[^>]+rel="next"[^>]*/>', html):
             break
         page += 1
     return all_games
+
 
 # Confirmed: page 1 has <link href="?page=2" rel="next"/>
 #            page 2 has <link rel="prev" href="/games/top-rated"/> and <link rel="next" href="?page=3"/>
@@ -341,15 +336,15 @@ All confirmed working via `http_get`:
 BASE = "https://itch.io/games"
 
 # Sort orders
-f"{BASE}/top-rated"      # all-time top rated (rated by community, 0–5 stars)
-f"{BASE}/newest"         # most recently published
-f"{BASE}/featured"       # itch.io staff picks
-f"{BASE}/on-sale"        # discounted games
-f"{BASE}/free"           # free games only
+f"{BASE}/top-rated"  # all-time top rated (rated by community, 0–5 stars)
+f"{BASE}/newest"  # most recently published
+f"{BASE}/featured"  # itch.io staff picks
+f"{BASE}/on-sale"  # discounted games
+f"{BASE}/free"  # free games only
 
 # Genre/tag paths (append .xml for RSS)
-f"{BASE}/tag-puzzle"     # tag slug — prefix with 'tag-'
-f"{BASE}/genre-action"   # genre — prefix with 'genre-' (less common)
+f"{BASE}/tag-puzzle"  # tag slug — prefix with 'tag-'
+f"{BASE}/genre-action"  # genre — prefix with 'genre-' (less common)
 
 # Combine: tag + sort via separate pages (no combined URL that survives http_get)
 # Note: https://itch.io/games/top-rated/tag-puzzle -> HTTP 403
@@ -384,10 +379,12 @@ Base URL: `https://itch.io/api/1/<key>/`
 import json
 from helpers import http_get
 
-ITCH_KEY = "your_api_key_here"   # from https://itch.io/user/settings/api-keys
+ITCH_KEY = "your_api_key_here"  # from https://itch.io/user/settings/api-keys
+
 
 def api(path):
     return json.loads(http_get(f"https://itch.io/api/1/{ITCH_KEY}/{path}"))
+
 
 # Authenticated user info
 api("me")

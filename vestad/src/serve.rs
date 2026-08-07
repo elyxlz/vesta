@@ -19,8 +19,8 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
-    self_update, systemd, update_check, update_window,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
+    maintenance_window, mobile_app, self_update, systemd, update_check,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -42,7 +42,6 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
     "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
-const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
 
@@ -222,27 +221,173 @@ async fn info() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "managed": crate::is_cloud_managed() }))
 }
 
-/// `POST /agents/{name}/account-token`: mint a short-lived server-identity token for
-/// the on-box agent (issue #20). Agent-token authenticated (the agent proves itself
-/// with its `X-Agent-Token`); vestad signs `{ sub: VESTA_CLOUD_SERVER_ID, typ:
-/// "server-identity" }` with its `api_key` and hands it back. The agent carries this
-/// to the control plane's `/api/account/*` to read its plan or open a billing portal.
-/// vestad makes NO network call, it only signs locally; the `api_key` never enters
-/// the agent container, only this 10-minute token does.
+/// `POST /agents/{name}/account-token`: mint a short-lived server-identity token
+/// for the on-box agent (issue #20). Agent-token authenticated. The identity
+/// comes from cloud-init env on a managed VM or `vesta-cloud-account.json` on a
+/// paired self-hosted box (`vesta_cloud::vesta_cloud_identity`); an unpaired box
+/// 404s, and the nullable `control_url` names the identity's control plane.
+/// vestad makes NO network call, it only signs locally; the `api_key` never
+/// enters the agent container, only this 10-minute token does.
 async fn account_token_handler(State(state): State<SharedState>) -> axum::response::Response {
-    if !crate::is_cloud_managed() {
-        return err_response(StatusCode::NOT_FOUND, "not a cloud-managed server").into_response();
-    }
-    let Ok(server_id) = std::env::var("VESTA_CLOUD_SERVER_ID") else {
-        // Managed but VESTA_CLOUD_SERVER_ID not seeded — nothing to mint.
+    let Some((server_id, control_url)) =
+        crate::vesta_cloud::vesta_cloud_identity(&state.env_config.config_dir)
+    else {
         return err_response(StatusCode::NOT_FOUND, "no server identity available").into_response();
     };
     let token = crate::jwt::create_server_identity_token(&state.api_key, &server_id);
     Json(serde_json::json!({
         "token": token,
         "expires_in": crate::jwt::SERVER_IDENTITY_TTL,
+        "control_url": control_url,
     }))
     .into_response()
+}
+
+/// `POST /vesta-cloud/pair` (daemon-level: the apps authenticate with the api
+/// key / access token, an agent with its own token): open or resume the pairing
+/// that links this self-hosted box to a Vesta Cloud account. The flow itself
+/// lives in `vesta_cloud::start_or_resume_pairing`; the caller only ever sees
+/// the `user_code` + `verification_url` to relay to the owner (never the
+/// `device_code`), with the code's REMAINING lifetime as `expires_in`.
+/// Managed VMs and already-paired boxes refuse with 409.
+async fn vesta_cloud_pair_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if crate::is_cloud_managed() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "this box is already managed by Vesta Cloud",
+        ));
+    }
+    if crate::vesta_cloud::load_vesta_cloud_account(&state.env_config.config_dir).is_some() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "already paired to a Vesta Cloud account (unpair first)",
+        ));
+    }
+
+    let _guard = state.vesta_cloud_pairing_lock.lock().await;
+    let pairing = crate::vesta_cloud::start_or_resume_pairing(
+        &state.http_client,
+        &state.env_config.config_dir,
+        &state.api_key,
+    )
+    .await
+    .map_err(|e| match e {
+        crate::vesta_cloud::PairStartError::AlreadyPaired => err_response(
+            StatusCode::CONFLICT,
+            "the control plane already recognizes this box's key as a live server",
+        ),
+        crate::vesta_cloud::PairStartError::Control(msg)
+        | crate::vesta_cloud::PairStartError::Transport(msg) => {
+            err_response(StatusCode::BAD_GATEWAY, &msg)
+        }
+    })?;
+
+    let now = crate::time_utils::now_epoch_secs();
+    Ok(Json(serde_json::json!({
+        "user_code": pairing.user_code,
+        "verification_url": pairing.verification_url,
+        "interval": pairing.interval,
+        "expires_in": pairing.remaining_secs(now),
+    })))
+}
+
+/// `POST /vesta-cloud/pair/poll` (daemon-level, same tiers as pair): forward
+/// ONE control-plane poll for the in-flight pairing. Answers 200
+/// `{status:"pending"}` while the owner hasn't approved (a STRUCTURED signal,
+/// callers never parse error prose); on `linked` the flow core has already
+/// persisted `vesta-cloud-account.json` and cleared the pairing. A terminal
+/// refusal clears the pairing; a network failure keeps it (poll again).
+async fn vesta_cloud_pair_poll_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let now = crate::time_utils::now_epoch_secs();
+    let _guard = state.vesta_cloud_pairing_lock.lock().await;
+    let had_pairing =
+        crate::vesta_cloud::load_vesta_cloud_pairing(&state.env_config.config_dir).is_some();
+    let Some(pairing) =
+        crate::vesta_cloud::current_vesta_cloud_pairing(&state.env_config.config_dir, now)
+    else {
+        if had_pairing {
+            return Err(err_response(StatusCode::GONE, "pairing expired"));
+        }
+        return Err(err_response(StatusCode::NOT_FOUND, "no pairing in progress"));
+    };
+
+    match crate::vesta_cloud::poll_pairing(
+        &state.http_client,
+        &state.env_config.config_dir,
+        &pairing.device_code,
+    )
+    .await
+    {
+        Err(e) => Err(err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("pairing poll failed: {e}"),
+        )),
+        Ok(crate::vesta_cloud::PollOutcome::Pending) => {
+            Ok(Json(serde_json::json!({ "status": "pending" })))
+        }
+        Ok(crate::vesta_cloud::PollOutcome::Linked {
+            server_id,
+            control_url,
+        }) => Ok(Json(serde_json::json!({
+            "status": "linked",
+            "server_id": server_id,
+            "control_url": control_url,
+        }))),
+        Ok(crate::vesta_cloud::PollOutcome::Refused { gone, reason }) => {
+            let mapped = if gone {
+                StatusCode::GONE
+            } else {
+                StatusCode::CONFLICT
+            };
+            Err(err_response(mapped, &format!("pairing failed: {reason}")))
+        }
+    }
+}
+
+/// `POST /vesta-cloud/unpair` (daemon-level, same tiers as pair): detach this
+/// box from its Vesta Cloud account via `vesta_cloud::request_unpair`. A 404
+/// from the control plane means the link was already gone server-side
+/// (dashboard unpair) and the local file is cleared; an identity rejection
+/// keeps the file on purpose (409, the owner unpairs from the dashboard).
+async fn vesta_cloud_unpair_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if crate::is_cloud_managed() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "a managed Vesta Cloud box cannot unpair",
+        ));
+    }
+    let Some(account) =
+        crate::vesta_cloud::load_vesta_cloud_account(&state.env_config.config_dir)
+    else {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            "not paired to a Vesta Cloud account",
+        ));
+    };
+
+    match crate::vesta_cloud::request_unpair(
+        &state.http_client,
+        &state.env_config.config_dir,
+        &state.api_key,
+        &account,
+    )
+    .await
+    {
+        Err(e) => Err(err_response(StatusCode::BAD_GATEWAY, &e)),
+        Ok(crate::vesta_cloud::UnpairOutcome::IdentityRejected) => Err(err_response(
+            StatusCode::CONFLICT,
+            "the control plane rejected this box's identity (has the api key changed since pairing?); the link was NOT cleared. remove the box from the vesta.run dashboard, then unpair again",
+        )),
+        Ok(crate::vesta_cloud::UnpairOutcome::Unpaired { .. }) => {
+            Ok(Json(serde_json::json!({ "status": "unpaired" })))
+        }
+    }
 }
 
 /// `GET /agents/{name}/workspace.bundle` — the host's upstream snapshot as a bundle
@@ -405,6 +550,9 @@ async fn gateway_update_handler(
         channel = channel.as_str(),
         "gateway update requested via API"
     );
+    // The same pre-update snapshot pass the maintenance cycle runs, immediately: the user
+    // asked now, so no window or idle wait. Restart-free, so it only delays the apply.
+    run_snapshot_pass(&state, maintenance::PassKind::pre_update_from_current()).await;
     let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
     state
         .updating
@@ -434,6 +582,7 @@ async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoRespo
     let agents = agent_status::list_agents(
         &state.docker,
         &state.http_client,
+        &state.agent_status_cache,
         &state.env_config.agents_dir,
         &state.rebuilding,
     )
@@ -530,6 +679,7 @@ async fn agent_status_handler(
     let status = agent_status::get_status(
         &state.docker,
         &state.http_client,
+        &state.agent_status_cache,
         &name,
         &state.env_config.agents_dir,
         &state.rebuilding,
@@ -713,6 +863,7 @@ async fn destroy_agent_handler(
         .await
         .map_err(map_docker_err)?;
     crate::restic::remove_repo(&name);
+    state.agent_status_cache.clear_bridge_ip(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -775,6 +926,9 @@ async fn rename_agent_handler(
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(&name, &new_name).map_err(map_docker_err)?;
+    // The old name's network is gone with the rename; drop its cached address so nothing keeps
+    // dialing it (the new name's fills in when it starts, below).
+    state.agent_status_cache.clear_bridge_ip(&name);
 
     {
         let mut settings = state.settings.write().await;
@@ -808,11 +962,7 @@ fn rename_notification_payload(
     new_name: &str,
     epoch_secs: u64,
 ) -> Result<serde_json::Value, String> {
-    let epoch = i64::try_from(epoch_secs).map_err(|e| format!("epoch out of range: {e}"))?;
-    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch)
-        .map_err(|e| format!("epoch out of range: {e}"))?
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| format!("format timestamp: {e}"))?;
+    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
     Ok(serde_json::json!({
         "timestamp": timestamp,
         "source": "vestad",
@@ -828,6 +978,22 @@ fn rename_notification_payload(
     }))
 }
 
+/// Write a vestad-authored notification JSON into an agent's notification intake. Best-effort: the
+/// caller decides whether a failure is fatal. Returns the file name written.
+async fn drop_notification(
+    docker: &bollard::Docker,
+    agent: &str,
+    file_name: &str,
+    payload: &serde_json::Value,
+) -> Result<String, String> {
+    let cname = docker::container_name(agent);
+    let bytes = serde_json::to_vec(payload).map_err(|e| format!("serialize notification: {e}"))?;
+    docker::upload_to_container(docker, &cname, "/root/agent/notifications", file_name, &bytes)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(file_name.to_string())
+}
+
 /// Drop a high-priority notification into the renamed agent so it self-updates
 /// MEMORY.md and any prompts that reference the old name. Best-effort: failure
 /// to write the notification doesn't block the rename. Returns the notification
@@ -837,21 +1003,40 @@ pub(crate) async fn drop_rename_notification(
     new_name: &str,
     old_name: &str,
 ) -> Result<String, String> {
-    let cname = docker::container_name(new_name);
     let epoch = crate::time_utils::now_epoch_secs();
     let payload = rename_notification_payload(old_name, new_name, epoch)?;
-    let bytes = serde_json::to_vec(&payload).map_err(|e| format!("serialize notification: {e}"))?;
-    let file_name = format!("rename-{epoch}.json");
-    docker::upload_to_container(
-        docker,
-        &cname,
-        "/root/agent/notifications",
-        &file_name,
-        &bytes,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(file_name)
+    drop_notification(docker, new_name, &format!("rename-{epoch}.json"), &payload).await
+}
+
+/// Build the presence notification payload. Pure (no IO) so its shape can be
+/// asserted without spinning up a container. `interrupt: false` snoozes it
+/// (ambient presence), overridable by the user's `notification_rules`.
+fn presence_notification_payload(
+    epoch_secs: u64,
+    client: crate::types::ClientKind,
+) -> Result<serde_json::Value, String> {
+    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
+    let client = client.display_name();
+    Ok(serde_json::json!({
+        "timestamp": timestamp,
+        "source": "vestad",
+        "type": "user-presence",
+        "interrupt": false,
+        "message": format!("the user just opened {client} and is here now."),
+    }))
+}
+
+/// Drop a snoozed presence notification into the agent so Vesta knows the user
+/// just returned to a client. Best-effort: a stopped agent or write failure is
+/// logged, never fatal. Returns the notification file name written.
+pub(crate) async fn drop_presence_notification(
+    docker: &bollard::Docker,
+    agent: &str,
+    client: crate::types::ClientKind,
+) -> Result<String, String> {
+    let epoch = crate::time_utils::now_epoch_secs();
+    let payload = presence_notification_payload(epoch, client)?;
+    drop_notification(docker, agent, &format!("user-presence-{epoch}.json"), &payload).await
 }
 
 /// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent` so the
@@ -887,13 +1072,16 @@ async fn write_to_agent(
 
     // Agent must be running to receive the proxy call; auto-start stopped agents.
     if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, name, Some(&crate::lifecycle::CONFIG_WRITE_START))
-            .await
-            .map_err(map_docker_err)?;
+        docker::start_agent(
+            &state.docker,
+            name,
+            Some(&crate::lifecycle::CONFIG_WRITE_START),
+        )
+        .await
+        .map_err(map_docker_err)?;
     }
 
-    let provider =
-        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
+    let provider = agent_provider_for(state, name).await?;
     let forwarded = match write {
         AgentWrite::Config(body) => provider.put_config(&body).await,
         AgentWrite::Provider(body) => provider.put_provider(&body).await,
@@ -906,14 +1094,37 @@ async fn write_to_agent(
     ))
 }
 
+/// `AgentProvider` for `name`, or `SERVICE_UNAVAILABLE` if its bridge IP hasn't resolved yet
+/// (races a just-issued start/create; see `AgentStatusCache::bridge_ip_or_resolve`).
+async fn agent_provider_for<'a>(
+    state: &'a SharedState,
+    name: &'a str,
+) -> Result<agent_provider::AgentProvider<'a>, (StatusCode, Json<serde_json::Value>)> {
+    let host = state
+        .agent_status_cache
+        .bridge_ip_or_resolve(&state.docker, &docker::container_name(name), name)
+        .await
+        .ok_or_else(|| {
+            err_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent's network address not yet resolved -- retry shortly",
+            )
+        })?;
+    Ok(agent_provider::AgentProvider::new(
+        &state.http_client,
+        &state.env_config.agents_dir,
+        name,
+        host,
+    ))
+}
+
 /// Relay the agent's `GET /config` (prefs; the agent owns it, vestad proxies it to the app).
 async fn get_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider =
-        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    let provider = agent_provider_for(&state, &name).await?;
     provider
         .get_config()
         .await
@@ -936,8 +1147,7 @@ async fn get_provider_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider =
-        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    let provider = agent_provider_for(&state, &name).await?;
     provider
         .get_provider()
         .await
@@ -1518,14 +1728,6 @@ struct RegisterServiceBody {
     public: Option<bool>,
 }
 
-/// Collect all ports in use across all agents in the service registry.
-fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Vec<u16> {
-    registry
-        .values()
-        .flat_map(|services| services.values().map(|e| e.port))
-        .collect()
-}
-
 /// Upper bound of the kernel's ephemeral source-port range
 /// (`net.ipv4.ip_local_port_range`). Service ports are allocated above this so
 /// the kernel never reuses a just-allocated service port as a transient
@@ -1548,51 +1750,27 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-/// Find a free port not used by any registered service or other process.
-///
-/// Callers bind the returned port themselves, only later. Asking the OS via `bind(0)`
-/// hands back an *ephemeral* port that the kernel can reuse as the source port of an
-/// outbound connection before the caller binds it, producing a spurious `EADDRINUSE`
-/// (the port looks free to a LISTEN scan but `bind()` fails). So scan
-/// deterministically and prefer ports *above* the ephemeral range, which the kernel
-/// will not hand out as source ports.
-fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Option<u16> {
-    let used = all_registered_ports(registry);
-    let scan = |lo: u16| {
-        (lo..=SERVICE_PORT_MAX)
-            .find(|p| !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
-    };
+/// Find a free port for `agent`'s own services, scanning only that agent's currently
+/// registered set. Each agent has its own network namespace (see `ensure_agent_network`), so
+/// vestad cannot test bindability inside one: this is pure bookkeeping over a small in-memory
+/// set, and the caller's own `bind()` is the real check.
+/// Prefers ports above the kernel's ephemeral range, since the kernel can reuse one as an
+/// outbound source port between allocation and the caller's bind, producing a spurious
+/// `EADDRINUSE` -- a single-host risk, unrelated to multi-tenancy.
+fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>, agent: &str) -> Option<u16> {
+    let used: std::collections::HashSet<u16> = registry
+        .get(agent)
+        .map(|services| services.values().map(|entry| entry.port).collect())
+        .unwrap_or_default();
+    let scan = |lo: u16| (lo..=SERVICE_PORT_MAX).find(|p| !used.contains(p));
     // Preferred: above the ephemeral range, where the port can't be reused as a
     // transient outbound source port between allocation and the caller binding it.
     let safe_min = ephemeral_port_high()
         .saturating_add(1)
         .max(SERVICE_PORT_MIN);
-    // Fallback: the full service range (may still race, but better than failing
-    // to allocate when the safe band is exhausted).
+    // Fallback: the full service range (exhausting the safe band before this agent's
+    // own handful of ports run out is not a realistic scenario, but cheap to keep).
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
-}
-
-/// A cached service port is reusable when it's the service's own live server (TCP
-/// connect succeeds) or genuinely free (bind succeeds). Only a port that is neither,
-/// a `zombie/TIME_WAIT` corpse left by a crashed startup (#371), is dropped so the
-/// caller gets a fresh one. A bind-only probe (#436) treats every listener as a
-/// squatter, but resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
-/// status/stop/restart) POST here purely to *find* the live port, and reallocating a
-/// resident service's port leaves every later lookup on a fresh, dead port. The one
-/// caller that binds (voice `start`) guards with `port_alive` first.
-async fn is_cached_port_reusable(port: u16) -> bool {
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
-    let alive = tokio::time::timeout(
-        Duration::from_millis(200),
-        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)),
-    )
-    .await
-    .is_ok_and(|r| r.is_ok());
-    alive
-        || tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_ok()
 }
 
 /// `public` is intrinsic to a registration, like the port: an absent field inherits
@@ -1685,12 +1863,8 @@ async fn register_service_handler(
         .and_then(|services| services.get(&service_name))
         .copied();
     let port = match cached_entry.map(|entry| entry.port) {
-        Some(cached_port) if is_cached_port_reusable(cached_port).await => cached_port,
-        Some(stale_port) => {
-            tracing::warn!(agent = %name, service = %service_name, stale_port, "cached service port is not bindable, allocating a fresh one");
-            allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
-        }
-        None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
+        Some(cached_port) => cached_port,
+        None => allocate_service_port(&settings.services, &name).ok_or_else(no_free_ports_err)?,
     };
     let public = resolve_public(body.public, cached_entry);
 
@@ -1734,6 +1908,114 @@ async fn list_services_handler(
     Json(serde_json::json!({"services": services}))
 }
 
+// --- Service keys ---
+
+#[derive(Deserialize)]
+struct MintServiceKeyBody {
+    #[serde(default)]
+    label: Option<String>,
+    /// Seconds until expiry. Omitted uses `DEFAULT_KEY_TTL_SECS`.
+    #[serde(default)]
+    ttl_secs: Option<u64>,
+    /// Deliberate opt-out of expiry, for a key handed to a long-lived consumer.
+    #[serde(default)]
+    never_expires: bool,
+}
+
+#[derive(Serialize)]
+struct MintServiceKeyResponse {
+    id: String,
+    /// The secret, returned exactly once: the store keeps only its hash.
+    key: String,
+    expires_at: Option<u64>,
+}
+
+/// When the key stops working. `never_expires` overrides any requested ttl.
+fn mint_expiry(body: &MintServiceKeyBody, now: u64) -> Option<u64> {
+    if body.never_expires {
+        return None;
+    }
+    // Saturating: an absurd caller-supplied ttl must not panic in debug or wrap in release.
+    Some(now.saturating_add(body.ttl_secs.unwrap_or(crate::service_keys::DEFAULT_KEY_TTL_SECS)))
+}
+
+/// A minted key must outlive `now`: the store counts `expires_at == now` as already expired, so
+/// minting one hands the caller a secret its own prune drops on the spot.
+fn expiry_is_already_dead(expires_at: Option<u64>, now: u64) -> bool {
+    expires_at.is_some_and(|expires_at| expires_at <= now)
+}
+
+/// Refuse to mint for a service that was never registered, so a typo does not silently
+/// produce a key that opens nothing. Registration truth is the proxy's own lookup.
+async fn require_registered_service(
+    state: &SharedState,
+    name: &str,
+    service: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if agent_proxy::resolve_service(state, name, service).await.is_some() {
+        return Ok(());
+    }
+    Err(err_response(
+        StatusCode::NOT_FOUND,
+        &format!("service '{service}' is not registered for agent '{name}'"),
+    ))
+}
+
+async fn mint_service_key_handler(
+    State(state): State<SharedState>,
+    Path((name, service)): Path<(String, String)>,
+    Json(body): Json<MintServiceKeyBody>,
+) -> Result<Json<MintServiceKeyResponse>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let now = crate::time_utils::now_epoch_secs();
+    let expires_at = mint_expiry(&body, now);
+    if expiry_is_already_dead(expires_at, now) {
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "ttl_secs must be greater than 0; omit it for the default, or pass never_expires",
+        ));
+    }
+    require_registered_service(&state, &name, &service).await?;
+
+    let mut store = state.service_keys.write().await;
+    let (info, secret) = store.mint(&name, &service, body.label, expires_at, now);
+    store.prune_expired(now);
+    crate::service_keys::save_store(&store);
+    tracing::info!(agent = %name, service = %service, id = %info.id, expires_at = ?info.expires_at, "service key minted");
+    Ok(Json(MintServiceKeyResponse {
+        id: info.id,
+        key: secret,
+        expires_at: info.expires_at,
+    }))
+}
+
+async fn list_service_keys_handler(
+    State(state): State<SharedState>,
+    Path((name, service)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let store = state.service_keys.read().await;
+    let keys = store.list(&name, &service, crate::time_utils::now_epoch_secs());
+    Ok(Json(serde_json::json!({"keys": keys})))
+}
+
+async fn revoke_service_key_handler(
+    State(state): State<SharedState>,
+    Path((name, service, id)): Path<(String, String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let mut store = state.service_keys.write().await;
+    if !store.revoke(&name, &service, &id) {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            &format!("no service key '{id}' for '{service}'"),
+        ));
+    }
+    crate::service_keys::save_store(&store);
+    tracing::info!(agent = %name, service = %service, id = %id, "service key revoked");
+    Ok(ok_json())
+}
+
 // --- Backup/Restore ---
 
 /// Build the SSE `error` event a backup/restore stream emits when its pipeline fails,
@@ -1772,18 +2054,41 @@ where
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// Publishes an agent's in-flight operation on the roster for as long as it is held, clearing it on
+/// drop so an early `?` return cannot strand the agent looking busy forever.
+struct PublishedOperation {
+    cache: Arc<crate::agent_status::AgentStatusCache>,
+    name: String,
+}
+
+impl PublishedOperation {
+    fn new(state: &SharedState, name: &str, operation: crate::docker::AgentOperation) -> Self {
+        let normalized = crate::docker::normalize_name(name);
+        state.agent_status_cache.set_operation(&normalized, operation);
+        Self { cache: state.agent_status_cache.clone(), name: normalized }
+    }
+}
+
+impl Drop for PublishedOperation {
+    fn drop(&mut self) {
+        self.cache.clear_operation(&self.name);
+    }
+}
+
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %name, "creating manual backup");
-    // Inline, a disconnect could drop the future at restic::snapshot, leaving the container
-    // stopped indefinitely (with_container_paused only restarts it after the snapshot returns).
+    // Inline, a disconnect could drop the future mid-pipeline, stranding the temp commit
+    // container/image that create_backup only removes after the snapshot returns.
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &name).await;
         let _file_lock = backup::agent_file_lock(&name)?;
+        let _operation =
+            PublishedOperation::new(&state, &name, crate::docker::AgentOperation::BackingUp);
         let info =
-            backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await?;
+            backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual, None).await?;
         tracing::info!(backup_id = %info.id, size = info.size, "backup created");
         Ok(serde_json::to_string(&info).unwrap_or_default())
     })
@@ -1827,6 +2132,8 @@ async fn restore_backup_handler(
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &path.name).await;
         let _file_lock = backup::agent_file_lock(&path.name)?;
+        let _operation =
+            PublishedOperation::new(&state, &path.name, crate::docker::AgentOperation::Restoring);
         let user_mounts = {
             let settings = state.settings.read().await;
             settings.agent_mounts(&path.name)
@@ -1875,30 +2182,27 @@ fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Valu
         "channel": channel,
         "auto_backup": {
             "enabled": settings.backup.enabled,
-            "hour": settings.backup.hour,
+            "every_n_days": settings.backup.every_n_days,
             "retention": settings.backup.retention,
         },
     })
 }
 
-/// Apply a sparse backup update in place. Validation (retention floor, hour range)
+/// Apply a sparse backup update in place. Validation (retention floor, cadence range)
 /// runs in the handler before this is called.
 fn apply_backup_update(backup: &mut BackupGlobalSettings, body: &SetBackupSettingsBody) {
     if let Some(enabled) = body.enabled {
         backup.enabled = enabled;
     }
-    if let Some(hour) = body.hour {
-        backup.hour = hour;
+    if let Some(days) = body.every_n_days {
+        backup.every_n_days = days;
     }
     if let Some(ref ret) = body.retention {
-        if let Some(d) = ret.daily {
-            backup.retention.daily = d;
+        if let Some(p) = ret.periodic {
+            backup.retention.periodic = p;
         }
-        if let Some(w) = ret.weekly {
-            backup.retention.weekly = w;
-        }
-        if let Some(m) = ret.monthly {
-            backup.retention.monthly = m;
+        if let Some(v) = ret.pre_update_versions {
+            backup.retention.pre_update_versions = v;
         }
     }
 }
@@ -1917,15 +2221,14 @@ fn agent_backup_json(
 #[derive(Deserialize)]
 struct SetBackupSettingsBody {
     enabled: Option<bool>,
-    hour: Option<u8>,
+    every_n_days: Option<u8>,
     retention: Option<RetentionUpdate>,
 }
 
 #[derive(Deserialize)]
 struct RetentionUpdate {
-    daily: Option<usize>,
-    weekly: Option<usize>,
-    monthly: Option<usize>,
+    periodic: Option<usize>,
+    pre_update_versions: Option<usize>,
 }
 
 const MIN_RETENTION: usize = 1;
@@ -1934,9 +2237,8 @@ fn validate_retention(
     update: &RetentionUpdate,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     for (name, val) in [
-        ("daily", update.daily),
-        ("weekly", update.weekly),
-        ("monthly", update.monthly),
+        ("periodic", update.periodic),
+        ("pre_update_versions", update.pre_update_versions),
     ] {
         if let Some(v) = val {
             if v < MIN_RETENTION {
@@ -1973,9 +2275,9 @@ async fn put_gateway_settings_handler(
         if let Some(ref ret) = backup.retention {
             validate_retention(ret)?;
         }
-        if let Some(hour) = backup.hour {
-            if hour > 23 {
-                return Err(err_response(StatusCode::BAD_REQUEST, "hour must be 0-23"));
+        if let Some(days) = backup.every_n_days {
+            if !(1..=30).contains(&days) {
+                return Err(err_response(StatusCode::BAD_REQUEST, "every_n_days must be 1-30"));
             }
         }
     }
@@ -2087,14 +2389,11 @@ async fn set_agent_backup_settings_handler(
     }
     if let Some(ret) = body.retention {
         let mut r = entry.retention.unwrap_or(global_retention);
-        if let Some(d) = ret.daily {
-            r.daily = d;
+        if let Some(p) = ret.periodic {
+            r.periodic = p;
         }
-        if let Some(w) = ret.weekly {
-            r.weekly = w;
-        }
-        if let Some(m) = ret.monthly {
-            r.monthly = m;
+        if let Some(v) = ret.pre_update_versions {
+            r.pre_update_versions = v;
         }
         entry.retention = Some(r);
     }
@@ -2505,6 +2804,24 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
+    // Service keys: the api key (app) or the agent's own token (self-scoped), so an agent
+    // can mint a key for a service it runs and revoke it later, and never for another agent.
+    let agents_service_keys = Router::new()
+        .route(
+            "/agents/{name}/services/{service}/keys",
+            post(mint_service_key_handler).get(list_service_keys_handler),
+        )
+        .route(
+            "/agents/{name}/services/{service}/keys/{id}",
+            axum::routing::delete(revoke_service_key_handler),
+        )
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+
     // Service listing: read-only, accepts either API key or the agent's token
     let agents_services_read = Router::new()
         .route("/agents/{name}/services", get(list_services_handler))
@@ -2523,8 +2840,24 @@ pub fn build_router(state: SharedState) -> Router {
     let gateway_agent_shared = Router::new()
         .route("/version", get(version))
         .route("/version/check", post(version_check))
-        .route("/gateway/update", post(gateway_update_handler))
+        // Vesta Cloud pairing is host-global like the update surface: the apps
+        // drive it with the api key / access token, an agent with its own
+        // token, and `vestad vesta-cloud login` runs the same core directly.
+        .route("/vesta-cloud/pair", post(vesta_cloud_pair_handler))
+        .route("/vesta-cloud/pair/poll", post(vesta_cloud_pair_poll_handler))
+        .route("/vesta-cloud/unpair", post(vesta_cloud_unpair_handler))
         .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_any_agent_token,
+        ));
+
+    // Update shares gateway_agent_shared's auth but rides the longrun deadline: it runs the
+    // pre-update snapshot pass inline before applying, and a first full snapshot of a
+    // multi-GB agent exceeds the control deadline, which would cancel the pass mid-stream.
+    let gateway_update = Router::new()
+        .route("/gateway/update", post(gateway_update_handler))
+        .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_any_agent_token,
@@ -2543,12 +2876,14 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(gateway_agent_shared)
+        .merge(gateway_update)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
         .merge(agents_self_stop)
         .merge(agents_self_restart)
         .merge(agents_services)
+        .merge(agents_service_keys)
         .merge(agents_services_read)
         .merge(gateway_logs)
         .merge(agents_proxy)
@@ -2577,159 +2912,35 @@ pub fn build_router(state: SharedState) -> Router {
 
 // --- Server start ---
 
-// --- Auto-backup background task ---
+// --- Update-check background task (detection only; the maintenance task applies) ---
 
-fn spawn_auto_backup_task(state: SharedState) {
+fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(
-                AUTO_BACKUP_CHECK_INTERVAL_SECS,
-            ))
-            .await;
-
-            let backup_settings = {
-                let settings = state.settings.read().await;
-                settings.backup.clone()
-            };
-
-            if !backup_settings.enabled {
-                tracing::debug!("auto-backup: disabled, skipping cycle");
-                continue;
+            let channel = effective_channel(&state).await;
+            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+                Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
+                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
+                Err(e) => tracing::error!("update check task failed: {}", e),
             }
-
-            // Fire on or after the configured local hour rather than only during that exact hour,
-            // then let the per-type dedup below make the work idempotent (one daily per local day,
-            // etc.). This way a spring-forward DST jump that skips the target hour still triggers a
-            // backup on the next cycle, and a daemon that was down through the hour catches up.
-            let target_hour = backup_settings.hour;
-            let current_hour = crate::time_utils::local_hour();
-            if current_hour < target_hour {
-                tracing::debug!(
-                    current_hour,
-                    target_hour,
-                    "auto-backup: before daily window, skipping"
-                );
-                continue;
-            }
-
-            let agents = backup::list_agent_names(&state.docker).await;
-
-            if agents.is_empty() {
-                tracing::debug!("auto-backup: no agents found, skipping cycle");
-                continue;
-            }
-
-            tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
-
-            let now_epoch = crate::time_utils::now_epoch_secs();
-            let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
-            let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago =
-                crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
-
-            for name in &agents {
-                // Resolve per-agent settings (override or global fallback)
-                let (agent_enabled, ret) = backup_settings.effective_for(name);
-                if !agent_enabled {
-                    tracing::debug!(agent = %name, "auto-backup: disabled for agent, skipping");
-                    continue;
-                }
-
-                let _guard = agent_write_guard(&state, name).await;
-
-                if let Some(age) = backup::container_age_secs(&state.docker, name).await {
-                    if age < backup::MIN_AGE_FOR_BACKUP_SECS {
-                        tracing::debug!(agent = %name, age_hours = age / 3600, "auto-backup: skipping young agent");
-                        continue;
-                    }
-                }
-
-                let mut backups = match backup::list_backups(&state.env_config.agents_dir, name)
-                    .await
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        tracing::error!(agent = %name, error = %e, "auto-backup: failed to list backups");
-                        continue;
-                    }
-                };
-
-                let mut needed = Vec::new();
-
-                let has_daily_today = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Daily
-                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
-                            .map(crate::time_utils::local_date_of_epoch)
-                            .as_deref()
-                            == Some(today_local.as_str())
-                });
-                if !has_daily_today {
-                    needed.push(crate::types::BackupType::Daily);
-                }
-
-                let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly
-                        && b.created_at >= seven_days_ago
-                });
-                if !has_recent_weekly {
-                    needed.push(crate::types::BackupType::Weekly);
-                }
-
-                let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly
-                        && b.created_at >= thirty_days_ago
-                });
-                if !has_recent_monthly {
-                    needed.push(crate::types::BackupType::Monthly);
-                }
-
-                if !needed.is_empty() {
-                    let _file_lock = match backup::agent_file_lock(name) {
-                        Ok(lock) => lock,
-                        Err(e) => {
-                            tracing::error!(agent = %name, error = %e, "auto-backup: failed to acquire lock");
-                            continue;
-                        }
-                    };
-                    tracing::info!(agent = %name, types = ?needed, "auto-backup: creating backups");
-                    for (bt, result) in
-                        backup::create_backups_batch(&state.docker, name, needed).await
-                    {
-                        match result {
-                            Ok(info) => {
-                                tracing::info!(agent = %name, backup_type = %bt, backup_id = %info.id, "auto-backup: created");
-                                backups.insert(0, info);
-                            }
-                            Err(e) => {
-                                tracing::error!(agent = %name, backup_type = %bt, error = %e, "auto-backup: failed");
-                            }
-                        }
-                    }
-                }
-
-                backup::cleanup_backups(name, &backups, &ret).await;
-            }
-
-            tracing::info!(agent_count = agents.len(), "auto-backup: cycle complete");
+            tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS))
+                .await;
         }
     });
 }
 
-// --- Update-check background task ---
+// --- Maintenance cycle ---
 
-// Detection cadence with no update pending -- also the UpdatePill's refresh rate. While an update
-// waits for the fleet's quiet window we re-poll this often instead, so update_info, the release
-// channel and the fleet's timezones all stay fresh and a transient apply failure retries within the
-// window rather than a night later.
-const WINDOW_POLL_SECS: u64 = 15 * 60;
+// Poll cadence while waiting for the fleet's 4-5am window and, inside it, between idle checks.
+const WINDOW_POLL: jiff::SignedDuration = jiff::SignedDuration::from_secs(15 * 60);
 
 // Give the agent WS snapshots that carry each agent's timezone time to arrive before the first
-// auto-apply decision, so an update already pending at startup targets the fleet's real windows
-// instead of resolving a still-empty cache to host-local.
+// maintenance decision, so a pass pending at startup targets the fleet's real windows instead of
+// resolving a still-empty cache to host-local.
 const STARTUP_SETTLE_SECS: u64 = 60;
 
 /// The local timezone of every alive agent, falling back to host-local for any agent that hasn't
-/// reported one (pre-upstream-sync fleet). Drives which 3-5am window the auto-update targets.
+/// reported one (pre-upstream-sync fleet). Drives which 4-5am window maintenance targets.
 fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
     let timezones = state.agent_status_cache.timezones();
     state
@@ -2737,82 +2948,166 @@ fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
         .agents()
         .iter()
         .filter(|entry| entry.status == docker::AgentStatus::Alive)
-        .map(|entry| update_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
+        .map(|entry| maintenance_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
         .collect()
 }
 
-fn spawn_update_check_task(state: SharedState) {
+/// One maintenance cycle owns all scheduled disk and restart work: it fires in the fleet's
+/// best-coverage 4-5am agent-local window, at a poll where every agent is idle (or at the
+/// window's last poll), runs the restart-free snapshot pass, and applies a pending update
+/// as an add-on to that same pass.
+fn spawn_maintenance_task(state: SharedState) {
     tokio::spawn(async move {
-        // Settle first so the timezone cache is populated before any startup-pending update applies.
+        // Settle first so the timezone cache is populated before the first window decision.
         tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
+        let mut last_pass_epoch: u64 = 0;
         loop {
-            let channel = effective_channel(&state).await;
-            let update_available = match tokio::task::spawn_blocking(move || {
-                update_check::check_once(channel)
-            })
-            .await
-            {
-                Ok(Ok(info)) => {
-                    let available = info.update_available;
-                    *state.update_info.lock().await = Some(info);
-                    available
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("update check failed: {}", e);
-                    false
-                }
-                Err(e) => {
-                    tracing::error!("update check task failed: {}", e);
-                    false
-                }
-            };
-
-            // Apply a pending update only once the fleet is in the 3-5am window covering the most
-            // agents (see update_window); until then keep polling fast so we notice the window open,
-            // a channel switch, a pulled release, or a cleared auto_update. perform_update restarts
-            // this process on success, so control usually never returns from the apply branch.
-            let mut awaiting_window = false;
-            if update_available && state.settings.read().await.auto_update {
+            let now_epoch = crate::time_utils::now_epoch_secs();
+            if now_epoch.saturating_sub(last_pass_epoch) >= maintenance::PASS_DEDUP_SECS {
                 let zones = running_agent_zones(&state);
-                if update_window::wait_until_best_window(&zones, jiff::Timestamp::now()).is_zero() {
-                    tracing::info!(
-                        channel = channel.as_str(),
-                        agents = zones.len(),
-                        "auto-update: agent quiet window reached, applying"
-                    );
-                    match tokio::task::spawn_blocking(move || self_update::perform_update(channel))
-                        .await
-                    {
-                        Ok(Ok(outcome)) => tracing::info!(
-                            updated = outcome.updated,
-                            restarted = outcome.restarted,
-                            current = %outcome.current,
-                            latest = %outcome.latest,
-                            "auto-update finished",
-                        ),
-                        // Retry within the window on the fast cadence rather than the next night.
-                        Ok(Err(e)) => {
-                            tracing::warn!("auto-update failed: {}", e);
-                            awaiting_window = true;
-                        }
-                        Err(e) => {
-                            tracing::error!("auto-update task panicked: {}", e);
-                            awaiting_window = true;
-                        }
-                    }
-                } else {
-                    awaiting_window = true;
+                let now = jiff::Timestamp::now();
+                let in_window =
+                    maintenance_window::wait_until_best_window(&zones, now).is_zero();
+                let all_idle = state.agent_status_cache.all_alive_idle();
+                // The lookahead scan only matters when an in-window pass would otherwise defer.
+                let window_closing = in_window
+                    && !all_idle
+                    && !maintenance_window::wait_until_best_window(&zones, now + WINDOW_POLL).is_zero();
+                if maintenance::should_fire(in_window, window_closing, all_idle) {
+                    last_pass_epoch = now_epoch;
+                    run_maintenance(&state).await;
                 }
             }
-
-            let interval = if awaiting_window {
-                WINDOW_POLL_SECS
-            } else {
-                update_check::CHECK_INTERVAL_SECS
-            };
-            tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+            tokio::time::sleep(WINDOW_POLL.unsigned_abs()).await;
         }
     });
+}
+
+/// One fired maintenance cycle: the snapshot pass, then a pending update as its add-on.
+/// `perform_update` restarts this process on success, so control usually never returns
+/// from the apply branch.
+async fn run_maintenance(state: &SharedState) {
+    let update_pending = state
+        .update_info
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|info| info.update_available);
+    let auto_update = state.settings.read().await.auto_update;
+
+    if update_pending && auto_update && !state.dev_mode {
+        run_snapshot_pass(state, maintenance::PassKind::pre_update_from_current()).await;
+        let channel = effective_channel(state).await;
+        tracing::info!(channel = channel.as_str(), "maintenance: applying pending update");
+        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+            Ok(Ok(outcome)) => tracing::info!(
+                updated = outcome.updated,
+                restarted = outcome.restarted,
+                current = %outcome.current,
+                latest = %outcome.latest,
+                "auto-update finished",
+            ),
+            // A failed apply retries next cycle; the fresh pre-update set is reused (<24h).
+            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
+            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+        }
+    } else {
+        run_snapshot_pass(state, maintenance::PassKind::Routine).await;
+    }
+}
+
+/// Snapshot every agent the pass selects, restart-free and concurrently (bounded). After a
+/// successful pre-update snapshot the agent's periodic snapshots are superseded and deleted;
+/// an agent whose snapshot failed keeps them as its fallback rollback point.
+async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
+    use futures_util::StreamExt;
+
+    let backup_settings = {
+        let settings = state.settings.read().await;
+        settings.backup.clone()
+    };
+    if !backup_settings.enabled && matches!(kind, maintenance::PassKind::Routine) {
+        tracing::debug!("maintenance: backups disabled, skipping routine pass");
+        return;
+    }
+
+    let agents = backup::list_agent_names(&state.docker).await;
+    if agents.is_empty() {
+        return;
+    }
+    let now_epoch = crate::time_utils::now_epoch_secs();
+    tracing::info!(agent_count = agents.len(), kind = ?kind, "maintenance: snapshot pass starting");
+
+    let kind = &kind;
+    let backup_settings = &backup_settings;
+    futures_util::stream::iter(agents)
+        .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| async move {
+            snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
+        })
+        .await;
+    tracing::info!(kind = ?kind, "maintenance: snapshot pass complete");
+}
+
+async fn snapshot_agent(
+    state: &SharedState,
+    name: &str,
+    kind: &maintenance::PassKind,
+    backup_settings: &BackupGlobalSettings,
+    now_epoch: u64,
+) {
+    let (agent_enabled, retention) = backup_settings.effective_for(name);
+    if !agent_enabled {
+        tracing::debug!(agent = %name, "maintenance: backups disabled for agent, skipping");
+        return;
+    }
+    if let Some(age) = backup::container_age_secs(&state.docker, name).await {
+        if age < backup::MIN_AGE_FOR_BACKUP_SECS {
+            tracing::debug!(agent = %name, age_hours = age / 3600, "maintenance: skipping young agent");
+            return;
+        }
+    }
+
+    let _guard = agent_write_guard(state, name).await;
+    let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(agent = %name, error = %e, "maintenance: failed to list backups");
+            return;
+        }
+    };
+    if maintenance::agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
+        let _file_lock = match backup::agent_file_lock(name) {
+            Ok(lock) => lock,
+            Err(e) => {
+                tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
+                return;
+            }
+        };
+        match backup::create_backup(&state.docker, name, kind.backup_type(), kind.version_tag()).await {
+            Ok(info) => {
+                if info.backup_type == crate::types::BackupType::PreUpdate {
+                    let superseded: Vec<String> = backups
+                        .iter()
+                        .filter(|b| b.backup_type == crate::types::BackupType::Periodic)
+                        .map(|b| b.id.clone())
+                        .collect();
+                    if !superseded.is_empty() {
+                        tracing::info!(agent = %name, count = superseded.len(), "maintenance: clearing periodic snapshots superseded by pre-update set");
+                        if let Err(e) = crate::restic::forget(name, &superseded).await {
+                            tracing::warn!(agent = %name, error = %e, "maintenance: failed to clear periodic snapshots");
+                        } else {
+                            backups.retain(|b| b.backup_type != crate::types::BackupType::Periodic);
+                        }
+                    }
+                }
+                backups.insert(0, info);
+            }
+            Err(e) => tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed"),
+        }
+    }
+    // Retention runs even when no snapshot was taken, so a tightened policy prunes on the
+    // next pass instead of waiting days for the next snapshot to trigger it.
+    backup::cleanup_backups(name, &backups, &retention).await;
 }
 
 // --- Server start ---
@@ -2830,6 +3125,7 @@ pub struct ServerConfig {
     pub expose_lan: bool,
     pub lan_url: Option<String>,
     pub on_agents_changed: agent_status::OnAgentsChanged,
+    pub force_update: bool,
 }
 
 pub async fn run_server(cfg: ServerConfig) {
@@ -2846,6 +3142,7 @@ pub async fn run_server(cfg: ServerConfig) {
         expose_lan,
         lan_url,
         on_agents_changed,
+        force_update,
     } = cfg;
     let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
@@ -2869,8 +3166,11 @@ pub async fn run_server(cfg: ServerConfig) {
     );
     // Capture whether this boot will deliver new agent code BEFORE extracting it: a re-extract
     // replaces the code dir, so reconcile must restart running agents to reload the new core (and
-    // re-bind their now-detached core mount).
-    let agent_code_changed = crate::agent_code::agent_code_is_stale(&env_config.config_dir);
+    // re-bind their now-detached core mount). `--force-update` forces the same restart when the
+    // fingerprint is unchanged, so a dev iterating on one version bounces every running agent into
+    // an upstream-sync + pending-migration pass without a version bump.
+    let agent_code_changed =
+        force_update || crate::agent_code::agent_code_is_stale(&env_config.config_dir);
     let code_dir = match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         Ok(dir) => dir,
         Err(e) => {
@@ -2899,7 +3199,20 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
-    let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
+    // The device registry persists on a background flush task: every mutation (a /sync connect or a
+    // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
+    let flush_registry = state.device_registry.clone();
+    tokio::spawn(async move { flush_registry.run_flusher().await });
+    // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
+    // supervisor reports its exit so run_server's select never waits on it, because a branch that
+    // resolved would end the select and stop the shutdown handler from stopping the agents.
+    let mobile_app_task = tokio::spawn(mobile_app_worker.run());
+    tokio::spawn(async move {
+        match mobile_app_task.await {
+            Ok(()) => tracing::error!("mobile app delivery worker exited unexpectedly"),
+            Err(error) => tracing::error!(%error, "mobile app delivery worker failed"),
+        }
+    });
     // Reconcile in the background so the API serves immediately: a rebuild (command/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
@@ -2925,6 +3238,25 @@ pub async fn run_server(cfg: ServerConfig) {
         ))
         .await;
     });
+    // Each agent has its own bridge network, so its calls into vestad (register-service,
+    // user-notification, health) cannot reach the loopback bind below; they dial `BOX_HOST`
+    // (host.docker.internal), which resolves to the docker bridge gateway. Bind there too so
+    // agent containers always have a reachable address for vestad, independent of
+    // `--expose-lan` (which stays scoped to real LAN devices reaching vestad, a separate
+    // concern). Skipped when `expose_lan` is set: the wildcard bind below already covers the
+    // gateway address too, so binding it a second time on the same port would conflict.
+    // Resolved here, before `docker` moves into spawn_agent_status_task below.
+    let agent_addr = if expose_lan {
+        None
+    } else {
+        let gateway = docker::resolve_docker_bridge_gateway(&docker)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "failed to resolve the docker bridge gateway — aborting startup");
+                std::process::exit(1);
+            });
+        Some(std::net::SocketAddr::from((gateway, port)))
+    };
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
@@ -2939,7 +3271,7 @@ pub async fn run_server(cfg: ServerConfig) {
         sync_hub: state.sync_hub.clone(),
     });
     let app = build_router(state.clone());
-    spawn_auto_backup_task(state.clone());
+    spawn_maintenance_task(state.clone());
     if dev_mode {
         tracing::info!("dev mode: auto-update disabled");
     } else {
@@ -2970,6 +3302,9 @@ pub async fn run_server(cfg: ServerConfig) {
 
     tracing::info!(port, %https_bind_addr, "https listening");
     tracing::info!(http_port = port + 1, "http listening on 127.0.0.1");
+    if let Some(addr) = agent_addr {
+        tracing::info!(%addr, "https listening for agent-initiated calls");
+    }
 
     let http_app = app.clone();
     let http_handle = tokio::spawn(async move {
@@ -2979,6 +3314,19 @@ pub async fn run_server(cfg: ServerConfig) {
         )
         .await
         .expect("http server failed");
+    });
+
+    let agent_app = app.clone();
+    let agent_rustls_config = rustls_config.clone();
+    let agent_handle = tokio::spawn(async move {
+        match agent_addr {
+            Some(addr) => axum_server::bind_rustls(addr, agent_rustls_config)
+                .serve(agent_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+                .await
+                .expect("agent-gateway https server failed"),
+            // `--expose-lan` already binds the wildcard address, which covers agent traffic too.
+            None => std::future::pending().await,
+        }
     });
 
     let tls_handle = tokio::spawn(async move {
@@ -2991,10 +3339,7 @@ pub async fn run_server(cfg: ServerConfig) {
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
         r = tls_handle => r.expect("https task panicked"),
-        r = mobile_app_handle => match r {
-            Ok(()) => panic!("mobile app delivery worker exited unexpectedly"),
-            Err(error) => panic!("mobile app delivery worker failed: {error}"),
-        },
+        r = agent_handle => r.expect("agent-gateway https task panicked"),
         () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             docker::stop_all_agents(&shutdown_docker).await;
@@ -3031,8 +3376,8 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
-        spawn_pipeline_sse, truncate_chars, valid_user_notification_kind, RegisterServiceBody,
+        allocate_service_port, ensure_not_rebuilding, resolve_public, spawn_pipeline_sse,
+        truncate_chars, valid_user_notification_kind, RegisterServiceBody,
     };
 
     #[test]
@@ -3125,6 +3470,22 @@ mod tests {
         assert!(
             message.contains("new-bot"),
             "message missing new name: {message}"
+        );
+    }
+
+    #[test]
+    fn presence_payload_is_snoozed_vestad_notification() {
+        let payload = super::presence_notification_payload(
+            1_700_000_000,
+            crate::types::ClientKind::Web,
+        )
+        .expect("payload");
+        assert_eq!(payload["source"], "vestad");
+        assert_eq!(payload["type"], "user-presence");
+        assert_eq!(payload["interrupt"], false);
+        assert_eq!(
+            payload["message"],
+            "the user just opened Vesta Web App and is here now."
         );
     }
 
@@ -3266,130 +3627,79 @@ mod tests {
         handle.abort();
     }
 
-    #[tokio::test]
-    async fn cached_port_is_reusable_when_free() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        assert!(
-            is_cached_port_reusable(port).await,
-            "a free port must be reusable"
-        );
-    }
+    #[test]
+    fn allocate_service_port_ignores_other_agents_ports() {
+        // Learn this machine's first-choice port with an empty registry (the exact number
+        // depends on /proc/sys/net/ipv4/ip_local_port_range, so it isn't hardcoded here).
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let first_choice = allocate_service_port(&empty, "agent-b").expect("allocate");
 
-    // A live listener is the service's own resident server (voice-server, a
-    // dashboard, etc.): reuse must return its port so register stays idempotent
-    // and lookups keep resolving the live port. Reallocating here moved the port
-    // out from under resident services (vesta#1254).
-    #[tokio::test]
-    async fn cached_port_is_reusable_when_listening() {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
-        let port = listener.local_addr().unwrap().port();
-        assert!(
-            is_cached_port_reusable(port).await,
-            "a port with a live listener must be reported reusable",
-        );
-    }
-
-    /// A port a crashed startup left *held but unserved* (#371, #433), and the corpse
-    /// holding it: connect is refused, yet bind still fails. Only a raw socket bound
-    /// without `SO_REUSEADDR` and never listened on models that; std/tokio listeners
-    /// always listen. The port is OS-ephemeral rather than from `allocate_service_port`,
-    /// whose deterministic scan would hand the same port to a parallel test.
-    fn dead_port_with_corpse() -> (u16, socket2::Socket) {
-        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("an ephemeral port");
-        let port = probe.local_addr().expect("the probe's address").port();
-        drop(probe);
-        let corpse = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
-            .expect("a raw tcp socket");
-        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
-        corpse.bind(&addr.into()).expect("bind without listening");
-        (port, corpse)
-    }
-
-    #[tokio::test]
-    async fn cached_port_is_not_reusable_when_held_but_unserved() {
-        let (port, _corpse) = dead_port_with_corpse();
-        assert!(
-            !is_cached_port_reusable(port).await,
-            "a port held by a crashed service's corpse must not be reused",
-        );
-    }
-
-    // The recovery half of #371/#433: a crashed service re-registering must land on a
-    // port it can actually bind, without a container or host restart.
-    #[tokio::test]
-    async fn crashed_service_is_reallocated_off_its_dead_port() {
-        let (dead_port, _corpse) = dead_port_with_corpse();
+        // Each agent gets its own network namespace, so two agents share no port space:
+        // agent-a registering that exact port must not exclude it for agent-b.
         let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
-        registry.entry("agent".into()).or_default().insert(
-            "dashboard".into(),
+        registry.entry("agent-a".into()).or_default().insert(
+            "tasks".into(),
             ServiceEntry {
-                port: dead_port,
+                port: first_choice,
+                public: false,
+            },
+        );
+        registry.insert("agent-b".into(), HashMap::new());
+
+        let port = allocate_service_port(&registry, "agent-b").expect("allocate");
+        assert_eq!(
+            port, first_choice,
+            "agent-b has nothing registered, so agent-a's port is free for it too"
+        );
+    }
+
+    #[test]
+    fn allocate_service_port_avoids_the_same_agents_own_ports() {
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let first_choice = allocate_service_port(&empty, "agent-a").expect("allocate");
+
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        registry.entry("agent-a".into()).or_default().insert(
+            "tasks".into(),
+            ServiceEntry {
+                port: first_choice,
                 public: false,
             },
         );
 
-        // Re-registration, replaying register_service_handler's port decision.
+        let port = allocate_service_port(&registry, "agent-a").expect("allocate");
+        assert_ne!(
+            port, first_choice,
+            "must not hand back a port agent-a already has registered"
+        );
+    }
+
+    // vestad cannot probe bindability inside an agent's network namespace, since each agent has
+    // its own, so an existing registration is always reused: no liveness check, no bind probe.
+    // The caller's own bind() is the only
+    // real check, same as it is for every service. Replays register_service_handler's port
+    // decision, which is now this simple.
+    #[test]
+    fn register_service_handler_reuses_a_cached_port_unconditionally() {
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        registry.entry("agent".into()).or_default().insert(
+            "dashboard".into(),
+            ServiceEntry {
+                port: 55000,
+                public: false,
+            },
+        );
+
         let cached = registry
             .get("agent")
             .and_then(|services| services.get("dashboard"))
             .map(|entry| entry.port);
         let resolved = match cached {
-            Some(port) if is_cached_port_reusable(port).await => port,
-            _ => allocate_service_port(&registry).expect("a port should be free"),
+            Some(port) => port,
+            None => allocate_service_port(&registry, "agent").expect("a port should be free"),
         };
 
-        assert_ne!(
-            resolved, dead_port,
-            "a crashed service must be moved off its held-but-dead port, not handed it back forever",
-        );
-    }
-
-    // Reproduction of vesta#1254. A resident service (voice-server) stays bound to
-    // its registered port; re-registration, which is also how consumers resolve the
-    // port (whatsapp's resolveVoiceBaseURL, voice's own status/stop/restart), must
-    // return that same live port. This replays the exact choice
-    // register_service_handler makes (reuse the cached port when reusable, else
-    // allocate a fresh one) against a real live listener, using the same
-    // allocate_service_port + is_cached_port_reusable it calls; a bind-only probe
-    // makes reuse fail here and the port drifts to a fresh, dead one.
-    #[tokio::test]
-    async fn resident_service_keeps_its_port_across_reregistration() {
-        use std::collections::HashMap;
-
-        // First registration: a fresh port for "voice", recorded in the registry.
-        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
-        let p1 = allocate_service_port(&registry).expect("a port should be free");
-        registry.entry("agent".into()).or_default().insert(
-            "voice".into(),
-            ServiceEntry {
-                port: p1,
-                public: false,
-            },
-        );
-
-        // The service is now resident: voice-server is listening on p1.
-        let _server = tokio::net::TcpListener::bind(("127.0.0.1", p1))
-            .await
-            .unwrap();
-
-        // Re-registration, replaying register_service_handler's port decision.
-        let cached = registry
-            .get("agent")
-            .and_then(|s| s.get("voice"))
-            .map(|e| e.port);
-        let resolved = match cached {
-            Some(p) if is_cached_port_reusable(p).await => p,
-            _ => allocate_service_port(&registry).expect("a port should be free"),
-        };
-
-        assert_eq!(
-            resolved, p1,
-            "a resident service must resolve to its live port {p1}, not a fresh dead one ({resolved})",
-        );
+        assert_eq!(resolved, 55000, "an existing registration is always reused");
     }
 
     // Reproduction of vesta#1323: the caller re-registering is often a resolver that never
@@ -3513,9 +3823,8 @@ mod tests {
 
         let backups: Vec<serde_json::Value> = [
             BackupType::Manual,
-            BackupType::Daily,
-            BackupType::Weekly,
-            BackupType::Monthly,
+            BackupType::Periodic,
+            BackupType::PreUpdate,
             BackupType::PreRestore,
         ]
         .into_iter()
@@ -3526,6 +3835,7 @@ mod tests {
                 backup_type,
                 created_at: "2026-01-01T00:00:00Z".into(),
                 size: 1234567890,
+                from_version: None,
             })
             .expect("serialize BackupInfo")
         })
@@ -3642,12 +3952,82 @@ mod tests {
             .join("../apps/core/fixtures/restart-reason-tokens.json");
         sync_fixture_file(&tokens_path, &format!("{tokens_json}\n"), regen);
     }
+
+    #[test]
+    fn mint_response_carries_the_secret_and_never_a_hash() {
+        let response = super::MintServiceKeyResponse {
+            id: "abcd1234".into(),
+            key: "f".repeat(64),
+            expires_at: Some(1_800_000_600),
+        };
+        let json = serde_json::to_value(&response).expect("serialize mint response");
+        assert_eq!(json["key"], "f".repeat(64));
+        assert_eq!(json["id"], "abcd1234");
+        assert_eq!(json["expires_at"], 1_800_000_600);
+        assert!(json.get("hash").is_none(), "the hash is never returned");
+    }
+
+    const MINT_NOW: u64 = 1_800_000_000;
+
+    fn mint_body(ttl_secs: Option<u64>, never_expires: bool) -> super::MintServiceKeyBody {
+        super::MintServiceKeyBody {
+            label: None,
+            ttl_secs,
+            never_expires,
+        }
+    }
+
+    #[test]
+    fn omitting_ttl_uses_the_default_and_never_expires_wins() {
+        // An absurd ttl saturates instead of panicking in debug or wrapping into the past.
+        let cases: [(Option<u64>, bool, Option<u64>); 4] = [
+            (
+                None,
+                false,
+                Some(MINT_NOW + crate::service_keys::DEFAULT_KEY_TTL_SECS),
+            ),
+            (Some(600), false, Some(MINT_NOW + 600)),
+            (Some(600), true, None),
+            (Some(u64::MAX), false, Some(u64::MAX)),
+        ];
+        for (ttl_secs, never_expires, expected) in cases {
+            assert_eq!(
+                super::mint_expiry(&mint_body(ttl_secs, never_expires), MINT_NOW),
+                expected,
+                "ttl_secs {ttl_secs:?}, never_expires {never_expires}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_ttl_is_refused_rather_than_minting_a_dead_key() {
+        // Why the guard exists: the store counts a key expiring at `now` as already expired, so
+        // minting one hands the caller a secret that never authenticates.
+        let mut store = crate::service_keys::ServiceKeyStore::default();
+        let (_, born_dead) = store.mint("alpha", "dashboard", None, Some(MINT_NOW), MINT_NOW);
+        assert!(!store.accepts("alpha", "dashboard", &born_dead, MINT_NOW));
+
+        // never_expires overrides the ttl, so that combination still mints.
+        let cases: [(Option<u64>, bool, bool); 3] = [
+            (Some(0), false, true),
+            (Some(0), true, false),
+            (Some(600), false, false),
+        ];
+        for (ttl_secs, never_expires, expected) in cases {
+            let expiry = super::mint_expiry(&mint_body(ttl_secs, never_expires), MINT_NOW);
+            assert_eq!(
+                super::expiry_is_already_dead(expiry, MINT_NOW),
+                expected,
+                "ttl_secs {ttl_secs:?}, never_expires {never_expires}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod gateway_settings_tests {
     use super::*;
-    use crate::settings::{default_retention, DEFAULT_AUTO_BACKUP_HOUR};
+    use crate::settings::{default_retention, DEFAULT_EVERY_N_DAYS};
 
     #[test]
     fn settings_json_has_unified_shape() {
@@ -3657,39 +4037,38 @@ mod gateway_settings_tests {
         assert_eq!(value["channel"], serde_json::json!("beta"));
         assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
         assert_eq!(
-            value["auto_backup"]["hour"],
-            serde_json::json!(DEFAULT_AUTO_BACKUP_HOUR)
+            value["auto_backup"]["every_n_days"],
+            serde_json::json!(DEFAULT_EVERY_N_DAYS)
         );
         assert_eq!(
-            value["auto_backup"]["retention"]["daily"],
-            serde_json::json!(backup::DEFAULT_RETENTION_DAILY)
+            value["auto_backup"]["retention"]["periodic"],
+            serde_json::json!(backup::DEFAULT_RETENTION_PERIODIC)
         );
     }
 
     #[test]
     fn backup_update_applies_only_present_fields() {
         let mut backup = BackupGlobalSettings::default();
-        let original_hour = backup.hour;
+        let original_every_n_days = backup.every_n_days;
         let body = SetBackupSettingsBody {
             enabled: Some(false),
-            hour: None,
+            every_n_days: None,
             retention: Some(RetentionUpdate {
-                daily: Some(9),
-                weekly: None,
-                monthly: None,
+                periodic: Some(9),
+                pre_update_versions: None,
             }),
         };
         apply_backup_update(&mut backup, &body);
         assert!(!backup.enabled, "enabled should be updated");
         assert_eq!(
-            backup.hour, original_hour,
-            "hour absent in body must be unchanged"
+            backup.every_n_days, original_every_n_days,
+            "every_n_days absent in body must be unchanged"
         );
-        assert_eq!(backup.retention.daily, 9, "daily should be updated");
+        assert_eq!(backup.retention.periodic, 9, "periodic should be updated");
         assert_eq!(
-            backup.retention.weekly,
-            default_retention().weekly,
-            "weekly absent must be unchanged"
+            backup.retention.pre_update_versions,
+            default_retention().pre_update_versions,
+            "pre_update_versions absent must be unchanged"
         );
     }
 

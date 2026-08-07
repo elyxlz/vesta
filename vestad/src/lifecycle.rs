@@ -54,18 +54,6 @@ pub static START_ALL: LifecycleReason =
     LifecycleReason::borrowed("manual: start-all requested", "You were started manually.");
 pub static DESTROY: LifecycleReason = LifecycleReason::shutdown_only("manual: delete requested");
 
-pub static SCHEDULED_BACKUP: LifecycleReason = LifecycleReason::borrowed(
-    "backup: scheduled",
-    "The system briefly paused you while it created a scheduled backup. No action is required.",
-);
-pub static MANUAL_BACKUP: LifecycleReason = LifecycleReason::borrowed(
-    "backup: manual",
-    "The system briefly paused you while it created a manual backup. No action is required.",
-);
-pub static PRE_RESTORE_BACKUP: LifecycleReason = LifecycleReason::borrowed(
-    "backup: pre-restore safety backup",
-    "The system briefly paused you while it created a safety backup before a restore. No action is required.",
-);
 pub static BACKUP_EXPORT: LifecycleReason = LifecycleReason::borrowed(
     "backup: export",
     "The system briefly paused you while it exported a backup. No action is required.",
@@ -152,7 +140,7 @@ mod tests {
 
     /// Every reason vestad can hand over. Shutdown-only ones carry no agent copy: the shutdown
     /// inbox writes the log reason alone, so a sentence there would reach nobody.
-    const BOOT_FACING: [&LifecycleReason; 18] = [
+    const BOOT_FACING: [&LifecycleReason; 15] = [
         &DEFAULT_RESTART,
         &PROVIDER_CONFIGURED,
         &PROVIDER_SIGNED_OUT,
@@ -160,9 +148,6 @@ mod tests {
         &PROVIDER_CONTEXT,
         &MANUAL_START,
         &START_ALL,
-        &SCHEDULED_BACKUP,
-        &MANUAL_BACKUP,
-        &PRE_RESTORE_BACKUP,
         &BACKUP_EXPORT,
         &BACKUP_IMPORT,
         &RESTORE_BOOT,
@@ -239,11 +224,11 @@ mod tests {
     #[test]
     fn boot_inbox_json_uses_the_agent_contract_field_names() {
         assert_eq!(
-            serde_json::to_value(&SCHEDULED_BACKUP).unwrap(),
+            serde_json::to_value(&BACKUP_EXPORT).unwrap(),
             serde_json::json!({
-                "log_reason": "backup: scheduled",
+                "log_reason": "backup: export",
                 "agent_message": concat!(
-                    "The system briefly paused you while it created a scheduled backup. ",
+                    "The system briefly paused you while it exported a backup. ",
                     "No action is required."
                 ),
             }),

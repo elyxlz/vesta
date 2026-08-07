@@ -5,6 +5,8 @@ description: Interrupt rules that guard YOUR focus (you, the agent, are the one 
 
 # Notifications
 
+Install the `notifications` command once from [SETUP.md](SETUP.md).
+
 ## What these rules do
 
 These interrupts land on **you, the agent**, not the user. An **interrupt** notification preempts your current turn the moment it arrives; a **snooze** one does not touch your current work, it waits and is handed to you in a batch once you have been idle a little while. Snoozing changes *when* you see a notification, never *whether*: nothing is dropped, the rule is reversible anytime, and you decide what to act on or drop when you work through the batch (below). Being yanked out of hard work by something trivial is a real cost, so these rules keep low-value notifications from breaking your focus while letting what genuinely matters reach you immediately.
@@ -35,11 +37,16 @@ notification's other fields. Every field/condition you set must hold (AND); what
 - Each `match` targets one field: `--match 'FIELD<op>VALUE'`, ops (case-insensitive):
   - `=` substring, e.g. `--match 'chat_name=Bride squad'`
   - `~=` regex (`re.search`), e.g. `--match 'subject~=invoice|payment'`
-  - `!=` / `!~=` negate either, e.g. `--match 'chat_type!=group'` (everything NOT a group)
-- `FIELD` is any field the notification carries; run `facets` to see what's there (`chat_name`, `chat_type`,
-  `media_type`, ...). Two aliases span a source's synonym fields so you needn't know the exact name:
-  `sender` (identity) and `text` (body). `--sender X` and `--keyword RE` are shortcuts for
-  `--match 'sender=X'` and `--match 'text~=RE'`.
+  - `!=` / `!~=` negate either, e.g. `--match 'chat_name!=Bride squad'` (everything but that chat)
+- `FIELD` is any field the notification carries, and fields are per-source. **Run `facets` first and
+  target a field it lists** (`facets` pools fields across sources, so check the values look like your
+  source's): a rule naming a field the notification does not carry is accepted, appears in `list`, and
+  never fires, so it reads as working while changing nothing. Negated it is worse: a predicate over a
+  missing field does not match, so its negation matches **everything** from that source, and
+  first-match-wins means it shadows every rule below it.
+- Two aliases span a source's synonym fields so you needn't know the exact name: `sender` (identity)
+  and `text` (body). `--sender X` and `--keyword RE` are shortcuts for `--match 'sender=X'` and
+  `--match 'text~=RE'`.
 - **First match wins**: rules evaluate top to bottom and stop at the first match, so order is the only
   precedence; a later, more-specific rule never overrides an earlier, broader one. To OR across fields,
   write separate rules (one rule's conditions are all ANDed).
@@ -83,7 +90,8 @@ notifications add --source whatsapp --match 'chat_name=Bride squad' --action sno
 # Still visible in history (marked "trashed"); only do this when the user has said to ignore it outright.
 notifications add --source whatsapp --match 'chat_name=status' --action trash
 
-# Combine conditions (AND): snooze only group chats from whatsapp, leaving DMs alone
+# Combine conditions (AND): snooze only group chats from whatsapp, leaving DMs alone.
+# WhatsApp chat notifications always carry chat_type (group or direct); check `facets` for your own fields.
 notifications add --source whatsapp --match 'chat_type=group' --action snooze
 
 # Negate: interrupt for any chat that is NOT that one group
@@ -113,6 +121,12 @@ Work through them deliberately, not by reflexively replying to each:
 - **Drop** the rest. Noise that needs nothing gets nothing; that's the point of snoozing.
 
 Spend effort proportional to value. If the same low-value thing keeps showing up snoozed, that's a signal to add a rule so it stops reaching you, or to ask the user whether it should interrupt instead.
+
+## A platform reminder is not a person writing to you
+
+**Platform notification emails about invitations are written in the FIRST PERSON, with subject lines like "I'm still waiting for your response", and they arrive from a no-reply address.** They read exactly like a person writing directly, and they are not: they are the platform re-announcing an action that person took days or weeks earlier. So the question "did a person act, or did the algorithm?" needs a third answer, **a person acted ONCE and the platform is re-announcing it**, which carries the same value as the original action, never more, and never urgency. Summarising it as new urgency is how you invent an obligation the source never carried and then hand it to the user as a priority, which is how an invitation reminder gets read as a person chasing them.
+
+**The check is mechanical and takes seconds: open the raw body and look at the template identifier and the call to action.** An accept-invitation link means it is a reminder; a reply link with quoted message text means a person actually wrote. Never let a first-person subject line stand in for a human sender, because that phrasing is chosen precisely to read as one.
 
 ## Learned Patterns
 

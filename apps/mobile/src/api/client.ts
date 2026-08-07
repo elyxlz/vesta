@@ -1,4 +1,5 @@
-import { ApiError, createHttpClient } from "@vesta/core";
+import { ApiError, createHttpClient, createServiceKeyCache } from "@vesta/core";
+import type { ServiceKeyCache } from "@vesta/core";
 import type { ConnectionConfig } from "./types";
 
 // The Bearer-auth + refresh-on-401 + retry mechanics live once in @vesta/core; this module
@@ -28,10 +29,12 @@ export interface ApiClient {
     init?: RequestInit,
   ) => Promise<ResponseBody>;
   jsonInit: (method: string, body: unknown) => RequestInit;
-  websocketUrl: (path: string, query?: URLSearchParams) => string;
-  mediaUrl: (path: string, query?: URLSearchParams) => string;
+  websocketUrl: (path: string, query?: URLSearchParams) => Promise<string>;
   getConnection: () => ConnectionConfig | null;
   forceRefresh: () => Promise<boolean>;
+  // The client's own service keys, so a client built by a test never shares them and
+  // reconnecting to another gateway keeps the client while missing the cache.
+  serviceKeys: ServiceKeyCache;
 }
 
 function apiErrorMessage(response: Response, body: string): string {
@@ -139,19 +142,18 @@ export function createApiClient(options: ClientOptions): ApiClient {
     init?: RequestInit,
   ): Promise<ResponseBody> => http.json<ResponseBody>(path, init);
 
-  const withToken = (
+  // The one place the access token is stamped into a URL: a socket handshake sends no headers.
+  // Refreshing here is what makes it impossible for a call site to dial with a token that
+  // expired while the client was away.
+  const socketUrl = async (
     path: string,
     query: URLSearchParams,
-    protocol: "http" | "ws",
-  ): string => {
+  ): Promise<string> => {
+    await refresh(false);
     const connection = options.getConnection();
     if (!connection) throw new Error("Not connected to a Vesta gateway.");
     query.set("token", connection.accessToken);
-    const base =
-      protocol === "ws"
-        ? connection.url.replace(/^http/, "ws")
-        : connection.url;
-    return `${base}${path}?${query.toString()}`;
+    return `${connection.url.replace(/^http/, "ws")}${path}?${query.toString()}`;
   };
 
   return {
@@ -163,10 +165,12 @@ export function createApiClient(options: ClientOptions): ApiClient {
       body: JSON.stringify(body),
     }),
     websocketUrl: (path, query = new URLSearchParams()) =>
-      withToken(path, query, "ws"),
-    mediaUrl: (path, query = new URLSearchParams()) =>
-      withToken(path, query, "http"),
+      socketUrl(path, query),
     getConnection: options.getConnection,
     forceRefresh: async () => (await refresh(true)) !== null,
+    serviceKeys: createServiceKeyCache({
+      http,
+      gateway: () => options.getConnection()?.url ?? null,
+    }),
   };
 }

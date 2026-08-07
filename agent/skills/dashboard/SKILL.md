@@ -1,7 +1,6 @@
 ---
 name: dashboard
-description: Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI. Understand what the user wants, design it, write a spec, then dispatch the dashboard-builder to build it.
-serve: ~/agent/skills/dashboard/scripts/daemon start
+description: Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI.
 ---
 
 # Dashboard
@@ -66,6 +65,17 @@ Example, for a request like "show me my running this week":
     Out of scope: No history beyond 7 days, no goals, no live device sync.
     Done when:    Health page shows the Running card and the dashboard serves.
 
+## Typechecking
+
+`vite build` does NOT typecheck: it strips types, so a data file that violates its own interface
+builds clean and renders wrong (a field under the wrong name reads as `undefined`). The symptom is a
+page showing empty cells or dead links from data that looks right; typecheck before debugging the
+page. The builder runs the real check before every build; if you ever check by hand, run
+`npx tsc --noEmit -p tsconfig.app.json` from `~/agent/skills/dashboard/app`. Never `-p .`: the root
+tsconfig is solution-style, so that compiles zero files and always passes.
+
 ## Verify and relay
 
-When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the app. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
+When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `dashboard daemon status` reports `running` and a port that answers, or reload the app. If the builder exercised pages backed by a live store (tasks, anything wired to a skill), also confirm that store is unchanged; a browser pass that clicked a control can silently write real user data. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
+
+**A live-data page cannot be verified by loading the port directly.** `apiFetch` awaits `_authReady`, which resolves only when the host app posts a `vesta-auth` message carrying the token and base URL. Browse to `http://127.0.0.1:<port>/` outside the app and that message never arrives, so the await never settles, no request is ever issued, and the page sits in its loading skeleton forever with no error and no toast. That is correct behaviour, not a defect, so do not file it as one. A direct load verifies the shell, layout and static pages only; judge a page backed by a skill or API by reloading it in the app instead.

@@ -32,6 +32,7 @@ import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
+import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -194,6 +195,8 @@ export function AppSettings() {
         </CardContent>
       </Card>
 
+      <DevicesCard />
+
       <GatewayLogsViewer open={showLogs} onOpenChange={setShowLogs} />
 
       {reachable && managed && (
@@ -219,7 +222,7 @@ export function AppSettings() {
   );
 }
 
-// The read-only daemon setup rows (lan, tunnel, backups) of the gateway card.
+// The read-only daemon setup rows (lan, tunnel) of the gateway card.
 function GatewaySetupFields({ setup }: { setup: GatewaySetup }) {
   return (
     <div className="mt-4 flex flex-col gap-3">
@@ -245,19 +248,6 @@ function GatewaySetupFields({ setup }: { setup: GatewaySetup }) {
         </FieldContent>
         <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">
           {setup.info.tunnel_url ?? "not set"}
-        </span>
-      </Field>
-      <Field orientation="horizontal" className="items-center justify-between">
-        <FieldContent>
-          <FieldLabel className="text-sm">backups</FieldLabel>
-          <FieldDescription>
-            automatic nightly snapshots of your agents
-          </FieldDescription>
-        </FieldContent>
-        <span className="shrink-0 text-sm text-muted-foreground">
-          {setup.settings.auto_backup.enabled
-            ? `daily at ${String(setup.settings.auto_backup.hour).padStart(2, "0")}:00 server time`
-            : "disabled"}
         </span>
       </Field>
     </div>

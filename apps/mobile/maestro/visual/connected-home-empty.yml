@@ -1,0 +1,62 @@
+appId: ${APP_ID}
+name: Connected home empty state
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=empty"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Create your agent"
+    timeout: 30000
+- takeScreenshot: home-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-empty.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDashboard=loaded"
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- tapOn: "Open aria"
+- extendedWaitUntil:
+    visible: "Done. I prioritized the visual regressions first.*"
+    timeout: 10000
+- swipe:
+    start: "85%,50%"
+    end: "15%,50%"
+    duration: 450
+- extendedWaitUntil:
+    visible: "Today at a glance"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-dashboard
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-dashboard.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
+- extendedWaitUntil:
+    visible: "Gateway disconnected. Trying to reconnect."
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-gateway-disconnected
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-gateway-disconnected.png

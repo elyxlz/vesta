@@ -49,6 +49,15 @@ class _ContextPreset(pyd.BaseModel):
     plans: list[str] | None = None
 
 
+class PresenceNotifications(pyd.BaseModel):
+    """Whether vestad drops a notification when the user returns to focus on a client. Read by vestad
+    through the status tap; the notification's disposition is governed by notification_rules."""
+
+    model_config = pyd.ConfigDict(extra="forbid")
+
+    enabled: bool = True
+
+
 class _ContextPolicy(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="forbid")
 
@@ -83,6 +92,7 @@ class _ProviderManifestEntry(pyd.BaseModel):
     order: int = pyd.Field(ge=0)
     auth_kind: ProviderAuthKind
     models: list[_ProviderModel] | tp.Literal["live"]
+    model_names: dict[str, str] = pyd.Field(default_factory=dict)
     default_model: _ProviderModel | None
     auxiliary_model: _ProviderModel | None = None
     context: _ContextPolicy
@@ -100,6 +110,9 @@ class _ProviderManifestEntry(pyd.BaseModel):
         unknown_contexts = set(self.context_by_model) - set(self.models if isinstance(self.models, list) else [])
         if unknown_contexts:
             raise ValueError(f"context_by_model contains unknown models: {sorted(unknown_contexts)}")
+        unknown_names = set(self.model_names) - set(self.models if isinstance(self.models, list) else [])
+        if unknown_names:
+            raise ValueError(f"model_names contains unknown models: {sorted(unknown_names)}")
         return self
 
 
@@ -125,7 +138,7 @@ _MANIFEST_FALLBACK: dict[str, pyd.JsonValue] = {
     "default_personality": "dry",
     "providers": {
         "claude": {
-            "display": "Claude account",
+            "display": "Claude",
             "order": 0,
             "auth_kind": "claude_oauth",
             "models": ["opus"],
@@ -474,8 +487,8 @@ class VestaConfig(pyd_settings.BaseSettings):
     """Vesta agent configuration: one central config.json (nested), per-agent.
 
     The active provider (model + context + credential) is a discriminated union under `provider`; the
-    rest are provider-independent prefs. Defaults are this model's field defaults (the manifest is the
-    generated projection of them). The store wins over env; see settings_customise_sources.
+    rest are provider-independent prefs. This model's field defaults are read from the hand-authored
+    manifest (MANIFEST_PATH). The store wins over env; see settings_customise_sources.
 
     Key env overrides (operational scalars only; provider fields live in the nested store, not env):
         LOG_LEVEL                - DEBUG | INFO | WARNING | ERROR (default: "INFO")
@@ -499,6 +512,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     # Optional skills linked into Claude Code at boot. Agent startup unions shipped defaults from
     # core/default-skills.txt into this list before the first SDK session starts.
     active_skills: list[str] = pyd.Field(default_factory=list)
+    presence_notifications: PresenceNotifications = pyd.Field(default_factory=PresenceNotifications)
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

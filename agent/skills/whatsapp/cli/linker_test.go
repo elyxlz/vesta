@@ -17,10 +17,12 @@ func TestChooseLinkerParadigm(t *testing.T) {
 		cfg  managedConfig
 		want string
 	}{
-		{"direct key", managedConfig{directURL: "https://box", directKey: "wak_x"}, "managed"},
-		{"cloud tenant", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t", cloudManaged: true}, "managed"},
-		{"self-hosted container (identity but not a tenant)", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t"}, "self-hosted"},
-		{"plain box", managedConfig{}, "self-hosted"},
+		{"direct key", managedConfig{directURL: "https://box", directKey: "wak_x"}, "headless"},
+		{"managed VM", managedConfig{managedInfra: true}, "headless"},
+		// A box with neither links the user's own WhatsApp, including a
+		// self-hosted box holding a Vesta Cloud account (managed WhatsApp
+		// opens for it only with an active paid membership).
+		{"plain box", managedConfig{}, "self-managed"},
 	}
 	for _, tc := range cases {
 		l := chooseLinker(tc.cfg, newStateStore(t.TempDir()))
@@ -54,7 +56,7 @@ func TestChooseLinkerPersistsDirectCredsAcrossEnvScrub(t *testing.T) {
 	dir := t.TempDir()
 
 	// First run: creds come from the environment (via cfg) and get persisted.
-	if l := chooseLinker(managedConfig{directURL: "https://wa.example", directKey: "wak_abc"}, newStateStore(dir)); l.name() != "managed" {
+	if l := chooseLinker(managedConfig{directURL: "https://wa.example", directKey: "wak_abc"}, newStateStore(dir)); l.name() != "headless" {
 		t.Fatalf("env creds should select managed, got %q", l.name())
 	}
 	if st := loadStateFromDisk(dir); st.DirectURL != "https://wa.example" || st.DirectKey != "wak_abc" {
@@ -62,7 +64,7 @@ func TestChooseLinkerPersistsDirectCredsAcrossEnvScrub(t *testing.T) {
 	}
 
 	// Later run with a scrubbed environment: creds load from state, still managed.
-	if l := chooseLinker(managedConfig{}, newStateStore(dir)); l.name() != "managed" {
+	if l := chooseLinker(managedConfig{}, newStateStore(dir)); l.name() != "headless" {
 		t.Fatalf("creds not recovered from state after env scrub: got %q", l.name())
 	}
 }
@@ -75,6 +77,58 @@ func TestChooseLinkerKeepsNumberWhenReconcilingCreds(t *testing.T) {
 	chooseLinker(managedConfig{directURL: "https://wa.example", directKey: "wak_abc"}, newStateStore(dir))
 	if st := loadStateFromDisk(dir); st.MSISDN != "+447700900009" || st.DirectKey != "wak_abc" {
 		t.Fatalf("reconcile clobbered number or creds: %+v", st)
+	}
+}
+
+// TestDoubletickProvisionSwitchesAWarmDaemon proves the exact boot-order case:
+// setup started a self-managed daemon before the credentials existed, then an
+// explicit Double Tick connect switches both pairing and messaging to managed.
+func TestDoubletickProvisionSwitchesAWarmDaemon(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	wac := &WhatsAppClient{
+		state:   store,
+		linker:  qrLinker{},
+		managed: newManagedAuth(managedConfig{}),
+	}
+
+	selected, finish, err := wac.provisionLinker(sourceDoubletick, "https://wa.example", "wak_secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish(true)
+	if selected.name() != "headless" || !wac.isManaged() || !wac.managed.isDirect() {
+		t.Fatalf("warm daemon did not switch to Double Tick: linker=%q managed=%v", selected.name(), wac.isManaged())
+	}
+	if state := store.snapshot(); state.DirectURL != "https://wa.example" || state.DirectKey != "wak_secret" {
+		t.Fatalf("direct credentials were not persisted: %+v", state)
+	}
+}
+
+func TestDoubletickProvisionDoesNotInstallFailedCredentials(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	wac := &WhatsAppClient{
+		state:   store,
+		linker:  qrLinker{},
+		managed: newManagedAuth(managedConfig{}),
+	}
+
+	_, finish, err := wac.provisionLinker(sourceDoubletick, "https://bad.example", "wak_bad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish(false)
+	if wac.isManaged() || wac.currentManaged().isDirect() {
+		t.Fatal("failed credentials replaced the daemon's working configuration")
+	}
+	if state := store.snapshot(); state.DirectURL != "" || state.DirectKey != "" {
+		t.Fatalf("failed credentials were persisted: %+v", state)
+	}
+}
+
+func TestDoubletickProvisionRejectsIncompleteSocketHandoff(t *testing.T) {
+	wac := &WhatsAppClient{state: newStateStore(t.TempDir()), linker: qrLinker{}}
+	if _, _, err := wac.provisionLinker(sourceDoubletick, "https://wa.example", ""); err == nil {
+		t.Fatal("an incomplete Double Tick credential handoff was accepted")
 	}
 }
 

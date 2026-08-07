@@ -42,7 +42,7 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
-from .events import EventBus, SnapshotEvent, VestaEvent
+from .events import EventBus, SnapshotConfig, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
 from .model_access import clear_model_access, model_access_snapshot
 from .models import State
@@ -60,6 +60,14 @@ from .provider import (
 logger = logging.getLogger("vesta.api")
 
 
+def _snapshot_config(config: VestaConfig) -> SnapshotConfig:
+    """The connect snapshot's config domain: timezone plus the presence toggle vestad's status tap reads."""
+    return {
+        "timezone": config.timezone,
+        "presence_notifications_enabled": config.presence_notifications.enabled,
+    }
+
+
 def _pending_notification_ids(config: VestaConfig) -> list[str]:
     """Notification file stems still on disk — received but not yet processed. Seeds the connect
     snapshot's `notifications.pending`; run off the loop by the caller (globs the dir)."""
@@ -73,8 +81,8 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
-    Recv: drained only to keep the socket live and notice a close (see _recv_loop); nothing injects
-    events anymore. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
+    Recv: drained only to keep the socket live and notice a close (see _recv_loop); no inbound frame
+    injects an event. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
 
@@ -97,7 +105,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
                 type="snapshot",
                 state=event_bus.state,
                 notifications={"pending": pending},
-                config={"timezone": config.timezone},
+                config=_snapshot_config(config),
                 model_access=model_access_snapshot(request.app["state"]),
             )
         )
@@ -116,8 +124,8 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 async def _recv_loop(ws: web.WebSocketResponse) -> None:
-    """Drain inbound frames. Nothing injects events into the bus anymore (app-chat owns chat on its own
-    service socket); this only keeps the connection live and notices a close."""
+    """Drain inbound frames. No inbound frame injects an event into the bus (app-chat owns chat on its
+    own service socket); this only keeps the connection live and notices a close."""
     async for msg in ws:
         if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
@@ -452,10 +460,11 @@ async def start_ws_server(
     config: VestaConfig,
     state: State | None = None,
     *,
-    # Loopback only: the container runs with host networking and vestad's proxy
-    # reaches this server via localhost, so binding 127.0.0.1 keeps the agent API
-    # off the LAN (and, behind the cloud firewall, off every external interface).
-    host: str = "127.0.0.1",
+    # This container has its own Docker bridge network, and vestad's proxy reaches this
+    # server at the container's address on it, so loopback would be unreachable. Binding
+    # every interface exposes it only within that network, whose sole members are vestad
+    # and this container; AGENT_TOKEN auth (_auth_middleware) is the real gate.
+    host: str = "0.0.0.0",
 ) -> web.AppRunner:
     app = web.Application(middlewares=[_auth_middleware])
     app["event_bus"] = event_bus

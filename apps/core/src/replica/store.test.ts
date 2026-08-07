@@ -17,6 +17,7 @@ function baseTree(): Tree {
       managed: false,
     },
     agents: {},
+    devices: [],
   }
 }
 
@@ -40,6 +41,7 @@ describe("createReplica", () => {
         status: "alive",
         activityState: "idle",
         buildPhase: null,
+        operation: null,
         startedAt: null,
         services: {},
       },

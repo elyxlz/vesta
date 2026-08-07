@@ -128,7 +128,7 @@ def _mcp_session(ctx: dict[str, typing.Any]):
     if ctx["mcp_config"] is None:
         return None
     servers = ctx["mcp_config"]["mcpServers"]
-    server = servers[sorted(servers)[0]]
+    server = servers[min(servers)]
     env = dict(os.environ)
     if "env" in server:
         env.update(server["env"])

@@ -1,0 +1,224 @@
+#!/bin/sh
+set -eu
+
+# `ssh-tunnel` on PATH, never `ssh`: that name belongs to the system client. The daemon is the
+# bore client alone; `setup` owns the sshd it points at, so adding a key later leaves a live
+# tunnel untouched.
+
+DAEMONS="$HOME/agent/data/daemons"
+PIDFILE="$DAEMONS/ssh-tunnel.pid"
+SSHD_PIDFILE="$DAEMONS/ssh-tunnel.sshd-pid"
+SSHD_PORTFILE="$DAEMONS/ssh-tunnel.sshd-port"
+SSHD_CONFIG="/tmp/vesta-sshd.conf"
+AUTHKEYS="$HOME/.ssh/authorized_keys"
+LOG="$HOME/agent/logs/ssh-tunnel.log"
+BORE_VERSION="0.5.1"
+BORE_BIN="$HOME/.local/bin/bore"
+USAGE="Usage: ssh-tunnel setup [public key] | ssh-tunnel daemon <start|stop|restart|status>"
+SETTLE_SECS=2
+# A start that has to fetch bore must not hang on a stalled release download.
+DOWNLOAD_TIMEOUT=60
+CONNECT_TIMEOUT=10
+STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
+# SIGTERM is the deliberate stop, and this is the point in the one budget at which a tunnel that
+# has not honoured it is killed instead, leaving the remainder to reap it.
+KILL_AFTER=$(( STOP_BUDGET * 2 / 3 ))
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_POLLS=6
+
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+# The budget is wall clock, never a count of sleeps: a probe that hangs for its own timeout
+# stretches a counted loop far past the seconds DAEMON_STOP_TIMEOUT_SECS names.
+deadline() { echo $(( $(date +%s) + $1 )); }
+expired() { [ "$(date +%s)" -ge "$1" ]; }
+
+# Waits out a pid until a deadline. Answers whether it is gone.
+await_gone() {
+  while kill -0 "$1" 2>/dev/null; do
+    if expired "$2"; then return 1; fi
+    sleep 0.5
+  done
+}
+
+# Field 22 of /proc/<pid>/stat: the process start time in clock ticks since boot. comm is a
+# bracketed field that may itself contain spaces and parentheses, so the numbered fields resume
+# after the LAST ')', which is why this scans backwards for it rather than trusting $2.
+starttime_of() {
+  awk '{ for (i = NF; i > 0; i--) if ($i ~ /\)$/) { print $(i + 20); exit } }' "/proc/$1/stat" 2>/dev/null || true
+}
+
+# The record is "<pid> <starttime>", or a bare pid where the starttime is unavailable: a bare pid
+# is the honest form of "identity unknown", and live_pid reads it the legacy way rather than as a
+# mismatch.
+record_for() {
+  st=$(starttime_of "$1")
+  if [ -n "$st" ]; then printf '%s %s' "$1" "$st"; else printf %s "$1"; fi
+}
+
+# The record is "<pid> <starttime>", and both halves have to match. kill -0 answers "does some
+# process hold this pid", never "is this still mine": the records outlive the container while a
+# fresh pid namespace renumbers from low values, so a reused pid otherwise reads as a healthy
+# daemon, every idempotent start skips it, and the service is silently down.
+live_pid() {
+  record=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  pid=${record%% *}
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  # LEGACY(remove-when: no daemon record predating the release that ships this check remains, i.e.
+  # every box has restarted its daemons at least once on this version): a record written by the old
+  # code is a bare pid. Trust it rather than reading the absence of a starttime as a mismatch,
+  # because an upgrade must not declare a live daemon dead and let a second stack beside it.
+  case "$record" in
+    *" "*)
+      # Only a non-empty run of digits is worth comparing. Any other second field, from a writer
+      # this contract does not own, would otherwise compare a real starttime against a non-number
+      # and declare a live daemon dead, letting a second stack beside it.
+      recorded=${record#* }
+      case "$recorded" in
+        ""|*[!0-9]*) ;;
+        *)
+          current=$(starttime_of "$pid")
+          if [ -n "$current" ] && [ "$current" != "$recorded" ]; then return 1; fi
+          ;;
+      esac
+      ;;
+  esac
+  printf %s "$pid"
+}
+
+# The pid record is the mutual exclusion: a start claims it before spawning and drops it on every
+# failure, so a start that loses the claim answers already_running instead of stacking a daemon
+# beside the winner's. A record no process stands behind is cleared and taken over, which is the
+# one path on which two starts can both spawn, and the duplicate loses on its own resources.
+claim_start() {
+  if ( set -C; record_for $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
+  i=0
+  while [ "$i" -lt "$CLAIM_POLLS" ]; do
+    if live_pid >/dev/null; then echo running; return 0; fi
+    [ -f "$PIDFILE" ] || break
+    sleep 0.5; i=$((i + 1))
+  done
+  rm -f "$PIDFILE"
+  if ( set -C; record_for $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
+}
+
+sshd_running() {
+  [ -s "$SSHD_PORTFILE" ] || return 1
+  pid=$(cat "$SSHD_PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+start_sshd() {
+  command -v sshd >/dev/null 2>&1 || apt-get install -y -q openssh-server >&2
+  ssh-keygen -A -q 2>/dev/null || true
+  port=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+  cat > "$SSHD_CONFIG" <<EOF
+Port $port
+ListenAddress 0.0.0.0
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile $AUTHKEYS
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+PidFile $SSHD_PIDFILE
+EOF
+  /usr/sbin/sshd -f "$SSHD_CONFIG" || fail "sshd refused to start on port $port"
+  echo "$port" > "$SSHD_PORTFILE"
+}
+
+# The tunnel client is a single downloaded binary, so a box that already has one uses it.
+ensure_bore() {
+  if command -v bore >/dev/null 2>&1; then command -v bore; return 0; fi
+  if [ -x "$BORE_BIN" ]; then printf '%s\n' "$BORE_BIN"; return 0; fi
+  case "$(uname -m)" in
+    x86_64) triple="x86_64-unknown-linux-musl" ;;
+    aarch64) triple="aarch64-unknown-linux-musl" ;;
+    *) return 1 ;;
+  esac
+  mkdir -p "$HOME/.local/bin"
+  url="https://github.com/ekzhang/bore/releases/download/v$BORE_VERSION/bore-v$BORE_VERSION-$triple.tar.gz"
+  curl -fsSL -m "$DOWNLOAD_TIMEOUT" --connect-timeout "$CONNECT_TIMEOUT" "$url" | tar -xz -C "$HOME/.local/bin" bore || return 1
+  chmod +x "$BORE_BIN"
+  printf '%s\n' "$BORE_BIN"
+}
+
+do_setup() {
+  key="${1:-}"
+  # A restart takes sshd with it but leaves the authorized keys, so setup with no argument is how
+  # an already-authorized machine gets its sshd back. A key is only required the first time, when
+  # there is nothing to bring back up for.
+  if [ -z "$key" ] && [ ! -s "$AUTHKEYS" ]; then
+    fail "a public key is required the first time: ssh-tunnel setup 'ssh-ed25519 AAAA... user@host'"
+  fi
+  mkdir -p "$HOME/.ssh" "$DAEMONS"
+  chmod 700 "$HOME/.ssh"
+  if [ -n "$key" ]; then
+    grep -qF "$key" "$AUTHKEYS" 2>/dev/null || echo "$key" >> "$AUTHKEYS"
+  fi
+  chmod 600 "$AUTHKEYS"
+  sshd_running || start_sshd
+  printf '{"status":"ready","sshd_port":%s}\n' "$(cat "$SSHD_PORTFILE")"
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  port=$(cat "$SSHD_PORTFILE" 2>/dev/null) || port=""
+  [ -n "$port" ] || fail "no sshd to tunnel; run ssh-tunnel setup '<public key>' first"
+  bore=$(ensure_bore) || fail "no bore client for $(uname -m), and none could be downloaded"
+  mkdir -p "$DAEMONS" "$HOME/agent/logs"
+  case "$(claim_start)" in
+    running) echo '{"status":"already_running"}'; return 0 ;;
+    lost) fail "another ssh-tunnel start holds $PIDFILE" ;;
+  esac
+  setsid "$bore" local "$port" --to bore.pub >> "$LOG" 2>&1 &
+  pid=$!
+  record_for "$pid" > "$PIDFILE"
+  # bore answers no probe of ours, so a client still alive a moment after the spawn is up.
+  sleep "$SETTLE_SECS"
+  if kill -0 "$pid" 2>/dev/null; then echo '{"status":"started"}'; return 0; fi
+  # A start that gives up takes its record with it: a record naming a dead tunnel reads as
+  # running and turns every later start into a no-op.
+  rm -f "$PIDFILE"
+  fail "the tunnel exited during startup; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  stop_by=$(deadline "$STOP_BUDGET")
+  kill -TERM "$pid" 2>/dev/null || true
+  if ! await_gone "$pid" "$(deadline "$KILL_AFTER")"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    await_gone "$pid" "$stop_by" || fail "the tunnel is still running ${STOP_BUDGET}s after SIGTERM then SIGKILL (pid=$pid)"
+  fi
+  rm -f "$PIDFILE"
+  echo '{"status":"stopped"}'
+}
+
+# The tunnel registers no port with vestad: bore assigns the public one, and the log it writes
+# carries it. `sshd` is the other half of reachability, and a stop leaves it up, so it is reported
+# beside the tunnel rather than folded into `running`.
+do_status() {
+  if sshd_running; then sshd=true; else sshd=false; fi
+  if live_pid >/dev/null; then
+    printf '{"running":true,"port":null,"sshd":%s}\n' "$sshd"
+  else
+    printf '{"running":false,"port":null,"sshd":%s}\n' "$sshd"
+  fi
+}
+
+case "${1:-}" in
+  setup) do_setup "${2:-}" ;;
+  daemon)
+    case "${2:-}" in
+      start) do_start ;;
+      stop) do_stop ;;
+      restart) do_stop >/dev/null; do_start ;;
+      status) do_status ;;
+      "" | -h | --help | help) echo "$USAGE" ;;
+      *) echo "$USAGE" >&2; exit 1 ;;
+    esac
+    ;;
+  "" | -h | --help | help) echo "$USAGE" ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac

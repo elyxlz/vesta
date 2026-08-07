@@ -6,7 +6,7 @@ description: "Discord: send/receive server messages and DMs; reply to source=dis
 # Discord - CLI: discord
 
 **Setup**: follow [SETUP.md](SETUP.md) (bot token, MESSAGE CONTENT intent, invite url).
-**Background**: `screen -dmS discord discord serve --notifications-dir ~/agent/notifications`
+**Background**: `discord daemon start`
 
 ## Quick Reference
 

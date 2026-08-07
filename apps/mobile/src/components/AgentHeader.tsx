@@ -3,7 +3,11 @@ import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
 import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import type { AgentActivityState, AgentStatus } from "@vesta/core";
+import type {
+  AgentActivityState,
+  AgentOperation,
+  AgentStatus,
+} from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
@@ -15,9 +19,10 @@ const IS_IOS = process.env.EXPO_OS === "ios";
 
 export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const router = useRouter();
-  const { name, agent, socket } = useAgent();
+  const { name, agent, activityState } = useAgent();
   const { colors, dark } = usePreferences();
   const status = agent?.status ?? "not_found";
+  const operation = agent?.operation ?? null;
   const openSettings = () =>
     router.push({
       pathname: "/agent/[name]/settings",
@@ -45,7 +50,8 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
         <AgentIsland
           name={name}
           status={status}
-          activityState={socket.agentState}
+          activityState={activityState}
+          operation={operation}
           color={colors.text}
           dark={dark}
           fallbackColor={colors.elevated}
@@ -71,6 +77,7 @@ export function AgentIsland({
   name,
   status,
   activityState,
+  operation,
   color,
   dark,
   fallbackColor,
@@ -80,6 +87,7 @@ export function AgentIsland({
   name: string;
   status: AgentStatus;
   activityState: AgentActivityState;
+  operation: AgentOperation | null;
   color: string;
   dark: boolean;
   fallbackColor: string;
@@ -101,7 +109,12 @@ export function AgentIsland({
         status={status}
         activityState={activityState}
       >
-        <AgentOrb status={status} activityState={activityState} size={24} />
+        <AgentOrb
+          status={status}
+          activityState={activityState}
+          operation={operation}
+          size={24}
+        />
       </BootTransitionTarget>
       <Text family="heading" numberOfLines={1} style={[styles.name, { color }]}>
         {name}
@@ -159,6 +172,7 @@ const styles = StyleSheet.create({
   titlePill: {
     maxWidth: 220,
     borderRadius: radii.pill,
+    borderCurve: "continuous",
     overflow: "hidden",
   },
   titleFallback: {

@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 
-from . import auth, organize, playback, playlists, search
+from . import auth, daemon, organize, playback, playlists, search
 from .config import Config
 
 
@@ -163,6 +163,16 @@ def _add_playback_parsers(subparsers) -> None:
     xfer_p.set_defaults(func=lambda args, config: playback.transfer(config, device_id=args.device_id, force_play=args.play))
 
 
+def _run_daemon(args, _config) -> dict:
+    sys.exit(daemon.daemon_cmd(args.action))
+
+
+def _add_daemon_parser(subparsers) -> None:
+    p = subparsers.add_parser("daemon", help="Manage the organize watcher daemon: start|stop|restart|status")
+    p.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
+    p.set_defaults(func=_run_daemon)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="spotify", description="Spotify CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -172,6 +182,11 @@ def main():
     _add_search_parser(subparsers)
     _add_organize_parsers(subparsers)
     _add_playback_parsers(subparsers)
+    _add_daemon_parser(subparsers)
+
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
 
     args = parser.parse_args()
 
@@ -180,7 +195,8 @@ def main():
     try:
         result = args.func(args, config)
     except Exception as e:
-        result = {"error": type(e).__name__, "message": str(e)}
+        print(json.dumps({"error": type(e).__name__, "message": str(e)}, indent=2), file=sys.stderr)
+        sys.exit(1)
 
     print(json.dumps(result, indent=2))
 

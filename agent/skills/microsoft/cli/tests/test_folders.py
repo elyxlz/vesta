@@ -26,7 +26,14 @@ def patched(monkeypatch):
         return "acct-1"
 
     def fake_request(conn, method, path, account_id=None, **kwargs):
-        calls.append({"method": method, "path": path, "json": kwargs["json"] if "json" in kwargs else None})
+        calls.append(
+            {
+                "method": method,
+                "path": path,
+                "json": kwargs["json"] if "json" in kwargs else None,
+                "params": kwargs["params"] if "params" in kwargs else {},
+            }
+        )
         if method == "GET" and path == "/me/mailFolders":
             return _FOLDERS_PAGE
         if method == "GET" and path.startswith("/me/mailFolders/"):
@@ -57,6 +64,17 @@ def test_resolve_display_name_to_id(patched):
     resolved = folders.resolve_folder_id_cfg(Config(), None, "acct-1", "Newsletters")
     assert resolved == "news-id"
     assert any(c["path"] == "/me/mailFolders" for c in patched)
+
+
+def test_resolve_nested_display_name_costs_one_listing(patched):
+    # A folder nested under Inbox resolves from the single top-level listing, because that listing
+    # expands one level of children. Walking each folder's childFolders instead would cost one
+    # request per top-level folder, on every unresolved name.
+    resolved = folders.resolve_folder_id_cfg(Config(), None, "acct-1", "Receipts")
+    assert resolved == "sub-id"
+    assert [c["path"] for c in patched] == ["/me/mailFolders"]
+    params = patched[0]["params"]
+    assert "$expand" in params and params["$expand"] == "childFolders"
 
 
 def test_resolve_unknown_returns_token(patched):
@@ -95,3 +113,29 @@ def test_delete_folder(patched):
     assert result == {"status": "deleted", "id": "fid"}
     delete = next(c for c in patched if c["method"] == "DELETE")
     assert delete["path"] == "/me/mailFolders/fid"
+
+
+def test_read_paths_address_a_custom_folder_by_id(patched, monkeypatch):
+    """`email list`/`search` must resolve a user-created folder to its id, like `move` does.
+
+    Graph accepts a bare name in the URL path only for its own well-known folders, so putting a
+    display name such as `Newsletters` straight into the path returns 400. Reading and moving
+    therefore have to share one resolver.
+    """
+    from microsoft_cli import email
+
+    seen: list[str] = []
+
+    def fake_paginate(config, client, endpoint, account_id=None, **kwargs):
+        seen.append(endpoint)
+        return iter(())
+
+    monkeypatch.setattr(email.auth, "get_account_id_by_email", lambda e, c: "acct-1")
+    monkeypatch.setattr(email.graph, "paginate_cfg", fake_paginate)
+    monkeypatch.setattr(email.folders.graph, "request", lambda *a, **k: _FOLDERS_PAGE)
+
+    email.list_emails(Config(), None, account_email="me@example.com", folder="Newsletters")
+    email.search_emails(Config(), None, account_email="me@example.com", query="hi", folder="Newsletters")
+
+    assert seen == ["/me/mailFolders/news-id/messages"] * 2
+    assert all("Newsletters" not in endpoint for endpoint in seen)

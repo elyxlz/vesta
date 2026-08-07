@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -61,26 +62,54 @@ func (wac *WhatsAppClient) linkHTTPHandler(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (wac *WhatsAppClient) startLinkServer(port int) {
+func (wac *WhatsAppClient) startLinkServer(port int) error {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return fmt.Errorf("start link page on port %d: %w", port, err)
+	}
 	server := &http.Server{Addr: fmt.Sprintf("127.0.0.1:%d", port), Handler: http.HandlerFunc(wac.linkHTTPHandler)}
 	wac.linkMu.Lock()
 	wac.linkServer = server
+	wac.linkPort = port
 	wac.linkMu.Unlock()
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			wac.logger.Errorf("link page server failed: %v", err)
 		}
 	}()
+	return nil
 }
 
 func (wac *WhatsAppClient) stopLinkServer() {
 	wac.linkMu.Lock()
 	server := wac.linkServer
 	wac.linkServer = nil
+	wac.linkPort = 0
+	wac.linkService = ""
 	wac.linkMu.Unlock()
 	if server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), linkServerShutdownTimeout)
 		defer cancel()
 		server.Shutdown(ctx)
 	}
+}
+
+func (wac *WhatsAppClient) setLinkService(service string) {
+	wac.linkMu.Lock()
+	defer wac.linkMu.Unlock()
+	wac.linkService = service
+}
+
+func (wac *WhatsAppClient) clearPendingLinkService() {
+	wac.linkMu.Lock()
+	defer wac.linkMu.Unlock()
+	if wac.linkPort == 0 {
+		wac.linkService = ""
+	}
+}
+
+func (wac *WhatsAppClient) activeLink() (int, string) {
+	wac.linkMu.Lock()
+	defer wac.linkMu.Unlock()
+	return wac.linkPort, wac.linkService
 }

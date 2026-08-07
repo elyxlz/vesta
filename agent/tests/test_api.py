@@ -117,7 +117,7 @@ async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
 
 @pytest.mark.anyio
 async def test_ws_recv_drain_survives_garbage_and_keeps_the_socket_live(event_bus):
-    """Nothing injects events over the WS anymore: the recv loop is a pure drain. Inbound frames
+    """No inbound frame injects an event over the WS: the recv loop is a pure drain. Inbound frames
     (garbage, a stale emit frame) are ignored without killing the connection, and the socket still
     receives bus events afterwards."""
     runner, base = await _start_server(event_bus)
@@ -214,9 +214,9 @@ async def test_memory_put_writes_atomically(tmp_path):
     assert not memory_path.with_name(memory_path.name + ".tmp").exists()
 
 
-# Regression: ws_runner.cleanup() used to sit on aiohttp's 60s default shutdown_timeout
-# per open WS handler because _ws_handler had no shutdown signal. Each connected client
-# (CLI + web + mobile) added another 60s wait. Now the app's on_shutdown closes them all.
+# The app's on_shutdown closes every open WS handler, so ws_runner.cleanup() never sits on
+# aiohttp's 60s default shutdown_timeout per handler. Without that signal each connected
+# client (CLI + web + mobile) would add another 60s. This budget is the ceiling proving it.
 SHUTDOWN_BUDGET_SEC = 3.0
 
 
@@ -657,3 +657,10 @@ async def test_history_rejects_app_chat_channel_with_410(event_bus):
                 assert resp.status == 200
     finally:
         await runner.cleanup()
+
+
+def test_snapshot_config_includes_presence_toggle(config):
+    """The connect snapshot's config dict carries the presence toggle vestad's status tap reads."""
+    from core.api import _snapshot_config
+
+    assert _snapshot_config(config)["presence_notifications_enabled"] is True

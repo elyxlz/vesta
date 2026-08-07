@@ -15,6 +15,7 @@ Returns JSON in ~0.3s. Works for any public video. Does **not** require login.
 from helpers import http_get
 import json
 
+
 def youtube_oembed(video_id):
     """Fetch oEmbed metadata for a YouTube video.
 
@@ -22,6 +23,7 @@ def youtube_oembed(video_id):
     """
     url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
     return json.loads(http_get(url))
+
 
 data = youtube_oembed("dQw4w9WgXcQ")
 # {
@@ -49,12 +51,14 @@ from helpers import http_get
 
 video_ids = ["dQw4w9WgXcQ", "jNQXAC9IVRw", "9bZkp7q19f0"]
 
+
 def fetch_oembed(vid):
     url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"
     try:
         return json.loads(http_get(url))
     except Exception as e:
         return {"error": str(e), "id": vid}
+
 
 with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(fetch_oembed, video_ids))
@@ -75,11 +79,12 @@ Every `youtube.com/watch?v={ID}` page embeds two JSON blobs in the HTML:
 from helpers import http_get
 import json, re
 
+
 def scrape_video(video_id):
     html = http_get(f"https://www.youtube.com/watch?v={video_id}")
 
     # ---- ytInitialPlayerResponse ----
-    m = re.search(r'var ytInitialPlayerResponse = (\{.*?\});(?:var|</script>)', html, re.DOTALL)
+    m = re.search(r"var ytInitialPlayerResponse = (\{.*?\});(?:var|</script>)", html, re.DOTALL)
     if not m:
         raise ValueError(f"ytInitialPlayerResponse not found for video {video_id} — video may be private, deleted, or region-blocked")
     pr = json.loads(m.group(1))
@@ -92,50 +97,49 @@ def scrape_video(video_id):
         reason = pr.get("playabilityStatus", {}).get("reason", "unknown")
         raise ValueError(f"Video {video_id} is unavailable: {reason}")
 
-    vd  = pr["videoDetails"]
-    mf  = pr["microformat"]["playerMicroformatRenderer"]
-    caps = pr.get("captions", {}) \
-             .get("playerCaptionsTracklistRenderer", {}) \
-             .get("captionTracks", [])
+    vd = pr["videoDetails"]
+    mf = pr["microformat"]["playerMicroformatRenderer"]
+    caps = pr.get("captions", {}).get("playerCaptionsTracklistRenderer", {}).get("captionTracks", [])
 
     return {
         # Core
-        "video_id":      vd["videoId"],
-        "title":         vd["title"],
-        "author":        vd["author"],
-        "channel_id":    vd["channelId"],
-        "description":   vd["shortDescription"],
-        "duration_s":    int(vd["lengthSeconds"]),
-        "view_count":    int(vd["viewCount"]),
-        "keywords":      vd.get("keywords", []),
-        "is_live":       vd.get("isLiveContent", False),
-        "is_private":    vd.get("isPrivate", False),
+        "video_id": vd["videoId"],
+        "title": vd["title"],
+        "author": vd["author"],
+        "channel_id": vd["channelId"],
+        "description": vd["shortDescription"],
+        "duration_s": int(vd["lengthSeconds"]),
+        "view_count": int(vd["viewCount"]),
+        "keywords": vd.get("keywords", []),
+        "is_live": vd.get("isLiveContent", False),
+        "is_private": vd.get("isPrivate", False),
         # Microformat (richer publishing data)
-        "publish_date":  mf.get("publishDate"),   # ISO 8601, e.g. "2009-10-25T00:57:33-07:00"
-        "upload_date":   mf.get("uploadDate"),
-        "category":      mf.get("category"),       # e.g. "Music", "Gaming", "Education"
-        "like_count":    int(mf.get("likeCount", 0)),
+        "publish_date": mf.get("publishDate"),  # ISO 8601, e.g. "2009-10-25T00:57:33-07:00"
+        "upload_date": mf.get("uploadDate"),
+        "category": mf.get("category"),  # e.g. "Music", "Gaming", "Education"
+        "like_count": int(mf.get("likeCount", 0)),
         "is_family_safe": mf.get("isFamilySafe"),
-        "is_unlisted":   mf.get("isUnlisted"),
+        "is_unlisted": mf.get("isUnlisted"),
         "available_countries": mf.get("availableCountries", []),  # list of ISO 3166-1 alpha-2 codes
-        "channel_name":  mf.get("ownerChannelName"),
-        "channel_url":   mf.get("ownerProfileUrl"),
-        "embed_url":     mf.get("embed", {}).get("iframeUrl"),
+        "channel_name": mf.get("ownerChannelName"),
+        "channel_url": mf.get("ownerProfileUrl"),
+        "embed_url": mf.get("embed", {}).get("iframeUrl"),
         # Thumbnails (all publicly accessible, no auth)
-        "thumbnail_hq":  f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",    # 480×360, always exists
-        "thumbnail_max": f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg", # 1280×720, may 404
+        "thumbnail_hq": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",  # 480×360, always exists
+        "thumbnail_max": f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",  # 1280×720, may 404
         # Caption tracks — baseUrl is included for reference but returns empty in practice;
         # use the Show Transcript UI flow in the browser instead (see playback.md)
         "caption_tracks": [
             {
-                "lang":     t.get("languageCode"),
-                "name":     t.get("name", {}).get("simpleText"),
-                "kind":     t.get("kind", "manual"),  # "manual" or "asr" (auto-generated)
+                "lang": t.get("languageCode"),
+                "name": t.get("name", {}).get("simpleText"),
+                "kind": t.get("kind", "manual"),  # "manual" or "asr" (auto-generated)
                 "base_url": t.get("baseUrl"),
             }
             for t in caps
         ],
     }
+
 
 video = scrape_video("dQw4w9WgXcQ")
 # {
@@ -168,21 +172,22 @@ from helpers import http_get
 import json, re
 from urllib.parse import quote_plus
 
+
 def youtube_search(query, max_results=20):
     """Search YouTube videos without a browser or API key."""
     url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
     html = http_get(url)
 
-    m = re.search(r'var ytInitialData = (\{.*?\});</script>', html, re.DOTALL)
+    m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.DOTALL)
     data = json.loads(m.group(1))
 
     # Walk the nested structure to find videoRenderer items
     section_contents = (
         data.get("contents", {})
-            .get("twoColumnSearchResultsRenderer", {})
-            .get("primaryContents", {})
-            .get("sectionListRenderer", {})
-            .get("contents", [])
+        .get("twoColumnSearchResultsRenderer", {})
+        .get("primaryContents", {})
+        .get("sectionListRenderer", {})
+        .get("contents", [])
     )
 
     results = []
@@ -192,31 +197,32 @@ def youtube_search(query, max_results=20):
             if not vr:
                 continue
             snippet = vr.get("detailedMetadataSnippets", [])
-            desc = (
-                "".join(r.get("text", "") for r in snippet[0]["snippetText"]["runs"])
-                if snippet else None
+            desc = "".join(r.get("text", "") for r in snippet[0]["snippetText"]["runs"]) if snippet else None
+            results.append(
+                {
+                    "video_id": vr["videoId"],
+                    "url": f"https://www.youtube.com/watch?v={vr['videoId']}",
+                    "title": vr.get("title", {}).get("runs", [{}])[0].get("text"),
+                    "channel": vr.get("ownerText", {}).get("runs", [{}])[0].get("text"),
+                    "channel_url": (
+                        "https://www.youtube.com"
+                        + vr.get("ownerText", {})
+                        .get("runs", [{}])[0]
+                        .get("navigationEndpoint", {})
+                        .get("browseEndpoint", {})
+                        .get("canonicalBaseUrl", "")
+                    ),
+                    "duration": vr.get("lengthText", {}).get("simpleText"),  # e.g. "3:32"
+                    "views": vr.get("viewCountText", {}).get("simpleText"),  # e.g. "1,764,468,859 views"
+                    "published": vr.get("publishedTimeText", {}).get("simpleText"),  # e.g. "7 years ago"
+                    "description_snippet": desc,
+                    "thumbnail": f"https://i.ytimg.com/vi/{vr['videoId']}/hqdefault.jpg",
+                }
             )
-            results.append({
-                "video_id":   vr["videoId"],
-                "url":        f"https://www.youtube.com/watch?v={vr['videoId']}",
-                "title":      vr.get("title", {}).get("runs", [{}])[0].get("text"),
-                "channel":    vr.get("ownerText", {}).get("runs", [{}])[0].get("text"),
-                "channel_url": (
-                    "https://www.youtube.com"
-                    + vr.get("ownerText", {}).get("runs", [{}])[0]
-                                              .get("navigationEndpoint", {})
-                                              .get("browseEndpoint", {})
-                                              .get("canonicalBaseUrl", "")
-                ),
-                "duration":   vr.get("lengthText", {}).get("simpleText"),  # e.g. "3:32"
-                "views":      vr.get("viewCountText", {}).get("simpleText"),  # e.g. "1,764,468,859 views"
-                "published":  vr.get("publishedTimeText", {}).get("simpleText"),  # e.g. "7 years ago"
-                "description_snippet": desc,
-                "thumbnail":  f"https://i.ytimg.com/vi/{vr['videoId']}/hqdefault.jpg",
-            })
             if len(results) >= max_results:
                 return results  # exit both loops immediately
     return results
+
 
 results = youtube_search("python tutorial", max_results=5)
 # Returns up to ~14-20 results (YouTube serves fewer than 20 on first page)
@@ -242,6 +248,7 @@ Channel pages (`youtube.com/@handle` or `youtube.com/channel/{CHANNEL_ID}`) embe
 from helpers import http_get
 import json, re
 
+
 def scrape_channel(handle_or_id):
     """
     handle_or_id: "@RickAstleyYT"           (handle, with @)
@@ -253,59 +260,43 @@ def scrape_channel(handle_or_id):
         url = f"https://www.youtube.com/{handle_or_id}"
 
     html = http_get(url)
-    m = re.search(r'var ytInitialData = (\{.*?\});</script>', html, re.DOTALL)
+    m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.DOTALL)
     data = json.loads(m.group(1))
 
     # Canonical metadata (always present)
     cmd = data.get("metadata", {}).get("channelMetadataRenderer", {})
 
     # Subscriber count + handle from pageHeaderViewModel
-    ph = (
-        data.get("header", {})
-            .get("pageHeaderRenderer", {})
-            .get("content", {})
-            .get("pageHeaderViewModel", {})
-    )
+    ph = data.get("header", {}).get("pageHeaderRenderer", {}).get("content", {}).get("pageHeaderViewModel", {})
     meta_parts = [
         part.get("text", {}).get("content", "")
-        for row in ph.get("metadata", {})
-                     .get("contentMetadataViewModel", {})
-                     .get("metadataRows", [])
+        for row in ph.get("metadata", {}).get("contentMetadataViewModel", {}).get("metadataRows", [])
         for part in row.get("metadataParts", [])
     ]
     # meta_parts is typically: ["@handle", "4.48m subscribers", "N videos"]
 
     # Avatar (take the largest source)
     avatar_sources = (
-        ph.get("image", {})
-          .get("decoratedAvatarViewModel", {})
-          .get("avatar", {})
-          .get("avatarViewModel", {})
-          .get("image", {})
-          .get("sources", [])
+        ph.get("image", {}).get("decoratedAvatarViewModel", {}).get("avatar", {}).get("avatarViewModel", {}).get("image", {}).get("sources", [])
     )
     avatar_url = avatar_sources[-1]["url"] if avatar_sources else None
 
     # Channel banner
-    banner_sources = (
-        ph.get("banner", {})
-          .get("imageBannerViewModel", {})
-          .get("image", {})
-          .get("sources", [])
-    )
+    banner_sources = ph.get("banner", {}).get("imageBannerViewModel", {}).get("image", {}).get("sources", [])
     banner_url = banner_sources[-1]["url"] if banner_sources else None
 
     return {
-        "channel_id":  cmd.get("externalId"),
-        "title":       cmd.get("title"),
+        "channel_id": cmd.get("externalId"),
+        "title": cmd.get("title"),
         "description": cmd.get("description"),
         "channel_url": cmd.get("channelUrl"),
-        "keywords":    cmd.get("keywords", ""),
-        "handle":      meta_parts[0] if len(meta_parts) > 0 else None,
+        "keywords": cmd.get("keywords", ""),
+        "handle": meta_parts[0] if len(meta_parts) > 0 else None,
         "subscribers": meta_parts[1] if len(meta_parts) > 1 else None,  # e.g. "4.48m subscribers"
-        "avatar_url":  avatar_url,
-        "banner_url":  banner_url,
+        "avatar_url": avatar_url,
+        "banner_url": banner_url,
     }
+
 
 channel = scrape_channel("@RickAstleyYT")
 # {
@@ -330,11 +321,11 @@ All thumbnail sizes are publicly accessible without auth. Construct directly fro
 def thumbnail_urls(video_id):
     base = f"https://i.ytimg.com/vi/{video_id}"
     return {
-        "default":  f"{base}/default.jpg",      # 120×90,  always exists
-        "medium":   f"{base}/mqdefault.jpg",     # 320×180, always exists
-        "high":     f"{base}/hqdefault.jpg",     # 480×360, always exists
-        "standard": f"{base}/sddefault.jpg",     # 640×480, always exists
-        "maxres":   f"{base}/maxresdefault.jpg", # 1280×720, may 404 on older/low-res videos
+        "default": f"{base}/default.jpg",  # 120×90,  always exists
+        "medium": f"{base}/mqdefault.jpg",  # 320×180, always exists
+        "high": f"{base}/hqdefault.jpg",  # 480×360, always exists
+        "standard": f"{base}/sddefault.jpg",  # 640×480, always exists
+        "maxres": f"{base}/maxresdefault.jpg",  # 1280×720, may 404 on older/low-res videos
     }
 ```
 
@@ -345,15 +336,17 @@ def thumbnail_urls(video_id):
 ```python
 import re
 
+
 def extract_video_id(url):
     """Extract YouTube video ID (11-char) from any YouTube URL format."""
-    m = re.search(r'(?:v=|/v/|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})', url)
+    m = re.search(r"(?:v=|/v/|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})", url)
     return m.group(1) if m else None
 
+
 extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ")  # "dQw4w9WgXcQ"
-extract_video_id("https://youtu.be/dQw4w9WgXcQ")                  # "dQw4w9WgXcQ"
-extract_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ")    # "dQw4w9WgXcQ"
-extract_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ")     # "dQw4w9WgXcQ"
+extract_video_id("https://youtu.be/dQw4w9WgXcQ")  # "dQw4w9WgXcQ"
+extract_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ")  # "dQw4w9WgXcQ"
+extract_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ")  # "dQw4w9WgXcQ"
 ```
 
 ---

@@ -5,10 +5,10 @@ import os
 import signal
 import sys
 import time
-from contextlib import closing, suppress
+from contextlib import closing
 from pathlib import Path
 
-from . import commands, db
+from . import commands, daemon, db
 from . import format as fmt
 from .config import Config
 from .scheduler import create_scheduler, write_notification
@@ -21,36 +21,17 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
-def _write_pid(config):
-    (config.data_dir / "serve.pid").write_text(str(os.getpid()))
-
-
-def _remove_pid(config):
-    with suppress(FileNotFoundError):
-        (config.data_dir / "serve.pid").unlink()
-
-
-def _fail_daemon_not_running(detail: str):
-    msg = f"daemon not running{detail} — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"
-    print(json.dumps({"error": msg}), file=sys.stderr)
-    sys.exit(1)
-
-
 def _require_arg(value: str | None, name: str, usage: str) -> str:
     if not value:
         raise ValueError(f"{name} is required: {usage}")
     return value
 
 
-def _require_daemon(config):
-    pid_file = config.data_dir / "serve.pid"
-    if not pid_file.exists():
-        _fail_daemon_not_running("")
-    try:
-        os.kill(int(pid_file.read_text().strip()), 0)
-    except (ValueError, ProcessLookupError, OSError):
-        pid_file.unlink(missing_ok=True)
-        _fail_daemon_not_running(" (stale pid file)")
+def _require_daemon():
+    if daemon.live_pid() is None:
+        msg = "daemon not running, start it with: tasks daemon start"
+        print(json.dumps({"error": msg}), file=sys.stderr)
+        sys.exit(1)
 
 
 def _sync_jobs(config: Config, scheduler, notif_dir: Path):
@@ -81,6 +62,15 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
         commands.restore_jobs_by_ids(config, scheduler, to_restore, notif_dir=notif_dir)
 
 
+def _add_due_args(parser: argparse.ArgumentParser) -> None:
+    """The shared due-date flags: an absolute datetime + timezone, or a relative offset."""
+    parser.add_argument("--due-datetime", default=None)
+    parser.add_argument("--timezone", default=None)
+    parser.add_argument("--due-in-minutes", type=int, default=None)
+    parser.add_argument("--due-in-hours", type=int, default=None)
+    parser.add_argument("--due-in-days", type=int, default=None)
+
+
 def _add_id_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("id_pos", nargs="?", default=None, metavar="id")
     parser.add_argument("--id", default=None, dest="task_id")
@@ -95,15 +85,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--notifications-dir", default=str(Path.home() / "agent" / "notifications"))
     p_serve.add_argument("--port", type=int, required=True, help="HTTP server port (allocated by vestad)")
 
+    # daemon
+    p_daemon = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
+    p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
+
     # add
     p_add = sub.add_parser("add", help="Add a new task")
     p_add.add_argument("title_pos", nargs="?", default=None, metavar="title")
     p_add.add_argument("--title", default=None)
-    p_add.add_argument("--due-datetime", default=None)
-    p_add.add_argument("--timezone", default=None)
-    p_add.add_argument("--due-in-minutes", type=int, default=None)
-    p_add.add_argument("--due-in-hours", type=int, default=None)
-    p_add.add_argument("--due-in-days", type=int, default=None)
+    _add_due_args(p_add)
     p_add.add_argument("--priority", default="normal", help="low/normal/high or 1/2/3")
     p_add.add_argument("--initial-metadata", default=None)
 
@@ -129,11 +119,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_update.add_argument("--status", default=None)
     p_update.add_argument("--title", default=None)
     p_update.add_argument("--priority", default=None)
-    p_update.add_argument("--due-datetime", default=None)
-    p_update.add_argument("--timezone", default=None)
-    p_update.add_argument("--due-in-minutes", type=int, default=None)
-    p_update.add_argument("--due-in-hours", type=int, default=None)
-    p_update.add_argument("--due-in-days", type=int, default=None)
+    _add_due_args(p_update)
+    p_update.add_argument("--clear-due", action="store_true", help="Remove the task's due date and its auto reminders")
+    p_update.add_argument(
+        "--backburner",
+        dest="backburner",
+        action="store_true",
+        default=None,
+        help="Park a deliberately undated task so the stale digest stops listing it (still pending, still in `tasks list`)",
+    )
+    p_update.add_argument(
+        "--no-backburner", dest="backburner", action="store_false", help="Undo --backburner; the digest will list it again once stale"
+    )
 
     # done
     p_done = sub.add_parser("done", help="Mark a task done")
@@ -173,7 +170,12 @@ def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "remind":
         return _main_remind()
 
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return None
+
+    args = parser.parse_args()
     config = Config()
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -186,7 +188,10 @@ def main():
             _run_serve(config, Path(args.notifications_dir), port=args.port)
             return None
 
-        _require_daemon(config)
+        if args.command == "daemon":
+            sys.exit(daemon.daemon_cmd(args.action))
+
+        _require_daemon()
         _handle_task(args, config)
 
     except ValueError as e:
@@ -300,7 +305,7 @@ def _main_remind():
         sys.exit(1)
 
     try:
-        _require_daemon(config)
+        _require_daemon()
 
         if subcmd == "list":
             _remind_list_cmd(config, remind_args[1:])
@@ -397,7 +402,9 @@ def _handle_task(args, config: Config):
                 due_in_minutes=args.due_in_minutes,
                 due_in_hours=args.due_in_hours,
                 due_in_days=args.due_in_days,
+                clear=args.clear_due,
             ),
+            backburner=args.backburner,
         )
     elif args.command == "done":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks done <id> or tasks done --id <id>")
@@ -457,31 +464,33 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
 
     from .server import start_server
 
-    http_server = start_server(config, port)
+    shutdown_reason = "unknown"
+    asked_to_stop = False
+
+    def handle_signal(signum, _frame):
+        # SIGTERM is what `tasks daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of the loop below is news the agent needs.
+        nonlocal shutdown_reason, asked_to_stop
+        shutdown_reason = signal.Signals(signum).name
+        asked_to_stop = signum == signal.SIGTERM
+        raise SystemExit(0)
+
+    # Installed before anything is brought up, so a signal arriving during startup is answered.
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    http_server = start_server(config, port, notif_dir)
 
     scheduler = create_scheduler()
     scheduler.start()
     commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
-    stop = False
-    shutdown_reason = "unknown"
-
-    def handle_signal(signum, _frame):
-        nonlocal stop, shutdown_reason
-        shutdown_reason = signal.Signals(signum).name
-        stop = True
-
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
 
     sync_interval = int(os.environ["TASKS_SYNC_INTERVAL"]) if "TASKS_SYNC_INTERVAL" in os.environ else 5
-
-    _write_pid(config)
 
     print(json.dumps({"status": "serving", "sync_interval": sync_interval, "http_port": port}))
     sys.stdout.flush()
     try:
-        while not stop:
+        while True:
             time.sleep(sync_interval)
             try:
                 _sync_jobs(config, scheduler, notif_dir)
@@ -491,6 +500,6 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
                 logging.getLogger(__name__).exception("serve tick failed")
     finally:
         http_server.should_exit = True
-        write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
-        _remove_pid(config)
+        if not asked_to_stop:
+            write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         scheduler.shutdown(wait=True)

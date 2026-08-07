@@ -1,22 +1,13 @@
 import type { ConnectionConfig } from "@/lib/connection";
 import { detectPlatform } from "@/lib/platform";
+import { parseConnectionConfig } from "./parse-connection-config";
 import type { NativeBridge } from "./types";
 
 const STORAGE_KEY = "vesta-connection";
 
 export function parseConnection(raw: string): ConnectionConfig | null {
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== "object") return null;
-    const config = parsed as ConnectionConfig;
-    if (
-      config.url &&
-      config.accessToken &&
-      (config.refreshToken || config.hosted)
-    ) {
-      return config;
-    }
-    return null;
+    return parseConnectionConfig(JSON.parse(raw));
   } catch {
     return null;
   }

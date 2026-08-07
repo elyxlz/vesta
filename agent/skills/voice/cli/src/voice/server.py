@@ -7,6 +7,7 @@ Reads SKILL_PORT from environment.
 import datetime as dt
 import json
 import os
+import signal
 import time
 from pathlib import Path
 
@@ -45,9 +46,8 @@ def create_app() -> web.Application:
 
 
 def write_daemon_died(notifications_dir: Path) -> None:
-    """Record the voice-server's exit so the agent restarts it. `voice-keys daemon stop/restart`
-    quits the screen session (SIGHUP), which terminates before this runs, so a deliberate
-    restart raises no false alarm; a crash or a container stop does write it."""
+    """Record the voice-server's exit so the agent restarts it, which is news for every exit but
+    the SIGTERM `voice-keys daemon stop` sends."""
     notifications_dir.mkdir(parents=True, exist_ok=True)
     notif = {"source": "voice", "type": "daemon_died", "timestamp": dt.datetime.now(dt.UTC).isoformat()}
     fname = f"{int(time.time() * 1e6)}-voice-daemon_died.json"
@@ -58,10 +58,24 @@ def write_daemon_died(notifications_dir: Path) -> None:
 
 def main() -> None:
     port = int(os.environ["SKILL_PORT"])
+    asked_to_stop = False
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        # SIGTERM is what `voice-keys daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of the server is news the agent needs.
+        nonlocal asked_to_stop
+        asked_to_stop = signum == signal.SIGTERM
+        raise SystemExit(0)
+
+    # Installed before the server comes up, and handle_signals=False keeps them installed:
+    # aiohttp's own handlers treat every signal alike, which is the distinction this needs.
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
     try:
-        web.run_app(create_app(), host="0.0.0.0", port=port, print=lambda *_: None)
+        web.run_app(create_app(), host="0.0.0.0", port=port, print=lambda *_: None, handle_signals=False)
     finally:
-        write_daemon_died(Path.home() / "agent" / "notifications")
+        if not asked_to_stop:
+            write_daemon_died(Path.home() / "agent" / "notifications")
 
 
 if __name__ == "__main__":

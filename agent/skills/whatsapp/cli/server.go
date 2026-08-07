@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 )
@@ -21,12 +22,40 @@ type SocketResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// render is the one owner of what a response prints and exits with, for every decoder of it: a
+// failure that produced a result prints that result; {"error": ...} carries one that produced none.
+func (resp SocketResponse) render() ([]byte, int) {
+	body := resp.Result
+	if body == nil && resp.Error != "" {
+		body = map[string]any{"error": resp.Error}
+	}
+	data, _ := json.MarshalIndent(body, "", "  ")
+	if resp.Error != "" {
+		return data, 1
+	}
+	return data, 0
+}
+
 func startSocketServer(sockPath string, wac *WhatsAppClient) (net.Listener, error) {
+	// Close the creation-time window too: net.Listen creates the socket before it
+	// can be chmodded, so the containing state directory must already exclude other
+	// local users.
+	if err := os.Chmod(filepath.Dir(sockPath), 0700); err != nil {
+		return nil, fmt.Errorf("secure socket directory %s: %v", filepath.Dir(sockPath), err)
+	}
 	os.Remove(sockPath)
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %v", sockPath, err)
+	}
+	// Socket requests can carry a direct API key during a warm-daemon connect.
+	// Restrict the endpoint before accepting anything so other local users cannot
+	// read credentials or issue WhatsApp commands through it.
+	if err := os.Chmod(sockPath, 0600); err != nil {
+		listener.Close()
+		os.Remove(sockPath)
+		return nil, fmt.Errorf("secure socket %s: %v", sockPath, err)
 	}
 
 	go func() {
@@ -78,6 +107,7 @@ func handleSocketConn(conn net.Conn, wac *WhatsAppClient) {
 		resp.Error = err.Error()
 	} else {
 		resp.Result = result
+		resp.Error = resultFailure(result)
 	}
 
 	json.NewEncoder(conn).Encode(resp)
@@ -105,11 +135,6 @@ func trySocketCommand(sockPath string, command string, args []string) ([]byte, i
 		return nil, 0, false
 	}
 
-	if resp.Error != "" {
-		data, _ := json.MarshalIndent(map[string]any{"error": resp.Error}, "", "  ")
-		return data, 1, true
-	}
-
-	data, _ := json.MarshalIndent(resp.Result, "", "  ")
-	return data, 0, true
+	data, exitCode := resp.render()
+	return data, exitCode, true
 }

@@ -121,7 +121,8 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
       quiesceTimerRef.current = null;
       capTimerRef.current = null;
 
-      streamLogs(
+      // Resolves when the stream ends; every failure arrives as a stream event instead.
+      void streamLogs(
         name,
         (event) => {
           const action = logStreamAction(event);
@@ -182,9 +183,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
           }
         },
         { replay },
-      ).catch((err: unknown) => {
-        console.warn("[console] log stream failed:", err);
-      });
+      );
     };
   });
 
@@ -229,6 +228,10 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
 
   const parentRef = useRef<HTMLDivElement>(null);
   const count = lines.length;
+  // `count` stops changing once the scrollback cap is full, but the tail still
+  // advances as old lines are dropped. Key follow-on-append to the newest line
+  // instead so a full console continues to follow live output.
+  const newestLineId = lines.at(-1)?.id;
 
   // Every log line stays in the DOM (no windowing) so a native text selection survives
   // scrolling and copies the full range; off-screen rows skip layout/paint via
@@ -246,7 +249,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   useLayoutEffect(() => {
     const el = parentRef.current;
     if (el && count > 0 && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [count]);
+  }, [count, newestLineId]);
 
   const linePad = fullscreen ? "px-page" : "px-5";
 

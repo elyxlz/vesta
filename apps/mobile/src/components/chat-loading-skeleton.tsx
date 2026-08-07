@@ -60,9 +60,6 @@ export function ChatLoadingSkeleton() {
       style={[styles.skeleton, pulseStyle]}
     >
       <View style={styles.stack}>
-        <View
-          style={[styles.date, { backgroundColor: colors.input }]}
-        />
         {PLACEHOLDER_ROWS.map((row, index) => (
           <View
             key={index}
@@ -96,12 +93,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 8,
     gap: 10,
-  },
-  date: {
-    alignSelf: "center",
-    width: 68,
-    height: 14,
-    borderRadius: 7,
   },
   bubble: {
     borderRadius: radii.bubble,

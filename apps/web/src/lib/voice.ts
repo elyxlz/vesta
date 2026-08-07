@@ -1,5 +1,7 @@
+import { serviceKeyQueryUrl, serviceKeySocketUrl } from "@vesta/core";
 import { apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
+import { serviceKeys } from "@/lib/service-key-cache";
 
 const SAMPLE_RATE = 16000;
 
@@ -138,22 +140,17 @@ export function prepareSpeech(
   ).then((res) => res.id);
 }
 
-// Exported for testing: the token rides the query string because a media
-// element's request cannot carry an Authorization header.
-export function buildTtsStreamUrl(
-  baseUrl: string,
-  accessToken: string,
-  agentName: string,
-  id: string,
-): string {
-  const params = new URLSearchParams({ token: accessToken });
-  return `${baseUrl}/agents/${encodeURIComponent(agentName)}/voice/tts/stream/${encodeURIComponent(id)}?${params.toString()}`;
-}
-
-function ttsStreamUrl(agentName: string, id: string): string {
+async function ttsStreamUrl(agentName: string, id: string): Promise<string> {
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vestad");
-  return buildTtsStreamUrl(conn.url, conn.accessToken, agentName, id);
+  const key = await serviceKeys.get(agentName, "voice");
+  return serviceKeyQueryUrl(
+    conn.url,
+    agentName,
+    "voice",
+    key,
+    `/tts/stream/${encodeURIComponent(id)}`,
+  );
 }
 
 export async function streamSpeech(
@@ -165,7 +162,10 @@ export async function streamSpeech(
   const id = preparedId ?? (await prepareSpeech(text, agentName, signal));
   if (signal?.aborted) return;
 
-  const audio = new Audio(ttsStreamUrl(agentName, id));
+  const src = await ttsStreamUrl(agentName, id);
+  if (signal?.aborted) return;
+
+  const audio = new Audio(src);
   audio.preload = "auto";
 
   await new Promise<void>((resolve, reject) => {
@@ -285,7 +285,7 @@ export class Transcriber {
 
     let socket: WebSocket;
     try {
-      const url = this.buildWsUrl();
+      const url = await this.buildWsUrl();
       socket = new WebSocket(url);
       socket.binaryType = "arraybuffer";
       await new Promise<void>((resolve, reject) => {
@@ -416,12 +416,17 @@ export class Transcriber {
     return this.active;
   }
 
-  private buildWsUrl(): string {
+  private async buildWsUrl(): Promise<string> {
     const conn = getConnection();
     if (!conn) throw new Error("not connected to vestad");
-    const base = conn.url.replace(/^http/, "ws");
-    const params = new URLSearchParams({ token: conn.accessToken });
-    return `${base}/agents/${encodeURIComponent(this.opts.agentName)}/voice/stt/listen?${params.toString()}`;
+    const key = await serviceKeys.get(this.opts.agentName, "voice");
+    return serviceKeySocketUrl(
+      conn.url,
+      this.opts.agentName,
+      "voice",
+      key,
+      "/stt/listen",
+    );
   }
 
   private cleanup(): void {

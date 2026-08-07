@@ -17,15 +17,10 @@ import {
 } from "@/components/ui/empty";
 import { ItemGroup } from "@/components/ui/item";
 import { getNotificationHistory, type NotificationEvent } from "@/api/agents";
+import { notificationRowKey } from "@vesta/core";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
 import { useLiveNotifications } from "@/hooks/use-live-notifications";
-
-// Identity for dedupe: notif_id when present (stable across REST history + the live stream),
-// falling back to the timestamp for older events that predate notif_id.
-function rowKey(event: NotificationEvent): string {
-  return event.notif_id ?? event.ts ?? "";
-}
 
 // The received-notifications history. Flows at its natural height and scrolls with the settings page;
 // the rules cards beside it stay sticky. Live-updating: the row list comes from the REST history
@@ -43,7 +38,8 @@ export function NotificationsCard() {
   // The currently-selected agent, so an in-flight request drops its result if the user switches
   // agents mid-flight (this card is not unmounted on switch, only its effect re-runs).
   const currentAgent = useRef(agentName);
-  // Keys of arrivals already in `items`, so live merges don't duplicate a REST-loaded row.
+  // Keys of arrivals already in `items`, so live merges don't duplicate a REST-loaded row. The key is
+  // the arrival, not the pending slot: notif_id alone recurs across time (see notificationRowKey).
   const seenRef = useRef<Set<string>>(new Set());
 
   // Pending = on disk, not yet processed: snapshot seed ∪ live arrivals − live clears. A clear after
@@ -66,7 +62,7 @@ export function NotificationsCard() {
         if (currentAgent.current !== name) return;
         setItems(page.notifications);
         setCursor(page.cursor);
-        seenRef.current = new Set(page.notifications.map(rowKey));
+        seenRef.current = new Set(page.notifications.map(notificationRowKey));
       })
       .catch((e: unknown) => {
         if (currentAgent.current === name)
@@ -84,9 +80,11 @@ export function NotificationsCard() {
   // Runs once `items` exists, and again when it (re)loads, catching arrivals that raced the fetch.
   useEffect(() => {
     if (items === null) return;
-    const fresh = arrivals.filter((n) => !seenRef.current.has(rowKey(n)));
+    const fresh = arrivals.filter(
+      (n) => !seenRef.current.has(notificationRowKey(n)),
+    );
     if (fresh.length === 0) return;
-    fresh.forEach((n) => seenRef.current.add(rowKey(n)));
+    fresh.forEach((n) => seenRef.current.add(notificationRowKey(n)));
     setItems((prev) => (prev ? [...[...fresh].reverse(), ...prev] : prev));
   }, [arrivals, items]);
 
@@ -97,7 +95,9 @@ export function NotificationsCard() {
     try {
       const page = await getNotificationHistory(requestedAgent, cursor);
       if (currentAgent.current !== requestedAgent) return;
-      page.notifications.forEach((n) => seenRef.current.add(rowKey(n)));
+      page.notifications.forEach((n) =>
+        seenRef.current.add(notificationRowKey(n)),
+      );
       setItems((prev) => [...(prev ?? []), ...page.notifications]);
       setCursor(page.cursor);
     } catch (e) {
@@ -144,9 +144,9 @@ export function NotificationsCard() {
         ) : (
           <div className="flex flex-col gap-2.5">
             <ItemGroup>
-              {items.map((event, i) => (
+              {items.map((event) => (
                 <NotificationRow
-                  key={event.notif_id ?? event.ts ?? `row-${String(i)}`}
+                  key={notificationRowKey(event)}
                   event={event}
                   // Pending = received but not yet processed (still on disk per the live pending set).
                   isPending={!!event.notif_id && pendingIds.has(event.notif_id)}

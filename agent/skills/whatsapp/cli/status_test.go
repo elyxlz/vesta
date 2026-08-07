@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSimpleStatusLinked(t *testing.T) {
 	dir := t.TempDir()
@@ -28,11 +31,49 @@ func TestSimpleStatusNotLinkedSurfacesReason(t *testing.T) {
 	if got["linked"] != false {
 		t.Errorf("linked = %v, want false", got["linked"])
 	}
-	if got["next"] != "run: whatsapp connect" {
+	if got["next"] != "run: whatsapp connect --source <cloud|doubletick|self-managed>" {
 		t.Errorf("next = %v, want the connect hint", got["next"])
 	}
 	if got["reason"] != "unlinked from the phone (stream:error logout)" {
 		t.Errorf("reason = %v, want the recorded last-exit reason", got["reason"])
+	}
+}
+
+func TestSimpleStatusReportsActiveQRPairing(t *testing.T) {
+	got := simpleStatus(map[string]any{
+		"logged_in":   false,
+		"auth_status": string(AuthStatusQRReady),
+	}, t.TempDir())
+	if got["connecting"] != true || got["method"] != "qr" {
+		t.Fatalf("active QR status = %#v, want connecting QR", got)
+	}
+	next, _ := got["next"].(string)
+	if strings.Contains(next, "run: whatsapp connect") || !strings.Contains(next, "do not run connect again") {
+		t.Errorf("active QR next step = %q, want wait guidance without another connect", next)
+	}
+}
+
+func TestSimpleStatusReportsQRServerBeforeFirstCode(t *testing.T) {
+	got := simpleStatus(map[string]any{
+		"logged_in": false,
+		"link_port": float64(61012),
+	}, t.TempDir())
+	if got["connecting"] != true || got["method"] != "qr" {
+		t.Fatalf("pre-QR status = %#v, want connecting QR", got)
+	}
+}
+
+func TestSimpleStatusReportsPendingPhonePairing(t *testing.T) {
+	got := simpleStatus(map[string]any{
+		"logged_in":             false,
+		"phone_pairing_pending": true,
+	}, t.TempDir())
+	if got["connecting"] != true || got["method"] != "phone" {
+		t.Fatalf("phone pairing status = %#v, want connecting phone", got)
+	}
+	next, _ := got["next"].(string)
+	if strings.Contains(next, "run: whatsapp connect") || !strings.Contains(next, "do not run connect again") {
+		t.Errorf("phone pairing next step = %q, want wait guidance without another connect", next)
 	}
 }
 

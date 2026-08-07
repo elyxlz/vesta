@@ -12,14 +12,11 @@ No authentication required for any approach documented here.
 ```python
 from helpers import http_get
 
+
 def genius_get(url, extra_headers=None):
     """Drop-in replacement for http_get on genius.com endpoints."""
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
         "Accept-Encoding": "gzip",
@@ -45,13 +42,10 @@ a browser-like User-Agent. They return rich structured JSON in ~0.13s.
 import json
 from helpers import http_get
 
+
 def genius_get(url, extra_headers=None):
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
         "Accept-Encoding": "gzip",
@@ -60,10 +54,12 @@ def genius_get(url, extra_headers=None):
         headers.update(extra_headers)
     return http_get(url, headers=headers)
 
+
 def genius_song(song_id):
     """Fetch full song metadata by Genius song ID."""
     data = json.loads(genius_get(f"https://genius.com/api/songs/{song_id}"))
     return data["response"]["song"]
+
 
 song = genius_song(1063)
 # All fields available in one call (no auth):
@@ -98,7 +94,7 @@ song = genius_song(1063)
 # song["featured_artists"]             → []
 
 # Primary album (first in list = original release):
-primary_album = song["albums"][0]["name"]   # "A Night at the Opera"
+primary_album = song["albums"][0]["name"]  # "A Night at the Opera"
 ```
 
 ### Search
@@ -110,7 +106,9 @@ def genius_search(query, per_page=5):
     data = json.loads(genius_get(url))
     return data["response"]["sections"]
 
+
 import urllib.parse
+
 sections = genius_search("Bohemian Rhapsody Queen", per_page=5)
 # sections is a list of dicts with keys: "type", "hits"
 # Each hit has: "type", "result"
@@ -123,6 +121,7 @@ for section in sections:
             print(r["full_title"], r["url"], r["id"])
         # Bohemian Rhapsody by Queen  https://genius.com/Queen-bohemian-rhapsody-lyrics  1063
         break
+
 
 # Simpler search (song section only):
 def genius_search_songs(query, per_page=5):
@@ -140,8 +139,7 @@ def genius_artist_songs(artist_id, per_page=20, sort="popularity"):
     """Fetch paginated list of songs for an artist. sort: 'popularity' or 'title'."""
     page = 1
     while True:
-        url = (f"https://genius.com/api/artists/{artist_id}/songs"
-               f"?per_page={per_page}&page={page}&sort={sort}")
+        url = f"https://genius.com/api/artists/{artist_id}/songs?per_page={per_page}&page={page}&sort={sort}"
         data = json.loads(genius_get(url))["response"]
         songs = data["songs"]
         if not songs:
@@ -150,6 +148,7 @@ def genius_artist_songs(artist_id, per_page=20, sort="popularity"):
         if data["next_page"] is None:
             break
         page = data["next_page"]
+
 
 # Example: get top 5 Queen songs by popularity
 for song in list(genius_artist_songs(563, per_page=5))[:5]:
@@ -174,13 +173,10 @@ Each div can contain nested child divs for annotation highlights — including a
 import re, json
 from helpers import http_get
 
+
 def genius_get(url, extra_headers=None):
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
         "Accept-Encoding": "gzip",
@@ -188,6 +184,7 @@ def genius_get(url, extra_headers=None):
     if extra_headers:
         headers.update(extra_headers)
     return http_get(url, headers=headers)
+
 
 def _remove_excluded_divs(html):
     """Strip all <div data-exclude-from-selection="true"> subtrees (contributor headers)."""
@@ -198,10 +195,12 @@ def _remove_excluded_divs(html):
         tag_start = html.rfind("<div", 0, idx)
         depth, pos = 0, tag_start
         while pos < len(html):
-            if html[pos:pos+4] == "<div":
-                depth += 1; pos += 4
-            elif html[pos:pos+6] == "</div>":
-                depth -= 1; pos += 6
+            if html[pos : pos + 4] == "<div":
+                depth += 1
+                pos += 4
+            elif html[pos : pos + 6] == "</div>":
+                depth -= 1
+                pos += 6
                 if depth == 0:
                     html = html[:tag_start] + html[pos:]
                     break
@@ -210,6 +209,7 @@ def _remove_excluded_divs(html):
         else:
             break
     return html
+
 
 def _extract_div_content(html, marker):
     """Extract all <div> subtrees that contain the given attribute marker."""
@@ -222,10 +222,12 @@ def _extract_div_content(html, marker):
         tag_start = html.rfind("<div", 0, idx)
         depth, pos = 0, tag_start
         while pos < len(html):
-            if html[pos:pos+4] == "<div":
-                depth += 1; pos += 4
-            elif html[pos:pos+6] == "</div>":
-                depth -= 1; pos += 6
+            if html[pos : pos + 4] == "<div":
+                depth += 1
+                pos += 4
+            elif html[pos : pos + 6] == "</div>":
+                depth -= 1
+                pos += 6
                 if depth == 0:
                     parts.append(html[tag_start:pos])
                     break
@@ -234,14 +236,21 @@ def _extract_div_content(html, marker):
         start = idx + 1
     return parts
 
+
 def _html_to_text(html_str):
     """Convert lyrics HTML to plain text, preserving line breaks."""
     text = re.sub(r"<br\s*/?>", "\n", html_str)
     text = re.sub(r"<[^>]+>", "", text)
-    text = (text
-            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-            .replace("&#39;", "'").replace("&quot;", '"').replace("&#x27;", "'")
-            .replace("&#x2F;", "/").replace("&nbsp;", " "))
+    text = (
+        text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#39;", "'")
+        .replace("&quot;", '"')
+        .replace("&#x27;", "'")
+        .replace("&#x2F;", "/")
+        .replace("&nbsp;", " ")
+    )
     # Collapse multiple blank lines to one
     lines = [l.strip() for l in text.split("\n")]
     result, prev_blank = [], False
@@ -254,6 +263,7 @@ def _html_to_text(html_str):
             result.append(line)
             prev_blank = False
     return "\n".join(result).strip()
+
 
 def genius_lyrics(url):
     """
@@ -271,6 +281,7 @@ def genius_lyrics(url):
         if text:
             parts.append(text)
     return "\n\n".join(parts)
+
 
 lyrics = genius_lyrics("https://genius.com/Queen-bohemian-rhapsody-lyrics")
 # Returns 2076 chars, 62 lines, structured as:
@@ -300,13 +311,10 @@ one HTML call for lyrics. Song ID can be derived several ways.
 import json, re, urllib.parse
 from helpers import http_get
 
+
 def genius_get(url, extra_headers=None):
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
         "Accept-Encoding": "gzip",
@@ -314,6 +322,7 @@ def genius_get(url, extra_headers=None):
     if extra_headers:
         headers.update(extra_headers)
     return http_get(url, headers=headers)
+
 
 def genius_song_id_from_url(lyrics_url):
     """
@@ -326,14 +335,13 @@ def genius_song_id_from_url(lyrics_url):
     m = re.search(r'content="genius://songs/(\d+)"', html)
     return int(m.group(1)) if m else None
 
+
 def genius_full(query):
     """
     Search for a song, return metadata + lyrics in two HTTP calls.
     """
     # Call 1: search for song
-    sections = json.loads(
-        genius_get(f"https://genius.com/api/search/multi?per_page=3&q={urllib.parse.quote(query)}")
-    )["response"]["sections"]
+    sections = json.loads(genius_get(f"https://genius.com/api/search/multi?per_page=3&q={urllib.parse.quote(query)}"))["response"]["sections"]
     song_result = None
     for s in sections:
         if s["type"] == "song" and s["hits"]:
@@ -349,25 +357,26 @@ def genius_full(query):
     meta = json.loads(genius_get(f"https://genius.com/api/songs/{song_id}"))["response"]["song"]
 
     # Call 3: lyrics from HTML
-    lyrics = genius_lyrics(lyrics_url)   # uses the function from Approach 2
+    lyrics = genius_lyrics(lyrics_url)  # uses the function from Approach 2
 
     return {
-        "id":           meta["id"],
-        "title":        meta["title"],
-        "artist":       meta["primary_artist"]["name"],
-        "artist_id":    meta["primary_artist"]["id"],
-        "album":        meta["albums"][0]["name"] if meta.get("albums") else None,
-        "release_date": meta["release_date"],           # "1975-10-31"
-        "pageviews":    meta["stats"]["pageviews"],      # 11067562
-        "contributors": meta["stats"]["contributors"],   # 516
-        "writers":      [a["name"] for a in meta["writer_artists"]],
-        "producers":    [a["name"] for a in meta["producer_artists"]],
+        "id": meta["id"],
+        "title": meta["title"],
+        "artist": meta["primary_artist"]["name"],
+        "artist_id": meta["primary_artist"]["id"],
+        "album": meta["albums"][0]["name"] if meta.get("albums") else None,
+        "release_date": meta["release_date"],  # "1975-10-31"
+        "pageviews": meta["stats"]["pageviews"],  # 11067562
+        "contributors": meta["stats"]["contributors"],  # 516
+        "writers": [a["name"] for a in meta["writer_artists"]],
+        "producers": [a["name"] for a in meta["producer_artists"]],
         "spotify_uuid": meta["spotify_uuid"],
-        "youtube_url":  meta["youtube_url"],
+        "youtube_url": meta["youtube_url"],
         "song_art_url": meta["song_art_image_url"],
-        "lyrics_url":   meta["url"],
-        "lyrics":       lyrics,
+        "lyrics_url": meta["url"],
+        "lyrics": lyrics,
     }
+
 
 result = genius_full("Queen Bohemian Rhapsody")
 # {
@@ -451,8 +460,10 @@ def genius_api(path, token):
     """Call the official public API. path example: '/songs/1063'"""
     import json
     from helpers import http_get
+
     url = f"https://api.genius.com{path}"
     return json.loads(http_get(url, headers={"Authorization": f"Bearer {token}"}))
+
 
 # Returns same structure as the internal /api/* endpoints.
 # Endpoints: /songs/{id}, /artists/{id}, /artists/{id}/songs, /search?q=...

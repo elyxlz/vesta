@@ -165,7 +165,7 @@ async def test_process_batch_renders_and_queues_sections_plain(config, state, tm
     batch = [_notif(tmp_path, "sys", source=CORE_SOURCE), _notif(tmp_path, "ext")]
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch(batch, queue=queue)
+        await process_batch(batch, queue=queue, disposition="interrupt")
 
     state.client.query.assert_not_called()
     first, second = queue.get_nowait(), queue.get_nowait()
@@ -308,7 +308,7 @@ async def test_burst_of_preempts_with_merged_results_never_wedges(tmp_path):
         await wait_for_condition(lambda: state.turn is not None, message="first turn never opened")
 
         for notif in notifs:
-            await process_batch([notif], queue=queue)
+            await process_batch([notif], queue=queue, disposition="interrupt")
         await wait_for_condition(
             lambda: all(not f.exists() for f in burst_files),
             message="delivered preempts must clear their files at delivery",

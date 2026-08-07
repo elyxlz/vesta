@@ -1,5 +1,4 @@
 import argparse
-import contextlib
 import json
 import logging
 import os
@@ -10,7 +9,22 @@ from pathlib import Path
 
 import httpx
 
-from . import auth_commands, backend, block, calendar, email, folders, monitor, notifications, notify, owa_rest, owa_rest_commands, teams
+from . import (
+    auth_commands,
+    backend,
+    block,
+    calendar,
+    daemon,
+    email,
+    folders,
+    monitor,
+    notifications,
+    notify,
+    owa_rest,
+    owa_rest_commands,
+    pending_send,
+    teams,
+)
 from . import format as fmt
 from .config import Config
 from .context import MicrosoftContext
@@ -19,7 +33,10 @@ from .payloads import EventFields, EventPatch, MailDraft
 # Commands whose effect is to actually transmit mail. In draft-only mode these are
 # refused before any Graph/OWA-REST call; drafting (`email draft`) stays allowed.
 _TRANSMIT_COMMANDS = {"send", "reply", "forward"}
+_PENDING_COMMANDS = {"send-delay", "pending", "undo"}
 _DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
+_PENDING_POLL_SECONDS = 1
+_PENDING_JOIN_TIMEOUT_SECONDS = 5
 
 
 def _draft_only_enabled() -> bool:
@@ -27,13 +44,52 @@ def _draft_only_enabled() -> bool:
     return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
 
 
-def _write_pid(config):
-    (config.data_dir / "serve.pid").write_text(str(os.getpid()))
+# Every (group, command) that writes: transmits a message, creates or edits anything in the
+# mailbox, or changes state the account's owner would see. Under MICROSOFT_READ_ONLY these are
+# refused at the single dispatch choke point in main(), before a backend is chosen, so a new
+# route cannot quietly bypass the check by being dispatched somewhere else.
+# Deliberately NOT here: `email send-delay` and `email pending` (client-side configuration and
+# inspection of the local outbox, invisible to the account's owner) and `email undo`, which
+# cancels a queued send and so only ever removes a write.
+_MUTATING_COMMANDS = frozenset(
+    {
+        ("email", c)
+        for c in (
+            "send",
+            "reply",
+            "forward",
+            "draft",
+            "reply-draft",
+            "move",
+            "archive",
+            "update",
+            "delete",
+            "block",
+            "unblock",
+        )
+    }
+    | {("calendar", c) for c in ("create", "update", "delete", "respond")}
+    | {("folder", c) for c in ("create", "rename", "delete")}
+    | {("teams", c) for c in ("send", "start", "post", "reply", "set-presence", "clear-presence")}
+    | {("notify", c) for c in ("add", "remove")}
+)
+_READ_ONLY_MESSAGE = (
+    "read-only mode (MICROSOFT_READ_ONLY): `{group} {command}` writes to the account and is refused."
+    " The account owner set this up; do not work around it. Tell the user what you wanted to do and let them decide."
+)
 
 
-def _remove_pid(config):
-    with contextlib.suppress(FileNotFoundError):
-        (config.data_dir / "serve.pid").unlink()
+def _read_only_enabled() -> bool:
+    """True when MICROSOFT_READ_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("MICROSOFT_READ_ONLY", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _guard_read_only(group: str, command: str) -> None:
+    if _read_only_enabled() and (group, command) in _MUTATING_COMMANDS:
+        raise RuntimeError(_READ_ONLY_MESSAGE.format(group=group, command=command))
+
+
+NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
 
 def _add_format_flags(parser: argparse.ArgumentParser) -> None:
@@ -43,16 +99,9 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
-def _require_daemon(config):
-    pid_file = config.data_dir / "serve.pid"
-    if not pid_file.exists():
-        print(json.dumps({"error": "daemon not running — start with: screen -dmS microsoft microsoft serve"}), file=sys.stderr)
-        sys.exit(1)
-    try:
-        os.kill(int(pid_file.read_text().strip()), 0)
-    except (ValueError, ProcessLookupError, OSError):
-        pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file) — start with: screen -dmS microsoft microsoft serve"}), file=sys.stderr)
+def _require_daemon():
+    if daemon.live_pid() is None:
+        print(json.dumps({"error": "daemon not running, start it with: microsoft daemon start"}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -61,7 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
     group = parser.add_subparsers(dest="group", required=True)
 
     p_serve = group.add_parser("serve")
-    p_serve.add_argument("--notifications-dir", required=True)
+    p_serve.add_argument("--notifications-dir", default=str(NOTIFICATIONS_DIR))
+
+    p_daemon = group.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
+    p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     _add_auth_parsers(group)
     email_sub = _add_email_parsers(group)
@@ -75,7 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
     # graph    - force the official Graph API.
     # owa-rest - force the OWA REST path (browser-captured token; requires: microsoft auth owa-login).
     for sub in (email_sub, cal_sub, folder_sub, teams_sub):
-        for sp in sub.choices.values():
+        for command, sp in sub.choices.items():
+            if sub is email_sub and command in _PENDING_COMMANDS:
+                continue
             sp.add_argument(
                 "--backend",
                 choices=[backend.AUTO, backend.GRAPH, backend.OWA_REST],
@@ -165,7 +219,7 @@ def _add_email_read_parsers(email_sub) -> None:
 
     p_get_email = email_sub.add_parser("get")
     p_get_email.add_argument("--account", required=True)
-    p_get_email.add_argument("--id", required=True, dest="email_id")
+    p_get_email.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_get_email.add_argument("--no-attachments", action="store_true")
     p_get_email.add_argument("--save-to", default=None)
 
@@ -187,7 +241,7 @@ def _add_email_read_parsers(email_sub) -> None:
 
     p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--account", required=True)
-    p_attachment.add_argument("--email-id", required=True)
+    p_attachment.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_attachment.add_argument("--attachment-id", default=None)
     p_attachment.add_argument("--save-path", default=None)
     p_attachment.add_argument("--list", action="store_true", dest="list_only", help="List attachment metadata only")
@@ -220,7 +274,7 @@ def _add_email_compose_parsers(email_sub) -> None:
 
     p_reply = email_sub.add_parser("reply")
     p_reply.add_argument("--account", required=True)
-    p_reply.add_argument("--id", required=True, dest="email_id")
+    p_reply.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_reply.add_argument("--body", required=True)
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
@@ -228,7 +282,7 @@ def _add_email_compose_parsers(email_sub) -> None:
 
     p_reply_draft = email_sub.add_parser("reply-draft")
     p_reply_draft.add_argument("--account", required=True)
-    p_reply_draft.add_argument("--id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
+    p_reply_draft.add_argument("--id", "--email-id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
     p_reply_draft.add_argument("--body", required=True, help="Reply text placed above the quoted history; '- ' lines become bullets")
     p_reply_draft.add_argument("--attachments", nargs="+", default=None)
     p_reply_draft.add_argument("--reply-all", action="store_true")
@@ -236,7 +290,7 @@ def _add_email_compose_parsers(email_sub) -> None:
 
     p_forward = email_sub.add_parser("forward")
     p_forward.add_argument("--account", required=True)
-    p_forward.add_argument("--id", required=True, dest="email_id")
+    p_forward.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_forward.add_argument("--to", nargs="+", required=True)
     p_forward.add_argument("--body", default="")
     p_forward.add_argument("--cc", nargs="+", default=None)
@@ -245,18 +299,27 @@ def _add_email_compose_parsers(email_sub) -> None:
 
 
 def _add_email_manage_parsers(email_sub) -> None:
+    p_send_delay = email_sub.add_parser("send-delay")
+    p_send_delay.add_argument("--seconds", type=int, default=None)
+
+    p_pending = email_sub.add_parser("pending")
+    p_pending.add_argument("--account", default=None)
+
+    p_undo = email_sub.add_parser("undo")
+    p_undo.add_argument("--id", required=True, dest="pending_id")
+
     p_move = email_sub.add_parser("move")
     p_move.add_argument("--account", required=True)
-    p_move.add_argument("--id", required=True, dest="email_id")
+    p_move.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_move.add_argument("--to-folder", required=True, dest="to_folder")
 
     p_archive = email_sub.add_parser("archive")
     p_archive.add_argument("--account", required=True)
-    p_archive.add_argument("--id", required=True, dest="email_id")
+    p_archive.add_argument("--id", "--email-id", required=True, dest="email_id")
 
     p_update = email_sub.add_parser("update")
     p_update.add_argument("--account", required=True)
-    p_update.add_argument("--id", required=True, dest="email_id")
+    p_update.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_update.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
     p_update.add_argument("--categories", nargs="+", default=None)
     p_update_flag = p_update.add_mutually_exclusive_group()
@@ -266,7 +329,7 @@ def _add_email_manage_parsers(email_sub) -> None:
     p_delete = email_sub.add_parser("delete")
     p_delete.add_argument("--account", required=True)
     p_delete_group = p_delete.add_mutually_exclusive_group(required=True)
-    p_delete_group.add_argument("--id", default=None, dest="email_id", help="ID of a single message to delete")
+    p_delete_group.add_argument("--id", "--email-id", default=None, dest="email_id", help="ID of a single message to delete")
     p_delete_group.add_argument("--sender", default=None, help="Delete all messages from this sender address")
     p_delete.add_argument("--permanent", action="store_true", help="Hard delete instead of moving to Deleted Items")
 
@@ -482,6 +545,10 @@ def _add_teams_channel_parsers(teams_sub) -> None:
 
 def main():
     parser = build_parser()
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
+
     args = parser.parse_args()
     config = Config()
 
@@ -489,17 +556,21 @@ def main():
     config.log_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        if args.group == "daemon":
+            sys.exit(daemon.daemon_cmd(args.action))
+
         if args.group == "serve":
             _run_serve(config, Path(args.notifications_dir))
             return
 
         if args.group != "auth":
-            _require_daemon(config)
+            _require_daemon()
 
         if args.group == "auth":
             result = _dispatch_auth(args, config)
             print(json.dumps(fmt.strip_odata(result), indent=2))
         elif args.group in ("email", "calendar", "folder", "notify", "teams"):
+            _guard_read_only(args.group, args.command)
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 dispatchers = {
                     "email": _dispatch_email,
@@ -674,12 +745,15 @@ def _email_routes():
 
 
 def _dispatch_email(args, config, client):
-    acct = args.account
-
     # Hard draft-only guard: refuse any transmitting command before it can reach
     # EITHER backend (Graph or OWA-REST). Drafting still flows through untouched.
     if args.command in _TRANSMIT_COMMANDS and _draft_only_enabled():
         raise RuntimeError(_DRAFT_ONLY_MESSAGE)
+
+    if args.command in _PENDING_COMMANDS:
+        return _dispatch_pending_email(args, config, client)
+
+    acct = args.account
 
     if args.command == "list" and args.search is not None:
         # `list --search/--query` is an alias for `email search`: run the identical search path,
@@ -695,13 +769,22 @@ def _dispatch_email(args, config, client):
             lambda: email.search_emails(config, client, **kw),
             lambda: owa_rest_commands.search_emails(config, client, **kw),
         )
+    if args.command in ("reply-draft", "attachment", "block", "unblock"):
+        return _dispatch_special_email(args, config, client)
+    routes = _email_routes()
+    if args.command in routes:
+        graph_impl, rest_impl, kw_of = routes[args.command]
+        kw = {"account_email": acct, **kw_of(args)}
+        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
+    return None
+
+
+def _dispatch_special_email(args, config, client):
     if args.command == "reply-draft":
-        # Graph-only: leaving a properly-threaded unsent draft over the preserved quote
-        # has no OWA REST counterpart, so this bypasses the backend router.
         return email.reply_draft(
             config,
             client,
-            account_email=acct,
+            account_email=args.account,
             email_id=args.email_id,
             body=args.body,
             attachments=args.attachments,
@@ -710,14 +793,20 @@ def _dispatch_email(args, config, client):
         )
     if args.command == "attachment":
         return _dispatch_attachment(args, config, client)
-    if args.command in ("block", "unblock"):
-        return _dispatch_block(args, config, client)
-    routes = _email_routes()
-    if args.command in routes:
-        graph_impl, rest_impl, kw_of = routes[args.command]
-        kw = {"account_email": acct, **kw_of(args)}
-        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
-    return None
+    return _dispatch_block(args, config, client)
+
+
+def _dispatch_pending_email(args, config, client):
+    if args.command == "send-delay":
+        seconds = (
+            pending_send.delay_seconds(config.data_dir)
+            if args.seconds is None
+            else pending_send.set_delay_seconds(config.data_dir, args.seconds)
+        )
+        return {"send_delay_seconds": seconds}
+    if args.command == "pending":
+        return [queued.public() for queued in pending_send.list_pending(config.data_dir, account=args.account)]
+    return pending_send.undo(config, client, args.pending_id)
 
 
 def _dispatch_block(args, config, client):
@@ -938,6 +1027,22 @@ def _dispatch_teams(args, config, client):
 
 def _run_serve(config: Config, notif_dir: Path):
     notif_dir.mkdir(parents=True, exist_ok=True)
+    monitor_stop_event = threading.Event()
+    shutdown_reason = "unknown"
+    asked_to_stop = False
+
+    def handle_signal(signum, _frame):
+        # SIGTERM is what `microsoft daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of the loop below is news the agent needs.
+        nonlocal shutdown_reason, asked_to_stop
+        shutdown_reason = signal.Signals(signum).name
+        asked_to_stop = signum == signal.SIGTERM
+        monitor_stop_event.set()
+
+    # Installed before anything is brought up, so a signal arriving during startup is answered.
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
     http_client = httpx.Client(timeout=30.0, follow_redirects=True)
 
     monitor_base_dir = config.data_dir / "monitor"
@@ -952,8 +1057,6 @@ def _run_serve(config: Config, notif_dir: Path):
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
         monitor_logger.addHandler(file_handler)
         monitor_logger.addHandler(logging.StreamHandler())
-
-    monitor_stop_event = threading.Event()
 
     ctx = MicrosoftContext(
         cache_file=config.cache_file,
@@ -973,24 +1076,33 @@ def _run_serve(config: Config, notif_dir: Path):
         calendar_notify_thresholds=config.calendar_notify_thresholds,
     )
 
-    shutdown_reason = "unknown"
-
-    def handle_signal(signum, _frame):
-        nonlocal shutdown_reason
-        shutdown_reason = signal.Signals(signum).name
-        monitor_stop_event.set()
-
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
-
     print(json.dumps({"status": "serving"}))
     sys.stdout.flush()
 
-    _write_pid(config)
+    pending_thread = threading.Thread(
+        target=_run_pending_dispatcher,
+        args=(config, monitor_stop_event, monitor_logger),
+        name="microsoft-pending-send",
+        daemon=True,
+    )
     try:
+        pending_thread.start()
         monitor.run(ctx)
     finally:
-        notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
-        _remove_pid(config)
+        monitor_stop_event.set()
+        pending_thread.join(timeout=_PENDING_JOIN_TIMEOUT_SECONDS)
+        if not asked_to_stop:
+            notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         http_client.close()
+
+
+def _run_pending_dispatcher(config: Config, stop_event: threading.Event, logger: logging.Logger) -> None:
+    pending_send.recover_dispatching(config.data_dir)
+    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+        while not stop_event.is_set():
+            try:
+                if pending_send.dispatch_due(config, client):
+                    continue
+            except Exception:
+                logger.exception("Error dispatching pending email")
+            stop_event.wait(_PENDING_POLL_SECONDS)

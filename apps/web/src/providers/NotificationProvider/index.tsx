@@ -7,8 +7,13 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { Controller, Delta, Tree } from "@vesta/core";
-import { useReplica } from "@vesta/core/react";
+import {
+  agentNeedsUser,
+  type Controller,
+  type Delta,
+  type Tree,
+} from "@vesta/core";
+import { useAnyFocused, useReplica } from "@vesta/core/react";
 import { useGateway } from "@/providers/GatewayProvider";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { native } from "@/lib/native";
@@ -56,16 +61,25 @@ async function focusAndOpen(
 function ReplicaNotifications({
   controller,
   chattingAgentRef,
+  anyFocusedRef,
   notifyAssistant,
   notifyRateLimited,
   markUnseen,
 }: {
   controller: Controller;
   chattingAgentRef: RefObject<string | null>;
+  anyFocusedRef: RefObject<boolean>;
   notifyAssistant: (agentName: string, text: string) => void;
   notifyRateLimited: (agentName: string, text: string) => void;
   markUnseen: () => void;
 }) {
+  // Mirror the global "any client focused" flag into the parent's ref so notifyAssistant can gate on
+  // it. The hook lives here because it needs a non-null controller, which this component guarantees.
+  const anyFocused = useAnyFocused(controller);
+  useEffect(() => {
+    anyFocusedRef.current = anyFocused;
+  }, [anyFocused, anyFocusedRef]);
+
   // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display triple:
   // kind/title/body), independent of any subscription. A rate limit toasts even while focused; a
   // chat lights the unseen badge and toasts, deferring the actively-chatted agent to
@@ -121,6 +135,7 @@ export function NotificationProvider({
   const controller = useContext(ControllerContext);
   const focused = useWindowFocus();
   const focusedRef = useRef(focused);
+  const anyFocusedRef = useRef(false);
   useEffect(() => {
     focusedRef.current = focused;
   }, [focused]);
@@ -153,7 +168,7 @@ export function NotificationProvider({
 
   const notifyAssistant = useCallback(
     (agentName: string, text: string) => {
-      if (focusedRef.current) return;
+      if (focusedRef.current || anyFocusedRef.current) return;
       if (!permissionRef.current) return;
       const body = text.trim();
       if (!body) return;
@@ -219,11 +234,7 @@ export function NotificationProvider({
       const previous = prevStatusRef.current.get(agent.name);
       prevStatusRef.current.set(agent.name, agent.status);
       if (!previous || previous === agent.status) continue;
-      if (
-        agent.status !== "not_authenticated" &&
-        agent.status !== "unprovisioned"
-      )
-        continue;
+      if (!agentNeedsUser(agent.status)) continue;
       if (!permissionRef.current) continue;
       const unprovisioned = agent.status === "unprovisioned";
       const title = unprovisioned
@@ -258,6 +269,7 @@ export function NotificationProvider({
         <ReplicaNotifications
           controller={controller}
           chattingAgentRef={chattingAgentRef}
+          anyFocusedRef={anyFocusedRef}
           notifyAssistant={notifyAssistant}
           notifyRateLimited={notifyRateLimited}
           markUnseen={markUnseen}

@@ -3,7 +3,6 @@ import { LogOut } from "lucide-react";
 import { Footer } from "@/components/Footer";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
-import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { triggerGatewayUpdate } from "@vesta/core";
@@ -40,7 +39,8 @@ export function GatewayBehindScreen() {
 
   return (
     <>
-      <Navbar center={<LogoText />} trailing={<StatusPill />} />
+      {/* no StatusPill: the socket is live here, so the pill would read "can't reach gateway" */}
+      <Navbar center={<LogoText />} />
       <Empty>
         <EmptyHeader className="max-w-lg">
           <EmptyTitle>gateway is behind</EmptyTitle>

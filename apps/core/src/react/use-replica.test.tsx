@@ -23,11 +23,18 @@ function baseGateway(): GatewayInfo {
 }
 
 function baseTree(): Tree {
-  return { gateway: baseGateway(), agents: {} }
+  return { gateway: baseGateway(), agents: {}, devices: [] }
 }
 
 function agentInfo(): AgentInfo {
-  return { status: "alive", activityState: "idle", buildPhase: null, startedAt: null, services: {} }
+  return {
+    status: "alive",
+    activityState: "idle",
+    buildPhase: null,
+    operation: null,
+    startedAt: null,
+    services: {},
+  }
 }
 
 function Version({ replica, onRender }: { replica: Replica; onRender: () => void }): ReactElement {

@@ -1,9 +1,9 @@
-"""Shared on-disk referral code — the bridge from the `vesta-cloud-account` skill.
+"""Shared on-disk referral code — the bridge from the `vesta-cloud` skill.
 
-The vesta-cloud-account skill and this one are separate Python packages (they can't import
-each other), so this file mirrors `vc_account_cli.referral_store` byte-for-byte on
-the path: the vesta-cloud-account skill is the only place the code is ever SET
-(`vesta-cloud-account set-referral`); this reader is the only thing this skill
+The vesta-cloud skill and this one are separate Python packages (they can't import
+each other), so this file mirrors `vesta_cloud_cli.referral_store` byte-for-byte on
+the path: the vesta-cloud skill is the only place the code is ever SET
+(`vesta-cloud set-referral`); this reader is the only thing this skill
 does with it. Plain UTF-8 text = the code, stripped. A missing or empty file
 means "no code configured".
 """

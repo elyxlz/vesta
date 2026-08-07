@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
 # Register a background service with vestad and print the assigned port.
-# Pass --public for services that need a public tunnel route (no token), omit
-# it for token-only services. Registration is idempotent: vestad returns the
-# same port for a given name on every call, and omitting --public keeps whatever
-# the service is already registered as rather than revoking a publish, so a
-# re-register that only wants the port is safe. To make a public service private,
-# unregister it and register it again.
+# Pass --public only for something that must load with no credential at all (a
+# whatsapp QR link, a shareable file link, an inbound webhook, a browser handover
+# page). Everything else
+# is private and is reached with the api key or a minted service key. The flag is
+# always sent explicitly, so a service that once registered public becomes
+# private again on its next registration.
+# Registration is idempotent: vestad returns the same port for a given name on
+# every call.
 #
 # vestad's HTTP API may not be up yet when the restart skill runs this (the
 # daemon block can fire before vestad's API is back). Rather than pipe a refused
@@ -17,18 +17,23 @@ set -euo pipefail
 # stdout, so `PORT=$(register-service ...) && start` short-circuits cleanly.
 #
 # Usage: register-service <name> [--public]
-#   PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-#   PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+#   PORT=$(register-service tasks)
+#   PORT=$(register-service file-host --public)
+
+set -euo pipefail
 
 NAME="${1:?Usage: register-service <name> [--public]}"
 if [ "${2:-}" = "--public" ]; then
     REQUEST="{\"name\":\"$NAME\",\"public\":true}"
 else
-    REQUEST="{\"name\":\"$NAME\"}"
+    REQUEST="{\"name\":\"$NAME\",\"public\":false}"
 fi
 
 WAIT_SECONDS="${REGISTER_SERVICE_WAIT:-30}"
-URL="https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services"
+# BOX_HOST comes from /run/vestad-env; vestad is the one owner of how to reach it
+# (it runs natively on the host, never in a container). set -u below fails loudly if
+# it's missing, same as an unset VESTAD_PORT/AGENT_NAME already would.
+URL="https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services"
 DEADLINE=$(( $(date +%s) + WAIT_SECONDS ))
 
 while :; do

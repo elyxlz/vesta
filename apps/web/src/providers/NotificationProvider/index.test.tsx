@@ -50,6 +50,7 @@ function agentInfo(name: string, status: AgentRow["status"]): AgentRow {
     status,
     activityState: "idle",
     buildPhase: null,
+    operation: null,
     startedAt: null,
     services: {},
   };
@@ -61,6 +62,7 @@ function node(status: AgentRow["status"]) {
       status,
       activityState: "idle" as const,
       buildPhase: null,
+      operation: null,
       startedAt: null,
       services: {},
     },
@@ -85,10 +87,14 @@ function tree(statuses: Record<string, AgentRow["status"]>): Tree {
       managed: false,
     },
     agents,
+    devices: [],
   };
 }
 
-function makeController(statuses: Record<string, AgentRow["status"]>) {
+function makeController(
+  statuses: Record<string, AgentRow["status"]>,
+  anyFocused = false,
+) {
   const replica = createReplica();
   replica.applySnapshot(tree(statuses));
   const listeners = new Set<(delta: Delta) => void>();
@@ -102,6 +108,9 @@ function makeController(statuses: Record<string, AgentRow["status"]>) {
     },
     getSyncState: () => "open",
     subscribeSyncState: () => () => undefined,
+    reportPresence: () => undefined,
+    getAnyFocused: () => anyFocused,
+    subscribeAnyFocused: () => () => undefined,
     close: () => undefined,
   };
   const emit = (delta: Delta): void => {
@@ -237,6 +246,25 @@ describe("NotificationProvider", () => {
     mount(controller, [agentInfo("ada", "alive")]);
     await flush();
     focus();
+
+    act(() => {
+      emit({
+        type: "user_notification",
+        agent: "ada",
+        kind: "message",
+        title: "ada",
+        body: "hi",
+      });
+    });
+
+    expect(built).toEqual([]);
+  });
+
+  it("does not toast a background chat alert while another client is focused", async () => {
+    const { controller, emit } = makeController({ ada: "alive" }, true);
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    blur();
 
     act(() => {
       emit({

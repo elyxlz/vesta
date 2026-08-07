@@ -5,17 +5,19 @@
 //! subscription policy, persistence, payload rendering, queueing, and Expo delivery.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{extract::State, http::StatusCode, Json};
 use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, Mutex, Semaphore};
+use tokio::sync::{mpsc, Semaphore};
 
+use crate::device_registry::{DeviceRegistry, PushSubscription};
 use crate::docker::{AgentStatus, ListEntry};
 use crate::state::{err_response, ok_json, SharedState};
+use crate::time_utils::now_epoch_secs;
+use crate::types::MobilePlatform;
 
 const EXPO_PUSH_URL: &str = "https://exp.host/--/api/v2/push/send";
 const MAX_INSTALLATION_ID_LENGTH: usize = 128;
@@ -26,25 +28,6 @@ const MOBILE_EVENT_QUEUE_CAPACITY: usize = 256;
 const MAX_CONCURRENT_EVENT_DELIVERIES: usize = 6;
 const PUSHABLE_EVENT_TYPES: &[&str] = &["chat", "status"];
 const MAX_CONCURRENT_PUSH_REQUESTS: usize = 6;
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum MobilePlatform {
-    Ios,
-    Android,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-struct MobileDevice {
-    installation_id: String,
-    token: String,
-    platform: MobilePlatform,
-    #[serde(default)]
-    gateway: Option<String>,
-    event_types: Vec<String>,
-    previews: bool,
-    registered_at: u64,
-}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RegisterMobileDevice {
@@ -72,18 +55,15 @@ struct QueuedAgentEvent {
 
 #[derive(Clone, Debug)]
 struct DeliveryContext {
-    devices: Arc<Mutex<Vec<MobileDevice>>>,
-    update_lock: Arc<Mutex<()>>,
-    config_dir: PathBuf,
+    registry: Arc<DeviceRegistry>,
     http_client: reqwest::Client,
     push_slots: Arc<Semaphore>,
+    presence: Arc<crate::sync::Presence>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct MobileApp {
-    devices: Arc<Mutex<Vec<MobileDevice>>>,
-    update_lock: Arc<Mutex<()>>,
-    config_dir: PathBuf,
+    registry: Arc<DeviceRegistry>,
     event_tx: mpsc::Sender<QueuedAgentEvent>,
 }
 
@@ -119,60 +99,6 @@ struct ExpoPushTicket {
 #[derive(Debug, Deserialize)]
 struct ExpoPushErrorDetails {
     error: Option<String>,
-}
-
-fn store_path(config_dir: &Path) -> PathBuf {
-    config_dir.join("mobile-devices.json")
-}
-
-fn load_devices(config_dir: &Path) -> Vec<MobileDevice> {
-    let path = store_path(config_dir);
-    match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(devices) => devices,
-            Err(error) => {
-                tracing::error!(%error, path = %path.display(), "mobile device registry is corrupt");
-                Vec::new()
-            }
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => {
-            tracing::error!(%error, path = %path.display(), "could not read mobile device registry");
-            Vec::new()
-        }
-    }
-}
-
-async fn persist_devices(config_dir: &Path, devices: &[MobileDevice]) -> Result<(), String> {
-    let json = serde_json::to_vec(devices)
-        .map_err(|error| format!("could not serialize mobile device registry: {error}"))?;
-    let path = store_path(config_dir);
-    let temporary = path.with_extension("json.tmp");
-    tokio::fs::write(&temporary, json)
-        .await
-        .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
-    if let Err(error) = tokio::fs::rename(&temporary, &path).await {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        return Err(format!("could not replace {}: {error}", path.display()));
-    }
-    Ok(())
-}
-
-async fn update_devices(
-    devices: &Arc<Mutex<Vec<MobileDevice>>>,
-    update_lock: &Arc<Mutex<()>>,
-    config_dir: &Path,
-    update: impl FnOnce(&mut Vec<MobileDevice>),
-) -> Result<(), String> {
-    // Serialize mutations without holding the device read lock across filesystem
-    // IO. Readers continue using the last durable snapshot until the new one has
-    // been atomically persisted.
-    let _update_guard = update_lock.lock().await;
-    let mut next = devices.lock().await.clone();
-    update(&mut next);
-    persist_devices(config_dir, &next).await?;
-    *devices.lock().await = next;
-    Ok(())
 }
 
 fn valid_expo_token(token: &str) -> bool {
@@ -237,27 +163,20 @@ fn agent_status_changes(
 
 impl MobileApp {
     pub(crate) fn new(
-        config_dir: PathBuf,
+        registry: Arc<DeviceRegistry>,
         http_client: reqwest::Client,
+        presence: Arc<crate::sync::Presence>,
     ) -> (Self, MobileAppWorker) {
-        let devices = Arc::new(Mutex::new(load_devices(&config_dir)));
-        let update_lock = Arc::new(Mutex::new(()));
         let push_slots = Arc::new(Semaphore::new(MAX_CONCURRENT_PUSH_REQUESTS));
         let (event_tx, event_rx) = mpsc::channel(MOBILE_EVENT_QUEUE_CAPACITY);
         let delivery_context = DeliveryContext {
-            devices: devices.clone(),
-            update_lock: update_lock.clone(),
-            config_dir: config_dir.clone(),
+            registry: registry.clone(),
             http_client,
             push_slots,
+            presence,
         };
         (
-            Self {
-                devices,
-                update_lock,
-                config_dir,
-                event_tx,
-            },
+            Self { registry, event_tx },
             MobileAppWorker {
                 context: delivery_context,
                 event_rx,
@@ -343,49 +262,34 @@ impl MobileApp {
         let mut event_types = input.event_types;
         event_types.sort();
         event_types.dedup();
-        let device = MobileDevice {
-            installation_id: installation_id.clone(),
+        let push = PushSubscription {
             token: token.clone(),
             platform: input.platform,
             gateway,
             event_types,
             previews: input.previews,
-            registered_at: crate::time_utils::now_epoch_secs(),
+            registered_at: now_epoch_secs(),
         };
-        update_devices(
-            &self.devices,
-            &self.update_lock,
-            &self.config_dir,
-            move |devices| {
-                devices.retain(|existing| {
-                    existing.installation_id != installation_id && existing.token != token
-                });
-                devices.push(device);
-            },
-        )
-        .await
-        .map_err(|error| {
+        // Register in memory, then flush so the 200 means durable. On a flush failure roll the
+        // registration back out of memory, keeping the old "failure registers nothing" contract.
+        self.registry.upsert_push(&installation_id, push);
+        if let Err(error) = self.registry.flush_now().await {
+            self.registry.clear_push_by_token(&token);
             tracing::error!(%error, "could not persist mobile device registration");
-            err_response(
+            return Err(err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "could not persist mobile device registration",
-            )
-        })
+            ));
+        }
+        Ok(())
     }
 
     async fn delete_device(
         &self,
         token: &str,
     ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-        let token = token.to_string();
-        update_devices(
-            &self.devices,
-            &self.update_lock,
-            &self.config_dir,
-            move |devices| devices.retain(|device| device.token != token),
-        )
-        .await
-        .map_err(|error| {
+        self.registry.clear_push_by_token(token);
+        self.registry.flush_now().await.map_err(|error| {
             tracing::error!(%error, "could not persist mobile device removal");
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -441,7 +345,7 @@ fn text_field<'a>(event: &'a serde_json::Value, key: &str) -> Option<&'a str> {
 }
 
 fn message_for(
-    device: &MobileDevice,
+    device: &PushSubscription,
     agent: &str,
     event_type: &str,
     event: &serde_json::Value,
@@ -562,15 +466,14 @@ async fn send_push_chunk(
 }
 
 async fn deliver_agent_event(context: DeliveryContext, event: QueuedAgentEvent) {
-    let devices = context.devices.lock().await.clone();
-    let messages: Vec<ExpoPushMessage> = devices
+    if context.presence.any_focused() {
+        tracing::debug!(agent = %event.agent, "client focused; suppressing push");
+        return;
+    }
+    let messages: Vec<ExpoPushMessage> = context
+        .registry
+        .push_targets(&event.event_type)
         .iter()
-        .filter(|device| {
-            device
-                .event_types
-                .iter()
-                .any(|candidate| candidate == &event.event_type)
-        })
         .map(|device| message_for(device, &event.agent, &event.event_type, &event.event))
         .collect();
     // Own each batch before it enters the spawned delivery worker. Borrowing
@@ -592,16 +495,9 @@ async fn deliver_agent_event(context: DeliveryContext, event: QueuedAgentEvent) 
         .flatten()
         .collect();
     if !invalid_tokens.is_empty() {
-        if let Err(error) = update_devices(
-            &context.devices,
-            &context.update_lock,
-            &context.config_dir,
-            move |devices| {
-                devices.retain(|device| !invalid_tokens.contains(&device.token));
-            },
-        )
-        .await
-        {
+        let tokens: Vec<String> = invalid_tokens.into_iter().collect();
+        context.registry.prune_push_tokens(&tokens);
+        if let Err(error) = context.registry.flush_now().await {
             tracing::warn!(%error, "could not persist invalid mobile token removal");
         }
     }
@@ -622,9 +518,8 @@ mod tests {
         }
     }
 
-    fn device(previews: bool, event_types: &[&str]) -> MobileDevice {
-        MobileDevice {
-            installation_id: "12880dc7-27c8-4ca7-9742-760a98e602e8".to_string(),
+    fn device(previews: bool, event_types: &[&str]) -> PushSubscription {
+        PushSubscription {
             token: "ExponentPushToken[test]".to_string(),
             platform: MobilePlatform::Ios,
             gateway: Some("https://first.vesta.run".to_string()),
@@ -635,6 +530,10 @@ mod tests {
             previews,
             registered_at: 0,
         }
+    }
+
+    fn registry(dir: &std::path::Path) -> Arc<DeviceRegistry> {
+        Arc::new(DeviceRegistry::load(dir))
     }
 
     #[test]
@@ -727,34 +626,59 @@ mod tests {
     }
 
     #[test]
+    fn presence_gate_reports_focused_after_a_focused_client_record() {
+        let presence = Arc::new(crate::sync::Presence::new());
+        let conn = presence.connect();
+        presence.record(
+            conn,
+            crate::sync::protocol::ClientContext {
+                focused: true,
+                client: crate::types::ClientKind::Mobile,
+                resync: false,
+                ..Default::default()
+            },
+            tokio::time::Instant::now(),
+        );
+        assert!(presence.any_focused());
+    }
+
+    #[test]
     fn constructor_does_not_spawn_or_require_a_runtime() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let (_app, _worker) =
-            MobileApp::new(directory.path().to_path_buf(), reqwest::Client::new());
+        let (_app, _worker) = MobileApp::new(
+            registry(directory.path()),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
     }
 
     #[tokio::test]
     async fn registration_is_durable_before_it_becomes_visible() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let (app, _worker) = MobileApp::new(directory.path().to_path_buf(), reqwest::Client::new());
+        let (app, _worker) = MobileApp::new(
+            registry(directory.path()),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
         app.register_device(registration("ExponentPushToken[durable]"))
             .await
             .expect("registration");
 
-        let stored = load_devices(directory.path());
-        assert_eq!(stored.len(), 1);
-        assert_eq!(
-            stored[0].installation_id,
-            "12880dc7-27c8-4ca7-9742-760a98e602e8"
-        );
-        assert_eq!(stored[0].token, "ExponentPushToken[durable]");
-        assert_eq!(app.devices.lock().await.as_slice(), stored.as_slice());
+        // Durable: a registry rebuilt from disk still has the push subscription.
+        let reloaded = DeviceRegistry::load(directory.path());
+        let targets = reloaded.push_targets("chat");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].token, "ExponentPushToken[durable]");
     }
 
     #[tokio::test]
     async fn registration_replaces_the_token_for_an_installation() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let (app, _worker) = MobileApp::new(directory.path().to_path_buf(), reqwest::Client::new());
+        let (app, _worker) = MobileApp::new(
+            registry(directory.path()),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
         app.register_device(registration("ExponentPushToken[first]"))
             .await
             .expect("first registration");
@@ -762,22 +686,28 @@ mod tests {
             .await
             .expect("rotated registration");
 
-        let stored = load_devices(directory.path());
-        assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0].token, "ExponentPushToken[rotated]");
+        let reloaded = DeviceRegistry::load(directory.path());
+        let targets = reloaded.push_targets("chat");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].token, "ExponentPushToken[rotated]");
     }
 
     #[tokio::test]
-    async fn registration_failure_does_not_mutate_memory() {
+    async fn registration_failure_rolls_back_out_of_memory() {
         let directory = tempfile::tempdir().expect("tempdir");
         let missing = directory.path().join("missing");
-        let (app, _worker) = MobileApp::new(missing, reqwest::Client::new());
+        let registry = registry(&missing);
+        let (app, _worker) = MobileApp::new(
+            registry.clone(),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
         let error = app
             .register_device(registration("ExponentPushToken[not-durable]"))
             .await
             .expect_err("missing directory must fail persistence");
         assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(app.devices.lock().await.is_empty());
+        assert!(registry.snapshot().is_empty());
     }
 
     #[test]

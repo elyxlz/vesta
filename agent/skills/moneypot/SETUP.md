@@ -1,42 +1,38 @@
 # Moneypot setup
 
-The **CLI needs no setup**: `python3 ~/agent/skills/moneypot/moneypot.py ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
+The **CLI needs no setup**: `moneypot ...` works immediately and creates `~/agent/data/moneypot.json` on first write. If the command is not on PATH yet, link it:
 
-The **HTTP API is optional**. To run it as a vestad-proxied service:
+```bash
+ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
+```
 
-1. Register a private port and start the server (uses the `vestad` skill):
+The **HTTP API is optional**. It is a stdlib JSON server over the same pot data, for another app that needs to read or write pots over HTTP, and its lifecycle is a daemon owned by the CLI:
 
-   ```bash
-   P=$(~/agent/skills/vestad/scripts/register-service moneypot) &&
-   screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"
-   ```
+```bash
+moneypot daemon start     # registers a private port with vestad, launches, returns once it answers
+moneypot daemon status    # {"running":true,"port":NNNNN}
+moneypot daemon stop
+moneypot daemon restart
+```
 
-   The server automatically accepts the vesta `AGENT_TOKEN`, and vestad also
-   requires that token before proxying a private service.
+`start` is idempotent, so re-running it never stacks a second copy, and it returns only once the API actually answers on its port.
 
-   **Public with a separate app key:** only use a public registration when an
-   external caller cannot send the vesta agent token. Generate and store a key:
+The port is registered **private**, so vestad is the gate in front of it and the API itself checks no credential. Reach it at `$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/...` with the app api key, or mint a service key for a caller that holds no app credential:
 
-   ```bash
-   KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
-   install -m 600 /dev/null ~/agent/data/moneypot-api-key
-   printf '%s\n' "$KEY" > ~/agent/data/moneypot-api-key
-   P=$(~/agent/skills/vestad/scripts/register-service moneypot --public) &&
-   screen -dmS moneypot bash -c 'cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --api-key "$(cat ~/agent/data/moneypot-api-key)" --port '"$P"' > ~/agent/logs/moneypot.log 2>&1'
-   ```
+```bash
+service-key mint moneypot --label "what it is for"     # prints the secret once; share the keyed link
+```
 
-   Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`).
+Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so the API comes back after a restart. It is the bare command, nothing around it, because start is idempotent:
 
-2. Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so it comes back after a restart:
+```bash
+moneypot daemon start
+```
 
-   ```bash
-   running moneypot || { P=$(~/agent/skills/vestad/scripts/register-service moneypot) && screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"; sleep 1; }
-   ```
+Verify:
 
-3. Verify:
-
-   ```bash
-   curl -s "$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/health"
-   ```
+```bash
+curl -s "http://localhost:$(cat ~/agent/data/daemons/moneypot.port)/health"
+```
 
 Stdlib only, no dependencies to install.

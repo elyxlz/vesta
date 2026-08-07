@@ -13,8 +13,9 @@ step is a subcommand; the buyer's verified session persists between invocations
 - ``onboard claude-finish --email``  — the code they paste back -> agent alive.
 - ``onboard presets`` / ``onboard links`` — reference data.
 
-Output is always JSON on stdout. Exit codes: 0 success, 2 invalid input / surfaced
-{error}, 3 control-plane/vestad unreachable, 1 unexpected.
+Success output is JSON on stdout; a failure exits non-zero and prints its JSON on
+stderr, so it survives piping stdout through grep/head/jq. Exit codes: 0 success,
+2 invalid input / surfaced {error}, 3 control-plane/vestad unreachable, 1 unexpected.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,12 @@ from .config import LINKS, PLAN, Config
 
 def _print(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def _fail(payload: dict[str, Any], code: int) -> int:
+    """The one failure printer: the payload goes to stderr so stdout carries only success output."""
+    print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
+    return code
 
 
 def _email(args: argparse.Namespace) -> str:
@@ -97,14 +105,15 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, _cfg: Config) -> int
         price=args.price,
         discount_code=(args.code.strip() if args.code else None),
     )
-    if "url" in result:
-        # Stash the assigned subdomain + server id (both returned by checkout) so
-        # later steps don't re-derive them; server_id is internal, so pop it out of
-        # the agent-facing output.
-        subdomain = result["subdomain"] if "subdomain" in result else None
-        state.update(email, subdomain=subdomain, server_id=result.pop("server_id", None))
+    if "url" not in result:
+        return _fail(result, 2)
+    # Stash the assigned subdomain + server id (both returned by checkout) so
+    # later steps don't re-derive them; server_id is internal, so pop it out of
+    # the agent-facing output.
+    subdomain = result["subdomain"] if "subdomain" in result else None
+    state.update(email, subdomain=subdomain, server_id=result.pop("server_id", None))
     _print(result)
-    return 0 if "url" in result else 2
+    return 0
 
 
 def _cmd_status(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
@@ -283,7 +292,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_send = sub.add_parser("verify-send", help="Email the buyer a 6-digit sign-in code.")
     p_send.add_argument("--email", required=True, help="The buyer's email.")
-    p_send.add_argument("--referral", help="Override the referral code (defaults to the one set with `vesta-cloud-account set-referral`).")
+    p_send.add_argument("--referral", help="Override the referral code (defaults to the one set with `vesta-cloud set-referral`).")
 
     p_verify = sub.add_parser("verify", help="Verify the code the buyer reads back.")
     p_verify.add_argument("--email", required=True)
@@ -340,17 +349,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return handler(args, client, cfg)
     except _InvalidError as e:
-        _print(e.payload)
-        return 2
+        return _fail(e.payload, 2)
     except OnboardError as e:
-        _print({"error": str(e)})
-        return 3
+        return _fail({"error": str(e)}, 3)
     except KeyboardInterrupt:
-        _print({"error": "interrupted"})
-        return 130
+        return _fail({"error": "interrupted"}, 130)
     except Exception as e:  # last-resort net so the CLI never explodes raw
-        _print({"error": type(e).__name__, "message": str(e)})
-        return 1
+        return _fail({"error": type(e).__name__, "message": str(e)}, 1)
 
 
 if __name__ == "__main__":

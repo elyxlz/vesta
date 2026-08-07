@@ -1,6 +1,7 @@
 """The notification data model and the core-notification vocabulary."""
 
 import datetime as dt
+import typing as tp
 import xml.sax.saxutils as xml_utils
 
 import pydantic as pyd
@@ -18,6 +19,11 @@ TYPE_COMPACTION_FOLLOWUP = "compaction_followup"
 
 # Types listed here snooze (wait for idle); every other core type interrupts.
 CORE_SNOOZE_TYPES = frozenset({TYPE_PROACTIVE_CHECK, TYPE_COMPACTION_FOLLOWUP})
+
+# The disposition vocabulary: how the interrupt rules route a notification. `trash` never reaches
+# the agent, so a delivered notification carries only the narrower form.
+Disposition = tp.Literal["interrupt", "snooze", "trash"]
+DeliveredDisposition = tp.Literal["interrupt", "snooze"]
 
 
 # Fields promoted to the <channel> element's inner body (the message), in priority order.
@@ -39,10 +45,14 @@ class Notification(pyd.BaseModel):
     body: str | None = None
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
-    def format_for_display(self) -> str:
+    def format_for_display(self, *, disposition: DeliveredDisposition | None = None) -> str:
         """Render the notification as a <channel> element: routing metadata as attributes, the
         message as the inner body. This mirrors the shape Claude Code injects for native channel
         events, so the model reads Vesta notifications in a structure it already handles well.
+
+        `disposition` is delivery-time context, not producer data: the effective disposition the
+        interrupt rules decided (interrupt preempted the agent's work, snooze waited for idle),
+        rendered as a `disposition` attribute so the agent can tell how a delivery arrived.
 
         A multi-line `body` (core/system notifications) becomes the inner text directly. Otherwise
         the first present content field (message/text/content) becomes the body and every other
@@ -53,15 +63,17 @@ class Notification(pyd.BaseModel):
         (`contact_unknown`, `is_forwarded`, `missed`). Strips microsecond precision from any
         datetime field.
         """
+        attrs = [f'source="{self.source}"', f'type="{self.type}"']
+        if disposition is not None:
+            attrs.append(f'disposition="{disposition}"')
         if self.body is not None:
-            return f'<channel source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</channel>'
+            return f"<channel {' '.join(attrs)}>\n{self.body.strip()}\n</channel>"
         data = self.model_dump(exclude={"file_path", "type", "source", "body", "interrupt"})
         content = ""
         for field in _CONTENT_FIELDS:
             if field in data and isinstance(data[field], str) and data[field].strip():
                 content = xml_utils.escape(data.pop(field).strip())
                 break
-        attrs = [f'source="{self.source}"', f'type="{self.type}"']
         for key, value in data.items():
             if value is None or value == "" or value is False or value == []:
                 continue

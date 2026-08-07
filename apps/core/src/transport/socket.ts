@@ -1,7 +1,7 @@
-import { encodeFrame, reauthFrame } from "../protocol/frames"
+import { clientContextFrame, encodeFrame, reauthFrame } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
 import { clientAheadOfGateway, clientBelowMinimum } from "../protocol/release-version"
-import type { ClientFrame, HelloFrame } from "../protocol/frames"
+import type { ClientFrame, ClientKind, HelloFrame } from "../protocol/frames"
 import type { Delta } from "../protocol/deltas"
 import type { Tree } from "../protocol/tree"
 
@@ -22,13 +22,20 @@ export interface SocketLike {
 }
 
 export interface SyncSocketDeps {
-  buildUrl: () => string
+  // Async so the builder can refresh an expiring token before each attempt: the URL carries the
+  // access token, so a client waking from sleep would otherwise burn its whole backoff presenting
+  // one that expired while it was away. Throwing means "no connectable URL", which backs off.
+  buildUrl: () => Promise<string>
   createSocket: (url: string) => SocketLike
   setTimer: (fn: () => void, ms: number) => number
   clearTimer: (handle: number) => void
   // This client's own release version, used to block running ahead of the gateway. Omitted (or
   // unparseable) fails open, so a dev build with a non-semver version never blocks.
   clientVersion?: string
+  clientKind: ClientKind
+  // This device's stable installation id and self-composed label, reported so vestad tracks it in
+  // the device registry. Omitted by a build that has no identity to report; then it is untracked.
+  device?: { id: string; descriptor: string }
   baseDelayMs?: number
   maxDelayMs?: number
 }
@@ -41,6 +48,7 @@ export interface SyncSocketCallbacks {
 
 export interface SyncSocket {
   reauth: (token: string) => void
+  reportPresence: (focused: boolean) => void
   close: () => void
 }
 
@@ -52,6 +60,17 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   let delay = base
   let terminal = false
   let open = false
+  let lastFocused: boolean | null = null
+  // Whether the gateway already has `lastFocused`. False while a report is still undelivered, so
+  // its replay goes out as the fresh focus it is rather than as a resync.
+  let focusSynced = false
+  // A token whose reauth was issued before the socket opened, held for that open. The gateway arms
+  // the session deadline from the connect token and only a reauth extends it, so dropping the frame
+  // would strand a live socket on a token that is about to expire.
+  let pendingToken: string | null = null
+  // True once close() or the app_behind gate has retired this socket for good. Read through a
+  // call because a connect in flight has to re-ask after awaiting its URL.
+  const retired = (): boolean => terminal
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -59,16 +78,19 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     target.onclose = null
   }
 
-  // Only send on an open socket: a browser WebSocket throws before OPEN, so the connecting
-  // window sends nothing (a reauth issued then is simply dropped; the next rotation resends).
-  const emit = (frame: ClientFrame): void => {
-    if (open && socket) socket.send(encodeFrame(frame))
+  // A browser WebSocket throws before OPEN, so the connecting window never sends. Reports whether
+  // the frame reached the gateway; both client frames are last-write-wins, so an undelivered one is
+  // re-issued from its cached value on open.
+  const emit = (frame: ClientFrame): boolean => {
+    if (!open || !socket) return false
+    socket.send(encodeFrame(frame))
+    return true
   }
 
   const scheduleReconnect = (): void => {
     callbacks.onStateChange("reconnecting")
     timer = deps.setTimer(() => {
-      connect()
+      void connect()
     }, delay)
     delay = Math.min(delay * 2, max)
   }
@@ -114,23 +136,38 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     }
   }
 
-  function connect(): void {
-    if (terminal) return
+  async function connect(): Promise<void> {
+    if (retired()) return
     open = false
     callbacks.onStateChange("connecting")
     let url: string
     try {
-      url = deps.buildUrl()
+      url = await deps.buildUrl()
     } catch {
       scheduleReconnect()
       return
     }
+    // close() can land while the builder is refreshing a token.
+    if (retired()) return
     const current = deps.createSocket(url)
     socket = current
     current.onopen = () => {
       if (socket !== current) return
       open = true
       delay = base
+      if (pendingToken !== null) {
+        current.send(encodeFrame(reauthFrame(pendingToken)))
+        pendingToken = null
+      }
+      // Replay cached presence. Already delivered means this is a reconnect, so it goes out as a
+      // resync and vestad doesn't read it as the user returning; never delivered (the report was
+      // issued while the socket was still connecting) means this is that first genuine focus.
+      if (lastFocused !== null) {
+        current.send(
+          encodeFrame(clientContextFrame(lastFocused, deps.clientKind, focusSynced, deps.device)),
+        )
+        focusSynced = true
+      }
       callbacks.onStateChange("open")
     }
     current.onmessage = (data) => {
@@ -145,15 +182,23 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     }
   }
 
-  connect()
+  void connect()
 
   return {
     reauth: (token) => {
-      emit(reauthFrame(token))
+      if (!emit(reauthFrame(token))) pendingToken = token
+    },
+    reportPresence: (focused) => {
+      // Skip repeated AppState/window-focus reports; the cached value still drives reconnect replay.
+      if (lastFocused === focused) return
+      lastFocused = focused
+      // A genuine user-driven report (resync=false): vestad may fire the return-to-focus notification.
+      focusSynced = emit(clientContextFrame(focused, deps.clientKind, false, deps.device))
     },
     close: () => {
       terminal = true
       open = false
+      pendingToken = null
       if (timer !== null) {
         deps.clearTimer(timer)
         timer = null

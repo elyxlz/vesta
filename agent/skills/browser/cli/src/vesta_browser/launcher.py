@@ -39,6 +39,11 @@ CAMOUFOX_ASSETS = {
 RELEASE_DOWNLOAD_URL = "https://github.com/daijro/camoufox/releases/download"
 CACHE_ROOT = Path.home() / ".cache" / "camoufox"
 PROFILE_ROOT = Path.home() / ".browser" / "profile"
+# Throwaway per-session profiles live under their own root so cleanup has an unambiguous
+# target set. Nothing outside this directory is ever auto-deleted: a profile the agent
+# named itself with --user-data-dir is durable by intent, and an idle signed-in profile is
+# indistinguishable from an orphan by any liveness test.
+EPHEMERAL_ROOT = Path.home() / ".browser" / "ephemeral"
 
 DOWNLOAD_TIMEOUT_S = 600.0
 DOWNLOAD_CHUNK = 1 << 20
@@ -125,6 +130,74 @@ def _extract_preserving_mode(zip_path: Path, dest: Path) -> None:
                 (dest / info.filename).chmod(mode)
 
 
+_OMNI_SEARCH_SELECTOR = "moz-src/toolkit/components/search/SearchEngineSelector.sys.mjs"
+# Camoufox's no-search-engines patch, verbatim from its shipped omni.ja (v150 and v152).
+_BROKEN_SEARCH_STUB = """\
+      return [
+        {
+          "appliesTo": [{
+            "default": "yes",
+            "included": {
+              "everywhere": true
+            },
+            "webExtension": {
+              "id": "none@mozilla.org"
+            }
+          }],
+        },
+      ];"""
+_REPAIRED_SEARCH_STUB = """\
+      return [
+        {
+          "recordType": "engine",
+          "identifier": "ddg",
+          "base": {
+            "classification": "general",
+            "name": "DuckDuckGo",
+            "urls": {
+              "search": {
+                "base": "https://duckduckgo.com/",
+                "searchTermParamName": "q"
+              }
+            }
+          },
+          "variants": [{ "environment": { "allRegionsAndLocales": true } }]
+        },
+        {
+          "recordType": "defaultEngines",
+          "globalDefault": "ddg",
+          "specificDefaults": []
+        },
+      ];"""
+
+
+def repair_search_stub(home: Path) -> None:
+    """Fix Camoufox's search-config stub inside omni.ja so SearchService can start.
+
+    Camoufox hardcodes SearchEngineSelector's configuration to one stub record that
+    predates search-config-v2; FF150+ hands it to the Rust selector, which requires
+    `recordType` and fails search init permanently (fatal in headless boxes: every
+    open then hangs, issue #1445). Rewriting the stub to a minimal valid config
+    heals fresh extractions and already-installed builds alike; Firefox invalidates
+    the profile startupCache on its own when omni.ja changes."""
+    omni = home / "omni.ja"
+    if not omni.is_file():
+        return
+    with zipfile.ZipFile(omni) as z:
+        if _OMNI_SEARCH_SELECTOR not in z.namelist():
+            return
+        source = z.read(_OMNI_SEARCH_SELECTOR).decode()
+    if _BROKEN_SEARCH_STUB not in source:
+        return
+    repaired = source.replace(_BROKEN_SEARCH_STUB, _REPAIRED_SEARCH_STUB)
+    tmp = omni.with_name("omni.ja.tmp")
+    with zipfile.ZipFile(omni) as zin, zipfile.ZipFile(tmp, "w") as zout:
+        for info in zin.infolist():
+            data = repaired.encode() if info.filename == _OMNI_SEARCH_SELECTOR else zin.read(info)
+            zout.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED)
+    tmp.replace(omni)
+
+
 def ensure_camoufox(override: str | None = None) -> str:
     """Return a path to the Camoufox executable, fetching + extracting on first use."""
     if override:
@@ -135,6 +208,9 @@ def ensure_camoufox(override: str | None = None) -> str:
     home = camoufox_home()
     exe = home / "camoufox"
     if exe.is_file():
+        # LEGACY(remove-when: CAMOUFOX_RELEASE_TAG moves past v150.0.2-beta.25): heals installs
+        # extracted before the repair shipped; a new tag always extracts (and repairs) fresh.
+        repair_search_stub(home)
         return str(exe)
 
     asset_name, expected_sha = _asset_for_arch()
@@ -148,6 +224,7 @@ def ensure_camoufox(override: str | None = None) -> str:
         shutil.rmtree(staging)
     _extract_preserving_mode(tmp_zip, staging)
     tmp_zip.unlink(missing_ok=True)
+    repair_search_stub(staging)
 
     # Atomic publish: rename staging -> home. If a concurrent launch already
     # published it, keep theirs and drop ours.
@@ -315,6 +392,17 @@ def _ensure_headed_prefs(profile_dir: Path) -> None:
     (profile_dir / "user.js").write_text(_HEADED_PREFS)
 
 
+def _camoufox_argv(exe: str, profile_dir: Path) -> list[str]:
+    """Argv for a Camoufox launch.
+
+    `_profile_has_live_owner` recognises a running browser by scanning /proc for this
+    exact shape, so the two must not drift: the executable path has to carry "camoufox"
+    and the profile dir has to stay its own element, never folded into `-profile=<dir>`.
+    Drift is silent, and it makes every live session look orphaned to `prune`.
+    """
+    return [exe, "-no-remote", "-profile", str(profile_dir), "--remote-debugging-port", "0"]
+
+
 def _profile_has_live_owner(profile_dir: Path) -> bool:
     """True if a live process is running Camoufox against this exact profile dir."""
     target = str(profile_dir)
@@ -373,7 +461,7 @@ def launch(
     # wasn't asked for (containers have no DISPLAY, so they always go headless).
     use_headless = headless or not os.environ.get("DISPLAY")
 
-    args = [exe, "-no-remote", "-profile", str(profile_dir), "--remote-debugging-port", "0"]
+    args = _camoufox_argv(exe, profile_dir)
     if use_headless:
         args.insert(1, "-headless")
     else:

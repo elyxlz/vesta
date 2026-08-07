@@ -7,7 +7,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
 
+from .config import default_data_dir
+
 logger = logging.getLogger(__name__)
+
+# Head schema version. Bump this in the same commit as a new _migrate_vN_to_vN+1, and assert against
+# it in tests rather than hard-coding an integer, so adding a migration cannot break unrelated tests.
+SCHEMA_VERSION = 5
 
 
 class Task(TypedDict, total=False):
@@ -16,6 +22,7 @@ class Task(TypedDict, total=False):
     status: str
     priority: int
     due_date: str | None
+    backburner: int
     metadata_path: str | None
     metadata_content: str | None
     created_at: str
@@ -78,7 +85,7 @@ def _migrate_metadata_to_files(data_dir: Path, conn: sqlite3.Connection):
     conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
 
 
-def _migrate_v1_to_v2(conn: sqlite3.Connection):
+def _migrate_v1_to_v2(conn: sqlite3.Connection, data_dir: Path):
     """v1 -> v2: Create reminders table, drop notified_thresholds, import old reminders."""
 
     # Create reminders table
@@ -121,9 +128,12 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection):
         conn.execute("DROP TABLE tasks")
         conn.execute("ALTER TABLE tasks_v2 RENAME TO tasks")
 
-    # Import reminders from old reminder CLI db if it exists
+    # LEGACY(remove-when: no fleet agent's tasks.db remains below schema v2): one-time import from the
+    # old reminder CLI db, and ONLY into the real store. The legacy path is absolute and home-relative
+    # while the database being built is whatever the caller passed, so without this guard every new
+    # database (a temp-directory test db included) gets seeded from a store that isn't its own.
     old_reminder_db = Path.home() / ".reminder" / "reminders.db"
-    if old_reminder_db.exists():
+    if data_dir == default_data_dir() and old_reminder_db.exists():
         try:
             old_conn = sqlite3.connect(old_reminder_db)
             old_conn.row_factory = sqlite3.Row
@@ -201,6 +211,28 @@ DUE_NOW_MESSAGE = (
     "`tasks delete {task_id}`. Never leave a task sitting overdue."
 )
 
+LEAD_TIME_MESSAGE = "Task due in {label}: {title}"
+
+# `schedule_type` labels for the two auto-reminder shapes. A rung's lead time is recoverable from
+# its label, which is what lets a retitle regenerate the body without rebuilding the ladder.
+AT_DUE_SCHEDULE = "auto: at due"
+_LEAD_SCHEDULE_PREFIX = "auto: "
+_LEAD_SCHEDULE_SUFFIX = " before due"
+
+
+def lead_time_schedule(label: str) -> str:
+    return f"{_LEAD_SCHEDULE_PREFIX}{label}{_LEAD_SCHEDULE_SUFFIX}"
+
+
+def lead_time_label(schedule_type: str | None) -> str | None:
+    """The lead time a rung's label names, or None when the label names no rung.
+
+    A row the user snoozed carries a `once at ...` label instead, so its lead time is gone.
+    """
+    if schedule_type and schedule_type.startswith(_LEAD_SCHEDULE_PREFIX) and schedule_type.endswith(_LEAD_SCHEDULE_SUFFIX):
+        return schedule_type[len(_LEAD_SCHEDULE_PREFIX) : -len(_LEAD_SCHEDULE_SUFFIX)]
+    return None
+
 
 def parse_datetime(s: str) -> datetime:
     parsed = datetime.fromisoformat(s)
@@ -237,15 +269,22 @@ def _insert_auto_reminder(conn: sqlite3.Connection, task_id: str, message: str, 
 def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, due_date_str: str):
     now = datetime.now(UTC)
     due_dt = parse_datetime(due_date_str)
+    # A rung the user rewrote is owned (auto_generated = 0) and survives the delete before a rebuild,
+    # so skip any instant already occupied rather than firing a second reminder alongside it.
+    taken = {row["scheduled_time"] for row in conn.execute("SELECT scheduled_time FROM reminders WHERE task_id = ?", (task_id,))}
 
     for label, delta in auto_reminder_deltas(due_dt - now):
         fire_time = due_dt - delta
-        if fire_time <= now:
+        if fire_time <= now or fire_time.isoformat() in taken:
             continue
-        _insert_auto_reminder(conn, task_id, f"Task due in {label}: {title}", f"auto: {label} before due", fire_time)
+        _insert_auto_reminder(conn, task_id, LEAD_TIME_MESSAGE.format(label=label, title=title), lead_time_schedule(label), fire_time)
 
-    if due_dt > now:
-        _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), "auto: at due", due_dt)
+    if due_dt > now and due_dt.isoformat() not in taken:
+        _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), AT_DUE_SCHEDULE, due_dt)
+
+
+def delete_task_reminders(conn: sqlite3.Connection, task_id: str):
+    conn.execute("DELETE FROM reminders WHERE task_id = ?", (task_id,))
 
 
 def delete_auto_reminders(conn: sqlite3.Connection, task_id: str):
@@ -270,6 +309,19 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection):
     conn.execute("DELETE FROM reminders WHERE auto_generated = 1 AND completed = 0")
     _create_auto_reminders_for_existing(conn)
     logger.info("Migrated schema v3 -> v4")
+
+
+def _migrate_v4_to_v5(conn: sqlite3.Connection):
+    """v4 -> v5: add the `backburner` flag.
+
+    Set on a task that is deliberately undated, because someone else drives it or it is a genuine
+    someday-maybe. It defers the nag, never the task: a parked task stays pending, stays visible in
+    `tasks list` marked [parked], and only stops appearing in the stale-task digest.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+    if "backburner" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN backburner INTEGER NOT NULL DEFAULT 0")
+    logger.info("Migrated schema v4 -> v5")
 
 
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
@@ -307,7 +359,8 @@ def init_db(data_dir: Path):
                 due_date TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 completed_at TEXT,
-                notified_thresholds TEXT
+                notified_thresholds TEXT,
+                backburner INTEGER NOT NULL DEFAULT 0
             )
         """)
 
@@ -317,7 +370,7 @@ def init_db(data_dir: Path):
             version = 1
 
         if version < 2:
-            _migrate_v1_to_v2(conn)
+            _migrate_v1_to_v2(conn, data_dir)
             conn.execute("UPDATE schema_version SET version = 2")
             version = 2
 
@@ -329,6 +382,12 @@ def init_db(data_dir: Path):
         if version < 4:
             _migrate_v3_to_v4(conn)
             conn.execute("UPDATE schema_version SET version = 4")
+            version = 4
+
+        if version < 5:
+            _migrate_v4_to_v5(conn)
+            conn.execute("UPDATE schema_version SET version = 5")
+            version = 5
 
         conn.commit()
 

@@ -11,13 +11,10 @@ import json
 
 # Find snapshots of any URL — primary entry point for Wayback data
 r = http_get(
-    "https://web.archive.org/cdx/search/cdx"
-    "?url=iana.org&output=json&limit=5"
-    "&fl=timestamp,original,statuscode,mimetype,length",
-    timeout=40.0
+    "https://web.archive.org/cdx/search/cdx?url=iana.org&output=json&limit=5&fl=timestamp,original,statuscode,mimetype,length", timeout=40.0
 )
 rows = json.loads(r)
-headers = rows[0]   # ['timestamp', 'original', 'statuscode', 'mimetype', 'length']
+headers = rows[0]  # ['timestamp', 'original', 'statuscode', 'mimetype', 'length']
 for row in rows[1:]:
     ts, orig, status, mime, length = row
     snap_url = f"https://web.archive.org/web/{ts}/{orig}"
@@ -43,7 +40,7 @@ r = http_get(
     "?url=iana.org&output=json&limit=1"
     "&fl=timestamp,original,statuscode"
     "&closest=20230601120000&sort=closest",
-    timeout=60.0   # CDX can be slow — always use timeout >= 40s
+    timeout=60.0,  # CDX can be slow — always use timeout >= 40s
 )
 rows = json.loads(r)
 # rows[0] = header, rows[1] = closest snapshot
@@ -63,10 +60,10 @@ import json
 r = http_get(
     "https://web.archive.org/cdx/search/cdx"
     "?url=iana.org&output=json"
-    "&collapse=timestamp:6"   # :6 = dedupe by YYYYMM (one per month)
+    "&collapse=timestamp:6"  # :6 = dedupe by YYYYMM (one per month)
     "&from=20230101&to=20231231"
     "&fl=timestamp,original",
-    timeout=60.0
+    timeout=60.0,
 )
 rows = json.loads(r)
 # rows[0] = header ['timestamp', 'original']
@@ -93,7 +90,7 @@ r = http_get(
     "?url=iana.org&matchType=domain&output=json"
     "&limit=10&fl=timestamp,original,statuscode"
     "&collapse=timestamp:8",  # one capture per URL per day
-    timeout=60.0
+    timeout=60.0,
 )
 rows = json.loads(r)
 for row in rows[1:]:
@@ -112,10 +109,8 @@ import json
 
 # All archived pages under /domains/ path
 r = http_get(
-    "https://web.archive.org/cdx/search/cdx"
-    "?url=iana.org/domains/&matchType=prefix&output=json"
-    "&limit=5&fl=timestamp,original,statuscode",
-    timeout=40.0
+    "https://web.archive.org/cdx/search/cdx?url=iana.org/domains/&matchType=prefix&output=json&limit=5&fl=timestamp,original,statuscode",
+    timeout=40.0,
 )
 rows = json.loads(r)
 for row in rows[1:]:
@@ -130,13 +125,10 @@ for row in rows[1:]:
 import json
 from urllib.parse import quote
 
+
 def cdx_all_snapshots(url, fl="timestamp,original,statuscode", page_size=500):
     """Iterate all CDX records for a URL, yielding rows (excluding header)."""
-    base = (
-        f"https://web.archive.org/cdx/search/cdx"
-        f"?url={quote(url, safe='')}&output=json"
-        f"&fl={fl}&limit={page_size}&showResumeKey=true"
-    )
+    base = f"https://web.archive.org/cdx/search/cdx?url={quote(url, safe='')}&output=json&fl={fl}&limit={page_size}&showResumeKey=true"
     resume_key = None
     while True:
         endpoint = base if resume_key is None else f"{base}&resumeKey={quote(resume_key)}"
@@ -151,6 +143,7 @@ def cdx_all_snapshots(url, fl="timestamp,original,statuscode", page_size=500):
         if not has_resume:
             break
         resume_key = rows[-1][0]
+
 
 for row in cdx_all_snapshots("iana.org", fl="timestamp,original"):
     ts, orig = row
@@ -184,19 +177,19 @@ data = json.loads(http_get(f"https://archive.org/metadata/{identifier}", timeout
 # alternate_locations, created, d1, d2, dir, files, files_count,
 # is_collection, item_last_updated, item_size, metadata, server, uniq, workable_servers
 
-meta = data['metadata']
+meta = data["metadata"]
 # Common metadata fields (not all present on every item):
-print(meta.get('identifier'))   # 'HardWonWisdomTrailer'
-print(meta.get('title'))        # 'Hard Won Wisdom Trailer'
-print(meta.get('mediatype'))    # 'movies' | 'texts' | 'audio' | 'software' | 'collection'
-print(meta.get('creator'))      # 'jakemauz'
-print(meta.get('date'))         # '2017-02-18'
-print(meta.get('description'))  # HTML string — strip tags if needed
-print(meta.get('subject'))      # str OR list of str depending on item
-print(meta.get('publicdate'))   # '2017-02-18 11:51:16'
-print(meta.get('collection'))   # parent collection identifier
+print(meta.get("identifier"))  # 'HardWonWisdomTrailer'
+print(meta.get("title"))  # 'Hard Won Wisdom Trailer'
+print(meta.get("mediatype"))  # 'movies' | 'texts' | 'audio' | 'software' | 'collection'
+print(meta.get("creator"))  # 'jakemauz'
+print(meta.get("date"))  # '2017-02-18'
+print(meta.get("description"))  # HTML string — strip tags if needed
+print(meta.get("subject"))  # str OR list of str depending on item
+print(meta.get("publicdate"))  # '2017-02-18 11:51:16'
+print(meta.get("collection"))  # parent collection identifier
 
-files = data['files']
+files = data["files"]
 # Each file entry:
 # name, source ('original'|'derivative'|'metadata'), format, size (bytes as str),
 # md5, sha1, crc32, mtime
@@ -204,16 +197,17 @@ files = data['files']
 # For derivative: original (name of source file)
 
 # Find the primary original file
-orig_files = [f for f in files if f.get('source') == 'original']
+orig_files = [f for f in files if f.get("source") == "original"]
 # orig_files[0]: {'name': 'Hard-won wisdom trailer.mp4', 'source': 'original',
 #  'format': 'MPEG4', 'size': '7532153', 'length': '94.13',
 #  'height': '360', 'width': '640', 'md5': 'aaeebe0481...', ...}
 
 # Build download URL — two equivalent forms:
-server = data['server']      # 'ia601405.us.archive.org'
-dir_path = data['dir']       # '/2/items/HardWonWisdomTrailer'
-fname = orig_files[0]['name']
+server = data["server"]  # 'ia601405.us.archive.org'
+dir_path = data["dir"]  # '/2/items/HardWonWisdomTrailer'
+fname = orig_files[0]["name"]
 from urllib.parse import quote as urlquote
+
 # Form 1: direct storage server (fastest)
 url1 = f"https://{server}{dir_path}/{urlquote(fname)}"
 # Form 2: standard redirect URL (always works, resolved by CDN)
@@ -232,7 +226,7 @@ r = http_get(
     "?q=artificial+intelligence+AND+mediatype:texts"
     "&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=date&fl[]=downloads"
     "&rows=5&sort[]=downloads+desc&output=json",
-    timeout=30.0
+    timeout=30.0,
 )
 data = json.loads(r)
 # data['responseHeader']['status'] = 0 (success)
@@ -241,9 +235,9 @@ data = json.loads(r)
 # data['response']['start'] = 0 (offset)
 # data['response']['docs'] = list of item dicts
 
-resp = data['response']
+resp = data["response"]
 print(f"Total: {resp['numFound']}, showing: {len(resp['docs'])}")
-for doc in resp['docs']:
+for doc in resp["docs"]:
     print(f"  {doc['identifier']}  {doc.get('title', '')[:50]}")
     # doc fields are only present if they have values — always use .get()
 ```
@@ -261,10 +255,10 @@ r = http_get(
     "&fl[]=identifier&fl[]=title&fl[]=date&fl[]=year"
     "&fl[]=creator&fl[]=subject&fl[]=description&fl[]=downloads"
     "&rows=3"
-    "&start=0"               # pagination offset
-    "&sort[]=date+desc"      # sort field + direction
+    "&start=0"  # pagination offset
+    "&sort[]=date+desc"  # sort field + direction
     "&output=json",
-    timeout=30.0
+    timeout=30.0,
 )
 data = json.loads(r)
 # Confirmed fields in fl[]:

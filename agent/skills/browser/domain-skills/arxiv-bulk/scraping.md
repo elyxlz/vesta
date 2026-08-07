@@ -27,56 +27,53 @@ import xml.etree.ElementTree as ET
 from helpers import http_get
 
 OAI_NS = {
-    'oai': 'http://www.openarchives.org/OAI/2.0/',
-    'arXiv': 'http://arxiv.org/OAI/arXiv/',
+    "oai": "http://www.openarchives.org/OAI/2.0/",
+    "arXiv": "http://arxiv.org/OAI/arXiv/",
 }
+
 
 def fetch_oai_page(url):
     """Fetch one OAI-PMH page; return (records_xml_list, next_token_or_None)."""
     xml = http_get(url)
     root = ET.fromstring(xml)
-    records = root.findall('.//oai:record', OAI_NS)
-    token_el = root.find('.//oai:resumptionToken', OAI_NS)
+    records = root.findall(".//oai:record", OAI_NS)
+    token_el = root.find(".//oai:resumptionToken", OAI_NS)
     token = token_el.text if token_el is not None and token_el.text else None
     return records, token
 
+
 def parse_arxiv_record(rec):
     """Extract fields from one <record> element (metadataPrefix=arXiv)."""
-    header = rec.find('oai:header', OAI_NS)
-    meta   = rec.find('.//arXiv:arXiv', OAI_NS)
+    header = rec.find("oai:header", OAI_NS)
+    meta = rec.find(".//arXiv:arXiv", OAI_NS)
     if meta is None:
-        return None   # deleted record (header has status="deleted")
-    authors_el = meta.findall('arXiv:authors/arXiv:author', OAI_NS)
+        return None  # deleted record (header has status="deleted")
+    authors_el = meta.findall("arXiv:authors/arXiv:author", OAI_NS)
     authors = []
     for a in authors_el:
-        fn = (a.findtext('arXiv:forenames', namespaces=OAI_NS) or '').strip()
-        ln = (a.findtext('arXiv:keyname',   namespaces=OAI_NS) or '').strip()
+        fn = (a.findtext("arXiv:forenames", namespaces=OAI_NS) or "").strip()
+        ln = (a.findtext("arXiv:keyname", namespaces=OAI_NS) or "").strip()
         authors.append(f"{fn} {ln}".strip())
     return {
-        'id':           meta.findtext('arXiv:id', namespaces=OAI_NS),
-        'datestamp':    header.findtext('oai:datestamp', namespaces=OAI_NS),
-        'created':      meta.findtext('arXiv:created',  namespaces=OAI_NS),
-        'updated':      meta.findtext('arXiv:updated',  namespaces=OAI_NS),
-        'title':        (meta.findtext('arXiv:title',    namespaces=OAI_NS) or '').strip(),
-        'authors':      authors,
-        'categories':   (meta.findtext('arXiv:categories', namespaces=OAI_NS) or '').split(),
-        'abstract':     (meta.findtext('arXiv:abstract',   namespaces=OAI_NS) or '').strip(),
-        'doi':          meta.findtext('arXiv:doi',         namespaces=OAI_NS),
-        'journal_ref':  meta.findtext('arXiv:journal-ref', namespaces=OAI_NS),
-        'license':      meta.findtext('arXiv:license',     namespaces=OAI_NS),
+        "id": meta.findtext("arXiv:id", namespaces=OAI_NS),
+        "datestamp": header.findtext("oai:datestamp", namespaces=OAI_NS),
+        "created": meta.findtext("arXiv:created", namespaces=OAI_NS),
+        "updated": meta.findtext("arXiv:updated", namespaces=OAI_NS),
+        "title": (meta.findtext("arXiv:title", namespaces=OAI_NS) or "").strip(),
+        "authors": authors,
+        "categories": (meta.findtext("arXiv:categories", namespaces=OAI_NS) or "").split(),
+        "abstract": (meta.findtext("arXiv:abstract", namespaces=OAI_NS) or "").strip(),
+        "doi": meta.findtext("arXiv:doi", namespaces=OAI_NS),
+        "journal_ref": meta.findtext("arXiv:journal-ref", namespaces=OAI_NS),
+        "license": meta.findtext("arXiv:license", namespaces=OAI_NS),
     }
+
 
 # --- Main harvest loop ---
 import time
 
-BASE = 'https://oaipmh.arxiv.org/oai'
-first_url = (
-    f"{BASE}?verb=ListRecords"
-    f"&metadataPrefix=arXiv"
-    f"&set=cs"
-    f"&from=2024-01-01"
-    f"&until=2024-01-02"
-)
+BASE = "https://oaipmh.arxiv.org/oai"
+first_url = f"{BASE}?verb=ListRecords&metadataPrefix=arXiv&set=cs&from=2024-01-01&until=2024-01-02"
 
 papers = []
 url = first_url
@@ -89,7 +86,7 @@ while url:
     print(f"  fetched {len(records)} records, total so far: {len(papers)}")
     if token:
         url = f"{BASE}?verb=ListRecords&resumptionToken={token}"
-        time.sleep(5)   # OAI-PMH policy: >=5s between pages
+        time.sleep(5)  # OAI-PMH policy: >=5s between pages
     else:
         url = None
 
@@ -140,24 +137,19 @@ import xml.etree.ElementTree as ET
 from helpers import http_get
 
 RAW_NS = {
-    'oai': 'http://www.openarchives.org/OAI/2.0/',
-    'raw': 'http://arxiv.org/OAI/arXivRaw/',
+    "oai": "http://www.openarchives.org/OAI/2.0/",
+    "raw": "http://arxiv.org/OAI/arXivRaw/",
 }
 
-xml = http_get(
-    "https://oaipmh.arxiv.org/oai"
-    "?verb=GetRecord"
-    "&metadataPrefix=arXivRaw"
-    "&identifier=oai:arXiv.org:1706.03762"
-)
+xml = http_get("https://oaipmh.arxiv.org/oai?verb=GetRecord&metadataPrefix=arXivRaw&identifier=oai:arXiv.org:1706.03762")
 root = ET.fromstring(xml)
-meta = root.find('.//raw:arXivRaw', RAW_NS)
+meta = root.find(".//raw:arXivRaw", RAW_NS)
 
-title     = meta.findtext('raw:title',     namespaces=RAW_NS)
-submitter = meta.findtext('raw:submitter', namespaces=RAW_NS)
-versions  = meta.findall('raw:version',    RAW_NS)
+title = meta.findtext("raw:title", namespaces=RAW_NS)
+submitter = meta.findtext("raw:submitter", namespaces=RAW_NS)
+versions = meta.findall("raw:version", RAW_NS)
 for v in versions:
-    print(v.get('version'), v.findtext('raw:date', namespaces=RAW_NS))
+    print(v.get("version"), v.findtext("raw:date", namespaces=RAW_NS))
 # Confirmed output for 1706.03762 ("Attention Is All You Need"):
 # v1 Mon, 12 Jun 2017 17:57:34 GMT
 # v2 Mon, 19 Jun 2017 16:49:45 GMT
@@ -180,19 +172,21 @@ Base URL: `https://api.semanticscholar.org/graph/v1/`
 import json
 from helpers import http_get
 
-paper = json.loads(http_get(
-    "https://api.semanticscholar.org/graph/v1/paper/arXiv:1706.03762"
-    "?fields=title,year,venue,publicationDate,citationCount,"
-    "influentialCitationCount,authors,abstract,externalIds"
-))
-print(paper['title'])                    # "Attention is All you Need"
-print(paper['citationCount'])            # 173155  (confirmed 2026-04-19)
-print(paper['influentialCitationCount']) # 19629
-print(paper['venue'])                    # "Neural Information Processing Systems"
-print(paper['externalIds']['ArXiv'])     # "1706.03762"
-print(paper['externalIds']['DOI'])       # missing if no DOI
-for a in paper['authors']:
-    print(a['name'], a['authorId'])
+paper = json.loads(
+    http_get(
+        "https://api.semanticscholar.org/graph/v1/paper/arXiv:1706.03762"
+        "?fields=title,year,venue,publicationDate,citationCount,"
+        "influentialCitationCount,authors,abstract,externalIds"
+    )
+)
+print(paper["title"])  # "Attention is All you Need"
+print(paper["citationCount"])  # 173155  (confirmed 2026-04-19)
+print(paper["influentialCitationCount"])  # 19629
+print(paper["venue"])  # "Neural Information Processing Systems"
+print(paper["externalIds"]["ArXiv"])  # "1706.03762"
+print(paper["externalIds"]["DOI"])  # missing if no DOI
+for a in paper["authors"]:
+    print(a["name"], a["authorId"])
 ```
 
 The ID format `arXiv:NNNN.NNNNN` is accepted directly — no conversion needed.
@@ -218,7 +212,7 @@ with urllib.request.urlopen(req, timeout=20) as r:
     results = json.loads(r.read())
 
 for p in results:
-    print(p['externalIds'].get('ArXiv'), p['citationCount'], p['title'][:50])
+    print(p["externalIds"].get("ArXiv"), p["citationCount"], p["title"][:50])
 # Confirmed output (2026-04-19):
 # 1706.03762  173155  Attention is All you Need
 # 1810.04805  113138  BERT: Pre-training of Deep Bidirectional Tran...
@@ -233,16 +227,18 @@ Note: `helpers.http_get` only does GET. For POST use `urllib.request.Request` di
 import json
 from helpers import http_get
 
-results = json.loads(http_get(
-    "https://api.semanticscholar.org/graph/v1/paper/search"
-    "?query=large+language+model"
-    "&fields=paperId,externalIds,title,year,citationCount"
-    "&limit=5"
-))
-total = results['total']   # e.g. 3473582 for "large language model"
-for p in results['data']:
-    arxiv_id = p['externalIds'].get('ArXiv', 'no-arxiv')
-    print(arxiv_id, p['year'], p['citationCount'], p['title'][:50])
+results = json.loads(
+    http_get(
+        "https://api.semanticscholar.org/graph/v1/paper/search"
+        "?query=large+language+model"
+        "&fields=paperId,externalIds,title,year,citationCount"
+        "&limit=5"
+    )
+)
+total = results["total"]  # e.g. 3473582 for "large language model"
+for p in results["data"]:
+    arxiv_id = p["externalIds"].get("ArXiv", "no-arxiv")
+    print(arxiv_id, p["year"], p["citationCount"], p["title"][:50])
 # next page: use offset=5, offset=10, etc.
 ```
 
@@ -273,22 +269,24 @@ Direct PDF download — no auth, no redirect for versionless URLs (returns 200 +
 ```python
 import urllib.request
 
+
 def download_pdf(arxiv_id, dest_path, version=None):
     """
     arxiv_id: bare ID like '1706.03762' or versioned '1706.03762v7'
     version:  if given, appended as 'v{version}' — ignored if arxiv_id already has version
     dest_path: where to save, e.g. '/tmp/paper.pdf'
     """
-    if 'v' not in arxiv_id.split('.')[-1] and version:
+    if "v" not in arxiv_id.split(".")[-1] and version:
         arxiv_id = f"{arxiv_id}v{version}"
     url = f"https://arxiv.org/pdf/{arxiv_id}"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=60) as r:
-        with open(dest_path, 'wb') as f:
+        with open(dest_path, "wb") as f:
             f.write(r.read())
     print(f"Saved {r.headers.get('content-length', '?')} bytes to {dest_path}")
 
-download_pdf('1706.03762', '/tmp/attention.pdf')
+
+download_pdf("1706.03762", "/tmp/attention.pdf")
 # Confirmed: saves 2215244 bytes, filename hint in header: '1706.03762v7.pdf'
 # Versionless URL resolves to latest version server-side (no redirect, 200 direct)
 ```

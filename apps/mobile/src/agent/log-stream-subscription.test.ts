@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("log stream subscription", () => {
-  it("cancels the live stream before a retry opens the next one", () => {
+  it("cancels the live stream before a retry opens the next one", async () => {
     vi.useFakeTimers();
     const streams: FakeStream[] = [];
     const open = (
@@ -34,6 +34,7 @@ describe("log stream subscription", () => {
       retryDelayMs: 1_000,
     });
 
+    await vi.advanceTimersByTimeAsync(0);
     expect(streams).toHaveLength(1);
     const first = streams[0];
     if (!first) throw new Error("expected an initial stream");
@@ -49,7 +50,7 @@ describe("log stream subscription", () => {
     expect(first.cancel).toHaveBeenCalledTimes(1);
     expect(streams).toHaveLength(1);
 
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
 
     // Exactly one new stream opens, reconnecting from the tail (a line was already received).
     expect(streams).toHaveLength(2);
@@ -59,5 +60,19 @@ describe("log stream subscription", () => {
 
     stop();
     expect(second.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels the live stream on teardown", () => {
+    const cancel = vi.fn();
+    const stop = subscribeLogs({
+      open: () => ({ cancel }),
+      onLine: vi.fn(),
+      onError: vi.fn(),
+      retryDelayMs: 1_000,
+    });
+
+    stop();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });

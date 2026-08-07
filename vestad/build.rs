@@ -138,10 +138,15 @@ fn main() {
     if !npm_root.join("node_modules").exists() {
         run_npm(&npm_root, &["install"], &[]);
     }
+    let development_client = std::env::var("PROFILE").is_ok_and(|profile| profile == "debug");
+    let development_client_value = if development_client { "true" } else { "false" };
     run_npm(
         &npm_root,
         &["--workspace", "@vesta/web", "run", "build"],
-        &[("VITE_VESTAD_HOSTED", "true")],
+        &[
+            ("VITE_VESTAD_HOSTED", "true"),
+            ("VITE_VESTA_DEV_BUILD", development_client_value),
+        ],
     );
 
     let dist_index = web_dir.join("dist").join("index.html");

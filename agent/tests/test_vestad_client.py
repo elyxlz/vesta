@@ -20,7 +20,7 @@ def _closed_port() -> int:
 
 @pytest.mark.anyio
 async def test_send_user_notification_is_a_noop_without_agent_identity(monkeypatch):
-    for var in ("VESTAD_PORT", "AGENT_NAME", "AGENT_TOKEN"):
+    for var in ("BOX_HOST", "VESTAD_PORT", "AGENT_NAME", "AGENT_TOKEN"):
         monkeypatch.delenv(var, raising=False)
     # Returns without raising and without attempting any request.
     assert await vestad_client.send_user_notification("message", "scout", "hi") is None
@@ -28,6 +28,7 @@ async def test_send_user_notification_is_a_noop_without_agent_identity(monkeypat
 
 @pytest.mark.anyio
 async def test_send_user_notification_swallows_an_unreachable_vestad(monkeypatch):
+    monkeypatch.setenv("BOX_HOST", "127.0.0.1")
     monkeypatch.setenv("VESTAD_PORT", str(_closed_port()))
     monkeypatch.setenv("AGENT_NAME", "scout")
     monkeypatch.setenv("AGENT_TOKEN", "tok")

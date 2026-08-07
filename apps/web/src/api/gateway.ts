@@ -1,4 +1,3 @@
-import { getConnection } from "@/lib/connection";
 import type { ReleaseChannel, SseHandle } from "@vesta/core";
 import type { LogEvent } from "@/lib/types";
 import { apiJson } from "./client";
@@ -10,22 +9,19 @@ export function streamGatewayLogs(
   follow: boolean,
   onEvent: (event: LogEvent) => void,
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const conn = getConnection();
-    if (!conn) {
-      reject(new Error("not connected"));
-      return;
-    }
-
-    const params = new URLSearchParams({ token: conn.accessToken });
-    if (follow) params.set("follow", "true");
-    const url = `${conn.url}/gateway/logs?${params.toString()}`;
-
+  const params = new URLSearchParams();
+  if (follow) params.set("follow", "true");
+  return new Promise((resolve) => {
     gatewayLogSource?.cancel();
-    gatewayLogSource = openLogStream(url, "gateway_stopped", onEvent, () => {
-      gatewayLogSource = null;
-      resolve();
-    });
+    gatewayLogSource = openLogStream(
+      `/gateway/logs?${params.toString()}`,
+      "gateway_stopped",
+      onEvent,
+      () => {
+        gatewayLogSource = null;
+        resolve();
+      },
+    );
   });
 }
 
@@ -48,14 +44,13 @@ export interface GatewayInfo {
 }
 
 export interface GatewayRetention {
-  daily: number;
-  weekly: number;
-  monthly: number;
+  periodic: number;
+  pre_update_versions: number;
 }
 
 export interface GatewayAutoBackup {
   enabled: boolean;
-  hour: number;
+  every_n_days: number;
   retention: GatewayRetention;
 }
 

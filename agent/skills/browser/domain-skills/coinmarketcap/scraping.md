@@ -28,21 +28,20 @@ Returns CMC-ranked coins with full price data in one call. No auth needed.
 ```python
 import json
 
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listing"
-    "?start=1&limit=100&sortBy=market_cap&sortType=desc&convert=USD"
-))
+resp = json.loads(
+    http_get("https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listing?start=1&limit=100&sortBy=market_cap&sortType=desc&convert=USD")
+)
 
-coins = resp['data']['cryptoCurrencyList']    # list of coin objects
-total_available = resp['data']['totalCount']  # 8374 as of 2026-04-18
+coins = resp["data"]["cryptoCurrencyList"]  # list of coin objects
+total_available = resp["data"]["totalCount"]  # 8374 as of 2026-04-18
 
 for c in coins:
-    usd = next(q for q in c['quotes'] if q['name'] == 'USD')
+    usd = next(q for q in c["quotes"] if q["name"] == "USD")
     print(
         f"#{c['cmcRank']} {c['symbol']}: "
         f"${usd['price']:,.2f} | "
-        f"MCap ${usd['marketCap']/1e9:.1f}B | "
-        f"Vol24h ${usd['volume24h']/1e9:.1f}B | "
+        f"MCap ${usd['marketCap'] / 1e9:.1f}B | "
+        f"Vol24h ${usd['volume24h'] / 1e9:.1f}B | "
         f"24h {usd['percentChange24h']:+.2f}% | "
         f"CS {c['circulatingSupply']:,.0f}"
     )
@@ -72,28 +71,29 @@ dominance, turnover, lastUpdated
 
 ```python
 # Pagination
-"?start=1&limit=100"        # page 1 of 100
-"?start=101&limit=100"      # page 2
+"?start=1&limit=100"  # page 1 of 100
+
+"?start=101&limit=100"  # page 2
 
 # Sort
-"sortBy=market_cap"         # default
+"sortBy=market_cap"  # default
 "sortBy=volume_24h"
 "sortBy=percent_change_24h"
 "sortBy=price"
 "sortBy=circulating_supply"
-"sortType=desc"             # or asc
+"sortType=desc"  # or asc
 
 # Currency conversion (affects quote prices returned)
-"convert=USD"               # USD prices
-"convert=BTC"               # BTC-denominated
+"convert=USD"  # USD prices
+"convert=BTC"  # BTC-denominated
 
 # Filter by type
-"cryptoType=all"            # default — coins + tokens
-"cryptoType=coins"          # layer-1s only (633 results)
-"cryptoType=tokens"         # ERC-20 etc.
+"cryptoType=all"  # default — coins + tokens
+"cryptoType=coins"  # layer-1s only (633 results)
+"cryptoType=tokens"  # ERC-20 etc.
 
 # Filter by tag (DeFi, NFT, etc.)
-"tagSlugs=defi"             # 2698 results
+"tagSlugs=defi"  # 2698 results
 "tagSlugs=nft"
 ```
 
@@ -107,11 +107,9 @@ Best for fetching one coin's complete data including ATH, ATL, 52-week high/low,
 import json
 
 # Look up by CMC coin ID (BTC=1, ETH=1027, XRP=52, SOL=5426, BNB=1839)
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail?id=1"
-))
-data = resp['data']
-s = data['statistics']
+resp = json.loads(http_get("https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail?id=1"))
+data = resp["data"]
+s = data["statistics"]
 
 print(f"Price:             ${s['price']:,.2f}")
 print(f"Rank:              #{s['rank']}")
@@ -169,19 +167,17 @@ holders, watchCount, watchListRanking
 ```python
 import json
 
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/global-metrics/quotes/latest"
-))
-data = resp['data']
-q = data['quotes'][0]   # USD quote (cryptoId=2781)
+resp = json.loads(http_get("https://api.coinmarketcap.com/data-api/v3/global-metrics/quotes/latest"))
+data = resp["data"]
+q = data["quotes"][0]  # USD quote (cryptoId=2781)
 
-print(f"Total Market Cap:  ${q['totalMarketCap']/1e12:.2f}T")
-print(f"Total Volume 24h:  ${q['totalVolume24H']/1e9:.1f}B")
-print(f"Altcoin MCap:      ${q['altcoinMarketCap']/1e12:.2f}T")
-print(f"DeFi MCap:         ${q['defiMarketCap']/1e9:.1f}B")
-print(f"DeFi Vol 24h:      ${q['defiVolume24H']/1e9:.1f}B")
-print(f"Stablecoin MCap:   ${q['stablecoinMarketCap']/1e9:.1f}B")
-print(f"Derivatives Vol:   ${q['derivativesVolume24H']/1e9:.1f}B")
+print(f"Total Market Cap:  ${q['totalMarketCap'] / 1e12:.2f}T")
+print(f"Total Volume 24h:  ${q['totalVolume24H'] / 1e9:.1f}B")
+print(f"Altcoin MCap:      ${q['altcoinMarketCap'] / 1e12:.2f}T")
+print(f"DeFi MCap:         ${q['defiMarketCap'] / 1e9:.1f}B")
+print(f"DeFi Vol 24h:      ${q['defiVolume24H'] / 1e9:.1f}B")
+print(f"Stablecoin MCap:   ${q['stablecoinMarketCap'] / 1e9:.1f}B")
+print(f"Derivatives Vol:   ${q['derivativesVolume24H'] / 1e9:.1f}B")
 print(f"BTC Dominance:     {data['btcDominance']:.2f}%")
 print(f"ETH Dominance:     {data['ethDominance']:.2f}%")
 print(f"Active Cryptos:    {data['activeCryptoCurrencies']}")
@@ -190,7 +186,7 @@ print(f"Active Exchanges:  {data['activeExchanges']}")
 print(f"Active Pairs:      {data['activeMarketPairs']}")
 
 # Yesterday comparison
-print(f"\nMCap Yesterday:    ${q['totalMarketCapYesterday']/1e12:.2f}T")
+print(f"\nMCap Yesterday:    ${q['totalMarketCapYesterday'] / 1e12:.2f}T")
 print(f"MCap Change:       {q['totalMarketCapYesterdayPercentageChange']:+.2f}%")
 ```
 
@@ -204,19 +200,21 @@ import json, time
 now = int(time.time())
 
 # Daily candles for BTC over last 7 days
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/historical"
-    f"?id=1&convertId=2781&timeStart={now - 7*86400}&timeEnd={now}&interval=daily"
-))
-candles = resp['data']['quotes']   # list of OHLCV dicts
+resp = json.loads(
+    http_get(
+        "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/historical"
+        f"?id=1&convertId=2781&timeStart={now - 7 * 86400}&timeEnd={now}&interval=daily"
+    )
+)
+candles = resp["data"]["quotes"]  # list of OHLCV dicts
 
 for candle in candles:
-    q = candle['quote']
+    q = candle["quote"]
     print(
         f"{candle['timeOpen'][:10]} "
         f"O={q['open']:,.0f} H={q['high']:,.0f} "
         f"L={q['low']:,.0f} C={q['close']:,.0f} "
-        f"V=${q['volume']/1e9:.1f}B MCap=${q['marketCap']/1e12:.2f}T"
+        f"V=${q['volume'] / 1e9:.1f}B MCap=${q['marketCap'] / 1e12:.2f}T"
     )
 ```
 
@@ -233,18 +231,12 @@ Supported intervals: `daily`, `1h` (hourly). `5m` returns HTTP 500 — not suppo
 ```python
 import json
 
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/market-pairs/latest"
-    "?id=1&start=1&limit=10&sort=volume"
-))
-data = resp['data']
+resp = json.loads(http_get("https://api.coinmarketcap.com/data-api/v3/cryptocurrency/market-pairs/latest?id=1&start=1&limit=10&sort=volume"))
+data = resp["data"]
 print(f"Total pairs for {data['name']}: {data['numMarketPairs']}")
 
-for pair in data['marketPairs']:
-    print(
-        f"  {pair['exchangeName']:20} {pair['marketPair']:12} "
-        f"${pair['price']:,.2f} Vol=${pair['volumeUsd']/1e6:.1f}M"
-    )
+for pair in data["marketPairs"]:
+    print(f"  {pair['exchangeName']:20} {pair['marketPair']:12} ${pair['price']:,.2f} Vol=${pair['volumeUsd'] / 1e6:.1f}M")
 ```
 
 Pair fields: `rank, exchangeId, exchangeName, exchangeSlug, marketId, marketPair, category (spot/futures), baseSymbol, quoteSymbol, baseCurrencyId, quoteCurrencyId, price, volumeUsd, effectiveLiquidity, lastUpdated, volumeBase, volumeQuote, depthUsdNegativeTwo, depthUsdPositiveTwo, feeType, isVerified, type (cex/dex)`
@@ -256,11 +248,8 @@ Pair fields: `rank, exchangeId, exchangeName, exchangeSlug, marketId, marketPair
 ```python
 import json
 
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/exchange/listing"
-    "?start=1&limit=20&sortBy=score&sortType=desc"
-))
-exchanges = resp['data']['exchanges']
+resp = json.loads(http_get("https://api.coinmarketcap.com/data-api/v3/exchange/listing?start=1&limit=20&sortBy=score&sortType=desc"))
+exchanges = resp["data"]["exchanges"]
 for ex in exchanges:
     print(f"  {ex['name']:30} score={ex.get('score')} trafficScore={ex.get('trafficScore')}")
 ```
@@ -275,20 +264,14 @@ Exchange fields: `id, name, slug, dexStatus, platformId, status, score, trafficS
 import json
 
 # Convert 1 BTC → USD
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/tools/price-conversion"
-    "?amount=1&id=1&convert_id=2781"
-))
-result = resp['data']
-usd_price = result['quote'][0]['price']
+resp = json.loads(http_get("https://api.coinmarketcap.com/data-api/v3/tools/price-conversion?amount=1&id=1&convert_id=2781"))
+result = resp["data"]
+usd_price = result["quote"][0]["price"]
 print(f"1 {result['symbol']} = ${usd_price:,.2f} USD")
 
 # Convert ETH → BTC
-resp2 = json.loads(http_get(
-    "https://api.coinmarketcap.com/data-api/v3/tools/price-conversion"
-    "?amount=1&id=1027&convert_id=1"
-))
-btc_price = resp2['data']['quote'][0]['price']
+resp2 = json.loads(http_get("https://api.coinmarketcap.com/data-api/v3/tools/price-conversion?amount=1&id=1027&convert_id=1"))
+btc_price = resp2["data"]["quote"][0]["price"]
 print(f"1 ETH = {btc_price:.6f} BTC")
 ```
 
@@ -302,11 +285,9 @@ print(f"1 ETH = {btc_price:.6f} BTC")
 import json
 
 # News for a specific coin
-resp = json.loads(http_get(
-    "https://api.coinmarketcap.com/content/v3/news?coins=1&limit=10"
-))
-for article in resp['data']:
-    meta = article['meta']
+resp = json.loads(http_get("https://api.coinmarketcap.com/content/v3/news?coins=1&limit=10"))
+for article in resp["data"]:
+    meta = article["meta"]
     print(f"  [{meta['sourceName']}] {meta['title']}")
     print(f"    {article['createdAt'][:10]} — {meta['sourceUrl']}")
 ```
@@ -329,36 +310,36 @@ import json, re
 html = http_get("https://coinmarketcap.com/")
 m = re.search(r'<script id="__NEXT_DATA__"[^>]+>([\s\S]*?)</script>', html)
 nd = json.loads(m.group(1))
-props = nd['props']
+props = nd["props"]
 
 # Global market metrics (same data as global-metrics API, faster from HTML)
-gm = props['pageProps']['globalMetrics']
+gm = props["pageProps"]["globalMetrics"]
 print(f"Total cryptos: {gm['numCryptocurrencies']}")
 print(f"BTC dominance: {gm['btcDominance']:.2f}%")
-print(f"Total MCap:    ${gm['marketCap']/1e12:.2f}T")
-print(f"Total Vol 24h: ${gm['totalVol']/1e9:.1f}B")
+print(f"Total MCap:    ${gm['marketCap'] / 1e12:.2f}T")
+print(f"Total Vol 24h: ${gm['totalVol'] / 1e9:.1f}B")
 
 # Spot prices for BTC/ETH/USD/SATS/BITS (the "ticker bar" data)
 # props['quotesLatestData'] — 5 items with short field names
-for q in props['quotesLatestData']:
+for q in props["quotesLatestData"]:
     print(f"  {q['symbol']}: p={q['p']} p24h={q['p24h']:+.3f}%")
     # fields: id, symbol, p (price), p1h, p24h, p7d, p30d, p60d, p90d, pytd, t
 
 # Top 101 coins with full USD quotes — from dehydratedState
-queries = props['dehydratedState']['queries']
-homepage_q = next(q for q in queries if q['queryKey'] == ['homepage-data', 1, 100])
-listing = homepage_q['state']['data']['data']['listing']
-coins = listing['cryptoCurrencyList']   # 101 coins
-total = listing['totalCount']
+queries = props["dehydratedState"]["queries"]
+homepage_q = next(q for q in queries if q["queryKey"] == ["homepage-data", 1, 100])
+listing = homepage_q["state"]["data"]["data"]["listing"]
+coins = listing["cryptoCurrencyList"]  # 101 coins
+total = listing["totalCount"]
 
 for c in coins:
-    if c['symbol'] == 'BTC':
-        usd = next(q for q in c['quotes'] if q['name'] == 'USD')
+    if c["symbol"] == "BTC":
+        usd = next(q for q in c["quotes"] if q["name"] == "USD")
         print(f"BTC: #{c['cmcRank']} ${usd['price']:,.2f}")
         break
 
 # Page-level shared data (Fear & Greed index, CMC20, altcoin index)
-psd = props['pageProps']['pageSharedData']
+psd = props["pageProps"]["pageSharedData"]
 print("pageSharedData keys:", list(psd.keys()))
 # keys: topCategories, fearGreedIndexData, cmc100, cmc20, faqData, altcoinIndex, halvingInfo, deviceInfo
 ```
@@ -386,7 +367,7 @@ m = re.search(r'<script id="__NEXT_DATA__"[^>]+>([\s\S]*?)</script>', html)
 nd = json.loads(m.group(1))
 
 # All stats under props.pageProps.detailRes.detail.statistics
-stats = nd['props']['pageProps']['detailRes']['detail']['statistics']
+stats = nd["props"]["pageProps"]["detailRes"]["detail"]["statistics"]
 
 print(f"Price:     ${stats['price']:,.2f}")
 print(f"Rank:      #{stats['rank']}")

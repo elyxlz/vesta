@@ -24,10 +24,10 @@ In https://console.cloud.google.com/ with the user's Google account:
 ## 2. Install and start the daemon
 
 1. Install: `uv tool install --editable ~/agent/skills/google/cli`
-2. Start background daemon: `screen -dmS google google serve`
-3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
+2. Start background daemon: `google daemon start`
+3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup line:
    ```
-   screen -dmS google google serve --notifications-dir ~/agent/notifications
+   google daemon start
    ```
 
 ## 3. Authentication

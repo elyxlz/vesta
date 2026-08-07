@@ -102,6 +102,17 @@ func TestLifecycleCommandsAnswerHelpRatherThanRunning(t *testing.T) {
 	}
 }
 
+func TestSetupAliasesReportConnectFlagsWithoutPairing(t *testing.T) {
+	for _, name := range []string{"connect", "link", "provision"} {
+		usage := helpFor(t, name)
+		for _, flag := range []string{"-source", "-phone", "-opener"} {
+			if !strings.Contains(usage, flag) {
+				t.Errorf("%s --help does not mention %s:\n%s", name, flag, usage)
+			}
+		}
+	}
+}
+
 // An argument whose own text is `-h` is not a question. It must fail loudly: reporting usage and
 // succeeding would tell the agent a message was sent when nothing was.
 func TestAnArgumentThatLooksLikeHelpIsNotTreatedAsHelp(t *testing.T) {
@@ -160,6 +171,18 @@ func TestUsageDoesNotOfferWrapperDrivenCommands(t *testing.T) {
 				t.Errorf("`whatsapp --help` offers %q, which the wrappers own", name)
 			}
 		}
+	}
+}
+
+// add-contact takes a phone number or a chat id in the same slot, so the usage line has to show
+// both: a caller who reads `add-contact <name> <phone>` has no way to learn the chat-id form, the
+// only way to save a peer WhatsApp addresses by LID alone.
+func TestUsageShowsTheChatIdFormOfAddContact(t *testing.T) {
+	var usage bytes.Buffer
+	printUsage(&usage)
+	want := "add-contact <name> (<phone> | --chat <chat-id>)"
+	if !strings.Contains(usage.String(), want) {
+		t.Errorf("`whatsapp --help` is missing %q:\n%s", want, usage.String())
 	}
 }
 

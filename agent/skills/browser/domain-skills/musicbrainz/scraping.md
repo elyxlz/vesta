@@ -19,8 +19,8 @@ import json
 UA = {"User-Agent": "browser-harness/1.0 (your@email.com)"}
 
 data = json.loads(http_get("https://musicbrainz.org/ws/2/artist/?query=queen&fmt=json&limit=5", headers=UA))
-for a in data['artists']:
-    print(a['id'], a['name'], a.get('type'), a.get('country'), a['score'])
+for a in data["artists"]:
+    print(a["id"], a["name"], a.get("type"), a.get("country"), a["score"])
 # 0383dadf-2a4e-4d10-a46a-e9e041da8eb3  Queen  Group  GB  100
 # 79239441-bfd5-4981-a70c-55c3f15c1287  Madonna  Person  US  73
 ```
@@ -54,51 +54,48 @@ import json
 
 UA = {"User-Agent": "browser-harness/1.0 (your@email.com)"}
 
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/artist/?query=queen&fmt=json&limit=5",
-    headers=UA
-))
+resp = json.loads(http_get("https://musicbrainz.org/ws/2/artist/?query=queen&fmt=json&limit=5", headers=UA))
 # resp keys: count (total matches), offset, artists (list)
-for a in resp['artists']:
-    print(a['id'])           # MBID: 0383dadf-2a4e-4d10-a46a-e9e041da8eb3
-    print(a['name'])         # Queen
-    print(a['sort-name'])    # Queen  (differs for persons: "Bowie, David")
-    print(a.get('type'))     # Group / Person / Orchestra / Choir
-    print(a.get('country'))  # GB
-    print(a.get('life-span'))# {'begin': '1970-06-27', 'end': None, 'ended': True}
-    print(a.get('disambiguation', ''))  # e.g. "English singer-songwriter"
-    print(a['score'])        # relevance 0-100
+for a in resp["artists"]:
+    print(a["id"])  # MBID: 0383dadf-2a4e-4d10-a46a-e9e041da8eb3
+    print(a["name"])  # Queen
+    print(a["sort-name"])  # Queen  (differs for persons: "Bowie, David")
+    print(a.get("type"))  # Group / Person / Orchestra / Choir
+    print(a.get("country"))  # GB
+    print(a.get("life-span"))  # {'begin': '1970-06-27', 'end': None, 'ended': True}
+    print(a.get("disambiguation", ""))  # e.g. "English singer-songwriter"
+    print(a["score"])  # relevance 0-100
 ```
 
 ### Artist by MBID (with related data via `inc=`)
 
 ```python
 # inc= parameters stack with + between them
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/artist/0383dadf-2a4e-4d10-a46a-e9e041da8eb3"
-    "?inc=releases+tags+ratings+release-groups&fmt=json",
-    headers=UA
-))
-print(resp['name'])      # Queen
-print(resp['type'])      # Group
-print(resp['country'])   # GB
-print(resp['life-span']) # {'begin': '1970-06-27', 'end': None, 'ended': True}
+resp = json.loads(
+    http_get(
+        "https://musicbrainz.org/ws/2/artist/0383dadf-2a4e-4d10-a46a-e9e041da8eb3?inc=releases+tags+ratings+release-groups&fmt=json", headers=UA
+    )
+)
+print(resp["name"])  # Queen
+print(resp["type"])  # Group
+print(resp["country"])  # GB
+print(resp["life-span"])  # {'begin': '1970-06-27', 'end': None, 'ended': True}
 
 # Tags (community-voted genre labels, sorted by count)
-tags = sorted(resp.get('tags', []), key=lambda x: x['count'], reverse=True)
-print([t['name'] for t in tags[:5]])
+tags = sorted(resp.get("tags", []), key=lambda x: x["count"], reverse=True)
+print([t["name"] for t in tags[:5]])
 # ['rock', 'glam rock', 'hard rock', 'art rock', 'british']
 
 # Rating (community score, 0-5)
-print(resp.get('rating'))  # {'votes-count': 43, 'value': 4.7}
+print(resp.get("rating"))  # {'votes-count': 43, 'value': 4.7}
 
 # Direct releases (up to 25 per request — use browse for full list)
-for r in resp.get('releases', []):
-    print(r['id'], r['title'], r.get('date'))
+for r in resp.get("releases", []):
+    print(r["id"], r["title"], r.get("date"))
 
 # Release groups (albums, singles, EPs — deduplicated by edition)
-for rg in resp.get('release-groups', []):
-    print(rg['id'], rg['title'], rg.get('primary-type'), rg.get('first-release-date'))
+for rg in resp.get("release-groups", []):
+    print(rg["id"], rg["title"], rg.get("primary-type"), rg.get("first-release-date"))
 # 6b47c9a0  A Night at the Opera  Album  1975-11-21
 # 002ed683  Sheer Heart Attack    Album  1974-11-01
 ```
@@ -107,17 +104,15 @@ for rg in resp.get('release-groups', []):
 
 ```python
 # Browse API: uses 'artist' param (not 'query') — response key is 'release-count' not 'count'
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/release/"
-    "?artist=0383dadf-2a4e-4d10-a46a-e9e041da8eb3&fmt=json&limit=25&offset=0",
-    headers=UA
-))
-print(resp['release-count'])   # 1635 — total releases for this artist
-for r in resp['releases']:
-    print(r['id'], r['title'], r.get('date'), r.get('country'), r.get('status'))
+resp = json.loads(
+    http_get("https://musicbrainz.org/ws/2/release/?artist=0383dadf-2a4e-4d10-a46a-e9e041da8eb3&fmt=json&limit=25&offset=0", headers=UA)
+)
+print(resp["release-count"])  # 1635 — total releases for this artist
+for r in resp["releases"]:
+    print(r["id"], r["title"], r.get("date"), r.get("country"), r.get("status"))
     # Also has: cover-art-archive.artwork (bool), cover-art-archive.front (bool)
-    caa = r.get('cover-art-archive', {})
-    print(caa.get('artwork'), caa.get('front'), caa.get('count'))
+    caa = r.get("cover-art-archive", {})
+    print(caa.get("artwork"), caa.get("front"), caa.get("count"))
 
 # Paginate: increment offset by limit
 ```
@@ -126,46 +121,44 @@ for r in resp['releases']:
 
 ```python
 # Search by title
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/release/?query=dark+side+of+the+moon&fmt=json&limit=5",
-    headers=UA
-))
+resp = json.loads(http_get("https://musicbrainz.org/ws/2/release/?query=dark+side+of+the+moon&fmt=json&limit=5", headers=UA))
 # resp keys: count, offset, releases
 
 # Full release with track list, artists, and labels
-release = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/release/b84ee12a-09ef-421b-82de-0441a926375b"
-    "?inc=artists+recordings+labels+release-groups&fmt=json",
-    headers=UA
-))
-print(release['title'])   # The Dark Side of the Moon
-print(release['date'])    # 1973-03-24
-print(release['status'])  # Official
-print(release['country']) # GB
+release = json.loads(
+    http_get(
+        "https://musicbrainz.org/ws/2/release/b84ee12a-09ef-421b-82de-0441a926375b?inc=artists+recordings+labels+release-groups&fmt=json",
+        headers=UA,
+    )
+)
+print(release["title"])  # The Dark Side of the Moon
+print(release["date"])  # 1973-03-24
+print(release["status"])  # Official
+print(release["country"])  # GB
 
 # Release group (the "album concept", deduplicates editions)
-rg = release.get('release-group', {})
-print(rg['title'], rg.get('primary-type'), rg['id'])
+rg = release.get("release-group", {})
+print(rg["title"], rg.get("primary-type"), rg["id"])
 # The Dark Side of the Moon  Album  f5093c06-23e3-404f-aeaa-40f72885ee3a
 
 # Artist credit
-for ac in release.get('artist-credit', []):
-    if isinstance(ac, dict) and 'artist' in ac:
-        print(ac['artist']['name'], ac['artist']['id'])
+for ac in release.get("artist-credit", []):
+    if isinstance(ac, dict) and "artist" in ac:
+        print(ac["artist"]["name"], ac["artist"]["id"])
         # Pink Floyd  83d91898-7763-47d7-b03b-b92132375c47
 
 # Labels
-for li in release.get('label-info', []):
-    label = li.get('label', {})
-    print(label.get('name'), li.get('catalog-number'))
+for li in release.get("label-info", []):
+    label = li.get("label", {})
+    print(label.get("name"), li.get("catalog-number"))
     # Harvest  SHVL 804
 
 # Track list (from media[].tracks[])
-for disc in release.get('media', []):
-    for track in disc.get('tracks', []):
-        dur_s = track['length'] // 1000 if track.get('length') else None
-        rec = track.get('recording', {})
-        print(track['number'], track['title'], dur_s, rec.get('id'))
+for disc in release.get("media", []):
+    for track in disc.get("tracks", []):
+        dur_s = track["length"] // 1000 if track.get("length") else None
+        rec = track.get("recording", {})
+        print(track["number"], track["title"], dur_s, rec.get("id"))
         # A1  Speak to Me  68s  bef3fddb-5aca-49f5-b2fd-d56a23268d63
         # A2  Breathe      168s ecbc7c9b-e79d-4ec8-ac77-44e4a7f7f1b8
 ```
@@ -174,17 +167,13 @@ for disc in release.get('media', []):
 
 ```python
 # Use Lucene field syntax to filter by artist
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/recording/"
-    "?query=bohemian+rhapsody+AND+artist:queen&fmt=json&limit=5",
-    headers=UA
-))
-print(resp['count'])  # 419
-for r in resp['recordings']:
-    dur_s = r['length'] // 1000 if r.get('length') else None
-    artists = [ac['artist']['name'] for ac in r.get('artist-credit', []) if isinstance(ac, dict)]
-    releases = r.get('releases', [])
-    print(r['id'], r['title'], dur_s, artists, releases[0]['title'] if releases else None)
+resp = json.loads(http_get("https://musicbrainz.org/ws/2/recording/?query=bohemian+rhapsody+AND+artist:queen&fmt=json&limit=5", headers=UA))
+print(resp["count"])  # 419
+for r in resp["recordings"]:
+    dur_s = r["length"] // 1000 if r.get("length") else None
+    artists = [ac["artist"]["name"] for ac in r.get("artist-credit", []) if isinstance(ac, dict)]
+    releases = r.get("releases", [])
+    print(r["id"], r["title"], dur_s, artists, releases[0]["title"] if releases else None)
 # a4803b45  Bohemian Rhapsody  130s  ['Queen']  Rhapsody in Red
 # 40212eb6  Bohemian Rhapsody  338s  ['Queen']  1986-07: Wembley Stadium
 ```
@@ -193,46 +182,38 @@ for r in resp['recordings']:
 
 ```python
 # Use release-group endpoint to avoid getting every regional edition
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/release-group/"
-    "?query=release-group:\"A+Night+at+the+Opera\"+AND+artist:queen&fmt=json&limit=5",
-    headers=UA
-))
+resp = json.loads(
+    http_get(
+        'https://musicbrainz.org/ws/2/release-group/?query=release-group:"A+Night+at+the+Opera"+AND+artist:queen&fmt=json&limit=5', headers=UA
+    )
+)
 # resp keys: count, release-groups
-for rg in resp.get('release-groups', []):
-    print(rg['id'], rg['title'], rg.get('primary-type'), rg.get('first-release-date'), rg['score'])
+for rg in resp.get("release-groups", []):
+    print(rg["id"], rg["title"], rg.get("primary-type"), rg.get("first-release-date"), rg["score"])
 # 6b47c9a0  A Night at the Opera  Album  1975-11-21  100
 
 # Browse release-groups for an artist
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/release-group/"
-    "?artist=0383dadf-2a4e-4d10-a46a-e9e041da8eb3&fmt=json&limit=25",
-    headers=UA
-))
-print(resp['release-group-count'])  # 412
-for rg in resp.get('release-groups', []):
-    print(rg['title'], rg.get('primary-type'), rg.get('first-release-date'))
+resp = json.loads(
+    http_get("https://musicbrainz.org/ws/2/release-group/?artist=0383dadf-2a4e-4d10-a46a-e9e041da8eb3&fmt=json&limit=25", headers=UA)
+)
+print(resp["release-group-count"])  # 412
+for rg in resp.get("release-groups", []):
+    print(rg["title"], rg.get("primary-type"), rg.get("first-release-date"))
 ```
 
 ### Label and work lookups
 
 ```python
 # Label search
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/label/?query=EMI&fmt=json&limit=3",
-    headers=UA
-))
-for l in resp['labels']:
-    print(l['id'], l['name'], l.get('type'), l.get('country'), l['score'])
+resp = json.loads(http_get("https://musicbrainz.org/ws/2/label/?query=EMI&fmt=json&limit=3", headers=UA))
+for l in resp["labels"]:
+    print(l["id"], l["name"], l.get("type"), l.get("country"), l["score"])
 # c029628b  EMI  Original Production  GB  100
 
 # Work (song composition — author-level, not performance-level)
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/work/?query=bohemian+rhapsody&fmt=json&limit=3",
-    headers=UA
-))
-for w in resp['works']:
-    print(w['id'], w['title'], w.get('type'), w['score'])
+resp = json.loads(http_get("https://musicbrainz.org/ws/2/work/?query=bohemian+rhapsody&fmt=json&limit=3", headers=UA))
+for w in resp["works"]:
+    print(w["id"], w["title"], w.get("type"), w["score"])
 # 41c94a08  Bohemian Rhapsody  Song  100
 ```
 
@@ -247,23 +228,21 @@ def get_cover_art(release_mbid, size="500"):
     Returns the front cover URL, or None if no artwork exists.
     """
     try:
-        resp = json.loads(http_get(
-            f"https://coverartarchive.org/release/{release_mbid}",
-            headers=UA
-        ))
+        resp = json.loads(http_get(f"https://coverartarchive.org/release/{release_mbid}", headers=UA))
     except Exception:
-        return None   # 404 = no art uploaded
+        return None  # 404 = no art uploaded
 
-    images = resp.get('images', [])
+    images = resp.get("images", [])
     # Prefer an image flagged as front=True
-    front = next((img for img in images if img.get('front')), None)
+    front = next((img for img in images if img.get("front")), None)
     img = front or (images[0] if images else None)
     if not img:
         return None
 
-    if size == 'full':
-        return img['image']
-    return img['thumbnails'].get(size) or img['thumbnails'].get('large')
+    if size == "full":
+        return img["image"]
+    return img["thumbnails"].get(size) or img["thumbnails"].get("large")
+
 
 # Thumbnail sizes confirmed: '250', '500', '1200', 'small' (=250), 'large' (=500)
 
@@ -271,16 +250,13 @@ url = get_cover_art("b84ee12a-09ef-421b-82de-0441a926375b")
 # http://coverartarchive.org/release/b84ee12a.../1611507818-500.jpg
 
 # Full images response structure
-resp = json.loads(http_get(
-    "https://coverartarchive.org/release/b84ee12a-09ef-421b-82de-0441a926375b",
-    headers=UA
-))
-for img in resp['images']:
-    print(img.get('types'))   # ['Front'], ['Back'], ['Liner'], ['Poster'], ['Medium'], ['Sticker'], ['Other']
-    print(img.get('front'))   # True only for front=True flagged images (not all 'Front' types)
-    print(img.get('approved'))# True/False
-    print(img['image'])       # full resolution URL
-    print(img['thumbnails'])  # {'small': '...-250.jpg', 'large': '...-500.jpg', '250': ..., '500': ..., '1200': ...}
+resp = json.loads(http_get("https://coverartarchive.org/release/b84ee12a-09ef-421b-82de-0441a926375b", headers=UA))
+for img in resp["images"]:
+    print(img.get("types"))  # ['Front'], ['Back'], ['Liner'], ['Poster'], ['Medium'], ['Sticker'], ['Other']
+    print(img.get("front"))  # True only for front=True flagged images (not all 'Front' types)
+    print(img.get("approved"))  # True/False
+    print(img["image"])  # full resolution URL
+    print(img["thumbnails"])  # {'small': '...-250.jpg', 'large': '...-500.jpg', '250': ..., '500': ..., '1200': ...}
 ```
 
 ### Lucene query syntax for search
@@ -289,19 +265,15 @@ All search endpoints support Lucene field queries:
 
 ```python
 # Field search: artist:, type:, country:, tag:, release:, date:
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/artist/"
-    "?query=artist:queen+AND+type:group+AND+country:GB&fmt=json&limit=5",
-    headers=UA
-))
+resp = json.loads(
+    http_get("https://musicbrainz.org/ws/2/artist/?query=artist:queen+AND+type:group+AND+country:GB&fmt=json&limit=5", headers=UA)
+)
 # count: 23 (exact matches only)
 
 # Phrase search with quotes
-resp = json.loads(http_get(
-    "https://musicbrainz.org/ws/2/release/"
-    '?query=release:"A+Night+at+the+Opera"+AND+artist:queen&fmt=json&limit=5',
-    headers=UA
-))
+resp = json.loads(
+    http_get('https://musicbrainz.org/ws/2/release/?query=release:"A+Night+at+the+Opera"+AND+artist:queen&fmt=json&limit=5', headers=UA)
+)
 ```
 
 Common Lucene field names per entity:
@@ -317,13 +289,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 UA = {"User-Agent": "browser-harness/1.0 (your@email.com)"}
 
+
 def fetch_artist(mbid):
-    resp = json.loads(http_get(
-        f"https://musicbrainz.org/ws/2/artist/{mbid}?inc=tags&fmt=json",
-        headers=UA
-    ))
-    tags = [t['name'] for t in sorted(resp.get('tags', []), key=lambda x: x['count'], reverse=True)[:3]]
-    return {"name": resp['name'], "type": resp.get('type'), "tags": tags}
+    resp = json.loads(http_get(f"https://musicbrainz.org/ws/2/artist/{mbid}?inc=tags&fmt=json", headers=UA))
+    tags = [t["name"] for t in sorted(resp.get("tags", []), key=lambda x: x["count"], reverse=True)[:3]]
+    return {"name": resp["name"], "type": resp.get("type"), "tags": tags}
+
 
 mbids = [
     "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",  # Queen
@@ -345,24 +316,24 @@ import time
 
 UA = {"User-Agent": "browser-harness/1.0 (your@email.com)"}
 
+
 def browse_all_releases(artist_mbid, page_size=25):
     """Fetch all releases for an artist across multiple pages."""
     offset = 0
     total = None
     releases = []
     while total is None or offset < total:
-        resp = json.loads(http_get(
-            f"https://musicbrainz.org/ws/2/release/"
-            f"?artist={artist_mbid}&fmt=json&limit={page_size}&offset={offset}",
-            headers=UA
-        ))
-        total = resp['release-count']
-        batch = resp['releases']
+        resp = json.loads(
+            http_get(f"https://musicbrainz.org/ws/2/release/?artist={artist_mbid}&fmt=json&limit={page_size}&offset={offset}", headers=UA)
+        )
+        total = resp["release-count"]
+        batch = resp["releases"]
         releases.extend(batch)
         offset += len(batch)
         if offset < total:
             time.sleep(1)  # stay within 1 req/s for sequential pagination
     return releases
+
 
 # Queen has 1635 releases — use release-groups (412) to get deduplicated albums
 ```

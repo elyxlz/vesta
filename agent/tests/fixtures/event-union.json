@@ -38,6 +38,7 @@
   ],
   "snapshot": {
     "config": {
+      "presence_notifications_enabled": true,
       "timezone": "America/New_York"
     },
     "model_access": {

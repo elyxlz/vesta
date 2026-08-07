@@ -52,9 +52,8 @@ pub struct StartAllResult {
 #[serde(rename_all = "snake_case")]
 pub enum BackupType {
     Manual,
-    Daily,
-    Weekly,
-    Monthly,
+    Periodic,
+    PreUpdate,
     PreRestore,
 }
 
@@ -65,4 +64,6 @@ pub struct BackupInfo {
     pub backup_type: BackupType,
     pub created_at: String,
     pub size: u64,
+    #[serde(default)]
+    pub from_version: Option<String>,
 }

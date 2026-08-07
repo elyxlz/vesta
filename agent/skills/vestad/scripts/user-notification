@@ -15,6 +15,6 @@ REQUEST=$(python3 -c \
     'import json, sys; print(json.dumps({"kind": sys.argv[1], "title": sys.argv[2], "body": sys.argv[3]}))' \
     "$KIND" "$TITLE" "$BODY")
 
-curl -sk -X POST "https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/user-notification" \
+curl -sk -X POST "https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/user-notification" \
     -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
     -d "$REQUEST" >/dev/null || true

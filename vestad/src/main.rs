@@ -12,9 +12,12 @@ mod app_static;
 mod auth;
 mod backup;
 mod channel;
+mod device_registry;
 mod docker;
 mod jwt;
 mod lifecycle;
+mod maintenance;
+mod maintenance_window;
 mod manifest;
 mod mobile_app;
 mod mounts;
@@ -24,6 +27,7 @@ mod restic;
 mod self_log;
 mod self_update;
 mod serve;
+mod service_keys;
 mod settings;
 mod state;
 mod status;
@@ -33,9 +37,9 @@ mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
-mod update_window;
 mod upstream;
 mod vendored_bin;
+mod vesta_cloud;
 
 use status::{paint, AgentEntry, Status, TunnelStatus};
 
@@ -62,6 +66,11 @@ enum Command {
         /// Expose the HTTPS API to other devices on your LAN (default: loopback only)
         #[arg(long)]
         expose_lan: bool,
+        /// Restart every running agent as if new code shipped (upstream-sync + pending
+        /// migrations), even when the embedded agent code is unchanged. For same-version
+        /// dev iteration; only applies with --standalone.
+        #[arg(long)]
+        force_update: bool,
     },
     /// Show vestad service status
     Status,
@@ -85,6 +94,11 @@ enum Command {
     },
     /// Connect a Cloudflare domain so your agent gets a public URL
     Connect,
+    /// Link this box to a Vesta Cloud account (pair / unpair)
+    VestaCloud {
+        #[command(subcommand)]
+        action: VestaCloudAction,
+    },
     /// Manage the Cloudflare tunnel (advanced)
     Tunnel {
         #[command(subcommand)]
@@ -101,6 +115,14 @@ enum Command {
     Uninstall,
     /// Print version information
     Version,
+}
+
+#[derive(clap::Subcommand)]
+enum VestaCloudAction {
+    /// Pair this box to a Vesta Cloud account (shows a code the owner approves)
+    Login,
+    /// Unpair this box from its Vesta Cloud account
+    Logout,
 }
 
 #[derive(clap::Subcommand)]
@@ -393,7 +415,7 @@ async fn bind_http_atomically(
     unreachable!()
 }
 
-fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
+fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool, force_update: bool) {
     let config = config_dir();
 
     // The systemd unit launches `serve --standalone` with no flag, so the
@@ -566,6 +588,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 expose_lan,
                 lan_url,
                 on_agents_changed,
+                force_update,
             })
             .await;
 
@@ -575,9 +598,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
         });
 }
 
-fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
-    if port.is_some() || no_tunnel {
-        eprintln!("note: --port and --no-tunnel only apply with --standalone");
+fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, force_update: bool) {
+    if port.is_some() || no_tunnel || force_update {
+        eprintln!("note: --port, --no-tunnel, and --force-update only apply with --standalone");
     }
 
     let docker = docker::connect().unwrap_or_else(|e| die(&e));
@@ -687,17 +710,19 @@ fn main() {
         no_tunnel: false,
         standalone: false,
         expose_lan: false,
+        force_update: false,
     }) {
         Command::Serve {
             port,
             no_tunnel,
             standalone,
             expose_lan,
+            force_update,
         } => {
             if standalone {
-                run_server_foreground(port, no_tunnel, expose_lan);
+                run_server_foreground(port, no_tunnel, expose_lan, force_update);
             } else {
-                run_server_systemd(port, no_tunnel, expose_lan);
+                run_server_systemd(port, no_tunnel, expose_lan, force_update);
             }
         }
 
@@ -869,7 +894,7 @@ fn main() {
                         // startup does, or rootful Docker would create the missing host path as
                         // root and the next vestad startup could no longer write into it.
                         upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
-                        let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
+                        let port = docker::allocate_port().unwrap_or_else(|e| die(&e));
                         docker::create_container(
                             &docker,
                             &env_config,
@@ -915,6 +940,18 @@ fn main() {
                 paint("1", &format!("https://{}/app", tc.hostname)),
             );
             eprintln!();
+        }
+
+        Command::VestaCloud { action } => {
+            let config = config_dir();
+            match action {
+                VestaCloudAction::Login => {
+                    vesta_cloud::run_login(&config).unwrap_or_else(|e| die(e));
+                }
+                VestaCloudAction::Logout => {
+                    vesta_cloud::run_logout(&config).unwrap_or_else(|e| die(e));
+                }
+            }
         }
 
         Command::Tunnel { action } => {
@@ -1037,6 +1074,31 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serve_force_update_flag_parses() {
+        let cli = Cli::parse_from(["vestad", "serve", "--standalone", "--force-update"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Serve {
+                force_update: true,
+                standalone: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn serve_defaults_force_update_off() {
+        let cli = Cli::parse_from(["vestad", "serve"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Serve {
+                force_update: false,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn local_health_url_targets_http_port_plus_one() {

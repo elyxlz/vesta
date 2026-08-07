@@ -33,7 +33,7 @@ const config: ExpoConfig = {
   name: isDevelopment ? "Vesta Dev" : "Vesta",
   owner: "vesta-cloud",
   slug: "vesta",
-  version: "0.1.180",
+  version: "0.1.186",
   scheme: isDevelopment ? "vesta-dev" : "vesta",
   orientation: "portrait",
   icon: appIcon,
@@ -86,6 +86,12 @@ const config: ExpoConfig = {
     "expo-status-bar",
     "expo-web-browser",
     [
+      "expo-local-authentication",
+      {
+        faceIDPermission: "Use Face ID to unlock Vesta.",
+      },
+    ],
+    [
       "expo-camera",
       {
         cameraPermission: "Scan a Vesta connection QR code.",
@@ -100,13 +106,12 @@ const config: ExpoConfig = {
     ],
     ...notificationPlugins,
     [
-      "./plugins/with-blank-launch-screen",
-      { backgroundColor: nativeConfigTokens.splashBackground },
-    ],
-    [
       "expo-splash-screen",
       {
         backgroundColor: nativeConfigTokens.splashBackground,
+        dark: {
+          backgroundColor: nativeConfigTokens.splashBackgroundDark,
+        },
         android: {
           // Expo's Android theme always references a splash drawable. Keep the
           // native launch screen visually blank while still generating the

@@ -6,8 +6,14 @@ target-version = "py312"
 # E402/E702/E731/UP008/E712: house style. SIM401 suggests the banned dict.get() fallback.
 # PLR2004 flags every literal comparison. ISC001 conflicts with the formatter.
 # ASYNC109 flags timeout kwargs that are part of CLI/tool signatures.
-# DTZ (naive datetimes) is deferred: converting call sites changes runtime behavior.
-ignore = ["E402", "E702", "E731", "UP008", "E712", "SIM401", "PLR2004", "ISC001", "ASYNC109"]
+# The curated set is extend-select below; these families are outside it and only reach us via
+# ruff's default rules: DTZ (naive datetimes) is deferred (converting call sites changes runtime
+# behavior); BLE broad-except is intentional in supervised loops; S is scoped to S110/S112 only;
+# EXE, TRY, PYI, and FLY are not part of the house ruleset.
+ignore = [
+    "E402", "E702", "E731", "UP008", "E712", "SIM401", "PLR2004", "ISC001", "ASYNC109",
+    "DTZ", "BLE", "S102", "EXE", "TRY", "PYI", "FLY",
+]
 extend-select = [
     "E", "W", "I", "N", "UP", "B", "A", "C4", "ISC", "G", "PIE", "T10", "RET", "SIM",
     "ARG", "PTH", "PL", "C90", "PERF", "FURB", "RUF", "ASYNC", "S110", "S112", "TID",
@@ -26,6 +32,3 @@ max-complexity = 15
 "**/conftest.py" = ["ARG", "PLC0415"]
 # Skill CLIs lazy-import heavy deps so cold CLI startup stays fast.
 "**/skills/**" = ["PLC0415"]
-# qBittorrent nova plugin contract: the class must be named like the file (lowercase)
-# and prettyPrinter is the engine's hook name.
-"**/skills/torrents/plugins/**" = ["N801", "N802"]

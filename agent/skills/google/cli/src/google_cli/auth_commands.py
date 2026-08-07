@@ -16,21 +16,17 @@ def authenticate_account(config: Config) -> dict:
 
 
 def run_local_auth(config: Config) -> dict:
-    try:
-        creds = auth.run_local_server_flow(config.credentials_file, config.scopes, config.token_file)
-        email = auth.get_user_email(creds)
-        return {"status": "success", "email": email}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    # A failed flow raises: main prints the error on stderr and exits non-zero.
+    creds = auth.run_local_server_flow(config.credentials_file, config.scopes, config.token_file)
+    email = auth.get_user_email(creds)
+    return {"status": "success", "email": email}
 
 
 def complete_authentication(config: Config, *, code: str) -> dict:
-    try:
-        creds = auth.complete_auth_flow(config.credentials_file, config.scopes, code, config.token_file)
-        email = auth.get_user_email(creds)
-        return {"status": "success", "email": email}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    # A wrong or expired code raises: main prints the error on stderr and exits non-zero.
+    creds = auth.complete_auth_flow(config.credentials_file, config.scopes, code, config.token_file)
+    email = auth.get_user_email(creds)
+    return {"status": "success", "email": email}
 
 
 def list_accounts(config: Config) -> list[dict]:

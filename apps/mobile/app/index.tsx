@@ -30,7 +30,6 @@ import {
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
 import { Screen } from "@/components/layout/Screen";
-import { EmptyState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
@@ -151,16 +150,31 @@ export default function HomeScreen() {
       <HomeHeader showCreate />
 
       {agents.length === 0 ? (
-        <View style={styles.empty}>
-          <EmptyState
-            title="Create your first agent"
-            detail="Give Vesta a name, choose a model, and shape how your new agent approaches the world."
-            action={{
-              label: "Create agent",
-              onPress: () => router.push("/new-agent"),
-            }}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Create your agent"
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+              () => undefined,
+            );
+            router.push("/new-agent");
+          }}
+          style={styles.agentPage}
+        >
+          <AgentIdentityCard
+            name="Create your agent"
+            status="alive"
+            activityState="idle"
+            showStatus={false}
+            orb={
+              <AgentOrb
+                status="alive"
+                animated={false}
+                size={AGENT_IDENTITY_ORB_SIZE}
+              />
+            }
           />
-        </View>
+        </Pressable>
       ) : (
         <>
           <Animated.FlatList
@@ -309,6 +323,7 @@ function AgentCarouselItem({
         name={agent.name}
         status={agent.status}
         activityState={agent.activityState}
+        operation={agent.operation}
         orb={
           <Animated.View
             style={[styles.orbHandoff, { transform: [{ scale: orbScale }] }]}
@@ -325,6 +340,7 @@ function AgentCarouselItem({
                 <AgentOrb
                   status={agent.status}
                   activityState={agent.activityState}
+                  operation={agent.operation}
                   size={AGENT_IDENTITY_ORB_SIZE}
                 />
               </BootTransitionTarget>
@@ -503,7 +519,7 @@ function HomeWordmark() {
   const { colors } = usePreferences();
   return (
     <View style={styles.wordmarkContainer}>
-      <Text family="heading" style={[styles.wordmark, { color: colors.text }]}>
+      <Text family="wordmark" style={[styles.wordmark, { color: colors.text }]}>
         vesta
       </Text>
     </View>
@@ -547,7 +563,6 @@ function HomeHeaderButton({
 const styles = StyleSheet.create({
   screen: { padding: 0 },
   carousel: { backgroundColor: "transparent" },
-  empty: { flex: 1, justifyContent: "center", padding: 24 },
   agentPage: {
     flex: 1,
     alignItems: "center",
@@ -616,8 +631,18 @@ const styles = StyleSheet.create({
     height: AGENT_IDENTITY_ORB_SIZE,
     borderRadius: AGENT_IDENTITY_ORB_SIZE / 2,
   },
-  skeletonStatus: { width: 76, height: 24, borderRadius: 12 },
+  skeletonStatus: {
+    width: 76,
+    height: 24,
+    borderRadius: 12,
+    borderCurve: "continuous",
+  },
   skeletonName: { width: 148, height: 38, borderRadius: 12 },
-  skeletonActiveIndicator: { width: 22, height: 7, borderRadius: 999 },
+  skeletonActiveIndicator: {
+    width: 22,
+    height: 7,
+    borderRadius: 999,
+    borderCurve: "continuous",
+  },
   skeletonIndicator: { width: 7, height: 7, borderRadius: 999 },
 });

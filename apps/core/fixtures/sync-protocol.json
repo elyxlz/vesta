@@ -4,12 +4,7 @@
       "info": {
         "activityState": "thinking",
         "buildPhase": null,
-        "modelAccess": {
-          "reason": null,
-          "state": "available",
-          "until": null,
-          "window": null
-        },
+        "operation": "backing_up",
         "services": {
           "dashboard": {
             "port": 8080,
@@ -26,6 +21,19 @@
       "name": "stopped-agent",
       "type": "agent_removed"
     },
+    "devices": {
+      "devices": [
+        {
+          "descriptor": "Vesta Desktop on macOS",
+          "id": "device-1",
+          "kind": "desktop",
+          "lastSeen": "2026-01-01T00:00:00Z",
+          "present": true,
+          "pushEnabled": false
+        }
+      ],
+      "type": "devices"
+    },
     "notifications": {
       "agent": "sample-agent",
       "pending": [
@@ -38,6 +46,10 @@
         }
       ],
       "type": "notifications"
+    },
+    "presence": {
+      "any_focused": true,
+      "type": "presence"
     },
     "state": {
       "scope": "gateway",
@@ -66,7 +78,7 @@
     }
   },
   "hello": {
-    "min_supported": "0.1.181",
+    "min_supported": "0.1.185",
     "type": "hello",
     "version": "0.1.0"
   },
@@ -77,12 +89,7 @@
           "info": {
             "activityState": "thinking",
             "buildPhase": null,
-            "modelAccess": {
-              "reason": null,
-              "state": "available",
-              "until": null,
-              "window": null
-            },
+            "operation": "backing_up",
             "services": {
               "dashboard": {
                 "port": 8080,
@@ -105,6 +112,16 @@
           }
         }
       },
+      "devices": [
+        {
+          "descriptor": "Vesta Desktop on macOS",
+          "id": "device-1",
+          "kind": "desktop",
+          "lastSeen": "2026-01-01T00:00:00Z",
+          "present": true,
+          "pushEnabled": false
+        }
+      ],
       "gateway": {
         "autoUpdate": true,
         "channel": "stable",

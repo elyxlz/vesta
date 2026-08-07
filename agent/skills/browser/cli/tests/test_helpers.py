@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 
 import pytest
 from vesta_browser import helpers
@@ -268,3 +269,141 @@ def test_screenshot_full_page_sets_document_origin(monkeypatch, tmp_path):
 def test_screenshot_rejects_bad_format():
     with pytest.raises(ValueError, match="format must be"):
         helpers.screenshot(image_format="gif")
+
+
+# ── new_tab falls back when the browser will not create a tab ──
+#
+# Some builds accept browsingContext.create and never answer it, which is what
+# tests/fake_bidi.py models via `withhold`. The transport raises rather than hanging;
+# these cover the layer above, where the session stays usable by taking over a
+# context that already exists.
+
+
+def _bidi_refusing_create(contexts, calls=None):
+    def fake(method, **params):
+        if calls is not None:
+            calls.append((method, params))
+        if method == "browsingContext.create":
+            raise RuntimeError("timeout: no response to 'browsingContext.create' within 60.0s")
+        if method == "browsingContext.getTree":
+            return {"contexts": contexts}
+        return {}
+
+    return fake
+
+
+def test_new_tab_falls_back_to_an_existing_context(monkeypatch):
+    monkeypatch.setattr(helpers, "bidi", _bidi_refusing_create([{"context": "ctx-1", "url": "about:blank"}]))
+    monkeypatch.setattr(helpers, "_set_context", lambda ctx: None)
+    assert helpers.new_tab() == "ctx-1"
+
+
+def test_new_tab_fallback_prefers_a_blank_context_over_a_page_in_use(monkeypatch):
+    """Taking over the user's loaded page would lose it; the blank one is free."""
+    contexts = [
+        {"context": "ctx-live", "url": "https://example.com/checkout"},
+        {"context": "ctx-blank", "url": "about:blank"},
+    ]
+    monkeypatch.setattr(helpers, "bidi", _bidi_refusing_create(contexts))
+    monkeypatch.setattr(helpers, "_set_context", lambda ctx: None)
+    assert helpers.new_tab() == "ctx-blank"
+
+
+def test_new_tab_fallback_uses_first_context_when_none_are_blank(monkeypatch):
+    contexts = [{"context": "ctx-a", "url": "https://a.test"}, {"context": "ctx-b", "url": "https://b.test"}]
+    monkeypatch.setattr(helpers, "bidi", _bidi_refusing_create(contexts))
+    monkeypatch.setattr(helpers, "_set_context", lambda ctx: None)
+    assert helpers.new_tab() == "ctx-a"
+
+
+def test_new_tab_fallback_tolerates_a_context_with_no_url(monkeypatch):
+    """getTree need not carry a url for every node, and a missing one is not a match."""
+    contexts = [{"context": "ctx-nourl"}, {"context": "ctx-blank", "url": "about:blank"}]
+    monkeypatch.setattr(helpers, "bidi", _bidi_refusing_create(contexts))
+    monkeypatch.setattr(helpers, "_set_context", lambda ctx: None)
+    assert helpers.new_tab() == "ctx-blank"
+
+
+def test_new_tab_still_navigates_after_falling_back(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(helpers, "bidi", _bidi_refusing_create([{"context": "ctx-1", "url": "about:blank"}], calls))
+    monkeypatch.setattr(helpers, "_set_context", lambda ctx: None)
+    helpers.new_tab("https://example.com")
+    assert ("browsingContext.navigate", {"url": "https://example.com", "wait": "complete"}) in calls
+
+
+def test_new_tab_switches_to_the_context_it_fell_back_to(monkeypatch):
+    """The fallback is worthless if later commands still address the context that never opened."""
+    switched: list[str] = []
+    monkeypatch.setattr(helpers, "bidi", _bidi_refusing_create([{"context": "ctx-1", "url": "about:blank"}]))
+    monkeypatch.setattr(helpers, "_set_context", switched.append)
+    helpers.new_tab()
+    assert switched == ["ctx-1"]
+
+
+def test_new_tab_reraises_when_there_is_no_context_to_reuse(monkeypatch):
+    """A genuinely dead browser must still surface the error, not be papered over."""
+    monkeypatch.setattr(helpers, "bidi", _bidi_refusing_create([]))
+    with pytest.raises(RuntimeError, match=re.escape("browsingContext.create")):
+        helpers.new_tab()
+
+
+def test_new_tab_reraises_when_the_tree_call_also_fails(monkeypatch):
+    def fake(method, **params):
+        raise RuntimeError(f"timeout: no response to '{method}' within 60.0s")
+
+    monkeypatch.setattr(helpers, "bidi", fake)
+    with pytest.raises(RuntimeError, match=re.escape("browsingContext.create")):
+        helpers.new_tab()
+
+
+# ── click_ref reports an overlay that intercepts the click ─────
+#
+# An overlay taking the click looks exactly like a button that does nothing: the
+# click reports success and the DOM shows nothing wrong. click_ref asks what is
+# actually on top and hands that back, so the caller can say so.
+
+
+def _click_probe(hit_expr_result, clicked=None):
+    """Stand in for the two evals click_ref makes: resolve the ref, then probe the point."""
+
+    def fake(expression, context=None):
+        if "__vestaResolveRef" in expression:
+            return {"found": True, "x": 10, "y": 20}
+        return hit_expr_result
+
+    return fake
+
+
+def test_click_ref_returns_none_when_the_ref_is_on_top(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval_value", _click_probe(None))
+    monkeypatch.setattr(helpers, "click", lambda x, y, button="left", clicks=1: None)
+    assert helpers.click_ref("e5") is None
+
+
+def test_click_ref_names_the_element_that_took_the_click(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval_value", _click_probe("div.modal-wrap"))
+    monkeypatch.setattr(helpers, "click", lambda x, y, button="left", clicks=1: None)
+    assert helpers.click_ref("e5") == "div.modal-wrap"
+
+
+def test_click_ref_still_clicks_when_something_is_on_top(monkeypatch):
+    """Reporting the overlay must not swallow the click; the caller decides what to do."""
+    landed: list[tuple[float, float]] = []
+    monkeypatch.setattr(helpers, "_eval_value", _click_probe("div.modal-wrap"))
+    monkeypatch.setattr(helpers, "click", lambda x, y, button="left", clicks=1: landed.append((x, y)))
+    helpers.click_ref("e5")
+    assert landed == [(10, 20)]
+
+
+def test_occluder_probe_asks_about_the_resolved_point(monkeypatch):
+    """The probe must test the point actually clicked, not the element's own opinion."""
+    seen: list[str] = []
+
+    def fake(expression, context=None):
+        seen.append(expression)
+
+    monkeypatch.setattr(helpers, "_eval_value", fake)
+    helpers._occluder_at("e5", 33, 44)
+    assert "elementFromPoint(33, 44)" in seen[0]
+    assert '"e5"' in seen[0]

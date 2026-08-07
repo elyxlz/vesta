@@ -17,13 +17,12 @@ from helpers import http_get
 
 UA = {"User-Agent": "browser-harness/1.0"}
 
+
 def geocode(query: str, limit: int = 3) -> list[dict]:
     q = urllib.parse.quote(query)
-    raw = http_get(
-        f"https://nominatim.openstreetmap.org/search?q={q}&format=json&limit={limit}&addressdetails=1",
-        headers=UA
-    )
+    raw = http_get(f"https://nominatim.openstreetmap.org/search?q={q}&format=json&limit={limit}&addressdetails=1", headers=UA)
     return json.loads(raw)  # [] when nothing found
+
 
 results = geocode("Eiffel Tower")
 # results[0]['display_name']  == 'Tour Eiffel, 5, Avenue Anatole France, ..., 75007, France'
@@ -53,10 +52,7 @@ from helpers import http_get
 
 UA = {"User-Agent": "browser-harness/1.0"}
 
-raw = http_get(
-    "https://nominatim.openstreetmap.org/search?q=Eiffel+Tower&format=json&limit=3&addressdetails=1",
-    headers=UA
-)
+raw = http_get("https://nominatim.openstreetmap.org/search?q=Eiffel+Tower&format=json&limit=3&addressdetails=1", headers=UA)
 results = json.loads(raw)
 # Returns [] when nothing found — no exception
 
@@ -71,10 +67,7 @@ results = json.loads(raw)
 ### 2. Reverse geocode (lat/lon → address)
 
 ```python
-raw = http_get(
-    "https://nominatim.openstreetmap.org/reverse?lat=48.8584&lon=2.2945&format=json",
-    headers=UA
-)
+raw = http_get("https://nominatim.openstreetmap.org/reverse?lat=48.8584&lon=2.2945&format=json", headers=UA)
 result = json.loads(raw)
 # result['display_name']  == 'Avenue Gustave Eiffel, Quartier du Gros-Caillou, ..., France'
 # result['address']['road']         == 'Avenue Gustave Eiffel'
@@ -92,10 +85,7 @@ result = json.loads(raw)
 ### 3. Structured search (field-based)
 
 ```python
-raw = http_get(
-    "https://nominatim.openstreetmap.org/search?city=Paris&country=France&format=json&limit=1",
-    headers=UA
-)
+raw = http_get("https://nominatim.openstreetmap.org/search?city=Paris&country=France&format=json&limit=1", headers=UA)
 result = json.loads(raw)[0]
 # result['name']          == 'Paris'
 # result['lat']           == '48.8534951'
@@ -112,10 +102,7 @@ result = json.loads(raw)[0]
 
 ```python
 # Prefix: N=node, W=way, R=relation
-raw = http_get(
-    "https://nominatim.openstreetmap.org/lookup?osm_ids=W5013364&format=json",
-    headers=UA
-)
+raw = http_get("https://nominatim.openstreetmap.org/lookup?osm_ids=W5013364&format=json", headers=UA)
 result = json.loads(raw)
 # Returns list. Eiffel Tower way: result[0]['name'] == 'Tour Eiffel'
 # Supports up to 50 IDs: osm_ids=W5013364,N123456,R789
@@ -166,6 +153,7 @@ from helpers import http_get
 UA = {"User-Agent": "browser-harness/1.0"}
 OVERPASS = "https://overpass.openstreetmap.fr/api/interpreter"
 
+
 def overpass_get(query: str) -> dict:
     url = f"{OVERPASS}?data={urllib.parse.quote(query)}"
     raw = http_get(url, headers=UA)
@@ -173,24 +161,23 @@ def overpass_get(query: str) -> dict:
         raise RuntimeError(f"Overpass error (HTML returned): {raw[:200]}")
     return json.loads(raw)
 
+
 # Find cafes in central Paris (bbox: south_lat, west_lon, north_lat, east_lon)
 r = overpass_get('[out:json][timeout:25];node["amenity"="cafe"](48.855,2.295,48.862,2.308);out 10;')
 # r['version']    == 0.6
 # r['generator']  == 'Overpass API 0.7.62.7 375dc00a'
 # r['elements']   → list of matching OSM elements
 
-for cafe in r['elements']:
-    print(cafe['tags'].get('name'), cafe['lat'], cafe['lon'])
+for cafe in r["elements"]:
+    print(cafe["tags"].get("name"), cafe["lat"], cafe["lon"])
 # 'Café de l\'Alma' 48.8609068 2.3015143
 # 'Le Campanella'   48.8585847 2.3032822
 # 'Kozy Bosquet'    48.855445  2.3054013
 
 # Find restaurants within 500m radius of a point (around filter)
-r = overpass_get(
-    '[out:json][timeout:25];node["amenity"="restaurant"](around:500,37.7749,-122.4194);out 10;'
-)
-for rest in r['elements']:
-    print(rest['tags'].get('name'), rest['tags'].get('cuisine',''))
+r = overpass_get('[out:json][timeout:25];node["amenity"="restaurant"](around:500,37.7749,-122.4194);out 10;')
+for rest in r["elements"]:
+    print(rest["tags"].get("name"), rest["tags"].get("cuisine", ""))
 # 'Nepalese Indian Cusine' 'indian;nepali'
 # 'Local Diner' 'coffee_shop;italian;burger;seafood'
 # 'Moya Cafe' ''
@@ -204,16 +191,19 @@ from helpers import http_get  # http_get is GET-only; use urllib for POST
 
 OVERPASS = "https://overpass.openstreetmap.fr/api/interpreter"
 
+
 def overpass_post(query: str) -> dict:
     """POST to Overpass — no URL length limits, preferred for multi-statement QL."""
     data = urllib.parse.urlencode({"data": query}).encode()
     req = urllib.request.Request(
-        OVERPASS, data=data, method="POST",
+        OVERPASS,
+        data=data,
+        method="POST",
         headers={
             "User-Agent": "browser-harness/1.0",
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept-Encoding": "gzip",
-        }
+        },
     )
     with urllib.request.urlopen(req, timeout=30) as r:
         body = r.read()
@@ -224,9 +214,10 @@ def overpass_post(query: str) -> dict:
         raise RuntimeError(f"Overpass error (HTML): {body[:300]}")
     return json.loads(body)
 
+
 # Example: cafes in Paris bbox
 r = overpass_post('[out:json][timeout:25];node["amenity"="cafe"](48.855,2.295,48.862,2.308);out 5;')
-print(len(r['elements']))  # 5 (or up to 5)
+print(len(r["elements"]))  # 5 (or up to 5)
 ```
 
 ### Overpass element structure
@@ -235,11 +226,11 @@ Every element in `r['elements']` is a dict with at minimum:
 
 ```python
 {
-    "type": "node",          # "node", "way", or "relation"
-    "id": 308684349,         # int — OSM element ID (stable, use for dedup)
-    "lat": 48.8609068,       # float — ONLY present for node type
-    "lon": 2.3015143,        # float — ONLY present for node type
-    "tags": {                # dict — all OSM tags on this element
+    "type": "node",  # "node", "way", or "relation"
+    "id": 308684349,  # int — OSM element ID (stable, use for dedup)
+    "lat": 48.8609068,  # float — ONLY present for node type
+    "lon": 2.3015143,  # float — ONLY present for node type
+    "tags": {  # dict — all OSM tags on this element
         "amenity": "cafe",
         "name": "Café de l'Alma",
         "name:fr": "Café de l'Alma",
@@ -247,9 +238,9 @@ Every element in `r['elements']` is a dict with at minimum:
         "payment:credit_cards": "yes",
         "phone": "+33 1 45 51 56 74",
         "opening_hours": "Mo-Sa 08:00-23:00; Su 09:00-19:00",  # optional
-        "website": "https://...",                               # optional
-        "wheelchair": "yes"                                     # optional
-    }
+        "website": "https://...",  # optional
+        "wheelchair": "yes",  # optional
+    },
 }
 ```
 
@@ -318,11 +309,13 @@ https://{a,b,c}.tile.openstreetmap.org/{z}/{x}/{y}.png
 # Convert lat/lon to tile coordinates
 import math
 
+
 def lat_lon_to_tile(lat, lon, zoom):
-    n = 2 ** zoom
+    n = 2**zoom
     x = int((lon + 180) / 360 * n)
     y = int((1 - math.log(math.tan(math.radians(lat)) + 1 / math.cos(math.radians(lat))) / math.pi) / 2 * n)
     return x, y
+
 
 x, y = lat_lon_to_tile(48.8582, 2.2945, 14)
 url = f"https://a.tile.openstreetmap.org/14/{x}/{y}.png"
@@ -354,6 +347,7 @@ print(raw)
 ```python
 import time
 
+
 def overpass_get_with_retry(query: str, max_retries: int = 3) -> dict:
     for attempt in range(max_retries):
         url = f"https://overpass.openstreetmap.fr/api/interpreter?data={urllib.parse.quote(query)}"
@@ -361,7 +355,7 @@ def overpass_get_with_retry(query: str, max_retries: int = 3) -> dict:
         if raw.startswith("{"):
             return json.loads(raw)
         if "rate_limited" in raw or "too busy" in raw:
-            wait = 2 ** attempt * 10  # 10s, 20s, 40s
+            wait = 2**attempt * 10  # 10s, 20s, 40s
             time.sleep(wait)
             continue
         raise RuntimeError(f"Overpass error: {raw[:200]}")
@@ -378,7 +372,8 @@ from helpers import http_get
 
 UA = {"User-Agent": "browser-harness/1.0"}
 NOMINATIM = "https://nominatim.openstreetmap.org"
-OVERPASS   = "https://overpass.openstreetmap.fr/api/interpreter"
+OVERPASS = "https://overpass.openstreetmap.fr/api/interpreter"
+
 
 def geocode(query: str, limit: int = 1) -> list[dict]:
     """Forward geocode — returns [] if nothing found."""
@@ -386,10 +381,12 @@ def geocode(query: str, limit: int = 1) -> list[dict]:
     raw = http_get(f"{NOMINATIM}/search?q={q}&format=json&limit={limit}&addressdetails=1", headers=UA)
     return json.loads(raw)
 
+
 def reverse_geocode(lat: float, lon: float) -> dict:
     """Reverse geocode — always returns a result (nearest road/place)."""
     raw = http_get(f"{NOMINATIM}/reverse?lat={lat}&lon={lon}&format=json", headers=UA)
     return json.loads(raw)
+
 
 def overpass_get(query: str) -> list[dict]:
     """Run an Overpass QL query, return elements list."""
@@ -399,14 +396,15 @@ def overpass_get(query: str) -> list[dict]:
         raise RuntimeError(f"Overpass error: {raw[:200]}")
     return json.loads(raw)["elements"]
 
+
 def overpass_post(query: str) -> list[dict]:
     """POST variant — avoids URL length limits for complex queries."""
     data = urllib.parse.urlencode({"data": query}).encode()
     req = urllib.request.Request(
-        OVERPASS, data=data, method="POST",
-        headers={"User-Agent": "browser-harness/1.0",
-                 "Content-Type": "application/x-www-form-urlencoded",
-                 "Accept-Encoding": "gzip"}
+        OVERPASS,
+        data=data,
+        method="POST",
+        headers={"User-Agent": "browser-harness/1.0", "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "gzip"},
     )
     with urllib.request.urlopen(req, timeout=30) as r:
         body = r.read()
@@ -417,6 +415,7 @@ def overpass_post(query: str) -> list[dict]:
         raise RuntimeError(f"Overpass error: {body[:300]}")
     return json.loads(body)["elements"]
 
+
 # --- Usage examples (validated 2026-04-18) ---
 
 # 1. Geocode a landmark
@@ -425,8 +424,8 @@ places = geocode("Eiffel Tower", limit=3)
 # places[0]['lon']  == '2.2945006'   (string)
 # places[0]['display_name'] == 'Tour Eiffel, 5, Avenue Anatole France, ..., 75007, France'
 # places[0]['address']['city'] == 'Paris'
-lat = float(places[0]['lat'])
-lon = float(places[0]['lon'])
+lat = float(places[0]["lat"])
+lon = float(places[0]["lon"])
 
 # 2. Reverse geocode the coordinates
 addr = reverse_geocode(lat, lon)
@@ -437,25 +436,21 @@ addr = reverse_geocode(lat, lon)
 
 # 3. Find nearby cafes (wait 1s between nominatim and overpass if same script)
 time.sleep(1)
-cafes = overpass_get(
-    f"[out:json][timeout:25];node[\"amenity\"=\"cafe\"](around:500,{lat},{lon});out 10;"
-)
+cafes = overpass_get(f'[out:json][timeout:25];node["amenity"="cafe"](around:500,{lat},{lon});out 10;')
 for cafe in cafes:
-    print(f"{cafe['tags'].get('name','?'):30s}  {cafe['lat']:.4f}, {cafe['lon']:.4f}")
+    print(f"{cafe['tags'].get('name', '?'):30s}  {cafe['lat']:.4f}, {cafe['lon']:.4f}")
 # Café de l'Alma                  48.8609, 2.3015
 # Le Campanella                   48.8586, 2.3033
 
 # 4. Structured city lookup + find restaurants in bounding box
 time.sleep(1)
 paris = geocode("Paris, France")[0]
-bb = paris['boundingbox']  # [south_lat, north_lat, west_lon, east_lon] ← Nominatim order!
+bb = paris["boundingbox"]  # [south_lat, north_lat, west_lon, east_lon] ← Nominatim order!
 # For Overpass: need (south_lat, west_lon, north_lat, east_lon) ← DIFFERENT order
 south, north, west, east = bb[0], bb[1], bb[2], bb[3]
 # Restrict to center slice to avoid massive result set
 center_bbox = f"48.855,2.295,48.865,2.315"
-rests = overpass_post(
-    f"[out:json][timeout:25];node[\"amenity\"=\"restaurant\"]({center_bbox});out 5;"
-)
+rests = overpass_post(f'[out:json][timeout:25];node["amenity"="restaurant"]({center_bbox});out 5;')
 print(f"Found {len(rests)} restaurants near Paris center")
 ```
 

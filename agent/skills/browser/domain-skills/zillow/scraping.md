@@ -27,14 +27,16 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+
 def extract_listings(html):
     """Parse Zillow __NEXT_DATA__ and return list of listing dicts."""
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
     if not m:
         return []
     d = json.loads(m.group(1))
-    sps = d['props']['pageProps']['searchPageState']
-    return sps['cat1']['searchResults']['listResults']
+    sps = d["props"]["pageProps"]["searchPageState"]
+    return sps["cat1"]["searchResults"]["listResults"]
+
 
 html = http_get("https://www.zillow.com/homes/San-Francisco,-CA_rb/", headers=HEADERS)
 listings = extract_listings(html)
@@ -78,24 +80,24 @@ The `listResults` array is the canonical source. Each entry includes:
 ```python
 # Full extraction snippet
 listing = listings[0]
-hi = listing.get('hdpData', {}).get('homeInfo', {})
+hi = listing.get("hdpData", {}).get("homeInfo", {})
 
 record = {
-    "zpid":         listing['zpid'],
-    "address":      listing['address'],
-    "price_raw":    listing.get('unformattedPrice') or hi.get('price'),
-    "beds":         listing.get('beds'),
-    "baths":        listing.get('baths'),
-    "sqft":         listing.get('area'),
-    "lat":          listing['latLong']['latitude'],
-    "lon":          listing['latLong']['longitude'],
-    "status":       listing['statusType'],
-    "zestimate":    listing.get('zestimate'),
-    "rent_zest":    hi.get('rentZestimate'),
-    "home_type":    hi.get('homeType'),
-    "days_listed":  hi.get('daysOnZillow'),
-    "tax_assessed": hi.get('taxAssessedValue'),
-    "url":          listing['detailUrl'],
+    "zpid": listing["zpid"],
+    "address": listing["address"],
+    "price_raw": listing.get("unformattedPrice") or hi.get("price"),
+    "beds": listing.get("beds"),
+    "baths": listing.get("baths"),
+    "sqft": listing.get("area"),
+    "lat": listing["latLong"]["latitude"],
+    "lon": listing["latLong"]["longitude"],
+    "status": listing["statusType"],
+    "zestimate": listing.get("zestimate"),
+    "rent_zest": hi.get("rentZestimate"),
+    "home_type": hi.get("homeType"),
+    "days_listed": hi.get("daysOnZillow"),
+    "tax_assessed": hi.get("taxAssessedValue"),
+    "url": listing["detailUrl"],
 }
 ```
 
@@ -103,10 +105,10 @@ record = {
 
 ```python
 d = json.loads(re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL).group(1))
-sps = d['props']['pageProps']['searchPageState']
+sps = d["props"]["pageProps"]["searchPageState"]
 
 # Total listings in this search
-total = sps['categoryTotals']['cat1']['totalResultCount']
+total = sps["categoryTotals"]["cat1"]["totalResultCount"]
 print(total)  # 1037
 
 # Each page returns exactly 41 listings. Add /<N>_p/ for subsequent pages:
@@ -128,6 +130,7 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+
 def get_listings(city_slug, page=1):
     """city_slug: e.g. 'San-Francisco,-CA', 'Seattle,-WA', 'Austin,-TX'"""
     if page == 1:
@@ -137,18 +140,19 @@ def get_listings(city_slug, page=1):
     html = http_get(url, headers=HEADERS)
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
     d = json.loads(m.group(1))
-    sps = d['props']['pageProps']['searchPageState']
-    total = sps['categoryTotals']['cat1']['totalResultCount']
-    listings = sps['cat1']['searchResults']['listResults']
+    sps = d["props"]["pageProps"]["searchPageState"]
+    total = sps["categoryTotals"]["cat1"]["totalResultCount"]
+    listings = sps["cat1"]["searchResults"]["listResults"]
     return listings, total
+
 
 all_listings = []
 listings, total = get_listings("San-Francisco,-CA")
 all_listings.extend(listings)
 
 max_pages = (total + 40) // 41
-for page in range(2, min(max_pages + 1, 6)):   # cap at 5 pages for demo
-    time.sleep(1.0)   # polite delay
+for page in range(2, min(max_pages + 1, 6)):  # cap at 5 pages for demo
+    time.sleep(1.0)  # polite delay
     page_listings, _ = get_listings("San-Francisco,-CA", page)
     all_listings.extend(page_listings)
 
@@ -194,11 +198,11 @@ r = listings[0]
 # r['unformattedPrice'] = 2500
 
 # Check which type:
-if r.get('isBuilding'):
+if r.get("isBuilding"):
     price_range = f"${r['minBaseRent']}–${r['maxBaseRent']}/mo"
-    units = r.get('units', [])
+    units = r.get("units", [])
 else:
-    price = r.get('unformattedPrice') or r.get('hdpData', {}).get('homeInfo', {}).get('price')
+    price = r.get("unformattedPrice") or r.get("hdpData", {}).get("homeInfo", {}).get("price")
 ```
 
 ---
@@ -212,11 +216,11 @@ html = http_get("https://www.zillow.com/san-francisco-ca/sold/", headers=HEADERS
 listings = extract_listings(html)
 
 for l in listings:
-    hi = l.get('hdpData', {}).get('homeInfo', {})
-    sold_price  = hi.get('priceForHDP')      # actual sold price
-    zestimate   = hi.get('zestimate')
-    tax_value   = hi.get('taxAssessedValue')
-    print(l['address'], f"${sold_price:,}", f"zest=${zestimate}")
+    hi = l.get("hdpData", {}).get("homeInfo", {})
+    sold_price = hi.get("priceForHDP")  # actual sold price
+    zestimate = hi.get("zestimate")
+    tax_value = hi.get("taxAssessedValue")
+    print(l["address"], f"${sold_price:,}", f"zest=${zestimate}")
 # 999 Green St APT 1702, San Francisco, CA 94133 $3,200,000 zest=$3,403,400
 # 1041 Vallejo St, San Francisco, CA 94133 $6,250,000 zest=None
 ```
@@ -268,10 +272,7 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-html = http_get(
-    "https://www.redfin.com/city/17151/CA/San-Francisco/filter/property-type=house",
-    headers=HEADERS
-)
+html = http_get("https://www.redfin.com/city/17151/CA/San-Francisco/filter/property-type=house", headers=HEADERS)
 print(len(html))  # ~1.6 MB
 
 # Extract all SingleFamilyResidence JSON-LD entries
@@ -281,20 +282,20 @@ for s in re.findall(r'<script type="application/ld\+json">(.*?)</script>', html,
         d = json.loads(s)
         if isinstance(d, list):
             for item in d:
-                if item.get('@type') in ('SingleFamilyResidence', 'House', 'Residence', 'Apartment'):
+                if item.get("@type") in ("SingleFamilyResidence", "House", "Residence", "Apartment"):
                     properties.append(item)
     except Exception:
         pass
 
 prop = properties[0]
-print("Name:", prop['name'])               # "662 Hampshire St, San Francisco, CA 94110"
-print("Address:", prop['address'])
+print("Name:", prop["name"])  # "662 Hampshire St, San Francisco, CA 94110"
+print("Address:", prop["address"])
 # {'@type': 'PostalAddress', 'streetAddress': '662 Hampshire St',
 #  'addressLocality': 'San Francisco', 'addressRegion': 'CA',
 #  'postalCode': '94110', 'addressCountry': 'US'}
-print("Rooms:", prop['numberOfRooms'])     # 3
-print("Floor size:", prop['floorSize'])    # {'@type': 'QuantitativeValue', 'value': 3350, 'unitCode': 'FTK'}
-print("URL:", prop['url'])
+print("Rooms:", prop["numberOfRooms"])  # 3
+print("Floor size:", prop["floorSize"])  # {'@type': 'QuantitativeValue', 'value': 3350, 'unitCode': 'FTK'}
+print("URL:", prop["url"])
 # https://www.redfin.com/CA/San-Francisco/662-Hampshire-St-94110/home/1533754
 ```
 
@@ -308,6 +309,7 @@ Redfin's internal GIS/search API returns rich structured data including price, M
 import json
 from helpers import http_get
 
+
 def redfin_search(region_id, region_type=6, num_homes=20, page=1, uipt="1,2,3,4,5,6"):
     """
     region_type: 6=city, 2=zipcode, 5=county
@@ -319,34 +321,38 @@ def redfin_search(region_id, region_type=6, num_homes=20, page=1, uipt="1,2,3,4,
         f"&page_number={page}&region_id={region_id}&region_type={region_type}"
         f"&sf=1,2,3,5,6,7&status=9&uipt={uipt}&v=8"
     )
-    raw = http_get(url, headers={
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.redfin.com/",
-        "Accept": "*/*",
-    })
+    raw = http_get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.redfin.com/",
+            "Accept": "*/*",
+        },
+    )
     # Strip the {}&& CSRF prefix Redfin prepends to all API responses
-    assert raw.startswith('{}&&'), f"Unexpected prefix: {raw[:10]}"
+    assert raw.startswith("{}&&"), f"Unexpected prefix: {raw[:10]}"
     return json.loads(raw[4:])
 
+
 data = redfin_search(region_id=17151)  # 17151 = San Francisco, CA
-homes = data['payload']['homes']
+homes = data["payload"]["homes"]
 
 home = homes[0]
-print("Address:", home['streetLine']['value'])  # "875 California St #703"
-print("City/State/Zip:", home['city'], home['state'], home['zip'])
-print("Price:", home['price']['value'])          # 3300000
-print("Beds:", home['beds'])                     # 3
-print("Baths:", home['baths'])                   # 2.5
-print("Sqft:", home['sqFt']['value'])            # 1828
-print("$/sqft:", home['pricePerSqFt']['value'])  # 1805
-print("Lot size:", home['lotSize']['value'])      # 9448
-print("Year built:", home['yearBuilt']['value'])  # 2021
-print("Days on market:", home['dom']['value'])    # 1
-print("MLS ID:", home['mlsId']['value'])          # "426115342"
-print("MLS Status:", home['mlsStatus'])           # "Active"
-print("Lat/Long:", home['latLong']['value'])
-print("URL:", home['url'])                        # "/CA/San-Francisco/..."
-print("Remarks:", home['listingRemarks'][:100])
+print("Address:", home["streetLine"]["value"])  # "875 California St #703"
+print("City/State/Zip:", home["city"], home["state"], home["zip"])
+print("Price:", home["price"]["value"])  # 3300000
+print("Beds:", home["beds"])  # 3
+print("Baths:", home["baths"])  # 2.5
+print("Sqft:", home["sqFt"]["value"])  # 1828
+print("$/sqft:", home["pricePerSqFt"]["value"])  # 1805
+print("Lot size:", home["lotSize"]["value"])  # 9448
+print("Year built:", home["yearBuilt"]["value"])  # 2021
+print("Days on market:", home["dom"]["value"])  # 1
+print("MLS ID:", home["mlsId"]["value"])  # "426115342"
+print("MLS Status:", home["mlsStatus"])  # "Active"
+print("Lat/Long:", home["latLong"]["value"])
+print("URL:", home["url"])  # "/CA/San-Francisco/..."
+print("Remarks:", home["listingRemarks"][:100])
 ```
 
 ### Redfin region IDs

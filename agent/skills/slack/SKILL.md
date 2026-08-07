@@ -6,7 +6,7 @@ description: "Slack: send/receive workspace messages, DMs, threads; reply to sou
 # Slack - CLI: slack
 
 **Setup**: follow [SETUP.md](SETUP.md) (Slack app from a manifest, then two tokens).
-**Background**: `screen -dmS slack slack serve --notifications-dir ~/agent/notifications`
+**Background**: `slack daemon start`
 
 ## Quick Reference
 

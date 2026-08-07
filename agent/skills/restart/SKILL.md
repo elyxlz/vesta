@@ -11,24 +11,15 @@ Run the Daemons block below; it is safe to re-run and starts only what's missing
 
 ## Daemons
 
-Skill setup steps add their daemon startup commands here, one fenced block per skill (a daemon that vestad proxies on a port is a service, registered via the `vestad` skill; a portless background process still goes here). Every line MUST be guarded with `running <session> ||` so re-running the block can't spawn a duplicate: crash/timeout recovery re-enters this skill repeatedly, and an unguarded line piles up duplicate daemons.
+When a skill's setup gives you a daemon startup line, add it here yourself, inside the fenced block below, on its own line before the closing fence. A setup script never edits this file. (A daemon that vestad proxies on a port gets that port from its own `daemon start`; a portless background process goes here too.)
+
+Every line is `<skill> daemon start`, with no guard around it (a trailing comment of your own, like `# TEMP` on a service you will tear down, is fine). A start is idempotent: a daemon that is already up answers `{"status":"already_running"}` and spawns nothing, so re-running this whole block cannot stack duplicates, which is what makes it safe for crash and timeout recovery to re-enter this skill repeatedly. A start also returns only once its daemon is actually up, so the lines never race each other and need no sleep between them.
+
+Three flags never appear on a line, because the command applies them itself: a port, a `--notifications-dir`, and a poll interval. Every other flag a skill's setup gives you stays on the line, because it is something chosen for that daemon and the command cannot infer it. Whatsapp named instances are the case you will meet: one line per account, each keeping the `--instance <name>` and per-instance flags it was set up with, e.g. `whatsapp daemon start --instance personal --read-only`.
+
+Keep every line in the one fenced block below, so a single read shows you every daemon this container runs.
 
 ```bash
-# Wipe dead sockets a restart may have left in /run/screen, else the guard treats
-# a "(Dead ???)" corpse as still-running and never restarts the daemon.
-screen -wipe >/dev/null 2>&1 || true
-
-# True iff a LIVE screen session with this exact name exists. Judge by captured
-# output (test -n), not exit code: the agent's shimmed ugrep `grep -qv` returns 0
-# on empty input, which would report every daemon as live on a cold boot.
-running() { test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -v "Dead")"; }
-# IMPORTANT: copy this definition verbatim from this file; never type it from
-# memory or a system-reminder cache. A stale cached grep form matches nothing
-# against a real session name, so running() returns false for a live session
-# and `false || spawn` re-spawns on every guarded restart line, silently
-# stacking duplicate daemons.
-
-# Skills append guarded startup lines below, e.g.:
-#   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
-# The trailing `sleep 1` keeps back-to-back `screen -dmS` launches from racing and dropping sessions.
+# One line per daemon, e.g.:
+#   file-host daemon start
 ```

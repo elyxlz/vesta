@@ -66,6 +66,33 @@ def test_trailing_comment_block_at_eof_is_flagged(tmp_path, monkeypatch):
     assert len(check_conventions.check_comment_blocks([rel])) == 1
 
 
+def test_header_block_under_a_shebang_is_exempt(tmp_path, monkeypatch):
+    """A shebang joins the run below it, so a documented script keeps its header exemption.
+
+    Pins the behavior extensionless skill CLIs now depend on: their doc sits under a shebang, and
+    any code between the two ends the run and makes the doc an ordinary capped block.
+    """
+    monkeypatch.chdir(tmp_path)
+    documented = "#!/usr/bin/env bash\n" + "# usage\n" * 12 + "echo ok\n"
+    assert check_conventions.check_comment_blocks([write(tmp_path, "tool.sh", documented)]) == []
+    # Code between the shebang and the block makes it an ordinary mid-file comment again.
+    after_code = "#!/usr/bin/env bash\nset -e\n" + "# usage\n" * 12 + "echo ok\n"
+    assert len(check_conventions.check_comment_blocks([write(tmp_path, "later.sh", after_code)])) == 1
+
+
+def test_extensionless_scripts_are_checked_by_shebang(tmp_path, monkeypatch):
+    """Skill CLIs are bare command names; language comes from the shebang so they stay covered."""
+    monkeypatch.chdir(tmp_path)
+    marker = "shell" + "check disable=SC2086"  # split so the conventions guard does not flag this fixture
+    shell = write(tmp_path, "hue", f"#!/usr/bin/env bash\necho hi\n# {marker}\necho $x\n")
+    assert len(check_conventions.check_escapes([shell])) == 1
+    noqa = "no" + "qa"
+    python = write(tmp_path, "skills-search", f"#!/usr/bin/env python3\nx = 1  # {noqa}: E501\n")
+    assert len(check_conventions.check_escapes([python])) == 1
+    # An extensionless file with no shell/python shebang stays out of scope.
+    assert check_conventions.check_escapes([write(tmp_path, "LICENSE", f"# {noqa}\n")]) == []
+
+
 def test_import_cycle_is_detected(tmp_path):
     (tmp_path / "a.py").write_text("from . import b\n")
     (tmp_path / "b.py").write_text("from .a import thing\n")

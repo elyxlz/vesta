@@ -33,16 +33,36 @@ function baseTree(): Tree {
           status: "alive",
           activityState: "idle",
           buildPhase: null,
+          operation: null,
           startedAt: null,
           services: {},
         },
         notifications: { pending: [] },
       },
     },
+    devices: [],
   }
 }
 
 describe("reduceDelta", () => {
+  it("replaces the devices list on a devices delta", () => {
+    const next = reduceDelta(baseTree(), {
+      type: "devices",
+      devices: [
+        {
+          id: "dev-1",
+          kind: "mobile",
+          descriptor: "iPhone",
+          present: true,
+          lastSeen: "2026-01-01T00:00:00Z",
+          pushEnabled: true,
+        },
+      ],
+    })
+    expect(next.devices).toHaveLength(1)
+    expect(next.devices[0]?.id).toBe("dev-1")
+  })
+
   it("replaces the gateway branch on a state delta", () => {
     const next = reduceDelta(baseTree(), {
       type: "state",
@@ -65,6 +85,7 @@ describe("reduceDelta", () => {
         status: "restarting",
         activityState: "idle",
         buildPhase: null,
+        operation: null,
         startedAt: null,
         services: {},
       },
@@ -81,6 +102,7 @@ describe("reduceDelta", () => {
         status: "starting",
         activityState: "idle",
         buildPhase: "pulling",
+        operation: null,
         startedAt: null,
         services: {},
       },
@@ -145,6 +167,7 @@ describe("reduceDelta", () => {
           status: "restarting",
           activityState: "idle",
           buildPhase: null,
+          operation: null,
           startedAt: null,
           services: {},
         },

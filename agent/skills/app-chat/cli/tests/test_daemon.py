@@ -1,15 +1,29 @@
-"""Tests for the app-chat daemon lifecycle: defaults, the stop-marker/daemon_died
-contract, and the start/stop/status subcommands."""
+"""Tests for the app-chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, and the
+start/stop/restart/status verbs against the pid and port records."""
 
-import argparse
 import asyncio
 import functools
 import json
+import os
+import signal
+import types
 
 import pytest
 from app_chat_cli import daemon
 from app_chat_cli.service import ServiceState
 from app_chat_cli.store import Store, StoredEvent, store_path
+
+
+@pytest.fixture
+def records(tmp_path, monkeypatch):
+    """Redirects the pid and port records into a tmpdir, the way a hermetic HOME would."""
+    daemons_dir = tmp_path / "daemons"
+    daemons_dir.mkdir()
+    monkeypatch.setattr(daemon, "DAEMONS_DIR", daemons_dir)
+    monkeypatch.setattr(daemon, "PIDFILE", daemons_dir / "app-chat.pid")
+    monkeypatch.setattr(daemon, "PORTFILE", daemons_dir / "app-chat.port")
+    monkeypatch.setattr(daemon, "LOG", tmp_path / "logs" / "app-chat.log")
+    return daemons_dir
 
 
 def test_default_notifications_dir_defaults_to_agent_notifications(monkeypatch, tmp_path):
@@ -34,206 +48,128 @@ def test_write_death_notification_writes_source_and_type(tmp_path):
     assert data["type"] == "daemon_died"
 
 
-def test_intentional_stop_consumes_marker_without_notification(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    notif_dir = tmp_path / "notifications"
-    marker = daemon._stop_marker_path(data_dir)
-    marker.write_text("")
+def test_a_sigterm_is_the_one_shutdown_that_stays_quiet(tmp_path):
+    state = _daemon_state(tmp_path)
 
-    daemon._consume_stop_marker_or_report_death(data_dir, notif_dir)
+    daemon._begin_shutdown(state, signal.SIGTERM)
 
-    assert not marker.exists()
-    assert not notif_dir.exists()
+    assert state.asked_to_stop is True
+    assert state.shutdown.is_set()
+    state.service.store.close()
 
 
-def test_unmarked_exit_reports_death(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    notif_dir = tmp_path / "notifications"
+def test_any_other_signal_leaves_the_death_report_armed(tmp_path):
+    state = _daemon_state(tmp_path)
 
-    daemon._consume_stop_marker_or_report_death(data_dir, notif_dir)
+    daemon._begin_shutdown(state, signal.SIGINT)
 
-    assert list(notif_dir.glob("*-app-chat-daemon_died.json"))
+    assert state.asked_to_stop is False
+    assert state.shutdown.is_set()
+    state.service.store.close()
 
 
-def test_socket_request_returns_error_when_nothing_listening(tmp_path):
-    result = asyncio.run(daemon.socket_request(tmp_path / "missing.sock", {"command": "status"}))
-    assert "error" in result
+def test_live_pid_is_none_without_a_record(records):
+    assert daemon.live_pid() is None
 
 
-def test_socket_request_round_trips_through_a_real_unix_socket(tmp_path):
-    sock_path = tmp_path / "app-chat.sock"
+def test_live_pid_is_none_for_a_pid_nobody_is_running(records):
+    daemon.PIDFILE.write_text("2147483646")
+    assert daemon.live_pid() is None
 
-    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        data = await reader.read(65536)
-        request = json.loads(data.decode())
-        writer.write(json.dumps({"ok": True, "port": 4321, "clients": 0, "echo": request["command"]}).encode())
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
 
-    async def scenario() -> dict[str, object]:
-        server = await asyncio.start_unix_server(handler, path=str(sock_path))
-        async with server:
-            return await daemon.socket_request(sock_path, {"command": "status"})
+def test_live_pid_reads_back_a_running_process(records):
+    daemon.PIDFILE.write_text(str(os.getpid()))
+    assert daemon.live_pid() == os.getpid()
 
-    result = asyncio.run(scenario())
-    assert result == {"ok": True, "port": 4321, "clients": 0, "echo": "status"}
 
+def test_start_is_a_no_op_while_the_recorded_process_is_alive(records, monkeypatch, capsys):
+    daemon.PIDFILE.write_text(str(os.getpid()))
+    monkeypatch.setattr(daemon.subprocess, "Popen", lambda *a, **k: pytest.fail("should not launch a duplicate daemon"))
 
-def test_daemon_alive_false_when_socket_missing(tmp_path):
-    assert daemon.daemon_alive(tmp_path / "nope.sock") is False
+    assert daemon.daemon_cmd("start") == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "already_running"}
 
 
-def test_daemon_alive_reflects_socket_request_result(tmp_path, monkeypatch):
-    sock_path = tmp_path / "app-chat.sock"
-    sock_path.write_text("")
+def test_start_fails_closed_when_registration_fails(records, monkeypatch, capsys):
+    monkeypatch.setattr(daemon, "_register_port", lambda: None)
+    monkeypatch.setattr(daemon.subprocess, "Popen", lambda *a, **k: pytest.fail("must not launch without a port"))
 
-    async def fake_ok(sock_path, request, timeout=daemon.SOCKET_TIMEOUT):
-        return {"ok": True, "port": 4321, "clients": 0}
+    assert daemon.daemon_cmd("start") == 1
+    assert "register" in json.loads(capsys.readouterr().err)["error"]
+    assert not daemon.PIDFILE.exists()
 
-    async def fake_error(sock_path, request, timeout=daemon.SOCKET_TIMEOUT):
-        return {"error": "connection refused"}
 
-    monkeypatch.setattr(daemon, "socket_request", fake_ok)
-    assert daemon.daemon_alive(sock_path) is True
+def test_start_records_the_pid_and_port_of_a_daemon_that_answers(records, monkeypatch, capsys):
+    launched = []
 
-    monkeypatch.setattr(daemon, "socket_request", fake_error)
-    assert daemon.daemon_alive(sock_path) is False
+    def fake_popen(argv, **kwargs):
+        launched.append(argv)
+        return types.SimpleNamespace(pid=4321, poll=lambda: None)
 
+    monkeypatch.setattr(daemon, "_register_port", lambda: "5150")
+    monkeypatch.setattr(daemon, "_ready", lambda port: True)
+    monkeypatch.setattr(daemon.subprocess, "Popen", fake_popen)
 
-def _args(tmp_path) -> argparse.Namespace:
-    return argparse.Namespace(data_dir=str(tmp_path / "data"))
+    assert daemon.daemon_cmd("start") == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "started"}
+    assert launched[0][1:] == ["serve", "--port", "5150"]
+    # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is
+    # there at all depends on the fake pid happening to exist on this machine.
+    assert daemon.PIDFILE.read_text().split()[0] == "4321"
+    assert daemon.PORTFILE.read_text() == "5150"
 
 
-def test_daemon_start_is_idempotent_when_already_running(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(daemon, "daemon_alive", lambda sock_path: True)
-    monkeypatch.setattr(daemon.subprocess, "run", lambda *a, **k: pytest.fail("should not launch a duplicate daemon"))
+def test_stop_is_idempotent_when_nothing_is_recorded(records, capsys):
+    assert daemon.daemon_cmd("stop") == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "already_stopped"}
 
-    daemon.cmd_daemon_start(_args(tmp_path))
 
-    assert json.loads(capsys.readouterr().out) == {"status": "already_running", "session": "app-chat"}
+def test_stop_sends_a_sigterm_and_clears_both_records(records, monkeypatch, capsys):
+    daemon.PIDFILE.write_text("4321")
+    daemon.PORTFILE.write_text("5150")
+    signals = []
+    monkeypatch.setattr(daemon.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    # alive for the signal, gone on the first poll after it
+    monkeypatch.setattr(daemon, "live_pid", iter([4321, None]).__next__)
 
+    assert daemon.daemon_cmd("stop") == 0
+    assert signals == [(4321, signal.SIGTERM)]
+    assert json.loads(capsys.readouterr().out) == {"status": "stopped"}
+    assert not daemon.PIDFILE.exists()
+    assert not daemon.PORTFILE.exists()
 
-def test_daemon_start_errors_when_screen_missing(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(daemon, "daemon_alive", lambda sock_path: False)
-    monkeypatch.setattr(daemon.shutil, "which", lambda name: None)
 
-    with pytest.raises(SystemExit) as exc:
-        daemon.cmd_daemon_start(_args(tmp_path))
+def test_restart_prints_one_line_and_skips_the_start_when_the_stop_fails(records, monkeypatch, capsys):
+    daemon.PIDFILE.write_text(str(os.getpid()))
+    monkeypatch.setattr(daemon.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(daemon, "STOP_TIMEOUT_SECS", 0)
+    monkeypatch.setattr(daemon, "_start", lambda: pytest.fail("must not start onto a daemon that is still there"))
 
-    assert exc.value.code == 1
-    assert "screen" in json.loads(capsys.readouterr().out)["error"]
+    assert daemon.daemon_cmd("restart") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "SIGTERM" in json.loads(captured.err)["error"]
 
 
-def test_daemon_start_launches_and_waits_for_the_socket(tmp_path, monkeypatch, capsys):
-    calls = {"alive": 0, "launched": False}
+def test_status_reports_not_running_without_a_record(records, capsys):
+    assert daemon.daemon_cmd("status") == 0
+    assert json.loads(capsys.readouterr().out) == {"running": False, "port": None}
 
-    def fake_alive(sock_path):
-        calls["alive"] += 1
-        return calls["launched"]
 
-    def fake_run(cmd, check):
-        calls["launched"] = True
+def test_status_reads_the_port_start_recorded(records, capsys):
+    daemon.PIDFILE.write_text(str(os.getpid()))
+    daemon.PORTFILE.write_text("5150")
 
-    monkeypatch.setattr(daemon, "daemon_alive", fake_alive)
-    monkeypatch.setattr(daemon.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(daemon.subprocess, "run", fake_run)
-    monkeypatch.setattr(daemon.time, "sleep", lambda seconds: None)
+    assert daemon.daemon_cmd("status") == 0
+    assert json.loads(capsys.readouterr().out) == {"running": True, "port": 5150}
 
-    daemon.cmd_daemon_start(_args(tmp_path))
 
-    assert json.loads(capsys.readouterr().out) == {"status": "started", "session": "app-chat"}
-    assert calls["launched"] is True
-
-
-def test_daemon_start_clears_a_leaked_stop_marker_before_launching(tmp_path, monkeypatch, capsys):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    daemon._stop_marker_path(data_dir).write_text("")
-
-    calls = {"launched": False}
-
-    def fake_alive(sock_path):
-        return calls["launched"]
-
-    def fake_run(cmd, check):
-        calls["launched"] = True
-        # the leaked marker must be gone before the fresh daemon is launched, so its own
-        # unexpected death still reports daemon_died rather than silently consuming the marker
-        assert not daemon._stop_marker_path(data_dir).exists()
-
-    monkeypatch.setattr(daemon, "daemon_alive", fake_alive)
-    monkeypatch.setattr(daemon.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(daemon.subprocess, "run", fake_run)
-    monkeypatch.setattr(daemon.time, "sleep", lambda seconds: None)
-
-    daemon.cmd_daemon_start(_args(tmp_path))
-
-    assert json.loads(capsys.readouterr().out) == {"status": "started", "session": "app-chat"}
-    assert not daemon._stop_marker_path(data_dir).exists()
-
-
-def test_daemon_stop_is_idempotent_when_already_stopped(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(daemon, "daemon_alive", lambda sock_path: False)
-
-    daemon.cmd_daemon_stop(_args(tmp_path))
-
-    assert json.loads(capsys.readouterr().out) == {"status": "already_stopped", "session": "app-chat"}
-
-
-def test_daemon_stop_writes_marker_before_quitting(tmp_path, monkeypatch, capsys):
-    data_dir = tmp_path / "data"
-    calls = {"alive": 0}
-
-    def fake_alive(sock_path):
-        calls["alive"] += 1
-        return calls["alive"] == 1  # alive on the first check, gone after the quit signal
-
-    quit_calls = []
-
-    def fake_run(cmd, check):
-        quit_calls.append(cmd)
-        # the marker must exist before the process is signaled, mirroring what serve consumes
-        assert daemon._stop_marker_path(data_dir).exists()
-
-    monkeypatch.setattr(daemon, "daemon_alive", fake_alive)
-    monkeypatch.setattr(daemon.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(daemon.subprocess, "run", fake_run)
-    monkeypatch.setattr(daemon.time, "sleep", lambda seconds: None)
-
-    daemon.cmd_daemon_stop(_args(tmp_path))
-
-    assert json.loads(capsys.readouterr().out) == {"status": "stopped", "session": "app-chat"}
-    assert quit_calls == [["/usr/bin/screen", "-S", "app-chat", "-X", "quit"]]
-
-
-def test_daemon_status_reports_not_running_when_socket_absent(tmp_path, capsys):
-    daemon.cmd_daemon_status(_args(tmp_path))
-
-    assert json.loads(capsys.readouterr().out) == {"running": False, "session": "app-chat"}
-
-
-def test_daemon_status_reports_port_and_client_count_when_running(tmp_path, monkeypatch, capsys):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    sock_path = daemon._sock_path(data_dir)
-    sock_path.write_text("")
-
-    async def fake_status(sock_path, request, timeout=daemon.SOCKET_TIMEOUT):
-        return {"ok": True, "port": 1234, "clients": 2}
-
-    monkeypatch.setattr(daemon, "socket_request", fake_status)
-
-    daemon.cmd_daemon_status(_args(tmp_path))
-
-    assert json.loads(capsys.readouterr().out) == {
-        "running": True,
-        "session": "app-chat",
-        "port": 1234,
-        "clients": 2,
-    }
+def test_the_help_forms_succeed_and_an_unknown_verb_does_not(records, capsys):
+    for action in ("", "-h", "--help", "help"):
+        assert daemon.daemon_cmd(action) == 0
+    assert "Usage" in capsys.readouterr().out
+    assert daemon.daemon_cmd("bogus") == 1
+    assert "Usage" in capsys.readouterr().err
 
 
 def _daemon_state(tmp_path) -> daemon.DaemonState:

@@ -71,7 +71,17 @@ def _print_feedback(interactive_only: bool = False) -> None:
 
 
 def cmd_launch(args: argparse.Namespace) -> int:
-    profile = Path(args.user_data_dir) if args.user_data_dir else None
+    if args.user_data_dir and args.ephemeral_profile:
+        print("--user-data-dir and --ephemeral-profile are mutually exclusive", file=sys.stderr)
+        return 2
+    if args.ephemeral_profile:
+        profile = admin.ephemeral_profile_dir()
+    elif args.user_data_dir:
+        # Resolve before launching: the live-owner check matches this path against process
+        # argv, so a relative path here would make a running session look unowned.
+        profile = Path(args.user_data_dir).expanduser().resolve()
+    else:
+        profile = None
     # Camoufox is fully fingerprint-spoofed headless, so CLI launches are always headless: no
     # display or Xvfb needed even when DISPLAY is set (e.g. callers that set DISPLAY=:99 out of
     # a stock-Chromium habit). Headed is reserved for `handover`, which provisions its own Xvfb.
@@ -162,6 +172,11 @@ def cmd_stop_all(_args: argparse.Namespace) -> int:
 
 def cmd_sessions(_args: argparse.Namespace) -> int:
     print(json.dumps(admin.list_sessions(), indent=2))
+    return 0
+
+
+def cmd_prune(args: argparse.Namespace) -> int:
+    print(json.dumps(admin.prune_profiles(apply=args.yes), indent=2))
     return 0
 
 
@@ -256,7 +271,9 @@ def cmd_click(args: argparse.Namespace) -> int:
         if not args.ref:
             print("click needs a ref or --at X Y", file=sys.stderr)
             return 2
-        helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
+        occluder = helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
+        if occluder:
+            print(f"# {args.ref} is covered by <{occluder}>, which took the click instead. See interaction-skills/clicking.md")
     helpers.wait(0.2)
     _print_feedback()
     return 0
@@ -426,7 +443,12 @@ def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentPars
     lp.add_argument("--stealth", action="store_true")
     lp.add_argument("--no-sandbox", action="store_true")
     lp.add_argument("--mode", choices=admin.PERCEPTION_MODES, default=None, help="Perception mode for this session: a11y | screenshot | both.")
-    lp.add_argument("--user-data-dir", default=None)
+    lp.add_argument("--user-data-dir", default=None, help="Durable profile dir; kept forever, never auto-deleted.")
+    lp.add_argument(
+        "--ephemeral-profile",
+        action="store_true",
+        help="Isolated throwaway profile, deleted on stop. Use instead of --user-data-dir for one-off runs.",
+    )
     lp.add_argument("--executable", default=None)
     lp.add_argument("--port", type=int, default=None)
     lp.set_defaults(func=cmd_launch)
@@ -444,6 +466,9 @@ def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentPars
     sub.add_parser("stop", help="Stop this session.").set_defaults(func=cmd_stop)
     sub.add_parser("stop-all", help="Stop all sessions.").set_defaults(func=cmd_stop_all)
     sub.add_parser("sessions", help="List active sessions.").set_defaults(func=cmd_sessions)
+    p_prune = sub.add_parser("prune", help="Report ephemeral profiles left by crashed sessions; --yes to delete them.")
+    p_prune.add_argument("--yes", action="store_true", help="Actually delete (default is a dry-run report).")
+    p_prune.set_defaults(func=cmd_prune)
 
     hv = sub.add_parser("handover", help="Hand the live browser to the user over a clean page so they sign in by hand.")
     hv.add_argument("action", choices=["start", "stop", "status"])

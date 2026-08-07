@@ -3,14 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createBackup,
   deleteBackup,
+  getAgentBackupSettings,
   listBackups,
   restoreBackup,
+  setAgentBackupSettings,
 } from "@/api/endpoints";
 import type { BackupInfo } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
+import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { FormRow, FormSection } from "@/components/ui/Form";
+import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { ErrorState, LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -19,7 +22,8 @@ import { useSession } from "@/session/SessionProvider";
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
@@ -44,8 +48,16 @@ function BackupCard({
         {backup.backup_type} · {formatBytes(backup.size)}
       </Text>
       <View style={styles.actions}>
-        <View style={styles.action}><Button variant="secondary" disabled={busy} onPress={restore}>Restore</Button></View>
-        <View style={styles.action}><Button variant="plain" disabled={busy} onPress={remove}>Delete</Button></View>
+        <View style={styles.action}>
+          <Button variant="secondary" disabled={busy} onPress={restore}>
+            Restore
+          </Button>
+        </View>
+        <View style={styles.action}>
+          <Button variant="plain" disabled={busy} onPress={remove}>
+            Delete
+          </Button>
+        </View>
       </View>
     </Card>
   );
@@ -55,35 +67,98 @@ export function BackupsSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
+  const { showError } = useToast();
   const { colors } = usePreferences();
   const backups = useQuery({
     queryKey: ["backups", name],
     queryFn: () => listBackups(api, name),
   });
   const action = useMutation({
-    mutationFn: async (operation: { type: "create" } | { type: "restore" | "delete"; id: string }) => {
+    mutationFn: async (
+      operation:
+        { type: "create" } | { type: "restore" | "delete"; id: string },
+    ) => {
       if (operation.type === "create") await createBackup(api, name);
-      if (operation.type === "restore") await restoreBackup(api, name, operation.id);
-      if (operation.type === "delete") await deleteBackup(api, name, operation.id);
+      if (operation.type === "restore")
+        await restoreBackup(api, name, operation.id);
+      if (operation.type === "delete")
+        await deleteBackup(api, name, operation.id);
       return operation.type;
     },
     onSuccess: (type) => {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
-      if (type === "restore") Alert.alert("Backup restored", `${name} is restarting with the selected snapshot.`);
+      if (type === "restore")
+        Alert.alert(
+          "Backup restored",
+          `${name} is restarting with the selected snapshot.`,
+        );
     },
+    onError: (error) => showError(error, "The backup action failed"),
+  });
+  const backupSettings = useQuery({
+    queryKey: ["backup-settings", name],
+    queryFn: () => getAgentBackupSettings(api, name),
+  });
+  const toggleAuto = useMutation({
+    mutationFn: (enabled: boolean) => setAgentBackupSettings(api, name, enabled),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["backup-settings", name], updated);
+    },
+    onError: (error) => showError(error, "Could not update automatic backups"),
   });
 
   if (backups.isLoading) return <LoadingState label="Loading backups…" />;
   if (!backups.data) {
-    return <ErrorState message="Backups are unavailable." retry={() => void backups.refetch()} />;
+    return (
+      <ErrorState
+        message="Backups are unavailable."
+        retry={() => void backups.refetch()}
+      />
+    );
   }
 
   return (
     <>
-      <FormSection title="Snapshots" footer="A backup captures the agent state before a risky change. Restoring replaces the current state and restarts the agent.">
-        <FormRow label="Available backups" value={String(backups.data.length)} icon="archive-outline" />
+      <FormSection
+        title="Automatic backups"
+        footer="Snapshot this agent automatically on the schedule and before every update."
+      >
+        <SwitchRow
+          label="Enabled"
+          value={backupSettings.data?.enabled ?? false}
+          disabled={backupSettings.isLoading || toggleAuto.isPending}
+          onValueChange={(enabled) => toggleAuto.mutate(enabled)}
+        />
       </FormSection>
-      <Button loading={action.isPending} icon="cloud-upload-outline" onPress={() => action.mutate({ type: "create" })}>Back up now</Button>
+      <FormSection
+        title="Snapshots"
+        footer="A backup captures the agent state before a risky change. Restoring replaces the current state and restarts the agent."
+      >
+        <FormRow
+          label="Available backups"
+          value={String(backups.data.length)}
+          icon="archive-outline"
+        />
+      </FormSection>
+      <Button
+        loading={action.isPending}
+        icon="cloud-upload-outline"
+        onPress={() =>
+          Alert.alert(
+            "Back up now?",
+            "The agent pauses briefly while the snapshot is captured.",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Back up",
+                onPress: () => action.mutate({ type: "create" }),
+              },
+            ],
+          )
+        }
+      >
+        Back up now
+      </Button>
       {[...backups.data]
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
         .map((backup) => (
@@ -91,22 +166,40 @@ export function BackupsSection() {
             key={backup.id}
             backup={backup}
             busy={action.isPending}
-            restore={() => Alert.alert("Restore this backup?", "Current agent state will be replaced.", [
-              { text: "Cancel", style: "cancel" },
-              { text: "Restore", onPress: () => action.mutate({ type: "restore", id: backup.id }) },
-            ])}
-            remove={() => Alert.alert("Delete this backup?", "This snapshot cannot be recovered.", [
-              { text: "Cancel", style: "cancel" },
-              { text: "Delete", style: "destructive", onPress: () => action.mutate({ type: "delete", id: backup.id }) },
-            ])}
+            restore={() =>
+              Alert.alert(
+                "Restore this backup?",
+                "Current agent state will be replaced.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Restore",
+                    onPress: () =>
+                      action.mutate({ type: "restore", id: backup.id }),
+                  },
+                ],
+              )
+            }
+            remove={() =>
+              Alert.alert(
+                "Delete this backup?",
+                "This snapshot cannot be recovered.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: () =>
+                      action.mutate({ type: "delete", id: backup.id }),
+                  },
+                ],
+              )
+            }
           />
         ))}
       {backups.data.length === 0 ? (
-        <Text style={[styles.empty, { color: colors.secondaryText }]}>No backups yet.</Text>
-      ) : null}
-      {action.error ? (
-        <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-          {action.error instanceof Error ? action.error.message : "The backup action failed."}
+        <Text style={[styles.empty, { color: colors.secondaryText }]}>
+          No backups yet.
         </Text>
       ) : null}
     </>

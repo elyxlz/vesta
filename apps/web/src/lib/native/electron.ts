@@ -1,7 +1,7 @@
 // Counterpart of the VestaNativeApi contract implemented by
 // apps/desktop/src/preload.ts, keep the two declarations identical.
-import type { ConnectionConfig } from "@/lib/connection";
 import type { Platform } from "@/lib/platform";
+import { parseConnectionConfig } from "./parse-connection-config";
 import type { NativeBridge, VestaNativeApi } from "./types";
 
 const NODE_PLATFORM_MAP: Record<string, Platform> = {
@@ -10,14 +10,6 @@ const NODE_PLATFORM_MAP: Record<string, Platform> = {
   linux: "linux",
 };
 
-function isConnectionConfig(value: unknown): value is ConnectionConfig {
-  if (value === null || typeof value !== "object") return false;
-  const config = value as ConnectionConfig;
-  return Boolean(
-    config.url && config.accessToken && (config.refreshToken || config.hosted),
-  );
-}
-
 export function createElectronBridge(api: VestaNativeApi): NativeBridge {
   const platform = NODE_PLATFORM_MAP[api.platform] ?? "linux";
   return {
@@ -25,8 +17,7 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
     platform,
     connectionStore: {
       async read() {
-        const value = await api.storeRead();
-        return isConnectionConfig(value) ? value : null;
+        return parseConnectionConfig(await api.storeRead());
       },
       async write(config) {
         await api.storeWrite(config);

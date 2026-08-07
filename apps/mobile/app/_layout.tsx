@@ -31,8 +31,12 @@ import {
   PreferencesProvider,
   usePreferences,
 } from "@/preferences/PreferencesProvider";
+import { PrivacyGate } from "@/privacy/privacy-gate";
+import { PrivacyProvider } from "@/privacy/privacy-provider";
 import { UserNotifications } from "@/notifications/UserNotifications";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
+import { PresenceReporter } from "@/presence/PresenceReporter";
+import { WhatsNewAutoOpen } from "@/releases/whats-new-auto-open";
 import {
   RosterHoldProvider,
   RosterProvider,
@@ -43,13 +47,12 @@ import { ChatHoldProvider } from "@/chat/ChatHoldProvider";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
-import { Text } from "@/components/ui/Typography";
+import { ToastProvider } from "@/components/native-toast";
 import {
   BootTransitionProvider,
   type BootDestination,
   type BootTargetFrame,
 } from "@/components/BootTransition";
-import { lightColors } from "@/theme/colors";
 import { fontNames } from "@/theme/typography";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -69,29 +72,28 @@ function SessionNavigation() {
   >({});
   const isConnectRoute =
     activeRoute === "connect" ||
+    activeRoute === "connect-actions" ||
     activeRoute === "connect-link" ||
     activeRoute === "recent-gateways" ||
     activeRoute === "scan";
   const isHomeRoute = !activeRoute;
   const routeNeedsAgents = isHomeRoute || activeRoute === "agent";
-  const activeColors = isConnectRoute ? lightColors : colors;
-  const navigationDark = !isConnectRoute && dark;
   const navigationTheme = useMemo(() => {
-    const base = navigationDark ? DarkTheme : DefaultTheme;
+    const base = dark ? DarkTheme : DefaultTheme;
     return {
       ...base,
-      dark: navigationDark,
+      dark,
       colors: {
         ...base.colors,
-        primary: activeColors.interactive,
-        background: activeColors.background,
-        card: activeColors.elevated,
-        text: activeColors.text,
-        border: activeColors.border,
-        notification: activeColors.danger,
+        primary: colors.interactive,
+        background: colors.background,
+        card: colors.elevated,
+        text: colors.text,
+        border: colors.border,
+        notification: colors.danger,
       },
     };
-  }, [activeColors, navigationDark]);
+  }, [colors, dark]);
   const routeMatchesSession =
     (status === "disconnected" && isConnectRoute) ||
     (status === "connected" &&
@@ -136,30 +138,18 @@ function SessionNavigation() {
     <BootTransitionProvider
       active={bootSplashVisible}
       onTarget={reportBootTarget}
+      pageRevealed={bootPageRevealed}
       targetVisible={bootTargetVisible}
     >
-      <View
-        style={[
-          styles.appSurface,
-          { backgroundColor: activeColors.background },
-        ]}
-      >
+      <View style={[styles.appSurface, { backgroundColor: colors.background }]}>
         <ThemeProvider value={navigationTheme}>
-          <StatusBar
-            style={
-              (bootSplashVisible && !bootPageRevealed) ||
-              isConnectRoute ||
-              !dark
-                ? "dark"
-                : "light"
-            }
-          />
+          <StatusBar style={dark ? "light" : "dark"} />
           <Stack
             screenOptions={{
-              contentStyle: { backgroundColor: activeColors.background },
+              contentStyle: { backgroundColor: colors.background },
               headerTransparent: true,
               headerStyle: { backgroundColor: "transparent" },
-              headerTintColor: activeColors.text,
+              headerTintColor: colors.text,
               headerTitleStyle: {
                 fontFamily: fontNames.heading.native["500"],
                 fontSize: 24,
@@ -173,6 +163,17 @@ function SessionNavigation() {
               headerBackButtonDisplayMode: "minimal",
             }}
           >
+            <Stack.Screen
+              name="privacy"
+              options={{
+                headerShown: false,
+                presentation: "formSheet",
+                sheetAllowedDetents: "fitToContents",
+                sheetGrabberVisible: false,
+                gestureEnabled: false,
+                contentStyle: { backgroundColor: colors.card },
+              }}
+            />
             <Stack.Protected guard={status !== "connected"}>
               <Stack.Screen
                 name="connect"
@@ -183,12 +184,25 @@ function SessionNavigation() {
                 }}
               />
               <Stack.Screen
+                name="connect-actions"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: false,
+                  sheetLargestUndimmedDetentIndex: "last",
+                  gestureEnabled: false,
+                  contentStyle: { backgroundColor: colors.card },
+                }}
+              />
+              <Stack.Screen
                 name="connect-link"
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
+                  contentStyle: { backgroundColor: colors.card },
                 }}
               />
               <Stack.Screen
@@ -198,14 +212,20 @@ function SessionNavigation() {
                   presentation: "formSheet",
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
+                  contentStyle: { backgroundColor: colors.card },
                 }}
               />
               <Stack.Screen
                 name="scan"
                 options={{
-                  headerShown: false,
-                  presentation: "fullScreenModal",
-                  statusBarHidden: true,
+                  title: "",
+                  headerShown: true,
+                  headerTitleAlign: "center",
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [1],
+                  sheetGrabberVisible: false,
+                  sheetExpandsWhenScrolledToEdge: false,
+                  contentStyle: { backgroundColor: colors.background },
                 }}
               />
             </Stack.Protected>
@@ -226,20 +246,40 @@ function SessionNavigation() {
                 }}
               />
               <Stack.Screen
+                name="gateway-update"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: false,
+                  gestureEnabled: false,
+                  contentStyle: { backgroundColor: colors.card },
+                }}
+              />
+              <Stack.Screen
                 name="settings"
                 options={{
                   title: "Settings",
-                  headerTitle: () => (
-                    <Text
-                      family="heading"
-                      style={[
-                        styles.settingsTitle,
-                        { color: activeColors.text },
-                      ]}
-                    >
-                      Settings
-                    </Text>
-                  ),
+                  headerTitleAlign: "center",
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [0.5, 1],
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
+                  contentStyle: { backgroundColor: colors.background },
+                }}
+              />
+              <Stack.Screen
+                name="whats-new"
+                options={{
+                  title: "What’s new",
+                  headerTitleAlign: "center",
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [0.5, 1],
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
+                  contentStyle: { backgroundColor: colors.background },
                 }}
               />
               <Stack.Screen name="debug" options={{ title: "Diagnostics" }} />
@@ -258,6 +298,7 @@ function SessionNavigation() {
               !bootSplashVisible
             }
           />
+          <WhatsNewAutoOpen enabled={!bootSplashVisible} />
           {bootSplashVisible ? (
             <BootSplash
               ready={routeMatchesSession}
@@ -277,12 +318,6 @@ function SessionNavigation() {
 
 const styles = StyleSheet.create({
   appSurface: { flex: 1 },
-  settingsTitle: {
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: "500",
-    letterSpacing: -0.7,
-  },
 });
 
 export default function RootLayout() {
@@ -316,19 +351,26 @@ export default function RootLayout() {
       <KeyboardProvider>
         <QueryClientProvider client={queryClient}>
           <PreferencesProvider>
-            <SessionProvider>
-              <RosterHoldProvider>
-                <ChatHoldProvider>
-                  <ControllerProvider>
-                    <RosterProvider>
-                      <UserNotifications />
-                      <PushCoordinator />
-                      <SessionNavigation />
-                    </RosterProvider>
-                  </ControllerProvider>
-                </ChatHoldProvider>
-              </RosterHoldProvider>
-            </SessionProvider>
+            <ToastProvider>
+              <PrivacyProvider>
+                <PrivacyGate>
+                  <SessionProvider>
+                    <RosterHoldProvider>
+                      <ChatHoldProvider>
+                        <ControllerProvider>
+                          <RosterProvider>
+                            <UserNotifications />
+                            <PresenceReporter />
+                            <PushCoordinator />
+                            <SessionNavigation />
+                          </RosterProvider>
+                        </ControllerProvider>
+                      </ChatHoldProvider>
+                    </RosterHoldProvider>
+                  </SessionProvider>
+                </PrivacyGate>
+              </PrivacyProvider>
+            </ToastProvider>
           </PreferencesProvider>
         </QueryClientProvider>
       </KeyboardProvider>

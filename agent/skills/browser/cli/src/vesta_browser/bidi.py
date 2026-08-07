@@ -8,8 +8,8 @@ BiDi is the W3C bidirectional protocol Camoufox's Firefox exposes on
                      {"id": N, "type": "error", "error": "...", "message": "..."}
                      {"type": "event", "method": "browsingContext.load", "params": {...}}
 
-The request/id correlation and event fan-out mirror the CDP client this replaces,
-so the daemon's loop is reused. Camoufox does not speak CDP (removed in FF141+),
+The request/id correlation and event fan-out match the CDP backend's, so the daemon's
+loop drives either one. Camoufox does not speak CDP (removed in FF141+),
 and there is no `Runtime.enable`-style leak to guard against here.
 """
 

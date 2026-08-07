@@ -41,6 +41,7 @@ from .models import State
 from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, observed_provider_failure
 
 OPENROUTER_API = "https://openrouter.ai/api"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"
 _MESSAGES_URL = "https://openrouter.ai/api/v1/messages"
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
@@ -103,6 +104,38 @@ async def _note_openrouter_rate_limit(app: web.Application, retry_after: str | N
 
 
 # --- pure request transforms (unit-tested) ---
+
+
+async def resolve_openrouter_max_tokens(config: VestaConfig) -> int | None:
+    """Look up the OpenRouter model's real context window. claude-code assumes a
+    200k window for non-Anthropic models (claude-code#46416), so the value passed
+    via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
+    The caller caps this at config.provider.max_context_tokens before passing it to the SDK
+    (cache-read cost scales with context size). Metadata failure is fatal for the session: guessing
+    can overrun a small model or silently expand an explicit user cap."""
+    if not isinstance(config.provider, OpenRouterConfig):
+        return None
+    try:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                OPENROUTER_MODELS_URL,
+                headers={"Authorization": f"Bearer {config.provider.key.get_secret_value()}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp,
+        ):
+            if resp.status != 200:
+                raise RuntimeError(f"OpenRouter model metadata returned HTTP {resp.status}")
+            body = await resp.json()
+    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        raise RuntimeError(f"OpenRouter context-window lookup failed: {e}") from e
+    models = body["data"] if isinstance(body, dict) and "data" in body else []
+    for entry in models:
+        if "id" in entry and entry["id"] == config.provider.model and "context_length" in entry:
+            ctx = entry["context_length"]
+            if isinstance(ctx, int) and ctx > 0:
+                return ctx
+    raise RuntimeError(f"OpenRouter model metadata has no valid context_length for {config.provider.model}")
 
 
 def _strip_cache_control(obj: tp.Any) -> None:

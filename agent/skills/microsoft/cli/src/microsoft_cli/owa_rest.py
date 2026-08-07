@@ -273,19 +273,18 @@ _MSG_SELECT = (
 _MAX_PAGE_SIZE = 100
 
 
-def _folder_id(name: str | None) -> str:
-    key = (name or "inbox").casefold()
-    return _FOLDER_MAP.get(key, key)
-
-
 # ---------------------------------------------------------------------------
 # Mail: read
 # ---------------------------------------------------------------------------
 
+# Read paths resolve folders via `resolve_folder_id`, the same resolver `move` uses: OWA REST
+# accepts a bare name in the URL path only for well-known folders, so a user-created one such
+# as `Screened` has to be looked up and addressed by id.
+
 
 def list_messages(client: httpx.Client, account_email: str, config, *, folder: str = "inbox", limit: int = 10) -> list[dict]:
     token = load_token(account_email, config)
-    fid = _folder_id(folder)
+    fid = resolve_folder_id(client, account_email, config, folder=folder)
     params = {
         "$select": _MSG_SELECT,
         "$orderby": "ReceivedDateTime desc",
@@ -297,7 +296,7 @@ def list_messages(client: httpx.Client, account_email: str, config, *, folder: s
 def list_messages_since(client: httpx.Client, account_email: str, config, *, folder: str, since_utc: str, limit: int) -> list[dict]:
     """Ascending order makes a truncated read a resumable prefix of the window, not its newest slice."""
     token = load_token(account_email, config)
-    fid = _folder_id(folder)
+    fid = resolve_folder_id(client, account_email, config, folder=folder)
     params = {
         "$select": _MSG_SELECT,
         "$filter": f"ReceivedDateTime gt {since_utc}",
@@ -312,7 +311,7 @@ def filter_messages_by_date(
 ) -> list[dict]:
     """Fetch messages in a receivedDateTime range, newest first, via server-side $filter."""
     token = load_token(account_email, config)
-    fid = _folder_id(folder or "inbox")
+    fid = resolve_folder_id(client, account_email, config, folder=folder or "inbox")
     params = {
         "$select": _MSG_SELECT,
         "$filter": date_filter,
@@ -324,7 +323,7 @@ def filter_messages_by_date(
 
 def search_messages(client: httpx.Client, account_email: str, config, *, query: str, folder: str | None = None, limit: int = 10) -> list[dict]:
     token = load_token(account_email, config)
-    fid = _folder_id(folder or "inbox")
+    fid = resolve_folder_id(client, account_email, config, folder=folder or "inbox")
     params: dict = {
         "$select": _MSG_SELECT,
         "$search": f'"{query}"',
@@ -392,15 +391,20 @@ def send_message(client: httpx.Client, account_email: str, config, *, mail: Mail
     return {"status": "sent"}
 
 
+def send_draft(client: httpx.Client, account_email: str, config, *, item_id: str) -> None:
+    token = load_token(account_email, config)
+    _post(client, token, f"/me/messages/{item_id}/send")
+
+
 def create_draft(client: httpx.Client, account_email: str, config, *, mail: MailDraft) -> dict:
     token = load_token(account_email, config)
 
     if mail.reply_to_id or mail.forward_id:
         source_id = mail.reply_to_id or mail.forward_id
-        endpoint = "createreply" if mail.reply_to_id else "createforward"
+        endpoint = "createreplyall" if mail.reply_to_id and mail.reply_all else "createreply" if mail.reply_to_id else "createforward"
         draft = _post(client, token, f"/me/messages/{source_id}/{endpoint}")
         draft_id = draft.get("id")
-        patch: dict[str, Any] = {"body": {"contentType": "Text", "content": mail.body}}
+        patch: dict[str, Any] = {"body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body}}
         if mail.subject:
             patch["subject"] = mail.subject
         if mail.to:
@@ -413,7 +417,7 @@ def create_draft(client: httpx.Client, account_email: str, config, *, mail: Mail
         _attach_files(client, token, draft_id, mail.attachments)
         return {"status": "drafted", "id": draft_id, "source_id": source_id}
 
-    result = _post(client, token, "/me/messages", _message_body(mail.subject or "", mail.body, mail.to, mail.cc, mail.bcc, False))
+    result = _post(client, token, "/me/messages", _message_body(mail.subject or "", mail.body, mail.to, mail.cc, mail.bcc, mail.html))
     draft_id = result.get("id")
     _attach_files(client, token, draft_id, mail.attachments)
     return {"status": "drafted", "id": draft_id}
@@ -559,17 +563,58 @@ def download_attachments(client: httpx.Client, account_email: str, config, *, em
 
 _FOLDER_SELECT = "id,displayName,parentFolderId,totalItemCount,unreadItemCount"
 
+# What an OWA folder id is made of, and the length below which a token is read as a display name.
+# Real ids run past a hundred characters, so the floor sits well clear of any folder a user names.
+_FOLDER_ID_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=+/")
+_FOLDER_ID_MIN_LEN = 64
+
+
+def _values(resp: dict) -> list[dict]:
+    return resp["value"] if "value" in resp else []
+
+
+def _folder_id_by_name(candidates: list[dict], key: str) -> str | None:
+    for candidate in candidates:
+        name = candidate["displayName"] if "displayName" in candidate else ""
+        if name and name.casefold() == key:
+            return candidate["id"]
+    return None
+
+
+def _is_folder_id(folder: str) -> bool:
+    """True for a token that is already an OWA folder id rather than a name to look up.
+
+    A folder id is a long opaque base64 string (``AAMkAG...AAA=``); a display name is short and
+    written for a human. Nothing that long and that shape is a name any listing would match, so
+    treating it as an id keeps a caller passing an id off the network entirely.
+    """
+    return len(folder) >= _FOLDER_ID_MIN_LEN and not (set(folder) - _FOLDER_ID_CHARS)
+
 
 def resolve_folder_id(client: httpx.Client, account_email: str, config, *, folder: str) -> str:
-    """Map a well-known key, a display name, or a raw folder id to an OWA folder path segment."""
+    """Map a well-known key, a display name, or a raw folder id to an OWA folder path segment.
+
+    A well-known key and a raw folder id both cost no request. A display name is matched against
+    the top-level listing first; only on a miss does it descend one level into each top-level
+    folder's children, which is where a nested folder such as Inbox/Screened lives and is the same
+    depth ``list_folders`` reports, so every folder the CLI can list is a folder it can address.
+    """
     key = folder.casefold()
     if key in _FOLDER_MAP:
         return _FOLDER_MAP[key]
+    if _is_folder_id(folder):
+        return folder
     token = load_token(account_email, config)
-    resp = _get(client, token, "/me/mailfolders", {"$select": "id,displayName", "$top": "100"})
-    for candidate in resp.get("value", []):
-        if (candidate.get("displayName") or "").casefold() == key:
-            return candidate["id"]
+    params = {"$select": "id,displayName", "$top": "100"}
+    top = _values(_get(client, token, "/me/mailfolders", params))
+    match = _folder_id_by_name(top, key)
+    if match is not None:
+        return match
+    for parent in top:
+        kids = _values(_get(client, token, f"/me/mailfolders/{parent['id']}/childfolders", params))
+        match = _folder_id_by_name(kids, key)
+        if match is not None:
+            return match
     return folder
 
 
@@ -580,7 +625,7 @@ def list_folders(client: httpx.Client, account_email: str, config) -> list[dict]
     for folder in top:
         out.append(folder)
         kids = _get(client, token, f"/me/mailfolders/{folder['id']}/childfolders", {"$select": _FOLDER_SELECT, "$top": "100"})
-        out.extend(kids.get("value", []))
+        out.extend(_values(kids))
     return out
 
 

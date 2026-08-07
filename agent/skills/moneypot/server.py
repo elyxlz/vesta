@@ -5,7 +5,8 @@ Stdlib only. Shares the same ~/agent/data/moneypot.json as the CLI. Mutations ar
 serialized with a lock so concurrent requests don't clobber the file.
 
 Run:  python3 server.py --port 8080
-Then register the port with vestad to expose it (see SETUP.md).
+`moneypot daemon start` is what launches it, on the private port it registers with vestad.
+vestad gates that port, so every route here answers an already-authorized request.
 
 Endpoints
   GET    /health
@@ -25,9 +26,7 @@ Endpoints
 from __future__ import annotations
 
 import argparse
-import hmac
 import json
-import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +37,9 @@ import moneypot as mp
 LOCK = threading.Lock()
 
 
+# Reads take no lock and need none: mp.save writes a temp file and renames it over the target, so a
+# reader sees either the whole previous file or the whole new one, never a torn write. Only mutations
+# serialize, because a read-modify-write pair would otherwise lose one of two concurrent updates.
 def _write(fn):
     with LOCK:
         data = mp.load()
@@ -46,11 +48,45 @@ def _write(fn):
         return result
 
 
+def _view_pot(pot_id, _q):
+    return mp.get_pot(mp.load(), pot_id)
+
+
+def _view_entries(pot_id, _q):
+    return mp.get_pot(mp.load(), pot_id)["entries"]
+
+
+def _view_balance(pot_id, _q):
+    return mp.balance(mp.load(), pot_id)
+
+
+def _view_contributions(pot_id, q):
+    account = (q.get("account") or [None])[0]
+    if not account:
+        raise mp.MoneypotError("?account= is required")
+    return mp.contributions(mp.load(), pot_id, account)
+
+
+# The per-pot GET routes, as (pattern, view). fullmatch means a longer path can never be swallowed
+# by the bare /pots/{id} pattern, so order here is presentational rather than load-bearing.
+_GET_POT_ROUTES = (
+    (r"/pots/([^/]+)", _view_pot),
+    (r"/pots/([^/]+)/entries", _view_entries),
+    (r"/pots/([^/]+)/balance", _view_balance),
+    (r"/pots/([^/]+)/contributions", _view_contributions),
+)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "moneypot/1.0"
 
-    def log_message(self, _format, *_args):
-        return
+    def log_message(self, fmt: str, *args: object) -> None:
+        """Quiet: per-request lines say nothing the daemon log does not already carry.
+
+        The base declares its first parameter as `format`, but every caller in http.server passes it
+        positionally, so renaming it here keeps the override substitutable without shadowing the
+        builtin.
+        """
 
     def _send(self, code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode()
@@ -59,23 +95,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-    def _authed(self) -> bool:
-        """Allow health checks and credentials matching the app or agent key."""
-        if urlparse(self.path).path.rstrip("/") in ("/health", ""):
-            return True
-        valid = [credential for credential in (self.server.api_key, self.server.agent_token) if credential]
-        if not valid:
-            return True
-        presented = []
-        auth = self.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            presented.append(auth[7:].strip())
-        for h in ("X-API-Key", "X-Agent-Token"):
-            v = self.headers.get(h, "").strip()
-            if v:
-                presented.append(v)
-        return any(hmac.compare_digest(candidate, credential) for candidate in presented for credential in valid)
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
@@ -93,54 +112,50 @@ class Handler(BaseHTTPRequestHandler):
     # -------- routing --------
 
     def do_GET(self):
-        self._dispatch(self._route_get)
+        try:
+            self._route_get()
+        except mp.MoneypotError as e:
+            self._send(400, {"error": str(e)})
+        except Exception as e:
+            self._send(500, {"error": str(e)})
 
     def do_POST(self):
-        self._dispatch(self._route_post)
+        try:
+            self._route_post()
+        except mp.MoneypotError as e:
+            self._send(400, {"error": str(e)})
+        except Exception as e:
+            self._send(500, {"error": str(e)})
 
     def do_DELETE(self):
-        self._dispatch(self._route_delete)
-
-    def _dispatch(self, route):
-        if not self._authed():
-            return self._send(401, {"error": "missing or invalid API key"})
         try:
-            route()
-        except mp.MoneypotError as exc:
-            self._send(400, {"error": str(exc)})
-        except (KeyError, OSError, TypeError) as exc:
-            self.log_error("request failed: %s", exc)
-            self._send(500, {"error": "internal server error"})
+            self._route_delete()
+        except mp.MoneypotError as e:
+            self._send(400, {"error": str(e)})
+        except Exception as e:
+            self._send(500, {"error": str(e)})
+
+    def _get_payload(self, path, q):
+        """The GET body for a path, or None when no route matches, so the router sends exactly once."""
+        if path == "/health":
+            return {"ok": True, "service": "moneypot"}
+        if path == "/pots":
+            data = mp.load()
+            return [
+                {"id": pid, **{k: v for k, v in p.items() if k != "entries"}, "entries": len(p["entries"])} for pid, p in data["pots"].items()
+            ]
+        for pattern, view in _GET_POT_ROUTES:
+            if m := re.fullmatch(pattern, path):
+                return view(m.group(1), q)
         return None
 
     def _route_get(self):
         u = urlparse(self.path)
         path = u.path.rstrip("/") or "/"
-        q = parse_qs(u.query)
-        if path == "/health":
-            code, payload = 200, {"ok": True, "service": "moneypot"}
-        elif path == "/pots":
-            data = mp.load()
-            payload = [
-                {"id": pid, **{k: v for k, v in p.items() if k != "entries"}, "entries": len(p["entries"])} for pid, p in data["pots"].items()
-            ]
-            code = 200
-        elif match := re.fullmatch(r"/pots/([^/]+)", path):
-            data = mp.load()
-            code, payload = 200, mp.get_pot(data, match.group(1))
-        elif match := re.fullmatch(r"/pots/([^/]+)/entries", path):
-            data = mp.load()
-            code, payload = 200, mp.get_pot(data, match.group(1))["entries"]
-        elif match := re.fullmatch(r"/pots/([^/]+)/balance", path):
-            code, payload = 200, mp.balance(mp.load(), match.group(1))
-        elif match := re.fullmatch(r"/pots/([^/]+)/contributions", path):
-            acct = (q.get("account") or [None])[0]
-            if not acct:
-                raise mp.MoneypotError("?account= is required")
-            code, payload = 200, mp.contributions(mp.load(), match.group(1), acct)
-        else:
-            code, payload = 404, {"error": f"no route GET {path}"}
-        return self._send(code, payload)
+        payload = self._get_payload(path, parse_qs(u.query))
+        if payload is None:
+            return self._send(404, {"error": f"no route GET {path}"})
+        return self._send(200, payload)
 
     def _route_post(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
@@ -214,28 +229,13 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": f"no route DELETE {path}"})
 
 
-class Server(ThreadingHTTPServer):
-    def __init__(self, address, handler, api_key, agent_token):
-        super().__init__(address, handler)
-        self.api_key = api_key
-        self.agent_token = agent_token
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument(
-        "--api-key",
-        default=os.environ.get("MONEYPOT_API_KEY"),
-        help="require this key on all routes except /health (also via MONEYPOT_API_KEY). Omit for an open API.",
-    )
     args = ap.parse_args()
-    api_key = args.api_key or None
-    agent_token = os.environ.get("AGENT_TOKEN") or None
-    srv = Server((args.host, args.port), Handler, api_key, agent_token)
-    mode = "private (credential required)" if api_key or agent_token else "open (no auth configured)"
-    print(f"moneypot API on {args.host}:{args.port} - {mode}", flush=True)
+    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"moneypot API on {args.host}:{args.port}", flush=True)
     srv.serve_forever()
 
 

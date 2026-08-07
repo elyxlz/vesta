@@ -13,32 +13,33 @@ import json
 
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
 
+
 def get_game_scores(slug):
     """slug = URL slug e.g. 'elden-ring', 'the-last-of-us'"""
     base = f"https://backend.metacritic.com"
-    product = json.loads(http_get(
-        f"{base}/games/metacritic/{slug}/web"
-        f"?componentName=product&componentType=Product&apiKey={API_KEY}"
-    ))
-    user_stats = json.loads(http_get(
-        f"{base}/reviews/metacritic/user/games/{slug}/stats/web"
-        f"?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"
-    ))
+    product = json.loads(http_get(f"{base}/games/metacritic/{slug}/web?componentName=product&componentType=Product&apiKey={API_KEY}"))
+    user_stats = json.loads(
+        http_get(
+            f"{base}/reviews/metacritic/user/games/{slug}/stats/web"
+            f"?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"
+        )
+    )
     item = product["data"]["item"]
     crit = item["criticScoreSummary"]
     user = user_stats["data"]["item"]
     return {
         "title": item["title"],
-        "platform": item["platform"],           # lead platform
-        "platforms": item["platforms"],          # list with per-platform scores
-        "metascore": crit["score"],              # int 0–100 or None
+        "platform": item["platform"],  # lead platform
+        "platforms": item["platforms"],  # list with per-platform scores
+        "metascore": crit["score"],  # int 0–100 or None
         "critic_reviews": crit["reviewCount"],  # int
-        "critic_sentiment": crit["sentiment"],   # e.g. "Universal acclaim"
-        "user_score": user["score"],             # float 0.0–10.0 or None
-        "user_reviews": user["reviewCount"],     # int
+        "critic_sentiment": crit["sentiment"],  # e.g. "Universal acclaim"
+        "user_score": user["score"],  # float 0.0–10.0 or None
+        "user_reviews": user["reviewCount"],  # int
         "user_sentiment": user["sentiment"],
-        "release_date": item["releaseDate"],     # "YYYY-MM-DD"
+        "release_date": item["releaseDate"],  # "YYYY-MM-DD"
     }
+
 
 print(get_game_scores("the-last-of-us"))
 # {'title': 'The Last of Us', 'platform': 'PlayStation 3',
@@ -57,23 +58,20 @@ If you only need the Metascore and critic review count and don't need the user s
 ```python
 import json, re
 
-url = "https://www.metacritic.com/game/elden-ring/"   # or /movie/ or /tv/
+url = "https://www.metacritic.com/game/elden-ring/"  # or /movie/ or /tv/
 html = http_get(url)
 
-block = re.findall(
-    r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
-    html, re.DOTALL
-)[0]
+block = re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)[0]
 ld = json.loads(block)
 
 agg = ld["aggregateRating"]
-print(ld["name"])                   # "Elden Ring"
-print(agg["ratingValue"])           # 96  (metascore)
-print(agg["reviewCount"])           # 93  (critic reviews count)
-print(ld.get("gamePlatform"))       # ['Xbox One', 'PC', 'PlayStation 4', 'Xbox Series X', 'PlayStation 5']
-print(ld.get("genre"))              # "Action RPG"
-print(ld.get("contentRating"))      # "M"
-print(ld.get("datePublished"))      # "2022-02-25"
+print(ld["name"])  # "Elden Ring"
+print(agg["ratingValue"])  # 96  (metascore)
+print(agg["reviewCount"])  # 93  (critic reviews count)
+print(ld.get("gamePlatform"))  # ['Xbox One', 'PC', 'PlayStation 4', 'Xbox Series X', 'PlayStation 5']
+print(ld.get("genre"))  # "Action RPG"
+print(ld.get("contentRating"))  # "M"
+print(ld.get("datePublished"))  # "2022-02-25"
 ```
 
 **JSON-LD limitations:**
@@ -93,32 +91,45 @@ import json
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
 BASE = "https://backend.metacritic.com"
 
+
 # Games
 def game_scores(slug):
     p = json.loads(http_get(f"{BASE}/games/metacritic/{slug}/web?componentName=product&componentType=Product&apiKey={API_KEY}"))
-    u = json.loads(http_get(f"{BASE}/reviews/metacritic/user/games/{slug}/stats/web?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"))
+    u = json.loads(
+        http_get(
+            f"{BASE}/reviews/metacritic/user/games/{slug}/stats/web?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"
+        )
+    )
     c = p["data"]["item"]["criticScoreSummary"]
     us = u["data"]["item"]
-    return {"metascore": c["score"], "critic_reviews": c["reviewCount"],
-            "user_score": us["score"], "user_reviews": us["reviewCount"]}
+    return {"metascore": c["score"], "critic_reviews": c["reviewCount"], "user_score": us["score"], "user_reviews": us["reviewCount"]}
+
 
 # Movies
 def movie_scores(slug):
     p = json.loads(http_get(f"{BASE}/movies/metacritic/{slug}/web?componentName=product&componentType=Product&apiKey={API_KEY}"))
-    u = json.loads(http_get(f"{BASE}/reviews/metacritic/user/movies/{slug}/stats/web?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"))
+    u = json.loads(
+        http_get(
+            f"{BASE}/reviews/metacritic/user/movies/{slug}/stats/web?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"
+        )
+    )
     c = p["data"]["item"]["criticScoreSummary"]
     us = u["data"]["item"]
-    return {"metascore": c["score"], "critic_reviews": c["reviewCount"],
-            "user_score": us["score"], "user_reviews": us["reviewCount"]}
+    return {"metascore": c["score"], "critic_reviews": c["reviewCount"], "user_score": us["score"], "user_reviews": us["reviewCount"]}
+
 
 # TV shows
 def show_scores(slug):
     p = json.loads(http_get(f"{BASE}/shows/metacritic/{slug}/web?componentName=product&componentType=Product&apiKey={API_KEY}"))
-    u = json.loads(http_get(f"{BASE}/reviews/metacritic/user/shows/{slug}/stats/web?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"))
+    u = json.loads(
+        http_get(
+            f"{BASE}/reviews/metacritic/user/shows/{slug}/stats/web?componentName=user-score-summary&componentType=ScoreSummary&apiKey={API_KEY}"
+        )
+    )
     c = p["data"]["item"]["criticScoreSummary"]
     us = u["data"]["item"]
-    return {"metascore": c["score"], "critic_reviews": c["reviewCount"],
-            "user_score": us["score"], "user_reviews": us["reviewCount"]}
+    return {"metascore": c["score"], "critic_reviews": c["reviewCount"], "user_score": us["score"], "user_reviews": us["reviewCount"]}
+
 
 # Verified results:
 print(game_scores("the-last-of-us"))
@@ -140,12 +151,15 @@ import urllib.request, gzip
 
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
 
+
 def _fetch(url):
     h = {"User-Agent": "Mozilla/5.0", "Accept-Encoding": "gzip"}
     with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=15) as r:
         data = r.read()
-        if r.headers.get("Content-Encoding") == "gzip": data = gzip.decompress(data)
+        if r.headers.get("Content-Encoding") == "gzip":
+            data = gzip.decompress(data)
         return json.loads(data.decode())
+
 
 def batch_game_scores(slugs, workers=5):
     """Fetch critic+user scores for multiple game slugs in parallel."""
@@ -153,20 +167,25 @@ def batch_game_scores(slugs, workers=5):
     AK = f"apiKey={API_KEY}"
 
     def fetch_one(slug):
-        c = _fetch(f"{BASE}/reviews/metacritic/critic/games/{slug}/stats/web?componentName=critic-score-summary&componentType=ScoreSummary&{AK}")
+        c = _fetch(
+            f"{BASE}/reviews/metacritic/critic/games/{slug}/stats/web?componentName=critic-score-summary&componentType=ScoreSummary&{AK}"
+        )
         u = _fetch(f"{BASE}/reviews/metacritic/user/games/{slug}/stats/web?componentName=user-score-summary&componentType=ScoreSummary&{AK}")
         ci = c["data"]["item"]
         ui = u["data"]["item"]
-        return {"slug": slug, "metascore": ci["score"], "critic_reviews": ci["reviewCount"],
-                "user_score": ui["score"], "user_reviews": ui["reviewCount"]}
+        return {
+            "slug": slug,
+            "metascore": ci["score"],
+            "critic_reviews": ci["reviewCount"],
+            "user_score": ui["score"],
+            "user_reviews": ui["reviewCount"],
+        }
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         return list(ex.map(fetch_one, slugs))
 
-results = batch_game_scores([
-    "the-last-of-us", "elden-ring", "god-of-war",
-    "red-dead-redemption-2", "the-witcher-3-wild-hunt"
-])
+
+results = batch_game_scores(["the-last-of-us", "elden-ring", "god-of-war", "red-dead-redemption-2", "the-witcher-3-wild-hunt"])
 # the-last-of-us: meta=95/98critics, user=9.2/17207
 # elden-ring: meta=96/86critics, user=8.4/23344
 # god-of-war: meta=94/118critics, user=9.0/30439
@@ -180,6 +199,7 @@ results = batch_game_scores([
 import json, urllib.parse
 
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
+
 
 def search(query, media_type=None, limit=10):
     """
@@ -200,7 +220,7 @@ def search(query, media_type=None, limit=10):
     return [
         {
             "title": i["title"],
-            "type": i["type"],          # "game-title", "movie", "tv-show"
+            "type": i["type"],  # "game-title", "movie", "tv-show"
             "slug": i["slug"],
             "year": i.get("premiereYear"),
             "metascore": i.get("criticScoreSummary", {}).get("score"),
@@ -208,6 +228,7 @@ def search(query, media_type=None, limit=10):
         }
         for i in items
     ]
+
 
 results = search("elden ring", media_type="games")
 # [{'title': 'Elden Ring', 'type': 'game-title', 'slug': 'elden-ring', 'year': 2022, 'metascore': 96, ...}]
@@ -222,6 +243,7 @@ import json
 
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
 
+
 def browse_games(sort_by="-metaScore", year_min=None, year_max=None, offset=0, limit=24):
     """
     sort_by: '-metaScore' | '-releaseDate' | '-popularityCount'
@@ -229,8 +251,10 @@ def browse_games(sort_by="-metaScore", year_min=None, year_max=None, offset=0, l
     Total available: ~14,160 games.
     """
     params = f"sortBy={sort_by}&mcoTypeId=13&offset={offset}&limit={limit}"
-    if year_min: params += f"&releaseYearMin={year_min}"
-    if year_max: params += f"&releaseYearMax={year_max}"
+    if year_min:
+        params += f"&releaseYearMin={year_min}"
+    if year_max:
+        params += f"&releaseYearMax={year_max}"
     url = f"https://backend.metacritic.com/finder/metacritic/web?{params}&componentName=finder&componentType=Finder&apiKey={API_KEY}"
     data = json.loads(http_get(url))
     total = data["data"]["totalResults"]
@@ -247,8 +271,9 @@ def browse_games(sort_by="-metaScore", year_min=None, year_max=None, offset=0, l
         for i in items
     ]
 
+
 total, games = browse_games(year_min=2023, year_max=2024)
-print(f"{total} games 2023-2024")   # 953
+print(f"{total} games 2023-2024")  # 953
 for g in games[:3]:
     print(g)
 # {'title': "Baldur's Gate 3", 'year': 2023, 'metascore': 96, 'user_score': 9.2}
@@ -267,11 +292,9 @@ import json
 
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
 
+
 def game_platforms(slug):
-    url = (
-        f"https://backend.metacritic.com/games/metacritic/{slug}/web"
-        f"?componentName=product&componentType=Product&apiKey={API_KEY}"
-    )
+    url = f"https://backend.metacritic.com/games/metacritic/{slug}/web?componentName=product&componentType=Product&apiKey={API_KEY}"
     data = json.loads(http_get(url))
     platforms = data["data"]["item"]["platforms"]
     return [
@@ -279,12 +302,13 @@ def game_platforms(slug):
             "name": p["name"],
             "slug": p["slug"],
             "is_lead": p["isLeadPlatform"],
-            "metascore": p["criticScoreSummary"]["score"],        # None if <4 reviews
+            "metascore": p["criticScoreSummary"]["score"],  # None if <4 reviews
             "critic_reviews": p["criticScoreSummary"]["reviewCount"],
             "release_date": p["releaseDate"],
         }
         for p in platforms
     ]
+
 
 print(game_platforms("elden-ring"))
 # [{'name': 'Xbox One', 'slug': 'xbox-one', 'is_lead': False, 'metascore': None, ...},
@@ -301,6 +325,7 @@ import json
 
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
 
+
 def get_critic_reviews(slug, media="games", offset=0, limit=10, sort="date"):
     """sort: 'date' | 'score' | 'publication'"""
     url = (
@@ -309,11 +334,11 @@ def get_critic_reviews(slug, media="games", offset=0, limit=10, sort="date"):
         f"&componentName=latest-critic-reviews&componentType=CriticReviewList&apiKey={API_KEY}"
     )
     data = json.loads(http_get(url))
-    total = data["data"]["totalResults"]   # e.g. 98
+    total = data["data"]["totalResults"]  # e.g. 98
     items = data["data"]["items"]
     return total, [
         {
-            "score": r["score"],                # int 0–100
+            "score": r["score"],  # int 0–100
             "publication": r["publicationName"],
             "quote": r["quote"],
             "date": r["date"],
@@ -322,8 +347,9 @@ def get_critic_reviews(slug, media="games", offset=0, limit=10, sort="date"):
         for r in items
     ]
 
+
 total, reviews = get_critic_reviews("the-last-of-us", sort="score")
-print(f"{total} critic reviews")   # 98
+print(f"{total} critic reviews")  # 98
 print(reviews[0])
 # {'score': 97, 'publication': 'GamingXP', 'quote': 'Flawless in its ambition...', 'date': '...'}
 ```
@@ -335,6 +361,7 @@ import json
 
 API_KEY = "1MOZgmNFxvmljaQR1X9KAij9Mo4xAY3u"
 
+
 def get_user_reviews(slug, media="games", offset=0, limit=10, order_by="score", order_type="desc"):
     """order_by: 'score' | 'date' | 'helpfulness'"""
     url = (
@@ -343,11 +370,11 @@ def get_user_reviews(slug, media="games", offset=0, limit=10, order_by="score", 
         f"&componentName=top-user-reviews&componentType=UserReviewList&apiKey={API_KEY}"
     )
     data = json.loads(http_get(url))
-    total = data["data"]["totalResults"]   # e.g. 2983 for The Last of Us
+    total = data["data"]["totalResults"]  # e.g. 2983 for The Last of Us
     items = data["data"]["items"]
     return total, [
         {
-            "score": r["score"],   # int 0–10
+            "score": r["score"],  # int 0–10
             "quote": r["quote"],
             "date": r["date"],
             "spoiler": r.get("spoiler", False),
@@ -355,8 +382,9 @@ def get_user_reviews(slug, media="games", offset=0, limit=10, order_by="score", 
         for r in items
     ]
 
+
 total, reviews = get_user_reviews("the-last-of-us")
-print(f"{total} user reviews")   # 2983
+print(f"{total} user reviews")  # 2983
 ```
 
 ### NUXT_DATA extraction (alternative, no API key)
@@ -369,45 +397,57 @@ import json, re
 url = "https://www.metacritic.com/game/the-last-of-us/"
 html = http_get(url)
 
-pool = json.loads(
-    re.search(r'<script[^>]*id="__NUXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL).group(1)
-)
+pool = json.loads(re.search(r'<script[^>]*id="__NUXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL).group(1))
+
 
 def deref(pool, idx, depth=0, visited=None):
-    if visited is None: visited = set()
-    if not isinstance(idx, int) or idx in visited or depth > 4: return idx
+    if visited is None:
+        visited = set()
+    if not isinstance(idx, int) or idx in visited or depth > 4:
+        return idx
     visited.add(idx)
     val = pool[idx]
     if isinstance(val, dict):
-        return {k: deref(pool, v, depth+1, visited) if isinstance(v, int) else v for k, v in val.items()}
-    elif isinstance(val, list) and len(val) == 2 and isinstance(val[0], str) and val[0] in ('Ref','Reactive','ShallowReactive','ShallowRef'):
-        return deref(pool, val[1], depth+1, visited)
+        return {k: deref(pool, v, depth + 1, visited) if isinstance(v, int) else v for k, v in val.items()}
+    elif isinstance(val, list) and len(val) == 2 and isinstance(val[0], str) and val[0] in ("Ref", "Reactive", "ShallowReactive", "ShallowRef"):
+        return deref(pool, val[1], depth + 1, visited)
     elif isinstance(val, list):
-        return [deref(pool, v, depth+1, visited) if isinstance(v, int) else v for v in val]
+        return [deref(pool, v, depth + 1, visited) if isinstance(v, int) else v for v in val]
     return val
+
 
 # Find components
 components_idx = next(
-    pool[i] for i, v in enumerate(pool)
-    if isinstance(v, list) and len(v) > 3 and all(isinstance(x, int) for x in v[:3])
-    and isinstance(pool[v[0]], dict) and 'data' in pool[v[0]] and 'meta' in pool[v[0]]
+    pool[i]
+    for i, v in enumerate(pool)
+    if isinstance(v, list)
+    and len(v) > 3
+    and all(isinstance(x, int) for x in v[:3])
+    and isinstance(pool[v[0]], dict)
+    and "data" in pool[v[0]]
+    and "meta" in pool[v[0]]
 )
+
 
 def find_component(pool, name):
     for i, val in enumerate(pool):
-        if not isinstance(val, dict) or 'data' not in val or 'meta' not in val: continue
-        meta = pool[val['meta']] if isinstance(val.get('meta'), int) else {}
-        if not isinstance(meta, dict): continue
-        cname = pool[meta.get('componentName')] if isinstance(meta.get('componentName'), int) else ''
-        if cname == name: return deref(pool, val['data'])
+        if not isinstance(val, dict) or "data" not in val or "meta" not in val:
+            continue
+        meta = pool[val["meta"]] if isinstance(val.get("meta"), int) else {}
+        if not isinstance(meta, dict):
+            continue
+        cname = pool[meta.get("componentName")] if isinstance(meta.get("componentName"), int) else ""
+        if cname == name:
+            return deref(pool, val["data"])
     return None
 
-critic = find_component(pool, 'critic-score-summary')
-user = find_component(pool, 'user-score-summary')
-print("Metascore:", critic['item']['score'])        # 95
-print("Critic reviews:", critic['item']['reviewCount'])  # 98
-print("User score:", user['item']['score'])         # 9.2
-print("User reviews:", user['item']['reviewCount']) # 17207
+
+critic = find_component(pool, "critic-score-summary")
+user = find_component(pool, "user-score-summary")
+print("Metascore:", critic["item"]["score"])  # 95
+print("Critic reviews:", critic["item"]["reviewCount"])  # 98
+print("User score:", user["item"]["score"])  # 9.2
+print("User reviews:", user["item"]["reviewCount"])  # 17207
 ```
 
 ---
@@ -429,10 +469,12 @@ Derive slug from the page URL: everything between the media-type path and the tr
 ```python
 import re
 
+
 def slug_from_url(url):
     # Works for /game/, /movie/, /tv/
-    m = re.search(r'/(?:game|movie|tv)/([^/]+)/', url)
+    m = re.search(r"/(?:game|movie|tv)/([^/]+)/", url)
     return m.group(1) if m else None
+
 
 slug_from_url("https://www.metacritic.com/game/the-last-of-us/")  # "the-last-of-us"
 ```

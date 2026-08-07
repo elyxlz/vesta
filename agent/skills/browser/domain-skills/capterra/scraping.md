@@ -15,14 +15,11 @@ from helpers import http_get
 import re, json
 
 # Works everywhere:
-html = http_get(
-    "https://www.capterra.com/p/135003/Slack/reviews/",
-    headers={"User-Agent": "ClaudeBot"}
-)
+html = http_get("https://www.capterra.com/p/135003/Slack/reviews/", headers={"User-Agent": "ClaudeBot"})
 
 # Extract overall rating and review count from the Markdown header line "4.7 (24059)"
-m = re.search(r'^([\d.]+)\s+\(([\d,]+)\)$', html, re.MULTILINE)
-print(m.group(1), m.group(2))   # 4.7  24059
+m = re.search(r"^([\d.]+)\s+\(([\d,]+)\)$", html, re.MULTILINE)
+print(m.group(1), m.group(2))  # 4.7  24059
 ```
 
 ---
@@ -34,6 +31,7 @@ All key metrics — overall rating, review count, sub-ratings, pagination — co
 ```python
 from helpers import http_get
 import re, json
+
 
 def get_product_summary(product_id, slug):
     """
@@ -47,7 +45,7 @@ def get_product_summary(product_id, slug):
     result = {"product_id": product_id, "slug": slug}
 
     # Overall rating + review count from header line "4.7 (24059)"
-    m = re.search(r'^([\d.]+)\s+\(([\d,]+)\)$', html, re.MULTILINE)
+    m = re.search(r"^([\d.]+)\s+\(([\d,]+)\)$", html, re.MULTILINE)
     if m:
         result["overall_rating"] = float(m.group(1))
         result["review_count"] = int(m.group(2).replace(",", ""))
@@ -73,6 +71,7 @@ def get_product_summary(product_id, slug):
                         pass
 
     return result
+
 
 summary = get_product_summary(135003, "Slack")
 print(json.dumps(summary, indent=2))
@@ -100,6 +99,7 @@ print(json.dumps(summary, indent=2))
 from helpers import http_get
 import re
 
+
 def get_reviews_page(product_id, slug, page=1):
     """
     Returns up to 25 reviews for one page.
@@ -109,7 +109,7 @@ def get_reviews_page(product_id, slug, page=1):
     html = http_get(url, headers={"User-Agent": "ClaudeBot"})
 
     # Total review count from header
-    m = re.search(r'^([\d.]+)\s+\(([\d,]+)\)$', html, re.MULTILINE)
+    m = re.search(r"^([\d.]+)\s+\(([\d,]+)\)$", html, re.MULTILINE)
     total = int(m.group(2).replace(",", "")) if m else 0
 
     # Showing X-Y of Z
@@ -128,10 +128,7 @@ def get_reviews_page(product_id, slug, page=1):
             r["title"] = t.group(1).strip()
 
         # Date
-        d = re.search(
-            r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+,\s+\d{4}",
-            block
-        )
+        d = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+,\s+\d{4}", block)
         if d:
             r["date"] = d.group(0)
 
@@ -162,6 +159,7 @@ def get_reviews_page(product_id, slug, page=1):
         "reviews": reviews,
     }
 
+
 # Page 1
 result = get_reviews_page(135003, "Slack", page=1)
 print(f"Total reviews: {result['total']}, this page: {len(result['reviews'])}")
@@ -183,6 +181,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 UA = {"User-Agent": "ClaudeBot"}
 
+
 def _fetch_page(args):
     product_id, slug, page = args
     url = f"https://www.capterra.com/p/{product_id}/{slug}/reviews/?page={page}"
@@ -192,28 +191,32 @@ def _fetch_page(args):
     for block in blocks[1:]:
         r = {}
         t = re.match(r'([^"]+)"', block)
-        if t: r["title"] = t.group(1).strip()
+        if t:
+            r["title"] = t.group(1).strip()
         d = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+,\s+\d{4}", block)
-        if d: r["date"] = d.group(0)
+        if d:
+            r["date"] = d.group(0)
         rm = re.search(r"\n\n([\d.]+)\n\n", block)
         if rm:
             val = float(rm.group(1))
-            if 1.0 <= val <= 5.0: r["rating"] = val
+            if 1.0 <= val <= 5.0:
+                r["rating"] = val
         pros = re.search(r"\nPros\n\n(.+?)(?=\n\nCons|\n\nReview Source|\n\nSwitched|\Z)", block, re.DOTALL)
-        if pros: r["pros"] = pros.group(1).strip()
+        if pros:
+            r["pros"] = pros.group(1).strip()
         cons = re.search(r"\nCons\n\n(.+?)(?=\n\nReview Source|\n\nSwitched|\n\n##|\Z)", block, re.DOTALL)
-        if cons: r["cons"] = cons.group(1).strip()
-        if r.get("title"): reviews.append(r)
+        if cons:
+            r["cons"] = cons.group(1).strip()
+        if r.get("title"):
+            reviews.append(r)
     return reviews
+
 
 def get_all_reviews(product_id, slug, max_pages=None, workers=5):
     """Fetch all reviews in parallel. max_pages=None fetches everything."""
     # First: get total pages
-    summary_html = http_get(
-        f"https://www.capterra.com/p/{product_id}/{slug}/reviews/",
-        headers=UA
-    )
-    m = re.search(r'^([\d.]+)\s+\(([\d,]+)\)$', summary_html, re.MULTILINE)
+    summary_html = http_get(f"https://www.capterra.com/p/{product_id}/{slug}/reviews/", headers=UA)
+    m = re.search(r"^([\d.]+)\s+\(([\d,]+)\)$", summary_html, re.MULTILINE)
     total = int(m.group(2).replace(",", "")) if m else 0
     total_pages = (total + 24) // 25
     pages = range(1, (max_pages or total_pages) + 1)
@@ -224,6 +227,7 @@ def get_all_reviews(product_id, slug, max_pages=None, workers=5):
         for batch in ex.map(_fetch_page, tasks):
             all_reviews.extend(batch)
     return all_reviews
+
 
 # Fetch first 50 reviews (2 pages) in parallel
 reviews = get_all_reviews(135003, "Slack", max_pages=2, workers=2)
@@ -237,6 +241,7 @@ print(f"Fetched {len(reviews)} reviews")
 from helpers import http_get
 import re, json
 
+
 def get_product_overview(product_id, slug):
     """Rating breakdown, sentiment, starting price from the product page."""
     url = f"https://www.capterra.com/p/{product_id}/{slug}/"
@@ -246,35 +251,35 @@ def get_product_overview(product_id, slug):
 
     # Overall rating and review count from the reviews section
     # Appears as "\n4.7\n\nBased on 24,059 reviews\n"
-    m = re.search(r'\n([\d.]+)\n\nBased on ([\d,]+) reviews\n', html)
+    m = re.search(r"\n([\d.]+)\n\nBased on ([\d,]+) reviews\n", html)
     if m:
         result["overall_rating"] = float(m.group(1))
         result["review_count"] = int(m.group(2).replace(",", ""))
 
     # Rating breakdown: "5(17268)\n\n4(5708)\n\n3(907)\n\n2(128)\n\n1(48)"
-    breakdown = re.findall(r'\b([1-5])\((\d+)\)', html)
+    breakdown = re.findall(r"\b([1-5])\((\d+)\)", html)
     if breakdown:
         result["rating_breakdown"] = {int(s): int(c) for s, c in breakdown if 1 <= int(s) <= 5}
 
     # Sentiment: "Positive\n\n96%\n\nNeutral\n\n4%\n\nNegative\n\n1%"
     for label, key in [("Positive", "sentiment_positive"), ("Neutral", "sentiment_neutral"), ("Negative", "sentiment_negative")]:
-        sm = re.search(rf'{label}\s*\n+\s*(\d+)%', html)
+        sm = re.search(rf"{label}\s*\n+\s*(\d+)%", html)
         if sm:
             result[key] = int(sm.group(1))
 
     # Starting price ("Starting price\n\n$8.75\n\nPer User")
-    pm = re.search(r'Starting price\s*\n+\$?([\d.]+)', html)
+    pm = re.search(r"Starting price\s*\n+\$?([\d.]+)", html)
     if pm:
         result["starting_price_usd"] = float(pm.group(1))
 
     # Categories ("What is X used for?" links)
-    cats = re.findall(r'\[([^\]]+)\]\(https://www\.capterra\.com/([a-z-]+-software)/\)', html[:3000])
+    cats = re.findall(r"\[([^\]]+)\]\(https://www\.capterra\.com/([a-z-]+-software)/\)", html[:3000])
     if cats:
         result["categories"] = [name for name, _ in cats]
 
     # Sub-ratings from product page
     for label, key in [("Value for money", "value_for_money"), ("Features", "features_rating")]:
-        sub = re.search(rf'{label}\s*\n+\s*([\d.]+)', html)
+        sub = re.search(rf"{label}\s*\n+\s*([\d.]+)", html)
         if sub:
             try:
                 val = float(sub.group(1))
@@ -284,6 +289,7 @@ def get_product_overview(product_id, slug):
                 pass
 
     return result
+
 
 overview = get_product_overview(135003, "Slack")
 print(json.dumps(overview, indent=2))
@@ -307,6 +313,7 @@ Each category page returns up to 40 products on page 1, then ~24–25 per subseq
 from helpers import http_get
 import re
 
+
 def get_category_products(category_slug, page=1):
     """
     List products in a Capterra category.
@@ -319,29 +326,27 @@ def get_category_products(category_slug, page=1):
     html = http_get(url, headers={"User-Agent": "ClaudeBot"})
 
     # Ratings: [4.6 (5732)](https://www.capterra.com/p/147657/monday-com/reviews/)
-    raw = re.findall(
-        r'\[([\d.]+)\s+\(([\d,]+)\)\]\(https://www\.capterra\.com/p/(\d+)/([^/]+)/reviews/\)',
-        html
-    )
+    raw = re.findall(r"\[([\d.]+)\s+\(([\d,]+)\)\]\(https://www\.capterra\.com/p/(\d+)/([^/]+)/reviews/\)", html)
     # Product names from "Learn more about X" links
-    names = {pid: name for name, pid in re.findall(
-        r'\[Learn more about ([^\]]+)\]\(https://www\.capterra\.com/p/(\d+)/[^/]+/\)', html
-    )}
+    names = {pid: name for name, pid in re.findall(r"\[Learn more about ([^\]]+)\]\(https://www\.capterra\.com/p/(\d+)/[^/]+/\)", html)}
 
     items, seen = [], set()
     for rating, review_count, pid, slug in raw:
         if pid not in seen:
             seen.add(pid)
-            items.append({
-                "product_id": int(pid),
-                "name": names.get(pid, slug),
-                "slug": slug,
-                "overall_rating": float(rating),
-                "review_count": int(review_count.replace(",", "")),
-                "product_url": f"https://www.capterra.com/p/{pid}/{slug}/",
-                "reviews_url": f"https://www.capterra.com/p/{pid}/{slug}/reviews/",
-            })
+            items.append(
+                {
+                    "product_id": int(pid),
+                    "name": names.get(pid, slug),
+                    "slug": slug,
+                    "overall_rating": float(rating),
+                    "review_count": int(review_count.replace(",", "")),
+                    "product_url": f"https://www.capterra.com/p/{pid}/{slug}/",
+                    "reviews_url": f"https://www.capterra.com/p/{pid}/{slug}/reviews/",
+                }
+            )
     return items
+
 
 products = get_category_products("project-management-software", page=1)
 for p in products[:3]:
@@ -357,14 +362,16 @@ for p in products[:3]:
 from helpers import http_get
 import re
 
+
 def get_all_categories():
     """Returns list of {name, slug} for all ~1003 Capterra software categories."""
     html = http_get("https://www.capterra.com/categories/", headers={"User-Agent": "ClaudeBot"})
-    cats = re.findall(r'\[([^\]]+)\]\(https://www\.capterra\.com/([a-z-]+-software)/\)', html)
+    cats = re.findall(r"\[([^\]]+)\]\(https://www\.capterra\.com/([a-z-]+-software)/\)", html)
     return [{"name": name, "slug": slug} for name, slug in cats]
 
+
 categories = get_all_categories()
-print(f"{len(categories)} categories")   # 1003
+print(f"{len(categories)} categories")  # 1003
 print(categories[:3])
 # [{'name': 'AB Testing', 'slug': 'ab-testing-software'},
 #  {'name': 'Absence Management', 'slug': 'absence-management-software'}, ...]

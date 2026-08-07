@@ -22,7 +22,7 @@ describe("parseConnectLink", () => {
   it("rejects a link without a key", () => {
     expect(parseConnectLink("https://agent.example.com/app")).toEqual({
       ok: false,
-      message: "This connection link has no key.",
+      message: "This connection link has no key",
     });
   });
 });

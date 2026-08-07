@@ -133,9 +133,35 @@ def forward() -> dict:
     return _go_history(1)
 
 
+def _reusable_context() -> str | None:
+    """A top-level context to take over when the browser will not create a tab.
+
+    Prefers one showing no page, so a page in use is never clobbered.
+    """
+    try:
+        contexts = bidi("browsingContext.getTree")["contexts"]
+    except RuntimeError:
+        return None
+    for node in contexts:
+        if (node["url"] if "url" in node else "").startswith(INTERNAL_URL_PREFIXES):
+            return node["context"]
+    return contexts[0]["context"] if contexts else None
+
+
 def new_tab(url: str = "about:blank") -> str:
-    """Create a new tab, switch to it, optionally navigate. Returns its context id."""
-    ctx = bidi("browsingContext.create", type="tab")["context"]
+    """Create a new tab, switch to it, optionally navigate. Returns its context id.
+
+    Some builds accept the BiDi connection and then never answer
+    browsingContext.create, which fails after the daemon's wait even though the browser
+    is healthy and its existing contexts navigate fine. Falling back to one of those
+    keeps the session usable; with none to take over, the create error stands.
+    """
+    try:
+        ctx = bidi("browsingContext.create", type="tab")["context"]
+    except RuntimeError:
+        ctx = _reusable_context()
+        if ctx is None:
+            raise
     _set_context(ctx)
     if url and url != "about:blank":
         goto(url)
@@ -275,10 +301,36 @@ def _resolve_center(ref: str) -> tuple[float, float]:
     return box["x"], box["y"]
 
 
-def click_ref(ref: str, button: str = "left", clicks: int = 1) -> None:
-    """Click an element by ref (e.g. 'e5') from the most recent snapshot."""
+def _occluder_at(ref: str, x: float, y: float) -> str | None:
+    """Describe what sits on top at a ref's click point, or None when the ref is clear.
+
+    An overlay taking the click is otherwise indistinguishable from a dead button:
+    the click reports success and the DOM shows nothing wrong.
+    """
+    probe = (
+        "(() => {"
+        f"const r = (globalThis.__vestaRefs || {{}})[{json.dumps(_norm_ref(ref))}];"
+        "if (!r || !r.el) return null;"
+        f"const hit = document.elementFromPoint({x}, {y});"
+        "if (!hit || hit === r.el || r.el.contains(hit)) return null;"
+        "const cls = typeof hit.className === 'string' && hit.className.trim()"
+        " ? '.' + hit.className.trim().split(/\\s+/).join('.') : '';"
+        "return hit.tagName.toLowerCase() + cls;"
+        "})()"
+    )
+    return _eval_value(f"JSON.stringify({probe})")
+
+
+def click_ref(ref: str, button: str = "left", clicks: int = 1) -> str | None:
+    """Click an element by ref (e.g. 'e5') from the most recent snapshot.
+
+    Returns what intercepted the click when something else is on top at that point,
+    so an overlay is not mistaken for a button that does nothing.
+    """
     x, y = _resolve_center(ref)
+    occluder = _occluder_at(ref, x, y)
     click(x, y, button=button, clicks=clicks)
+    return occluder
 
 
 def type_ref(ref: str, text: str, submit: bool = False, slowly: bool = False) -> None:

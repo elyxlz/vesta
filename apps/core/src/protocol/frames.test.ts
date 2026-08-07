@@ -41,12 +41,14 @@ describe("server frame and tree shapes", () => {
             status: "alive",
             activityState: "idle",
             buildPhase: null,
+            operation: null,
             startedAt: "2026-07-18T00:00:00Z",
             services: {},
           },
           notifications: { pending: [event] },
         },
       },
+      devices: [],
     }
     const snapshot: SnapshotFrame = { type: "snapshot", tree }
     expect(snapshot.tree.agents.scout?.notifications.pending[0]?.id).toBe(7)

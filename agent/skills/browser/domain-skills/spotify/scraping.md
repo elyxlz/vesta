@@ -15,6 +15,7 @@ Returns JSON in ~0.25s. Works for tracks, albums, playlists, and artists. Does *
 from helpers import http_get
 import json
 
+
 def spotify_oembed(resource_type, resource_id):
     """Fetch oEmbed metadata for a Spotify resource.
 
@@ -25,6 +26,7 @@ def spotify_oembed(resource_type, resource_id):
     url = f"https://open.spotify.com/oembed?url={resource_url}"
     data = json.loads(http_get(url))
     return data
+
 
 # Example: track
 track = spotify_oembed("track", "4PTG3Z6ehGkBFwjybzWkR8")
@@ -69,12 +71,14 @@ track_ids = [
     "0VjIjW4GlUZAMYd2vXMi3b",
 ]
 
+
 def fetch_oembed(tid):
     url = f"https://open.spotify.com/oembed?url=https://open.spotify.com/track/{tid}"
     try:
         return json.loads(http_get(url))
     except Exception as e:
         return {"error": str(e), "id": tid}
+
 
 with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(fetch_oembed, track_ids))
@@ -92,6 +96,7 @@ Every open.spotify.com page (track, album, playlist, artist) serves full HTML wi
 ```python
 from helpers import http_get
 import json, re
+
 
 def scrape_track(track_id):
     url = f"https://open.spotify.com/track/{track_id}"
@@ -112,21 +117,22 @@ def scrape_track(track_id):
     allowed_countries = re.findall(r'<meta\s+property="og:restrictions:country:allowed"\s+content="([^"]*)"', html)
 
     return {
-        "title":          metas.get("og:title"),
-        "artist":         metas.get("music:musician_description"),
-        "artist_urls":    musician_urls,               # spotify artist page URLs
-        "album_url":      metas.get("music:album"),    # spotify album page URL
-        "track_number":   metas.get("music:album:track"),
-        "duration_s":     int(metas.get("music:duration", 0)),
-        "release_date":   metas.get("music:release_date"),  # YYYY-MM-DD
-        "cover_art":      metas.get("og:image"),       # 640px JPG
-        "audio_preview":  metas.get("og:audio"),       # 30s MP3 (may be None)
-        "spotify_url":    metas.get("og:url"),
-        "description":    metas.get("og:description"),
+        "title": metas.get("og:title"),
+        "artist": metas.get("music:musician_description"),
+        "artist_urls": musician_urls,  # spotify artist page URLs
+        "album_url": metas.get("music:album"),  # spotify album page URL
+        "track_number": metas.get("music:album:track"),
+        "duration_s": int(metas.get("music:duration", 0)),
+        "release_date": metas.get("music:release_date"),  # YYYY-MM-DD
+        "cover_art": metas.get("og:image"),  # 640px JPG
+        "audio_preview": metas.get("og:audio"),  # 30s MP3 (may be None)
+        "spotify_url": metas.get("og:url"),
+        "description": metas.get("og:description"),
         "eligible_regions": allowed_countries,
-        "ld_name":        ld.get("name"),
-        "ld_date":        ld.get("datePublished"),
+        "ld_name": ld.get("name"),
+        "ld_date": ld.get("datePublished"),
     }
+
 
 # Tested on track/4PTG3Z6ehGkBFwjybzWkR8 (Never Gonna Give You Up):
 # {
@@ -160,12 +166,13 @@ def scrape_artist(artist_id):
             metas[m.group(1)] = m.group(2)
 
     return {
-        "name":              metas.get("og:title"),
+        "name": metas.get("og:title"),
         "monthly_listeners": metas.get("og:description"),  # "Artist · 6.7M monthly listeners."
-        "image":             metas.get("og:image"),         # full-size artist photo
-        "spotify_url":       metas.get("og:url"),
-        "description":       ld.get("description"),
+        "image": metas.get("og:image"),  # full-size artist photo
+        "spotify_url": metas.get("og:url"),
+        "description": ld.get("description"),
     }
+
 
 # Tested on Rick Astley (artist/0gxyHStUsqpMadRV0Di1Qt):
 # {
@@ -185,6 +192,7 @@ def scrape_artist(artist_id):
 from helpers import http_get
 import json, re
 
+
 def scrape_embed(resource_type, resource_id):
     """
     resource_type: 'track', 'album', 'playlist', or 'artist'
@@ -194,7 +202,8 @@ def scrape_embed(resource_type, resource_id):
     html = http_get(url)
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
     data = json.loads(m.group(1))
-    return data['props']['pageProps']['state']['data']['entity']
+    return data["props"]["pageProps"]["state"]["data"]["entity"]
+
 
 # ---- TRACK ----
 entity = scrape_embed("track", "4PTG3Z6ehGkBFwjybzWkR8")
@@ -254,13 +263,14 @@ def get_embed_token(resource_type="track", resource_id="4PTG3Z6ehGkBFwjybzWkR8")
     html = http_get(url)
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
     data = json.loads(m.group(1))
-    session = data['props']['pageProps']['state']['settings']['session']
+    session = data["props"]["pageProps"]["state"]["settings"]["session"]
     return {
-        "access_token":  session['accessToken'],
-        "expires_ms":    session['accessTokenExpirationTimestampMs'],
-        "is_anonymous":  session['isAnonymous'],          # always True
-        "client_id":     data['props']['pageProps']['config']['clientId'],
+        "access_token": session["accessToken"],
+        "expires_ms": session["accessTokenExpirationTimestampMs"],
+        "is_anonymous": session["isAnonymous"],  # always True
+        "client_id": data["props"]["pageProps"]["config"]["clientId"],
     }
+
 
 # Returned fields (verified 2026-04-18):
 # access_token: "BQBfxv..." (a standard Spotify Bearer token, ~160 chars)
@@ -317,8 +327,10 @@ Extract Spotify ID from any URL:
 
 ```python
 import re
+
+
 def spotify_id(url):
-    m = re.search(r'spotify\.com/(?:embed/)?(?:track|album|artist|playlist)/([A-Za-z0-9]{22})', url)
+    m = re.search(r"spotify\.com/(?:embed/)?(?:track|album|artist|playlist)/([A-Za-z0-9]{22})", url)
     return m.group(1) if m else None
 ```
 

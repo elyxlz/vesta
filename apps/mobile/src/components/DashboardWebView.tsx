@@ -61,8 +61,21 @@ function embeddedDocumentSetup(
   `;
 }
 
+// Dispatch bridge messages into the page as real MessageEvents, the shape parent-bridge.ts
+// listens for. A string postMessage payload is ignored by it.
+function dispatchMessagesScript(
+  bridgeMessages: readonly Record<string, unknown>[],
+): string {
+  return `
+    for (const data of ${serializeForInjection(bridgeMessages)}) {
+      window.dispatchEvent(new MessageEvent("message", { data }));
+    }
+    true;
+  `;
+}
+
 export interface DashboardWebViewHandle {
-  postMessage: (message: string) => void;
+  sendBridgeMessages: (messages: readonly Record<string, unknown>[]) => void;
 }
 
 interface DashboardWebViewProps {
@@ -85,11 +98,14 @@ export const DashboardWebView = forwardRef<
   { bridgeMessages, dark, ...props },
   forwardedRef,
 ) {
-  const nativeRef = useRef<DashboardWebViewHandle>(null);
+  const nativeRef = useRef<{
+    injectJavaScript: (script: string) => void;
+  }>(null);
   useImperativeHandle(
     forwardedRef,
     () => ({
-      postMessage: (message) => nativeRef.current?.postMessage(message),
+      sendBridgeMessages: (messages) =>
+        nativeRef.current?.injectJavaScript(dispatchMessagesScript(messages)),
     }),
     [],
   );

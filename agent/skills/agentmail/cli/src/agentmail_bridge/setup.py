@@ -178,14 +178,8 @@ def _print_summary(inbox: dict, webhook_url: str) -> None:
     click.echo("\nfor send / list / etc., the wrapper passes through to the official CLI:")
     click.echo(f"  agentmail inboxes:messages send --inbox-id {inbox['inbox_id']} \\")
     click.echo("    --to recipient@example.com --subject 'hi' --text 'hello'")
-    click.echo("\nnext: register and start the local webhook receiver")
-    click.echo(
-        "  PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services "
-        "-H \"X-Agent-Token: $AGENT_TOKEN\" -H 'Content-Type: application/json' "
-        '-d \'{"name":"agentmail","public":true}\' | '
-        "python3 -c \"import sys,json; print(json.load(sys.stdin)['port'])\")"
-    )
-    click.echo("  screen -dmS agentmail agentmail serve --port $PORT")
+    click.echo("\nnext: start the local webhook receiver (it registers its own public port)")
+    click.echo("  agentmail daemon start")
 
 
 @click.command("setup")

@@ -36,12 +36,13 @@ from .settings import DEFAULT_CLIENT_ID
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
-# Delegated Graph scopes for Teams. Every one is user-consentable (no admin
-# consent), so `auth teams-login` works for non-admins. Chat.ReadWrite subsumes
-# read + send + create-chat + edit; ChannelMessage.Send covers channel posts and
-# replies. Reading channel *messages* needs the admin-only ChannelMessage.Read.All,
-# deliberately left out so it never blocks the consent bundle; grant it on your own
-# app registration (MICROSOFT_MCP_CLIENT_ID) if you need channel reads.
+# Delegated Graph scopes for Teams. All are work/school only: the consumer (MSA)
+# endpoint never grants them, so Teams needs a work or school account. On such a
+# tenant every one is user-consentable, so `auth teams-login` works for non-admins.
+# Chat.ReadWrite subsumes read + send + create-chat + edit; ChannelMessage.Send
+# covers channel posts and replies. Reading channel *messages* needs the admin-only
+# ChannelMessage.Read.All, deliberately left out so it never blocks the consent
+# bundle; grant it on your own app registration (MICROSOFT_MCP_CLIENT_ID) instead.
 TEAMS_SCOPES = [
     "https://graph.microsoft.com/Chat.ReadWrite",
     "https://graph.microsoft.com/ChannelMessage.Send",
@@ -101,6 +102,16 @@ def mark_device_account(account_email: str, config) -> None:
     p = _token_path(account_email, config)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"source": "device"}))
+
+
+def unmark_device_account(account_email: str, config) -> None:
+    """Drop a device marker so `has_token` stops claiming Teams for this account.
+
+    Leaves a browser-captured token alone: that marker holds a real token this function
+    has no reason to destroy."""
+    marker = _read_marker(account_email, config)
+    if marker is not None and _source(marker) == "device":
+        _token_path(account_email, config).unlink(missing_ok=True)
 
 
 def save_token(account_email: str, config, *, token: str, expires_at: float, source: str = "browser") -> None:
@@ -170,12 +181,17 @@ def captured_token(config, account_email: str) -> str:
 
 
 def resolve_token(config, account_email: str) -> str:
-    """Return any usable Teams token (device first, then captured). Used by the monitor."""
+    """Return any usable Teams token (device first, then captured), raising a TeamsError when there
+    is none. The monitor's single token entry point: a device-marked account whose MSAL token is
+    absent surfaces as TeamsNoTokenError here, so callers handle one failure type."""
     marker = _read_marker(account_email, config)
     if marker is None:
         raise TeamsNoTokenError(f"No Teams token for {account_email}. Run: microsoft auth teams-login")
     if _source(marker) == "device":
-        return graph_token(config, account_email)
+        try:
+            return graph_token(config, account_email)
+        except backend.GraphUnavailableError as exc:
+            raise TeamsNoTokenError(str(exc)) from exc
     return captured_token(config, account_email)
 
 
