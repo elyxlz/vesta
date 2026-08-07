@@ -483,14 +483,33 @@ def _table_ddl(conn: sqlite3.Connection) -> list[tuple[str, str]]:
     return conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL").fetchall()
 
 
-def _channel_row(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str]:
-    """One row's text cells by column name; a missing row is an empty dict."""
+def _cell_text(value: object) -> str | None:
+    """The scannable text of a cell: a str as-is, a BLOB decoded latin-1, else None. latin-1 is a
+    lossless 1:1 byte<->codepoint map, so re-encoding a scrubbed BLOB restores every unmatched byte.
+    An outbound email is queued as a payload BLOB, so a scan that reads only str cells certifies the
+    send queue clean while a pasted credential rides in it."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("latin-1")
+    return None
+
+
+def _scannable_cells(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str | bytes]:
+    """One row's str and BLOB cells by column name, keeping each cell's storage type so a scrub
+    writes a BLOB back as a BLOB; a missing row is an empty dict."""
     cursor = conn.execute(f'SELECT * FROM "{table}" WHERE rowid = ?', (rowid,))
     row = cursor.fetchone()
     if row is None:
         return {}
     names = [description[0] for description in cursor.description]
-    return {name: value for name, value in zip(names, row, strict=True) if isinstance(value, str)}
+    return {name: value for name, value in zip(names, row, strict=True) if isinstance(value, str | bytes)}
+
+
+def _channel_row(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str]:
+    """One row's scannable cells as text by column name (a BLOB decoded latin-1); a missing row is
+    an empty dict. The scrub reads types through `_scannable_cells` so it can write a BLOB back."""
+    return {name: text for name, value in _scannable_cells(conn, table, rowid).items() if (text := _cell_text(value)) is not None}
 
 
 def channel_stored_hits(conn: sqlite3.Connection, refs: list[tuple[str, int]]) -> dict[tuple[str, int], list[str]]:
@@ -529,11 +548,11 @@ def scrub_channel_rows(conn: sqlite3.Connection, refs: list[tuple[str, int]]) ->
     mirror row's own reference; both are idempotent, so hitting a row twice never mangles it."""
     changed = 0
     for table, rowid in refs:
-        updates = {
-            column: new_value
-            for column, value in _channel_row(conn, table, rowid).items()
-            if (new_value := _transform_cell(value, _redact_text)) != value
-        }
+        updates: dict[str, str | bytes] = {}
+        for column, value in _scannable_cells(conn, table, rowid).items():
+            text = _cell_text(value)
+            if text is not None and (new_text := _transform_cell(text, _redact_text)) != text:
+                updates[column] = new_text.encode("latin-1") if isinstance(value, bytes) else new_text
         if updates:
             assignments = ", ".join(f'"{column}" = ?' for column in updates)
             conn.execute(f'UPDATE "{table}" SET {assignments} WHERE rowid = ?', [*updates.values(), rowid])
@@ -556,7 +575,7 @@ def channel_rows_holding(conn: sqlite3.Connection, secret: str) -> int:
     for table in _store_tables(conn)[0]:
         cursor = conn.execute(f'SELECT rowid, * FROM "{table}"')
         while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
-            total += sum(1 for row in rows if any(isinstance(value, str) and _cell_holds(value, secret) for value in row[1:]))
+            total += sum(1 for row in rows if any((text := _cell_text(value)) is not None and _cell_holds(text, secret) for value in row[1:]))
     return total
 
 
@@ -575,14 +594,14 @@ def scrub_literal_channel(conn: sqlite3.Connection, secret: str) -> tuple[int, i
 def _replace_in_table(conn: sqlite3.Connection, table: str, transform: tp.Callable[[str], str]) -> int:
     cursor = conn.execute(f'SELECT rowid, * FROM "{table}"')
     names = [description[0] for description in cursor.description]
-    pending: list[tuple[int, dict[str, str]]] = []
+    pending: list[tuple[int, dict[str, str | bytes]]] = []
     while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
         for row in rows:
-            updates = {
-                name: new_value
-                for name, value in zip(names[1:], row[1:], strict=True)
-                if isinstance(value, str) and (new_value := _transform_cell(value, transform)) != value
-            }
+            updates: dict[str, str | bytes] = {}
+            for name, value in zip(names[1:], row[1:], strict=True):
+                text = _cell_text(value)
+                if text is not None and (new_text := _transform_cell(text, transform)) != text:
+                    updates[name] = new_text.encode("latin-1") if isinstance(value, bytes) else new_text
             if updates:
                 pending.append((row[0], updates))
     for rowid, updates in pending:
@@ -834,8 +853,9 @@ def _scan_table(conn: sqlite3.Connection, store: Store, table: str, deadline: fl
             return False
         for row in rows:
             for value in row[1:]:
-                if isinstance(value, str):
-                    hits.extend((f"{store.name}:{table}:{row[0]}", snippet) for snippet in find_matches(value))
+                text = _cell_text(value)
+                if text is not None:
+                    hits.extend((f"{store.name}:{table}:{row[0]}", snippet) for snippet in find_matches(text))
     return True
 
 

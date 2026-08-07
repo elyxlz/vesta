@@ -1066,3 +1066,51 @@ def test_show_prints_a_channel_row_with_the_secret_masked(tmp_path, event_bus, d
     assert SECRET not in out
     assert "[REDACTED]" in out
     assert "the aws key is" in out and "for backups" in out
+
+
+def _make_pending_send_store(home: pl.Path, body: str) -> pl.Path:
+    """email-client's outbound queue: the whole message is one payload BLOB, the shape the scan
+    used to skip and stamp clean."""
+    path = home / ".email-client" / "pending-sends.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE pending_sends (id INTEGER PRIMARY KEY, account TEXT, payload BLOB)")
+    conn.execute("INSERT INTO pending_sends (account, payload) VALUES ('me', ?)", (body.encode(),))
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_scan_flags_a_secret_in_a_blob_payload(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A queued outbound email holds its body as a payload BLOB; a scan that reads only str cells
+    would stamp the send queue scanned and clean while the credential rides out with the mail."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    _make_pending_send_store(tmp_path, f"Subject: keys\n\nuse aws key {SECRET} to deploy")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert SECRET not in out
+    assert "email-client:pending_sends:1|" in out
+    coverage_line = next(line for line in out.splitlines() if line.startswith("email-client:"))
+    assert "0 hit(s)" not in coverage_line
+
+
+def test_scrub_a_blob_payload_redacts_it_and_keeps_it_a_blob(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_pending_send_store(tmp_path, f"Subject: keys\n\nuse aws key {SECRET} to deploy")
+    out = _scan_output(monkeypatch, capsys)
+    refs = sorted({line.split("|", 1)[0] for line in out.splitlines() if line.startswith("email-client:")})
+    assert refs == ["email-client:pending_sends:1"]
+
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", *refs])
+    assert redact.main() == 0
+
+    conn = sqlite3.connect(path)
+    payload = conn.execute("SELECT payload FROM pending_sends WHERE id = 1").fetchone()[0]
+    conn.close()
+    assert isinstance(payload, bytes)  # written back as a BLOB, not silently retyped to TEXT
+    assert SECRET.encode() not in payload
+    assert b"[REDACTED]" in payload
+    assert b"use aws key" in payload and b"to deploy" in payload  # every other byte preserved
+    for sidecar in (path, pl.Path(f"{path}-wal")):
+        assert not sidecar.is_file() or SECRET.encode() not in sidecar.read_bytes()
