@@ -396,7 +396,7 @@ def test_device_authorized_account_is_owa_polled_not_skipped(tmp_path, monkeypat
     from microsoft_cli import auth, owa_rest
     from microsoft_cli.config import Config
 
-    account = "donatella@pichinon.com"
+    account = "dana@example.com"
     config = Config(data_dir=tmp_path)
     owa_rest.mark_device_account(account, config)  # real device marker on disk
 
@@ -424,7 +424,7 @@ def test_device_authorized_account_is_not_graph_polled(tmp_path, monkeypatch):
     from microsoft_cli import auth, owa_rest
     from microsoft_cli.config import Config
 
-    account = "donatella@pichinon.com"
+    account = "dana@example.com"
     owa_rest.mark_device_account(account, Config(data_dir=tmp_path))
 
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: None)
@@ -447,7 +447,7 @@ def test_a_torn_token_marker_does_not_abort_the_whole_poll_cycle(tmp_path, monke
     from microsoft_cli import auth, owa_rest
     from microsoft_cli.config import Config
 
-    account = "donatella@pichinon.com"
+    account = "dana@example.com"
     path = owa_rest._token_path(account, Config(data_dir=tmp_path))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"source": "dev')  # save_token caught mid-write
