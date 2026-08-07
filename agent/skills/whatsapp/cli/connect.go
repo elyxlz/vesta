@@ -182,7 +182,7 @@ func canonicalConnectArgs(program string, opts connectOptions) []string {
 }
 
 // runConnect is the agent's single WhatsApp setup verb. The agent states the account
-// source with --source (cloud, doubletick, or self-managed); the CLI validates that
+// source with --source (vesta-cloud, doubletick, or self-managed); the CLI validates that
 // the box environment can satisfy it and routes to the matching path, erring clearly
 // when it cannot. There is no auto-detection: the mode is the agent's explicit choice.
 // Idempotent and safe to re-run until `whatsapp status` shows linked.

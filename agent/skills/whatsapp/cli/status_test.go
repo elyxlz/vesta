@@ -31,11 +31,30 @@ func TestSimpleStatusNotLinkedSurfacesReason(t *testing.T) {
 	if got["linked"] != false {
 		t.Errorf("linked = %v, want false", got["linked"])
 	}
-	if got["next"] != "run: whatsapp connect --source <cloud|doubletick|self-managed>" {
+	if got["next"] != "run: whatsapp connect --source <vesta-cloud|doubletick|self-managed>" {
 		t.Errorf("next = %v, want the connect hint", got["next"])
 	}
 	if got["reason"] != "unlinked from the phone (stream:error logout)" {
 		t.Errorf("reason = %v, want the recorded last-exit reason", got["reason"])
+	}
+}
+
+// TestStatusHintSourcesAreAccepted runs every source named in the not-linked
+// recovery hint through validateConnectSource, so the hint can never hand the
+// agent a --source value connect rejects.
+func TestStatusHintSourcesAreAccepted(t *testing.T) {
+	next, ok := notLinkedStatus(t.TempDir(), "")["next"].(string)
+	if !ok {
+		t.Fatal("not-linked status must carry a next hint")
+	}
+	start, end := strings.Index(next, "<"), strings.Index(next, ">")
+	if start < 0 || end < start {
+		t.Fatalf("next = %q, want a <source|...> placeholder", next)
+	}
+	for _, source := range strings.Split(next[start+1:end], "|") {
+		if err := validateConnectSource(connectOptions{source: source}); err != nil {
+			t.Errorf("hinted source %q rejected by connect: %v", source, err)
+		}
 	}
 }
 
