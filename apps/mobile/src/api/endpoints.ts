@@ -14,6 +14,7 @@ import {
 } from "@vesta/core";
 import type { ApiClient } from "./client";
 import type {
+  AgentBackupSettings,
   BackupInfo,
   FileReadResponse,
   FileTreeEntry,
@@ -263,6 +264,24 @@ export async function deleteBackup(
   await api.request(
     `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}`,
     { method: "DELETE" },
+  );
+}
+
+export async function getAgentBackupSettings(
+  api: ApiClient,
+  name: string,
+): Promise<AgentBackupSettings> {
+  return api.json(`/agents/${encodeURIComponent(name)}/settings/backup`);
+}
+
+export async function setAgentBackupSettings(
+  api: ApiClient,
+  name: string,
+  enabled: boolean,
+): Promise<AgentBackupSettings> {
+  return api.json(
+    `/agents/${encodeURIComponent(name)}/settings/backup`,
+    api.jsonInit("PUT", { enabled }),
   );
 }
 

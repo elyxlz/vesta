@@ -299,6 +299,13 @@ function createVisualApi(): ApiClient {
           ],
         } as ResponseBody;
       }
+      if (path.endsWith("/settings/backup")) {
+        return {
+          enabled: true,
+          retention: { periodic: 2, pre_update_versions: 2 },
+          has_override: false,
+        } as ResponseBody;
+      }
       if (path.endsWith("/backups")) return backups as ResponseBody;
       if (path.includes("/voice/stt/status")) {
         return voiceStatuses.stt as ResponseBody;
