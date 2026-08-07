@@ -36,6 +36,7 @@ class Migration:
     name: str
     content: str
     phase: MigrationPhase
+    interruptible: bool = False
 
 
 MIGRATION_BATCH_INSTRUCTIONS = """[Migration batch]
@@ -64,6 +65,7 @@ def _parse_migration(path: pl.Path) -> Migration:
     """Read one migration, validating and removing its optional phase frontmatter."""
     text = path.read_text()
     phase = MigrationPhase.AFTER_SYNC
+    interruptible = False
     if text.startswith("---\n"):
         frontmatter, separator, content = text[4:].partition("\n---\n")
         if not separator:
@@ -76,7 +78,7 @@ def _parse_migration(path: pl.Path) -> Migration:
             if not field_separator or not key.strip() or not value.strip():
                 raise ValueError(f"{path}: invalid migration frontmatter line: {line!r}")
             fields[key.strip()] = value.strip()
-        unknown = set(fields) - {"migration_phase"}
+        unknown = set(fields) - {"migration_phase", "interruptible"}
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"{path}: unknown migration frontmatter field(s): {names}")
@@ -86,8 +88,14 @@ def _parse_migration(path: pl.Path) -> Migration:
             except ValueError as error:
                 allowed = ", ".join(item.value for item in MigrationPhase)
                 raise ValueError(f"{path}: migration_phase must be one of: {allowed}") from error
+        if "interruptible" in fields:
+            if phase is MigrationPhase.BEFORE_SYNC:
+                raise ValueError(f"{path}: interruptible is not allowed on a before_sync migration")
+            if fields["interruptible"] not in ("true", "false"):
+                raise ValueError(f"{path}: interruptible must be true or false")
+            interruptible = fields["interruptible"] == "true"
         text = content
-    return Migration(name=path.stem, content=text, phase=phase)
+    return Migration(name=path.stem, content=text, phase=phase, interruptible=interruptible)
 
 
 def list_pending(*, state: vm.State, config: cfg.VestaConfig) -> list[Migration]:

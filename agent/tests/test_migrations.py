@@ -106,6 +106,35 @@ def test_invalid_migration_phase_is_rejected(mig):
         list_pending(state=state, config=config)
 
 
+def test_interruptible_field_parses_and_defaults_false(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-yes.md").write_text("---\ninterruptible: true\n---\n\nbody a")
+    (migrations_dir / "002-no.md").write_text("---\ninterruptible: false\n---\n\nbody b")
+    (migrations_dir / "003-default.md").write_text("body c")
+
+    pending = list_pending(state=state, config=config)
+
+    assert [migration.interruptible for migration in pending] == [True, False, False]
+    assert "interruptible" not in pending[0].content
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_interruptible_rejected_on_before_sync(mig, value):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-bad.md").write_text(f"---\nmigration_phase: before_sync\ninterruptible: {value}\n---\n\nbody")
+
+    with pytest.raises(ValueError, match="interruptible is not allowed on a before_sync migration"):
+        list_pending(state=state, config=config)
+
+
+def test_invalid_interruptible_value_rejected(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-bad.md").write_text("---\ninterruptible: yes\n---\n\nbody")
+
+    with pytest.raises(ValueError, match="interruptible must be true or false"):
+        list_pending(state=state, config=config)
+
+
 def test_every_shipped_migration_parses():
     """A malformed shipped migration raises out of collect_boot_turns and crash-loops every agent
     on the boot that ships it, so the whole shipped set must parse here instead."""
