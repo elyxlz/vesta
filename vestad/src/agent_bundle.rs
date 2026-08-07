@@ -275,14 +275,15 @@ fn build_manifest(
 /// already back up, so every failure here cleans up its own litter (spool file, scrubbed
 /// image) and leaves the source untouched; `write_bundle` removes a partial `output` itself.
 async fn export_from_snapshot(docker: &Docker, request: ExportRequest<'_>, snapshot_tag: &str) -> Result<(), DockerError> {
+    let now_rfc3339 = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| docker_failed("formatting export timestamp", err))?;
+
     eprintln!("scrubbing credentials...");
     let scrub_result = scrub_image(docker, request.name, snapshot_tag, request.core_dir).await;
     crate::docker::remove_image(docker, snapshot_tag).await.ok();
     let scrubbed_tag = scrub_result?;
 
-    let now_rfc3339 = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|err| docker_failed("formatting export timestamp", err))?;
     let manifest = build_manifest(request.name, request.user_desired, request.mounts, now_rfc3339);
 
     let spool_path = spool_path_for(request.output);
