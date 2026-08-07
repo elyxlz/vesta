@@ -78,6 +78,22 @@ When the written-on point is behind master, fan out one subagent dedicated to th
 
 Fold the report into the comment, not alongside it: a PR whose problem master already fixed is `NOISE` (superseded; name the commit that did it) whatever its code quality, `partially fixed` reframes what the PR still buys, and `still broken` is what lets the verdict stand on today's code rather than the base's.
 
+## Make the verdict reproducible
+
+Two runs of this skill on the same PR should reach the same verdict. They diverge when they trace different things, scope a finding differently, or map findings to a verdict by feel. Close those three gaps every time.
+
+**Cover the same ground.** Before writing a verdict you must have traced each of these and know its result, whether or not it becomes a finding:
+- the PR's stated goal, end to end: run the documented or changed sequence to the state a user actually ends in, and confirm that state is the claimed one. Each command being individually valid is not the goal reached; "the flags are accepted" is not "read-only is in force".
+- every reader of anything the diff changes (a record, flag, format, column, wire field), in every language, tests and scripts included.
+- the failure, empty, and concurrent path of the main change, not only its happy path.
+- each closing-keyword issue, read from the issue itself, actually closed.
+
+A `MERGE` names the ground it attacked and held ("attacked on completeness, the filter edges, and the failure path"); an unstated attack surface is an unfinished review, not a clean one.
+
+**Scope by reachability, not by feel.** Nothing is "pre-existing" or "out of scope" until you have shown the PR's own changed surface cannot reach it: its diff, its documented flow, and the callers of the functions it touches. A defect whose mechanism predates the PR is still this PR's defect when the change's own flow triggers it. "That is the crash path, not this PR" is the exact miss that ships: test reachability before you file it away.
+
+**Map findings to the verdict mechanically.** The verdict is a function of the findings, not a closing impression. Any Blocking finding makes it `BUGGED`, or `NOISE` when the change should not be carried at all. A bypassable safety or auth control, lost or corrupted data, or a flow that does not reach its own stated goal is always Blocking, however narrow the window. No Blocking finding, a real problem solved, and the coverage floor met makes it `MERGE`. When two reviews of one PR disagree, the reachable Blocking finding outranks the review that only confirmed the parts are valid: re-derive from the code, never average the verdicts.
+
 ## Also confirm
 
 **It fixes the issue it claims to.** Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`) and read the issue itself, not the PR's description of it. Distinguish fixing it from fixing part of it, fixing something adjacent, and not addressing it at all. With no issue linked, say what problem the PR appears to solve and whether it is worth carrying.
