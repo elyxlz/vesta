@@ -421,7 +421,9 @@ def _contains_dashes(text: str) -> bool:
 async def process_message(msg: str, *, state: vm.State, config: cfg.VestaConfig) -> tuple[list[str], vm.State]:
     turn = await converse(msg, state=state, config=config, show_output=True)
     # turn.texts holds one entry per assistant message of the turn, and the warning can only ask for the last message back.
-    if config.block_dashes and turn.texts and _contains_dashes(turn.texts[-1]) and not turn.preempted:
+    # Check the same filtered copy _emit_parsed_content publishes: filter_tool_lines strips each line's
+    # leading whitespace, so an indented markdown bullet's " - " is not a separator in the emitted text.
+    if config.block_dashes and turn.texts and _contains_dashes(sdk_parsing.filter_tool_lines(turn.texts[-1])) and not turn.preempted:
         # A preempted turn's reply was cut short at a step boundary; correcting a truncated
         # reply would re-send it after the preempting prompt's work, so skip it.
         logger.warning("Em/en dash detected in response, sending correction")

@@ -402,6 +402,32 @@ async def test_process_message_no_correction(tmp_path, response):
     assert len(converse_calls) == 1
 
 
+@pytest.mark.parametrize(
+    ("response", "expected_calls"),
+    [(["Options:\n  - alpha\n  - beta"], 1), (["  - alpha\n  - beta"], 1), (["foo - bar"], 2)],
+    ids=["indented-bullets-after-intro", "indented-bullets-only", "genuine-separator"],
+)
+@pytest.mark.anyio
+async def test_process_message_checks_the_emitted_copy(tmp_path, response, expected_calls):
+    """The dash check runs over the same filter_tool_lines copy that reaches the event bus: emit strips
+    each line's leading whitespace, so an indented markdown bullet's " - " is not a separator in what the
+    user saw (issue #1539), while a genuine mid-line " - " separator survives the filter and corrects."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output):
+        converse_calls.append(prompt)
+        if len(converse_calls) == 1:
+            return vm.TurnSignals(texts=response)
+        return vm.TurnSignals(texts=["corrected response"])
+
+    with patch("core.client.converse", side_effect=mock_converse):
+        await process_message("hello", state=state, config=config)
+
+    assert len(converse_calls) == expected_calls
+
+
 @pytest.mark.anyio
 async def test_process_message_no_correction_when_block_dashes_off(tmp_path):
     """With block_dashes disabled, a dashed reply is left as-is: no correction turn."""
