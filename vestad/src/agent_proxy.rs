@@ -113,15 +113,12 @@ fn keyed_forward_path(
 /// (`auth::presented_tokens` reads that carrier, so vestad has already consumed it and no
 /// upstream may see it). `None` when nothing else remains, so the URL carries no stray `?`.
 fn forwarded_query(query: &str) -> Option<String> {
-    let kept: Vec<&str> = query
+    let kept = query
         .split('&')
         .filter(|pair| !pair.is_empty() && !pair.starts_with(auth::CLIENT_CREDENTIAL_QUERY_PREFIX))
-        .collect();
-    if kept.is_empty() {
-        None
-    } else {
-        Some(kept.join("&"))
-    }
+        .collect::<Vec<_>>()
+        .join("&");
+    (!kept.is_empty()).then_some(kept)
 }
 
 /// The agent token vestad injects upstream. Only the raw agent port consumes it, so a

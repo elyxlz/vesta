@@ -274,11 +274,14 @@ fn key_endpoints_are_authenticated_and_scoped_to_one_agent() {
     );
 }
 
+/// The echo-upstream response body, parsed as JSON.
+fn echoed(body: &str) -> serde_json::Value {
+    serde_json::from_str(body).expect("the upstream echoes its request as JSON")
+}
+
 /// The `headers` object out of an echo-upstream response body.
 fn echoed_headers(body: &str) -> serde_json::Map<String, serde_json::Value> {
-    let echoed: serde_json::Value =
-        serde_json::from_str(body).expect("the upstream echoes its request as JSON");
-    echoed["headers"]
+    echoed(body)["headers"]
         .as_object()
         .expect("echoed headers object")
         .clone()
@@ -286,9 +289,7 @@ fn echoed_headers(body: &str) -> serde_json::Map<String, serde_json::Value> {
 
 /// The `path` (path and query, verbatim) out of an echo-upstream response body.
 fn echoed_path(body: &str) -> String {
-    let echoed: serde_json::Value =
-        serde_json::from_str(body).expect("the upstream echoes its request as JSON");
-    echoed["path"]
+    echoed(body)["path"]
         .as_str()
         .expect("echoed request path")
         .to_string()
