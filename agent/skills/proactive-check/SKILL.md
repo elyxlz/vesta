@@ -7,9 +7,70 @@ description: Periodic self-directed check-in; fires on interval to reach out or 
 
 This is your scheduled moment to think unprompted. No one asked; you're checking in with yourself and the user's world. Be thoughtful, not noisy.
 
-## Preflight: daemon liveness (do this first, every tick)
+## Preflight: run the script (do this first, every tick)
+
+```bash
+bash ~/agent/skills/proactive-check/scripts/preflight.sh
+```
+
+One call covers both preflights below: daemon liveness, and the budget read from the live usage
+meters, with the band to spend at. **Run it rather than performing it from memory.** The two
+sections after it are the reference for what it checks and why.
+
+They are a script and not prose because performing them from memory is what fails. A proactive
+check fires every hour forever, so its preflight is the most-repeated procedure an agent has, and
+after a compaction the context holds a paraphrase of this file rather than the file. The paraphrase
+decays toward whatever is cheapest to type: on one box the budget check degraded into
+`grep utilization ~/agent/logs/vesta.log` and ran that way on every tick for a full day, against
+the explicit instruction below not to, rationing the day against a stale number. Nothing looked
+wrong, because the log's number happened to sit near the true one.
+
+Anything printed as `CHECK` is a real finding, and that includes a budget it could not read: an
+unknown budget is treated as tight, never as fine.
+
+## Preflight 1 (detail): daemon liveness
 
 Before anything else, confirm the daemons the `restart` skill starts are actually alive: ask each line in its Daemons block with the matching `<skill> daemon status`. Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring a dead daemon back with its own start line from that block, or re-run the whole Daemons block, which is idempotent and a no-op when everything is already up.
+
+## Preflight 2 (detail): budget, before any expensive pass
+
+A proactive check fires every hour forever. That cadence is only sustainable if most ticks are
+cheap, so check what is left before deciding how big to go:
+
+```bash
+source /run/vestad-env; curl -s "http://127.0.0.1:$WS_PORT/usage" -H "X-Agent-Token: $AGENT_TOKEN"
+```
+
+That returns a `meters` array, one entry per window, each with a `label`, a live `used_pct` (0 to
+100), and `resets_at`. Read every meter, not just one: a session window that resets within the hour
+and a weekly window that resets in six days mean very different things at the same percentage.
+
+**Do not read the budget out of `vesta.log`.** The log only carries rate-limit lines while a limit
+is actively being warned about, so once a window resets the lines stop and the last high number sits
+there looking current. It also cannot tell you `resets_at`, which is the field that decides whether
+throttling is worth doing at all. Note too that the log's `utilization` is a 0-to-1 fraction while
+`used_pct` is a percentage, so mixing them reads 0.91 as "under one percent".
+
+Band on the **highest** `used_pct` across the meters:
+
+- **Below ~60**: normal. Spend the tick however the work deserves.
+- **~60 to 80**: no multi-agent fan-outs on anything the user has not asked for. One focused agent
+  if the work is genuinely urgent, otherwise do it in-thread or defer.
+- **Above ~80**: cheap ticks only. Preflight, read state, act on anything actually due, stop. **Do
+  not spawn research subagents at all.** Write down what you would have done so a later tick with
+  headroom can pick it up.
+
+Check `resets_at` before throttling: if the tight window resets shortly, deferring the expensive
+pass by one tick costs nothing, whereas rationing every tick for six days is a real loss.
+
+**Overnight ticks default one band stricter.** Nobody is awake, so nothing discretionary is urgent,
+and the cost of being wrong is asymmetric: burn the week's budget at 3am on unprompted research and
+you are rationed during the hours the user is actually awake and asking.
+
+**The tell you are over-spending is not the number, it is the justification.** "While it's quiet I
+might as well go deep" is the exact thought that produces a six-figure-token research run for
+something the user never asked about. Quiet is not a reason to spend, it is a reason the spending is
+invisible.
 
 ## Two questions, every time
 
