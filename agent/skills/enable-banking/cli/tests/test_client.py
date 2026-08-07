@@ -132,12 +132,14 @@ def test_revoke_session_deletes_empty_body_returns_ok(http):
     assert calls[0]["url"] == "https://api.enablebanking.com/sessions/sess-9"
 
 
-def test_error_response_exits(http, capsys):
+def test_error_response_raises_a_catchable_api_error(http):
+    """The error is an ordinary Exception carrying the status: the watcher's poll loop catches
+    and classifies it, so one bad API answer can never take the whole watcher process down."""
     _, responses = http
     responses.append(FakeResponse({"detail": "bad"}, status_code=400, is_error=True))
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(eb.ApiError) as exc:
         eb.get_session(CONF)
-    assert exc.value.code == 1
-    err = json.loads(capsys.readouterr().err)
-    assert err["status"] == 400
-    assert err["error"] == "Enable Banking API error (GET /sessions/sess-9)"
+    assert isinstance(exc.value, Exception) and not isinstance(exc.value, (SystemExit, KeyboardInterrupt))
+    assert exc.value.status == 400
+    assert "GET /sessions/sess-9" in str(exc.value)
+    assert "detail" in str(exc.value)

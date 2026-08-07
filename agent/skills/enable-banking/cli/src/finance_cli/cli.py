@@ -198,7 +198,7 @@ def cmd_auth_status(_args) -> dict:
             session = eb.get_session(conf)
             result["session_status"] = session.get("status", "unknown")
             result["valid_until"] = session.get("access", {}).get("valid_until", "")
-        except SystemExit:
+        except eb.ApiError:
             result["session_status"] = "error_fetching"
 
     return result
@@ -235,7 +235,7 @@ def cmd_balances(_args) -> list:
             continue
         try:
             balances = eb.get_balances(conf, uid)
-        except SystemExit:
+        except eb.ApiError:
             balances = [{"error": "could not fetch balance"}]
         results.append(
             {
@@ -398,6 +398,6 @@ def main():
     try:
         result = args.func(args)
         print(json.dumps(result, indent=2))
-    except ValueError as e:
+    except (ValueError, eb.ApiError) as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
