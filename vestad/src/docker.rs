@@ -1736,8 +1736,8 @@ pub struct OneshotSpec<'a> {
 
 /// Create, start, and wait out a one-shot container, returning its exit status code. Network
 /// isolated (`network_mode: "none"`) and carries no restart policy, since it exists only to run
-/// `spec.cmd` and exit. On success the caller removes the container; on timeout this force-removes
-/// it and returns an error naming the timeout.
+/// `spec.cmd` and exit. On success the caller removes the container; every failure past creation
+/// force-removes it before returning, so a retry never collides on the name.
 pub async fn run_oneshot_container(
     docker: &Docker,
     spec: OneshotSpec<'_>,
@@ -1762,10 +1762,12 @@ pub async fn run_oneshot_container(
         .await
         .map_err(|e| DockerError::Failed(format!("docker create for oneshot failed: {e}")))?;
 
-    docker
-        .start_container(spec.cname, None)
-        .await
-        .map_err(|e| DockerError::Failed(format!("docker start for oneshot failed: {e}")))?;
+    if let Err(e) = docker.start_container(spec.cname, None).await {
+        remove_container_force(docker, spec.cname).await?;
+        return Err(DockerError::Failed(format!(
+            "docker start for oneshot failed: {e}"
+        )));
+    }
 
     let mut wait_stream = docker
         .wait_container(spec.cname, None::<bollard::query_parameters::WaitContainerOptions>);
@@ -1775,6 +1777,8 @@ pub async fn run_oneshot_container(
     )
     .await;
 
+    // Every branch past this point has an already-created (and started) container to clean up:
+    // only the success path leaves it for the caller to remove.
     match wait_result {
         Err(_) => {
             remove_container_force(docker, spec.cname).await?;
@@ -1784,10 +1788,16 @@ pub async fn run_oneshot_container(
         }
         Ok(Some(Ok(response))) => Ok(response.status_code),
         Ok(Some(Err(bollard::errors::Error::DockerContainerWaitError { code, .. }))) => Ok(code),
-        Ok(Some(Err(e))) => Err(e.into()),
-        Ok(None) => Err(DockerError::Failed(
-            "oneshot container wait stream ended with no response".into(),
-        )),
+        Ok(Some(Err(e))) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(format!("oneshot container wait failed: {e}")))
+        }
+        Ok(None) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(
+                "oneshot container wait stream ended with no response".into(),
+            ))
+        }
     }
 }
 
