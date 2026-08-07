@@ -93,12 +93,11 @@ whatsapp connect --source self-managed --instance personal
 ```
 
 `--read-only` blocks sending, receipts, and presence; `--no-notifications` silences
-notifications. `whatsapp connect` does not accept these flags itself, and running it
-first would cold-start the daemon write-capable, after which `daemon start --read-only`
-only reports `already_running` and the instance stays write-capable. Connecting after
-the daemon is already up links through it and leaves the flag in force. Keep the flag on
-that instance's `whatsapp daemon start` line under `## Daemons` in the restart skill so
-it survives every restart. Never point two instances at the same account/device store.
+notifications. `whatsapp connect` takes neither flag, so running it first cold-starts the
+daemon write-capable, after which `daemon start --read-only` only reports `already_running`.
+Connecting after the daemon is up links through it and leaves the flag in force. Keep the
+flag on that instance's `whatsapp daemon start` line under `## Daemons` in the restart skill
+so it survives every restart. Never point two instances at the same account/device store.
 
 ## Operational notes
 
