@@ -259,8 +259,6 @@ func pidRecordFor(pid int) string {
 	return strconv.Itoa(pid)
 }
 
-// ensureDaemon is the self-bootstrap every agent-facing command runs: a socket that answers is
-// all those commands need, whoever brought it up.
 // daemonBringupArgs picks the flags an implicit bringup starts the daemon with: the last run's
 // recorded flags, so a crashed --read-only or --no-notifications daemon comes back with the
 // control intact rather than write-capable, falling back to the instance flag alone when no run
@@ -269,6 +267,8 @@ func daemonBringupArgs() []string {
 	return restartServeArgs(loadStateFromDisk(stateDataDir()))
 }
 
+// ensureDaemon is the self-bootstrap every agent-facing command runs: a socket that answers is
+// all those commands need, whoever brought it up.
 func ensureDaemon() error {
 	if daemonAlive(getSocketPath()) {
 		return nil
