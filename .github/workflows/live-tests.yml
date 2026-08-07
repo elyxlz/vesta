@@ -135,18 +135,16 @@ jobs:
         working-directory: vestad
         run: cargo build
 
+      # On a failure, retry only the tests that failed, not the whole suite: the live suite shares
+      # one in-process 2-agent pool, so the retry stays at the suite level (see the script). The
+      # job-level timeout-minutes bounds the run.
       - name: Run live end-to-end tests
         if: steps.credentials.outputs.available == 'true'
-        uses: nick-fields/retry@v4
+        shell: bash
         env:
           # Inputs are passed through the environment instead of interpolated
           # into the command, preventing workflow-dispatch shell injection.
-          TEST_FILTER: ${{ inputs.test_filter }}
+          LIVE_TEST_FILTER: ${{ inputs.test_filter }}
           VESTA_UPGRADE_FROM: ${{ inputs.upgrade_from }}
           VESTA_UPGRADE_TO: ${{ inputs.upgrade_to }}
-        with:
-          timeout_minutes: 40
-          max_attempts: 2
-          retry_wait_seconds: 30
-          shell: bash
-          command: VESTAD_AGENT_IMAGE=vesta:local LIVE_TEST_FILTER="$TEST_FILTER" ./check.sh live
+        run: scripts/run-live-retry.sh

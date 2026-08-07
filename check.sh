@@ -296,7 +296,9 @@ check_live() {
     # this suite, so the release gate covers it alongside the other live tests.
     local test_args=()
     if [ -n "${LIVE_TEST_FILTER:-}" ]; then
-      test_args+=("$LIVE_TEST_FILTER")
+      # Space-separated so a retry can re-run several failed tests in one filtered run.
+      read -ra live_filters <<< "$LIVE_TEST_FILTER"
+      test_args+=("${live_filters[@]}")
     fi
     cargo test -p vestad --test live "${test_args[@]}" -- --test-threads=8
   )
