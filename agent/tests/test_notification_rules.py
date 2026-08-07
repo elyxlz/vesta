@@ -198,6 +198,15 @@ def test_match_text_alias_searches_body_and_message():
     assert npn.notif_disposition(_notif(source="telegram", type="edit", message="taxes are due"), [rule]) == "snooze"
 
 
+def test_match_text_alias_searches_email_subject_and_preview():
+    """Email notifications carry `subject` and `preview` and never body/message/content: a `text`
+    alias that skipped them could never match an email, and a rule that never matches looks
+    identical to a rule whose topic never came up."""
+    rule = _rule(match=[{"field": "text", "op": "regex", "value": "visa|overdue"}], action="interrupt")
+    assert npn.notif_disposition(_notif(source="microsoft", type="email", subject="Your visa decision"), [rule]) == "interrupt"
+    assert npn.notif_disposition(_notif(source="microsoft", type="email", preview="your account is overdue"), [rule]) == "interrupt"
+
+
 def test_match_invalid_regex_predicate_is_rejected():
     with pytest.raises(pyd.ValidationError):
         _rule(match=[{"field": "chat_name", "op": "regex", "value": "(unclosed"}], action="snooze")

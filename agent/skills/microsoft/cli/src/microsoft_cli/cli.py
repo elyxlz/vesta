@@ -44,6 +44,51 @@ def _draft_only_enabled() -> bool:
     return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
 
 
+# Every (group, command) that writes: transmits a message, creates or edits anything in the
+# mailbox, or changes state the account's owner would see. Under MICROSOFT_READ_ONLY these are
+# refused at the single dispatch choke point in main(), before a backend is chosen, so a new
+# route cannot quietly bypass the check by being dispatched somewhere else.
+# Deliberately NOT here: `email send-delay` and `email pending` (client-side configuration and
+# inspection of the local outbox, invisible to the account's owner) and `email undo`, which
+# cancels a queued send and so only ever removes a write.
+_MUTATING_COMMANDS = frozenset(
+    {
+        ("email", c)
+        for c in (
+            "send",
+            "reply",
+            "forward",
+            "draft",
+            "reply-draft",
+            "move",
+            "archive",
+            "update",
+            "delete",
+            "block",
+            "unblock",
+        )
+    }
+    | {("calendar", c) for c in ("create", "update", "delete", "respond")}
+    | {("folder", c) for c in ("create", "rename", "delete")}
+    | {("teams", c) for c in ("send", "start", "post", "reply", "set-presence", "clear-presence")}
+    | {("notify", c) for c in ("add", "remove")}
+)
+_READ_ONLY_MESSAGE = (
+    "read-only mode (MICROSOFT_READ_ONLY): `{group} {command}` writes to the account and is refused."
+    " The account owner set this up; do not work around it. Tell the user what you wanted to do and let them decide."
+)
+
+
+def _read_only_enabled() -> bool:
+    """True when MICROSOFT_READ_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("MICROSOFT_READ_ONLY", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _guard_read_only(group: str, command: str) -> None:
+    if _read_only_enabled() and (group, command) in _MUTATING_COMMANDS:
+        raise RuntimeError(_READ_ONLY_MESSAGE.format(group=group, command=command))
+
+
 NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
 
@@ -525,6 +570,7 @@ def main():
             result = _dispatch_auth(args, config)
             print(json.dumps(fmt.strip_odata(result), indent=2))
         elif args.group in ("email", "calendar", "folder", "notify", "teams"):
+            _guard_read_only(args.group, args.command)
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 dispatchers = {
                     "email": _dispatch_email,

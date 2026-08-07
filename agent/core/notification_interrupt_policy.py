@@ -31,7 +31,10 @@ from .notification import CORE_SOURCE, Notification
 # satisfies the op. This is the single place cross-source field-name knowledge lives — a new source's
 # new field is targetable by its concrete name with no code change.
 _IDENTITY_FIELDS = ("sender", "contact_name", "handle", "from", "author")
-_BODY_FIELDS = ("body", "message", "content")
+# `subject` and `preview` belong here: email notifications carry those two and never
+# body/message/content, so a `text` alias that skipped them could never match an email, and a
+# rule that never matches looks identical to a rule whose topic never came up.
+_BODY_FIELDS = ("body", "message", "content", "subject", "preview")
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {"sender": _IDENTITY_FIELDS, "text": _BODY_FIELDS}
 
 
