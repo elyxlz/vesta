@@ -242,6 +242,28 @@ export async function deleteBackup(
   );
 }
 
+export interface AgentBackupSettings {
+  enabled: boolean;
+  retention: { periodic: number; pre_update_versions: number };
+  has_override: boolean;
+}
+
+export async function fetchAgentBackupSettings(
+  name: string,
+): Promise<AgentBackupSettings> {
+  return apiJson(`/agents/${encodeURIComponent(name)}/settings/backup`);
+}
+
+export async function setAgentBackupSettings(
+  name: string,
+  enabled: boolean,
+): Promise<AgentBackupSettings> {
+  return apiJson(
+    `/agents/${encodeURIComponent(name)}/settings/backup`,
+    jsonInit("PUT", { enabled }),
+  );
+}
+
 /// Normalized, provider-agnostic plan usage (agent's GET /usage). `meters` are
 /// time-windowed quota gauges (Claude rate-limit buckets); `credits` is a spend balance
 /// (OpenRouter, or Claude extra-usage). Both already in display units (% and dollars).
