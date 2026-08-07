@@ -627,12 +627,12 @@ func TestRestartWithoutARecordedRunFallsBackToInstanceArgs(t *testing.T) {
 	})
 }
 
-// TestSelfBootstrapReplaysRecordedFlagsAfterCrash pins the one-shot self-bootstrap
-// (runOneShot's restartServeArgs(loadStateFromDisk(stateDataDir()))): a plain command
-// after a --read-only daemon crashed brings the daemon back read-only from the recorded
-// flags in state.json, not write-capable, even though the command's own args carry no
-// --read-only.
-func TestSelfBootstrapReplaysRecordedFlagsAfterCrash(t *testing.T) {
+// TestDaemonBringupReplaysRecordedFlagsAfterCrash: a plain command after a --read-only daemon
+// crashed brings the daemon back read-only from the recorded flags in state.json, not
+// write-capable, even though the command's own args carry no --read-only. Every implicit bringup
+// (whatsapp status, connect, provision, the one-shot path) reads daemonBringupArgs, so this pins
+// the flags all of them start with.
+func TestDaemonBringupReplaysRecordedFlagsAfterCrash(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	// The next command targets the same instance but carries no --read-only of its own.
@@ -646,26 +646,25 @@ func TestSelfBootstrapReplaysRecordedFlagsAfterCrash(t *testing.T) {
 		s.Args, s.PID, s.StartedAt = []string{"--instance", "personal", "--read-only"}, 4242, time.Now().UTC()
 	})
 
-	serveArgs := restartServeArgs(loadStateFromDisk(stateDataDir()))
+	serveArgs := daemonBringupArgs()
 	if !slices.Contains(serveArgs, "--read-only") {
-		t.Fatalf("self-bootstrap must replay the recorded --read-only flag, got %v", serveArgs)
+		t.Fatalf("bringup must replay the recorded --read-only flag, got %v", serveArgs)
 	}
 	if !slices.Contains(serveArgs, "personal") {
-		t.Fatalf("self-bootstrap must keep the recorded instance, got %v", serveArgs)
+		t.Fatalf("bringup must keep the recorded instance, got %v", serveArgs)
 	}
 }
 
-// TestSelfBootstrapFallsBackToInstanceArgsWithoutARecording pins the first-ever
-// bootstrap: with no recorded run the self-bootstrap falls back to the instance flag
-// alone (the linkServeArgs shape), so a cold start still works and carries no stray
-// --read-only.
-func TestSelfBootstrapFallsBackToInstanceArgsWithoutARecording(t *testing.T) {
+// TestDaemonBringupFallsBackToInstanceArgsWithoutARecording pins the first-ever bringup:
+// with no recorded run it falls back to the instance flag alone (the linkServeArgs shape),
+// so a cold start still works and carries no stray --read-only.
+func TestDaemonBringupFallsBackToInstanceArgsWithoutARecording(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	withArgs(t, "--instance", "personal")
-	serveArgs := restartServeArgs(loadStateFromDisk(stateDataDir()))
+	serveArgs := daemonBringupArgs()
 	if !reflect.DeepEqual(serveArgs, []string{"--instance", "personal"}) {
-		t.Fatalf("without a recording the self-bootstrap falls back to instance args only, got %v", serveArgs)
+		t.Fatalf("without a recording the bringup falls back to instance args only, got %v", serveArgs)
 	}
 }
 

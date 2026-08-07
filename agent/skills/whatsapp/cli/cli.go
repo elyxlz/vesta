@@ -359,7 +359,7 @@ func runOneShot(command string) {
 	// anything by hand. Replay the last run's recorded serve flags (the same source
 	// `daemon restart` reads), so a --read-only or --no-notifications daemon that
 	// crashed comes back with the operator's controls intact rather than write-capable.
-	if err := ensureDaemon(restartServeArgs(loadStateFromDisk(stateDataDir()))); err != nil {
+	if err := ensureDaemon(); err != nil {
 		failJSON("could not start the whatsapp daemon: %v; run `whatsapp status`", err)
 	}
 	args, err := resolveStdinArgs(stripGlobalFlags(os.Args[1:]), "message", "text")

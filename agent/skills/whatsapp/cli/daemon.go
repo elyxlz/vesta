@@ -261,11 +261,19 @@ func pidRecordFor(pid int) string {
 
 // ensureDaemon is the self-bootstrap every agent-facing command runs: a socket that answers is
 // all those commands need, whoever brought it up.
-func ensureDaemon(serveArgs []string) error {
+// daemonBringupArgs picks the flags an implicit bringup starts the daemon with: the last run's
+// recorded flags, so a crashed --read-only or --no-notifications daemon comes back with the
+// control intact rather than write-capable, falling back to the instance flag alone when no run
+// was ever recorded. Every implicit bringup reads it, so no command path can drop the control.
+func daemonBringupArgs() []string {
+	return restartServeArgs(loadStateFromDisk(stateDataDir()))
+}
+
+func ensureDaemon() error {
 	if daemonAlive(getSocketPath()) {
 		return nil
 	}
-	_, err := startDaemonProcess(serveArgs)
+	_, err := startDaemonProcess(daemonBringupArgs())
 	return err
 }
 
