@@ -21,6 +21,8 @@ MODEL="${PR_MONITOR_MODEL:-claude-opus-5}"
 RUN_TIMEOUT="${PR_MONITOR_TIMEOUT:-7200}"
 PARALLEL="${PR_MONITOR_PARALLEL:-3}"
 PRUNE_WORKTREES_EVERY="${PR_MONITOR_PRUNE_WORKTREES:-3600}"
+BACKOFF_MIN="${PR_MONITOR_BACKOFF_MIN:-60}"
+BACKOFF_MAX="${PR_MONITOR_BACKOFF_MAX:-1800}"
 STATE_ROOT="${PR_MONITOR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pr-monitor}"
 ME="$(gh api /user -q .login 2>/dev/null)"
 
@@ -207,6 +209,39 @@ restore_checkout() {
   fi
 }
 
+# A 429 is the whole account going quiet, not this one event failing, so every
+# other run is about to hit it too and retrying at the poll interval just burns
+# the queue against a closed door. Hold the dispatcher instead, doubling the wait
+# each time. Concurrent runs all fail against the same limit, so only the first
+# one past the current window lengthens it.
+rate_limited() {
+  local now until secs
+  now=$(date +%s)
+  until=$(cat "$STATE_ROOT/backoff-until" 2>/dev/null || echo 0)
+  [ "$now" -lt "$until" ] && return 0
+  secs=$(cat "$STATE_ROOT/backoff" 2>/dev/null || echo 0)
+  if [ "$secs" -le 0 ]; then secs="$BACKOFF_MIN"; else secs=$(( secs * 2 )); fi
+  [ "$secs" -gt "$BACKOFF_MAX" ] && secs="$BACKOFF_MAX"
+  mkdir -p "$STATE_ROOT"
+  printf '%s' "$secs" > "$STATE_ROOT/backoff"
+  printf '%s' "$(( now + secs ))" > "$STATE_ROOT/backoff-until"
+  echo "dispatch: rate limited by the API, holding ${secs}s before the next run" >&2
+}
+
+# The first run that gets through says the limit has lifted, so start the next
+# one over at the shortest wait rather than wherever the last streak ended.
+clear_backoff() {
+  rm -f "$STATE_ROOT/backoff" "$STATE_ROOT/backoff-until"
+}
+
+await_backoff() {
+  local until now
+  until=$(cat "$STATE_ROOT/backoff-until" 2>/dev/null) || return 0
+  now=$(date +%s)
+  [ "$now" -ge "$until" ] && return 0
+  sleep "$(( until - now ))"
+}
+
 handle() {
   local repo="$1" kind="$2" id="$3" pr="$4" prompt="$5"
   local sf sid out rc lock
@@ -241,6 +276,14 @@ handle() {
   rc=$?
   # A stored id that no longer resolves would fail every retry, so forget it.
   if [ "$rc" -ne 0 ]; then
+    # Running out of quota says nothing about this PR or its session, so keep the
+    # conversation and hold the dispatcher rather than dropping both.
+    if [ "$(printf '%s' "$out" | jq -r '.api_error_status // empty' 2>/dev/null)" = "429" ]; then
+      rate_limited
+      release "$repo" "$kind" "$id"
+      trap - TERM INT
+      return 1
+    fi
     [ "$rc" = "124" ] && echo "dispatch: run on $repo#$pr exceeded ${RUN_TIMEOUT}s and was stopped" >&2
     echo "dispatch: claude failed rc=$rc on $repo#$pr, releasing claim" >&2
     [ -s "$sf" ] && rm -f "$sf"
@@ -263,6 +306,7 @@ handle() {
     echo "dispatch: WARN $repo#$pr run finished without commenting" >&2
   fi
   trap - TERM INT
+  clear_backoff
   echo "dispatch: handled $repo#$pr ($kind $id)" >&2
   prune_sessions "$repo"
   prune_worktrees "$repo"
@@ -273,6 +317,7 @@ for repo in "${repos[@]}"; do prune_sessions "$repo"; prune_worktrees "$repo"; d
 
 bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
   while [ "$(jobs -rp | wc -l)" -ge "$PARALLEL" ]; do wait -n; done
+  await_backoff
   restore_checkout
   case "$tag" in
     HIT)
