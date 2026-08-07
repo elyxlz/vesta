@@ -112,6 +112,20 @@ def list_pending(*, state: vm.State, config: cfg.VestaConfig) -> list[Migration]
     return pending
 
 
+def _batch_turn(batch: list[Migration], *, phase: MigrationPhase, interruptible: bool) -> vm.QueuedTurn:
+    sections: list[str] = []
+    for migration in batch:
+        # Append the completion step here so migration authors never hand-write the name
+        # (a typo would mark the wrong name and loop the migration forever). The canonical
+        # name is known here, so it is always correct by construction.
+        mark_step = f'## Final step\n\nCall `mark_migration_applied` with `name="{migration.name}"`.'
+        sections.append(f"[Migration: {migration.name}]\n\n{migration.content.strip()}\n\n{mark_step}")
+    instructions = MIGRATION_BATCH_INSTRUCTIONS
+    if phase is MigrationPhase.BEFORE_SYNC:
+        instructions += BEFORE_SYNC_BATCH_INSTRUCTIONS
+    return vm.QueuedTurn(f"{instructions}\n\n" + "\n\n---\n\n".join(sections), False, [], interruptible=interruptible)
+
+
 def _migration_turns(
     *,
     pending: list[Migration],
@@ -119,28 +133,23 @@ def _migration_turns(
     config: cfg.VestaConfig,
     first_start: bool,
     phase: MigrationPhase,
-) -> list[str]:
+) -> list[vm.QueuedTurn]:
     if first_start:
         if pending:
             state.persisted.applied_migrations.extend(migration.name for migration in pending)
             state_store.save_state(state.persisted, config)
             logger.startup(f"Pre-marked {len(pending)} migration(s) as applied (fresh agent)")
         return []
-    if not pending:
-        return []
-    sections: list[str] = []
-    for migration in pending:
-        # Append the completion step here so migration authors never hand-write the name
-        # (a typo would mark the wrong name and loop the migration forever). The canonical
-        # name is known here, so it is always correct by construction.
-        mark_step = f'## Final step\n\nCall `mark_migration_applied` with `name="{migration.name}"`.'
-        sections.append(f"[Migration: {migration.name}]\n\n{migration.content.strip()}\n\n{mark_step}")
-    names = ", ".join(migration.name for migration in pending)
-    logger.startup(f"Queued {phase.value} migration batch boot turn ({len(pending)}): {names}")
-    instructions = MIGRATION_BATCH_INSTRUCTIONS
-    if phase is MigrationPhase.BEFORE_SYNC:
-        instructions += BEFORE_SYNC_BATCH_INSTRUCTIONS
-    return [f"{instructions}\n\n" + "\n\n---\n\n".join(sections)]
+    turns: list[vm.QueuedTurn] = []
+    for interruptible in (False, True):
+        batch = [migration for migration in pending if migration.interruptible is interruptible]
+        if not batch:
+            continue
+        names = ", ".join(migration.name for migration in batch)
+        label = "interruptible " if interruptible else ""
+        logger.startup(f"Queued {phase.value} {label}migration batch boot turn ({len(batch)}): {names}")
+        turns.append(_batch_turn(batch, phase=phase, interruptible=interruptible))
+    return turns
 
 
 def _pending_for(*, state: vm.State, config: cfg.VestaConfig, first_start: bool, phase: MigrationPhase) -> list[Migration]:
@@ -152,7 +161,7 @@ def _pending_for(*, state: vm.State, config: cfg.VestaConfig, first_start: bool,
     return [migration for migration in pending if migration.phase is phase]
 
 
-def before_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, first_start: bool = False) -> list[str]:
+def before_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, first_start: bool = False) -> list[vm.QueuedTurn]:
     """Return pending before-sync migrations as an exclusive boot barrier."""
     return _migration_turns(
         pending=_pending_for(state=state, config=config, first_start=first_start, phase=MigrationPhase.BEFORE_SYNC),
@@ -163,8 +172,8 @@ def before_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, fir
     )
 
 
-def after_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, first_start: bool = False) -> list[str]:
-    """Return pending after-sync migrations in one filename-ordered boot turn.
+def after_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, first_start: bool = False) -> list[vm.QueuedTurn]:
+    """Return pending after-sync migrations as filename-ordered boot turns, the non-interruptible batch first.
 
     These can rely on the running version's stock files being present. The agent itself records
     completion on upgrade boots.
