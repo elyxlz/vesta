@@ -154,6 +154,24 @@ def _has_card_iin(digits: str) -> bool:
     return digits[0] == "2" and 2221 <= int(digits[:4]) <= 2720
 
 
+def _is_decimal_mantissa(text: str, start: int, end: int) -> bool:
+    """True when a digit run is the fractional part of a decimal, e.g. 3500061035156 inside
+    393.3500061035156.
+
+    A float's mantissa routinely runs 13 to 16 digits, which is exactly the PAN length band; it
+    often opens with an assigned IIN prefix (35 is JCB, 4 is Visa) and passes Luhn about one time
+    in ten by chance. So any event carrying a price series, a coordinate list or a chart API
+    response gets reported as a payment card. Nightly scans of an agent that tracks stock prices
+    were 4 of 10 hits from this one cause, and a scan whose hits are mostly noise is a scan whose
+    real hits stop being read.
+    """
+    before = text[max(0, start - 2) : start]
+    after = text[end : end + 2]
+    return bool(len(before) == 2 and before[1] == "." and before[0].isdigit()) or bool(
+        after[:1] == "." and after[1:2].isdigit()
+    )
+
+
 def _is_card(candidate: str) -> bool:
     """A candidate run is a real PAN only when its stripped digits count 13 to 19, pass Luhn, AND open
     with an assigned card issuer prefix. Luhn alone flags ~1 in 10 non-card digit runs (a 13-digit
@@ -212,7 +230,8 @@ def _hit_spans(text: str) -> list[tuple[int, int]]:
     """Every real hit's span in one string: the combined REGEX (already-redacted spans and news-slug
     false positives filtered out) plus the payment-card pass."""
     spans = [m.span() for m in REGEX.finditer(text) if REDACTED not in m.group(0) and not _looks_like_word_slug(m.group(0))]
-    spans += [m.span() for m in CARD_CANDIDATE.finditer(text) if _is_card(m.group(0))]
+    spans += [m.span() for m in CARD_CANDIDATE.finditer(text)
+              if _is_card(m.group(0)) and not _is_decimal_mantissa(text, m.start(), m.end())]
     return spans
 
 

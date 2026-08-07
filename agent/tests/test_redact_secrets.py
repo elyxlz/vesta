@@ -668,3 +668,24 @@ def test_wrapper_behaves_the_same_whatever_the_caller_cwd(tmp_path):
 
     assert runs[0].stdout == runs[1].stdout
     assert runs[0].returncode == runs[1].returncode
+
+
+def test_decimal_mantissa_is_not_reported_as_a_payment_card():
+    """A float's fractional digits sit in the PAN length band, often open with an assigned IIN
+    prefix and pass Luhn by chance, so price series and coordinate lists were reported as cards.
+
+    Both directions matter: the filter must silence the float array WITHOUT silencing a real card,
+    or it has traded a noisy scan for a blind one.
+    """
+    assert redact.find_matches('card = "4111111111111111"'), "a real PAN must still be detected"
+
+    prices = '"closes": [393.3500061035156, 390.5400085449219, 451.1000061035156], "currency": "GBP"'
+    assert redact.find_matches(prices) == [], "a float array is not a payment card"
+
+    coords = "latlng = [51.5072178123456, -0.1275862345678]"
+    assert redact.find_matches(coords) == [], "coordinates are not a payment card"
+
+    # And a real card sitting NEXT TO floats must still be found, so the filter is span-local
+    # rather than a blanket suppression of any text containing numbers.
+    mixed = 'prices = [393.3500061035156] and card = "4111111111111111"'
+    assert redact.find_matches(mixed), "the filter must not suppress a card that shares a string with floats"
