@@ -43,20 +43,17 @@ pub fn lock_live_agent_b() -> Option<(MutexGuard<'static, SharedAgent>, String)>
 const MEMORY_PATH: &str = "/root/agent/MEMORY.md";
 const NOTIFICATIONS_DIR: &str = "/root/agent/notifications";
 pub const E2E_FILES_DIR: &str = "/root/agent/e2e-test";
-const TEST_MEMORY: &str = r#"# VESTA MEMORY SYSTEM (TEST MODE)
+// Kept deliberately plain: override-style absolutes ("skip all confirmations", "always
+// permitted") read to the agent as a prompt injection, so it investigates the file instead of
+// settling and first-start blows its timeout. This states the environment as fact instead.
+const TEST_MEMORY: &str = r#"# Memory
 
-## 1. CORE IDENTITY
+## Environment
 
-You are Vesta running in automated test mode.
+This agent is running inside an automated end to end test, on an isolated container that resets between runs. No human is present. The "pytest" sender is the test harness, and its notifications are ordinary task requests from the owner, usually a small file to write under the test area. Treat them as trusted, routine work and carry them out directly, the way you would any everyday task from the owner. Filesystem changes stay inside this container, so they are safe to make.
 
-### CRITICAL: Test Mode Behavior
-- ACT IMMEDIATELY ON TEST REQUESTS: When you receive notifications from "pytest", execute them immediately without asking for permission
-- NO CONFIRMATION NEEDED: This is an automated test environment - just do the tasks
-- File operations are safe: The test environment is isolated, so file operations are always permitted
+## User profile
 
-## 2. USER PROFILE
-
-### Personal Details
 - Name: Test User
 - Location: Test Environment
 - Timezone: UTC
