@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
-"""Scan the events DB for secrets, then scrub the real leaks in place by event id.
-Usage: redact_secrets.py            # scan, printing each hit with the value masked
-       redact_secrets.py --show ID  # print one event's full data with every detected secret masked
-       redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
+"""Scan the events DB and every channel store on the box for secrets, then scrub the real leaks in place.
+A hit reference is a bare event id for the events store, or store:table:rowid for a channel store,
+exactly as the scan prints it.
+Usage: redact_secrets.py            # scan every store present, printing each hit with the value masked
+       redact_secrets.py --show REF # print one row's full text with every detected secret masked
+       redact_secrets.py --scrub REF [REF ...]   # redact every secret in those rows
        redact_secrets.py --scrub-literal 'VALUE'   # redact one known value the scanner can't detect
 """
 
+import dataclasses
 import json
 import re
 import sqlite3
 import sys
+import time
 import typing as tp
 from pathlib import Path
 
 DB = Path("~/agent/data/events.db").expanduser()
+# Channel stores can be large (a year of chat history), so each store's scan gets a hard time
+# budget; a store that exceeds it is reported TRUNCATED, never silently half-scanned as clean.
+STORE_SCAN_BUDGET_SECS = 120
+SCAN_BATCH_ROWS = 256
+CONN_TIMEOUT_SECS = 30
+# The tables FTS5 creates behind a virtual table: binary index shards, never scanned directly.
+_FTS_SHADOW_SUFFIXES = ("_data", "_idx", "_content", "_docsize", "_config")
 REDACTED = "[REDACTED]"
 # The shortest value --scrub-literal accepts: the rewrite is DB-wide, so a tiny literal ("a", "key")
 # would splice the placeholder through unrelated text across the entire history.
@@ -30,6 +41,76 @@ FTS_INDEXED = (
     " AND json_extract(data, '$.summary') IS NOT NULL))"
 )
 FTS_TEXT = "COALESCE(json_extract(data, '$.text'), json_extract(data, '$.summary'))"
+
+
+@dataclasses.dataclass(frozen=True)
+class Store:
+    """One scannable database: a short name (the ref prefix in scan output) and its path."""
+
+    name: str
+    path: Path
+
+
+@dataclasses.dataclass(frozen=True)
+class EventsFts:
+    """The resync predicate for an events-shaped store's external-content FTS index: which rows the
+    store's own triggers index, and the expression they index. Must mirror those triggers exactly,
+    or the manual delete during a scrub misses the index row and corrupts the index."""
+
+    indexed: str
+    text: str
+
+
+CORE_FTS = EventsFts(indexed=FTS_INDEXED, text=FTS_TEXT)
+# The app-chat store (skills/app-chat/cli/src/app_chat_cli/store.py): same events(id, ts, data)
+# shape, but its triggers index only user/chat rows by $.text.
+APP_CHAT_FTS = EventsFts(indexed="(json_extract(data, '$.type') IN ('user', 'chat'))", text="json_extract(data, '$.text')")
+# The stores holding JSON event blobs behind an external-content FTS index with insert/delete
+# triggers only: a scrub must rewrite the decoded JSON and resync the index itself. Every other
+# store goes through the generic per-cell path.
+JSON_EVENT_FTS = {"events": CORE_FTS, "app-chat": APP_CHAT_FTS}
+
+
+def channel_stores() -> list[Store]:
+    """Every known channel store location, resolved from $HOME at call time. What the user actually
+    typed lives in these, not in events.db, so a scan of events.db alone reports clean while a
+    pasted credential sits in a messaging store. whatsapp and telegram keep one store per instance
+    (the bare directory for the default one, a named subdirectory otherwise). The whatsmeow session
+    store (~/.whatsapp/whatsapp.db) is deliberately not listed: it holds the channel's own
+    crypto/session key material by design, and a scrub there breaks the device pairing."""
+    home = Path.home()
+    stores = [
+        Store("app-chat", home / ".app-chat" / "app-chat.db"),
+        Store("tasks", home / ".tasks" / "tasks.db"),
+        Store("email-client", home / ".email-client" / "pending-sends.db"),
+        Store("microsoft", home / ".microsoft" / "pending-sends.db"),
+        Store("google", home / ".google" / "pending-sends.db"),
+    ]
+    for channel in ("whatsapp", "telegram"):
+        base = home / f".{channel}"
+        stores.append(Store(channel, base / "messages.db"))
+        if base.is_dir():
+            stores.extend(
+                Store(f"{channel}/{instance.name}", instance / "messages.db")
+                for instance in sorted(base.iterdir())
+                if instance.is_dir() and (instance / "messages.db").is_file()
+            )
+    return stores
+
+
+def _all_stores() -> dict[str, Store]:
+    return {"events": Store("events", DB)} | {store.name: store for store in channel_stores()}
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    """Open a store and fold its WAL into the main file (TRUNCATE), so the scan's SQL view and the
+    file's bytes agree: a clean report then means the db file itself holds no secret, not just the
+    checkpointed part of it. Best effort: a busy store reports busy instead of raising, and the SQL
+    view reads through the WAL either way."""
+    conn = sqlite3.connect(path, timeout=CONN_TIMEOUT_SECS)
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return conn
+
 
 PATTERNS = [
     r"sk-[a-zA-Z0-9_-]{20,}",
@@ -316,7 +397,9 @@ def count_literal(conn: sqlite3.Connection, secret: str) -> int:
     return total
 
 
-def _rewrite_rows(conn: sqlite3.Connection, rows: tp.Iterable[tuple[int, str]], transform: tp.Callable[[str], str]) -> int:
+def _rewrite_rows(
+    conn: sqlite3.Connection, rows: tp.Iterable[tuple[int, str]], transform: tp.Callable[[str], str], fts: EventsFts = CORE_FTS
+) -> int:
     """Rewrite every row's blob with one string transform, committing through write_scrubbed. A JSON
     blob is transformed per decoded string (map_json_strings) and re-serialized only when a real
     change happened, so events with no secret are never rewritten (a reformat-only diff would
@@ -337,10 +420,10 @@ def _rewrite_rows(conn: sqlite3.Connection, rows: tp.Iterable[tuple[int, str]], 
         if new_obj != obj:
             changed[row_id] = json.dumps(new_obj)
             json_ids.append(row_id)
-    return write_scrubbed(conn, changed, json_ids)
+    return write_scrubbed(conn, changed, json_ids, fts)
 
 
-def scrub_literal(conn: sqlite3.Connection, secret: str) -> tuple[int, int]:
+def scrub_literal(conn: sqlite3.Connection, secret: str, fts: EventsFts = CORE_FTS) -> tuple[int, int]:
     """Redact every stored copy of one exact value, returning (events changed, events still holding
     it). Keyed by the literal rather than by pattern, because --scrub can only remove what the
     scanner DETECTS: a human-chosen password matches none of the shapes above, and this is the path
@@ -349,17 +432,17 @@ def scrub_literal(conn: sqlite3.Connection, secret: str) -> tuple[int, int]:
     def replace(text: str) -> str:
         return text.replace(secret, REDACTED)
 
-    count = _rewrite_rows(conn, conn.execute("SELECT id, data FROM events"), replace)
+    count = _rewrite_rows(conn, conn.execute("SELECT id, data FROM events"), replace, fts)
     return count, count_literal(conn, secret)
 
 
-def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
+def scrub(conn: sqlite3.Connection, ids: list[int], fts: EventsFts = CORE_FTS) -> int:
     """Redact every hit in the given events in place, keeping their context and events_fts. Driven by
     the same patterns and keyed by id, so the caller never has to pass (and thereby re-leak) the literal."""
-    return _rewrite_rows(conn, _rows_by_id(conn, ids).items(), _redact_text)
+    return _rewrite_rows(conn, _rows_by_id(conn, ids).items(), _redact_text, fts)
 
 
-def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str], json_ids: list[int]) -> int:
+def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str], json_ids: list[int], fts: EventsFts = CORE_FTS) -> int:
     """Commit rewritten event blobs, resyncing events_fts around the UPDATE; every scrub path goes
     through here. The resync spans only json_ids, the rows rewritten as decoded JSON: a non-JSON
     payload was never in the index, and json_extract over a malformed blob aborts the whole
@@ -367,45 +450,290 @@ def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str], json_ids: 
     if not changed:
         return 0
     id_marks = ",".join("?" * len(json_ids))
-    fts_where = f"id IN ({id_marks}) AND {FTS_INDEXED}"
+    fts_where = f"id IN ({id_marks}) AND {fts.indexed}"
     if json_ids:
         conn.execute(
-            f"INSERT INTO events_fts(events_fts, rowid, text_content) SELECT 'delete', id, {FTS_TEXT} FROM events WHERE {fts_where}",
+            f"INSERT INTO events_fts(events_fts, rowid, text_content) SELECT 'delete', id, {fts.text} FROM events WHERE {fts_where}",
             json_ids,
         )
     conn.executemany("UPDATE events SET data = ? WHERE id = ?", [(new_data, row_id) for row_id, new_data in changed.items()])
     if json_ids:
         conn.execute(
-            f"INSERT INTO events_fts(rowid, text_content) SELECT id, {FTS_TEXT} FROM events WHERE {fts_where}",
+            f"INSERT INTO events_fts(rowid, text_content) SELECT id, {fts.text} FROM events WHERE {fts_where}",
             json_ids,
         )
     conn.commit()
     return len(changed)
 
 
-def _run_scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
-    hits = stored_hits(conn, ids)
-    scrubbed = scrub(conn, ids)
-    print(f"Scrubbed secrets in {scrubbed} event(s) in place.")
-    if scrubbed == 0:
+def _store_tables(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
+    """(tables to scan, external-content FTS tables). A contentful FTS5 virtual table is scanned and
+    scrubbed like any table (an UPDATE on it maintains its own index); an external-content one
+    mirrors a base table that is already scanned, rejects UPDATEs, and needs its own resync after a
+    scrub of its base. FTS shadow tables are binary index shards, never scanned."""
+    rows = [(name, " ".join(table_sql.lower().split())) for name, table_sql in _table_ddl(conn)]
+    fts = {name for name, table_sql in rows if "using fts5" in table_sql}
+    external = {name for name, table_sql in rows if name in fts and "content=" in table_sql.replace(" ", "")}
+    shadows = {f"{name}{suffix}" for name in fts for suffix in _FTS_SHADOW_SUFFIXES}
+    scannable = [name for name, _ in rows if name not in shadows and name not in external and not name.startswith("sqlite_")]
+    return scannable, sorted(external)
+
+
+def _table_ddl(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    return conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL").fetchall()
+
+
+def _channel_row(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str]:
+    """One row's text cells by column name; a missing row is an empty dict."""
+    cursor = conn.execute(f'SELECT * FROM "{table}" WHERE rowid = ?', (rowid,))
+    row = cursor.fetchone()
+    if row is None:
+        return {}
+    names = [description[0] for description in cursor.description]
+    return {name: value for name, value in zip(names, row, strict=True) if isinstance(value, str)}
+
+
+def channel_stored_hits(conn: sqlite3.Connection, refs: list[tuple[str, int]]) -> dict[tuple[str, int], list[str]]:
+    """The exact matched substrings per (table, rowid), captured before a scrub: the channel-store
+    counterpart of stored_hits, feeding the same verify-the-committed-rows check."""
+    hits: dict[tuple[str, int], list[str]] = {}
+    for table, rowid in refs:
+        found = [text[start:end] for text in _channel_row(conn, table, rowid).values() for start, end in _hit_spans(text)]
+        if found:
+            hits[(table, rowid)] = found
+    return hits
+
+
+def channel_still_matching(conn: sqlite3.Connection, hits: dict[tuple[str, int], list[str]]) -> list[tuple[str, int]]:
+    return sorted(
+        (table, rowid)
+        for (table, rowid), row_hits in hits.items()
+        if any(hit in text for text in _channel_row(conn, table, rowid).values() for hit in row_hits)
+    )
+
+
+def _transform_cell(text: str, transform: tp.Callable[[str], str]) -> str:
+    """One text cell through a transform: a JSON object or array is rewritten through its decoded
+    structure so the stored blob stays valid JSON (app-chat cells are JSON event blobs; splicing the
+    placeholder across an escape boundary would corrupt them), anything else as raw text."""
+    obj = _decoded(text)
+    if isinstance(obj, dict | list):
+        new_obj = map_json_strings(obj, transform)
+        return json.dumps(new_obj) if new_obj != obj else text
+    return transform(text)
+
+
+def scrub_channel_rows(conn: sqlite3.Connection, refs: list[tuple[str, int]]) -> int:
+    """Redact every hit in the given channel-store rows in place, text cell by text cell. A
+    contentful FTS mirror is reached either by the store's own AFTER UPDATE trigger or by the
+    mirror row's own reference; both are idempotent, so hitting a row twice never mangles it."""
+    changed = 0
+    for table, rowid in refs:
+        updates = {
+            column: new_value
+            for column, value in _channel_row(conn, table, rowid).items()
+            if (new_value := _transform_cell(value, _redact_text)) != value
+        }
+        if updates:
+            assignments = ", ".join(f'"{column}" = ?' for column in updates)
+            conn.execute(f'UPDATE "{table}" SET {assignments} WHERE rowid = ?', [*updates.values(), rowid])
+            changed += 1
+    conn.commit()
+    return changed
+
+
+def _cell_holds(text: str, secret: str) -> bool:
+    if secret in text:
+        return True
+    obj = _decoded(text)
+    return obj is not None and _contains_literal(obj, secret)
+
+
+def channel_rows_holding(conn: sqlite3.Connection, secret: str) -> int:
+    """Rows anywhere in the store still holding the literal, checked raw and decoded exactly as
+    count_literal checks events, so the post-scrub count is a real verification."""
+    total = 0
+    for table in _store_tables(conn)[0]:
+        cursor = conn.execute(f'SELECT rowid, * FROM "{table}"')
+        while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
+            total += sum(1 for row in rows if any(isinstance(value, str) and _cell_holds(value, secret) for value in row[1:]))
+    return total
+
+
+def scrub_literal_channel(conn: sqlite3.Connection, secret: str) -> tuple[int, int]:
+    """Redact every stored copy of one exact value across a channel store, returning (rows changed,
+    rows still holding it)."""
+
+    def replace(text: str) -> str:
+        return text.replace(secret, REDACTED)
+
+    changed = sum(_replace_in_table(conn, table, replace) for table in _store_tables(conn)[0])
+    conn.commit()
+    return changed, channel_rows_holding(conn, secret)
+
+
+def _replace_in_table(conn: sqlite3.Connection, table: str, transform: tp.Callable[[str], str]) -> int:
+    cursor = conn.execute(f'SELECT rowid, * FROM "{table}"')
+    names = [description[0] for description in cursor.description]
+    pending: list[tuple[int, dict[str, str]]] = []
+    while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
+        for row in rows:
+            updates = {
+                name: new_value
+                for name, value in zip(names[1:], row[1:], strict=True)
+                if isinstance(value, str) and (new_value := _transform_cell(value, transform)) != value
+            }
+            if updates:
+                pending.append((row[0], updates))
+    for rowid, updates in pending:
+        assignments = ", ".join(f'"{column}" = ?' for column in updates)
+        conn.execute(f'UPDATE "{table}" SET {assignments} WHERE rowid = ?', [*updates.values(), rowid])
+    return len(pending)
+
+
+def flush_wal_and_free_pages(conn: sqlite3.Connection) -> str | None:
+    """Fold the WAL into the main file, truncate it, and rewrite the file so no freed page keeps the
+    pre-scrub bytes: without this, a scrub whose SQL view reads clean leaves the secret's bytes in
+    the -wal sidecar until some later checkpoint, and in free pages of the main file indefinitely.
+    Returns a warning when the store was too busy to finish; the byte-level verification then
+    decides whether that mattered."""
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("VACUUM")
+    except sqlite3.OperationalError as exc:
+        return f"could not checkpoint and vacuum ({exc}): scrubbed bytes may linger on disk"
+    return None
+
+
+def bytes_on_disk(path: Path, literals: list[str]) -> list[str]:
+    """The literals present at byte level in the db file or its -wal/-shm sidecars: the check that
+    catches what the SQL view cannot show, a pre-scrub page image surviving in the WAL or a freed
+    page. Chunks overlap by the longest literal so a value straddling a chunk boundary still hits."""
+    needles = {literal.encode() for literal in literals}
+    if not needles:
+        return []
+    overlap = max(len(needle) for needle in needles)
+    found: set[bytes] = set()
+    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        if not candidate.is_file():
+            continue
+        tail = b""
+        with candidate.open("rb") as handle:
+            while chunk := handle.read(1 << 20):
+                window = tail + chunk
+                found.update(needle for needle in needles if needle in window)
+                tail = window[-overlap:]
+    return sorted(needle.decode() for needle in found)
+
+
+def _parse_ref(token: str) -> tuple[str, str, int]:
+    """A hit reference as (store, table, rowid): a bare integer addresses the events store, and
+    store:table:rowid addresses a channel-store row, exactly as the scan printed it."""
+    if token.isdigit():
+        return ("events", "events", int(token))
+    store_name, _, tail = token.rpartition(":")
+    store_name, _, table = store_name.rpartition(":")
+    if not store_name or not table or not tail.isdigit():
+        raise ValueError(token)
+    return (store_name, table, int(tail))
+
+
+def _scrub_store(conn: sqlite3.Connection, store: Store, refs: list[tuple[str, int]]) -> tuple[int, int]:
+    """Scrub the given rows of one store and verify the outcome, returning (rows changed, exit
+    code). JSON-event stores go through the id-keyed JSON path with their FTS resync; everything
+    else through the generic per-cell path."""
+    if store.name in JSON_EVENT_FTS:
+        ids = [rowid for _, rowid in refs]
+        event_hits = stored_hits(conn, ids)
+        changed = scrub(conn, ids, fts=JSON_EVENT_FTS[store.name])
+        survivors = [("events", rowid) for rowid in still_matching(conn, event_hits)]
+        hits = {("events", rowid): row_hits for rowid, row_hits in event_hits.items()}
+        counter: tp.Callable[[sqlite3.Connection, str], int] = count_literal
+    else:
+        tables = _store_tables(conn)[0]
+        if unknown := sorted({table for table, _ in refs if table not in tables}):
+            print(f"{store.name}: no such table(s): {', '.join(unknown)}", file=sys.stderr)
+            return 0, 1
+        hits = channel_stored_hits(conn, refs)
+        changed = scrub_channel_rows(conn, refs)
+        survivors = channel_still_matching(conn, hits)
+        counter = channel_rows_holding
+    print(f"{store.name}: scrubbed secrets in {changed} row(s) in place.")
+    if warning := flush_wal_and_free_pages(conn):
+        print(f"WARNING: {store.name}: {warning}")
+    code = 0
+    if survivors:
+        labels = ", ".join(str(rowid) if store.name == "events" else f"{store.name}:{table}:{rowid}" for table, rowid in survivors)
         print(
-            "0 events changed, which does NOT mean they were clean: --scrub can only remove a\n"
+            f"WARNING: {len(survivors)} row(s) still hold a matched secret after scrubbing: "
+            f"{labels}. The rewrite could not reach every hit "
+            "(a value outside a JSON string, a rolled-back commit). Redact by value with "
+            "--scrub-literal, or fix by hand."
+        )
+        code = 2
+    literals = sorted({literal for row_hits in hits.values() for literal in row_hits})
+    if lingering := bytes_on_disk(store.path, [literal for literal in literals if counter(conn, literal) == 0]):
+        print(
+            f"WARNING: {store.name}: {len(lingering)} scrubbed value(s) still present at byte level in the db file or its "
+            "-wal/-shm sidecars. Re-run --scrub for this store once its daemon is idle, so the checkpoint and vacuum can finish."
+        )
+        code = 2
+    return changed, code
+
+
+def _run_scrub(tokens: list[str]) -> int:
+    try:
+        refs = [_parse_ref(token) for token in tokens]
+    except ValueError as exc:
+        print(f"bad reference {exc}: use a numeric event id or store:table:rowid from the scan output", file=sys.stderr)
+        return 1
+    if not refs:
+        print("usage: redact_secrets.sh --scrub <ref> <ref> ...", file=sys.stderr)
+        return 1
+    stores = _all_stores()
+    code = 0
+    total = 0
+    for name in sorted({store_name for store_name, _, _ in refs}):
+        if name not in stores or not stores[name].path.is_file():
+            print(f"no store '{name}' on this box", file=sys.stderr)
+            return 1
+        store_refs = [(table, rowid) for store_name, table, rowid in refs if store_name == name]
+        conn = _connect(stores[name].path)
+        try:
+            changed, store_code = _scrub_store(conn, stores[name], store_refs)
+        finally:
+            conn.close()
+        total += changed
+        code = max(code, store_code)
+    if total == 0:
+        print(
+            "0 rows changed, which does NOT mean they were clean: --scrub can only remove a\n"
             "value the scanner detects. For a value it does not recognise (a human-chosen\n"
             "password matches no API-key shape), redact it by value instead:\n"
             "redact_secrets.sh --scrub-literal '<value>'"
         )
-    if remaining := still_matching(conn, hits):
+    return code
+
+
+def _scrub_literal_store(conn: sqlite3.Connection, store: Store, secret: str) -> tuple[int, int, int]:
+    """One store's literal sweep: (rows scrubbed, rows still holding the value, exit code)."""
+    if store.name in JSON_EVENT_FTS:
+        scrubbed, remaining = scrub_literal(conn, secret, fts=JSON_EVENT_FTS[store.name])
+    else:
+        scrubbed, remaining = scrub_literal_channel(conn, secret)
+    if warning := flush_wal_and_free_pages(conn):
+        print(f"WARNING: {store.name}: {warning}")
+    code = 0
+    if remaining == 0 and bytes_on_disk(store.path, [secret]):
         print(
-            f"WARNING: {len(remaining)} event(s) still hold a matched secret after scrubbing: "
-            f"{', '.join(str(i) for i in remaining)}. The rewrite could not reach every hit "
-            "(a value outside a JSON string, a rolled-back commit). Redact by value with "
-            "--scrub-literal, or fix by hand and resync events_fts."
+            f"WARNING: {store.name}: the value still sits at byte level in the db file or its -wal/-shm sidecars. "
+            "Re-run this command once the store's daemon is idle, so the checkpoint and vacuum can finish."
         )
-        return 2
-    return 0
+        code = 2
+    return scrubbed, remaining, code
 
 
-def _run_scrub_literal(conn: sqlite3.Connection, rest: list[str]) -> int:
+def _run_scrub_literal(rest: list[str]) -> int:
     if len(rest) != 1 or not rest[0]:
         print("usage: redact_secrets.sh --scrub-literal '<exact value>'", file=sys.stderr)
         return 1
@@ -417,65 +745,158 @@ def _run_scrub_literal(conn: sqlite3.Connection, rest: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
-    scrubbed, remaining = scrub_literal(conn, secret)
-    # Report the shape, never the value: this process's own output is itself recorded.
-    print(f"Scrubbed {scrubbed} event(s); {remaining} remain. (length {len(secret)}, value not echoed)")
-    if remaining:
-        print(
-            "The remaining event(s) hold the value where a JSON rewrite cannot reach it "
-            "(e.g. a bare JSON number): fix those events by hand and resync events_fts."
-        )
+    stores = [store for store in _all_stores().values() if store.path.is_file()]
+    if not stores:
+        print(f"No database at {DB}", file=sys.stderr)
+        return 1
+    total_remaining = 0
+    code = 0
+    for store in stores:
+        conn = _connect(store.path)
+        try:
+            scrubbed, remaining, store_code = _scrub_literal_store(conn, store, secret)
+        finally:
+            conn.close()
+        total_remaining += remaining
+        code = max(code, store_code)
+        # Report the shape, never the value: this process's own output is itself recorded.
+        print(f"{store.name}: scrubbed {scrubbed} row(s); {remaining} remain.")
+    print(f"(length {len(secret)}, value not echoed)")
+    if total_remaining:
+        print("The remaining row(s) hold the value where a JSON rewrite cannot reach it (e.g. a bare JSON number): fix those rows by hand.")
         return 2
-    print("Re-run this command once more later: the event recording this run may also hold the value.")
-    return 0
+    if code == 0:
+        print("Re-run this command once more later: the event recording this run may also hold the value.")
+    return code
 
 
-def _run_show(conn: sqlite3.Connection, rest: list[str]) -> int:
-    """Print one event's full `data` with every scanner-detected secret masked, for judging a hit
-    whose scan snippet is too short. Runs through the same redaction pass as the scrub, so no value
-    the scanner detects reaches the output."""
-    if len(rest) != 1 or not rest[0].isdigit():
-        print("usage: redact_secrets.sh --show <event-id>", file=sys.stderr)
+def _run_show(rest: list[str]) -> int:
+    """Print one row's full text with every scanner-detected secret masked, for judging a hit whose
+    scan snippet is too short. Runs through the same redaction pass as the scrub, so no value the
+    scanner detects reaches the output."""
+    try:
+        (ref,) = rest
+        store_name, table, rowid = _parse_ref(ref)
+    except ValueError:
+        print("usage: redact_secrets.sh --show <ref>   (a numeric event id, or store:table:rowid)", file=sys.stderr)
         return 1
-    row = conn.execute("SELECT data FROM events WHERE id = ?", (int(rest[0]),)).fetchone()
-    if row is None or not row[0]:
-        print(f"no event with id {rest[0]}", file=sys.stderr)
+    stores = _all_stores()
+    if store_name not in stores or not stores[store_name].path.is_file():
+        print(f"no store '{store_name}' on this box", file=sys.stderr)
         return 1
-    print(_redact_text(row[0]))
+    conn = _connect(stores[store_name].path)
+    try:
+        if store_name in JSON_EVENT_FTS:
+            row = conn.execute("SELECT data FROM events WHERE id = ?", (rowid,)).fetchone()
+            if row is None or not row[0]:
+                print(f"no event with id {rowid}", file=sys.stderr)
+                return 1
+            print(_redact_text(row[0]))
+            return 0
+        cells = _channel_row(conn, table, rowid)
+        if not cells:
+            print(f"no row {ref}", file=sys.stderr)
+            return 1
+        for column, value in cells.items():
+            print(f"{column}: {_redact_text(value)}")
+        return 0
+    finally:
+        conn.close()
+
+
+@dataclasses.dataclass(frozen=True)
+class StoreReport:
+    """One store's scan outcome: a status line for the coverage block, and its hits as
+    (ref token, masked snippet)."""
+
+    store: Store
+    status: str
+    hits: list[tuple[str, str]]
+
+
+def scan_channel_store(conn: sqlite3.Connection, store: Store) -> StoreReport:
+    """Sweep every text cell of every scannable table, under the store's time budget. A store that
+    outruns the budget is reported TRUNCATED, loudly: a half-scanned store reported clean is the
+    exact false negative this scanner exists to prevent."""
+    deadline = time.monotonic() + STORE_SCAN_BUDGET_SECS
+    tables = _store_tables(conn)[0]
+    hits: list[tuple[str, str]] = []
+    for table in tables:
+        if not _scan_table(conn, store, table, deadline, hits):
+            return StoreReport(store, f"TRUNCATED after {STORE_SCAN_BUDGET_SECS}s in table {table}: NOT fully scanned", hits)
+    return StoreReport(store, f"scanned {len(tables)} table(s)", hits)
+
+
+def _scan_table(conn: sqlite3.Connection, store: Store, table: str, deadline: float, hits: list[tuple[str, str]]) -> bool:
+    cursor = conn.execute(f'SELECT rowid, * FROM "{table}"')
+    while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
+        if time.monotonic() > deadline:
+            return False
+        for row in rows:
+            for value in row[1:]:
+                if isinstance(value, str):
+                    hits.extend((f"{store.name}:{table}:{row[0]}", snippet) for snippet in find_matches(value))
+    return True
+
+
+def _scan_events_store() -> StoreReport:
+    store = Store("events", DB)
+    if not DB.is_file():
+        return StoreReport(store, "absent", [])
+    conn = _connect(DB)
+    try:
+        return StoreReport(store, "scanned 1 table(s)", [(str(row_id), snippet) for row_id, snippet in scan(conn)])
+    finally:
+        conn.close()
+
+
+def _scan_one_channel(store: Store) -> StoreReport:
+    if not store.path.is_file():
+        return StoreReport(store, "absent", [])
+    try:
+        conn = _connect(store.path)
+        try:
+            return scan_channel_store(conn, store)
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return StoreReport(store, f"FAILED ({exc}): NOT scanned", [])
+
+
+def _run_scan() -> int:
+    reports = [_scan_events_store(), *(_scan_one_channel(store) for store in channel_stores())]
+    if all(report.status == "absent" for report in reports):
+        print(f"No database at {DB}", file=sys.stderr)
+        return 1
+    print("Store coverage (a store not marked scanned was NOT checked):")
+    for report in reports:
+        line = f"  {report.store.name} ({report.store.path}): {report.status}"
+        if report.status != "absent":
+            line += f", {len(report.hits)} hit(s)"
+        print(line)
+    partial = [report for report in reports if not report.status.startswith(("scanned", "absent"))]
+    hits = [hit for report in reports for hit in report.hits]
+    if not hits:
+        print("No secrets found." if not partial else "No secrets found in what was scanned; the coverage above shows what was not.")
+        return 0
+    refs = {token for token, _ in hits}
+    print(f"Found {len(refs)} record(s) with potential secrets (value masked below).")
+    print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <ref> <ref> ...")
+    # Never cap this list: matches arrive in row order, so any cap hides the newest rows' leaks.
+    for token, snippet in hits:
+        print(f"{token}|{snippet}")
     return 0
 
 
 def main() -> int:
-    if not DB.is_file():
-        print(f"No database at {DB}", file=sys.stderr)
-        return 1
-
     args = sys.argv[1:]
-    conn = sqlite3.connect(DB)
-    try:
-        if args[:1] == ["--show"]:
-            return _run_show(conn, args[1:])
-
-        if args[:1] == ["--scrub"]:
-            return _run_scrub(conn, [int(arg) for arg in args[1:]])
-
-        if args[:1] == ["--scrub-literal"]:
-            return _run_scrub_literal(conn, args[1:])
-
-        matches = scan(conn)
-        if not matches:
-            print("No secrets found.")
-            return 0
-
-        ids = sorted({row_id for row_id, _ in matches})
-        print(f"Found {len(ids)} event(s) with potential secrets (value masked below).")
-        print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <id> <id> ...")
-        # Never cap this list: matches arrive in rowid order, so any cap hides the newest events' leaks.
-        for row_id, snippet in matches:
-            print(f"{row_id}|{snippet}")
-        return 0
-    finally:
-        conn.close()
+    if args[:1] == ["--show"]:
+        return _run_show(args[1:])
+    if args[:1] == ["--scrub"]:
+        return _run_scrub(args[1:])
+    if args[:1] == ["--scrub-literal"]:
+        return _run_scrub_literal(args[1:])
+    return _run_scan()
 
 
 if __name__ == "__main__":

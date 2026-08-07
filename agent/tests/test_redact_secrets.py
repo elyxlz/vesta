@@ -22,6 +22,13 @@ spec.loader.exec_module(redact)
 SECRET = "AKIAABCDEFGHIJKLMNOP"
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """The scanner enumerates channel stores from $HOME at call time; point it at the test's tmp dir
+    so no test can ever open (or scrub) a real store on the machine running the suite."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
 @pytest.fixture
 def db_conn(tmp_path, event_bus):
     conn = sqlite3.connect(str(tmp_path / "events.db"))
@@ -414,13 +421,13 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     monkeypatch.setattr("sys.argv", ["redact_secrets.py"])
     assert redact.main() == 0
     out = capsys.readouterr().out
-    assert "Found 1 event(s)" in out
+    assert "Found 1 record(s)" in out
     assert SECRET not in out
     leak_id = int(out.splitlines()[-1].split("|", 1)[0])
 
     monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", str(leak_id)])
     assert redact.main() == 0
-    assert "Scrubbed secrets in 1 event(s)" in capsys.readouterr().out
+    assert "scrubbed secrets in 1 row(s)" in capsys.readouterr().out
 
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
@@ -737,7 +744,7 @@ def test_main_scrub_literal_never_echoes_the_value(tmp_path, event_bus, db_conn,
 
     out = capsys.readouterr().out
     assert UNDETECTABLE not in out
-    assert "Scrubbed 1 event(s); 0 remain" in out
+    assert "events: scrubbed 1 row(s); 0 remain" in out
     assert f"length {len(UNDETECTABLE)}" in out
     assert UNDETECTABLE not in db_conn.execute("SELECT data FROM events").fetchone()[0]
 
@@ -775,7 +782,7 @@ def test_main_scrub_explains_a_zero_event_result(tmp_path, event_bus, db_conn, m
     assert redact.main() == 0
 
     out = capsys.readouterr().out
-    assert "Scrubbed secrets in 0 event(s)" in out
+    assert "scrubbed secrets in 0 row(s)" in out
     assert "does NOT mean they were clean" in out
     assert "--scrub-literal" in out
 
@@ -842,3 +849,220 @@ def test_scan_ignores_lookalikes_that_are_not_the_apple_format(event_bus, db_con
     event_bus.emit(AssistantEvent(type="assistant", text=text))
 
     assert redact.scan(db_conn) == []
+
+
+# ---------------------------------------------------------------------------
+# Channel stores: what the user typed lives outside events.db
+# ---------------------------------------------------------------------------
+# The whatsapp-shaped store mirrors skills/whatsapp/cli/storage.go: a messages table, a standalone
+# (contentful) FTS5 mirror, and an AFTER UPDATE trigger keeping the mirror's content in sync. The
+# app-chat-shaped store mirrors skills/app-chat/cli/src/app_chat_cli/store.py: JSON event blobs
+# behind an external-content FTS index with insert/delete triggers only.
+
+WHATSAPP_SCHEMA = """
+CREATE TABLE chats (jid TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE messages (id TEXT, chat_jid TEXT, sender TEXT, content TEXT, timestamp TEXT, PRIMARY KEY (id, chat_jid));
+CREATE VIRTUAL TABLE messages_fts USING fts5(content, chat_name, sender);
+CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
+    UPDATE messages_fts SET content = new.content WHERE rowid = new.rowid;
+END;
+"""
+
+APP_CHAT_SCHEMA = """
+CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, data TEXT NOT NULL);
+CREATE VIRTUAL TABLE events_fts USING fts5(text_content, content='events', content_rowid='id');
+CREATE TRIGGER events_fts_ai AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts(rowid, text_content)
+    SELECT new.id, json_extract(new.data, '$.text')
+    WHERE json_extract(new.data, '$.type') IN ('user', 'chat');
+END;
+CREATE TRIGGER events_fts_ad AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, text_content)
+    SELECT 'delete', old.id, json_extract(old.data, '$.text')
+    WHERE json_extract(old.data, '$.type') IN ('user', 'chat');
+END;
+"""
+
+
+def _make_whatsapp_store(home: pl.Path, text: str) -> pl.Path:
+    path = home / ".whatsapp" / "messages.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript(WHATSAPP_SCHEMA)
+    conn.execute("INSERT INTO messages VALUES ('m1', 'c@s.whatsapp.net', 'them', ?, '2026-01-01')", (text,))
+    conn.execute("INSERT INTO messages_fts(rowid, content, chat_name, sender) VALUES (1, ?, 'chat', 'them')", (text,))
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _make_app_chat_store(home: pl.Path, text: str) -> pl.Path:
+    path = home / ".app-chat" / "app-chat.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript(APP_CHAT_SCHEMA)
+    conn.execute("INSERT INTO events (ts, data) VALUES ('2026-01-01', ?)", (json.dumps({"type": "user", "text": text}),))
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _scan_output(monkeypatch, capsys) -> str:
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py"])
+    assert redact.main() == 0
+    return capsys.readouterr().out
+
+
+def test_scan_flags_a_secret_in_a_whatsapp_shaped_store(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """The incident behind the widened scope: a credential pasted into a chat channel sits in that
+    channel's own store, which a scan of events.db alone reports clean."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    _make_whatsapp_store(tmp_path, f"here is my aws key {SECRET} use it")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert SECRET not in out
+    hits = [line for line in out.splitlines() if line.startswith("whatsapp:messages")]
+    assert "whatsapp:messages:1|" in out
+    assert hits and all("[REDACTED]" in line for line in hits)
+
+
+def test_scan_reports_a_clean_channel_store_as_scanned_and_green(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    _make_whatsapp_store(tmp_path, "see you at dinner tonight")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "No secrets found." in out
+    coverage = [line for line in out.splitlines() if "whatsapp (" in line]
+    assert coverage and "scanned" in coverage[0]
+
+
+def test_scan_lists_an_absent_store_so_the_scope_is_visible(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    coverage = [line for line in out.splitlines() if "telegram" in line]
+    assert coverage and "absent" in coverage[0]
+
+
+def test_scan_sees_a_channel_row_committed_only_to_the_wal(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A recent message can live only in the -wal sidecar until a checkpoint; the scan must see it."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, "an older clean message")
+    holder = sqlite3.connect(path)
+    holder.execute("INSERT INTO messages VALUES ('m2', 'c@s.whatsapp.net', 'them', ?, '2026-01-02')", (f"key {SECRET} here",))
+    holder.commit()  # holder stays open, so the row sits uncheckpointed in messages.db-wal
+    assert SECRET.encode() in pl.Path(f"{path}-wal").read_bytes()
+    assert SECRET.encode() not in path.read_bytes()
+
+    out = _scan_output(monkeypatch, capsys)
+    holder.close()
+
+    assert "whatsapp:messages:2|" in out
+    assert SECRET not in out
+
+
+def test_scan_truncates_an_over_budget_store_and_says_so(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr(redact, "STORE_SCAN_BUDGET_SECS", 0)
+    _make_whatsapp_store(tmp_path, f"key {SECRET} here")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "TRUNCATED" in out
+    assert "No secrets found in what was scanned" in out
+
+
+def test_scrub_purges_the_secret_bytes_from_the_events_wal(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A scrub whose SQL view reads clean is not done: the pre-scrub page images sit in events.db-wal
+    until a checkpoint, so the scrub must checkpoint and vacuum, then the bytes must be gone."""
+    event_bus.emit(AssistantEvent(type="assistant", text=f"my aws key is {SECRET} for backups"))
+    db = tmp_path / "events.db"
+    assert SECRET.encode() in pl.Path(f"{db}-wal").read_bytes()
+    monkeypatch.setattr(redact, "DB", db)
+    leak_id = db_conn.execute("SELECT id FROM events").fetchone()[0]
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", str(leak_id)])
+
+    assert redact.main() == 0
+
+    assert SECRET not in capsys.readouterr().out
+    for sidecar in (db, pl.Path(f"{db}-wal"), pl.Path(f"{db}-shm")):
+        assert not sidecar.is_file() or SECRET.encode() not in sidecar.read_bytes()
+
+
+def test_scrub_channel_refs_redact_the_row_its_fts_mirror_and_the_disk_bytes(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, f"here is my aws key {SECRET} use it")
+    out = _scan_output(monkeypatch, capsys)
+    refs = sorted({line.split("|", 1)[0] for line in out.splitlines() if line.startswith("whatsapp:")})
+    assert refs  # the scan addressed the store's rows
+
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", *refs])
+    assert redact.main() == 0
+
+    conn = sqlite3.connect(path)
+    content = conn.execute("SELECT content FROM messages WHERE rowid = 1").fetchone()[0]
+    assert SECRET not in content
+    assert "[REDACTED]" in content
+    assert SECRET not in conn.execute("SELECT content FROM messages_fts WHERE rowid = 1").fetchone()[0]
+    assert conn.execute("SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?", (SECRET,)).fetchone()[0] == 0
+    conn.close()
+    for sidecar in (path, pl.Path(f"{path}-wal"), pl.Path(f"{path}-shm")):
+        assert not sidecar.is_file() or SECRET.encode() not in sidecar.read_bytes()
+
+
+def test_scrub_app_chat_row_keeps_json_valid_and_resyncs_its_fts(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_app_chat_store(tmp_path, 'mongo "mongodb://user:secretpass@cluster0.example.net/db" for backups')
+    out = _scan_output(monkeypatch, capsys)
+    refs = sorted({line.split("|", 1)[0] for line in out.splitlines() if line.startswith("app-chat:")})
+    assert refs == ["app-chat:events:1"]
+
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", *refs])
+    assert redact.main() == 0
+
+    conn = sqlite3.connect(path)
+    data = conn.execute("SELECT data FROM events WHERE id = 1").fetchone()[0]
+    assert "secretpass" not in data
+    assert "[REDACTED]" in json.loads(data)["text"]  # still valid JSON, so app-chat history still parses
+    assert conn.execute("SELECT count(*) FROM events_fts WHERE events_fts MATCH 'secretpass'").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM events_fts WHERE events_fts MATCH 'backups'").fetchone()[0] == 1
+    conn.close()
+
+
+def test_scrub_literal_sweeps_the_channel_stores_too(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE} for now"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, f"psw: {UNDETECTABLE} dont tell")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal", UNDETECTABLE])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert UNDETECTABLE not in out
+    assert "events: scrubbed 1 row(s); 0 remain." in out
+    # One direct row change: the store's own AFTER UPDATE trigger cleans the FTS mirror in the same
+    # pass, and 0 remain proves the mirror came out clean too.
+    assert "whatsapp: scrubbed 1 row(s); 0 remain." in out
+    conn = sqlite3.connect(path)
+    assert UNDETECTABLE not in conn.execute("SELECT content FROM messages WHERE rowid = 1").fetchone()[0]
+    conn.close()
+    for sidecar in (path, pl.Path(f"{path}-wal")):
+        assert not sidecar.is_file() or UNDETECTABLE.encode() not in sidecar.read_bytes()
+
+
+def test_show_prints_a_channel_row_with_the_secret_masked(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    _make_whatsapp_store(tmp_path, f"the aws key is {SECRET} for backups")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--show", "whatsapp:messages:1"])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert SECRET not in out
+    assert "[REDACTED]" in out
+    assert "the aws key is" in out and "for backups" in out
