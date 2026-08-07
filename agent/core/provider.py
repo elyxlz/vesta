@@ -49,6 +49,8 @@ class ProviderAuthState(enum.StrEnum):
     NOT_AUTHENTICATED = "not_authenticated"
 
 
+RATE_LIMIT_RETRY_FALLBACK_SECONDS = 300
+RATE_LIMITED_STATUS = 429
 ProviderStatusKind = ProviderKind | tp.Literal["none"]
 
 # What normally counts as a terminal provider error — the credential is rejected (401) or the
@@ -75,6 +77,76 @@ _KIMI_INVALID_CREDENTIAL_MARKERS = (
 )
 
 
+# --- what a provider's HTTP 429 actually means ---
+# One status covers a minute-scale throttle, a quota resetting in days, and problems retrying can
+# never fix (expired plan, empty balance, a model the subscription lacks). So each provider answers
+# for its own, with no default: guessing meant silently retrying a dead subscription forever while
+# reporting a passing rate limit. Markers come from the vendors' published error tables and match
+# the error text the SDK surfaces, as _KIMI_INVALID_CREDENTIAL_MARKERS already does.
+
+
+class Rejection(tp.NamedTuple):
+    """How to treat one rejected request. `retryable=False` means waiting cannot help."""
+
+    retryable: bool
+    window: str
+    seconds: int | None = None
+
+
+_MINUTE = 60
+_FIVE_HOURS = 5 * 60 * 60
+_SEVEN_DAYS = 7 * 24 * 60 * 60
+
+# Ordered: the first marker found in the error text wins, so the specific precede the general.
+_ZAI_REJECTIONS: tuple[tuple[str, Rejection], ...] = (
+    ("1309", Rejection(retryable=False, window="plan expired")),
+    ("1311", Rejection(retryable=False, window="model not in plan")),
+    ("1314", Rejection(retryable=False, window="enterprise package expired")),
+    ("1315", Rejection(retryable=False, window="api key scope")),
+    ("1313", Rejection(retryable=False, window="fair usage policy")),
+    ("past 7 days", Rejection(retryable=True, window="7 days", seconds=_SEVEN_DAYS)),
+    ("past 5 hours", Rejection(retryable=True, window="5 hours", seconds=_FIVE_HOURS)),
+    ("weekly/monthly limit exhausted", Rejection(retryable=True, window="weekly/monthly", seconds=_SEVEN_DAYS)),
+    ("usage limit reached", Rejection(retryable=True, window="usage limit", seconds=_FIVE_HOURS)),
+    ("temporarily overloaded", Rejection(retryable=True, window="overloaded", seconds=_MINUTE)),
+    ("rate limit reached", Rejection(retryable=True, window="requests", seconds=_MINUTE)),
+)
+
+_KIMI_REJECTIONS: tuple[tuple[str, Rejection], ...] = (
+    ("exceeded_current_quota_error", Rejection(retryable=False, window="account balance")),
+    ("tpd limit", Rejection(retryable=True, window="tokens per day", seconds=24 * 60 * 60)),
+    ("tpm limit", Rejection(retryable=True, window="tokens per minute", seconds=_MINUTE)),
+    ("rpm limit", Rejection(retryable=True, window="requests per minute", seconds=_MINUTE)),
+    ("concurrency limit", Rejection(retryable=True, window="concurrency", seconds=10)),
+    # Matches both the error type (engine_overloaded_error) and its message text.
+    ("overloaded", Rejection(retryable=True, window="overloaded", seconds=_MINUTE)),
+)
+
+# The bridge retries a 429 three times itself before surfacing one, so a rejection reaching us is a
+# sustained limit. It carries the true reset in a Retry-After header we cannot read from here.
+_OPENAI_REJECTIONS: tuple[tuple[str, Rejection], ...] = (
+    ("rate_limit_error", Rejection(retryable=True, window="chatgpt plan", seconds=_FIVE_HOURS)),
+    ("rate limit reached", Rejection(retryable=True, window="chatgpt plan", seconds=_FIVE_HOURS)),
+)
+
+
+def classify_rejection(kind: "ProviderStatusKind | None", details: tp.Iterable[str]) -> Rejection | None:
+    """What this provider's 429 means, or None when it does not answer for its own rejections.
+
+    None is a known gap rather than a wait: Claude and OpenRouter are served by richer signals
+    elsewhere, and a provider reached through an external bridge may never surface the status here.
+    """
+    limits = _provider_limits()
+    if kind is None or kind not in limits:
+        return None
+    markers = limits[kind].rejections
+    text = "\n".join(details).lower()
+    for marker, rejection in markers:
+        if marker in text:
+            return rejection
+    return None
+
+
 def is_terminal_provider_error(
     kind: "ProviderStatusKind | None",
     *,
@@ -89,6 +161,12 @@ def is_terminal_provider_error(
     Only its two explicit credential messages are therefore terminal. Other providers retain the
     SDK's 401/402 classification.
     """
+    # Z.AI and Kimi return 429 for an expired plan, an empty balance, or a model the subscription
+    # lacks. Every other provider calls that 402, so it lands here as the same terminal failure:
+    # the agent stops and the app asks the user to act, instead of retrying what waiting cannot fix.
+    if api_error_status == RATE_LIMITED_STATUS:
+        rejection = classify_rejection(kind, details)
+        return rejection is not None and not rejection.retryable
     if kind == "kimi":
         is_401 = assistant_error == "authentication_failed" or api_error_status == 401
         if not is_401:
@@ -116,6 +194,25 @@ class ProviderStatus:
         # reports none. Enforced here so every construction path — including dc.replace — converges.
         if self.state != ProviderAuthState.AUTHENTICATED:
             self.model = None
+
+
+class ProviderCooldown(pyd.BaseModel):
+    reason: tp.Literal["rate_limit"] = "rate_limit"
+    until: int
+    window: str | None = None
+
+
+def active_cooldown(cooldown: ProviderCooldown | None, *, now: float | None = None) -> ProviderCooldown | None:
+    if cooldown is None:
+        return None
+    timestamp = time.time() if now is None else now
+    return cooldown if cooldown.until > timestamp else None
+
+
+def rate_limit_cooldown(*, resets_at: int | None, window: str | None, now: float | None = None) -> ProviderCooldown:
+    timestamp = time.time() if now is None else now
+    until = resets_at if resets_at is not None and resets_at > timestamp else int(timestamp) + RATE_LIMIT_RETRY_FALLBACK_SECONDS
+    return ProviderCooldown(until=until, window=window)
 
 
 def derive_status(config: VestaConfig) -> ProviderStatus:
@@ -415,8 +512,13 @@ class UsageCredits:
 
 @dc.dataclass
 class Usage:
+    """One provider's account of its own limits: how full each window is, what credit remains, and
+    whether it is refusing work right now. Meters and credits are pulled on request; the cooldown is
+    pushed by a rejection, so a client reads one shape rather than reconciling two sources."""
+
     meters: list[UsageMeter]
     credits: UsageCredits | None
+    cooldown: "ProviderCooldown | None" = None
 
 
 class UsageError(Exception):
@@ -449,15 +551,45 @@ def _read_oauth_token() -> str | None:
         return None
 
 
+@dc.dataclass(frozen=True)
+class ProviderLimits:
+    """Everything one provider can tell us about its own limits.
+
+    `fetch` pulls meters and credits when the provider exposes a usage API; None means it does not,
+    and the agent learns its limits only by being refused. `rejections` names what that refusal
+    means, ordered specific-first; empty means the provider is served by a richer signal elsewhere
+    (Claude's structured window, OpenRouter's proxied Retry-After) or publishes nothing usable.
+    Adding a provider is one row here."""
+
+    fetch: "tp.Callable[[VestaConfig], tp.Awaitable[Usage]] | None"
+    rejections: tuple[tuple[str, Rejection], ...] = ()
+
+
+def _provider_limits() -> "dict[str, ProviderLimits]":
+    return {
+        "claude": ProviderLimits(fetch=lambda _config: _claude_usage()),
+        "openrouter": ProviderLimits(fetch=_openrouter_usage),
+        "zai": ProviderLimits(fetch=None, rejections=_ZAI_REJECTIONS),
+        "kimi": ProviderLimits(fetch=None, rejections=_KIMI_REJECTIONS),
+        # openai is the opposite case: Codex reports used-percent, window length and reset for a
+        # primary and secondary window plus a credit balance, on every response, via x-codex-*
+        # headers. The bridge captures them and forwards none, and drops the codex.rate_limits
+        # stream event too, so nothing downstream of it can read them. Reaching them means teaching
+        # the bridge to pass them through, not another endpoint here.
+        "openai": ProviderLimits(fetch=None, rejections=_OPENAI_REJECTIONS),
+    }
+
+
 async def get_usage(config: VestaConfig) -> Usage:
-    """Provider-agnostic plan usage for the agent's active provider. Returns empty usage when no
-    provider is configured; raises UsageError when an upstream fetch fails."""
+    """Provider-agnostic plan usage for the agent's active provider. Returns empty usage when the
+    provider exposes none; raises UsageError when an upstream fetch fails."""
     kind, _ = _derive_kind_and_auth(config)
-    if kind == "claude":
-        return await _claude_usage()
-    if kind == "openrouter":
-        return await _openrouter_usage(config)
-    return Usage(meters=[], credits=None)
+    limits = _provider_limits()
+    if kind not in limits or limits[kind].fetch is None:
+        return Usage(meters=[], credits=None)
+    fetch = limits[kind].fetch
+    assert fetch is not None
+    return await fetch(config)
 
 
 async def _claude_usage() -> Usage:

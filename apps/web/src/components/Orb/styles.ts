@@ -4,6 +4,7 @@ import {
   type AgentActivityState,
   type AgentOperation as ServerOperation,
   type AgentStatus,
+  type ModelAccess,
   type OrbVisualState,
 } from "@vesta/core";
 import { getOpLabel, type AgentRequest } from "@/stores/use-agent-ops";
@@ -11,6 +12,7 @@ export { orbColors } from "@/design-tokens";
 
 interface AgentLike {
   status: AgentStatus;
+  modelAccess?: ModelAccess;
   operation: ServerOperation | null;
 }
 
@@ -38,6 +40,16 @@ function resolveStatus(
 
   if (!agent) return { label: "", orbState: "off" };
 
+  if (agent.status === "alive" && agent.modelAccess?.state === "cooling_down") {
+    const until = new Date(agent.modelAccess.until * 1000).toLocaleTimeString(
+      [],
+      {
+        hour: "numeric",
+        minute: "2-digit",
+      },
+    );
+    return { label: `rate limited until ${until}`, orbState: "busy" };
+  }
   return {
     label: agentStatusLabel(agent.status, activityState, agent.operation),
     orbState: agentOrbState(agent.status, activityState, agent.operation),

@@ -4,6 +4,12 @@
       "info": {
         "activityState": "thinking",
         "buildPhase": null,
+        "modelAccess": {
+          "reason": null,
+          "state": "available",
+          "until": null,
+          "window": null
+        },
         "operation": "backing_up",
         "services": {
           "dashboard": {
@@ -90,6 +96,12 @@
           "info": {
             "activityState": "thinking",
             "buildPhase": null,
+            "modelAccess": {
+              "reason": null,
+              "state": "available",
+              "until": null,
+              "window": null
+            },
             "operation": "backing_up",
             "services": {
               "dashboard": {

@@ -98,6 +98,33 @@ describe("rostersEqual", () => {
       expected: false,
     },
     {
+      name: "changed model access is unequal",
+      a: rosterFromTree(
+        tree({
+          aria: {
+            info: agentInfo({
+              modelAccess: { state: "available", reason: null, until: null, window: null },
+            }),
+          },
+        }),
+      ),
+      b: rosterFromTree(
+        tree({
+          aria: {
+            info: agentInfo({
+              modelAccess: {
+                state: "cooling_down",
+                reason: "rate_limit",
+                until: 2_000_000_000,
+                window: "five_hour",
+              },
+            }),
+          },
+        }),
+      ),
+      expected: false,
+    },
+    {
       name: "changed operation is unequal",
       a: rosterFromTree(tree({ aria: { info: agentInfo({ operation: null }) } })),
       b: rosterFromTree(tree({ aria: { info: agentInfo({ operation: "backing_up" }) } })),

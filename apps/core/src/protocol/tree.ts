@@ -14,6 +14,15 @@ export type AgentStatus =
 
 export type AgentActivityState = "idle" | "thinking"
 
+export type ModelAccess =
+  | { state: "available"; reason: null; until: null; window: null }
+  | {
+      state: "cooling_down"
+      reason: "rate_limit"
+      until: number
+      window: string | null
+    }
+
 // A long-running operation vestad is running against an existing agent. Distinct from AgentStatus,
 // which describes the container: both of these run against an agent whose container state barely
 // changes, so only the roster reveals them, and to every client rather than just the initiator.
@@ -33,6 +42,7 @@ export interface ServiceInfo {
 export interface AgentInfo {
   status: AgentStatus
   activityState: AgentActivityState
+  modelAccess?: ModelAccess
   buildPhase: BuildPhase | null
   operation: AgentOperation | null
   startedAt: string | null

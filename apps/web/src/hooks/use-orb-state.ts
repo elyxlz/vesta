@@ -3,6 +3,7 @@ import type {
   AgentActivityState,
   AgentOperation,
   AgentStatus,
+  ModelAccess,
   OrbVisualState,
 } from "@vesta/core";
 import { useAgentOps } from "@/stores/use-agent-ops";
@@ -10,6 +11,7 @@ import { useAgentOps } from "@/stores/use-agent-ops";
 interface AgentLike {
   name: string;
   status: AgentStatus;
+  modelAccess?: ModelAccess;
   operation: AgentOperation | null;
 }
 

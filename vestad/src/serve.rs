@@ -1793,10 +1793,11 @@ struct UserNotificationBody {
     body: String,
 }
 
-/// User-notification kinds are a closed set: `message` (a new agent reply) and `rate_limited`. An
-/// unknown kind is rejected so the user-notification surface cannot drift open.
+/// User-notification kinds are a closed set: `message` (a new agent reply), `rate_limited`, and
+/// `auth_lost` (terminal provider auth loss, so the agent cannot reply until re-auth). An unknown
+/// kind is rejected so the user-notification surface cannot drift open.
 fn valid_user_notification_kind(kind: &str) -> bool {
-    matches!(kind, "message" | "rate_limited")
+    matches!(kind, "message" | "rate_limited" | "auth_lost")
 }
 
 /// Truncate to at most `max` chars on a char boundary, appending an ellipsis when it cut. Counting by
@@ -3384,6 +3385,7 @@ mod tests {
     fn user_notification_kind_is_a_closed_set() {
         assert!(valid_user_notification_kind("message"));
         assert!(valid_user_notification_kind("rate_limited"));
+        assert!(valid_user_notification_kind("auth_lost"));
         assert!(!valid_user_notification_kind("chat"));
         assert!(!valid_user_notification_kind("status"));
         assert!(!valid_user_notification_kind(""));

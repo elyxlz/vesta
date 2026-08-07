@@ -33,8 +33,11 @@ from . import diagnostics, logger, sdk_parsing, state_store, vestad_client
 from . import models as vm
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from .helpers import get_constitution_path, get_memory_path
+from .model_access import activate_rate_limit, model_access_available, note_rate_limit_once, wait_for_model_access
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
+    RATE_LIMITED_STATUS,
+    classify_rejection,
     is_terminal_provider_error,
     is_unauthenticated,
     observed_provider_failure,
@@ -43,6 +46,10 @@ from .tools import build_vesta_tools_server
 
 ZAI_ANTHROPIC_URL = "https://api.z.ai/api/anthropic"
 KIMI_ANTHROPIC_URL = "https://api.kimi.com/coding/"
+
+# Body of the auth_lost user notification. A fixed notice, never the upstream error text, so no
+# credential fragment a provider echoes back can reach a client notification.
+AUTH_LOST_NOTICE = "Provider sign-in stopped working, so replies are paused. Messages are kept and answered once you sign in again in the app."
 
 # The error surface of a dead or wedged CLI subprocess, caught by every consumer of the SDK seam
 # (the session open below, loops.py's turn and compaction error handlers). Owned here so loops.py
@@ -110,7 +117,7 @@ async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig)
     turn = state.turn
     if not client or turn is None or state.noninterruptible_turn_active or state.compacting:
         return False
-    if is_unauthenticated(state.provider_status):
+    if is_unauthenticated(state.provider_status) or not model_access_available(state):
         # Same deferral as the processor's gate: don't hand prompts to a dead token; the
         # notification file stays on disk and re-runs after re-auth.
         return False
@@ -195,19 +202,76 @@ def _emit_parsed_content(texts: list[str], thinking_blocks: list[ThinkingBlock],
         state.event_bus.emit({"type": "error", "text": f"Turn failed upstream: {error_text[:500]}"})
 
 
-async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
+async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Surface a rejected rate limit from the structured classification: the CLI's synthesized text
     for the same event misnames the window (issue #1071), so this event is what consumers trust.
     Once per window; the type/resets_at pair changes when a different limit trips. The internal event
     is kept for history; a best-effort user notification raises a user-facing toast + push."""
+    # This structured window vocabulary is Claude-specific. OpenRouter's authoritative signal is
+    # its proxy's upstream HTTP 429, while the other Claude-compatible providers do not promise
+    # Claude's five-hour/weekly reset semantics.
+    if state.provider_status is None or state.provider_status.kind != "claude":
+        return
     info = msg.rate_limit_info
     notice = sdk_parsing.rate_limit_notice(info, now=time.time())
-    window_key = (info.rate_limit_type, info.resets_at)
-    if notice and window_key != state.rate_limit_noticed:
-        state.rate_limit_noticed = window_key
-        state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
+    if notice:
+        await activate_rate_limit(state=state, config=config, resets_at=info.resets_at, window=info.rate_limit_type)
+    if notice and note_rate_limit_once(state=state, window=info.rate_limit_type, resets_at=info.resets_at, notice=notice):
         agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
         await vestad_client.send_user_notification("rate_limited", agent_name, notice)
+
+
+async def _note_rejected_turn(msg: ResultMessage, *, state: vm.State, config: cfg.VestaConfig, details: tuple[str, ...]) -> None:
+    """Open a cooldown for a 429 the provider says is worth waiting out.
+
+    There is no fallback for a provider that does not answer: a blanket "wait five minutes" reads an
+    expired plan as a passing throttle and retries it forever. An unclassified rejection is logged
+    as the gap it is; one waiting cannot fix is left to the terminal-error path."""
+    kind = state.provider_status.kind if state.provider_status is not None else None
+    rejection = classify_rejection(kind, details)
+    if rejection is None:
+        logger.warning(f"{kind or 'provider'} rejected a turn with {msg.api_error_status} and no rate-limit meaning; not pausing")
+        return
+    if not rejection.retryable:
+        # Waiting cannot fix an expired plan or an empty balance. is_terminal_provider_error claims
+        # these below, flipping the agent to not_authenticated exactly as a 402 from any other
+        # provider would, so the user is asked to act rather than watching silent retries.
+        return
+    resets_at = int(time.time()) + rejection.seconds if rejection.seconds is not None else None
+    cooldown = await activate_rate_limit(state=state, config=config, resets_at=resets_at, window=rejection.window)
+    resets = time.strftime("%I:%M %p %Z", time.localtime(cooldown.until))
+    note_rate_limit_once(
+        state=state,
+        window=rejection.window,
+        resets_at=cooldown.until,
+        notice=f"Rate limited by {kind} ({rejection.window}), pausing until {resets}.",
+    )
+
+
+async def _note_rate_limit_signal(msg: Message, *, state: vm.State, config: cfg.VestaConfig, details: tuple[str, ...]) -> None:
+    """The two ways a rejection reaches this stream: Claude's structured classification, which
+    names the window, or any provider's bare 429 on the result."""
+    if isinstance(msg, RateLimitEvent):
+        await _note_rate_limit(msg, state=state, config=config)
+    elif isinstance(msg, ResultMessage) and msg.api_error_status == RATE_LIMITED_STATUS:
+        await _note_rejected_turn(msg, state=state, config=config, details=details)
+
+
+async def _note_auth_lost(*, state: vm.State, config: cfg.VestaConfig) -> None:
+    """Terminal upstream 401/402: flip to not_authenticated, announce the deaf streak, and stop the
+    CLI's internal retries so the app shows "not signed in" in ~3s instead of hanging to the response
+    timeout and restart-looping. The best-effort user notification (issues #1642/#1650) fires once
+    per streak: on the authenticated -> not_authenticated transition, or on the first sighting when
+    the OpenRouter cache proxy already flipped the status; retries against the same dead credential
+    stay quiet."""
+    logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
+    newly_deaf = not is_unauthenticated(state.provider_status) or not state.auth_lost_noticed
+    state.provider_status = observed_provider_failure(state.provider_status)
+    if newly_deaf:
+        state.auth_lost_noticed = True
+        agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
+        await vestad_client.send_user_notification("auth_lost", agent_name, AUTH_LOST_NOTICE)
+    await attempt_interrupt(state, config=config, reason="Provider auth lost")
 
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
@@ -239,8 +303,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
             logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
         await persist_session_id(session_id, state=state, config=config)
     _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
-    if isinstance(msg, RateLimitEvent):
-        await _note_rate_limit(msg, state=state)
+    await _note_rate_limit_signal(msg, state=state, config=config, details=(*texts, *error_texts))
     # The SDK can surface a provider failure either on the assistant classification or the result's
     # HTTP status. Keep the decision provider-aware: Kimi uses 401 for tier/model/context permission
     # errors and a temporary 402, neither of which means its subscription key is dead.
@@ -252,12 +315,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         details=(*texts, *error_texts),
     )
     if auth_lost:
-        # Flip to not_authenticated, stop the CLI's internal retries, and end the turn cleanly
-        # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
-        # and restart-looping.
-        logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
-        state.provider_status = observed_provider_failure(state.provider_status)
-        await attempt_interrupt(state, config=config, reason="Provider auth lost")
+        await _note_auth_lost(state=state, config=config)
     if isinstance(msg, ResultMessage) or auth_lost:
         if turn and not turn.done.is_set():
             turn.done.set()
@@ -356,6 +414,11 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
     A preempt landing mid-turn needs no handling: the CLI-side abort ends this turn as an
     ordinary ResultMessage."""
     assert state.client is not None
+    # wait_for_model_access returns False only once shutdown is signalled, so this cancellation is
+    # the shutdown path: _run_one_turn re-raises it there instead of treating it as an unexpected
+    # cancel. Pinned by test_wait_for_model_access_returns_false_only_on_shutdown.
+    if not await wait_for_model_access(state=state, config=config):
+        raise asyncio.CancelledError
     client = state.client
 
     diagnostics.touch_activity(state, "query_start")

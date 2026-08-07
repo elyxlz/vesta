@@ -16,6 +16,7 @@ import pydantic as pyd
 from . import config as cfg
 from . import lifecycle, logger
 from .events import EVENTS_DB_FILENAME
+from .provider import ProviderCooldown
 
 STATE_FILENAME = "state.json"
 
@@ -29,6 +30,7 @@ class PersistedState(pyd.BaseModel):
     pending_boot_message: str | None = None
     session_id: str | None = None
     applied_migrations: list[str] = pyd.Field(default_factory=list)
+    provider_cooldown: ProviderCooldown | None = None
 
 
 def state_path(config: cfg.VestaConfig) -> pl.Path:

@@ -44,8 +44,18 @@ from .config import (
 )
 from .events import EventBus, SnapshotConfig, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
+from .model_access import clear_model_access, model_access_snapshot
 from .models import State
-from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_key_provider, set_openai
+from .provider import (
+    ProviderAuthState,
+    UsageError,
+    active_cooldown,
+    clear_provider,
+    get_usage,
+    set_claude,
+    set_key_provider,
+    set_openai,
+)
 
 logger = logging.getLogger("vesta.api")
 
@@ -96,6 +106,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
                 state=event_bus.state,
                 notifications={"pending": pending},
                 config=_snapshot_config(config),
+                model_access=model_access_snapshot(request.app["state"]),
             )
         )
         recv_task = asyncio.create_task(_recv_loop(ws))
@@ -201,13 +212,17 @@ async def _history_handler(request: web.Request) -> web.Response:
 
 
 async def _usage_handler(request: web.Request) -> web.Response:
-    """Report normalized, provider-agnostic plan usage for the agent's active provider."""
+    """Report normalized, provider-agnostic plan usage for the agent's active provider, including
+    any live cooldown, so a client never has to reconcile the pulled meters against the pushed
+    model_access state."""
     config = request.app["config"]
+    state: State = request.app["state"]
     try:
         usage = await get_usage(config)
     except UsageError as e:
         logger.error("usage fetch failed: %s", e)
         return web.json_response({"error": str(e)}, status=502)
+    usage.cooldown = active_cooldown(state.persisted.provider_cooldown)
     return web.json_response(dc.asdict(usage))
 
 
@@ -325,6 +340,7 @@ async def _status_handler(request: web.Request) -> web.Response:
             "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
             "provider_configured": status is not None and status.kind != "none",
             "setup_complete": state.persisted.first_start_done,
+            "model_access": model_access_snapshot(state),
         }
     )
 
@@ -354,6 +370,7 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
             state.provider_status = await asyncio.to_thread(
                 set_openai, signin.credentials, signin.model, signin.max_context_tokens, config=config
             )
+        await clear_model_access(state=state, config=config)
     except (ValueError, TypeError, pyd.ValidationError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:
@@ -392,8 +409,10 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     """Sign out: clear the provider credentials, resetting to a valid signed-out state. Idempotent.
     Applied by the next restart."""
     state: State = request.app["state"]
+    config: VestaConfig = request.app["config"]
     try:
         state.provider_status = await asyncio.to_thread(clear_provider)
+        await clear_model_access(state=state, config=config)
     except OSError as e:
         return web.json_response({"error": f"sign out failed: {e}"}, status=500)
     return web.json_response({"ok": True})
@@ -451,7 +470,9 @@ async def start_ws_server(
     app["event_bus"] = event_bus
     app["agent_token"] = config.agent_token.get_secret_value() if config.agent_token is not None else None
     app["config"] = config
-    app["state"] = state
+    # start_ws_server takes an optional state (tests bind the server alone); the snapshot
+    # handlers dereference it, so stand in a throwaway rather than crash the request.
+    app["state"] = state or State()
     app["websockets"] = weakref.WeakSet()
     app.on_shutdown.append(_close_all_websockets)
     app.router.add_get("/ws", _ws_handler)

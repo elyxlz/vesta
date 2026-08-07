@@ -741,3 +741,83 @@ async def test_converse_flips_auth_on_result_api_error_status(config):
         await asyncio.wait_for(converse("test prompt", state=state, config=config, show_output=False), timeout=5.0)
 
     assert state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED
+
+
+def _terminal_auth_msg():
+    from claude_agent_sdk import AssistantMessage, TextBlock
+
+    return AssistantMessage(
+        content=[TextBlock(text="Please run /login · API Error: 401 Invalid authentication credentials sk-ant-oat01-SECRET")],
+        model="opus",
+        error="authentication_failed",
+    )
+
+
+def _capture_user_notifications(monkeypatch) -> list[tuple[str, str, str]]:
+    from core import vestad_client
+
+    sent: list[tuple[str, str, str]] = []
+
+    async def record(kind: str, title: str, body: str) -> None:
+        sent.append((kind, title, body))
+
+    monkeypatch.setattr(vestad_client, "send_user_notification", record)
+    return sent
+
+
+@pytest.mark.anyio
+async def test_terminal_auth_loss_sends_one_auth_lost_user_notification(monkeypatch):
+    """The transition into the deaf state raises exactly one auth_lost user notification (issues
+    #1642/#1650): the user learns the agent cannot reply, and retries in the same streak add none."""
+    state, config, _mock_client, _emitted, message_queue, consumed = make_stream_harness()
+    sent = _capture_user_notifications(monkeypatch)
+    monkeypatch.setenv("AGENT_NAME", "scout")
+
+    async with consuming(state, config):
+        await message_queue.put(_terminal_auth_msg())
+        await message_queue.put(_terminal_auth_msg())
+        await wait_for_condition(lambda: len(consumed) >= 2, message="consumer never dispatched the auth failures")
+
+    assert [(kind, title) for kind, title, _body in sent] == [("auth_lost", "scout")]
+    (_kind, _title, body) = sent[0]
+    assert "sign in" in body
+    # Credential guard: the notification body is a fixed notice, never the upstream error text.
+    assert "sk-ant" not in body
+    assert "401" not in body
+
+
+@pytest.mark.anyio
+async def test_auth_lost_notification_rearms_after_recovery(monkeypatch):
+    """Re-auth then a second terminal failure is a new deaf streak: it notifies again."""
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state, config, _mock_client, _emitted, message_queue, consumed = make_stream_harness()
+    sent = _capture_user_notifications(monkeypatch)
+
+    async with consuming(state, config):
+        await message_queue.put(_terminal_auth_msg())
+        await wait_for_condition(lambda: len(consumed) >= 1, message="consumer never dispatched the first auth failure")
+        state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+        await message_queue.put(_terminal_auth_msg())
+        await wait_for_condition(lambda: len(consumed) >= 2, message="consumer never dispatched the second auth failure")
+
+    assert [kind for kind, _title, _body in sent] == ["auth_lost", "auth_lost"]
+
+
+@pytest.mark.anyio
+async def test_auth_loss_flipped_by_the_openrouter_proxy_still_notifies_once(monkeypatch):
+    """The OpenRouter cache proxy flips provider_status before the SDK stream surfaces the 401
+    (openrouter_cache._stream_upstream), so the status is already not_authenticated when
+    _dispatch_message sees the terminal error. The streak must still be announced, exactly once."""
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state, config, _mock_client, _emitted, message_queue, consumed = make_stream_harness()
+    sent = _capture_user_notifications(monkeypatch)
+    state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="openrouter", model=None)
+
+    async with consuming(state, config):
+        await message_queue.put(_terminal_auth_msg())
+        await message_queue.put(_terminal_auth_msg())
+        await wait_for_condition(lambda: len(consumed) >= 2, message="consumer never dispatched the auth failures")
+
+    assert [kind for kind, _title, _body in sent] == ["auth_lost"]

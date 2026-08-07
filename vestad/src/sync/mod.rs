@@ -21,3 +21,4 @@ pub(crate) use events::{activity_state, notification_change};
 pub(crate) use handler::sync_ws_handler;
 pub(crate) use hub::SyncHub;
 pub(crate) use presence::{ConnId, Presence};
+pub(crate) use protocol::ModelAccess;

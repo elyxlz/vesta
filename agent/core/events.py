@@ -71,6 +71,17 @@ class RateLimitedEvent(_BaseEvent):
     resets_at: int | None
 
 
+class ModelAccessInfo(tp.TypedDict):
+    state: tp.Literal["available", "cooling_down"]
+    reason: tp.Literal["rate_limit"] | None
+    until: int | None
+    window: str | None
+
+
+class ModelAccessEvent(_BaseEvent, ModelAccessInfo):
+    type: tp.Literal["model_access"]
+
+
 class NotificationEvent(_BaseEvent):
     type: tp.Literal["notification"]
     source: str
@@ -120,6 +131,7 @@ type StreamEvent = (
     | ThinkingEvent
     | ErrorEvent
     | RateLimitedEvent
+    | ModelAccessEvent
     | NotificationEvent
     | NotificationClearedEvent
     | SubagentStartEvent
@@ -146,6 +158,7 @@ class SnapshotEvent(tp.TypedDict):
     state: AgentState
     notifications: SnapshotNotifications
     config: SnapshotConfig
+    model_access: tp.NotRequired[ModelAccessInfo]
 
 
 # Bus-internal: the single item left in an evicted subscriber's queue (see EventBus._offer).
@@ -161,7 +174,7 @@ PAGE_SIZE = 50
 # Live-only event types: broadcast to subscribers but never persisted to events.db. status (activity
 # flips) and notification_cleared (pending deltas) have no place in history. A live-only event gets a
 # negative session-local id (see _next_live_id).
-_LIVE_ONLY_TYPES: tuple[str, ...] = ("status", "notification_cleared")
+_LIVE_ONLY_TYPES: tuple[str, ...] = ("status", "notification_cleared", "model_access")
 
 
 _EVENTS_SCHEMA = """

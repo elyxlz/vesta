@@ -20,7 +20,7 @@ use crate::types::ClientKind;
 use super::hub::UserNotification;
 use super::presence::PRESENCE_NOTIFY_DELAY;
 use super::protocol::{
-    AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
+    AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope, ModelAccess,
     NotificationsBranch, ServiceInfo, Tree,
 };
 use super::MIN_SUPPORTED_CLIENT_VERSION;
@@ -167,6 +167,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     // making the snapshot the baseline the deltas build on.
     let mut agents_rx = state.agent_status_cache.subscribe_agents();
     let mut activity_rx = state.agent_status_cache.subscribe_activity();
+    let mut model_access_rx = state.agent_status_cache.subscribe_model_access();
     let mut services_rx = state.agent_status_cache.subscribe_services();
     let mut invalidations_rx = state.agent_status_cache.subscribe_invalidations();
     let mut notifications_rx = state.sync_hub.subscribe_notifications();
@@ -209,6 +210,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
         let wake = tokio::select! {
             r = agents_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = activity_rx.changed() => { if r.is_err() { break } Wake::Roster }
+            r = model_access_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = services_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
@@ -451,6 +453,7 @@ fn current_roster(state: &SharedState) -> BTreeMap<String, AgentInfo> {
     build_roster(
         &cache.agents(),
         &cache.subscribe_activity().borrow(),
+        &cache.subscribe_model_access().borrow(),
         &cache.subscribe_services().borrow(),
         &cache.service_revs(),
         cache.build_phases(),
@@ -465,6 +468,7 @@ fn current_roster(state: &SharedState) -> BTreeMap<String, AgentInfo> {
 fn build_roster(
     agents: &[ListEntry],
     activity: &HashMap<String, String>,
+    model_access: &HashMap<String, ModelAccess>,
     services: &HashMap<String, HashMap<String, ServiceEntry>>,
     revs: &HashMap<String, HashMap<String, u64>>,
     mut build_phases: HashMap<String, BuildPhase>,
@@ -476,7 +480,7 @@ fn build_roster(
             let normalized = crate::docker::normalize_name(&entry.name);
             let build_phase = build_phases.remove(&normalized);
             let operation = operations.get(&normalized).copied();
-            (entry.name.clone(), agent_info(entry, activity, services, revs, build_phase, operation))
+            (entry.name.clone(), agent_info(entry, activity, model_access, services, revs, build_phase, operation))
         })
         .collect();
     for (name, phase) in build_phases {
@@ -490,6 +494,7 @@ fn synthetic_building_info(phase: BuildPhase) -> AgentInfo {
     AgentInfo {
         status: AgentStatus::SettingUp,
         activity_state: "idle".into(),
+        model_access: ModelAccess::default(),
         build_phase: Some(phase),
         operation: None,
         started_at: None,
@@ -500,6 +505,7 @@ fn synthetic_building_info(phase: BuildPhase) -> AgentInfo {
 fn agent_info(
     entry: &ListEntry,
     activity: &HashMap<String, String>,
+    model_access: &HashMap<String, ModelAccess>,
     services: &HashMap<String, HashMap<String, ServiceEntry>>,
     revs: &HashMap<String, HashMap<String, u64>>,
     build_phase: Option<crate::docker::BuildPhase>,
@@ -521,6 +527,7 @@ fn agent_info(
     AgentInfo {
         status: entry.status,
         activity_state,
+        model_access: model_access.get(&entry.name).cloned().unwrap_or_default(),
         build_phase,
         operation,
         started_at: entry.started_at.clone(),
@@ -605,17 +612,33 @@ mod tests {
         let mut revs = HashMap::new();
         revs.insert("scout".to_string(), HashMap::from([("dashboard".to_string(), 3u64)]));
 
-        let info = agent_info(&entry("scout", AgentStatus::Alive), &activity, &svc, &revs, None, None);
+        let info = agent_info(&entry("scout", AgentStatus::Alive), &activity, &HashMap::new(), &svc, &revs, None, None);
         assert_eq!(info.activity_state, "thinking");
         assert_eq!(info.services["dashboard"], ServiceInfo { port: 8080, rev: 3 });
 
         // An agent with no activity entry defaults to idle.
-        let idle = agent_info(&entry("mona", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);
+        let idle = agent_info(
+            &entry("mona", AgentStatus::Alive),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            None,
+            None,
+        );
         assert_eq!(idle.activity_state, "idle");
     }
 
     fn info_of(status: AgentStatus) -> AgentInfo {
-        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, started_at: None, services: BTreeMap::new() }
+        AgentInfo {
+            status,
+            activity_state: "idle".into(),
+            model_access: ModelAccess::default(),
+            build_phase: None,
+            operation: None,
+            started_at: None,
+            services: BTreeMap::new(),
+        }
     }
 
     #[test]
@@ -659,7 +682,7 @@ mod tests {
     #[test]
     fn build_roster_synthesizes_a_mid_build_agent_without_a_container() {
         let build_phases = HashMap::from([("luna".to_string(), BuildPhase::Pulling)]);
-        let roster = build_roster(&[], &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases, &HashMap::new());
+        let roster = build_roster(&[], &HashMap::new(), &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases, &HashMap::new());
 
         let luna = roster.get("luna").expect("synthetic row for the creating agent");
         assert_eq!(luna.status, AgentStatus::SettingUp);
@@ -677,6 +700,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             HashMap::new(),
             &operations,
         );
@@ -686,6 +710,7 @@ mod tests {
 
         let settled = build_roster(
             &agents,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -701,13 +726,22 @@ mod tests {
         // phase, with no lingering synthetic ghost.
         let agents = [entry("luna", AgentStatus::SettingUp)];
         let build_phases = HashMap::from([("luna".to_string(), BuildPhase::Starting)]);
-        let roster = build_roster(&agents, &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases, &HashMap::new());
+        let roster = build_roster(
+            &agents,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            build_phases,
+            &HashMap::new(),
+        );
         assert_eq!(roster.len(), 1);
         assert_eq!(roster["luna"].build_phase, Some(BuildPhase::Starting));
 
         // Create settled: phase cleared, the real row remains with no phase.
         let settled = build_roster(
             &[entry("luna", AgentStatus::Alive)],
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
