@@ -84,13 +84,21 @@ whatsapp status --instance personal
 whatsapp messages --instance personal --limit 10
 ```
 
-For a read-only or silent instance, pass `--read-only` (blocks sending, receipts,
-and presence) or `--no-notifications` on `whatsapp daemon start`; they are daemon
-flags, and `whatsapp connect` does not accept them. The running daemon records its
-flags in `state.json` and `whatsapp daemon restart` reapplies them, but a fresh
-start does not, so include them on that instance's `whatsapp daemon start` line
-under `## Daemons` in the restart skill. Never point two instances at the same
-account/device store.
+For a read-only or silent instance, start its daemon with the flag BEFORE the first
+connect, so the instance is never even briefly write-capable:
+
+```bash
+whatsapp daemon start --instance personal --read-only
+whatsapp connect --source self-managed --instance personal
+```
+
+`--read-only` blocks sending, receipts, and presence; `--no-notifications` silences
+notifications. `whatsapp connect` does not accept these flags itself, and running it
+first would cold-start the daemon write-capable, after which `daemon start --read-only`
+only reports `already_running` and the instance stays write-capable. Connecting after
+the daemon is already up links through it and leaves the flag in force. Keep the flag on
+that instance's `whatsapp daemon start` line under `## Daemons` in the restart skill so
+it survives every restart. Never point two instances at the same account/device store.
 
 ## Operational notes
 
