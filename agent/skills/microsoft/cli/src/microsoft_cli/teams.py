@@ -32,6 +32,7 @@ from typing import Any
 import httpx
 
 from . import auth, backend
+from .config import read_json_marker
 from .settings import DEFAULT_CLIENT_ID
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -79,10 +80,7 @@ def _token_path(account_email: str, config) -> pl.Path:
 
 
 def _read_marker(account_email: str, config) -> dict | None:
-    try:
-        return json.loads(_token_path(account_email, config).read_text())
-    except FileNotFoundError:
-        return None
+    return read_json_marker(_token_path(account_email, config))
 
 
 def _source(marker: dict) -> str:

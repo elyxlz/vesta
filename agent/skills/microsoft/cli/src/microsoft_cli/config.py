@@ -1,7 +1,20 @@
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .settings import DEFAULT_CLIENT_ID, get_settings
+
+
+def read_json_marker(path: Path) -> dict | None:
+    """Parse a per-account token marker, treating a missing or half-written one as absent. save_token
+    rewrites a marker on every refresh and does not write atomically, so a read can catch it truncated;
+    the routing that reads markers runs outside per-account containment, so a raise here would take the
+    whole poll cycle down over one torn file."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
 
 # Dynamic-consent scopes for the shared default public client (it has no permissions we control,
 # so ".default" would either grant nothing useful or demand admin consent for its whole catalog).

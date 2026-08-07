@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 
 from . import auth
-from .config import OWA_REST_SCOPES
+from .config import OWA_REST_SCOPES, read_json_marker
 from .payloads import EventFields, EventPatch, MailDraft
 from .settings import OWA_REST_CLIENT_ID
 
@@ -95,10 +95,7 @@ def list_accounts(config) -> list[str]:
 
 
 def _read_marker(account_email: str, config) -> dict | None:
-    try:
-        return json.loads(_token_path(account_email, config).read_text())
-    except FileNotFoundError:
-        return None
+    return read_json_marker(_token_path(account_email, config))
 
 
 def _source(marker: dict) -> str:
@@ -115,6 +112,14 @@ def browser_token_expiry(account_email: str, config) -> float | None:
         return float(marker["expires_at"])
     except (KeyError, ValueError):
         return None
+
+
+def is_device_account(account_email: str, config) -> bool:
+    """True (network-free) when this OWA REST account authenticates by device flow: its tokens come
+    from the MSAL cache with OWA REST scopes only, so it has no Graph scopes and must be polled over
+    OWA REST rather than Graph."""
+    marker = _read_marker(account_email, config)
+    return marker is not None and _source(marker) == "device"
 
 
 def has_valid_token(account_email: str, config) -> bool:

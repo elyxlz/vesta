@@ -52,6 +52,16 @@ def test_has_token_false_when_no_file(tmp_path):
     assert teams.has_token("user@example.com", Config(data_dir=tmp_path)) is False
 
 
+def test_a_torn_teams_marker_reads_as_absent_not_a_crash(tmp_path):
+    cfg = Config(data_dir=tmp_path)
+    path = teams._token_path("user@example.com", cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"source": "brow')  # save_token caught mid-write, non-atomic
+    # browser_token_expiry runs in the refresh loop outside per-account containment, so a raise here
+    # would take the whole poll cycle down over one half-written file.
+    assert teams.browser_token_expiry("user@example.com", cfg) is None
+
+
 def test_has_token_true_for_fresh_browser_token(tmp_path):
     cfg = Config(data_dir=tmp_path)
     future = time.time() + 7200
