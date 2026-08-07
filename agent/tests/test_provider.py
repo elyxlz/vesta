@@ -31,6 +31,7 @@ from core.provider import (
     get_usage,
     is_terminal_auth_error,
     is_terminal_provider_error,
+    note_provider_auth_lost,
     observed_provider_failure,
     set_claude,
     set_key_provider,
@@ -403,6 +404,51 @@ def test_observed_provider_failure_flips_in_memory_only(prov):
     assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
     # It does NOT persist: a fresh boot re-derives optimistically from disk (creds still present).
     assert derive_status(cfg.VestaConfig()).state == ProviderAuthState.AUTHENTICATED
+
+
+@pytest.mark.anyio
+async def test_auth_lost_notifies_the_user_once_per_loss_and_rearms_on_recovery(prov, monkeypatch):
+    from core import provider as provider_mod
+    from core import vestad_client
+
+    sent: list[tuple[str, str, str]] = []
+
+    async def fake_send(kind: str, title: str, body: str) -> None:
+        sent.append((kind, title, body))
+
+    monkeypatch.setattr(vestad_client, "send_user_notification", fake_send)
+    monkeypatch.setenv("AGENT_NAME", "scout")
+    provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    provider_mod.CREDENTIALS_PATH.write_text(_CREDS)
+    status = set_claude(_CREDS, "opus", None, config=prov)
+
+    flipped = await note_provider_auth_lost(status)
+    assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert [(kind, title) for kind, title, _ in sent] == [("auth_lost", "scout")]
+
+    # A repeat failure while already flipped stays silent.
+    assert await note_provider_auth_lost(flipped) is flipped
+    assert len(sent) == 1
+
+    # Recovery re-arms: the next boot re-derives authenticated from disk, and a later loss notifies again.
+    recovered = derive_status(cfg.VestaConfig())
+    assert recovered.state == ProviderAuthState.AUTHENTICATED
+    await note_provider_auth_lost(recovered)
+    assert [kind for kind, _, _ in sent] == ["auth_lost", "auth_lost"]
+
+
+@pytest.mark.anyio
+async def test_auth_lost_with_no_provider_sends_nothing(prov, monkeypatch):
+    from core import vestad_client
+
+    sent: list[str] = []
+
+    async def fake_send(kind: str, title: str, body: str) -> None:
+        sent.append(kind)
+
+    monkeypatch.setattr(vestad_client, "send_user_notification", fake_send)
+    assert await note_provider_auth_lost(None) is None
+    assert sent == []
 
 
 def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):

@@ -300,6 +300,25 @@ describe("NotificationProvider", () => {
     ]);
   });
 
+  it("raises nothing for an auth-lost alert; the roster status transition owns it", async () => {
+    const { controller, emit } = makeController({ ada: "alive" });
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    blur();
+
+    act(() => {
+      emit({
+        type: "user_notification",
+        agent: "ada",
+        kind: "auth_lost",
+        title: "ada",
+        body: "Lost access to the model provider.",
+      });
+    });
+
+    expect(built).toEqual([]);
+  });
+
   it("lights the unseen badge when the fleet's pending count grows while hidden", async () => {
     const { controller, emit } = makeController({ ada: "alive" });
     mount(controller, [agentInfo("ada", "alive")]);

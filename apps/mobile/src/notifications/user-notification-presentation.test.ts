@@ -16,6 +16,16 @@ function rateLimitedUserNotification(agent: string): UserNotificationDelta {
   };
 }
 
+function authLostUserNotification(agent: string): UserNotificationDelta {
+  return {
+    type: "user_notification",
+    agent,
+    kind: "auth_lost",
+    title: agent,
+    body: "Lost access to the model provider.",
+  };
+}
+
 describe("shouldPresentUserNotification", () => {
   const cases: {
     name: string;
@@ -26,6 +36,12 @@ describe("shouldPresentUserNotification", () => {
     {
       name: "a rate-limit user notification always shows, even for the active agent",
       delta: rateLimitedUserNotification("alex"),
+      activeAgent: "alex",
+      expected: true,
+    },
+    {
+      name: "an auth-lost user notification always shows, even for the active agent",
+      delta: authLostUserNotification("alex"),
       activeAgent: "alex",
       expected: true,
     },

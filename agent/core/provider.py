@@ -3,6 +3,7 @@
 import dataclasses as dc
 import enum
 import json
+import os
 import pathlib as pl
 import time
 import typing as tp
@@ -10,7 +11,7 @@ import typing as tp
 import aiohttp
 import pydantic as pyd
 
-from . import logger
+from . import logger, vestad_client
 from .config import (
     CREDENTIALS_PATH,
     ClaudeConfig,
@@ -344,6 +345,23 @@ def clear_provider() -> ProviderStatus:
             raise
     logger.startup("Provider cleared (signed out)")
     return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
+
+
+AUTH_LOST_NOTICE = "Lost access to the model provider, so messages will wait unanswered. Sign in again to bring your agent back online."
+
+
+async def note_provider_auth_lost(status: ProviderStatus | None) -> ProviderStatus | None:
+    """Flip the status via observed_provider_failure and, exactly on the authenticated ->
+    not_authenticated transition, tell the user out of band (kind "auth_lost"): core defers every
+    message until re-auth, so without this signal the agent just goes dark (issues #1642/#1650).
+    Once per loss: a repeat failure while already flipped is identity-returned by the flip and sends
+    nothing; a recovery (sign-in or boot re-derivation) re-arms it. Best-effort by construction
+    (send_user_notification swallows its own failures)."""
+    flipped = observed_provider_failure(status)
+    if flipped is not status:
+        agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
+        await vestad_client.send_user_notification("auth_lost", agent_name, AUTH_LOST_NOTICE)
+    return flipped
 
 
 def observed_provider_failure(status: ProviderStatus | None) -> ProviderStatus | None:

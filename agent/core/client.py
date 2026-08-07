@@ -37,7 +37,7 @@ from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     is_terminal_provider_error,
     is_unauthenticated,
-    observed_provider_failure,
+    note_provider_auth_lost,
 )
 from .tools import build_vesta_tools_server
 
@@ -256,7 +256,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
         # and restart-looping.
         logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
-        state.provider_status = observed_provider_failure(state.provider_status)
+        state.provider_status = await note_provider_auth_lost(state.provider_status)
         await attempt_interrupt(state, config=config, reason="Provider auth lost")
     if isinstance(msg, ResultMessage) or auth_lost:
         if turn and not turn.done.is_set():

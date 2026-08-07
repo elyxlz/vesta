@@ -148,6 +148,16 @@ fn pushable_event_type(event_type: &str) -> bool {
     PUSHABLE_EVENT_TYPES.contains(&event_type)
 }
 
+/// The device subscription an outgoing event is delivered on. `auth_lost` rides the default `chat`
+/// subscription: a dead provider must reach the same devices a missed reply would, and devices
+/// subscribe only to the `chat`/`status` vocabulary.
+fn subscription_topic(event_type: &str) -> &str {
+    match event_type {
+        "auth_lost" => "chat",
+        other => other,
+    }
+}
+
 fn agent_status_changes(
     previous: &[ListEntry],
     current: &[ListEntry],
@@ -185,14 +195,16 @@ impl MobileApp {
     }
 
     /// Enqueue a mobile push for an agent-injected user notification (`POST /agents/{name}/user-notification`).
-    /// Only a new message pushes: it reuses the existing `chat` device subscription, so registered
-    /// devices need no change. A `rate_limited` user notification toasts on connected clients but is
-    /// never a mobile push, so it is skipped here (chat-only device subscriptions dropped it before too).
+    /// A new message (`message`) and a terminal provider auth loss (`auth_lost`) push; both ride the
+    /// existing `chat` device subscription (see `subscription_topic`), so registered devices need no
+    /// change. A `rate_limited` user notification toasts on connected clients but is never a mobile
+    /// push, so it is skipped here.
     pub(crate) fn push_user_notification(&self, agent: &str, kind: &str, title: &str, body: &str) {
-        if kind != "message" {
-            return;
+        match kind {
+            "message" => self.queue_event(agent, "chat", serde_json::json!({"type": "chat", "title": title, "body": body})),
+            "auth_lost" => self.queue_event(agent, "auth_lost", serde_json::json!({"type": "auth_lost", "title": title, "body": body})),
+            _ => {}
         }
-        self.queue_event(agent, "chat", serde_json::json!({"type": "chat", "title": title, "body": body}));
     }
 
     /// Compare two gateway-owned lifecycle snapshots and enqueue only real status
@@ -359,6 +371,15 @@ fn message_for(
             };
             (title, body, format!("/agent/{agent}/chat"))
         }
+        // Auth-loss copy carries no user content, so it shows regardless of the previews setting;
+        // the route lands on the agent screen, where sign-in lives.
+        "auth_lost" => {
+            let title = text_field(event, "title").unwrap_or(agent).to_string();
+            let body = text_field(event, "body")
+                .filter(|text| !text.is_empty())
+                .map_or_else(|| format!("{agent} needs you to sign in again."), str::to_string);
+            (title, body, format!("/agent/{agent}"))
+        }
         "status" => {
             let state = text_field(event, "state").unwrap_or("updated");
             let body = match state {
@@ -472,7 +493,7 @@ async fn deliver_agent_event(context: DeliveryContext, event: QueuedAgentEvent) 
     }
     let messages: Vec<ExpoPushMessage> = context
         .registry
-        .push_targets(&event.event_type)
+        .push_targets(subscription_topic(&event.event_type))
         .iter()
         .map(|device| message_for(device, &event.agent, &event.event_type, &event.event))
         .collect();
@@ -551,6 +572,29 @@ mod tests {
         let message = message_for(&device(true, &["chat"]), "alex", "chat", &event);
         assert_eq!(message.body, "Hello from Vesta");
         assert_eq!(message.data["eventType"], "chat");
+    }
+
+    #[test]
+    fn auth_lost_push_rides_the_chat_subscription() {
+        assert_eq!(subscription_topic("auth_lost"), "chat");
+        assert_eq!(subscription_topic("chat"), "chat");
+        assert_eq!(subscription_topic("status"), "status");
+    }
+
+    #[test]
+    fn auth_lost_push_shows_its_body_even_without_previews_and_routes_to_the_agent() {
+        let event = serde_json::json!({"type": "auth_lost", "title": "alex", "body": "Lost access to the model provider."});
+        let message = message_for(&device(false, &["chat"]), "alex", "auth_lost", &event);
+        assert_eq!(message.title, "alex");
+        assert_eq!(message.body, "Lost access to the model provider.");
+        assert_eq!(message.data["route"], "/agent/alex");
+    }
+
+    #[test]
+    fn auth_lost_push_with_no_body_falls_back_to_sign_in_copy() {
+        let event = serde_json::json!({"type": "auth_lost", "title": "alex"});
+        let message = message_for(&device(false, &["chat"]), "alex", "auth_lost", &event);
+        assert_eq!(message.body, "alex needs you to sign in again.");
     }
 
     #[test]

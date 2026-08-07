@@ -35,7 +35,7 @@ from aiohttp import web
 from . import logger
 from .config import OpenRouterConfig, VestaConfig
 from .models import State
-from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, observed_provider_failure
+from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, note_provider_auth_lost
 
 OPENROUTER_API = "https://openrouter.ai/api"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -300,7 +300,7 @@ async def _stream_upstream(
         async with client.request(request.method, url, data=body, headers=headers) as upstream:
             if upstream.status in TERMINAL_PROVIDER_ERRORS:
                 state: State = request.app["state"]
-                state.provider_status = observed_provider_failure(state.provider_status)
+                state.provider_status = await note_provider_auth_lost(state.provider_status)
             # Forward upstream headers (Content-Type, Retry-After, rate-limit, ...) so the SDK
             # keeps its backoff signals. aiohttp already decompressed the body and StreamResponse
             # re-frames length/encoding, so drop those hop-by-hop headers.

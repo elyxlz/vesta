@@ -92,6 +92,9 @@ function ReplicaNotifications({
         notifyRateLimited(agent, body);
         return;
       }
+      // Auth loss is surfaced by the roster status transition below (the agent flips to
+      // not_authenticated moments later), so the delta itself raises nothing here.
+      if (kind === "auth_lost") return;
       markUnseen();
       if (chattingAgentRef.current === agent) return;
       notifyAssistant(agent, body);
