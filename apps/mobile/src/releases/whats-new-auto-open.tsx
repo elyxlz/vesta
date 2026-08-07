@@ -7,6 +7,7 @@ import {
   type ReleaseChannel,
 } from "@vesta/core";
 import { usePathname, useRouter } from "expo-router";
+import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useRoster } from "@/session/RosterProvider";
 import { releaseNotesQueryOptions } from "./release-notes-query";
 
@@ -21,6 +22,7 @@ export function WhatsNewAutoOpen({ enabled }: { enabled: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const roster = useRoster();
+  const privacyBlocked = usePrivacyBlocked();
   const checkedRef = useRef(false);
   const handledVersionRef = useRef<string | null>(null);
   const [pending, setPending] = useState<PendingVersion | null>(null);
@@ -34,6 +36,7 @@ export function WhatsNewAutoOpen({ enabled }: { enabled: boolean }) {
     if (
       checkedRef.current ||
       !enabled ||
+      privacyBlocked ||
       !roster.reachable ||
       !roster.gatewayVersion ||
       !roster.gatewayChannel
@@ -60,10 +63,24 @@ export function WhatsNewAutoOpen({ enabled }: { enabled: boolean }) {
     return () => {
       active = false;
     };
-  }, [enabled, roster.gatewayChannel, roster.gatewayVersion, roster.reachable]);
+  }, [
+    enabled,
+    privacyBlocked,
+    roster.gatewayChannel,
+    roster.gatewayVersion,
+    roster.reachable,
+  ]);
 
   useEffect(() => {
-    if (!pending || !notes.data || notes.isFetching || notes.isError) return;
+    if (
+      privacyBlocked ||
+      !pending ||
+      !notes.data ||
+      notes.isFetching ||
+      notes.isError
+    ) {
+      return;
+    }
     if (handledVersionRef.current === pending.version) return;
     handledVersionRef.current = pending.version;
     const visible = filterReleaseNotes(notes.data, pending);
@@ -76,7 +93,15 @@ export function WhatsNewAutoOpen({ enabled }: { enabled: boolean }) {
       () => undefined,
     );
     if (pathname !== "/whats-new") router.push("/whats-new");
-  }, [notes.data, notes.isError, notes.isFetching, pathname, pending, router]);
+  }, [
+    notes.data,
+    notes.isError,
+    notes.isFetching,
+    pathname,
+    pending,
+    privacyBlocked,
+    router,
+  ]);
 
   return null;
 }

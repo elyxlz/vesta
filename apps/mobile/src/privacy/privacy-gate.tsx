@@ -1,15 +1,16 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useRouter, useSegments, type Href } from "expo-router";
-import { PrivacyGateView } from "./privacy-gate-view";
-import { blocksProtectedContent } from "./model";
-import { usePrivacy } from "./privacy-provider";
+import { BlockingSheetGateView } from "@/components/blocking-sheet-gate-view";
+import { usePrivacyBlocked } from "./use-privacy-blocked";
 
 const PRIVACY_ROUTE = "/privacy" as Href;
 const ROOT_ROUTE = "/" as Href;
+const ESTIMATED_PRIVACY_SHEET_HEIGHT = 181;
 const NATIVE_SHEET_ROUTES = new Set([
   "connect-actions",
   "connect-link",
   "debug",
+  "gateway-update",
   "new-agent",
   "recent-gateways",
   "scan",
@@ -18,15 +19,10 @@ const NATIVE_SHEET_ROUTES = new Set([
 ]);
 
 export function PrivacyGate({ children }: { children: ReactNode }) {
-  const privacy = usePrivacy();
   const router = useRouter();
   const segments = useSegments();
   const presentationPending = useRef(false);
-  const blocked = blocksProtectedContent(
-    privacy.hydrated,
-    privacy.locked,
-    privacy.initializationError !== null,
-  );
+  const blocked = usePrivacyBlocked();
   const activeRoute = segments[0] as string | undefined;
   const privacyRouteActive = activeRoute === "privacy";
 
@@ -57,8 +53,11 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
   }, [activeRoute, blocked, privacyRouteActive, router]);
 
   return (
-    <PrivacyGateView blocked={blocked}>
+    <BlockingSheetGateView
+      blocked={blocked}
+      estimatedSheetHeight={ESTIMATED_PRIVACY_SHEET_HEIGHT}
+    >
       {children}
-    </PrivacyGateView>
+    </BlockingSheetGateView>
   );
 }

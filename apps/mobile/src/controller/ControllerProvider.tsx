@@ -12,7 +12,7 @@ import { createAppStateForegroundSignal } from "./foreground-signal";
 import { useOptionalControllerSyncState } from "./optional-controller-store";
 import { runReauthCheck } from "./reauth-poll";
 import { AppBehindScreen } from "./AppBehindScreen";
-import { GatewayBehindScreen } from "./GatewayBehindScreen";
+import { GatewayUpdateGate } from "./gateway-update-gate";
 
 // Development variants drift with source rather than releases, so they deliberately fail open.
 // Production variants compare their release against the gateway's compatibility window.
@@ -109,16 +109,15 @@ function ConnectedController({ children }: { children: ReactNode }) {
 
   return (
     <ControllerContext.Provider value={controller}>
-      {routeTakeover(syncState) ?? children}
+      {syncState === "app_behind" ? (
+        <AppBehindScreen />
+      ) : (
+        <GatewayUpdateGate blocked={syncState === "gateway_behind"}>
+          {children}
+        </GatewayUpdateGate>
+      )}
     </ControllerContext.Provider>
   );
-}
-
-// The two blocking sync states take over in place of the app; every other state renders it.
-function routeTakeover(syncState: string): ReactNode {
-  if (syncState === "app_behind") return <AppBehindScreen />;
-  if (syncState === "gateway_behind") return <GatewayBehindScreen />;
-  return null;
 }
 
 // Before connect (and on the connect screens) there is no gateway to talk to: render children

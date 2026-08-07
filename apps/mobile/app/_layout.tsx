@@ -246,6 +246,17 @@ function SessionNavigation() {
                 }}
               />
               <Stack.Screen
+                name="gateway-update"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: false,
+                  gestureEnabled: false,
+                  contentStyle: { backgroundColor: colors.card },
+                }}
+              />
+              <Stack.Screen
                 name="settings"
                 options={{
                   title: "Settings",

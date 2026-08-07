@@ -1,0 +1,96 @@
+appId: ${APP_ID}
+name: Gateway update screens
+tags:
+  - visual
+  - connected
+  - gateway-update
+# Cover the blocking screen and the optional update in Settings.
+---
+- clearState
+- openLink:
+    link: "vesta-dev://?visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Privacy unavailable"
+    timeout: 30000
+- assertNotVisible: "This app is newer than the gateway.*"
+- stopApp
+- clearState
+
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "This app is newer than the gateway. Update the gateway to reconnect."
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-required
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-required.png
+
+- tapOn:
+    text: "^Update gateway$"
+    index: 1
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-in-progress
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-in-progress.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=available"
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- tapOn:
+    text: "App settings.*"
+- extendedWaitUntil:
+    visible: "App Lock"
+    timeout: 10000
+- swipe:
+    start: "50%,58%"
+    end: "50%,10%"
+    duration: 500
+- waitForAnimationToEnd:
+    timeout: 3000
+- extendedWaitUntil:
+    visible: "Close settings"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "Gateway"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+    centerElement: true
+- takeScreenshot: settings-gateway-update-available
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-gateway-update-available.png
+
+- tapOn:
+    text: "^Update gateway,.*"
+- extendedWaitUntil:
+    visible: "Update gateway?"
+    timeout: 10000
+- takeScreenshot: settings-gateway-update-confirm
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-gateway-update-confirm.png

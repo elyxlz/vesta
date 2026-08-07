@@ -8,6 +8,7 @@ import { useToast } from "@/components/native-toast";
 import { Field } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useSession } from "@/session/SessionProvider";
 
 const SCANNED_LINK_LOADING_MS = 1_000;
@@ -52,6 +53,7 @@ function ConnectLinkContent({
   const { connectLink } = useSession();
   const { showError } = useToast();
   const { colors, dark } = usePreferences();
+  const privacyBlocked = usePrivacyBlocked();
   const handledScan = useRef("");
   const [link, setLink] = useState(initialLink);
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,7 @@ function ConnectLinkContent({
   );
 
   useEffect(() => {
-    if (!autoConnect || !initialLink) return;
+    if (privacyBlocked || !autoConnect || !initialLink) return;
     const attempt = `${scanId}:${initialLink}`;
     if (handledScan.current === attempt) return;
     const timeout = setTimeout(() => {
@@ -88,7 +90,7 @@ function ConnectLinkContent({
       void connect(initialLink, true);
     }, 0);
     return () => clearTimeout(timeout);
-  }, [autoConnect, connect, initialLink, scanId]);
+  }, [autoConnect, connect, initialLink, privacyBlocked, scanId]);
 
   return (
     <AuthSheet mode="keyboard" title="Connect your gateway" hasGrabber>

@@ -5,17 +5,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { VestaBrand } from "@/components/VestaBrand";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
-const ESTIMATED_PRIVACY_SHEET_HEIGHT = 181;
-
-interface PrivacyGateViewProps {
+interface BlockingSheetGateViewProps {
   blocked: boolean;
   children: ReactNode;
+  estimatedSheetHeight: number;
 }
 
-export function PrivacyGateView({
+export function BlockingSheetGateView({
   blocked,
   children,
-}: PrivacyGateViewProps) {
+  estimatedSheetHeight,
+}: BlockingSheetGateViewProps) {
   const insets = useSafeAreaInsets();
   const { colors, dark } = usePreferences();
 
@@ -44,8 +44,7 @@ export function PrivacyGateView({
             style={[
               styles.hero,
               {
-                paddingBottom:
-                  ESTIMATED_PRIVACY_SHEET_HEIGHT + insets.bottom,
+                paddingBottom: estimatedSheetHeight + insets.bottom,
               },
             ]}
           >

@@ -15,6 +15,7 @@ const startsConnected = query?.visualSession === "connected";
 const startsEmpty = query?.visualRoster === "empty";
 const showsDashboard = query?.visualDashboard === "loaded";
 const startsOffline = query?.visualReachable === "offline";
+const hasGatewayUpdate = query?.visualGatewayUpdate === "available";
 const agents: AgentRow[] = startsEmpty
   ? []
   : [
@@ -55,8 +56,8 @@ const fixture: RosterValue = {
   gatewayVersion: "0.2.0",
   gatewayChannel: "stable",
   managed: false,
-  updateAvailable: false,
-  latestVersion: null,
+  updateAvailable: hasGatewayUpdate,
+  latestVersion: hasGatewayUpdate ? "0.2.1" : null,
   devices: [],
 };
 const FixtureContext = createContext<RosterValue | null>(null);
