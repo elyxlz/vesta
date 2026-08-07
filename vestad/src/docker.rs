@@ -185,7 +185,7 @@ pub(crate) async fn resolve_bridge_ip(
 // a hard crash-loop so a wedged agent eventually stays down instead of thrashing forever.
 const RESTART_MAX_RETRIES: i64 = 5;
 const ENV_MOUNT_DEST: &str = "/run/vestad-env";
-const CORE_MOUNT_DEST: &str = "/root/agent/core";
+pub(crate) const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// User-authored charter, bind-mounted read-only so the agent reads but cannot edit it.
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.

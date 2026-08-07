@@ -6,6 +6,7 @@
 //! `read_bundle_image` streams the trailing image entry into a caller sink.
 
 use crate::docker::DockerError;
+use bollard::Docker;
 use std::io::Read;
 use std::path::Path;
 
@@ -170,6 +171,63 @@ pub(crate) fn read_bundle_image<F: FnMut(&[u8]) -> Result<(), DockerError>>(path
     Ok(())
 }
 
+pub const SCRUB_TIMEOUT_SECS: u64 = 300;
+
+/// The one pinned invocation of core's credential wipe. cwd /root/agent puts the core package
+/// (bind-mounted at /root/agent/core) on sys.path; the venv is baked into the image.
+pub fn scrub_cmd() -> Vec<String> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        "cd /root/agent && .venv/bin/python -c 'from core.provider import clear_provider; clear_provider()'".into(),
+    ]
+}
+
+/// Scrub credentials from `source_image` by running core's `clear_provider` (via `scrub_cmd`) in a
+/// throwaway container, then committing the result to `vesta-export-{agent_name}:scrubbed`.
+/// `core_dir` is bind-mounted read-only at `docker::CORE_MOUNT_DEST` so the invocation reaches the
+/// same core package the agent runs. Any leftover same-named container/image from a crashed prior
+/// run is removed first (mirrors `backup.rs::remove_temp_artifacts`).
+pub async fn scrub_image(
+    docker: &Docker,
+    agent_name: &str,
+    source_image: &str,
+    core_dir: &Path,
+) -> Result<String, DockerError> {
+    let cname = format!("vesta-export-scrub-{agent_name}");
+    let image_repo = format!("vesta-export-{agent_name}");
+    let output_image = format!("{image_repo}:scrubbed");
+
+    crate::docker::remove_container_force(docker, &cname).await.ok();
+    crate::docker::remove_image(docker, &output_image).await.ok();
+
+    let core_bind = format!("{}:{}:ro", core_dir.display(), crate::docker::CORE_MOUNT_DEST);
+    let exit_code = crate::docker::run_oneshot_container(
+        docker,
+        crate::docker::OneshotSpec {
+            image: source_image,
+            cname: &cname,
+            cmd: scrub_cmd(),
+            ro_binds: vec![core_bind],
+        },
+        SCRUB_TIMEOUT_SECS,
+    )
+    .await?;
+
+    if exit_code != 0 {
+        crate::docker::remove_container_force(docker, &cname).await.ok();
+        return Err(DockerError::Failed(format!(
+            "credential scrub failed (exit {exit_code}); see docker logs {cname}"
+        )));
+    }
+
+    let commit_result = crate::docker::commit_container_to_image(docker, &cname, &image_repo, "scrubbed").await;
+    crate::docker::remove_container_force(docker, &cname).await.ok();
+    commit_result?;
+
+    Ok(output_image)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,5 +332,92 @@ mod tests {
         std::fs::write(&truncated_path, &whole[..whole.len() / 2]).expect("write truncated");
         let result = read_bundle_image(&truncated_path, |_| Ok(()));
         assert!(result.is_err(), "truncated bundle must fail");
+    }
+
+    fn test_docker() -> bollard::Docker {
+        crate::docker::connect().expect("docker")
+    }
+
+    fn test_agent_image() -> String {
+        std::env::var(crate::docker::AGENT_IMAGE_ENV).unwrap_or_else(|_| crate::docker::vesta_image())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn scrub_image_removes_credentials_and_clears_provider() {
+        let docker = test_docker();
+        let image = test_agent_image();
+        let name = format!("scrubtest-{}", std::process::id());
+        let fixture_cname = format!("vesta-scrub-fixture-{name}");
+        let fixture_image = format!("vesta-scrub-fixture:{name}");
+
+        // Build a fixture image with credentials planted: create (never start) a container from the
+        // agent image, docker cp the files in, commit.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let creds = dir.path().join(".credentials.json");
+        std::fs::write(&creds, r#"{"claudeAiOauth":{"accessToken":"secret"}}"#).expect("write creds");
+        let config_json = dir.path().join("config.json");
+        std::fs::write(
+            &config_json,
+            r#"{"provider":{"kind":"openrouter","key":"sk-secret","model":"m"},"timezone":"Europe/London"}"#,
+        )
+        .expect("write config");
+
+        crate::docker::create_plain_container(&docker, &image, &fixture_cname).await.expect("create fixture");
+        let cp = |src: &std::path::Path, dst: &str| {
+            let status = std::process::Command::new("docker")
+                .args(["cp", &src.display().to_string(), &format!("{fixture_cname}:{dst}")])
+                .status()
+                .expect("docker cp runs");
+            assert!(status.success(), "docker cp {dst} failed");
+        };
+        // ~/.claude exists in the image (created by the Dockerfile), so the file cp lands directly.
+        cp(&creds, "/root/.claude/.credentials.json");
+        // /root/agent/data may be absent in a never-booted image; docker cp cannot mkdir -p, so
+        // stage the whole data dir and cp the directory.
+        let data_dir = dir.path().join("data");
+        std::fs::create_dir_all(&data_dir).expect("mkdir data");
+        std::fs::copy(&config_json, data_dir.join("config.json")).expect("stage config");
+        cp(&data_dir, "/root/agent/data");
+        let status = std::process::Command::new("docker")
+            .args(["commit", &fixture_cname, &fixture_image])
+            .status()
+            .expect("docker commit runs");
+        assert!(status.success());
+
+        // Scrub. core_dir: extract the embedded agent code into a temp config dir, as the CLI does.
+        let config_dir = tempfile::TempDir::new().expect("tempdir");
+        let code_dir = crate::agent_code::ensure_agent_code(config_dir.path()).expect("agent code");
+        let scrubbed = scrub_image(&docker, &name, &fixture_image, &code_dir.join("core"))
+            .await
+            .expect("scrub succeeds");
+
+        // Verify inside the scrubbed image: both credential files gone, provider cleared, timezone kept.
+        let verify_cname = format!("vesta-scrub-verify-{name}");
+        let exit = crate::docker::run_oneshot_container(
+            &docker,
+            crate::docker::OneshotSpec {
+                image: &scrubbed,
+                cname: &verify_cname,
+                cmd: vec!["sh".into(), "-c".into(),
+                    "test ! -f /root/.claude/.credentials.json && \
+                     test ! -f /root/agent/data/claude-code-proxy/codex/auth.json && \
+                     grep -q Europe/London /root/agent/data/config.json && \
+                     ! grep -q sk-secret /root/agent/data/config.json".into()],
+                ro_binds: vec![],
+            },
+            60,
+        )
+        .await
+        .expect("verify runs");
+        assert_eq!(exit, 0, "scrubbed image must have no credentials and keep prefs");
+
+        // Cleanup.
+        for cname in [&fixture_cname, &verify_cname] {
+            crate::docker::remove_container_force(&docker, cname).await.ok();
+        }
+        for img in [&fixture_image, &scrubbed] {
+            crate::docker::remove_image(&docker, img).await.ok();
+        }
     }
 }
