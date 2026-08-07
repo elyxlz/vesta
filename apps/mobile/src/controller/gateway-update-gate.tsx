@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { useRouter, useSegments, type Href } from "expo-router";
 import { BlockingSheetGateView } from "@/components/blocking-sheet-gate-view";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
+import { gatewayUpdateGateNavigationAction } from "./gateway-update-gate-model";
 
 const GATEWAY_UPDATE_ROUTE = "/gateway-update" as Href;
 const ROOT_ROUTE = "/" as Href;
@@ -30,48 +31,46 @@ export function GatewayUpdateGate({
   const segments = useSegments();
   const presentationPending = useRef(false);
   const activeRoute = segments[0] as string | undefined;
+  const privacyRouteActive = activeRoute === "privacy";
   const gatewayUpdateRouteActive = activeRoute === "gateway-update";
   const privacyBlocked = usePrivacyBlocked();
   const gatewayUpdateBlocked = blocked && !privacyBlocked;
+  const action = gatewayUpdateGateNavigationAction({
+    blocked,
+    privacyBlocked,
+    privacyRouteActive,
+    gatewayUpdateRouteActive,
+    replaceActiveRoute: Boolean(
+      activeRoute && NATIVE_SHEET_ROUTES.has(activeRoute),
+    ),
+  });
 
   useEffect(() => {
-    // Privacy owns navigation while it is blocked. It replaces any active sheet and the gateway
-    // update waits until privacy clears, so simultaneous state changes cannot stack two sheets.
-    if (privacyBlocked) {
+    // Privacy owns navigation until its route is gone. Waiting through the unlocked dismissal
+    // prevents a push and back in the same commit from leaving privacy beneath this sheet.
+    if (action === "none") {
       presentationPending.current = false;
       return;
     }
 
-    if (gatewayUpdateBlocked) {
-      if (gatewayUpdateRouteActive) {
-        presentationPending.current = false;
-        return;
-      }
-      if (presentationPending.current) return;
-
-      presentationPending.current = true;
-      if (activeRoute && NATIVE_SHEET_ROUTES.has(activeRoute)) {
-        router.replace(GATEWAY_UPDATE_ROUTE);
+    if (action === "dismiss") {
+      presentationPending.current = false;
+      if (router.canGoBack()) {
+        router.back();
       } else {
-        router.push(GATEWAY_UPDATE_ROUTE);
+        router.replace(ROOT_ROUTE);
       }
       return;
     }
 
-    presentationPending.current = false;
-    if (!gatewayUpdateRouteActive) return;
-    if (router.canGoBack()) {
-      router.back();
+    if (presentationPending.current) return;
+    presentationPending.current = true;
+    if (action === "replace-update") {
+      router.replace(GATEWAY_UPDATE_ROUTE);
     } else {
-      router.replace(ROOT_ROUTE);
+      router.push(GATEWAY_UPDATE_ROUTE);
     }
-  }, [
-    activeRoute,
-    gatewayUpdateBlocked,
-    gatewayUpdateRouteActive,
-    privacyBlocked,
-    router,
-  ]);
+  }, [action, router]);
 
   return (
     <BlockingSheetGateView

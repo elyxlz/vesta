@@ -310,34 +310,14 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (
-      !hydrated ||
-      initializationError ||
-      !privacyReadyRef.current ||
-      !settings.appLockEnabled
-    ) {
-      return;
-    }
-    if (AppState.currentState === "active" && lockedRef.current) {
-      void unlock();
-    }
-  }, [hydrated, initializationError, settings.appLockEnabled, unlock]);
-
-  useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (!privacyReadyRef.current) return;
       if (locksApp(state) && settingsRef.current.appLockEnabled) {
         updateLocked(true);
-      } else if (
-        state === "active" &&
-        settingsRef.current.appLockEnabled &&
-        lockedRef.current
-      ) {
-        void unlock();
       }
     });
     return () => subscription.remove();
-  }, [unlock, updateLocked]);
+  }, [updateLocked]);
 
   const value = useMemo<PrivacyValue>(
     () => ({
