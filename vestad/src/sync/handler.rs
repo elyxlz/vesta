@@ -635,6 +635,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             HashMap::new(),
             &operations,
         );
@@ -644,6 +645,7 @@ mod tests {
 
         let settled = build_roster(
             &agents,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
