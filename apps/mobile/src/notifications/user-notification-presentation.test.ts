@@ -30,6 +30,18 @@ describe("shouldPresentUserNotification", () => {
       expected: true,
     },
     {
+      name: "an auth-lost user notification always shows, even for the active agent",
+      delta: {
+        type: "user_notification",
+        agent: "alex",
+        kind: "auth_lost",
+        title: "alex",
+        body: "sign in again",
+      },
+      activeAgent: "alex",
+      expected: true,
+    },
+    {
       name: "a chat user notification for the active agent defers",
       delta: chatUserNotification("alex"),
       activeAgent: "alex",

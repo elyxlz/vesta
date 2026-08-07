@@ -300,6 +300,25 @@ describe("NotificationProvider", () => {
     ]);
   });
 
+  it("does not toast an auth-lost alert (the status flip owns that notification)", async () => {
+    const { controller, emit } = makeController({ ada: "alive" });
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    blur();
+
+    act(() => {
+      emit({
+        type: "user_notification",
+        agent: "ada",
+        kind: "auth_lost",
+        title: "ada",
+        body: "Provider sign-in stopped working, so replies are paused.",
+      });
+    });
+
+    expect(built).toEqual([]);
+  });
+
   it("lights the unseen badge when the fleet's pending count grows while hidden", async () => {
     const { controller, emit } = makeController({ ada: "alive" });
     mount(controller, [agentInfo("ada", "alive")]);

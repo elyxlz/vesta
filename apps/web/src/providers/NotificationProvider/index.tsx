@@ -92,6 +92,10 @@ function ReplicaNotifications({
         notifyRateLimited(agent, body);
         return;
       }
+      // auth_lost rides the same delta for mobile and future kinds' sake, but here the roster's
+      // status flip to not_authenticated already raises the sign-in notification below; a second
+      // one from the delta would duplicate it.
+      if (kind === "auth_lost") return;
       markUnseen();
       if (chattingAgentRef.current === agent) return;
       notifyAssistant(agent, body);
