@@ -483,7 +483,10 @@ def _table_ddl(conn: sqlite3.Connection) -> list[tuple[str, str]]:
     return conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL").fetchall()
 
 
-def _cell_text(value: object) -> str | None:
+type CellValue = str | bytes | int | float | None
+
+
+def _cell_text(value: CellValue) -> str | None:
     """The scannable text of a cell: a str as-is, a BLOB decoded latin-1, else None. latin-1 is a
     lossless 1:1 byte<->codepoint map, so re-encoding a scrubbed BLOB restores every unmatched byte.
     An outbound email is queued as a payload BLOB, so a scan that reads only str cells certifies the
@@ -542,20 +545,30 @@ def _transform_cell(text: str, transform: tp.Callable[[str], str]) -> str:
     return transform(text)
 
 
+def _cell_updates(cells: tp.Iterable[tuple[str, CellValue]], transform: tp.Callable[[str], str]) -> dict[str, str | bytes]:
+    """Each cell rewritten through the transform, kept only where the text actually changed and
+    keyed by column; a BLOB is re-encoded latin-1 so it is written back as a BLOB, not retyped."""
+    updates: dict[str, str | bytes] = {}
+    for column, value in cells:
+        text = _cell_text(value)
+        if text is not None and (new_text := _transform_cell(text, transform)) != text:
+            updates[column] = new_text.encode("latin-1") if isinstance(value, bytes) else new_text
+    return updates
+
+
+def _apply_cell_updates(conn: sqlite3.Connection, table: str, rowid: int, updates: dict[str, str | bytes]) -> None:
+    assignments = ", ".join(f'"{column}" = ?' for column in updates)
+    conn.execute(f'UPDATE "{table}" SET {assignments} WHERE rowid = ?', [*updates.values(), rowid])
+
+
 def scrub_channel_rows(conn: sqlite3.Connection, refs: list[tuple[str, int]]) -> int:
     """Redact every hit in the given channel-store rows in place, text cell by text cell. A
     contentful FTS mirror is reached either by the store's own AFTER UPDATE trigger or by the
     mirror row's own reference; both are idempotent, so hitting a row twice never mangles it."""
     changed = 0
     for table, rowid in refs:
-        updates: dict[str, str | bytes] = {}
-        for column, value in _scannable_cells(conn, table, rowid).items():
-            text = _cell_text(value)
-            if text is not None and (new_text := _transform_cell(text, _redact_text)) != text:
-                updates[column] = new_text.encode("latin-1") if isinstance(value, bytes) else new_text
-        if updates:
-            assignments = ", ".join(f'"{column}" = ?' for column in updates)
-            conn.execute(f'UPDATE "{table}" SET {assignments} WHERE rowid = ?', [*updates.values(), rowid])
+        if updates := _cell_updates(_scannable_cells(conn, table, rowid).items(), _redact_text):
+            _apply_cell_updates(conn, table, rowid, updates)
             changed += 1
     conn.commit()
     return changed
@@ -596,17 +609,9 @@ def _replace_in_table(conn: sqlite3.Connection, table: str, transform: tp.Callab
     names = [description[0] for description in cursor.description]
     pending: list[tuple[int, dict[str, str | bytes]]] = []
     while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
-        for row in rows:
-            updates: dict[str, str | bytes] = {}
-            for name, value in zip(names[1:], row[1:], strict=True):
-                text = _cell_text(value)
-                if text is not None and (new_text := _transform_cell(text, transform)) != text:
-                    updates[name] = new_text.encode("latin-1") if isinstance(value, bytes) else new_text
-            if updates:
-                pending.append((row[0], updates))
+        pending.extend((row[0], updates) for row in rows if (updates := _cell_updates(zip(names[1:], row[1:], strict=True), transform)))
     for rowid, updates in pending:
-        assignments = ", ".join(f'"{column}" = ?' for column in updates)
-        conn.execute(f'UPDATE "{table}" SET {assignments} WHERE rowid = ?', [*updates.values(), rowid])
+        _apply_cell_updates(conn, table, rowid, updates)
     return len(pending)
 
 
