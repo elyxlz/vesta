@@ -13,7 +13,7 @@ Run it with `moneypot <command>`. Put the command on PATH once:
 mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
 ```
 
-It is a local CLI: nothing to start, nothing to register, no network beyond the optional live exchange-rate lookup. Data lives in `~/agent/data/moneypot.json`, created on first write.
+The CLI needs nothing running: it reads and writes `~/agent/data/moneypot.json` directly, created on first write, and touches the network only for the optional live exchange-rate lookup. The HTTP API below is separate and optional, and is the only part that starts a daemon or registers a port.
 
 ## Model
 
@@ -80,6 +80,42 @@ contributions into 'Joint':
 'Joint' still owes (out-of-pocket, net of repayments):
    Bob  £50.00
 ```
+
+## HTTP API (optional)
+
+`moneypot daemon start|stop|restart|status` serves the same pot data as JSON over HTTP, for another app that needs to read or write pots without shelling out to the CLI. Nothing in the CLI needs it.
+
+Start is idempotent (a live daemon is a no-op) and owns the port registration with vestad; stop is the deliberate shutdown; status reads the pid and port records under `~/agent/data/daemons/`, so it answers while vestad is down. Logs go to `~/agent/logs/moneypot.log`. Manage the daemon only through these commands, never by launching `server.py` yourself.
+
+The port is registered private, so vestad is the gate in front of it and the API itself checks no credential. Reach it at `$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/...` with the app api key, or mint a service key for a caller that holds no app credential:
+
+```bash
+service-key mint moneypot --label "what it is for"
+```
+
+Add this line yourself, inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+```
+moneypot daemon start
+```
+
+Routes:
+
+```
+GET    /health
+GET    /pots                                list pots
+POST   /pots                                {id, name?, currency?, members:[...]}
+GET    /pots/{id}                           full pot
+DELETE /pots/{id}
+GET    /pots/{id}/entries
+POST   /pots/{id}/members                   {name}
+POST   /pots/{id}/expenses                  {payer, amount, desc?, currency?, rate?, fetch?, for?:[...], split?:{Name:amt}}
+POST   /pots/{id}/transfers                 {from, to, amount, desc?, currency?, rate?, fetch?}
+DELETE /pots/{id}/entries/{eid}
+GET    /pots/{id}/balance
+GET    /pots/{id}/contributions?account=X
+```
+
+Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route). API mutations are serialized with a lock; the CLI writes the same file without one, so do not drive mutations through the CLI and the API at the same moment.
 
 ## Notes
 
