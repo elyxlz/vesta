@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 
+from finance_cli.health import read_health
+
 NAME = "finance"
 DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
@@ -182,7 +184,17 @@ def _stop() -> int:
 
 
 def _status() -> int:
-    print(json.dumps({"running": live_pid() is not None, "port": None}))
+    """A local read of the pid record and, when the watcher has recorded one, its health record:
+    a daemon can be up while failing every poll, and `running` alone would hide that. No record
+    means no health opinion yet, and the answer stays the two-field shape."""
+    answer: dict[str, bool | int | str | None] = {"running": live_pid() is not None, "port": None}
+    recorded = read_health()
+    if recorded is not None:
+        answer["healthy"] = recorded.healthy
+        answer["last_success_at"] = recorded.last_success_at
+        answer["consecutive_failures"] = recorded.consecutive_failures
+        answer["error"] = recorded.error
+    print(json.dumps(answer))
     return 0
 
 

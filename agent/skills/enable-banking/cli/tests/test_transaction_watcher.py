@@ -53,3 +53,89 @@ def test_successive_notification_filenames_sort_in_send_order(tmp_path, monkeypa
         written_order.append(latest.name)
 
     assert sorted(written_order) == written_order
+
+
+def _configured_home(tmp_path, monkeypatch):
+    """A signed-in HOME for poll_once to read: one account, a session, an empty seen file."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    finance_dir = tmp_path / ".finance"
+    finance_dir.mkdir()
+    (finance_dir / "config.json").write_text(json.dumps({"session_id": "sess-1", "accounts": [{"uid": "acc-1", "currency": "GBP"}]}))
+    monkeypatch.setattr(tw, "SEEN_FILE", finance_dir / "seen_transactions.json")
+    tw.save_seen(set())
+
+
+def test_an_api_error_during_a_poll_is_a_recorded_failure_not_a_process_death(tmp_path, monkeypatch):
+    """The regression that killed the live watcher: one 503 from the provider ended the whole
+    process, because the API layer's failure was not an Exception the poll loop could catch.
+    Now it is: the cycle completes, classified transient, and the next cycle retries."""
+    from finance_cli import enablebanking as eb
+
+    _configured_home(tmp_path, monkeypatch)
+
+    def upstream_sad(*_args, **_kwargs):
+        raise eb.ApiError(503, "Enable Banking API error (GET x): status 503")
+
+    monkeypatch.setattr(eb, "get_transactions", upstream_sad)
+    outcome = tw.poll_once()
+    assert outcome.attempted is True
+    assert outcome.new_txs == []
+    assert [failure.permanent for failure in outcome.failures] == [False]
+
+
+def test_a_401_is_classified_permanent(tmp_path, monkeypatch):
+    from finance_cli import enablebanking as eb
+
+    _configured_home(tmp_path, monkeypatch)
+
+    def credential_dead(*_args, **_kwargs):
+        raise eb.ApiError(401, "Enable Banking API error (GET x): status 401")
+
+    monkeypatch.setattr(eb, "get_transactions", credential_dead)
+    outcome = tw.poll_once()
+    assert [failure.permanent for failure in outcome.failures] == [True]
+
+
+def test_an_unconfigured_watcher_polls_nothing_and_has_no_health_opinion(tmp_path, monkeypatch):
+    """A watcher started before sign-in is idle, not unhealthy: it must not write a health
+    record, or every fresh install would announce itself as broken."""
+    from finance_cli import health
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(tw, "SEEN_FILE", tmp_path / ".finance" / "seen_transactions.json")
+    monkeypatch.setattr(health, "HEALTH_FILE", tmp_path / "daemons" / "finance.health")
+    tw.save_seen(set())
+
+    outcome = tw.poll_once()
+    assert outcome.attempted is False
+
+    tw._tick()
+    assert not health.HEALTH_FILE.exists()
+
+
+def test_a_tick_records_its_outcome_in_the_health_record(tmp_path, monkeypatch):
+    """The wiring the daemon contract's status half depends on: a failing cycle lands in the
+    record as unhealthy, and a working one resets it to healthy."""
+    from finance_cli import health
+
+    monkeypatch.setattr(tw, "SEEN_FILE", tmp_path / "seen_transactions.json")
+    monkeypatch.setattr(health, "HEALTH_FILE", tmp_path / "daemons" / "finance.health")
+    monkeypatch.setattr(health, "NOTIFICATIONS_DIR", tmp_path / "notifications")
+    tw.save_seen(set())
+
+    failing = tw.PollOutcome([], [tw.PollFailure(error="status 401", permanent=True)], attempted=True)
+    monkeypatch.setattr(tw, "poll_once", lambda: failing)
+    tw._tick()
+    recorded = health.read_health()
+    assert recorded is not None
+    assert recorded.healthy is False
+    assert recorded.consecutive_failures == 1
+    assert recorded.error == "status 401"
+    assert len(list((tmp_path / "notifications").glob("*daemon_unhealthy*"))) == 1
+
+    monkeypatch.setattr(tw, "poll_once", lambda: tw.PollOutcome([], [], attempted=True))
+    tw._tick()
+    recorded = health.read_health()
+    assert recorded is not None
+    assert recorded.healthy is True
+    assert recorded.consecutive_failures == 0

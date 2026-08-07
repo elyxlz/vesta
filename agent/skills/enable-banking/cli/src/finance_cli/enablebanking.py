@@ -62,23 +62,26 @@ def _headers(conf: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+class ApiError(Exception):
+    """A non-2xx answer from the Enable Banking API.
+
+    An ordinary Exception on purpose: the watcher's poll loop catches it, classifies it by
+    `status` (401/403 is a dead credential, anything else a retryable blip), and keeps polling.
+    The CLI turns it into the `{"error":...}` stderr envelope at its own boundary in `main()`.
+    """
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 def _raise_for_status(resp: httpx.Response, context: str) -> None:
     if resp.is_error:
         try:
             body = resp.json()
-        except Exception:
+        except ValueError:
             body = resp.text
-        print(
-            json.dumps(
-                {
-                    "error": f"Enable Banking API error ({context})",
-                    "status": resp.status_code,
-                    "body": body,
-                }
-            ),
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        raise ApiError(resp.status_code, f"Enable Banking API error ({context}): status {resp.status_code}, body {json.dumps(body)}")
 
 
 def _request(conf: dict, method: str, path: str, params: dict | None = None, body: dict | None = None) -> Any:

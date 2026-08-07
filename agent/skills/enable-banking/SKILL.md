@@ -25,10 +25,17 @@ Do not infer the liveness of a connection from a string in a config file. Read t
 
 The watcher (`finance serve`) polls Enable Banking every 5 minutes and writes new transaction notifications to `~/agent/notifications/<time_ns>-finance-message.json`. It must be running at all times, so drive it with the daemon verb below rather than launching `finance serve` yourself.
 
-**Check if running:**
+**Check if running, and whether the polling is actually working:**
 ```bash
 finance daemon status
 ```
+
+Status reports `running` plus, once the watcher has polled, its health: `healthy`,
+`last_success_at`, `consecutive_failures`, `error`. `running: true` with `healthy: false` means
+the watcher is up but its polls are failing (see the `error` field; a `status 401`/`403` is a
+dead credential needing `finance auth login`, not a restart), and transaction data may be stale.
+A persistently failing watcher also announces itself with a `daemon_unhealthy` notification,
+once on discovery and then daily while broken.
 
 **Start if not running:**
 ```bash

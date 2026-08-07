@@ -9,7 +9,7 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 ## Preflight: daemon liveness (do this first, every tick)
 
-Before anything else, confirm the daemons the `restart` skill starts are actually alive: ask each line in its Daemons block with the matching `<skill> daemon status`. Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring a dead daemon back with its own start line from that block, or re-run the whole Daemons block, which is idempotent and a no-op when everything is already up.
+Before anything else, confirm the daemons the `restart` skill starts are actually alive: ask each line in its Daemons block with the matching `<skill> daemon status`. Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring a dead daemon back with its own start line from that block, or re-run the whole Daemons block, which is idempotent and a no-op when everything is already up. An answer that is running but carries `"healthy": false` is a daemon that is up and failing its work: its `error` field says why and `last_success_at` says since when, so fix the cause it names (a dead credential needs re-auth, not a restart) and treat data it serves as possibly stale.
 
 ## Two questions, every time
 

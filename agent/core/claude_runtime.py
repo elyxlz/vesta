@@ -111,13 +111,16 @@ def _clear_daemon_records(daemons_dir: pl.Path) -> None:
 
     Boot runs before any daemon does, so every record present is from a process the container
     no longer has. A pid it names can already belong to something else in the fresh pid space,
-    which would read as live and turn the next start into a silent no-op. A record is a file, so
-    a directory here belongs to whoever put it there and boot leaves it standing.
+    which would read as live and turn the next start into a silent no-op. A `.health` record
+    stays: it describes the daemon's work against its upstream, which a restart does not reset,
+    and its persisted notified-state is what keeps a restart from re-announcing a failure the
+    agent was already told about. A record is a file, so a directory here belongs to whoever
+    put it there and boot leaves it standing.
     """
     if not daemons_dir.is_dir():
         return
     for record in daemons_dir.iterdir():
-        if not record.is_dir():
+        if not record.is_dir() and record.suffix != ".health":
             record.unlink(missing_ok=True)
 
 

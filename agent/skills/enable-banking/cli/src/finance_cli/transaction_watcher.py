@@ -1,5 +1,6 @@
 """Poll Enable Banking for new transactions and write notifications."""
 
+import dataclasses
 import json
 import signal
 import sys
@@ -7,20 +8,13 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from finance_cli.enablebanking import ApiError
+from finance_cli.health import NOTIFICATIONS_DIR, atomic_write_text, record_failure, record_success
+
 SEEN_FILE = Path.home() / ".finance" / "seen_transactions.json"
-# The directory the engine watches (config.notifications_dir). A notification written anywhere
-# else still succeeds: nothing is delivered and nothing errors.
-NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 POLL_INTERVAL = 300  # 5 minutes
-
-
-def atomic_write_text(path: Path, text: str) -> None:
-    """Write text to path atomically: write a sibling temp file, then rename over the target, so a
-    monitor tick globbing the notifications dir never observes a half-written file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    tmp.replace(path)
+# API answers that mean the credential itself is dead, which no retry heals.
+PERMANENT_STATUSES = (401, 403)
 
 
 def load_seen() -> set[str]:
@@ -71,20 +65,36 @@ def format_tx(tx: dict) -> str:
     return f"{sign}{sym}{amount} — {details}"
 
 
-def poll_once() -> list[dict]:
-    """Check for new transactions. Returns list of new ones."""
+@dataclasses.dataclass(frozen=True)
+class PollFailure:
+    error: str
+    permanent: bool
+
+
+@dataclasses.dataclass(frozen=True)
+class PollOutcome:
+    new_txs: list[dict]
+    failures: list[PollFailure]
+    attempted: bool  # False when there was nothing to poll: not signed in yet, or no accounts
+
+
+def poll_once() -> PollOutcome:
+    """Check every account for new transactions, collecting each fetch's failure instead of
+    letting one kill the cycle: a 401/403 is a dead credential that never self-heals, anything
+    else a blip the next cycle retries."""
     from finance_cli.enablebanking import get_transactions
 
     config_path = Path.home() / ".finance" / "config.json"
     if not config_path.exists():
-        return []
+        return PollOutcome([], [], attempted=False)
 
     conf = json.loads(config_path.read_text())
     if not conf.get("session_id") or not conf.get("accounts"):
-        return []
+        return PollOutcome([], [], attempted=False)
 
     seen = load_seen()
     new_txs = []
+    failures: list[PollFailure] = []
 
     # Only check last 2 days to keep it fast
     date_from = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
@@ -99,11 +109,15 @@ def poll_once() -> list[dict]:
                     seen.add(tx_id)
                     tx["_account_currency"] = account.get("currency", "")
                     new_txs.append(tx)
+        except ApiError as e:
+            print(f"Error checking account {account.get('uid', '?')}: {e}", file=sys.stderr)
+            failures.append(PollFailure(error=str(e), permanent=e.status in PERMANENT_STATUSES))
         except Exception as e:
             print(f"Error checking account {account.get('uid', '?')}: {e}", file=sys.stderr)
+            failures.append(PollFailure(error=f"{type(e).__name__}: {e}", permanent=False))
 
     save_seen(seen)
-    return new_txs
+    return PollOutcome(new_txs, failures, attempted=True)
 
 
 def write_notification(tx: dict) -> None:
@@ -198,19 +212,33 @@ def serve() -> None:
         raise
 
 
+def _tick() -> None:
+    """One poll cycle, its outcome recorded in the health record `finance daemon status`
+    surfaces (see finance_cli.health). A cycle with nothing to poll records nothing: a watcher
+    waiting for sign-in is idle, not unhealthy."""
+    # The seed is what keeps the first poll quiet, and it needs the config a watcher
+    # started before sign-in does not have yet, so a failure just waits a cycle.
+    if not SEEN_FILE.exists():
+        print("First run — seeding existing transactions...")
+        seed_seen()
+        return
+    outcome = poll_once()
+    for tx in outcome.new_txs:
+        formatted = format_tx(tx)
+        print(f"New: {formatted}")
+        write_notification(tx)
+    if not outcome.attempted:
+        return
+    if outcome.failures:
+        record_failure("; ".join(failure.error for failure in outcome.failures), permanent=any(f.permanent for f in outcome.failures))
+    else:
+        record_success()
+
+
 def _poll_forever() -> None:
     while True:
         try:
-            # The seed is what keeps the first poll quiet, and it needs the config a watcher
-            # started before sign-in does not have yet, so a failure just waits a cycle.
-            if SEEN_FILE.exists():
-                for tx in poll_once():
-                    formatted = format_tx(tx)
-                    print(f"New: {formatted}")
-                    write_notification(tx)
-            else:
-                print("First run — seeding existing transactions...")
-                seed_seen()
+            _tick()
         except Exception as e:
             print(f"Poll error: {e}", file=sys.stderr)
 

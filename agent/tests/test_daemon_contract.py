@@ -64,6 +64,7 @@ class Daemon:
     name: str  # pidfile name and log name
     serves_port: bool
     emits_daemon_died: bool
+    reports_health: bool = False  # keeps a ~/agent/data/daemons/<name>.health record status surfaces
     public: bool = False  # registers `--public`; anything new is private plus a service key
     service: str | None = None  # vestad service name, when it differs from the command name
     legacy_command: list[str] | None = None  # a script path fleet restart files still launch by
@@ -263,6 +264,7 @@ SKILLS = [
         name="finance",
         serves_port=False,
         emits_daemon_died=True,
+        reports_health=True,
     ),
     Daemon(
         command=[str(SKILLS_DIR / "whatsapp/whatsapp")],
@@ -570,6 +572,58 @@ def test_a_death_nobody_asked_for_is_reported(daemon):
     while time.monotonic() < deadline and not _death_notices(home):
         time.sleep(DEATH_POLL_SECS)
     assert _death_notices(home) != []
+
+
+def test_status_surfaces_the_health_record(daemon):
+    """A daemon can be up while failing every work cycle (a revoked credential, a rejecting
+    upstream), and `running` alone hides that: a live poller once served a two-week-stale cache
+    through 3,903 identical auth failures with status reporting running:true throughout. A
+    daemon that keeps a health record must surface it from status, and one that keeps none must
+    answer the plain two-field shape, so absent means unknown rather than healthy."""
+    spec, home, env = daemon
+    if not spec.reports_health:
+        pytest.skip("keeps no health record")
+    assert _json(_verb(spec, env, "start")) == {"status": "started"}
+    healthfile = home / "agent/data/daemons" / f"{spec.name}.health"
+
+    # Before any work cycle there is no record, and status must not invent health fields.
+    assert healthfile.exists() is False
+    assert _json(_verb(spec, env, "status")) == {"running": True, "port": None}
+
+    healthfile.write_text(
+        json.dumps(
+            {
+                "healthy": False,
+                "last_success_at": "2026-07-24T09:00:00+00:00",
+                "consecutive_failures": 3903,
+                "error": "status 401, credential revoked",
+                "notified_at": "2026-08-06T04:00:00+00:00",
+            }
+        )
+    )
+    failing = _json(_verb(spec, env, "status"))
+    assert failing["running"] is True
+    assert failing["healthy"] is False
+    assert failing["consecutive_failures"] == 3903
+    assert failing["last_success_at"] == "2026-07-24T09:00:00+00:00"
+    assert failing["error"] == "status 401, credential revoked"
+    assert "notified_at" not in failing, "notification bookkeeping leaked into the status answer"
+
+    healthfile.write_text(
+        json.dumps(
+            {"healthy": True, "last_success_at": "2026-08-06T09:00:00+00:00", "consecutive_failures": 0, "error": None, "notified_at": None}
+        )
+    )
+    recovered = _json(_verb(spec, env, "status"))
+    assert recovered["healthy"] is True
+    assert recovered["error"] is None
+
+    # The record describes the daemon's work, not its process, so it outlives a stop: a stopped
+    # poller's last known health is still the truth about the data it left behind.
+    assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
+    stopped = _json(_verb(spec, env, "status"))
+    assert stopped["running"] is False
+    assert stopped["healthy"] is True
 
 
 def test_status_reads_the_port_record_and_never_re_registers(daemon):

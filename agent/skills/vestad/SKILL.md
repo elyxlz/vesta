@@ -169,6 +169,50 @@ Two obligations that are easy to miss:
   silent for it, so a deliberate stop is never reported as a crash. Every other way out is
   reported, since nothing else notices a daemon that quietly went away.
 
+### Health: a daemon that is up but failing (optional half of status)
+
+`running` answers whether the process exists, which says nothing about whether the daemon can do
+its job: a poller whose credential was revoked stays up, serves ever-staler local data, and logs
+the same auth error forever with nothing pointing anyone at the log. A daemon whose work can fail
+while the process lives (anything polling an upstream or holding a credential) therefore keeps a
+health record, and its status surfaces it. A daemon with no work that can fail this way (a static
+file server) keeps no record, and its status stays the plain shape above: an absent record means
+no opinion, never health.
+
+The record is `~/agent/data/daemons/<name>.health`, one JSON object the daemon's own work loop
+writes atomically (temp file, then rename) after each cycle:
+
+```json
+{"healthy": false, "last_success_at": "2026-07-24T09:00:00+00:00", "consecutive_failures": 42, "error": "status 401, credential revoked", "notified_at": "2026-08-06T04:00:00+00:00"}
+```
+
+A successful cycle writes `healthy: true` with the failure count zeroed, the error and
+`notified_at` null; a failed one increments `consecutive_failures` and records the error. Status
+carries the first four fields whenever the record exists, `notified_at` staying internal:
+
+```json
+{"running": true, "port": null, "healthy": false, "last_success_at": "2026-07-24T09:00:00+00:00", "consecutive_failures": 42, "error": "status 401, credential revoked"}
+```
+
+The record describes the daemon's work against its upstream, not its process, so it deliberately
+outlives stops, restarts, and reboots (boot clears the pid and port records and leaves `.health`
+standing): a restart does not fix a revoked credential, and `running: false` beside the last
+recorded health is both truths at once.
+
+A failure that persists must reach the agent as a notification rather than only the log:
+`type: daemon_unhealthy`, `source: <skill>`, interrupting, with a message naming the error, how
+long the work has been failing, and the fix. A permanent failure (an auth rejection, which no
+retry heals) is reported on its first occurrence; a transient one (a 5xx, a dropped connection)
+only after a few consecutive failed cycles. Writing the notification stamps `notified_at` in the
+record, which is what suppresses a repeat, and because it is on disk the suppression survives
+restarts, which are exactly when a long-broken credential gets rediscovered. Re-notify only while
+the same failure still stands a day later; a successful cycle clears `notified_at`, so the next
+lapse is announced again.
+
+The exemplar is the finance watcher: `finance_cli/health.py` (under
+`~/agent/skills/enable-banking/cli/src/`) owns the record and the notification decision, the poll
+loop feeds it each cycle's outcome, and `finance daemon status` surfaces the record.
+
 The contract has one exemplar per language, each a real launcher this repo's conformance
 tests hold to the behavior above: shell is `~/agent/skills/file-host/file-host`, Python is
 `~/agent/skills/tasks/cli/src/tasks_cli/daemon.py`, and Go is
