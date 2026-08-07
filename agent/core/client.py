@@ -44,6 +44,10 @@ from .tools import build_vesta_tools_server
 ZAI_ANTHROPIC_URL = "https://api.z.ai/api/anthropic"
 KIMI_ANTHROPIC_URL = "https://api.kimi.com/coding/"
 
+# Body of the auth_lost user notification. A fixed notice, never the upstream error text, so no
+# credential fragment a provider echoes back can reach a client notification.
+AUTH_LOST_NOTICE = "Provider sign-in stopped working, so replies are paused. Messages are kept and answered once you sign in again in the app."
+
 # The error surface of a dead or wedged CLI subprocess, caught by every consumer of the SDK seam
 # (the session open below, loops.py's turn and compaction error handlers). Owned here so loops.py
 # never imports claude_agent_sdk itself.
@@ -210,6 +214,23 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
         await vestad_client.send_user_notification("rate_limited", agent_name, notice)
 
 
+async def _note_auth_lost(*, state: vm.State, config: cfg.VestaConfig) -> None:
+    """Terminal upstream 401/402: flip to not_authenticated, announce the deaf streak, and stop the
+    CLI's internal retries so the app shows "not signed in" in ~3s instead of hanging to the response
+    timeout and restart-looping. The best-effort user notification (issues #1642/#1650) fires once
+    per streak: on the authenticated -> not_authenticated transition, or on the first sighting when
+    the OpenRouter cache proxy already flipped the status; retries against the same dead credential
+    stay quiet."""
+    logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
+    newly_deaf = not is_unauthenticated(state.provider_status) or not state.auth_lost_noticed
+    state.provider_status = observed_provider_failure(state.provider_status)
+    if newly_deaf:
+        state.auth_lost_noticed = True
+        agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
+        await vestad_client.send_user_notification("auth_lost", agent_name, AUTH_LOST_NOTICE)
+    await attempt_interrupt(state, config=config, reason="Provider auth lost")
+
+
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
     close the open turn on its ResultMessage. Messages with no open turn (a delivered preempt
@@ -252,12 +273,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         details=(*texts, *error_texts),
     )
     if auth_lost:
-        # Flip to not_authenticated, stop the CLI's internal retries, and end the turn cleanly
-        # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
-        # and restart-looping.
-        logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
-        state.provider_status = observed_provider_failure(state.provider_status)
-        await attempt_interrupt(state, config=config, reason="Provider auth lost")
+        await _note_auth_lost(state=state, config=config)
     if isinstance(msg, ResultMessage) or auth_lost:
         if turn and not turn.done.is_set():
             turn.done.set()

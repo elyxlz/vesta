@@ -24,7 +24,8 @@ export interface NotificationsDelta {
   pending: NotificationEvent[]
 }
 
-// The always-on, server-decided user-facing notification (a new chat reply or a rate limit), carrying
+// The always-on, server-decided user-facing notification (a new chat reply, a rate limit, or a
+// terminal provider auth loss), carrying
 // the display triple directly. Chat leaves the event union, so the user notification no longer embeds
 // an event: the client routes on `kind` and renders `title`/`body`. Independent of any subscription;
 // clients toast it. Additive: an old client on the pre-user-notification union simply ignores it.

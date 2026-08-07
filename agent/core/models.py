@@ -121,6 +121,10 @@ class State:
     # resets_at): the CLI re-reports the same rejection on every retry, so _dispatch_message
     # announces each window once (issue #1071).
     rate_limit_noticed: tuple[str | None, int | None] | None = None
+    # True once the current deaf streak's auth_lost user notification went out, so retries hitting
+    # the same dead credential announce it once. Re-auth restarts the agent (provider writes are
+    # write-only), which rebuilds State and re-arms it.
+    auth_lost_noticed: bool = False
     processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))

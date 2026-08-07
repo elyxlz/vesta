@@ -188,6 +188,9 @@ impl MobileApp {
     /// Only a new message pushes: it reuses the existing `chat` device subscription, so registered
     /// devices need no change. A `rate_limited` user notification toasts on connected clients but is
     /// never a mobile push, so it is skipped here (chat-only device subscriptions dropped it before too).
+    /// An `auth_lost` one is skipped for a different reason: the agent's status flips to
+    /// `not_authenticated` at the same moment, and `observe_agent_status_changes` already pushes that
+    /// transition ("needs you to sign in") to `status`-subscribed devices; a push here would duplicate it.
     pub(crate) fn push_user_notification(&self, agent: &str, kind: &str, title: &str, body: &str) {
         if kind != "message" {
             return;
