@@ -132,7 +132,13 @@ def mask(match: re.Match[str]) -> str:
 # digits from MII 3, clearing the IIN gate, and pass Luhn about one time in ten. A PAN follows a
 # space, a colon or a quote, never a namespace, so the dot costs no real detection. The guard is
 # deliberately dot-only: hyphen/underscore-namespaced ids stay flagged, erring toward redaction.
-CARD_CANDIDATE = re.compile(r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)")
+_DIGIT_RUN = r"(?<![\d.])\d(?:[ -]?\d){12,18}(?!\d)"
+# A messaging id is a digit run wearing a suffix. A WhatsApp LID collides with the Mastercard
+# 2-series head-on: 251638040256599 opens 2516 (inside 2221-2720), clears the IIN gate and passes
+# Luhn by chance, so it is indistinguishable from a PAN by digits alone. The suffix is the only
+# discriminator there is, and the hit count scales with how much chat traffic a box carries.
+_MESSAGING_ID_SUFFIX = r"(?!@(?:lid|s\.whatsapp\.net|c\.us|g\.us)\b)"
+CARD_CANDIDATE = re.compile(_DIGIT_RUN + _MESSAGING_ID_SUFFIX)
 # Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
 CONTEXT_CHARS = 40
 
@@ -164,7 +170,9 @@ def _has_card_iin(digits: str) -> bool:
 def _is_card(candidate: str) -> bool:
     """A candidate run is a real PAN only when its stripped digits count 13 to 19, pass Luhn, AND open
     with an assigned card issuer prefix. Luhn alone flags ~1 in 10 non-card digit runs (a 13-digit
-    timestamp can pass by chance); the IIN gate removes that class without dropping a major-network card."""
+    timestamp can pass by chance); the IIN gate removes that class without dropping a major-network card.
+    The 13 floor deliberately excludes legacy 12-digit Maestro: a 12-digit run is usually a phone
+    number, and country codes 30-69 clear the IIN gate, so admitting 12 would flag chats wholesale."""
     digits = candidate.replace(" ", "").replace("-", "")
     return 13 <= len(digits) <= 19 and _has_card_iin(digits) and luhn_valid(digits)
 
