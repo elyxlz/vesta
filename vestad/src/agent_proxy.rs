@@ -109,6 +109,18 @@ fn keyed_forward_path(
     keys.accepts(agent, service, key, now).then_some(forwarded)
 }
 
+/// The query string forwarded upstream: the client's query minus every `token=` pair
+/// (`auth::presented_tokens` reads that carrier, so vestad has already consumed it and no
+/// upstream may see it). `None` when nothing else remains, so the URL carries no stray `?`.
+fn forwarded_query(query: &str) -> Option<String> {
+    let kept = query
+        .split('&')
+        .filter(|pair| !pair.is_empty() && !pair.starts_with(auth::CLIENT_CREDENTIAL_QUERY_PREFIX))
+        .collect::<Vec<_>>()
+        .join("&");
+    (!kept.is_empty()).then_some(kept)
+}
+
 /// The agent token vestad injects upstream. Only the raw agent port consumes it, so a
 /// registered service is never handed one.
 fn injected_agent_token(agent_token: Option<&str>, is_registered_service: bool) -> Option<&str> {
@@ -201,10 +213,11 @@ pub async fn agent_proxy_handler(
         ));
     }
 
+    // Both the HTTP and WS branches forward this path, so the credential strip covers both.
     let mut target_path = stripped_path;
-    if let Some(q) = request.uri().query() {
+    if let Some(query) = request.uri().query().and_then(forwarded_query) {
         target_path.push('?');
-        target_path.push_str(q);
+        target_path.push_str(&query);
     }
 
     let is_ws_upgrade = request
@@ -381,13 +394,17 @@ async fn forward_http_to_container(
         .await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {e}")))?;
 
+    // Hop-by-hop headers, plus the client credential vestad already consumed
+    // (auth::presented_tokens): the proxy is the gate, so no upstream, registered
+    // service or raw agent port alike, is handed the gateway-tier bearer.
     let mut req_builder = client.request(method, &url);
     for (name, value) in &parts.headers {
         let n = name.as_str().to_ascii_lowercase();
         if matches!(
             n.as_str(),
             "host" | "connection" | "transfer-encoding" | "content-length"
-        ) {
+        ) || n == auth::CLIENT_CREDENTIAL_HEADER
+        {
             continue;
         }
         req_builder = req_builder.header(name.as_str(), value.as_bytes());
@@ -514,8 +531,8 @@ mod keyed_forward_path_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_target_url, injected_agent_token, pump_agent_to_client, split_key_subpath,
-        split_service_subpath, wait_for_upstream,
+        build_target_url, forwarded_query, injected_agent_token, pump_agent_to_client,
+        split_key_subpath, split_service_subpath, wait_for_upstream,
     };
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
@@ -536,6 +553,31 @@ mod tests {
         assert_eq!(injected_agent_token(Some("tok"), false), Some("tok"));
         assert_eq!(injected_agent_token(None, false), None);
         assert_eq!(injected_agent_token(None, true), None);
+    }
+
+    /// The `?token=` pair is the query carrier `auth::presented_tokens` consumes, so the
+    /// forwarded query must never contain one, while every other pair passes untouched.
+    /// Both the HTTP forward and the WS upstream dial use the path this filter produces.
+    #[test]
+    fn the_forwarded_query_drops_every_token_pair_and_keeps_the_rest() {
+        // (client query, query forwarded upstream)
+        let cases = [
+            ("token=secret", None),
+            ("token=secret&lang=en", Some("lang=en")),
+            ("lang=en&token=secret&fmt=json", Some("lang=en&fmt=json")),
+            ("token=one&token=two", None),
+            ("lang=en", Some("lang=en")),
+            // `tokens=` is a different name; only the exact `token=` carrier is a credential.
+            ("tokens=plural&mytoken=x", Some("tokens=plural&mytoken=x")),
+            ("", None),
+        ];
+        for (query, expected) in cases {
+            assert_eq!(
+                forwarded_query(query).as_deref(),
+                expected,
+                "forwarded_query({query:?})"
+            );
+        }
     }
 
     #[test]

@@ -176,6 +176,11 @@ fn token_fingerprint(token: &str) -> String {
     hex::encode(&digest.as_ref()[..3])
 }
 
+/// The two carriers a client credential rides in (`presented_tokens` reads them, the agent
+/// proxy strips them before forwarding): the `Authorization` header and the `?token=` pair.
+pub(crate) const CLIENT_CREDENTIAL_HEADER: &str = "authorization";
+pub(crate) const CLIENT_CREDENTIAL_QUERY_PREFIX: &str = "token=";
+
 /// Every credential the request presents: the Bearer header and the `?token=` query param.
 /// One place enumerates them so each carrier is checked identically.
 pub(crate) fn presented_tokens<'req>(
@@ -183,12 +188,14 @@ pub(crate) fn presented_tokens<'req>(
     uri: &'req axum::http::Uri,
 ) -> impl Iterator<Item = &'req str> {
     let bearer = headers
-        .get("authorization")
+        .get(CLIENT_CREDENTIAL_HEADER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    let query = uri
-        .query()
-        .and_then(|query| query.split('&').find_map(|pair| pair.strip_prefix("token=")));
+    let query = uri.query().and_then(|query| {
+        query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix(CLIENT_CREDENTIAL_QUERY_PREFIX))
+    });
     bearer.into_iter().chain(query)
 }
 
