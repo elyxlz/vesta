@@ -125,6 +125,12 @@ export interface GatewaySettings {
   };
 }
 
+export interface AgentBackupSettings {
+  enabled: boolean;
+  retention: { periodic: number; pre_update_versions: number };
+  has_override: boolean;
+}
+
 export interface HostMount {
   host_path: string;
   container_path: string;

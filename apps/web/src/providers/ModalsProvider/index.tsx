@@ -7,12 +7,13 @@ export { useModals } from "./context";
 
 export function ModalsProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const { remove } = useSelectedAgent();
+  const { remove, backup } = useSelectedAgent();
 
   // ProviderPicker (rendered inside AgentIslandModals) owns the auth lifecycle now.
   // This provider only controls whether the dialog is open.
   const [showAuth, setShowAuth] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [backupDialogOpen, setBackupDialogOpen] = useState(false);
 
   const handleOpenAuth = () => setShowAuth(true);
   const clearAuthState = () => setShowAuth(false);
@@ -22,6 +23,8 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
     await remove();
   };
 
+  const handleBackup = () => backup();
+
   const value: ModalsContextValue = {
     showAuth,
     handleOpenAuth,
@@ -29,6 +32,9 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
     deleteDialogOpen,
     setDeleteDialogOpen,
     handleDelete,
+    backupDialogOpen,
+    setBackupDialogOpen,
+    handleBackup,
   };
 
   return (
