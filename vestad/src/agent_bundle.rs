@@ -215,7 +215,8 @@ pub async fn scrub_image(
     .await?;
 
     if exit_code != 0 {
-        crate::docker::remove_container_force(docker, &cname).await.ok();
+        // Leave the container in place: the error advises `docker logs {cname}`, and the next
+        // scrub_image call's leftover sweep above reclaims it.
         return Err(DockerError::Failed(format!(
             "credential scrub failed (exit {exit_code}); see docker logs {cname}"
         )));
