@@ -876,7 +876,7 @@ fn main() {
                         }
 
                         eprintln!("loading image from {}...", input.display());
-                        let loaded_image = docker::import_image_gzip(&docker, &input).await
+                        let loaded_image = docker::load_image_from_file(&docker, &input).await
                             .unwrap_or_else(|e| die(format!("import failed: {e}")));
                         let loaded_image = loaded_image.as_str();
 
