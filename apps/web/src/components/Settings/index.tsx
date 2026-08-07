@@ -222,7 +222,7 @@ export function AppSettings() {
   );
 }
 
-// The read-only daemon setup rows (lan, tunnel, backups) of the gateway card.
+// The read-only daemon setup rows (lan, tunnel) of the gateway card.
 function GatewaySetupFields({ setup }: { setup: GatewaySetup }) {
   return (
     <div className="mt-4 flex flex-col gap-3">
@@ -248,19 +248,6 @@ function GatewaySetupFields({ setup }: { setup: GatewaySetup }) {
         </FieldContent>
         <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">
           {setup.info.tunnel_url ?? "not set"}
-        </span>
-      </Field>
-      <Field orientation="horizontal" className="items-center justify-between">
-        <FieldContent>
-          <FieldLabel className="text-sm">backups</FieldLabel>
-          <FieldDescription>
-            automatic snapshots of your agents, without interrupting them
-          </FieldDescription>
-        </FieldContent>
-        <span className="shrink-0 text-sm text-muted-foreground">
-          {setup.settings.auto_backup.enabled
-            ? `every ${String(setup.settings.auto_backup.every_n_days)} days, and before every update`
-            : "disabled"}
         </span>
       </Field>
     </div>
