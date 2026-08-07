@@ -17,8 +17,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
 	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
 	fmt.Fprintln(w, "Setup / health:")
-	fmt.Fprintln(w, "  connect --source <cloud|doubletick|self-managed> [--opener <text>] [--phone +E.164] set up or recover WhatsApp; --opener is for cloud/doubletick, --phone (self-managed) uses a pairing code when the user cannot scan a QR")
-	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect`")
+	fmt.Fprintln(w, "  connect --source <vesta-cloud|doubletick|self-managed> [--opener <text>] [--phone +E.164] set up or recover WhatsApp; --opener is for vesta-cloud/doubletick, --phone (self-managed) uses a pairing code when the user cannot scan a QR")
+	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect --source <vesta-cloud|doubletick|self-managed>`")
 	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon; the restart skill runs `whatsapp daemon start` at boot")
 	fmt.Fprintln(w, "  start                                alias for `daemon start`: bring the daemon up and wait until it answers (idempotent)")
 	fmt.Fprintln(w, "Internal:")

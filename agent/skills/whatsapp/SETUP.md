@@ -50,7 +50,7 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
 - `{"linked":true,"connected":false,...}`: let the daemon reconnect; use the
   returned `next` only if it cannot.
 - `{"linked":false,"connecting":true,...}`: wait for the active link attempt.
-- `{"linked":false,"connected":false,"next":"run: whatsapp connect",...}`: for
+- `{"linked":false,"connected":false,"next":"run: whatsapp connect --source ...",...}`: for
   first setup, run the selected method once; if a prior link was lost, get
   approval first (see the [linking rule](SKILL.md#the-linking-rule)).
 
@@ -85,9 +85,11 @@ whatsapp messages --instance personal --limit 10
 ```
 
 For a read-only or silent instance, pass `--read-only` (blocks sending, receipts,
-and presence) or `--no-notifications` when you first bring it up (on `whatsapp
-connect` or `whatsapp daemon start`); the daemon records them in `state.json` and
-reapplies them across its own restarts. Never point two instances at the same
+and presence) or `--no-notifications` on `whatsapp daemon start`; they are daemon
+flags, and `whatsapp connect` does not accept them. The running daemon records its
+flags in `state.json` and `whatsapp daemon restart` reapplies them, but a fresh
+start does not, so include them on that instance's `whatsapp daemon start` line
+under `## Daemons` in the restart skill. Never point two instances at the same
 account/device store.
 
 ## Operational notes
