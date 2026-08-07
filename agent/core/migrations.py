@@ -5,7 +5,11 @@ stem is the migration name. Migrations default to the after-sync phase; authors
 can select the before-sync phase with Markdown frontmatter (see
 core/main.py collect_boot_turns). Pending before-sync migrations form a boot
 barrier and restart into sync; pending after-sync migrations are delivered
-after the sync turn. The runner appends a final step instructing the agent to
+after the sync turn. An after-sync migration can declare `interruptible: true`
+in its frontmatter (rejected on before-sync migrations): interruptible
+migrations run as a second batch after the non-interruptible batch, and user
+messages may preempt that batch mid-turn, with unmarked migrations re-running
+on the next boot. The runner appends a final step instructing the agent to
 call `mark_migration_applied(name)` — authors do not write it per file — which
 records it in `state.json`. If the agent never calls the tool — rate limit,
 crash, hallucinated success — the migration runs again on the next boot.
