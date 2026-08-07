@@ -86,6 +86,13 @@ PATTERNS = [
     r"(?:key|token|secret|password)\\?[\"']?[ ]*\\?[:=]+[ ]*\\?[\"']?(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}",
     # `Authorization: Bearer <tok>`: the secret is named by the SCHEME, not by a key name.
     r"Bearer[ ]+(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9_\-.]{16,}",
+    # Apple app-specific password pasted BARE. Every rule above needs a label, prefix or URL around
+    # the value, so none fire on a credential typed straight into chat, which is how users send one.
+    # Format is fixed: four groups of four lowercase letters, matched case-sensitively (as AKIA is)
+    # so mixed-case kebab identifiers cannot collide.
+    # Four consecutive four-letter lowercase words match too. Deliberate: scanning only LISTS
+    # candidates and --scrub is a separate explicit step, so a false positive costs a review line.
+    r"(?-i:\b[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}\b)",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
     # Credentials embedded in URLs, where the secret is a query value or bare path segment with no
     # key-shaped name (a Hue bridge key travels as /api/<key>). Query params whose name ends in
