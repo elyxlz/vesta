@@ -117,6 +117,14 @@ def browser_token_expiry(account_email: str, config) -> float | None:
         return None
 
 
+def is_device_account(account_email: str, config) -> bool:
+    """True (network-free) when this OWA REST account authenticates by device flow: its tokens come
+    from the MSAL cache with OWA REST scopes only, so it has no Graph scopes and must be polled over
+    OWA REST rather than Graph."""
+    marker = _read_marker(account_email, config)
+    return marker is not None and _source(marker) == "device"
+
+
 def has_valid_token(account_email: str, config) -> bool:
     """Return True (network-free) if this account can produce an OWA REST token: a device-flow
     account still in the MSAL cache, or a browser-captured token that has not expired."""

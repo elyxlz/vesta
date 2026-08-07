@@ -521,20 +521,52 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
     return True
 
 
-def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config, gave_up: set[str]) -> None:
+def _read_auth_needed(path: Path) -> set[str]:
+    """Accounts already told to re-authenticate, so a persistently gone account is not re-notified
+    every cycle. A missing or malformed file reads as none pending."""
+    raw = path.read_text() if path.exists() else ""
+    if not raw:
+        return set()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return set()
+    if isinstance(parsed, list):
+        return {str(account) for account in parsed}
+    return set()
+
+
+def _write_auth_needed(path: Path, accounts: set[str]) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(sorted(accounts)))
+    tmp.rename(path)
+
+
+def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config) -> None:
     """Silently re-mint browser-captured tokens before they expire, so the user signs in only once.
-    On a lapsed sign-in, notify once and stop retrying that account until the daemon restarts."""
+    A gone account (mailbox deleted, refresh token revoked) is due every cycle, so notify auth_needed
+    once and then stay quiet until the account refreshes again; the quiet flag is persisted, so a
+    daemon restart does not re-notify. A later successful refresh re-arms it, so the notification
+    that matters, a genuinely lapsed sign-in, still reaches the user the next time it lapses."""
     logger = ctx.monitor_logger
+    notified_path = ctx.monitor_base_dir / "auth_needed.json"
+    notified = _read_auth_needed(notified_path)
+    changed = False
     for account in capture.due_accounts(config, time.time()):
-        if account in gave_up:
-            continue
         try:
             saved = capture.refresh_and_save(config, account)
             logger.info("Refreshed Microsoft tokens for %s: %s", account, ", ".join(saved))
+            if account in notified:
+                notified.discard(account)
+                changed = True
         except capture.CaptureError as e:
             logger.warning("Token refresh failed for %s: %s", account, e)
-            gave_up.add(account)
-            notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=str(e))
+            if account not in notified:
+                notified.add(account)
+                changed = True
+                notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=str(e))
+    if changed:
+        _write_auth_needed(notified_path, notified)
 
 
 def _poll_graph_mail(ctx: MicrosoftContext, acc, new_check_time: datetime, last_dt: datetime, catching_up: bool) -> datetime | None:
@@ -607,7 +639,6 @@ def _poll_graph_calendar(ctx: MicrosoftContext, acc, new_check_time: datetime, l
 def run(ctx: MicrosoftContext):
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
-    refresh_gave_up: set[str] = set()
 
     while not ctx.monitor_stop_event.is_set():
         try:
@@ -616,7 +647,13 @@ def run(ctx: MicrosoftContext):
             config = Config(data_dir=ctx.cache_file.parent)
 
             msal_accounts = auth.list_accounts(ctx.cache_file)
+            owa_accounts = owa_rest.list_accounts(config)
+            # A device-flow owa-login leaves the account in the MSAL cache holding OWA REST scopes
+            # only: Graph cannot poll it, so it is routed to the OWA REST loop below, never Graph.
+            device_owa = {email.casefold() for email in owa_accounts if owa_rest.is_device_account(email, config)}
             for acc in msal_accounts:
+                if acc.username.casefold() in device_owa:
+                    continue
                 logger.info("Checking account: %s", acc.username)
                 _poll_unit(ctx, state, f"mail:{acc.username}", new_check_time, partial(_poll_graph_mail, ctx, acc, new_check_time))
                 _poll_unit(
@@ -627,11 +664,11 @@ def run(ctx: MicrosoftContext):
                     _whole_window(new_check_time, partial(_poll_graph_calendar, ctx, acc, new_check_time)),
                 )
 
-            # OWA REST accounts (locked tenants) are not in the MSAL cache, so poll them separately
-            # for anything Graph did not already cover.
-            msal_usernames = {acc.username.casefold() for acc in msal_accounts}
-            for account_email in owa_rest.list_accounts(config):
-                if account_email.casefold() in msal_usernames:
+            # OWA REST accounts poll for what Graph did not cover: a locked-tenant account absent from
+            # the MSAL cache, and a device account present in it but pollable only over OWA REST.
+            graph_covered = {acc.username.casefold() for acc in msal_accounts} - device_owa
+            for account_email in owa_accounts:
+                if account_email.casefold() in graph_covered:
                     continue
                 logger.info("Checking OWA REST account: %s", account_email)
                 watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
@@ -669,7 +706,7 @@ def run(ctx: MicrosoftContext):
                 )
 
             # Keep browser-captured tokens fresh so the user's one sign-in lasts the SSO session.
-            _refresh_captured_tokens(ctx, config, refresh_gave_up)
+            _refresh_captured_tokens(ctx, config)
 
             state["last_cycle"] = new_check_time.isoformat()
             _write_state(ctx.monitor_state_file, state)

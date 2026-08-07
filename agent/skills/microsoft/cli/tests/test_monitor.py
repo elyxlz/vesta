@@ -55,6 +55,7 @@ def _fake_ctx(tmp_path):
     return types.SimpleNamespace(
         monitor_logger=logging.getLogger("test-monitor"),
         notif_dir=tmp_path,
+        monitor_base_dir=tmp_path,
         http_client=None,
         cache_file=tmp_path / "auth_cache.bin",
         get_calendar_notify_thresholds=lambda: [10080, 60, 15],
@@ -364,3 +365,166 @@ def test_graph_mail_pages_a_bounded_window_and_parks_before_the_last_message_rea
     assert asked["limit"] == monitor._MAX_WINDOW_MESSAGES
     assert len(calls) == monitor._MAX_WINDOW_MESSAGES
     assert read_through == datetime.fromisoformat(mailbox[-1]["receivedDateTime"]) - timedelta(seconds=1)
+
+
+# ---------------------------------------------------------------------------
+# Backend routing: a device-flow owa-login leaves the account in the MSAL cache
+# with OWA REST scopes only. It has no usable Graph scopes, so it must be polled
+# over OWA REST, not skipped as "already Graph-covered".
+# ---------------------------------------------------------------------------
+
+
+def _no_graph_no_teams_no_refresh(monkeypatch):
+    """No MSAL Graph accounts, no Teams, no due token refresh unless a test overrides them."""
+    monkeypatch.setattr(monitor.auth, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.teams, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.capture, "due_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.owa_rest, "list_events", lambda *a, **k: [])
+
+
+def _spy_graph(monkeypatch):
+    """Record any Graph poll; the return values mimic reading nothing."""
+    graph_calls: list[str] = []
+    monkeypatch.setattr(monitor, "_poll_graph_mail", lambda _ctx, acc, *a, **k: graph_calls.append(acc.username))
+    monkeypatch.setattr(monitor, "_poll_graph_calendar", lambda _ctx, acc, *a, **k: bool(graph_calls.append(acc.username)))
+    return graph_calls
+
+
+def test_device_authorized_account_is_owa_polled_not_skipped(tmp_path, monkeypatch):
+    """#1866: a device owa-login account is in the MSAL cache AND has a `{"source": "device"}` OWA
+    marker. It must be OWA-polled, not skipped as an MSAL account Graph already covers."""
+    from microsoft_cli import auth, owa_rest
+    from microsoft_cli.config import Config
+
+    account = "donatella@pichinon.com"
+    config = Config(data_dir=tmp_path)
+    owa_rest.mark_device_account(account, config)  # real device marker on disk
+
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _no_graph_no_teams_no_refresh(monkeypatch)
+    monkeypatch.setattr(monitor.auth, "list_accounts", lambda *a, **k: [auth.Account(username=account, account_id="acct-dev")])
+    _spy_graph(monkeypatch)
+
+    now = datetime.now(UTC)
+    arrived_at = now - timedelta(seconds=30)
+    monkeypatch.setattr(monitor.owa_rest, "list_messages_since", _mailbox(_email("boss@x.com", "Manager", arrived_at.isoformat())))
+
+    ctx = _run_ctx(tmp_path, cycles=1)
+    ctx.monitor_state_file.write_text((now - timedelta(seconds=60)).isoformat())
+    monitor.run(ctx)
+
+    assert [call["sender"] for call in calls] == ["Manager"]
+    assert calls[0]["account"] == account
+
+
+def test_device_authorized_account_is_not_graph_polled(tmp_path, monkeypatch):
+    """#1866: the device account has no Graph scopes, so Graph-polling it only logs errors. Routing
+    must send it to OWA REST alone."""
+    from microsoft_cli import auth, owa_rest
+    from microsoft_cli.config import Config
+
+    account = "donatella@pichinon.com"
+    owa_rest.mark_device_account(account, Config(data_dir=tmp_path))
+
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: None)
+    _no_graph_no_teams_no_refresh(monkeypatch)
+    monkeypatch.setattr(monitor.auth, "list_accounts", lambda *a, **k: [auth.Account(username=account, account_id="acct-dev")])
+    monkeypatch.setattr(monitor.owa_rest, "list_messages_since", lambda *a, **k: [])
+    graph_calls = _spy_graph(monkeypatch)
+
+    ctx = _run_ctx(tmp_path, cycles=1)
+    ctx.monitor_state_file.write_text((datetime.now(UTC) - timedelta(seconds=60)).isoformat())
+    monitor.run(ctx)
+
+    assert graph_calls == []
+
+
+def test_graph_account_with_browser_owa_marker_is_not_double_polled(tmp_path, monkeypatch):
+    """#1866 guard: an account with usable Graph scopes AND a browser OWA token (source != device)
+    stays Graph-only, so it is never polled and notified twice."""
+    from microsoft_cli import auth, owa_rest
+    from microsoft_cli.config import Config
+
+    account = "both@x.com"
+    config = Config(data_dir=tmp_path)
+    owa_rest.save_token(account, config, token="t", expires_at=datetime.now(UTC).timestamp() + 3600, source="browser")
+
+    _no_graph_no_teams_no_refresh(monkeypatch)
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: None)
+    monkeypatch.setattr(monitor.auth, "list_accounts", lambda *a, **k: [auth.Account(username=account, account_id="acct-both")])
+    owa_calls: list[str] = []
+    monkeypatch.setattr(monitor.owa_rest, "list_messages_since", lambda _c, acc, *a, **k: owa_calls.append(acc) or [])
+    graph_calls = _spy_graph(monkeypatch)
+
+    ctx = _run_ctx(tmp_path, cycles=1)
+    ctx.monitor_state_file.write_text((datetime.now(UTC) - timedelta(seconds=60)).isoformat())
+    monitor.run(ctx)
+
+    assert graph_calls == [account, account]  # mail + calendar
+    assert owa_calls == []  # OWA loop skipped it
+
+
+# ---------------------------------------------------------------------------
+# auth_needed backoff: a persistently-gone captured account must be notified
+# once, then stay quiet across daemon restarts, re-arming on recovery.
+# ---------------------------------------------------------------------------
+
+
+def _gone_captured_account(monkeypatch, account: str, refresh):
+    """Only a browser-captured account, due for refresh; `refresh(account)` decides its fate."""
+    monkeypatch.setattr(monitor.auth, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.teams, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.owa_rest, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.capture, "due_accounts", lambda *a, **k: [account])
+    monkeypatch.setattr(monitor.capture, "refresh_and_save", refresh)
+
+
+def test_auth_needed_notifies_once_across_daemon_restarts(tmp_path, monkeypatch):
+    """#1868: a gone account is due every cycle; a fresh `run()` (a daemon restart) must not re-notify,
+    so the quiet flag has to be persisted, not just held in memory."""
+    from microsoft_cli import capture
+
+    account = "gone@x.com"
+
+    def always_gone(_config, _account):
+        raise capture.CaptureError("No account found; mailbox is gone")
+
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _gone_captured_account(monkeypatch, account, always_gone)
+
+    now = datetime.now(UTC)
+    for _restart in range(2):
+        ctx = _run_ctx(tmp_path, cycles=1)
+        ctx.monitor_state_file.write_text(now.isoformat())
+        monitor.run(ctx)
+
+    assert [call["account"] for call in calls] == [account]  # notified once, not once per restart
+
+
+def test_auth_needed_rearms_after_a_successful_refresh(tmp_path, monkeypatch):
+    """#1868: a recovery (successful refresh) clears the quiet flag, so a later lapse notifies again.
+    Without the re-arm, the account would stay silently quiet forever after its first failure."""
+    from microsoft_cli import capture
+
+    account = "flappy@x.com"
+    outcome = {"fail": True}
+
+    def sometimes(_config, _account):
+        if outcome["fail"]:
+            raise capture.CaptureError("mailbox gone")
+        return ["mail/calendar"]
+
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _gone_captured_account(monkeypatch, account, sometimes)
+
+    now = datetime.now(UTC)
+    for fail_this_cycle in (True, False, True):  # fail, recover, fail again
+        outcome["fail"] = fail_this_cycle
+        ctx = _run_ctx(tmp_path, cycles=1)
+        ctx.monitor_state_file.write_text(now.isoformat())
+        monitor.run(ctx)
+
+    assert [call["account"] for call in calls] == [account, account]  # re-armed by the recovery
