@@ -657,6 +657,16 @@ def test_device_account_absent_from_cache_is_unavailable(tmp_path, monkeypatch):
     assert owa_rest.has_valid_token("user@example.com", cfg) is False
 
 
+def test_a_torn_token_marker_reads_as_no_device_account_not_a_crash(tmp_path):
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    path = owa_rest._token_path("user@example.com", cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"source": "dev')  # save_token caught mid-write, non-atomic
+    assert owa_rest.is_device_account("user@example.com", cfg) is False
+
+
 def test_load_token_device_uses_msal_silent(tmp_path, monkeypatch):
     from microsoft_cli.config import Config
 

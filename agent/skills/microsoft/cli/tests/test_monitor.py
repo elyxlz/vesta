@@ -440,6 +440,31 @@ def test_device_authorized_account_is_not_graph_polled(tmp_path, monkeypatch):
     assert graph_calls == []
 
 
+def test_a_torn_token_marker_does_not_abort_the_whole_poll_cycle(tmp_path, monkeypatch):
+    """#1866 regression guard: the device-routing marker read runs outside per-account containment,
+    so a half-written token file must not take the whole cycle down. A torn marker reads as
+    no-device, so the account routes to Graph and still gets polled instead of the cycle dying."""
+    from microsoft_cli import auth, owa_rest
+    from microsoft_cli.config import Config
+
+    account = "donatella@pichinon.com"
+    path = owa_rest._token_path(account, Config(data_dir=tmp_path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"source": "dev')  # save_token caught mid-write
+
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: None)
+    _no_graph_no_teams_no_refresh(monkeypatch)
+    monkeypatch.setattr(monitor.auth, "list_accounts", lambda *a, **k: [auth.Account(username=account, account_id="acct-1")])
+    monkeypatch.setattr(monitor.owa_rest, "list_messages_since", lambda *a, **k: [])
+    graph_calls = _spy_graph(monkeypatch)
+
+    ctx = _run_ctx(tmp_path, cycles=1)
+    ctx.monitor_state_file.write_text((datetime.now(UTC) - timedelta(seconds=60)).isoformat())
+    monitor.run(ctx)
+
+    assert graph_calls != []  # the account was polled; the cycle survived the torn marker
+
+
 def test_graph_account_with_browser_owa_marker_is_not_double_polled(tmp_path, monkeypatch):
     """#1866 guard: an account with usable Graph scopes AND a browser OWA token (source != device)
     stays Graph-only, so it is never polled and notified twice."""
