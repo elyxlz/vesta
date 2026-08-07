@@ -30,7 +30,10 @@ from .notification import CORE_SOURCE, Notification
 # that exact field; an alias here expands to a set of per-source synonyms and matches if ANY of them
 # satisfies the op. This is the single place cross-source field-name knowledge lives — a new source's
 # new field is targetable by its concrete name with no code change.
-_IDENTITY_FIELDS = ("sender", "contact_name", "handle", "from", "author")
+# `sender_address` sits last: a source that splits identity (microsoft's `sender` display name +
+# `sender_address` email) must still be targetable by address, while notif_sender (first present
+# wins) keeps preferring the human-readable name.
+_IDENTITY_FIELDS = ("sender", "contact_name", "handle", "from", "author", "sender_address")
 # `subject` and `preview` belong here: email notifications carry those two and never
 # body/message/content, so a `text` alias that skipped them could never match an email, and a
 # rule that never matches looks identical to a rule whose topic never came up.
