@@ -1,0 +1,278 @@
+//! Portable agent export/import bundle format: a gzipped tar carrying a JSON
+//! manifest, the agent's constitution, and a `docker save` image tar, in that
+//! fixed entry order. `write_bundle` produces one, `sniff_bundle` tells a
+//! bundle apart from a legacy plain-image export without fully parsing it,
+//! `open_bundle` reads the small head (manifest + constitution), and
+//! `read_bundle_image` streams the trailing image entry into a caller sink.
+
+use crate::docker::DockerError;
+use std::io::Read;
+use std::path::Path;
+
+pub(crate) const BUNDLE_FORMAT_VERSION: u32 = 1;
+pub(crate) const MANIFEST_ENTRY: &str = "vesta-manifest.json";
+pub(crate) const CONSTITUTION_ENTRY: &str = "constitution.md";
+pub(crate) const IMAGE_ENTRY: &str = "image.tar";
+
+const IMAGE_CHUNK_BYTES: usize = 64 * 1024;
+
+const CORRUPT_BUNDLE_MESSAGE: &str = "bundle is corrupt or was modified";
+const NOT_A_BUNDLE_MESSAGE: &str = "not a vesta export file";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct BundleManifest {
+    pub format_version: u32,
+    pub agent_name: String,
+    pub vestad_version: String,
+    pub created_at: String,
+    pub user_desired: crate::settings::UserDesired,
+    pub mounts: Vec<crate::mounts::HostMount>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum BundleKind {
+    Bundle,
+    Legacy,
+}
+
+fn docker_failed(context: &str, err: impl std::fmt::Display) -> DockerError {
+    DockerError::Failed(format!("{context}: {err}"))
+}
+
+/// Appends one entry (a GNU tar header plus its bytes) to the bundle being built.
+fn append_entry<W: std::io::Write>(builder: &mut tar::Builder<W>, name: &str, data: &[u8]) -> Result<(), DockerError> {
+    let mut header = tar::Header::new_gnu();
+    header.set_size(data.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, name, data)
+        .map_err(|err| DockerError::Failed(format!("appending {name} entry: {err}")))
+}
+
+fn write_bundle_inner(output: &Path, manifest: &BundleManifest, constitution: &str, image_tar: &Path) -> Result<(), DockerError> {
+    let file = std::fs::File::create(output).map_err(|err| docker_failed("creating bundle file", err))?;
+    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut builder = tar::Builder::new(encoder);
+
+    let manifest_bytes = serde_json::to_vec(manifest).map_err(|err| docker_failed("encoding bundle manifest", err))?;
+    append_entry(&mut builder, MANIFEST_ENTRY, &manifest_bytes)?;
+    append_entry(&mut builder, CONSTITUTION_ENTRY, constitution.as_bytes())?;
+
+    let image_size = std::fs::metadata(image_tar)
+        .map_err(|err| docker_failed("reading image tar metadata", err))?
+        .len();
+    let mut image_file = std::fs::File::open(image_tar).map_err(|err| docker_failed("opening image tar", err))?;
+    let mut header = tar::Header::new_gnu();
+    header.set_size(image_size);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, IMAGE_ENTRY, &mut image_file)
+        .map_err(|err| docker_failed("appending image tar entry", err))?;
+
+    let encoder = builder.into_inner().map_err(|err| docker_failed("finishing bundle tar", err))?;
+    encoder.finish().map_err(|err| docker_failed("finishing bundle gzip", err))?;
+    Ok(())
+}
+
+pub(crate) fn write_bundle(output: &Path, manifest: &BundleManifest, constitution: &str, image_tar: &Path) -> Result<(), DockerError> {
+    match write_bundle_inner(output, manifest, constitution, image_tar) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            std::fs::remove_file(output).ok();
+            Err(err)
+        }
+    }
+}
+
+pub(crate) fn sniff_bundle(path: &Path) -> Result<BundleKind, DockerError> {
+    let file = std::fs::File::open(path).map_err(|err| docker_failed(NOT_A_BUNDLE_MESSAGE, err))?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries().map_err(|err| docker_failed(NOT_A_BUNDLE_MESSAGE, err))?;
+    let first = entries
+        .next()
+        .ok_or_else(|| DockerError::Failed(NOT_A_BUNDLE_MESSAGE.to_string()))?
+        .map_err(|err| docker_failed(NOT_A_BUNDLE_MESSAGE, err))?;
+    let entry_path = first.path().map_err(|err| docker_failed(NOT_A_BUNDLE_MESSAGE, err))?;
+    if entry_path.as_ref() == Path::new(MANIFEST_ENTRY) {
+        Ok(BundleKind::Bundle)
+    } else {
+        Ok(BundleKind::Legacy)
+    }
+}
+
+/// Reads the next tar entry, checks its name matches `expected_name`, and returns its bytes.
+fn read_named_entry<R: std::io::Read>(entries: &mut tar::Entries<'_, R>, expected_name: &str) -> Result<Vec<u8>, DockerError> {
+    let mut entry = entries
+        .next()
+        .ok_or_else(|| DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()))?
+        .map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    let entry_path = entry.path().map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    if entry_path.as_ref() != Path::new(expected_name) {
+        return Err(DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()));
+    }
+    let mut data = Vec::new();
+    entry.read_to_end(&mut data).map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    Ok(data)
+}
+
+pub(crate) fn open_bundle(path: &Path) -> Result<(BundleManifest, String), DockerError> {
+    let file = std::fs::File::open(path).map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries().map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+
+    let manifest_bytes = read_named_entry(&mut entries, MANIFEST_ENTRY)?;
+    let manifest: BundleManifest =
+        serde_json::from_slice(&manifest_bytes).map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    if manifest.format_version > BUNDLE_FORMAT_VERSION {
+        return Err(DockerError::Failed(format!(
+            "bundle format v{} is newer than this vestad supports; update vestad",
+            manifest.format_version
+        )));
+    }
+
+    let constitution_bytes = read_named_entry(&mut entries, CONSTITUTION_ENTRY)?;
+    let constitution = String::from_utf8(constitution_bytes).map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+
+    Ok((manifest, constitution))
+}
+
+pub(crate) fn read_bundle_image<F: FnMut(&[u8]) -> Result<(), DockerError>>(path: &Path, mut sink: F) -> Result<(), DockerError> {
+    let file = std::fs::File::open(path).map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries().map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+
+    read_named_entry(&mut entries, MANIFEST_ENTRY)?;
+    read_named_entry(&mut entries, CONSTITUTION_ENTRY)?;
+
+    let mut entry = entries
+        .next()
+        .ok_or_else(|| DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()))?
+        .map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    let entry_path = entry.path().map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+    if entry_path.as_ref() != Path::new(IMAGE_ENTRY) {
+        return Err(DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()));
+    }
+    drop(entry_path);
+
+    let mut buffer = vec![0u8; IMAGE_CHUNK_BYTES];
+    loop {
+        let bytes_read = entry.read(&mut buffer).map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
+        if bytes_read == 0 {
+            break;
+        }
+        sink(&buffer[..bytes_read])?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_round_trips_manifest_constitution_and_image() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let image_src = dir.path().join("image-src.tar");
+        std::fs::write(&image_src, b"fake image tar bytes").expect("write image");
+        let manifest = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION,
+            agent_name: "apollo".into(),
+            vestad_version: "0.1.187".into(),
+            created_at: "2026-08-07T00:00:00Z".into(),
+            user_desired: crate::settings::UserDesired::Stopped,
+            mounts: vec![crate::mounts::HostMount {
+                host_path: "/home/u/docs".into(),
+                container_path: "/mnt/docs".into(),
+                writable: true,
+            }],
+        };
+        let bundle = dir.path().join("apollo.tar.gz");
+        write_bundle(&bundle, &manifest, "be kind", &image_src).expect("write bundle");
+
+        assert_eq!(sniff_bundle(&bundle).expect("sniff"), BundleKind::Bundle);
+        let (read_manifest, constitution) = open_bundle(&bundle).expect("open");
+        assert_eq!(read_manifest.agent_name, "apollo");
+        assert_eq!(read_manifest.user_desired, crate::settings::UserDesired::Stopped);
+        assert_eq!(read_manifest.mounts.len(), 1);
+        assert_eq!(constitution, "be kind");
+        let mut image_bytes = Vec::new();
+        read_bundle_image(&bundle, |chunk| {
+            image_bytes.extend_from_slice(chunk);
+            Ok(())
+        })
+        .expect("image");
+        assert_eq!(image_bytes, b"fake image tar bytes");
+    }
+
+    #[test]
+    fn sniff_reports_legacy_for_plain_gzipped_tar() {
+        // A legacy export is a gzipped docker-save tar; its first entry is never vesta-manifest.json.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let legacy = dir.path().join("legacy.tar.gz");
+        let file = std::fs::File::create(&legacy).expect("create");
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(2);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, "manifest.json", &b"[]"[..]).expect("append");
+        builder.into_inner().expect("tar").finish().expect("gzip");
+        assert_eq!(sniff_bundle(&legacy).expect("sniff"), BundleKind::Legacy);
+    }
+
+    #[test]
+    fn sniff_rejects_garbage() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let junk = dir.path().join("junk.tar.gz");
+        std::fs::write(&junk, b"not gzip at all").expect("write");
+        assert!(sniff_bundle(&junk).is_err());
+    }
+
+    #[test]
+    fn open_bundle_refuses_future_format_version() {
+        // Build a bundle whose manifest claims version BUNDLE_FORMAT_VERSION + 1.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let image_src = dir.path().join("image-src.tar");
+        std::fs::write(&image_src, b"x").expect("write image");
+        let manifest = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION + 1,
+            agent_name: "apollo".into(),
+            vestad_version: "9.9.9".into(),
+            created_at: "2026-08-07T00:00:00Z".into(),
+            user_desired: crate::settings::UserDesired::Running,
+            mounts: vec![],
+        };
+        let bundle = dir.path().join("future.tar.gz");
+        write_bundle(&bundle, &manifest, "", &image_src).expect("write");
+        let err = open_bundle(&bundle).expect_err("must refuse");
+        assert!(err.to_string().contains("newer"), "got: {err}");
+    }
+
+    #[test]
+    fn read_bundle_image_fails_on_truncated_file() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let image_src = dir.path().join("image-src.tar");
+        std::fs::write(&image_src, vec![7u8; 64 * 1024]).expect("write image");
+        let manifest = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION,
+            agent_name: "apollo".into(),
+            vestad_version: "0.1.187".into(),
+            created_at: "2026-08-07T00:00:00Z".into(),
+            user_desired: crate::settings::UserDesired::Running,
+            mounts: vec![],
+        };
+        let bundle = dir.path().join("whole.tar.gz");
+        write_bundle(&bundle, &manifest, "", &image_src).expect("write");
+        let whole = std::fs::read(&bundle).expect("read");
+        let truncated_path = dir.path().join("truncated.tar.gz");
+        std::fs::write(&truncated_path, &whole[..whole.len() / 2]).expect("write truncated");
+        let result = read_bundle_image(&truncated_path, |_| Ok(()));
+        assert!(result.is_err(), "truncated bundle must fail");
+    }
+}

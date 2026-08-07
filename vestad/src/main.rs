@@ -8,6 +8,7 @@ mod agent_embed;
 mod agent_provider;
 mod agent_proxy;
 mod agent_status;
+mod agent_bundle;
 mod app_static;
 mod auth;
 mod backup;
