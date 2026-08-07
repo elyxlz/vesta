@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -624,6 +625,47 @@ func TestRestartWithoutARecordedRunFallsBackToInstanceArgs(t *testing.T) {
 			t.Errorf("the default instance has no flags to fall back to, got %v", serveArgs)
 		}
 	})
+}
+
+// TestDaemonBringupReplaysRecordedFlagsAfterCrash: a plain command after a --read-only daemon
+// crashed brings the daemon back read-only from the recorded flags in state.json, not
+// write-capable, even though the command's own args carry no --read-only. Every implicit bringup
+// (whatsapp status, connect, provision, the one-shot path) reads daemonBringupArgs, so this pins
+// the flags all of them start with.
+func TestDaemonBringupReplaysRecordedFlagsAfterCrash(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// The next command targets the same instance but carries no --read-only of its own.
+	withArgs(t, "--instance", "personal")
+	dataDir := stateDataDir()
+	if err := os.MkdirAll(dataDir, daemonDirPerms); err != nil {
+		t.Fatal(err)
+	}
+	// A read-only daemon ran, recorded its flags, then crashed. state.json persists.
+	newStateStore(dataDir).update(func(s *daemonState) {
+		s.Args, s.PID, s.StartedAt = []string{"--instance", "personal", "--read-only"}, 4242, time.Now().UTC()
+	})
+
+	serveArgs := daemonBringupArgs()
+	if !slices.Contains(serveArgs, "--read-only") {
+		t.Fatalf("bringup must replay the recorded --read-only flag, got %v", serveArgs)
+	}
+	if !slices.Contains(serveArgs, "personal") {
+		t.Fatalf("bringup must keep the recorded instance, got %v", serveArgs)
+	}
+}
+
+// TestDaemonBringupFallsBackToInstanceArgsWithoutARecording pins the first-ever bringup:
+// with no recorded run it falls back to the instance flag alone (the linkServeArgs shape),
+// so a cold start still works and carries no stray --read-only.
+func TestDaemonBringupFallsBackToInstanceArgsWithoutARecording(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	withArgs(t, "--instance", "personal")
+	serveArgs := daemonBringupArgs()
+	if !reflect.DeepEqual(serveArgs, []string{"--instance", "personal"}) {
+		t.Fatalf("without a recording the bringup falls back to instance args only, got %v", serveArgs)
+	}
 }
 
 // TestClaimTakesOverARecordTheRivalDropped pins the narrower of the two takeover paths: a rival

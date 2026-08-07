@@ -9,7 +9,7 @@ package main
 // {status:"blocked"}). No daemon management, no readiness polling, no code
 // shuttling. Idempotent, so re-running is always safe.
 func runProvision(source, opener, directURL, directKey string) {
-	if err := ensureDaemon(linkServeArgs()); err != nil {
+	if err := ensureDaemon(); err != nil {
 		failJSON("%s", err.Error())
 	}
 	args := []string{}

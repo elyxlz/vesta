@@ -274,7 +274,7 @@ func currentQRLink() activeQRLink {
 }
 
 func runLink() {
-	if err := ensureDaemon(linkServeArgs()); err != nil {
+	if err := ensureDaemon(); err != nil {
 		failJSON("%s", err.Error())
 	}
 	lock, err := acquireConnectLock()
@@ -336,7 +336,7 @@ func runLink() {
 }
 
 func runLinkPhone(phone string) {
-	if err := ensureDaemon(linkServeArgs()); err != nil {
+	if err := ensureDaemon(); err != nil {
 		failJSON("%s", err.Error())
 	}
 	lock, err := acquireConnectLock()
