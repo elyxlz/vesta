@@ -967,7 +967,9 @@ def _next_run_for_row(row) -> str | None:
     return row["scheduled_time"]
 
 
-def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
+def remind_list(config: Config, *, task_id: str | None = None, limit: int | None = 50) -> list[dict]:
+    # limit=None means every row: SQLite reads LIMIT -1 as unlimited.
+    limit_param = -1 if limit is None else limit
     # Recurring reminders sort first so the LIMIT only ever trims one-shots, and the one-shot tail
     # sorts by fire time (scheduled_time ASC) so the LIMIT drops the furthest-out rows, never the
     # soonest, keeping "what fires next" visible at any limit. Recurring rows keep created_at
@@ -985,12 +987,12 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) 
         if task_id is not None:
             cursor = conn.execute(
                 f"SELECT * FROM reminders WHERE completed = 0 AND task_id = ? {order_clause}",
-                (task_id, limit),
+                (task_id, limit_param),
             )
         else:
             cursor = conn.execute(
                 f"SELECT * FROM reminders WHERE completed = 0 {order_clause}",
-                (limit,),
+                (limit_param,),
             )
         return [
             {

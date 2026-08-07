@@ -27,6 +27,21 @@ def _require_arg(value: str | None, name: str, usage: str) -> str:
     return value
 
 
+# Soft cap only: a warning, never a rejection, because a legitimately long title exists. The title
+# is the one field every list and digest shows, so detail belongs in metadata, not appended here.
+TITLE_SOFT_CAP_CHARS = 100
+
+
+def _warn_long_title(title: str) -> None:
+    if len(title) <= TITLE_SOFT_CAP_CHARS:
+        return
+    msg = (
+        f"title is {len(title)} chars; keep the title short and scannable, and put the detail "
+        "in the task's metadata instead (the metadata_path file in this result, or --initial-metadata on add)"
+    )
+    print(json.dumps({"warning": msg}), file=sys.stderr)
+
+
 def _require_daemon():
     if daemon.live_pid() is None:
         msg = "daemon not running, start it with: tasks daemon start"
@@ -199,13 +214,25 @@ def main():
         sys.exit(1)
 
 
+REMIND_LIST_PAGE_SIZE = 50
+
+
 def _remind_list_cmd(config: Config, argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
     p.add_argument("--task", default=None, dest="task_id")
-    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--limit", type=int, default=None)
     _add_format_flags(p)
     args = p.parse_args(argv)
-    _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=args.limit), fmt.format_reminder_list)
+    # JSON is consumed by scripts asking absence questions ("is anything scheduled for X?"), so a
+    # silent page size would make a truncated list read as "no". Only an explicit --limit caps
+    # JSON output; the human table keeps its page size.
+    if args.limit is not None:
+        limit = args.limit
+    elif args.json or args.json_pretty:
+        limit = None
+    else:
+        limit = REMIND_LIST_PAGE_SIZE
+    _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=limit), fmt.format_reminder_list)
 
 
 def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:
@@ -353,7 +380,7 @@ options:
   --fuzz-minutes N      Recurring/cron only: each fire lands within +/-N minutes of the nominal time
 
 subcommands:
-  list                  List active reminders
+  list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
   snooze                Push a one-shot reminder back (works on fired ones too)
   delete                Delete a reminder
   update                Update a reminder message""")
@@ -362,6 +389,7 @@ subcommands:
 def _handle_task(args, config: Config):
     if args.command == "add":
         title = _require_arg(args.title_pos or args.title, "title", 'tasks add "title" or tasks add --title "title"')
+        _warn_long_title(title)
         result = commands.add_task(
             config,
             title=title,
@@ -390,6 +418,8 @@ def _handle_task(args, config: Config):
         result = commands.get_task(config, task_id=task_id)
     elif args.command == "update":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks update <id> or tasks update --id <id>")
+        if args.title is not None:
+            _warn_long_title(args.title)
         result = commands.update_task(
             config,
             task_id=task_id,

@@ -189,6 +189,22 @@ def test_match_sender_alias_searches_identity_fields():
     assert npn.notif_disposition(notif, [rule]) == "snooze"
 
 
+def test_sender_alias_matches_a_separate_sender_address_field():
+    # microsoft splits identity into `sender` (display name) + `sender_address` (email), so a
+    # --sender rule targeting the address domain must match the address field, not just the name.
+    # trash discriminates: the no-match fallback can never produce it.
+    notif = _notif(source="microsoft", type="email", sender="Some Person", sender_address="user@example.com")
+    rule = _rule(sender="example.com", action="trash")
+    assert npn.notif_disposition(notif, [rule]) == "trash"
+
+
+def test_sender_alias_matches_the_combined_name_address_form():
+    # email-client carries "Name <address>" in one `sender` field; the same domain rule matches there.
+    notif = _notif(source="email-client", type="email", sender="Some Person <user@example.com>")
+    rule = _rule(sender="example.com", action="trash")
+    assert npn.notif_disposition(notif, [rule]) == "trash"
+
+
 def test_match_text_alias_searches_body_and_message():
     rule = _rule(match=[{"field": "text", "op": "regex", "value": "taxes"}], action="snooze")
     assert npn.notif_disposition(_wa(message="ping about taxes"), [rule]) == "snooze"
@@ -388,6 +404,22 @@ def test_notif_sender_handle_field():
 def test_notif_sender_none_when_no_identity_field():
     notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "twitter", "type": "tweet"})
     assert npn.notif_sender(notif) is None
+
+
+def test_notif_sender_prefers_display_name_over_address():
+    # A microsoft-shaped notification carries both; the log/facet sender stays the human-readable
+    # name, which is what pins sender_address to the end of the identity tuple.
+    notif = Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "microsoft", "type": "email", "sender": "Some Person", "sender_address": "u@x.com"}
+    )
+    assert npn.notif_sender(notif) == "Some Person"
+
+
+def test_notif_sender_falls_back_to_address_alone():
+    notif = Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "microsoft", "type": "email", "sender_address": "user@example.com"}
+    )
+    assert npn.notif_sender(notif) == "user@example.com"
 
 
 # --- notif_facet_fields (discoverability) ---
