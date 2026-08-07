@@ -29,9 +29,16 @@ function DeviceRow({ device }: { device: DeviceInfo }) {
   return (
     <div className="flex min-w-0 items-center gap-3 text-sm leading-none">
       {kindIcon(device.kind)}
-      <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-        {device.descriptor ?? "Unnamed device"}
-      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="min-w-0 truncate font-medium text-foreground">
+          {device.descriptor ?? "Unnamed device"}
+        </span>
+        {device.location !== null && (
+          <span className="min-w-0 truncate text-xs text-muted-foreground">
+            {device.location}
+          </span>
+        )}
+      </div>
       {device.present ? (
         <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-emerald-500">
           <Circle className="size-2 fill-current" />
