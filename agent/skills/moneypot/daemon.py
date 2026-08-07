@@ -57,7 +57,7 @@ def _alive(pid: int) -> bool:
     """
     try:
         stat = (pl.Path("/proc") / str(pid) / "stat").read_text()
-    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+    except OSError:
         return False
     comm_end = stat.rfind(") ")
     if comm_end == -1:

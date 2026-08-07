@@ -115,7 +115,7 @@ GET    /pots/{id}/balance
 GET    /pots/{id}/contributions?account=X
 ```
 
-Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route). Mutations are serialized with a lock, so concurrent writes cannot clobber the file.
+Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route). API mutations are serialized with a lock; the CLI writes the same file without one, so do not drive mutations through the CLI and the API at the same moment.
 
 ## Notes
 

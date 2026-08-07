@@ -62,9 +62,10 @@ cannot, drop it: they may be hiding from the person who hurt them, or from someo
 ### The number
 
 **112 is the one to give when you know nothing else.** It connects on GSM networks across Europe and
-much of the world, and in most places it works **from a locked phone, with no SIM and no credit**,
-over any available network. That fact is worth more than any list, because it survives the case where
-someone has no money, no plan and a borrowed handset.
+much of the world, typically **from a locked phone and with no credit**, over any available network.
+Do not promise it works without a SIM: several countries (Germany and the UK among them) reject
+SIM-less calls, so a borrowed handset needs its SIM in place. That reach is still worth more than
+any list, because it survives the case where someone has no money and no plan of their own.
 
 Beyond that, **look up the AMBULANCE number for the country they are actually in, and say where you
 got it.** Do not recite one from memory. In many countries ambulance, fire and police are separate
@@ -216,11 +217,10 @@ family, and let the patient choose who is told.
   the driver" costs nothing. Urgency makes you *sound* certain, which is a different failure from
   being wrong, and speed and honesty were never actually in conflict.
 - **A facility's phone number from a search snippet or a directory is the LEAST reliable thing you
-  will send, and it looks the most authoritative.** In the real case this file was built on, the
-  hospital and the street were right and the phone number was DEAD: a stale third-party listing for
-  a hospital that had since been renamed and renumbered. It cost nothing only because they took a
-  taxi and never rang it. So give the number from the FACILITY'S OWN SITE or say you have not
-  confirmed it, and remember the hierarchy: the emergency-services number is stable and public, an
+  will send, and it looks the most authoritative.** A stale third-party listing can carry a dead
+  number for a hospital that has since been renamed and renumbered, with the name and street still
+  right, and nothing on the listing warns you. So give the number from the FACILITY'S OWN SITE or
+  say you have not confirmed it, and remember the hierarchy: the emergency-services number is stable and public, an
   address is fairly stable, a facility's direct line goes stale silently. Never let a phone number
   be the only route you give.
 - **Be the memory.** Offer to hold the details: what was taken and when, the time symptoms started,
@@ -284,8 +284,3 @@ Do this when nothing is happening, because at 03:00 there is no time:
 - Keep it in one file per region, `data/emergency-reference-<region>.md`, built before travel, with
   **every line tagged with how it was verified** or explicitly marked unverified.
 
-## Before you need it
-
-**Check this skill is actually switched on**, wherever your setup records active skills. A file on
-disk that was never activated cannot fire, and nothing warns you: it sits there looking finished
-while the situation it was written for goes unhandled.
