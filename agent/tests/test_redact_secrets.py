@@ -796,3 +796,49 @@ def test_wrapper_behaves_the_same_whatever_the_caller_cwd(tmp_path):
     assert runs[0].stdout == runs[1].stdout
     assert runs[0].returncode == runs[1].returncode
     assert all("No database at" in run.stderr for run in runs)
+
+
+# ── Bare app-specific password ─────────────────────────────────
+#
+# Every other pattern needs a label, a prefix or a URL around the value. None of them fire on a
+# credential the user simply types into chat, which is how a person actually sends one.
+
+APP_SPECIFIC = "abcd-efgh-ijkl-mnop"
+
+
+def test_scan_catches_an_app_specific_password_sent_with_no_label(event_bus, db_conn):
+    """The real incident: the user pastes the credential on its own, with nothing around it."""
+    event_bus.emit(AssistantEvent(type="assistant", text=APP_SPECIFIC))
+
+    matches = redact.scan(db_conn)
+
+    assert len(matches) == 1
+    _, snippet = matches[0]
+    assert APP_SPECIFIC not in snippet
+    assert "[REDACTED]" in snippet
+
+
+def test_scan_catches_it_mid_sentence_too(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"here you go {APP_SPECIFIC} let me know"))
+
+    matches = redact.scan(db_conn)
+
+    assert len(matches) == 1
+    _, snippet = matches[0]
+    assert APP_SPECIFIC not in snippet
+    assert "here you go" in snippet and "let me know" in snippet
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Abcd-Efgh-Ijkl-Mnop",  # mixed case is not the Apple format
+        "user-data-dir-name",  # kebab identifier, wrong group lengths
+        "a1b2-c3d4-e5f6-g7h8",  # digits, not the Apple format
+        "2026-08-07T10:00:00",  # a timestamp
+    ],
+)
+def test_scan_ignores_lookalikes_that_are_not_the_apple_format(event_bus, db_conn, text):
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
+
+    assert redact.scan(db_conn) == []

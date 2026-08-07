@@ -86,6 +86,18 @@ PATTERNS = [
     r"(?:key|token|secret|password)\\?[\"']?[ ]*\\?[:=]+[ ]*\\?[\"']?(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}",
     # `Authorization: Bearer <tok>`: the secret is named by the SCHEME, not by a key name.
     r"Bearer[ ]+(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9_\-.]{16,}",
+    # Apple app-specific password, pasted BARE. Every rule above needs a label, a prefix or a URL
+    # around the value, so none of them fire on a credential the user simply types into chat, which
+    # is how a person actually sends one. Observed 2026-08-06: a live iCloud app-specific password
+    # arrived as a plain WhatsApp message and survived a full scan, while the SAME value was caught
+    # one event later where it happened to sit next to `--password`. The format is fixed and
+    # self-identifying: exactly four groups of four lowercase letters. Case-sensitive (like the AKIA
+    # rule) so mixed-case kebab identifiers cannot match.
+    # ACCEPTED FALSE POSITIVES: four consecutive four-letter lowercase words also match, e.g.
+    # "open-city-tour-bike". Deliberate. Scanning only LISTS candidates; scrubbing is a separate
+    # explicit --scrub ID step, so a false positive costs one noisy review line, never lost data.
+    # Under-matching a live credential is the expensive direction.
+    r"(?-i:\b[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}\b)",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
     # Credentials embedded in URLs, where the secret is a query value or bare path segment with no
     # key-shaped name (a Hue bridge key travels as /api/<key>). Query params whose name ends in
