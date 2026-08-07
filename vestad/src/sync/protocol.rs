@@ -176,6 +176,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         present: true,
         last_seen: "2026-01-01T00:00:00Z".into(),
         push_enabled: false,
+        location: Some("London, United Kingdom".into()),
     }];
     let tree = Tree { gateway: gateway.clone(), agents, devices: devices.clone() };
 

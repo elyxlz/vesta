@@ -44,6 +44,10 @@ struct DeviceRecord {
     last_seen: u64,
     #[serde(default)]
     push: Option<PushSubscription>,
+    #[serde(default)]
+    ip: Option<String>,
+    #[serde(default)]
+    location: Option<String>,
 }
 
 impl DeviceRecord {
@@ -64,6 +68,7 @@ pub(crate) struct DeviceInfo {
     pub present: bool,
     pub last_seen: String,
     pub push_enabled: bool,
+    pub location: Option<String>,
 }
 
 /// The legacy `mobile-devices.json` element, read once to migrate into `devices.json`.
@@ -136,6 +141,37 @@ impl DeviceRegistry {
         record.last_seen = now;
         self.republish(&state);
         self.dirty.notify_one();
+    }
+
+    /// Record the client IP for this device (the IP stays off the wire) and report whether a geo
+    /// lookup is needed: the IP changed, or no location is stored yet. Non-blocking; the disk write
+    /// defers. No republish, since the IP is not projected onto the roster.
+    pub(crate) fn note_ip(&self, id: &str, ip: std::net::IpAddr) -> bool {
+        let mut state = self.state.lock().expect("device registry mutex");
+        let ip_str = ip.to_string();
+        let record = state.devices.entry(id.to_string()).or_default();
+        let needs_lookup = record.ip.as_deref() != Some(ip_str.as_str()) || record.location.is_none();
+        record.ip = Some(ip_str);
+        self.dirty.notify_one();
+        needs_lookup
+    }
+
+    /// Set the resolved location, but only if the record's IP still matches the one the lookup ran
+    /// for (a racing reconnect from another IP must win). Republishes the roster on a real change.
+    pub(crate) fn set_location(&self, id: &str, ip: std::net::IpAddr, location: String) {
+        let mut state = self.state.lock().expect("device registry mutex");
+        let ip_str = ip.to_string();
+        let updated = match state.devices.get_mut(id) {
+            Some(record) if record.ip.as_deref() == Some(ip_str.as_str()) => {
+                record.location = Some(location);
+                true
+            }
+            _ => false,
+        };
+        if updated {
+            self.republish(&state);
+            self.dirty.notify_one();
+        }
     }
 
     /// A `/sync` connection for this device closing. On the device's last connection dropping, stamp
@@ -273,6 +309,7 @@ fn project(state: &RegistryState) -> Vec<DeviceInfo> {
             present: state.live_counts.get(id).copied().unwrap_or(0) > 0,
             last_seen: epoch_to_rfc3339(record.last_seen).unwrap_or_default(),
             push_enabled: record.push.is_some(),
+            location: record.location.clone(),
         })
         .collect();
     devices.sort_by(|a, b| a.id.cmp(&b.id));
@@ -339,6 +376,8 @@ fn migrate_legacy(legacy_path: &Path) -> Option<HashMap<InstallationId, DeviceRe
                     previews: device.previews,
                     registered_at: device.registered_at,
                 }),
+                ip: None,
+                location: None,
             },
         );
     }
@@ -381,6 +420,54 @@ mod tests {
         assert_eq!(device.kind, ClientKind::Web);
         assert_eq!(device.descriptor.as_deref(), Some("Chrome on macOS"));
         assert!(!device.push_enabled);
+    }
+
+    #[test]
+    fn note_ip_stores_and_flags_lookup() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        registry.mark_connected("dev-a", ClientKind::Web, Some("Chrome".into()), 100);
+        let ip: std::net::IpAddr = "1.2.3.4".parse().expect("ip");
+        assert!(registry.note_ip("dev-a", ip), "new ip needs a lookup");
+        assert!(registry.note_ip("dev-a", ip), "same ip with no location still needs one until resolved");
+    }
+
+    #[test]
+    fn note_ip_reuses_location_for_unchanged_ip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        registry.mark_connected("dev-a", ClientKind::Web, Some("Chrome".into()), 100);
+        let ip: std::net::IpAddr = "1.2.3.4".parse().expect("ip");
+        registry.note_ip("dev-a", ip);
+        registry.set_location("dev-a", ip, "London, United Kingdom".into());
+        assert!(!registry.note_ip("dev-a", ip), "unchanged ip with a location needs no lookup");
+        assert_eq!(only(&registry, "dev-a").location.as_deref(), Some("London, United Kingdom"));
+    }
+
+    #[test]
+    fn set_location_is_a_no_op_when_the_ip_changed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        registry.mark_connected("dev-a", ClientKind::Web, Some("Chrome".into()), 100);
+        let first: std::net::IpAddr = "1.2.3.4".parse().expect("ip");
+        let second: std::net::IpAddr = "5.6.7.8".parse().expect("ip");
+        registry.note_ip("dev-a", first);
+        registry.note_ip("dev-a", second);
+        registry.set_location("dev-a", first, "Stale City, Nowhere".into());
+        assert_eq!(only(&registry, "dev-a").location, None, "a lookup for the old ip does not land");
+    }
+
+    #[test]
+    fn roster_never_contains_the_raw_ip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        registry.mark_connected("dev-a", ClientKind::Web, Some("Chrome".into()), 100);
+        let ip: std::net::IpAddr = "203.0.113.9".parse().expect("ip");
+        registry.note_ip("dev-a", ip);
+        registry.set_location("dev-a", ip, "Paris, France".into());
+        let serialized = serde_json::to_string(&registry.snapshot()).expect("serialize roster");
+        assert!(!serialized.contains("203.0.113.9"), "roster leaked the ip: {serialized}");
+        assert!(serialized.contains("Paris, France"), "roster should carry the location");
     }
 
     #[test]
