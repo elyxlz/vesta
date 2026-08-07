@@ -353,8 +353,8 @@ export default function RootLayout() {
           <PreferencesProvider>
             <ToastProvider>
               <PrivacyProvider>
-                <PrivacyGate>
-                  <SessionProvider>
+                <SessionProvider>
+                  <PrivacyGate>
                     <RosterHoldProvider>
                       <ChatHoldProvider>
                         <ControllerProvider>
@@ -367,8 +367,8 @@ export default function RootLayout() {
                         </ControllerProvider>
                       </ChatHoldProvider>
                     </RosterHoldProvider>
-                  </SessionProvider>
-                </PrivacyGate>
+                  </PrivacyGate>
+                </SessionProvider>
               </PrivacyProvider>
             </ToastProvider>
           </PreferencesProvider>
