@@ -78,11 +78,27 @@ When the written-on point is behind master, fan out one subagent dedicated to th
 
 Fold the report into the comment, not alongside it: a PR whose problem master already fixed is `NOISE` (superseded; name the commit that did it) whatever its code quality, `partially fixed` reframes what the PR still buys, and `still broken` is what lets the verdict stand on today's code rather than the base's.
 
+## Make the verdict reproducible
+
+Two runs of this skill on the same PR should reach the same verdict. They diverge when they trace different things, scope a finding differently, or map findings to a verdict by feel. Close those three gaps every time.
+
+**Cover the same ground.** Before writing a verdict you must have traced each of these and know its result, whether or not it becomes a finding:
+- the PR's stated goal, end to end: run the documented or changed sequence to the state a user actually ends in, and confirm that state is the claimed one. Each command being individually valid is not the goal reached; "the flags are accepted" is not "read-only is in force".
+- every reader of anything the diff changes (a record, flag, format, column, wire field), in every language, tests and scripts included.
+- the failure, empty, and concurrent path of the main change, not only its happy path.
+- each closing-keyword issue, read from the issue itself, actually closed.
+
+A `MERGE` names the ground it attacked and held ("attacked on completeness, the filter edges, and the failure path"); an unstated attack surface is an unfinished review, not a clean one.
+
+**Scope by reachability, not by feel.** Nothing is "pre-existing" or "out of scope" until you have shown the PR's own changed surface cannot reach it: its diff, its documented flow, and the callers of the functions it touches. A defect whose mechanism predates the PR is still this PR's defect when the change's own flow triggers it. "That is the crash path, not this PR" is the exact miss that ships: test reachability before you file it away.
+
+**Map findings to the verdict mechanically.** The verdict is a function of the findings, not a closing impression. Any Blocking finding makes it `BUGGED`, or `NOISE` when the change should not be carried at all. A bypassable safety or auth control, lost or corrupted data, or a flow that does not reach its own stated goal is always Blocking, however narrow the window. No Blocking finding, a real problem solved, and the coverage floor met makes it `MERGE`. When two reviews of one PR disagree, the reachable Blocking finding outranks the review that only confirmed the parts are valid: re-derive from the code, never average the verdicts.
+
 ## Also confirm
 
 **It fixes the issue it claims to.** Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`) and read the issue itself, not the PR's description of it. Distinguish fixing it from fixing part of it, fixing something adjacent, and not addressing it at all. With no issue linked, say what problem the PR appears to solve and whether it is worth carrying.
 
-**It is right for this repository.** Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch for the repo-wide bans CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors (`.get()`/`getattr`/`hasattr`), `.unwrap()` on fallible Rust paths, `any` in TypeScript, and under `agent/` a docstring or comment that narrates a previous design or restates the PR's rationale (the agent reads it cold, so it must state the current mechanism only).
+**It is right for this repository.** Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch for the repo-wide bans CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors (`.get()`/`getattr`/`hasattr`), `.unwrap()` on fallible Rust paths, `any` in TypeScript, and under `agent/` a docstring or comment that narrates a previous design or restates the PR's rationale (the agent reads it cold, so it must state the current mechanism only). Apply the `vesta-prompt-guide` encounter test before flagging this, so the call is deterministic rather than a matter of taste: prose describing a before and after the agent can still **encounter** on disk (a stale record a migration converges, a legacy shape a reader must tolerate, the source state a `LEGACY(...)` block exists for) is correct and stays; only changelog narration with nothing on disk to act on (what this replaces, what it used to do, how many files it folds) is the violation. This keeps migration and convergence prose, which describes a before and after by necessity, from being flagged as a false positive.
 
 **Shipped migrations are append-only.** A diff that edits a file under `agent/core/migrations/` already in a release reaches nobody who ran it; the fix is a new migration file. Walk any migration prompt as a literal-minded executor: every step checks before acting, is safe half-done twice, and the mark-applied step is gated on nothing remaining.
 
