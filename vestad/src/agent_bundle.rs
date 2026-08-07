@@ -8,7 +8,7 @@
 use crate::docker::DockerError;
 use bollard::Docker;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) const BUNDLE_FORMAT_VERSION: u32 = 1;
 pub(crate) const MANIFEST_ENTRY: &str = "vesta-manifest.json";
@@ -40,12 +40,18 @@ fn docker_failed(context: &str, err: impl std::fmt::Display) -> DockerError {
     DockerError::Failed(format!("{context}: {err}"))
 }
 
-/// Appends one entry (a GNU tar header plus its bytes) to the bundle being built.
-fn append_entry<W: std::io::Write>(builder: &mut tar::Builder<W>, name: &str, data: &[u8]) -> Result<(), DockerError> {
+/// A GNU tar header for an entry of `size` bytes, world-readable and checksummed.
+fn gnu_header(size: u64) -> tar::Header {
     let mut header = tar::Header::new_gnu();
-    header.set_size(data.len() as u64);
+    header.set_size(size);
     header.set_mode(0o644);
     header.set_cksum();
+    header
+}
+
+/// Appends one entry (a GNU tar header plus its bytes) to the bundle being built.
+fn append_entry<W: std::io::Write>(builder: &mut tar::Builder<W>, name: &str, data: &[u8]) -> Result<(), DockerError> {
+    let mut header = gnu_header(data.len() as u64);
     builder
         .append_data(&mut header, name, data)
         .map_err(|err| DockerError::Failed(format!("appending {name} entry: {err}")))
@@ -64,10 +70,7 @@ fn write_bundle_inner(output: &Path, manifest: &BundleManifest, constitution: &s
         .map_err(|err| docker_failed("reading image tar metadata", err))?
         .len();
     let mut image_file = std::fs::File::open(image_tar).map_err(|err| docker_failed("opening image tar", err))?;
-    let mut header = tar::Header::new_gnu();
-    header.set_size(image_size);
-    header.set_mode(0o644);
-    header.set_cksum();
+    let mut header = gnu_header(image_size);
     builder
         .append_data(&mut header, IMAGE_ENTRY, &mut image_file)
         .map_err(|err| docker_failed("appending image tar entry", err))?;
@@ -229,9 +232,123 @@ pub async fn scrub_image(
     Ok(output_image)
 }
 
+/// Everything `export_agent` needs to build one bundle. `core_dir` is the host directory
+/// bind-mounted read-only into the scrub container at `docker::CORE_MOUNT_DEST`; `constitution`
+/// and `mounts` are read by the caller from the agent's own settings and constitution file.
+pub struct ExportRequest<'a> {
+    pub name: &'a str,
+    pub output: &'a Path,
+    pub core_dir: &'a Path,
+    pub constitution: String,
+    pub user_desired: crate::settings::UserDesired,
+    pub mounts: Vec<crate::mounts::HostMount>,
+}
+
+const IMAGE_SPOOL_SUFFIX: &str = ".image-partial";
+
+/// The uncompressed image tar spooled next to `output` while a bundle is assembled, so the
+/// final rename-free write via `write_bundle` reads from the same filesystem it writes to.
+fn spool_path_for(output: &Path) -> PathBuf {
+    let mut spool = output.as_os_str().to_os_string();
+    spool.push(IMAGE_SPOOL_SUFFIX);
+    PathBuf::from(spool)
+}
+
+fn build_manifest(
+    name: &str,
+    user_desired: crate::settings::UserDesired,
+    mounts: Vec<crate::mounts::HostMount>,
+    now_rfc3339: String,
+) -> BundleManifest {
+    BundleManifest {
+        format_version: BUNDLE_FORMAT_VERSION,
+        agent_name: name.to_string(),
+        vestad_version: env!("CARGO_PKG_VERSION").to_string(),
+        created_at: now_rfc3339,
+        user_desired,
+        mounts,
+    }
+}
+
+/// Steps 5-9 of the export flow: scrub the snapshot, build the manifest, spool the scrubbed
+/// image, and package the bundle. Runs after the source container (if it was running) is
+/// already back up, so every failure here cleans up its own litter (spool file, scrubbed
+/// image) and leaves the source untouched; `write_bundle` removes a partial `output` itself.
+async fn export_from_snapshot(docker: &Docker, request: ExportRequest<'_>, snapshot_tag: &str) -> Result<(), DockerError> {
+    eprintln!("scrubbing credentials...");
+    let scrub_result = scrub_image(docker, request.name, snapshot_tag, request.core_dir).await;
+    crate::docker::remove_image(docker, snapshot_tag).await.ok();
+    let scrubbed_tag = scrub_result?;
+
+    let now_rfc3339 = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| docker_failed("formatting export timestamp", err))?;
+    let manifest = build_manifest(request.name, request.user_desired, request.mounts, now_rfc3339);
+
+    let spool_path = spool_path_for(request.output);
+    eprintln!("saving image...");
+    let save_result = crate::docker::save_image_to_file(docker, &scrubbed_tag, &spool_path).await;
+    let bundle_result = match save_result {
+        Ok(()) => {
+            eprintln!("packaging bundle...");
+            write_bundle(request.output, &manifest, &request.constitution, &spool_path)
+        }
+        Err(err) => Err(err),
+    };
+
+    std::fs::remove_file(&spool_path).ok();
+    crate::docker::remove_image(docker, &scrubbed_tag).await.ok();
+    bundle_result
+}
+
+/// Export `request.name` to a portable bundle at `request.output`: stop the agent if running,
+/// snapshot its filesystem, restart it, then scrub and package the copy. Progress lines go to
+/// stderr, matching the prior `vestad backup export` UX. The source agent is back up (or was
+/// never stopped) before any of the copy-only work in `export_from_snapshot` runs.
+pub async fn export_agent(docker: &Docker, request: ExportRequest<'_>) -> Result<(), DockerError> {
+    crate::docker::validate_name(request.name)?;
+    let cname = crate::docker::container_name(request.name);
+    let status = crate::docker::container_status(docker, &cname).await;
+    if status == crate::docker::ContainerStatus::NotFound {
+        return Err(DockerError::Failed(format!("agent '{}' not found", request.name)));
+    }
+
+    let was_running = status == crate::docker::ContainerStatus::Running;
+    if was_running {
+        eprintln!("stopping agent...");
+        crate::docker::handoff_shutdown_reason(docker, request.name, &cname, &crate::lifecycle::BACKUP_EXPORT).await;
+        crate::docker::stop_container_with_timeout(docker, &cname, crate::backup::BACKUP_STOP_TIMEOUT_SECS).await?;
+    }
+
+    eprintln!("snapshotting container...");
+    let snapshot_tag = format!("vesta-export-{}:snapshot", request.name);
+    if let Err(err) = crate::docker::snapshot_container(docker, &cname, &snapshot_tag, &[]).await {
+        if was_running {
+            crate::docker::handoff_boot_reason(docker, request.name, &cname, &crate::lifecycle::BACKUP_EXPORT).await;
+            crate::docker::start_container(docker, &cname).await;
+        }
+        return Err(err);
+    }
+
+    if was_running {
+        crate::docker::handoff_boot_reason(docker, request.name, &cname, &crate::lifecycle::BACKUP_EXPORT).await;
+        crate::docker::start_container(docker, &cname).await;
+    }
+
+    export_from_snapshot(docker, request, &snapshot_tag).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_manifest_stamps_current_version_and_format() {
+        let manifest = build_manifest("apollo", crate::settings::UserDesired::Running, vec![], "2026-08-07T00:00:00Z".into());
+        assert_eq!(manifest.format_version, BUNDLE_FORMAT_VERSION);
+        assert_eq!(manifest.vestad_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(manifest.agent_name, "apollo");
+    }
 
     #[test]
     fn bundle_round_trips_manifest_constitution_and_image() {

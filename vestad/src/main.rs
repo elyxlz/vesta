@@ -3,12 +3,12 @@ compile_error!("vestad only supports Linux");
 
 use clap::Parser;
 
+mod agent_bundle;
 mod agent_code;
 mod agent_embed;
 mod agent_provider;
 mod agent_proxy;
 mod agent_status;
-mod agent_bundle;
 mod app_static;
 mod auth;
 mod backup;
@@ -111,6 +111,13 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
+    /// Export an agent to a portable bundle file (credentials are stripped)
+    Export {
+        /// Agent name
+        name: String,
+        /// Output file path (.tar.gz)
+        output: std::path::PathBuf,
+    },
     /// Update vestad to the latest version
     Update,
     /// Uninstall vestad: stop service, remove config, and delete binary
@@ -129,13 +136,6 @@ enum VestaCloudAction {
 
 #[derive(clap::Subcommand)]
 enum BackupAction {
-    /// Export an agent to a compressed file
-    Export {
-        /// Agent name
-        name: String,
-        /// Output file path (.tar.gz)
-        output: std::path::PathBuf,
-    },
     /// Import an agent from a compressed file
     Import {
         /// Agent name to create
@@ -789,77 +789,6 @@ fn main() {
                 .expect("tokio runtime builds");
 
             match action {
-                BackupAction::Export { name, output } => {
-                    docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-                    let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
-                    let cname = docker::container_name(&name);
-
-                    rt.block_on(async {
-                        let cs = docker::container_status(&docker, &cname).await;
-                        if cs == docker::ContainerStatus::NotFound {
-                            die(format!("agent '{name}' not found"));
-                        }
-
-                        let was_running = cs == docker::ContainerStatus::Running;
-                        if was_running {
-                            eprintln!("stopping agent...");
-                            docker::handoff_shutdown_reason(
-                                &docker,
-                                &name,
-                                &cname,
-                                &lifecycle::BACKUP_EXPORT,
-                            )
-                            .await;
-                            docker::stop_container_with_timeout(
-                                &docker,
-                                &cname,
-                                backup::BACKUP_STOP_TIMEOUT_SECS,
-                            )
-                            .await
-                            .unwrap_or_else(|e| die(format!("failed to stop container: {e}")));
-                        }
-
-                        eprintln!("snapshotting container...");
-                        let temp_tag = format!("vesta-export:{name}-temp");
-                        if let Err(e) =
-                            docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await
-                        {
-                            if was_running {
-                                docker::handoff_boot_reason(
-                                    &docker,
-                                    &name,
-                                    &cname,
-                                    &lifecycle::BACKUP_EXPORT,
-                                )
-                                .await;
-                                docker::start_container(&docker, &cname).await;
-                            }
-                            die(format!("snapshot failed: {e}"));
-                        }
-
-                        if was_running {
-                            docker::handoff_boot_reason(
-                                &docker,
-                                &name,
-                                &cname,
-                                &lifecycle::BACKUP_EXPORT,
-                            )
-                            .await;
-                            docker::start_container(&docker, &cname).await;
-                        }
-
-                        eprintln!("exporting to {}...", output.display());
-                        docker::export_image_gzip(&docker, &temp_tag, &output)
-                            .await
-                            .unwrap_or_else(|e| die(format!("export failed: {e}")));
-
-                        docker::remove_image(&docker, &temp_tag)
-                            .await
-                            .unwrap_or_else(|e| die(format!("failed to remove temp image: {e}")));
-
-                        eprintln!("exported: {}", output.display());
-                    });
-                }
                 BackupAction::Import { name, input } => {
                     docker::validate_name(&name).unwrap_or_else(|e| die(&e));
                     let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
@@ -925,6 +854,39 @@ fn main() {
                     });
                 }
             }
+        }
+
+        Command::Export { name, output } => {
+            let docker = docker::connect().unwrap_or_else(|e| die(&e));
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime builds");
+            docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+            let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
+            let config = config_dir();
+            let code_dir = agent_code::ensure_agent_code(&config)
+                .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
+            let settings = settings::load_settings();
+            let agent_settings = settings.agents.get(&name).cloned().unwrap_or_default();
+            let constitution_path = docker::constitution_host_path(&config.join("agents"), &name);
+            let constitution = std::fs::read_to_string(&constitution_path).unwrap_or_default();
+            rt.block_on(async {
+                agent_bundle::export_agent(
+                    &docker,
+                    agent_bundle::ExportRequest {
+                        name: &name,
+                        output: &output,
+                        core_dir: &code_dir.join("core"),
+                        constitution,
+                        user_desired: agent_settings.user_desired,
+                        mounts: agent_settings.mounts,
+                    },
+                )
+                .await
+                .unwrap_or_else(|e| die(format!("export failed: {e}")));
+                eprintln!("exported: {} (credentials stripped; the import signs in fresh)", output.display());
+            });
         }
 
         Command::Connect => {

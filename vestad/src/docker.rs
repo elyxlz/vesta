@@ -1580,62 +1580,6 @@ async fn remove_snapshots<'a>(docker: &Docker, tags: impl Iterator<Item = &'a st
     }
 }
 
-/// Export a Docker image to a gzip-compressed tar file.
-/// Streams from Docker through gzip to disk without buffering the full image in memory.
-/// Cleans up the partial file on failure.
-pub async fn export_image_gzip(
-    docker: &Docker,
-    image: &str,
-    output: &std::path::Path,
-) -> Result<(), DockerError> {
-    let output = output.to_path_buf();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(8);
-
-    let write_output = output.clone();
-    let write_handle = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-        let file = std::fs::File::create(&write_output)
-            .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        while let Some(chunk) = rx.blocking_recv() {
-            std::io::Write::write_all(&mut encoder, &chunk)
-                .map_err(|e| DockerError::Failed(format!("failed to write export data: {e}")))?;
-        }
-        encoder
-            .finish()
-            .map_err(|e| DockerError::Failed(format!("failed to finalize gzip: {e}")))?;
-        Ok(())
-    });
-
-    let mut stream = docker.export_image(image);
-    let mut stream_err = None;
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(data) => {
-                if tx.send(data).await.is_err() {
-                    break;
-                }
-            }
-            Err(e) => {
-                stream_err = Some(DockerError::Failed(format!("export stream error: {e}")));
-                break;
-            }
-        }
-    }
-    drop(tx);
-
-    if let Some(err) = stream_err {
-        tokio::fs::remove_file(&output).await.ok();
-        return Err(err);
-    }
-
-    write_handle
-        .await
-        .map_err(|e| DockerError::Failed(format!("export task failed: {e}")))?
-        .inspect_err(|_| {
-            std::fs::remove_file(&output).ok();
-        })
-}
-
 /// Export a Docker image to an uncompressed tar file.
 /// Streams from Docker straight to disk without buffering the full image in memory, and cleans
 /// up the partial file on failure. Bundle export owns its own compression, so this writes chunks
