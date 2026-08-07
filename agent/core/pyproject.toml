@@ -1,6 +1,6 @@
 [project]
 name = "vesta"
-version = "0.1.186"
+version = "0.1.187"
 description = "AI guardian angel that works autonomously on your behalf"
 license = "MIT"
 authors = [
