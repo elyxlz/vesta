@@ -100,6 +100,7 @@ describe("parseServerFrame", () => {
       present: true,
       lastSeen: "2026-01-01T00:00:00Z",
       pushEnabled: false,
+      location: "London, United Kingdom",
     }
     const parsed = parseServerFrame(JSON.stringify({ type: "devices", devices: [device] }))
     expect(parsed).toEqual({ kind: "delta", delta: { type: "devices", devices: [device] } })
@@ -113,9 +114,29 @@ describe("parseServerFrame", () => {
       present: false,
       lastSeen: "2026-01-01T00:00:00Z",
       pushEnabled: true,
+      location: null,
     }
     const parsed = parseServerFrame(JSON.stringify({ type: "devices", devices: [device] }))
     expect(parsed).toEqual({ kind: "delta", delta: { type: "devices", devices: [device] } })
+  })
+
+  it("defaults an absent location to null and rejects a non-string one", () => {
+    const base = {
+      id: "dev-1",
+      kind: "web",
+      descriptor: "Chrome",
+      present: true,
+      lastSeen: "2026-01-01T00:00:00Z",
+      pushEnabled: false,
+    }
+    expect(parseServerFrame(JSON.stringify({ type: "devices", devices: [base] }))).toEqual({
+      kind: "delta",
+      delta: { type: "devices", devices: [{ ...base, location: null }] },
+    })
+    const bad = { ...base, location: 42 }
+    expect(parseServerFrame(JSON.stringify({ type: "devices", devices: [bad] }))).toEqual({
+      kind: "unknown",
+    })
   })
 
   it("treats a devices delta with a malformed entry as unknown", () => {

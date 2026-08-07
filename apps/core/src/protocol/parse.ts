@@ -151,5 +151,7 @@ function parseDevice(value: unknown): DeviceInfo | null {
   if (!DEVICE_KINDS.includes(kind as DeviceKind)) return null
   const descriptor = device.descriptor === null ? null : str(device.descriptor)
   if (descriptor === null && device.descriptor !== null) return null
-  return { id, kind: kind as DeviceKind, descriptor, present, lastSeen, pushEnabled }
+  const location = device.location == null ? null : str(device.location)
+  if (location === null && device.location != null) return null
+  return { id, kind: kind as DeviceKind, descriptor, present, lastSeen, pushEnabled, location }
 }
