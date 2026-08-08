@@ -828,7 +828,7 @@ fn main() {
                     }
                 }
             }
-            eprintln!("imported: {} (port {}); the agent is signed out — sign in from the app", outcome.name, outcome.port);
+            eprintln!("imported: {} (port {}); the agent is signed out; sign in from the app", outcome.name, outcome.port);
         }
 
         Command::Export { name, output } => {
