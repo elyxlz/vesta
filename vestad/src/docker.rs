@@ -1256,9 +1256,34 @@ pub fn update_all_agent_env_files(
 
 // --- Container listing ---
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedAgent {
     pub cname: String,
     pub agent_name: String,
+}
+
+/// At most one container per agent name. A stray container can carry a real agent's
+/// labels (`docker commit` copies them into any image built from the agent), and a
+/// duplicate entry would shadow the healthy container in every name-keyed consumer.
+/// The canonical `vesta-{user}-{agent}` container always wins.
+fn dedup_by_agent_name(agents: Vec<ManagedAgent>) -> Vec<ManagedAgent> {
+    let mut kept: Vec<ManagedAgent> = Vec::new();
+    for agent in agents {
+        if let Some(existing) = kept.iter_mut().find(|k| k.agent_name == agent.agent_name) {
+            let canonical = container_name(&agent.agent_name);
+            tracing::warn!(
+                agent = %agent.agent_name,
+                canonical = %canonical,
+                "duplicate containers claim one agent name; keeping the canonical one"
+            );
+            if agent.cname == canonical {
+                *existing = agent;
+            }
+        } else {
+            kept.push(agent);
+        }
+    }
+    kept
 }
 
 /// List all managed containers owned by the current user, paired with the
@@ -1279,7 +1304,7 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
     };
 
     let user = crate::paths::current_user();
-    containers
+    let agents = containers
         .into_iter()
         .filter_map(|c| {
             let names = c.names?;
@@ -1302,7 +1327,8 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
                 .unwrap_or_else(|| name_from_cname(&cname));
             Some(ManagedAgent { cname, agent_name })
         })
-        .collect()
+        .collect();
+    dedup_by_agent_name(agents)
 }
 
 // --- GPU detection ---
@@ -4008,6 +4034,39 @@ mod tests {
             !rename_body.contains("remove_container_force"),
             "rename_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
         );
+    }
+
+    #[test]
+    fn dedup_keeps_the_canonical_container_whatever_the_order() {
+        let canonical = container_name("axel");
+        let stray = "stray-copy-of-axel".to_string();
+        for order in [[&stray, &canonical], [&canonical, &stray]] {
+            let agents: Vec<ManagedAgent> = order
+                .iter()
+                .map(|cname| ManagedAgent {
+                    cname: (*cname).clone(),
+                    agent_name: "axel".to_string(),
+                })
+                .collect();
+            let deduped = dedup_by_agent_name(agents);
+            assert_eq!(deduped.len(), 1, "one entry per agent name");
+            assert_eq!(deduped[0].cname, canonical);
+        }
+    }
+
+    #[test]
+    fn dedup_leaves_distinct_agents_untouched() {
+        let agents = vec![
+            ManagedAgent {
+                cname: container_name("axel"),
+                agent_name: "axel".to_string(),
+            },
+            ManagedAgent {
+                cname: container_name("luna"),
+                agent_name: "luna".to_string(),
+            },
+        ];
+        assert_eq!(dedup_by_agent_name(agents.clone()), agents);
     }
 
     // --- Docker integration tests (require Docker daemon) ---
