@@ -50,14 +50,36 @@ else
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.
+#
+# Count only lines DATED within the last two days, not simply the last 2000 lines. The freshness
+# test used to be on the file while the count was over its tail, so a log that had been fixed still
+# reported RED until enough healthy lines pushed the old errors out of the window. Seen 8 Aug 2026:
+# apple-calendar re-authed on 6 Aug and had synced cleanly every 5 min since, yet 1,962 pre-fix
+# Unauthorized lines sat in the tail and it would have kept crying RED for about three more days.
+# A check that stays loud after the fix is how a real RED gets waved off as stale.
+rc_today=$(date +%F)
+rc_yest=$(date -d yesterday +%F 2>/dev/null || date -v-1d +%F 2>/dev/null)
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | grep -icE 'error|traceback')
-    if [ "$errors" -gt 200 ]; then
-        bad "$(basename "$log"): $errors error lines in its recent tail; read it and find the producer"
+    window=$(tail -n 2000 "$log")
+    # Logs whose lines carry no leading ISO date can't be aged; count them whole and say so, rather
+    # than silently reporting zero for a component that is genuinely storming.
+    # Accept an optional leading '[': several daemons bracket their timestamps, and anchoring on a
+    # bare digit demotes those logs to "undated", so their whole tail is counted and a component
+    # that recovers long ago keeps reporting RED with no way to age the old lines out.
+    dated=$(printf '%s\n' "$window" | grep -cE '^\[?[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
+    if [ "${dated:-0}" -gt 0 ]; then
+        errors=$(printf '%s\n' "$window" | grep -E "^\[?($rc_today|$rc_yest)" | grep -icE 'error|traceback' || true)
+        span="in the last 2 days"
     else
-        ok "$(basename "$log"): $errors error lines in its recent tail"
+        errors=$(printf '%s\n' "$window" | grep -icE 'error|traceback' || true)
+        span="in its recent tail (undated log, age unknown)"
+    fi
+    if [ "${errors:-0}" -gt 200 ]; then
+        bad "$(basename "$log"): $errors error lines $span; read it and find the producer"
+    else
+        ok "$(basename "$log"): $errors error lines $span"
     fi
 done
 
@@ -80,6 +102,18 @@ if mkdir -p "$notif" 2>/dev/null && touch "$notif/.reality_check" 2>/dev/null; t
 else
     bad "notifications dir is not writable: every producer is silently mute"
 fi
+
+# Append-only history. A single run can only say "how many REDs right now", which is the same
+# one-night horizon that let this probe silently stop being run for three nights in Aug 2026
+# without anyone noticing. Recording every run means the SERIES is checkable and, more importantly,
+# a GAP in it is itself the finding: the gauge cannot quietly lapse without leaving a hole.
+rc_hist="$HOME/agent/data/reality-history.tsv"
+mkdir -p "$(dirname "$rc_hist")" 2>/dev/null
+printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$red" >> "$rc_hist"
+
+prior=$(tail -n 6 "$rc_hist" 2>/dev/null | awk '{printf "%s ", $2}')
+[ -n "$prior" ] && printf 'flagged-probe count over recent runs (oldest first): %s\n' "$prior"
+printf 'last run recorded: %s\n' "$(tail -n 1 "$rc_hist" | cut -f1)"
 
 if [ "$red" -gt 0 ]; then
     printf '%s RED: fix each tonight or write the reason off in the summary.\n' "$red"
