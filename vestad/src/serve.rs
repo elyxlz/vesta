@@ -564,9 +564,23 @@ async fn gateway_update_handler(
     // swap, the restart) and every client watches its phases on /sync. A retry of a failed update
     // is this same call, which is why a terminal operation yields the slot.
     match update::start_update(state, update::UpdateIntent::Manual).await {
-        Ok(started) => Ok((
+        Ok(update::UpdateStart::Started { target_version }) => Ok((
             StatusCode::ACCEPTED,
-            Json(serde_json::json!({"started": started})),
+            Json(serde_json::json!({"started": true, "target_version": target_version})),
+        )),
+        // Nothing to do rather than a failure: say which "nothing" it was, so a caller never has to
+        // guess whether the gateway is current or the check could not answer.
+        Ok(update::UpdateStart::AlreadyCurrent { version }) => Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "started": false,
+                "reason": "already_current",
+                "version": version,
+            })),
+        )),
+        Ok(update::UpdateStart::ReleaseCheckFailed { error }) => Err(err_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!("cannot check for a new release: {error}"),
         )),
         Err(phase) => Err((
             StatusCode::CONFLICT,
@@ -2864,9 +2878,13 @@ pub fn build_router(state: SharedState) -> Router {
     // flow). These paths carry no agent name, so the middleware accepts any of this
     // host's agent tokens. Update is host-global: it restarts vestad, which stops and
     // restarts every agent on the host, the caller included.
+    // The update routes belong here too: both return immediately (the update runs on its own task
+    // and reports its phases through /sync), so they need no deadline of their own.
     let gateway_agent_shared = Router::new()
         .route("/version", get(version))
         .route("/version/check", post(version_check))
+        .route("/gateway/update", post(gateway_update_handler))
+        .route("/gateway/update/dismiss", post(dismiss_gateway_update_handler))
         // Vesta Cloud pairing is host-global like the update surface: the apps
         // drive it with the api key / access token, an agent with its own
         // token, and `vestad vesta-cloud login` runs the same core directly.
@@ -2874,16 +2892,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/vesta-cloud/pair/poll", post(vesta_cloud_pair_poll_handler))
         .route("/vesta-cloud/unpair", post(vesta_cloud_unpair_handler))
         .layer(control_timeout_layer())
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::auth_middleware_api_or_any_agent_token,
-        ));
-
-    // Update shares gateway_agent_shared's auth. Both routes return immediately (the update runs on
-    // its own task and reports through /sync), so neither needs the longrun deadline.
-    let gateway_update = Router::new()
-        .route("/gateway/update", post(gateway_update_handler))
-        .route("/gateway/update/dismiss", post(dismiss_gateway_update_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_any_agent_token,
@@ -2902,7 +2910,6 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(gateway_agent_shared)
-        .merge(gateway_update)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
@@ -3026,7 +3033,10 @@ async fn run_maintenance(state: &SharedState) {
         // The same one entry point a manual update takes. A failed apply retries next cycle; the
         // fresh pre-update snapshot set is reused (<24h).
         match update::start_update(state.clone(), update::UpdateIntent::Auto).await {
-            Ok(_) => state.update_operation.wait_until_settled().await,
+            Ok(update::UpdateStart::Started { .. }) => {
+                state.update_operation.wait_until_settled().await;
+            }
+            Ok(outcome) => tracing::info!(?outcome, "maintenance: no update to apply"),
             Err(phase) => tracing::warn!(?phase, "maintenance: an update is already running"),
         }
     } else {

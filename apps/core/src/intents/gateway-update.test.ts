@@ -11,21 +11,32 @@ function httpWith(request: HttpClient["request"]): HttpClient {
   return { request, json: vi.fn() }
 }
 
+function httpWithJson(json: HttpClient["json"]): HttpClient {
+  return { request: vi.fn(), json }
+}
+
 describe("triggerGatewayUpdate", () => {
-  it("POSTs /gateway/update and returns true on accept", async () => {
-    const request = vi.fn().mockResolvedValue(new Response())
-    const ok = await triggerGatewayUpdate(httpWith(request))
+  it("POSTs /gateway/update and returns true once an update is running", async () => {
+    const json = vi.fn().mockResolvedValue({ started: true, target_version: "0.1.190" })
+    const ok = await triggerGatewayUpdate(httpWithJson(json))
 
     expect(ok).toBe(true)
-    const call = request.mock.calls[0]
+    const call = json.mock.calls[0]
     if (!call) throw new Error("no request")
     expect(call[0]).toBe("/gateway/update")
     expect((call[1] as RequestInit).method).toBe("POST")
   })
 
+  it("returns false when the gateway is already current, so nothing is left to watch", async () => {
+    const json = vi
+      .fn()
+      .mockResolvedValue({ started: false, reason: "already_current", version: "0.1.190" })
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false)
+  })
+
   it("returns false when vestad rejects the request", async () => {
-    const request = vi.fn().mockRejectedValue(new Error("down"))
-    expect(await triggerGatewayUpdate(httpWith(request))).toBe(false)
+    const json = vi.fn().mockRejectedValue(new Error("down"))
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false)
   })
 })
 

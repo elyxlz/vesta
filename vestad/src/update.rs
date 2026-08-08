@@ -551,64 +551,89 @@ impl UpdateOperation {
     }
 }
 
-/// Start an update, unless one already holds the operation slot. Returns whether work actually
-/// started: a gateway already on the newest release is a no-op, not a failure. The update itself
-/// runs on its own task, so the caller (an HTTP handler) returns immediately and every client
-/// watches the phases on `/sync`.
-pub async fn start_update(state: SharedState, intent: UpdateIntent) -> Result<bool, UpdatePhase> {
-    let Some(target) = resolve_target(&state).await else {
-        return Ok(false);
+/// What asking for an update did. "Nothing started" has two very different causes, so each says
+/// which one it was rather than leaving the caller to guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateStart {
+    Started { target_version: String },
+    AlreadyCurrent { version: String },
+    ReleaseCheckFailed { error: String },
+}
+
+/// Start an update, unless one already holds the operation slot (then the live phase comes back as
+/// the error). The update itself runs on its own task, so the caller returns immediately and every
+/// client watches the phases on `/sync`.
+pub async fn start_update(
+    state: SharedState,
+    intent: UpdateIntent,
+) -> Result<UpdateStart, UpdatePhase> {
+    let target = match resolve_target(&state).await {
+        Target::Newer(version) => version,
+        Target::Current(version) => return Ok(UpdateStart::AlreadyCurrent { version }),
+        Target::Unknown(error) => return Ok(UpdateStart::ReleaseCheckFailed { error }),
     };
     state.update_operation.claim(&target)?;
     let run = UpdateRun {
         state,
         intent,
-        target,
+        target: target.clone(),
         started_at: crate::time_utils::now_epoch_secs(),
     };
     tokio::spawn(run_update(run));
-    Ok(true)
+    Ok(UpdateStart::Started {
+        target_version: target,
+    })
 }
 
-/// The release this update installs, or None when the gateway is already current. Reuses the
-/// periodic check's answer and only reaches GitHub when there is none yet.
-async fn resolve_target(state: &SharedState) -> Option<String> {
+/// The release an update would install: a newer one, the one already running, or none because the
+/// check could not answer.
+enum Target {
+    Newer(String),
+    Current(String),
+    Unknown(String),
+}
+
+/// Resolve the target release, reusing the periodic check's answer and only reaching GitHub when
+/// there is none yet.
+async fn resolve_target(state: &SharedState) -> Target {
     let known = state
         .update_info
         .lock()
         .await
         .as_ref()
         .map(|info| info.latest.clone());
-    let latest = if let Some(latest) = known {
-        latest
-    } else {
-        refresh_latest_tag(state).await?
+    let latest = match known {
+        Some(latest) => latest,
+        None => match refresh_latest_tag(state).await {
+            Ok(latest) => latest,
+            Err(error) => return Target::Unknown(error),
+        },
     };
     if version_less_than(env!("CARGO_PKG_VERSION"), &latest) {
-        Some(latest)
+        Target::Newer(latest)
     } else {
         tracing::info!(latest = %latest, "gateway is already current; nothing to update");
-        None
+        Target::Current(env!("CARGO_PKG_VERSION").to_string())
     }
 }
 
 /// Reach GitHub for the newest release and remember it, so the check the `UpdatePill` reads and the
 /// one an update starts from are the same answer.
-async fn refresh_latest_tag(state: &SharedState) -> Option<String> {
+async fn refresh_latest_tag(state: &SharedState) -> Result<String, String> {
     let channel = crate::channel::Channel::resolve(&state.settings.read().await.channel);
     match tokio::task::spawn_blocking(move || check_once(channel)).await {
         Ok(Ok(info)) => {
             let latest = info.latest.clone();
             *state.update_info.lock().await = Some(info);
-            Some(latest)
+            Ok(latest)
         }
         Ok(Err(error)) => {
             tracing::warn!(%error, "cannot start an update: release check failed");
-            None
+            Err(error)
         }
         Err(error) => {
             tracing::error!(%error, "cannot start an update: release check task failed");
-            None
+            Err(error.to_string())
         }
     }
 }

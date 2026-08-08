@@ -3,13 +3,14 @@ import type { HttpClient } from "../transport/http"
 // A manual check fetches from GitHub server-side, so allow longer than vestad's own 10s fetch.
 export const VERSION_CHECK_TIMEOUT_MS = 15000
 
-// The one owner of the gateway self-update request. Returns whether vestad accepted it; the caller
-// decides how to re-attach (web forces a reconnect, the gateway-behind screens let the live socket
-// self-heal once the gateway restarts newer).
+// The one owner of the gateway self-update request. Returns whether an update actually started:
+// vestad answers 200 with `started: false` when the gateway already runs the newest release, which
+// leaves nothing for the caller to watch, so a spinner started on the click has to come back down.
+// A started update reports its phases as gateway state on /sync; nothing here waits for it.
 export async function triggerGatewayUpdate(http: HttpClient): Promise<boolean> {
   try {
-    await http.request("/gateway/update", { method: "POST" })
-    return true
+    const body = await http.json<{ started?: unknown }>("/gateway/update", { method: "POST" })
+    return body.started === true
   } catch {
     return false
   }
