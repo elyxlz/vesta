@@ -26,6 +26,7 @@ function baseTree(): Tree {
       updateAvailable: false,
       latestVersion: null,
       managed: false,
+      operation: null,
     },
     agents: {
       scout: {

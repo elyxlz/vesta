@@ -15,6 +15,17 @@ export async function triggerGatewayUpdate(http: HttpClient): Promise<boolean> {
   }
 }
 
+// Drop a failed update the user has acknowledged, which releases every app from the update screen.
+// Returns whether vestad accepted it; a running update refuses (409) and keeps its screen.
+export async function dismissGatewayUpdate(http: HttpClient): Promise<boolean> {
+  try {
+    await http.request("/gateway/update/dismiss", { method: "POST" })
+    return true
+  } catch {
+    return false
+  }
+}
+
 // The one owner of the gateway restart request. Returns whether vestad accepted it; like an update,
 // the gateway drops every connection briefly and comes back, so the caller reuses the update flow's
 // reconnect UX to re-attach.

@@ -85,6 +85,7 @@ function tree(statuses: Record<string, AgentRow["status"]>): Tree {
       updateAvailable: false,
       latestVersion: null,
       managed: false,
+      operation: null,
     },
     agents,
     devices: [],
