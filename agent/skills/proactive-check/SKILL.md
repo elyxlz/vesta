@@ -7,11 +7,27 @@ description: Periodic self-directed check-in; fires on interval to reach out or 
 
 This is your scheduled moment to think unprompted. No one asked; you're checking in with yourself and the user's world. Be thoughtful, not noisy.
 
-## Preflight: daemon liveness (do this first, every tick)
+## Preflight: run the script (do this first, every tick)
 
-Before anything else, confirm the daemons the `restart` skill starts are actually alive: ask each one it starts with the matching `<skill> daemon status`. Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring a dead daemon back with its own `<skill> daemon start`, or re-run the `restart` skill, which is idempotent and a no-op when everything is already up.
+```bash
+sh ~/agent/skills/proactive-check/scripts/preflight.sh
+```
 
-This check is your duty and stays yours: never build a watchdog, cron job, or auto-restarting script to do it for you. An automation restarts blindly, hides the cause from you, and becomes one more thing that breaks silently; you can read the log, fix the cause, and judge when the user must be involved. When a daemon you brought back died for a reason worth fixing, fix it in that skill, not with a new layer of machinery on top.
+It checks daemon liveness and the live budget, then prints the band to spend this tick at. **Run it rather than reconstructing it from this file.** A check rebuilt from memory decays toward whatever is easiest to type, and the budget half in particular degrades into grepping `vesta.log`, which is the one source that cannot answer it: the log carries rate-limit lines only while a limit is being warned about, so after a window resets its last high number sits there looking current, and `resets_at` is not in the log at all. The script reads `GET /usage` instead, one meter per window, each with a live `used_pct` (0 to 100) and a `resets_at`.
+
+Anything printed as `CHECK` is a real finding, and the script exits non-zero when there is one.
+
+**Running a script here is not automating the duty away.** The script reports; it never restarts anything. Never build a watchdog, cron job, or auto-restarting script to do the bringing-back for you: an automation restarts blindly, hides the cause from you, and becomes one more thing that breaks silently. You can read the log, fix the cause, and judge when the user must be involved. When a daemon you brought back died for a reason worth fixing, fix it in that skill, not with a new layer of machinery on top.
+
+- **A daemon that is not reporting running is down**, including one that errors, is missing, or answers nothing, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this comes first. Bring it back with its own start line from the `restart` skill's Daemons block, or re-run the whole block, which is idempotent and a no-op when everything is already up. A line printed `UNCHK` has no status verb to ask, so check that one by hand.
+- **An unmeasurable budget is not an unmetered one.** A provider that answers cleanly and reports no meters and no credit limit has no budget to ration against, so that tick is normal. Only a budget the script could not read at all (endpoint unreachable, an error answer, a payload it cannot parse) is a reason to ration, and that is a `CHECK`.
+
+**The band policy lives in the script, not here.** The thresholds, what each band allows, and the overnight rule are printed on the `BAND`, `DIVE` and `NOTE` lines of its output; act on the lines it prints. Restating the numbers in this file would give them two owners that drift apart.
+
+Two things the band cannot tell you, so keep them in mind whatever it says:
+
+- **Count the agents you will actually get, not the ones you spawn.** Subagents spawn their own, so "I'll run three" quietly becomes five or more, and the total is what lands on the budget. Say the size in each agent's prompt, or check the count afterwards and note the gap.
+- **The tell you are over-spending is not the number, it is the justification.** "While it's quiet I might as well go deep" is the exact thought that produces a six-figure-token research run on something the user never mentioned. Quiet is not a reason to spend, it is the reason the spending is invisible.
 
 ## Two questions, every time
 
@@ -46,6 +62,7 @@ Roughly once a week, one quiet tick becomes a deep block instead of a normal pas
 - **Spanning turns**: if the block ends before the piece does, park the state in §6 (done so far, next step) and set a reminder on your own channel (`reminders` skill) for the next quiet stretch. The dive is allowed to span turns; it doesn't die at one.
 - **Internal only**: the piece is yours. Never mention it unprompted; it surfaces only when a conversation already touches the topic and it genuinely belongs in the reply.
 - **The user always wins**: if anything for the user lands mid-dive, drop the dive without ceremony. The note in progress and §6 hold the state for next time.
+- **The preflight gates it**: a dive is discretionary spend, so it starts only on the `DIVE` line the preflight prints. In a tighter band it is deferred, not cancelled: the cadence marker is the newest file's date, so a dive that waits stays due and the next quiet tick with headroom takes it. The dive is also the one thing the overnight-stricter rule does not apply to, since its slot is the small hours and the bump would leave it no slot at all.
 
 ## Nudging vs holding
 
