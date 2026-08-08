@@ -137,6 +137,14 @@ export interface ProviderIdentity {
   modelName: string | null
 }
 
+// Claude's live catalog carries no model_names (the manifest ships only the two stable aliases,
+// "opus" and "sonnet"), so this is the display label for each alias when the manifest entry has
+// no name for it. A live slug (e.g. "claude-opus-5") falls through to the raw slug, which is fine.
+const CLAUDE_ALIAS_LABELS: Record<string, string> = {
+  opus: "Opus",
+  sonnet: "Sonnet",
+}
+
 /// Who is running this agent, as the user reads it: the manifest owns both names, and the wire
 /// identifiers stand in on a gateway whose manifest predates them. Null while disconnected.
 export function resolveProviderIdentity(
@@ -148,6 +156,10 @@ export function resolveProviderIdentity(
   return {
     kind: provider.kind,
     providerName: entry?.display ?? provider.kind,
-    modelName: provider.model ? (entry?.model_names?.[provider.model] ?? provider.model) : null,
+    modelName: provider.model
+      ? (entry?.model_names?.[provider.model] ??
+        CLAUDE_ALIAS_LABELS[provider.model] ??
+        provider.model)
+      : null,
   }
 }

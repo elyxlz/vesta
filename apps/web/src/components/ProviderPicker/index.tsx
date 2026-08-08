@@ -21,7 +21,6 @@ import {
 } from "./logos";
 import type { ProviderMode } from "./types";
 import { useManifest } from "@/hooks/use-manifest";
-import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, errorMessage } from "@/lib/utils";
 import { contextForModel, type Manifest } from "@/api/manifest";
@@ -143,6 +142,16 @@ function providerUsesOAuth(
   return authKind === "claude_oauth" || authKind === "device_oauth";
 }
 
+// A live-catalog provider has no static default model, so even defaults-only
+// mode must walk the model (and context) steps.
+function catalogIsLive(
+  provider: ProviderMode | null,
+  manifest: Manifest,
+): boolean {
+  if (provider === null) return false;
+  return manifest.providers[provider]?.models === "live";
+}
+
 function startProviderOAuth(provider: ProviderMode | null) {
   if (provider === "openai") return openaiProvider.startOAuth();
   if (provider === "claude") return claudeProvider.startOAuth();
@@ -217,9 +226,14 @@ export function ProviderPicker({
   >(null);
   // Creation catalog (per-provider context window + presets) comes from the manifest, not a local copy.
   const manifest = useManifest();
-  // Claude's fixed model list; fetched only while on the Claude path.
-  const claudeModels = useClaudeModels(provider === "claude");
-  const providerModels = providerModelOptions(provider, manifest, claudeModels);
+  // The claude branch of providerModelOptions is only returned for provider === "claude", which
+  // modelStepModels below always discards in favor of claudeMode, so the aliases passed here never
+  // reach the picker; CLAUDE_ALIASES is still the right value to pass (matching ProviderCard).
+  const providerModels = providerModelOptions(
+    provider,
+    manifest,
+    CLAUDE_ALIASES,
+  );
   const stepLogo = providerLogo(provider);
   const keyCopy = keyStepCopy(provider);
 
@@ -274,7 +288,7 @@ export function ProviderPicker({
   // model + context, mirroring the OpenRouter path.
   const handleCredentialsReady = (creds: string) => {
     setCredentials(creds);
-    if (defaultsOnly) {
+    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
       finishWithDefaults(creds, key);
       return;
     }
@@ -290,7 +304,7 @@ export function ProviderPicker({
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
-    if (defaultsOnly && provider !== "openrouter") {
+    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
       finishWithDefaults(credentials, newKey);
       return;
     }

@@ -91,6 +91,40 @@ describe("resolveProviderIdentity", () => {
     })
   })
 
+  it("labels a live Claude alias when the manifest carries no model_names", () => {
+    const provider = {
+      kind: "claude" as const,
+      model: "opus",
+      max_context_tokens: null,
+      authed: true,
+      plan: null,
+    }
+    const manifest = {
+      default_provider: "claude" as const,
+      default_personality: "dry",
+      providers: {
+        claude: {
+          display: "Claude",
+          order: 0,
+          auth_kind: "claude_oauth" as const,
+          models: "live" as const,
+          default_model: null,
+          context: { default: 1_000_000, max: 1_000_000, presets: [] },
+        },
+      },
+    }
+    expect(resolveProviderIdentity(provider, manifest)).toEqual({
+      kind: "claude",
+      providerName: "Claude",
+      modelName: "Opus",
+    })
+    expect(resolveProviderIdentity({ ...provider, model: "claude-opus-5" }, manifest)).toEqual({
+      kind: "claude",
+      providerName: "Claude",
+      modelName: "claude-opus-5",
+    })
+  })
+
   it("falls back to wire identifiers and hides disconnected providers", () => {
     const provider = {
       kind: "openrouter" as const,
