@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { RESTART_REASONS, restartBody } from "@vesta/core";
 import type { ApiClient } from "./client";
-import { restartAgent, setAgentBackupSettings } from "./endpoints";
+import {
+  fetchClaudeModels,
+  restartAgent,
+  setAgentBackupSettings,
+} from "./endpoints";
 
 function apiStub() {
   const request = vi.fn().mockResolvedValue(new Response());
@@ -63,5 +67,21 @@ describe("setAgentBackupSettings", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: false }),
     });
+  });
+});
+
+describe("fetchClaudeModels", () => {
+  it("GETs the agent's live Claude catalog", async () => {
+    const json = vi
+      .fn()
+      .mockResolvedValue([
+        { slug: "claude-opus-5", label: "Claude Opus 5", author: "Anthropic" },
+      ]);
+    const api = { json } as unknown as ApiClient;
+
+    const models = await fetchClaudeModels(api, "luna");
+
+    expect(json).toHaveBeenCalledWith("/agents/luna/provider/models");
+    expect(models[0]?.slug).toBe("claude-opus-5");
   });
 });

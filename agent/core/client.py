@@ -231,6 +231,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
     if turn and thinking_estimate is not None:
         diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
+    state.resolved_model = sdk_parsing.init_resolved_model(msg) or state.resolved_model
     texts, thinking_blocks, session_id, error_texts = sdk_parsing.parse_sdk_message(msg)
     if session_id and session_id != state.persisted.session_id:
         if state.persisted.session_id:

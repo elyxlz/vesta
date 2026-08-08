@@ -79,7 +79,7 @@
     }
   },
   "hello": {
-    "min_supported": "0.1.185",
+    "min_supported": "0.1.189",
     "type": "hello",
     "version": "0.1.0"
   },

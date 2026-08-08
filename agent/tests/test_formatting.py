@@ -169,6 +169,19 @@ def test_parse_sdk_message_returns_session_id_from_init():
     assert texts == []
 
 
+def test_init_resolved_model_reads_the_concrete_model():
+    """The init message reports the model the CLI resolved a floating alias to; the accessor
+    returns it (with a [1m] context suffix stripped) so /provider can label the alias exactly."""
+    from claude_agent_sdk import SystemMessage
+
+    from core.sdk_parsing import init_resolved_model
+
+    init = SystemMessage(subtype="init", data={"session_id": "s", "model": "claude-opus-4-8[1m]"})
+    assert init_resolved_model(init) == "claude-opus-4-8"
+    assert init_resolved_model(SystemMessage(subtype="init", data={"session_id": "s"})) is None
+    assert init_resolved_model(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 1})) is None
+
+
 def test_parse_sdk_message_skips_thinking_tokens_system_message():
     """thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn;
     parse must drop it without logging so it does not flood the agent log."""

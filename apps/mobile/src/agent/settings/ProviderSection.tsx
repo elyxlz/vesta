@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CLAUDE_ALIASES } from "@vesta/core";
 import type { ProviderKind } from "@vesta/core";
 import { Alert, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -8,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   completeClaudeOAuth,
   completeOpenAIOAuth,
+  fetchClaudeModels,
   fetchManifest,
   fetchOpenRouterModels,
   fetchUsage,
@@ -36,6 +38,13 @@ function isKeyProviderKind(kind: ProviderKind): kind is KeyProviderKind {
   return kind === "openrouter" || kind === "zai" || kind === "kimi";
 }
 
+// The two Claude aliases offered ahead of the live catalog (owned by @vesta/core), so the
+// picker still shows something useful when the live fetch fails or has not resolved yet.
+const CLAUDE_ALIAS_OPTIONS = CLAUDE_ALIASES.map((alias) => ({
+  label: alias.label,
+  value: alias.slug,
+}));
+
 export function ProviderSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
@@ -61,6 +70,16 @@ export function ProviderSection() {
     enabled:
       provider.data?.kind === "openrouter" ||
       (provider.data?.kind === "none" && authKind === "openrouter"),
+  });
+  // Enabled only once signed in: the agent lists models with its stored OAuth token,
+  // so before sign-in (kind "none") the endpoint can only 409.
+  const claudeModels = useQuery({
+    queryKey: ["claude-models", name],
+    queryFn: () => fetchClaudeModels(api, name),
+    enabled: provider.data?.kind === "claude",
+    // The catalog changes on the order of months; don't re-run the two-hop
+    // Anthropic call on every settings visit.
+    staleTime: 60 * 60 * 1000,
   });
   const [oauthSession, setOauthSession] = useState("");
   const [oauthCode, setOauthCode] = useState("");
@@ -117,18 +136,22 @@ export function ProviderSection() {
       (manifest.data.providers[left]?.order ?? Number.MAX_SAFE_INTEGER) -
       (manifest.data.providers[right]?.order ?? Number.MAX_SAFE_INTEGER),
   );
+  const toOption = (model: { slug: string; label: string }) => ({
+    label: model.label,
+    value: model.slug,
+  });
+  const manifestModels = entry?.models;
   const modelOptions =
     providerKind === "openrouter"
-      ? (openRouterModels.data ?? []).map((model) => ({
-          label: model.label,
-          value: model.slug,
-        }))
-      : entry?.models === "live"
-        ? []
-        : (entry?.models ?? []).map((model) => ({
-            label: entry?.model_names?.[model] ?? model,
-            value: model,
-          }));
+      ? (openRouterModels.data ?? []).map(toOption)
+      : providerKind === "claude"
+        ? [...CLAUDE_ALIAS_OPTIONS, ...(claudeModels.data ?? []).map(toOption)]
+        : Array.isArray(manifestModels)
+          ? manifestModels.map((model) => ({
+              label: entry?.model_names?.[model] ?? model,
+              value: model,
+            }))
+          : [];
 
   const chooseModel = () => {
     const options = modelOptions.slice(0, 12).map((option) => ({
