@@ -214,6 +214,25 @@ the daemon that wrote it is never told.** Nothing surfaces at the write, so a da
 healthy work for hours while every alert it emits is discarded. Write one notification and confirm
 it reached the agent before trusting the path.
 
+### State that must survive a restart
+
+`daemon restart` is frequent and cheap: crash recovery, the `restart` skill's `## Daemons` block,
+a container rebuild. Treat everything in process memory as lost at the top of every cycle.
+
+So any guard whose subject outlives the process is persisted, not held in a variable: backoffs,
+cooldowns, circuit breakers, rate-limit lockouts, quota counters, and "already notified" markers.
+A ban imposed by a remote API survives your restart; a module global does not, so the first call
+after each restart spends the lockout it was supposed to be waiting out, and re-arms it.
+
+Schedule periodic-but-expensive work on the wall clock, from a persisted last-run timestamp, never
+a cycle counter. A counter starting at zero both resets the schedule on every restart and
+front-loads the costliest path into the first cycle after one.
+
+Keep it beside the daemon's other state, under `~/agent/data/<skill>/`.
+
+**An unpersisted mitigation looks like it is working right up until the first restart, and a
+restart is exactly when it is needed.**
+
 List registrations, unregister a service, or tell connected clients to reload after changing
 what a service serves:
 
