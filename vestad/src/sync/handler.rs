@@ -174,6 +174,10 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     // just avoids missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
     let mut user_notifications_rx = state.sync_hub.subscribe_user_notifications();
     let mut devices_rx = state.device_registry.subscribe_devices();
+    // Update phases move on their own clock, so they get their own wake: without it a "backing up
+    // axel 2/4" would sit unsent until the next roster poll or keepalive.
+    let mut operation_rx = state.update_operation.subscribe();
+    operation_rx.borrow_and_update();
     agents_rx.borrow_and_update();
     activity_rx.borrow_and_update();
     services_rx.borrow_and_update();
@@ -214,6 +218,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
             r = presence_rx.changed() => { if r.is_err() { break } Wake::Presence }
             r = devices_rx.changed() => { if r.is_err() { break } Wake::Devices }
+            r = operation_rx.changed() => { if r.is_err() { break } Wake::Roster }
             user_notification = user_notifications_rx.recv() => Wake::UserNotification(user_notification),
             client = rx.next() => Wake::Client(client),
             _ = keepalive.tick() => Wake::Keepalive,
@@ -574,6 +579,7 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
         (settings.auto_update, crate::channel::Channel::resolve(&settings.channel).as_str().to_string())
     };
     let tunnel_url = state.tunnel_url.lock().await.clone();
+    let operation = state.update_operation.snapshot().map(Into::into);
     GatewayInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         channel,
@@ -584,6 +590,7 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
         update_available,
         latest_version,
         managed: crate::is_cloud_managed(),
+        operation,
     }
 }
 

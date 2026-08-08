@@ -20,6 +20,80 @@ pub(crate) struct GatewayInfo {
     pub update_available: bool,
     pub latest_version: Option<String>,
     pub managed: bool,
+    /// The gateway-wide operation in flight, or None when the gateway is idle. Mirrors the agent
+    /// nodes' `operation`: work that outlives the request that started it, so every client sees it
+    /// rather than only the one that asked. Defaulted so a tree written by an older gateway (before
+    /// the field existed) still parses.
+    #[serde(default)]
+    pub operation: Option<GatewayOperation>,
+}
+
+/// The one kind of gateway operation there is. An enum rather than a bare string so a second kind
+/// cannot be added without every reader being told about it.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GatewayOperationKind {
+    Update,
+}
+
+/// The wire face of an update's phase. Terminal success is deliberately absent: a finished update
+/// clears the operation, and the client reads the new version off the gateway node itself.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GatewayUpdatePhase {
+    Snapshotting,
+    Applying,
+    Restarting,
+    Failed,
+}
+
+/// One in-flight gateway update, flattened for the wire: the progress fields carry values only while
+/// snapshotting, and `error` only on a failure.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GatewayOperation {
+    pub kind: GatewayOperationKind,
+    pub phase: GatewayUpdatePhase,
+    pub agent: Option<String>,
+    pub done: Option<u32>,
+    pub total: Option<u32>,
+    pub target_version: String,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+}
+
+impl From<crate::update::ActiveUpdate> for GatewayOperation {
+    fn from(active: crate::update::ActiveUpdate) -> Self {
+        use crate::update::UpdatePhase;
+        let (phase, agent, done, total, error) = match active.phase {
+            UpdatePhase::Snapshotting { agent, done, total } => (
+                GatewayUpdatePhase::Snapshotting,
+                agent,
+                Some(done),
+                Some(total),
+                None,
+            ),
+            UpdatePhase::Applying => (GatewayUpdatePhase::Applying, None, None, None, None),
+            UpdatePhase::Restarting => (GatewayUpdatePhase::Restarting, None, None, None, None),
+            UpdatePhase::Failed { during, error } => (
+                GatewayUpdatePhase::Failed,
+                None,
+                None,
+                None,
+                Some(format!("while {during}: {error}")),
+            ),
+        };
+        Self {
+            kind: GatewayOperationKind::Update,
+            phase,
+            agent,
+            done,
+            total,
+            target_version: active.target_version,
+            warnings: active.warnings,
+            error,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -149,6 +223,16 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         update_available: true,
         latest_version: Some("0.1.1".into()),
         managed: false,
+        operation: Some(GatewayOperation {
+            kind: GatewayOperationKind::Update,
+            phase: GatewayUpdatePhase::Snapshotting,
+            agent: Some("sample-agent".into()),
+            done: Some(1),
+            total: Some(2),
+            target_version: "0.1.1".into(),
+            warnings: vec!["other-agent: backup failed (disk full)".into()],
+            error: None,
+        }),
     };
     let mut services = BTreeMap::new();
     services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3 });
@@ -215,6 +299,7 @@ mod tests {
             update_available: false,
             latest_version: None,
             managed: false,
+            operation: None,
         }
     }
 
@@ -227,6 +312,57 @@ mod tests {
         assert!(value.get("updateAvailable").is_some());
         assert!(value.get("latestVersion").is_some());
         assert!(value.get("auto_update").is_none());
+    }
+
+    #[test]
+    fn a_running_update_projects_its_phase_and_progress() {
+        let active = crate::update::ActiveUpdate {
+            target_version: "0.1.190".into(),
+            phase: crate::update::UpdatePhase::Snapshotting {
+                agent: Some("axel".into()),
+                done: 1,
+                total: 4,
+            },
+            warnings: vec!["mona: backup failed (disk full)".into()],
+        };
+        let value = serde_json::to_value(GatewayOperation::from(active)).expect("serialize");
+        assert_eq!(value["kind"], serde_json::json!("update"));
+        assert_eq!(value["phase"], serde_json::json!("snapshotting"));
+        assert_eq!(value["agent"], serde_json::json!("axel"));
+        assert_eq!(value["done"], serde_json::json!(1));
+        assert_eq!(value["total"], serde_json::json!(4));
+        assert_eq!(value["targetVersion"], serde_json::json!("0.1.190"));
+        assert_eq!(value["warnings"][0], serde_json::json!("mona: backup failed (disk full)"));
+        assert_eq!(value["error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_failed_update_projects_the_stage_it_died_on() {
+        let active = crate::update::ActiveUpdate {
+            target_version: "0.1.190".into(),
+            phase: crate::update::UpdatePhase::Failed {
+                during: crate::update::UpdateStage::Applying,
+                error: "curl failed".into(),
+            },
+            warnings: Vec::new(),
+        };
+        let operation = GatewayOperation::from(active);
+        assert_eq!(operation.phase, GatewayUpdatePhase::Failed);
+        assert_eq!(operation.error.as_deref(), Some("while installing: curl failed"));
+        assert_eq!(operation.agent, None);
+    }
+
+    #[test]
+    fn an_idle_gateway_carries_a_null_operation() {
+        let value = serde_json::to_value(sample_gateway()).expect("serialize");
+        assert_eq!(value["operation"], serde_json::Value::Null);
+
+        // A gateway node from an older vestad has no `operation` key at all; parsing must not need one.
+        let mut older = value.clone();
+        let object = older.as_object_mut().expect("gateway object");
+        object.remove("operation");
+        let parsed: GatewayInfo = serde_json::from_value(older).expect("parse a gateway without the field");
+        assert_eq!(parsed.operation, None);
     }
 
     #[test]
