@@ -78,8 +78,10 @@ const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
-/// Name prefix of the throwaway image repo and container a backup exports through.
-pub const BACKUP_TEMP_CONTAINER_PREFIX: &str = "vesta-backup-tmp";
+/// Name prefix of the throwaway image repo and container a backup exports through
+/// (`{prefix}{agent}`). The trailing separator is part of the prefix so a canonical
+/// `vesta-{user}-{agent}` name can only collide with it for a user literally named "backup".
+pub const BACKUP_TEMP_CONTAINER_PREFIX: &str = "vesta-backup-tmp-";
 
 // --- Expected container config (single source of truth) ---
 
@@ -1270,15 +1272,14 @@ fn dedup_by_agent_name(agents: Vec<ManagedAgent>) -> Vec<ManagedAgent> {
     let mut kept: Vec<ManagedAgent> = Vec::new();
     for agent in agents {
         if let Some(existing) = kept.iter_mut().find(|k| k.agent_name == agent.agent_name) {
-            let canonical = container_name(&agent.agent_name);
-            tracing::warn!(
-                agent = %agent.agent_name,
-                canonical = %canonical,
-                "duplicate containers claim one agent name; keeping the canonical one"
-            );
-            if agent.cname == canonical {
+            if agent.cname == container_name(&agent.agent_name) {
                 *existing = agent;
             }
+            tracing::warn!(
+                agent = %existing.agent_name,
+                kept = %existing.cname,
+                "duplicate containers claim one agent name; keeping one"
+            );
         } else {
             kept.push(agent);
         }
@@ -4118,16 +4119,17 @@ mod tests {
 
     impl TestContainer {
         fn new(suffix: &str) -> Self {
-            let name = format!("{}-{}-{}", TEST_PREFIX, suffix, std::process::id());
-            // Clean up any leftover from previous runs
-            docker_cleanup(&["rm", "-f", &name]);
-            Self { name }
+            Self::named(format!("{}-{}-{}", TEST_PREFIX, suffix, std::process::id()))
         }
 
         /// A container under its real `container_name()`, for the paths that rediscover an agent by
         /// name rather than being handed one.
         fn for_agent(agent: &str) -> Self {
-            let name = container_name(agent);
+            Self::named(container_name(agent))
+        }
+
+        /// A container under an exact literal name, cleaning up any leftover from previous runs.
+        fn named(name: String) -> Self {
             docker_cleanup(&["rm", "-f", &name]);
             Self { name }
         }
@@ -4303,10 +4305,7 @@ mod tests {
         let docker = test_docker();
         let agent = format!("ghost{}", std::process::id());
         let real = TestContainer::for_agent(&agent);
-        let ghost = TestContainer {
-            name: format!("{BACKUP_TEMP_CONTAINER_PREFIX}-{agent}"),
-        };
-        docker_cleanup(&["rm", "-f", &ghost.name]);
+        let ghost = TestContainer::named(format!("{BACKUP_TEMP_CONTAINER_PREFIX}{agent}"));
         for cname in [&real.name, &ghost.name] {
             let status = std::process::Command::new("docker")
                 .args([

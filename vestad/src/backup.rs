@@ -103,7 +103,7 @@ pub async fn create_backup(
 
     let result = if cs == ContainerStatus::Running {
         // One shared name for the throwaway image repo and export container.
-        let temp_cname = format!("{BACKUP_TEMP_CONTAINER_PREFIX}-{name}");
+        let temp_cname = format!("{BACKUP_TEMP_CONTAINER_PREFIX}{name}");
         let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
         // A leftover temp container/image from a crashed run must not fail this one.
         remove_temp_artifacts(docker, &temp_cname, &image).await;
