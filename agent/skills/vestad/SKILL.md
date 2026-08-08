@@ -188,51 +188,6 @@ vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it ne
 non-zero with a stderr message and no port. A start treats that as fatal and launches nothing,
 because a daemon on a port vestad does not know about is worse than one that did not start.
 
-### The notification JSON a daemon writes
-
-A daemon reports an event to the agent by writing one JSON object into `~/agent/notifications/`,
-as a `*.json` file whose name sorts in the order you want the batch read (skills prefix it with a
-timestamp: `<time_ns>-<skill>-<type>.json`). Three fields are required, with no defaults:
-
-- `timestamp`: an ISO 8601 datetime. No other spelling works; a name of your own is a missing
-  field, not a synonym.
-- `source`: which skill it came from, and the string the user's interrupt rules match on.
-- `type`: the kind of event within that source.
-
-The rest is optional. `interrupt` (bool, default `true`) is the producer's own disposition, used
-when no user rule matches, so write `false` for something that should pool until the agent is idle.
-`body` is the message text taken verbatim. Extra fields are allowed and are how a notification
-carries its metadata: with no `body`, the first present of `message`, `text`, or `content` becomes
-the message and every remaining field renders as an attribute on the delivered element.
-
-```json
-{"timestamp": "2025-01-31T09:30:00", "source": "my-skill", "type": "alert", "message": "disk at 91%", "interrupt": false}
-```
-
-**A notification that fails validation is rejected into the system log, the file is deleted, and
-the daemon that wrote it is never told.** Nothing surfaces at the write, so a daemon can log
-healthy work for hours while every alert it emits is discarded. Write one notification and confirm
-it reached the agent before trusting the path.
-
-### State that must survive a restart
-
-`daemon restart` is frequent and cheap: crash recovery, the `restart` skill's `## Daemons` block,
-a container rebuild. Treat everything in process memory as lost at the top of every cycle.
-
-So any guard whose subject outlives the process is persisted, not held in a variable: backoffs,
-cooldowns, circuit breakers, rate-limit lockouts, quota counters, and "already notified" markers.
-A ban imposed by a remote API survives your restart; a module global does not, so the first call
-after each restart spends the lockout it was supposed to be waiting out, and re-arms it.
-
-Schedule periodic-but-expensive work on the wall clock, from a persisted last-run timestamp, never
-a cycle counter. A counter starting at zero both resets the schedule on every restart and
-front-loads the costliest path into the first cycle after one.
-
-Keep it beside the daemon's other state, under `~/agent/data/<skill>/`.
-
-**An unpersisted mitigation looks like it is working right up until the first restart, and a
-restart is exactly when it is needed.**
-
 List registrations, unregister a service, or tell connected clients to reload after changing
 what a service serves:
 
@@ -244,6 +199,54 @@ curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<nam
 
 Invalidate optionally takes `{"scope": "<part>"}` (e.g. `{"scope": "stt"}`) to mark what
 changed; omit the body for a full invalidation.
+
+### The notification JSON a daemon writes
+
+A daemon reports an event to the agent by writing one JSON object into `~/agent/notifications/`.
+The agent reads every `*.json` there in lexicographic filename order, so name the file
+`<time_ns>-<skill>-<type>.json`: the fixed-width nanosecond prefix is what keeps one daemon's own
+notifications in the order it wrote them. Write it under a temporary name that does not end in
+`.json`, then rename it into place, because the agent reads a file the instant it appears. Three
+fields are required, they have no defaults, and their names are exact:
+
+- `timestamp`: an ISO 8601 datetime.
+- `source`: which skill it came from, and the string the user's interrupt rules match on. `core` is
+  reserved for the agent's own control flow, so never write it.
+- `type`: the kind of event within that source.
+
+The rest is optional. `interrupt` (bool, default `true`) is the producer's own disposition, used
+when no user rule matches, so write `false` for something that should pool until the agent is idle.
+Extra fields are allowed and are how a notification carries its metadata: the first present of
+`message`, `text`, or `content` becomes the message, and every remaining field renders as an
+attribute on the delivered element. An empty or false value is dropped, so name a boolean to make
+`true` the interesting case. Carry the message in `message`: `body` belongs to core's own
+control-flow notifications and is rendered raw, while `message` is escaped.
+
+```json
+{"timestamp": "2025-01-31T09:30:00", "source": "my-skill", "type": "alert", "message": "disk at 91%", "interrupt": false}
+```
+
+**A notification that fails validation is logged to `~/agent/logs/vesta.log`, the file is deleted,
+and the daemon that wrote it is never told.** A daemon can log healthy work for hours while every
+alert it emits is discarded, so write one notification and confirm it reached the agent before
+trusting the path.
+
+### State that must survive a restart
+
+A daemon restarts often: a crash, a container restart, a rebuild, or `daemon restart` run by hand.
+Treat everything in process memory as lost at every restart.
+
+So any guard whose subject outlives the process is persisted, not held in a variable: backoffs,
+rate-limit lockouts, quota counters, and "already notified" markers. A ban imposed by a remote API
+survives your restart; a module global does not, so the first call after each restart spends the
+lockout it was supposed to be waiting out, and re-arms it.
+
+Schedule periodic-but-expensive work on the wall clock, from a persisted last-run timestamp, never
+a cycle counter. A counter starting at zero both resets the schedule on every restart and
+front-loads the costliest path into the first cycle after one.
+
+Keep that state with the skill's own data (`~/agent/data/<skill>/` for a new skill), never in
+`~/agent/data/daemons/`, which holds the pid and port records alone.
 
 ## Share a private service (mint a service key)
 
