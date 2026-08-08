@@ -160,10 +160,15 @@ for meter in meters:
     worst = float(pct) if worst is None else max(worst, float(pct))
     print("METER %s|%.0f|%s" % (label, float(pct), resets))
 
+# Credits fold into worst like any other meter, they are NOT a fallback for when meters are
+# missing. A provider can report both (Claude with extra usage enabled reports rate windows AND a
+# monthly spend balance), and a monthly cap at 95% beside a session window at 20% must band on the
+# 95. The budget is the WORST of every signal, never the first one that happens to parse.
 used, limit = field(credits, "used"), field(credits, "limit")
-if worst is None and numeric(used) and numeric(limit) and limit > 0:
-    worst = 100.0 * float(used) / float(limit)
-    print("METER credits, %.2f of %.2f spent|%.0f|n/a" % (used, limit, worst))
+if numeric(used) and numeric(limit) and limit > 0:
+    pct = 100.0 * float(used) / float(limit)
+    worst = pct if worst is None else max(worst, pct)
+    print("METER credits, %.2f of %.2f spent|%.0f|n/a" % (used, limit, pct))
 
 if worst is not None:
     print("WORST %.0f" % worst)

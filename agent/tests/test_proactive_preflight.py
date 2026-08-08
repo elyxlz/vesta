@@ -169,6 +169,41 @@ def test_the_worst_window_sets_the_band(tmp_path):
     assert "BAND  tight (84% used)" in run.stdout
 
 
+def test_a_high_credit_balance_beats_green_windows(tmp_path):
+    # Claude with extra usage enabled reports rate windows AND a monthly spend balance, so a reader
+    # that treats credits as a fallback for empty meters reads the balance out of the payload and
+    # then discards it, banding normal on the session window while the monthly cap is nearly spent.
+    home = _home(tmp_path)
+    payload = {
+        "meters": [{"label": "current session", "used_pct": 20.0, "resets_at": "2026-01-01T05:00:00+00:00"}],
+        "credits": {"used": 95.0, "limit": 100.0},
+    }
+
+    run = _run(home, port=free_port(), body=json.dumps(payload))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "budget: credits, 95.00 of 100.00 spent at 95%" in run.stdout
+    assert "BAND  tight (95% used)" in run.stdout
+    assert "BAND  normal" not in run.stdout
+    assert "DIVE  no" in run.stdout
+
+
+def test_a_window_worse_than_the_credit_balance_still_sets_the_band(tmp_path):
+    # The other direction of the same max: whichever signal is worst wins, so a nearly spent window
+    # is not softened by a monthly balance that is barely touched.
+    home = _home(tmp_path)
+    payload = {
+        "meters": [{"label": "current session", "used_pct": 90.0, "resets_at": "2026-01-01T05:00:00+00:00"}],
+        "credits": {"used": 5.0, "limit": 100.0},
+    }
+
+    run = _run(home, port=free_port(), body=json.dumps(payload))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "budget: credits, 5.00 of 100.00 spent at 5%" in run.stdout
+    assert "BAND  tight (90% used)" in run.stdout
+
+
 def test_an_unreachable_endpoint_rations_and_goes_red(tmp_path):
     # Nothing listening on the port: the budget is unmeasurable, which is the one case that rations.
     home = _home(tmp_path)
