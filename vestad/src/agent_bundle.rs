@@ -375,13 +375,18 @@ pub fn resolve_import_name(
 
 /// The name `import_agent` would create, without holding the per-agent file lock the caller
 /// takes once it knows that name. Cheap: a bundle's manifest is only its small tar head.
+/// Validates before returning: the manifest's `agent_name` is untrusted file content, and the
+/// caller locks a `{name}.lock` path keyed on this name before any other validation runs, so an
+/// unvalidated name (e.g. `../evil` or an absolute path) could escape the lock directory.
 pub fn peek_import_name(input: &Path, name_override: Option<&str>) -> Result<String, DockerError> {
     let kind = sniff_bundle(input)?;
     let manifest_name = match kind {
         BundleKind::Bundle => Some(open_bundle(input)?.0.agent_name),
         BundleKind::Legacy => None,
     };
-    resolve_import_name(kind, manifest_name.as_deref(), name_override)
+    let name = resolve_import_name(kind, manifest_name.as_deref(), name_override)?;
+    crate::docker::validate_name(&name)?;
+    Ok(name)
 }
 
 fn agent_exists_error(name: &str) -> DockerError {
@@ -641,6 +646,46 @@ mod tests {
         assert_eq!(resolve_import_name(BundleKind::Legacy, None, Some("apollo")).expect("ok"), "apollo");
         let err = resolve_import_name(BundleKind::Legacy, None, None).expect_err("must refuse");
         assert!(err.to_string().contains("--name"), "got: {err}");
+    }
+
+    /// A bundle whose manifest carries a malicious `agent_name`. Its manifest name alone must
+    /// never reach a caller that locks a `{name}.lock` file keyed on it.
+    fn bundle_with_manifest_name(dir: &Path, agent_name: &str) -> PathBuf {
+        let image_src = dir.join("image-src.tar");
+        std::fs::write(&image_src, b"x").expect("write image");
+        let manifest = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION,
+            agent_name: agent_name.to_string(),
+            vestad_version: env!("CARGO_PKG_VERSION").to_string(),
+            created_at: "2026-08-07T00:00:00Z".into(),
+            user_desired: crate::settings::UserDesired::Running,
+            mounts: vec![],
+        };
+        let bundle = dir.join("evil.tar.gz");
+        write_bundle(&bundle, &manifest, "", &image_src).expect("write bundle");
+        bundle
+    }
+
+    #[test]
+    fn peek_import_name_rejects_path_traversal_in_manifest_name() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let bundle = bundle_with_manifest_name(dir.path(), "../evil");
+
+        let err = peek_import_name(&bundle, None).expect_err("must refuse traversal name");
+        assert!(matches!(err, DockerError::InvalidName(_)), "got: {err}");
+
+        // The traversal name must never have reached a caller that could lock/write a path
+        // derived from it: no such file exists anywhere reachable from the tempdir or its parent.
+        assert!(!dir.path().join("../evil.lock").exists());
+    }
+
+    #[test]
+    fn peek_import_name_override_wins_and_is_validated() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let bundle = bundle_with_manifest_name(dir.path(), "../evil");
+
+        let name = peek_import_name(&bundle, Some("apollo")).expect("valid override succeeds");
+        assert_eq!(name, "apollo");
     }
 
     fn test_docker() -> bollard::Docker {
