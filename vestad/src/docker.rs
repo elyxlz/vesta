@@ -78,6 +78,10 @@ const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
+/// Name prefix of the throwaway image repo and container a backup exports through
+/// (`{prefix}{agent}`). The trailing separator is part of the prefix so a canonical
+/// `vesta-{user}-{agent}` name can only collide with it for a user literally named "backup".
+pub const BACKUP_TEMP_CONTAINER_PREFIX: &str = "vesta-backup-tmp-";
 
 // --- Expected container config (single source of truth) ---
 
@@ -1254,9 +1258,33 @@ pub fn update_all_agent_env_files(
 
 // --- Container listing ---
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedAgent {
     pub cname: String,
     pub agent_name: String,
+}
+
+/// At most one container per agent name. A stray container can carry a real agent's
+/// labels (`docker commit` copies them into any image built from the agent), and a
+/// duplicate entry would shadow the healthy container in every name-keyed consumer.
+/// The canonical `vesta-{user}-{agent}` container always wins.
+fn dedup_by_agent_name(agents: Vec<ManagedAgent>) -> Vec<ManagedAgent> {
+    let mut kept: Vec<ManagedAgent> = Vec::new();
+    for agent in agents {
+        if let Some(existing) = kept.iter_mut().find(|k| k.agent_name == agent.agent_name) {
+            if agent.cname == container_name(&agent.agent_name) {
+                *existing = agent;
+            }
+            tracing::warn!(
+                agent = %existing.agent_name,
+                kept = %existing.cname,
+                "duplicate containers claim one agent name; keeping one"
+            );
+        } else {
+            kept.push(agent);
+        }
+    }
+    kept
 }
 
 /// List all managed containers owned by the current user, paired with the
@@ -1277,11 +1305,17 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
     };
 
     let user = crate::paths::current_user();
-    containers
+    let agents = containers
         .into_iter()
         .filter_map(|c| {
             let names = c.names?;
             let cname = names.first()?.strip_prefix('/')?.to_string();
+            // `docker commit` copies the agent's labels into the backup temp image, so
+            // the container a backup exports through matches the managed filter. It is
+            // never an agent: adopting it would boot-start a broken ghost copy.
+            if cname.starts_with(BACKUP_TEMP_CONTAINER_PREFIX) {
+                return None;
+            }
             let labels = c.labels.unwrap_or_default();
             let owner = labels.get(LABEL_USER).cloned().unwrap_or_default();
             if owner != user {
@@ -1294,7 +1328,8 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
                 .unwrap_or_else(|| name_from_cname(&cname));
             Some(ManagedAgent { cname, agent_name })
         })
-        .collect()
+        .collect();
+    dedup_by_agent_name(agents)
 }
 
 // --- GPU detection ---
@@ -4002,6 +4037,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dedup_keeps_the_canonical_container_whatever_the_order() {
+        let canonical = container_name("axel");
+        let stray = "stray-copy-of-axel".to_string();
+        for order in [[&stray, &canonical], [&canonical, &stray]] {
+            let agents: Vec<ManagedAgent> = order
+                .iter()
+                .map(|cname| ManagedAgent {
+                    cname: (*cname).clone(),
+                    agent_name: "axel".to_string(),
+                })
+                .collect();
+            let deduped = dedup_by_agent_name(agents);
+            assert_eq!(deduped.len(), 1, "one entry per agent name");
+            assert_eq!(deduped[0].cname, canonical);
+        }
+    }
+
+    #[test]
+    fn dedup_leaves_distinct_agents_untouched() {
+        let agents = vec![
+            ManagedAgent {
+                cname: container_name("axel"),
+                agent_name: "axel".to_string(),
+            },
+            ManagedAgent {
+                cname: container_name("luna"),
+                agent_name: "luna".to_string(),
+            },
+        ];
+        assert_eq!(dedup_by_agent_name(agents.clone()), agents);
+    }
+
     // --- Docker integration tests (require Docker daemon) ---
     // Run with: cargo test -p vestad -- --ignored
 
@@ -4051,16 +4119,17 @@ mod tests {
 
     impl TestContainer {
         fn new(suffix: &str) -> Self {
-            let name = format!("{}-{}-{}", TEST_PREFIX, suffix, std::process::id());
-            // Clean up any leftover from previous runs
-            docker_cleanup(&["rm", "-f", &name]);
-            Self { name }
+            Self::named(format!("{}-{}-{}", TEST_PREFIX, suffix, std::process::id()))
         }
 
         /// A container under its real `container_name()`, for the paths that rediscover an agent by
         /// name rather than being handed one.
         fn for_agent(agent: &str) -> Self {
-            let name = container_name(agent);
+            Self::named(container_name(agent))
+        }
+
+        /// A container under an exact literal name, cleaning up any leftover from previous runs.
+        fn named(name: String) -> Self {
             docker_cleanup(&["rm", "-f", &name]);
             Self { name }
         }
@@ -4223,6 +4292,47 @@ mod tests {
                 .iter()
                 .any(|h| h.starts_with("host.docker.internal:")),
             "expected a host.docker.internal mapping, got {extra_hosts:?}"
+        );
+    }
+
+    /// `docker commit` copies the agent's labels into the backup temp image, so the export
+    /// container a backup streams through matches the `vesta.managed=true` filter. An
+    /// interrupted cleanup leaves it behind, and adopting it as an agent would boot-start
+    /// a broken ghost copy on every reconcile.
+    #[tokio::test]
+    #[ignore]
+    async fn backup_temp_container_is_never_a_managed_agent() {
+        let docker = test_docker();
+        let agent = format!("ghost{}", std::process::id());
+        let real = TestContainer::for_agent(&agent);
+        let ghost = TestContainer::named(format!("{BACKUP_TEMP_CONTAINER_PREFIX}{agent}"));
+        for cname in [&real.name, &ghost.name] {
+            let status = std::process::Command::new("docker")
+                .args([
+                    "create",
+                    "--name",
+                    cname,
+                    "--label",
+                    "vesta.managed=true",
+                    "--label",
+                    &format!("{LABEL_AGENT_NAME}={agent}"),
+                    "--label",
+                    &format!("{LABEL_USER}={}", crate::paths::current_user()),
+                    &test_agent_image(),
+                ])
+                .status()
+                .expect("docker create runs");
+            assert!(status.success(), "docker create {cname} failed");
+        }
+
+        let agents = list_managed_agents(&docker).await;
+        assert!(
+            agents.iter().any(|a| a.cname == real.name),
+            "the real agent container must be listed"
+        );
+        assert!(
+            !agents.iter().any(|a| a.cname == ghost.name),
+            "a backup temp container must never be adopted as an agent"
         );
     }
 
