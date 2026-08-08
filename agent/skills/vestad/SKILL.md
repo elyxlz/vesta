@@ -188,6 +188,32 @@ vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it ne
 non-zero with a stderr message and no port. A start treats that as fatal and launches nothing,
 because a daemon on a port vestad does not know about is worse than one that did not start.
 
+### The notification JSON a daemon writes
+
+A daemon reports an event to the agent by writing one JSON object into `~/agent/notifications/`,
+as a `*.json` file whose name sorts in the order you want the batch read (skills prefix it with a
+timestamp: `<time_ns>-<skill>-<type>.json`). Three fields are required, with no defaults:
+
+- `timestamp`: an ISO 8601 datetime. No other spelling works; a name of your own is a missing
+  field, not a synonym.
+- `source`: which skill it came from, and the string the user's interrupt rules match on.
+- `type`: the kind of event within that source.
+
+The rest is optional. `interrupt` (bool, default `true`) is the producer's own disposition, used
+when no user rule matches, so write `false` for something that should pool until the agent is idle.
+`body` is the message text taken verbatim. Extra fields are allowed and are how a notification
+carries its metadata: with no `body`, the first present of `message`, `text`, or `content` becomes
+the message and every remaining field renders as an attribute on the delivered element.
+
+```json
+{"timestamp": "2025-01-31T09:30:00", "source": "my-skill", "type": "alert", "message": "disk at 91%", "interrupt": false}
+```
+
+**A notification that fails validation is rejected into the system log, the file is deleted, and
+the daemon that wrote it is never told.** Nothing surfaces at the write, so a daemon can log
+healthy work for hours while every alert it emits is discarded. Write one notification and confirm
+it reached the agent before trusting the path.
+
 List registrations, unregister a service, or tell connected clients to reload after changing
 what a service serves:
 
