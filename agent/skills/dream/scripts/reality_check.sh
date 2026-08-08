@@ -65,9 +65,12 @@ for log in "$HOME"/agent/logs/*.log; do
     window=$(tail -n 2000 "$log")
     # Logs whose lines carry no leading ISO date can't be aged; count them whole and say so, rather
     # than silently reporting zero for a component that is genuinely storming.
-    dated=$(printf '%s\n' "$window" | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
+    # Accept an optional leading '[': several daemons bracket their timestamps, and anchoring on a
+    # bare digit demotes those logs to "undated", so their whole tail is counted and a component
+    # that recovers long ago keeps reporting RED with no way to age the old lines out.
+    dated=$(printf '%s\n' "$window" | grep -cE '^\[?[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
     if [ "${dated:-0}" -gt 0 ]; then
-        errors=$(printf '%s\n' "$window" | grep -E "^($rc_today|$rc_yest)" | grep -icE 'error|traceback' || true)
+        errors=$(printf '%s\n' "$window" | grep -E "^\[?($rc_today|$rc_yest)" | grep -icE 'error|traceback' || true)
         span="in the last 2 days"
     else
         errors=$(printf '%s\n' "$window" | grep -icE 'error|traceback' || true)
