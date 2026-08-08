@@ -77,6 +77,7 @@ def test_build_client_options_passes_resolved_context_window(tmp_path, state):
     options = build_client_options(config, state)
     # Overrides claude-code's 200k default for non-Anthropic models (claude-code#46416).
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "1000000"
+    assert options.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1000000"
 
 
 def test_build_client_options_openrouter_falls_back_when_unresolved(tmp_path, state):
@@ -85,6 +86,7 @@ def test_build_client_options_openrouter_falls_back_when_unresolved(tmp_path, st
     options = build_client_options(config, state)
     # No resolved window: claude-code keeps its own default (no env override).
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in options.env
 
 
 def test_build_client_options_preserves_explicit_cap_before_resolution(tmp_path, state):
@@ -95,6 +97,7 @@ def test_build_client_options_preserves_explicit_cap_before_resolution(tmp_path,
     state.openrouter_proxy_url = "http://127.0.0.1:40000"
     options = build_client_options(config, state)
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "64000"
+    assert options.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "64000"
 
 
 class _ModelResponse:
@@ -163,19 +166,15 @@ def test_build_client_options_claude_default_reports_1m_window(tmp_path, state):
     assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in options.env
 
 
-def test_build_client_options_claude_caps_to_chosen_window(tmp_path, state):
-    """A chosen window above 200k still needs the 1M beta, and caps the CLI's window at the choice.
-
-    The CLI derives its window from the model itself (natively-1M models are 1M regardless of
-    CLAUDE_CODE_MAX_CONTEXT_TOKENS, which it only reads for non-claude model names); the knob it
-    honors on Claude models is CLAUDE_CODE_AUTO_COMPACT_WINDOW, min'd against the model window
-    and reported as maxTokens by get_context_usage.
-    """
-    config = _config_with_memory(tmp_path, provider={"kind": "claude", "model": "opus", "max_context_tokens": 500_000})
+@pytest.mark.parametrize("chosen,cap", [(500_000, "500000"), (1_000_000, "1000000")])
+def test_build_client_options_claude_caps_to_chosen_window(tmp_path, state, chosen, cap):
+    """A chosen window above 200k still needs the 1M beta, and caps the CLI's window at the choice
+    via CLAUDE_CODE_AUTO_COMPACT_WINDOW, the knob the CLI honors on claude-named models."""
+    config = _config_with_memory(tmp_path, provider={"kind": "claude", "model": "opus", "max_context_tokens": chosen})
     options = build_client_options(config, state)
     assert options.betas == ["context-1m-2025-08-07"]
-    assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "500000"
-    assert options.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "500000"
+    assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == cap
+    assert options.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == cap
 
 
 def test_build_client_options_claude_200k_drops_beta(tmp_path, state):

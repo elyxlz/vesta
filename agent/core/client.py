@@ -530,6 +530,15 @@ def _fixed_provider_context(provider: cfg.ZaiConfig | cfg.KimiConfig | cfg.OpenA
     return context
 
 
+def _context_cap_env(context: int) -> dict[str, str]:
+    """The CLI honors CLAUDE_CODE_AUTO_COMPACT_WINDOW on claude-named models and
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS on other model names, so a cap sets both."""
+    return {
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(context),
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context),
+    }
+
+
 def _openrouter_sdk_settings(provider: cfg.OpenRouterConfig, state: vm.State) -> _SDKSettings:
     if not state.openrouter_proxy_url:
         raise RuntimeError("OpenRouter cache proxy not started before building client options")
@@ -540,7 +549,7 @@ def _openrouter_sdk_settings(provider: cfg.OpenRouterConfig, state: vm.State) ->
     }
     context = state.openrouter_max_tokens or provider.max_context_tokens
     if context:
-        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
+        env.update(_context_cap_env(context))
     return env, [], ThinkingConfigDisabled(type="disabled")
 
 
@@ -553,10 +562,8 @@ def _zai_sdk_settings(provider: cfg.ZaiConfig) -> _SDKSettings:
         "ANTHROPIC_DEFAULT_SONNET_MODEL": harness_model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": harness_model,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        **_context_cap_env(_fixed_provider_context(provider)),
     }
-    context = _fixed_provider_context(provider)
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
     return env, [], _adaptive_thinking()
 
 
@@ -566,6 +573,7 @@ def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
         "ANTHROPIC_BASE_URL": KIMI_ANTHROPIC_URL,
         "ANTHROPIC_API_KEY": provider.key.get_secret_value(),
         "CLAUDE_CODE_EFFORT_LEVEL": "high",
+        **_context_cap_env(_fixed_provider_context(provider)),
     }
     # Kimi's Claude Code guide maps every internal model role to the selected Kimi model.
     for name in (
@@ -577,9 +585,6 @@ def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
         "CLAUDE_CODE_SUBAGENT_MODEL",
     ):
         env[name] = harness_model
-    context = _fixed_provider_context(provider)
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
     return env, [], _adaptive_thinking()
 
 
@@ -594,8 +599,7 @@ def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSet
         "ANTHROPIC_BASE_URL": state.codex_proxy_url,
         "ANTHROPIC_AUTH_TOKEN": "unused",
         "ANTHROPIC_SMALL_FAST_MODEL": cfg.provider_harness_model(provider.kind, auxiliary_model, context),
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(context),
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context),
+        **_context_cap_env(context),
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
     }
@@ -605,15 +609,7 @@ def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSet
 def _claude_sdk_settings(provider: cfg.ClaudeConfig) -> _SDKSettings:
     chosen = provider.max_context_tokens
     betas = [CONTEXT_1M_BETA] if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW else []
-    # The CLI sizes a natively-1M Claude model's window from the model alone and only reads
-    # CLAUDE_CODE_MAX_CONTEXT_TOKENS for non-claude model names, so the chosen cap must also
-    # ride CLAUDE_CODE_AUTO_COMPACT_WINDOW: min'd against the model window, it is what
-    # get_context_usage reports and where auto-compaction fires.
-    env = (
-        {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(chosen), "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(chosen)}
-        if chosen is not None
-        else {}
-    )
+    env = _context_cap_env(chosen) if chosen is not None else {}
     return env, betas, provider.thinking
 
 
