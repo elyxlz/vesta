@@ -6,7 +6,7 @@ use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status,
     create_container, ensure_container_removed, env_file_names, guard_alive, handoff_boot_reason,
     handoff_shutdown_reason, read_env_value, start_container, stop_container_with_timeout,
-    validate_name, AgentEnvConfig, ContainerStatus, DockerError,
+    validate_name, AgentEnvConfig, ContainerStatus, DockerError, BACKUP_TEMP_CONTAINER_PREFIX,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -79,7 +79,6 @@ fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
     u64::try_from(dt.unix_timestamp()).ok()
 }
 
-const TEMP_IMAGE_REPO_PREFIX: &str = "vesta-backup-tmp";
 const TEMP_IMAGE_TAG: &str = "latest";
 
 /// Best-effort removal of the throwaway commit container/image (leftovers included).
@@ -104,7 +103,7 @@ pub async fn create_backup(
 
     let result = if cs == ContainerStatus::Running {
         // One shared name for the throwaway image repo and export container.
-        let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
+        let temp_cname = format!("{BACKUP_TEMP_CONTAINER_PREFIX}-{name}");
         let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
         // A leftover temp container/image from a crashed run must not fail this one.
         remove_temp_artifacts(docker, &temp_cname, &image).await;

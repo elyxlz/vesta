@@ -78,6 +78,8 @@ const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
+/// Name prefix of the throwaway image repo and container a backup exports through.
+pub const BACKUP_TEMP_CONTAINER_PREFIX: &str = "vesta-backup-tmp";
 
 // --- Expected container config (single source of truth) ---
 
@@ -1282,6 +1284,12 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
         .filter_map(|c| {
             let names = c.names?;
             let cname = names.first()?.strip_prefix('/')?.to_string();
+            // `docker commit` copies the agent's labels into the backup temp image, so
+            // the container a backup exports through matches the managed filter. It is
+            // never an agent: adopting it would boot-start a broken ghost copy.
+            if cname.starts_with(BACKUP_TEMP_CONTAINER_PREFIX) {
+                return None;
+            }
             let labels = c.labels.unwrap_or_default();
             let owner = labels.get(LABEL_USER).cloned().unwrap_or_default();
             if owner != user {
@@ -4223,6 +4231,50 @@ mod tests {
                 .iter()
                 .any(|h| h.starts_with("host.docker.internal:")),
             "expected a host.docker.internal mapping, got {extra_hosts:?}"
+        );
+    }
+
+    /// `docker commit` copies the agent's labels into the backup temp image, so the export
+    /// container a backup streams through matches the `vesta.managed=true` filter. An
+    /// interrupted cleanup leaves it behind, and adopting it as an agent would boot-start
+    /// a broken ghost copy on every reconcile.
+    #[tokio::test]
+    #[ignore]
+    async fn backup_temp_container_is_never_a_managed_agent() {
+        let docker = test_docker();
+        let agent = format!("ghost{}", std::process::id());
+        let real = TestContainer::for_agent(&agent);
+        let ghost = TestContainer {
+            name: format!("{BACKUP_TEMP_CONTAINER_PREFIX}-{agent}"),
+        };
+        docker_cleanup(&["rm", "-f", &ghost.name]);
+        for cname in [&real.name, &ghost.name] {
+            let status = std::process::Command::new("docker")
+                .args([
+                    "create",
+                    "--name",
+                    cname,
+                    "--label",
+                    "vesta.managed=true",
+                    "--label",
+                    &format!("{LABEL_AGENT_NAME}={agent}"),
+                    "--label",
+                    &format!("{LABEL_USER}={}", crate::paths::current_user()),
+                    &test_agent_image(),
+                ])
+                .status()
+                .expect("docker create runs");
+            assert!(status.success(), "docker create {cname} failed");
+        }
+
+        let agents = list_managed_agents(&docker).await;
+        assert!(
+            agents.iter().any(|a| a.cname == real.name),
+            "the real agent container must be listed"
+        );
+        assert!(
+            !agents.iter().any(|a| a.cname == ghost.name),
+            "a backup temp container must never be adopted as an agent"
         );
     }
 
