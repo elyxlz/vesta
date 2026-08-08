@@ -77,6 +77,7 @@ fn main() {
     for rel in [
         "agent/core",
         "agent/skills",
+        "agent/hooks",
         "agent/MEMORY.md",
         "agent/.gitignore",
         "agent/ruff.toml",
