@@ -11,7 +11,6 @@ Routes:
   - PUT  /provider             sign in / switch provider (OAuth or subscription/provider key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
-  - GET  /provider/models      the signed-in Claude account's live model catalog
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 
@@ -31,7 +30,6 @@ import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from . import claude_models
 from .config import (
     ClaudeConfig,
     KeyProviderKind,
@@ -257,15 +255,15 @@ async def _config_put_handler(request: web.Request) -> web.Response:
     return await _validate_and_store(config, data, label="config")
 
 
-_NonEmptyString = tp.Annotated[str, pyd.StringConstraints(strip_whitespace=True, min_length=1)]
-
-
 class _ClaudeSignIn(pyd.BaseModel):
     kind: tp.Literal["claude"]
     # None on re-auth: preserve the agent's existing model rather than reset it.
-    model: _NonEmptyString | None = None
+    model: tp.Literal["opus", "sonnet"] | None = None
     max_context_tokens: int | None = None
     credentials: str
+
+
+_NonEmptyString = tp.Annotated[str, pyd.StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class _KeySignIn(pyd.BaseModel):
@@ -312,9 +310,6 @@ async def _provider_get_handler(request: web.Request) -> web.Response:
     # picker can restrict >200K windows to Max, the only plan entitled to the 1M-context beta.
     if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is not None:
         body["plan"] = config.provider.oauth.subscription_type
-    # The concrete model the live session runs as, so clients can label a floating alias exactly.
-    if state.resolved_model is not None:
-        body["resolved_model"] = state.resolved_model
     return web.json_response(body)
 
 
@@ -404,20 +399,6 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _provider_models_handler(_request: web.Request) -> web.Response:
-    """The signed-in Claude account's live model catalog, for the settings model picker."""
-    token = await asyncio.to_thread(claude_models.read_claude_access_token)
-    if token is None:
-        return web.json_response({"error": "no claude credentials"}, status=409)
-    try:
-        models = await claude_models.fetch_claude_models(token)
-    # ValueError covers a malformed 200 body: pydantic ValidationError and json.JSONDecodeError.
-    except (_aiohttp.ClientError, TimeoutError, ValueError) as exc:
-        logger.error("claude models fetch failed: %s", exc)
-        return web.json_response({"error": "claude models fetch failed"}, status=502)
-    return web.json_response(models)
-
-
 async def _memory_get_handler(request: web.Request) -> web.Response:
     """Return current contents of MEMORY.md."""
     config: VestaConfig = request.app["config"]
@@ -480,7 +461,6 @@ async def start_ws_server(
     app.router.add_get("/config", _config_get_handler)
     app.router.add_put("/config", _config_put_handler)
     app.router.add_get("/provider", _provider_get_handler)
-    app.router.add_get("/provider/models", _provider_models_handler)
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)
     app.router.add_delete("/provider", _provider_delete_handler)

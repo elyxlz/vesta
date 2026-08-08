@@ -33,9 +33,9 @@ def test_manifest_has_both_providers_and_defaults():
     assert sorted(manifest["providers"]) == ["claude", "kimi", "openai", "openrouter", "zai"]
     ordered = sorted(manifest["providers"], key=lambda kind: manifest["providers"][kind]["order"])
     assert ordered == ["claude", "openai", "zai", "kimi", "openrouter"]
-    assert manifest["providers"]["claude"]["models"] == "live"
-    assert manifest["providers"]["claude"]["default_model"] is None
-    assert manifest["providers"]["claude"]["context"]["presets"]  # plan-gated presets stay
+    assert manifest["providers"]["claude"]["models"] == ["opus", "sonnet"]
+    assert manifest["providers"]["claude"]["model_names"]["opus"] == "Opus"
+    assert manifest["providers"]["claude"]["context"]["presets"]  # the picker's curated suggestions
     assert manifest["providers"]["openrouter"]["models"] == "live"  # free-form, fetched separately
     assert manifest["providers"]["zai"]["default_model"] == "glm-5.2"
     assert manifest["providers"]["kimi"]["default_model"] == "kimi-for-coding"
@@ -47,22 +47,9 @@ def test_manifest_has_both_providers_and_defaults():
 
 def test_model_defaults_come_from_the_manifest():
     # The single source: the model's field defaults are read from the manifest, not restated in code.
-    # Claude's catalog is live, so it has no manifest default; the code-owned fallback applies instead.
     manifest = _manifest()
-    assert manifest["providers"]["claude"]["default_model"] is None
-    assert ClaudeConfig().model == "opus-latest"
+    assert ClaudeConfig().model == manifest["providers"]["claude"]["default_model"]
     assert VestaConfig().agent_personality == manifest["default_personality"]
-
-
-def test_claude_latest_aliases_reach_the_harness_bare():
-    # The stored -latest form is config-facing only: the CLI resolves the bare alias itself, and a
-    # legacy bare alias or a pinned slug passes through unchanged.
-    from core.config import provider_harness_model
-
-    assert provider_harness_model("claude", "opus-latest", 1_000_000) == "opus"
-    assert provider_harness_model("claude", "sonnet-latest", 200_000) == "sonnet"
-    assert provider_harness_model("claude", "opus", 1_000_000) == "opus"
-    assert provider_harness_model("claude", "claude-opus-4-8", 1_000_000) == "claude-opus-4-8"
 
 
 def test_openrouter_requires_a_key():

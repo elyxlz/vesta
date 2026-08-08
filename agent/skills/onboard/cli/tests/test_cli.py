@@ -78,22 +78,6 @@ def test_presets_lists_live_reference_data(capsys, monkeypatch):
     assert data["default_model"] == "opus"
 
 
-def test_live_claude_catalog_reads_as_aliases(monkeypatch):
-    # A live catalog carries models:"live" and default_model:null (fetched from Anthropic at
-    # request time rather than pinned in the manifest). fetch_claude_models / fetch_agent_defaults
-    # must still hand the picker something usable: the two stable aliases, "opus-latest" as the default.
-    live_manifest = {
-        "default_provider": "claude",
-        "default_personality": "dry",
-        "providers": {"claude": {"models": "live", "default_model": None}},
-    }
-    monkeypatch.setattr(cli_mod.Client, "fetch_manifest", lambda self: live_manifest)
-    cfg = cli_mod.Config(base_url="https://vesta.run/api", referral_code=None, vestad_base="https://box:1234")
-    client = cli_mod.Client(cfg)
-    assert client.fetch_claude_models() == [{"id": "opus-latest"}, {"id": "sonnet-latest"}]
-    assert client.fetch_agent_defaults() == {"model": "opus-latest", "personality": "dry"}
-
-
 # --- verify -----------------------------------------------------------------
 
 

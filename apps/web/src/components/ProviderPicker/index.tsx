@@ -97,19 +97,6 @@ function providerResult(
   };
 }
 
-// The initial model-step selection: the in-progress choice wins, else Claude
-// defaults to the "opus-latest" alias, else the manifest's per-provider default.
-function modelStepInitialModel(
-  provider: ProviderMode | null,
-  model: string,
-  manifest: Manifest,
-): string {
-  if (model) return model;
-  if (provider === "claude") return "opus-latest";
-  if (provider === null) return "";
-  return manifest.providers[provider]?.default_model ?? "";
-}
-
 function providerUsesOAuth(
   provider: ProviderMode | null,
   manifest: Manifest,
@@ -117,16 +104,6 @@ function providerUsesOAuth(
   if (provider === null) return false;
   const authKind = manifest.providers[provider]?.auth_kind;
   return authKind === "claude_oauth" || authKind === "device_oauth";
-}
-
-// A live-catalog provider has no static default model, so even defaults-only
-// mode must walk the model (and context) steps.
-function catalogIsLive(
-  provider: ProviderMode | null,
-  manifest: Manifest,
-): boolean {
-  if (provider === null) return false;
-  return manifest.providers[provider]?.models === "live";
 }
 
 function startProviderOAuth(provider: ProviderMode | null) {
@@ -196,15 +173,11 @@ export function ProviderPicker({
   const [credentials, setCredentials] = useState<string | null>(null);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
-  // The live Claude catalog, fetched as soon as auth stashes the credentials so
-  // it is ready by the time the model step renders.
-  const claudeLiveModels = useClaudeModels(
-    provider === "claude" ? credentials : null,
-    claudeProvider.fetchClaudeModels,
-  );
   // Creation catalog (per-provider context window + presets) comes from the manifest, not a local copy.
   const manifest = useManifest();
-  const providerModels = providerModelOptions(provider, manifest);
+  // Claude's fixed model list; fetched only while on the Claude path.
+  const claudeModels = useClaudeModels(provider === "claude");
+  const providerModels = providerModelOptions(provider, manifest, claudeModels);
   const stepLogo = providerLogo(provider);
   const keyCopy = keyStepCopy(provider);
 
@@ -258,7 +231,7 @@ export function ProviderPicker({
   // model + context, mirroring the OpenRouter path.
   const handleCredentialsReady = (creds: string) => {
     setCredentials(creds);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
+    if (defaultsOnly) {
       finishWithDefaults(creds, key);
       return;
     }
@@ -267,7 +240,7 @@ export function ProviderPicker({
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
+    if (defaultsOnly && provider !== "openrouter") {
       finishWithDefaults(credentials, newKey);
       return;
     }
@@ -386,7 +359,12 @@ export function ProviderPicker({
         )}
         {step === "model" && (
           <ModelStep
-            initialModel={modelStepInitialModel(provider, model, manifest)}
+            initialModel={
+              model ||
+              (provider
+                ? (manifest.providers[provider]?.default_model ?? "")
+                : "")
+            }
             onModelChange={setModel}
             onSubmit={(m) => {
               setModel(m);
@@ -396,10 +374,7 @@ export function ProviderPicker({
                 setStep("context");
               }
             }}
-            models={providerModels}
-            claudeLiveModels={
-              provider === "claude" ? claudeLiveModels : undefined
-            }
+            models={provider === "openrouter" ? undefined : providerModels}
             allowCustom={provider === "openrouter"}
             logo={stepLogo}
             onCancel={cancelToChoice}

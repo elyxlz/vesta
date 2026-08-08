@@ -111,17 +111,6 @@ def thinking_tokens_estimate(msg: Message) -> int | None:
     return None
 
 
-def init_resolved_model(msg: Message) -> str | None:
-    """The model the CLI resolved for this session, from SystemMessage(subtype="init"). A floating
-    alias like "opus" resolves to a concrete slug here, so clients can show the exact model. None
-    for any other message or a payload without the field."""
-    if not isinstance(msg, SystemMessage) or msg.subtype != "init":
-        return None
-    if isinstance(msg.data, dict) and "model" in msg.data and isinstance(msg.data["model"], str):
-        return msg.data["model"].removesuffix("[1m]")
-    return None
-
-
 def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 

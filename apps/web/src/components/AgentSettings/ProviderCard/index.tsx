@@ -50,7 +50,6 @@ import {
   type Usage,
   type UsageMeter,
 } from "@/api/agents";
-import { fetchAgentClaudeModels } from "@/api/providers/claude";
 import { contextForModel, type Manifest } from "@/api/manifest";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import { formatTokens } from "@/lib/format";
@@ -268,7 +267,7 @@ function ModelDialog({
   applying,
   error,
   provider,
-  claudeLiveModels,
+  claudeModels,
   manifest,
   onSubmit,
 }: {
@@ -277,16 +276,16 @@ function ModelDialog({
   applying: boolean;
   error: string | null;
   provider: ProviderInfo;
-  claudeLiveModels: OpenRouterModelOption[] | null;
+  claudeModels: OpenRouterModelOption[];
   manifest: Manifest | undefined;
   onSubmit: (model: string) => void;
 }) {
   const isOpenRouter = provider.kind === "openrouter";
-  const isClaude = provider.kind === "claude";
   const configuredKind = provider.kind === "none" ? null : provider.kind;
   const fixedModels = providerModelOptions(
     configuredKind,
     manifest,
+    claudeModels,
     provider.model,
   );
   return (
@@ -311,8 +310,7 @@ function ModelDialog({
           <div className="flex flex-col items-center gap-4 py-2">
             <ModelStep
               initialModel={provider.model ?? ""}
-              models={fixedModels}
-              claudeLiveModels={isClaude ? claudeLiveModels : undefined}
+              models={isOpenRouter ? undefined : fixedModels}
               allowCustom={isOpenRouter}
               submitLabel="switch model"
               onSubmit={onSubmit}
@@ -460,6 +458,7 @@ export function ProviderCard() {
   // Revalidate on status change so a provider switch (which restarts the agent)
   // is reflected here without a manual reload.
   const { provider, refresh } = useProvider(name, agent.status);
+  const claudeModels = useClaudeModels(provider?.kind === "claude");
   // Context-window presets come from the manifest (GET /manifest); the context dialog needs the
   // active provider's presets just like the setup wizard does.
   const manifest = useManifest();
@@ -468,12 +467,6 @@ export function ProviderCard() {
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The live Claude catalog for the change-model dialog, listed by the agent from its own
-  // stored credentials while the card shows Claude, so the dialog opens ready.
-  const claudeLiveModels = useClaudeModels(
-    provider?.kind === "claude" && name ? name : null,
-    fetchAgentClaudeModels,
-  );
 
   const {
     usage,
@@ -618,7 +611,7 @@ export function ProviderCard() {
         applying={applying}
         error={error}
         provider={provider}
-        claudeLiveModels={claudeLiveModels}
+        claudeModels={claudeModels}
         manifest={manifest}
         onSubmit={(model) => void applyModel(model)}
       />

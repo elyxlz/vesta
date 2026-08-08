@@ -6,8 +6,12 @@
       "display": "Claude",
       "order": 0,
       "auth_kind": "claude_oauth",
-      "models": "live",
-      "default_model": null,
+      "models": ["opus", "sonnet"],
+      "model_names": {
+        "opus": "Opus",
+        "sonnet": "Sonnet"
+      },
+      "default_model": "opus",
       "context": {
         "default": 1000000,
         "max": 1000000,
