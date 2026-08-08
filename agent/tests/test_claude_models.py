@@ -7,6 +7,7 @@ import pytest
 from aiohttp import web
 
 import core.claude_models as cm
+import core.config as cfg
 
 
 def test_parse_models_maps_id_and_display_name():
@@ -16,14 +17,16 @@ def test_parse_models_maps_id_and_display_name():
 
 
 def test_read_access_token_missing_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(cm, "CREDENTIALS_PATH", tmp_path / "nope.json")
+    # read_claude_access_token delegates to config.read_claude_oauth, the one owner of parsing
+    # CREDENTIALS_PATH, so the seam to patch is config's module-level path, not a module of our own.
+    monkeypatch.setattr(cfg, "CREDENTIALS_PATH", tmp_path / "nope.json")
     assert cm.read_claude_access_token() is None
 
 
 def test_read_access_token_reads_blob(tmp_path, monkeypatch):
     path = tmp_path / "creds.json"
     path.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok"}}))
-    monkeypatch.setattr(cm, "CREDENTIALS_PATH", path)
+    monkeypatch.setattr(cfg, "CREDENTIALS_PATH", path)
     assert cm.read_claude_access_token() == "tok"
 
 

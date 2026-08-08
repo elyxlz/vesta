@@ -2,13 +2,12 @@
 from the Anthropic Models API. The single owner of the /v1/models call and its parsing on
 the agent side (vestad owns the onboarding copy)."""
 
-import json
 import typing as tp
 
 import aiohttp
 import pydantic as pyd
 
-from .config import CREDENTIALS_PATH
+from .config import read_claude_oauth
 
 _MODELS_URL = "https://api.anthropic.com/v1/models"
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -32,20 +31,12 @@ class _ModelsResponse(pyd.BaseModel):
 
 
 def read_claude_access_token() -> str | None:
-    """The stored OAuth access token, or None when unauthenticated/unreadable."""
-    if not CREDENTIALS_PATH.is_file():
+    """The stored OAuth access token, or None when unauthenticated/unreadable. Delegates to
+    config.py's read_claude_oauth, the one owner of parsing CREDENTIALS_PATH."""
+    oauth = read_claude_oauth()
+    if oauth is None or oauth.access_token is None or not oauth.access_token.strip():
         return None
-    try:
-        blob = json.loads(CREDENTIALS_PATH.read_text())
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(blob, dict) or "claudeAiOauth" not in blob:
-        return None
-    oauth = blob["claudeAiOauth"]
-    if not isinstance(oauth, dict) or "accessToken" not in oauth:
-        return None
-    token = oauth["accessToken"]
-    return token if isinstance(token, str) and token.strip() else None
+    return oauth.access_token
 
 
 def parse_models(payload: pyd.JsonValue) -> list[ClaudeModelOption]:

@@ -408,7 +408,7 @@ async def _provider_models_handler(_request: web.Request) -> web.Response:
         return web.json_response({"error": "no claude credentials"}, status=409)
     try:
         models = await claude_models.fetch_claude_models(token)
-    except _aiohttp.ClientError as exc:
+    except (_aiohttp.ClientError, TimeoutError) as exc:
         logger.error("claude models fetch failed: %s", exc)
         return web.json_response({"error": "claude models fetch failed"}, status=502)
     return web.json_response(models)
