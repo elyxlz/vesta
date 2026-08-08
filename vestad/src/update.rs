@@ -1,8 +1,11 @@
 //! Everything about updating the gateway itself: the periodic release check that feeds the
-//! UpdatePill, the phase model and durable ledger that make an update observable, the orchestrator
+//! `UpdatePill`, the phase model and durable ledger that make an update observable, the orchestrator
 //! that drives one update from pre-update snapshots to the restart, and the binary swap it applies.
 
 use std::fmt;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
 
 // Poll GitHub for new releases every 5 hours: often enough that the UpdatePill and a
 // power user's manual update see a release promptly. This only governs detection; an
@@ -237,6 +240,156 @@ fn snippet(s: &str) -> String {
     }
 }
 
+// --- Phases, ledger, boot recovery ---
+
+// Beside settings.json in the config dir. Present only while an update is in flight, which is what
+// makes it the boot-time record: a vestad that comes up and finds one knows the update it describes
+// either landed (Restarting on the target version) or died somewhere.
+const LEDGER_FILE_NAME: &str = "update.json";
+
+/// Who asked for the update. Recorded for the log and the ledger; both intents run the same path.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateIntent {
+    Manual,
+    Auto,
+}
+
+/// The step an update was on. Named separately from `UpdatePhase` so a failure can say what it was
+/// doing without carrying that step's payload.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateStage {
+    Resolving,
+    Snapshotting,
+    Applying,
+    Restarting,
+}
+
+impl fmt::Display for UpdateStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let word = match self {
+            Self::Resolving => "resolving the release",
+            Self::Snapshotting => "backing up",
+            Self::Applying => "installing",
+            Self::Restarting => "restarting",
+        };
+        f.write_str(word)
+    }
+}
+
+/// Where one update is right now. `Snapshotting` carries its own progress so every client can render
+/// "backing up axel 2/4"; `agent` is None only for the moment before the first agent is picked.
+/// `Failed` is terminal and stays on the operation until the user retries or dismisses it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum UpdatePhase {
+    Snapshotting {
+        agent: Option<String>,
+        done: u32,
+        total: u32,
+    },
+    Applying,
+    Restarting,
+    Failed {
+        during: UpdateStage,
+        error: String,
+    },
+}
+
+impl UpdatePhase {
+    /// The stage this phase is on, for a failure's `during` and for boot recovery.
+    pub fn stage(&self) -> UpdateStage {
+        match self {
+            Self::Snapshotting { .. } => UpdateStage::Snapshotting,
+            Self::Applying => UpdateStage::Applying,
+            Self::Restarting => UpdateStage::Restarting,
+            Self::Failed { during, .. } => *during,
+        }
+    }
+}
+
+/// The durable record of an in-flight update, rewritten at every phase transition and deleted once a
+/// terminal state is surfaced. The only state that survives the restart the update itself performs.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UpdateLedger {
+    pub target_version: String,
+    pub phase: UpdatePhase,
+    pub intent: UpdateIntent,
+    pub started_at: u64,
+    pub warnings: Vec<String>,
+}
+
+fn ledger_path(config_dir: &Path) -> std::path::PathBuf {
+    config_dir.join(LEDGER_FILE_NAME)
+}
+
+/// The recorded update, or None when there is none or the file cannot be read as one. An unreadable
+/// ledger is treated as absent on purpose: recovery then falls through to a normal boot instead of
+/// blocking on a file nobody can act on.
+pub fn read_ledger(config_dir: &Path) -> Option<UpdateLedger> {
+    let contents = std::fs::read_to_string(ledger_path(config_dir)).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+/// Write the ledger atomically (temp + rename), best-effort: a failed write costs the boot-time
+/// recovery signal, never the update itself, so it logs and proceeds.
+pub fn write_ledger(config_dir: &Path, ledger: &UpdateLedger) {
+    let Ok(json) = serde_json::to_vec(ledger) else {
+        return;
+    };
+    let path = ledger_path(config_dir);
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, json).is_err() {
+        tracing::warn!("could not write the update ledger");
+        return;
+    }
+    if std::fs::rename(&tmp, &path).is_err() {
+        tracing::warn!("could not install the update ledger");
+    }
+}
+
+pub fn clear_ledger(config_dir: &Path) {
+    let path = ledger_path(config_dir);
+    if path.exists() && std::fs::remove_file(&path).is_err() {
+        tracing::warn!("could not clear the update ledger");
+    }
+}
+
+/// What this boot must do about the update the ledger describes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootRecovery {
+    Normal,
+    Updated {
+        version: String,
+        warnings: Vec<String>,
+    },
+    Interrupted {
+        target_version: String,
+        during: UpdateStage,
+    },
+}
+
+/// Read the ledger once and decide: no ledger is a normal boot; a ledger left in `Restarting` on the
+/// version it targeted is the update landing; anything else is an update that died. The ledger is
+/// always cleared, so a boot never inherits the previous boot's verdict.
+pub fn recover_at_boot(config_dir: &Path, running_version: &str) -> BootRecovery {
+    let Some(ledger) = read_ledger(config_dir) else {
+        return BootRecovery::Normal;
+    };
+    clear_ledger(config_dir);
+    if matches!(ledger.phase, UpdatePhase::Restarting) && running_version == ledger.target_version {
+        return BootRecovery::Updated {
+            version: ledger.target_version,
+            warnings: ledger.warnings,
+        };
+    }
+    BootRecovery::Interrupted {
+        during: ledger.phase.stage(),
+        target_version: ledger.target_version,
+    }
+}
+
 // --- Binary swap ---
 
 #[derive(Debug)]
@@ -360,6 +513,93 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ledger_of(phase: UpdatePhase) -> UpdateLedger {
+        UpdateLedger {
+            target_version: "0.1.190".into(),
+            phase,
+            intent: UpdateIntent::Manual,
+            started_at: 1_700_000_000,
+            warnings: vec!["axel: snapshot timed out".into()],
+        }
+    }
+
+    #[test]
+    fn a_ledger_round_trips_through_the_config_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(read_ledger(dir.path()), None);
+
+        let ledger = ledger_of(UpdatePhase::Snapshotting {
+            agent: Some("axel".into()),
+            done: 1,
+            total: 4,
+        });
+        write_ledger(dir.path(), &ledger);
+        assert_eq!(read_ledger(dir.path()), Some(ledger));
+
+        clear_ledger(dir.path());
+        assert_eq!(read_ledger(dir.path()), None);
+        // Clearing an absent ledger is a no-op, not an error.
+        clear_ledger(dir.path());
+    }
+
+    #[test]
+    fn an_unparseable_ledger_reads_as_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join(LEDGER_FILE_NAME), "{ not json").expect("write");
+        assert_eq!(read_ledger(dir.path()), None);
+    }
+
+    #[test]
+    fn boot_recovery_reads_the_ledger_and_always_clears_it() {
+        let cases = [
+            (None, BootRecovery::Normal),
+            (
+                Some(UpdatePhase::Restarting),
+                BootRecovery::Updated {
+                    version: "0.1.190".into(),
+                    warnings: vec!["axel: snapshot timed out".into()],
+                },
+            ),
+            (
+                Some(UpdatePhase::Snapshotting { agent: Some("axel".into()), done: 1, total: 4 }),
+                BootRecovery::Interrupted {
+                    target_version: "0.1.190".into(),
+                    during: UpdateStage::Snapshotting,
+                },
+            ),
+            (
+                Some(UpdatePhase::Applying),
+                BootRecovery::Interrupted {
+                    target_version: "0.1.190".into(),
+                    during: UpdateStage::Applying,
+                },
+            ),
+        ];
+        for (phase, expected) in cases {
+            let dir = tempfile::tempdir().expect("tempdir");
+            if let Some(phase) = phase {
+                write_ledger(dir.path(), &ledger_of(phase));
+            }
+            assert_eq!(recover_at_boot(dir.path(), "0.1.190"), expected);
+            assert_eq!(read_ledger(dir.path()), None, "recovery always clears the ledger");
+        }
+    }
+
+    #[test]
+    fn a_restarting_ledger_on_the_old_version_reads_as_interrupted() {
+        // The binary swap or the service restart never landed: the running version is still the old
+        // one, so this boot is not the updated one the ledger was written for.
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_ledger(dir.path(), &ledger_of(UpdatePhase::Restarting));
+        assert_eq!(
+            recover_at_boot(dir.path(), "0.1.189"),
+            BootRecovery::Interrupted {
+                target_version: "0.1.190".into(),
+                during: UpdateStage::Restarting,
+            }
+        );
+    }
 
     #[test]
     fn version_less_than_compares_numerically() {
