@@ -133,6 +133,13 @@ export async function fetchOpenRouterModels(
   return api.json("/providers/openrouter/models/top");
 }
 
+export async function fetchClaudeModels(
+  api: ApiClient,
+  name: string,
+): Promise<OpenRouterModelOption[]> {
+  return api.json(`/agents/${encodeURIComponent(name)}/provider/models`);
+}
+
 export async function validateOpenRouterKey(
   api: ApiClient,
   key: string,

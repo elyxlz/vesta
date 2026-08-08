@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   completeClaudeOAuth,
   completeOpenAIOAuth,
+  fetchClaudeModels,
   fetchManifest,
   fetchOpenRouterModels,
   fetchUsage,
@@ -36,6 +37,13 @@ function isKeyProviderKind(kind: ProviderKind): kind is KeyProviderKind {
   return kind === "openrouter" || kind === "zai" || kind === "kimi";
 }
 
+// The two Claude aliases offered ahead of the live catalog, so the picker still shows
+// something useful when the live fetch fails or the account has not signed in yet.
+const CLAUDE_ALIASES = [
+  { label: "Opus", value: "opus" },
+  { label: "Sonnet", value: "sonnet" },
+];
+
 export function ProviderSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
@@ -61,6 +69,13 @@ export function ProviderSection() {
     enabled:
       provider.data?.kind === "openrouter" ||
       (provider.data?.kind === "none" && authKind === "openrouter"),
+  });
+  const claudeModels = useQuery({
+    queryKey: ["claude-models", name],
+    queryFn: () => fetchClaudeModels(api, name),
+    enabled:
+      provider.data?.kind === "claude" ||
+      (provider.data?.kind === "none" && authKind === "claude"),
   });
   const [oauthSession, setOauthSession] = useState("");
   const [oauthCode, setOauthCode] = useState("");
@@ -123,12 +138,20 @@ export function ProviderSection() {
           label: model.label,
           value: model.slug,
         }))
-      : entry?.models === "live"
-        ? []
-        : (entry?.models ?? []).map((model) => ({
-            label: entry?.model_names?.[model] ?? model,
-            value: model,
-          }));
+      : providerKind === "claude"
+        ? [
+            ...CLAUDE_ALIASES,
+            ...(claudeModels.data ?? []).map((model) => ({
+              label: model.label,
+              value: model.slug,
+            })),
+          ]
+        : entry?.models === "live"
+          ? []
+          : (entry?.models ?? []).map((model) => ({
+              label: entry?.model_names?.[model] ?? model,
+              value: model,
+            }));
 
   const chooseModel = () => {
     const options = modelOptions.slice(0, 12).map((option) => ({
