@@ -14,6 +14,7 @@ export function ModelStep({
   onModelChange,
   onSubmit,
   models,
+  claudeMode,
   allowCustom = true,
   submitLabel = "continue",
   logo,
@@ -25,6 +26,12 @@ export function ModelStep({
   /// Fixed model list (e.g. Claude opus/sonnet/haiku). When provided, the step
   /// shows just these and skips the OpenRouter fetch, search, and custom-slug.
   models?: OpenRouterModelOption[];
+  /// Claude's two-tier picker: two alias buttons plus an expandable live-slug
+  /// list. Takes over the render before isFixed/customMode/OpenRouter.
+  claudeMode?: {
+    aliases: OpenRouterModelOption[];
+    liveModels: OpenRouterModelOption[] | null;
+  };
   allowCustom?: boolean;
   submitLabel?: string;
   logo?: ReactNode;
@@ -39,6 +46,7 @@ export function ModelStep({
     models ?? null,
   );
   const [customMode, setCustomMode] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // Mirrors the model state so the one-shot fetch below can read the value
   // current at resolve time without depending on it.
@@ -51,7 +59,7 @@ export function ModelStep({
   };
 
   useEffect(() => {
-    if (isFixed) return;
+    if (isFixed || claudeMode) return;
     let cancelled = false;
     openrouterProvider
       .fetchTopModels()
@@ -71,7 +79,7 @@ export function ModelStep({
     return () => {
       cancelled = true;
     };
-  }, [isFixed, onModelChange]);
+  }, [isFixed, claudeMode, onModelChange]);
 
   const filtered = useMemo(() => {
     if (!topModels) return [];
@@ -90,9 +98,7 @@ export function ModelStep({
     <ProviderStep
       logo={logo}
       title="pick a model"
-      subtitle={
-        isFixed ? "choose a model." : "top models on OpenRouter this week."
-      }
+      subtitle={modelStepSubtitle(claudeMode !== undefined, isFixed)}
       submitLabel={submitLabel}
       submitDisabled={!canContinue}
       onSubmit={() => {
@@ -102,7 +108,15 @@ export function ModelStep({
     >
       <FieldGroup className="w-full gap-3">
         <Field>
-          {isFixed ? (
+          {claudeMode ? (
+            <ClaudeModelPicker
+              claudeMode={claudeMode}
+              model={model}
+              onSelect={setModel}
+              expanded={expanded}
+              onToggleExpanded={() => setExpanded((v) => !v)}
+            />
+          ) : isFixed ? (
             <ModelCardList
               models={filtered}
               selected={model}
@@ -154,6 +168,68 @@ export function ModelStep({
         </Field>
       </FieldGroup>
     </ProviderStep>
+  );
+}
+
+function modelStepSubtitle(hasClaudeMode: boolean, isFixed: boolean): string {
+  if (hasClaudeMode) return "pick a model.";
+  if (isFixed) return "choose a model.";
+  return "top models on OpenRouter this week.";
+}
+
+// The Claude two-tier control: two primary alias buttons (opus/sonnet) plus an
+// expandable live-slug list. Alias and slug selection are mutually exclusive
+// because both write the one `model` value via `onSelect`.
+function ClaudeModelPicker({
+  claudeMode,
+  model,
+  onSelect,
+  expanded,
+  onToggleExpanded,
+}: {
+  claudeMode: {
+    aliases: OpenRouterModelOption[];
+    liveModels: OpenRouterModelOption[] | null;
+  };
+  model: string;
+  onSelect: (slug: string) => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) {
+  return (
+    <div className="flex w-full flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2">
+        {claudeMode.aliases.map((a) => (
+          <button
+            key={a.slug}
+            type="button"
+            onClick={() => onSelect(a.slug)}
+            className={`rounded-xl border p-3 text-center text-sm font-medium transition-all cursor-pointer ${
+              model === a.slug
+                ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
+                : "border-border bg-input/30 hover:bg-input/60"
+            }`}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
+        onClick={onToggleExpanded}
+      >
+        {expanded ? "← fewer models" : "more models →"}
+      </button>
+      {expanded && (
+        <ModelCardList
+          models={claudeMode.liveModels ?? []}
+          selected={model}
+          onSelect={onSelect}
+          loading={claudeMode.liveModels === null}
+        />
+      )}
+    </div>
   );
 }
 
