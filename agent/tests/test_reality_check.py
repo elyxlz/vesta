@@ -106,7 +106,7 @@ def test_this_agent_filling_the_disk_goes_red(tmp_path):
     assert "25000MB" in run.stdout
 
 
-def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
+def test_a_busy_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
     """A RED the agent cannot clear teaches it to carry REDs, which is the one thing the probe
     forbids. The host figure still gets reported, as context rather than as a fault."""
     home = _healthy_home(tmp_path)
@@ -120,6 +120,21 @@ def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
     assert "300MB" in run.stdout
     # Pins the context branch itself: dropping to the plain OK line would also pass the figures.
     assert "not yours to clear" in run.stdout
+
+
+def test_a_host_disk_at_the_ceiling_goes_red(tmp_path):
+    """Above the context band the host figure is the agent's problem too, because writes start
+    failing everywhere; the probe exists to catch exactly that, so a full host cannot read green."""
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 100)
+    _fake_own_usage(home, 300)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "100%" in run.stdout
+    # Pins the escalation, since the own-usage RED would also fire on a returncode check alone.
+    assert "escalate it to the user or vestad" in run.stdout
 
 
 def test_a_du_walk_that_never_finishes_goes_red(tmp_path):
