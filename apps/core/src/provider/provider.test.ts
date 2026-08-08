@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  canonicalClaudeModel,
   normalizeProviderInfo,
   providerPutBody,
   resolveProviderIdentity,
@@ -50,6 +51,7 @@ describe("normalizeProviderInfo", () => {
     expect(normalizeProviderInfo({ authed: false })).toEqual({
       kind: "none",
       model: null,
+      resolved_model: null,
       max_context_tokens: null,
       authed: false,
       plan: null,
@@ -64,6 +66,7 @@ describe("resolveProviderIdentity", () => {
         {
           kind: "openai",
           model: "gpt-5.6-sol",
+          resolved_model: null,
           max_context_tokens: null,
           authed: true,
           plan: null,
@@ -95,6 +98,7 @@ describe("resolveProviderIdentity", () => {
     const provider = {
       kind: "claude" as const,
       model: "opus",
+      resolved_model: null,
       max_context_tokens: null,
       authed: true,
       plan: null,
@@ -134,12 +138,26 @@ describe("resolveProviderIdentity", () => {
       resolveProviderIdentity({ ...provider, model: "claude-3-5-sonnet-20241022" }, manifest)
         ?.modelName,
     ).toBe("claude-3-5-sonnet-20241022")
+    expect(
+      resolveProviderIdentity({ ...provider, resolved_model: "claude-opus-4-8" }, manifest)
+        ?.modelName,
+    ).toBe("Opus 4.8")
+    expect(
+      resolveProviderIdentity({ ...provider, model: "opus-latest" }, manifest)?.modelName,
+    ).toBe("Opus")
+    expect(
+      resolveProviderIdentity(
+        { ...provider, model: "sonnet-latest", resolved_model: "claude-sonnet-5" },
+        manifest,
+      )?.modelName,
+    ).toBe("Sonnet 5")
   })
 
   it("falls back to wire identifiers and hides disconnected providers", () => {
     const provider = {
       kind: "openrouter" as const,
       model: "author/model",
+      resolved_model: null,
       max_context_tokens: null,
       authed: true,
       plan: null,
@@ -149,5 +167,14 @@ describe("resolveProviderIdentity", () => {
       modelName: "author/model",
     })
     expect(resolveProviderIdentity({ ...provider, authed: false }, undefined)).toBeNull()
+  })
+})
+
+describe("canonicalClaudeModel", () => {
+  it("maps legacy bare aliases to the -latest form and leaves the rest alone", () => {
+    expect(canonicalClaudeModel("opus")).toBe("opus-latest")
+    expect(canonicalClaudeModel("sonnet")).toBe("sonnet-latest")
+    expect(canonicalClaudeModel("opus-latest")).toBe("opus-latest")
+    expect(canonicalClaudeModel("claude-opus-4-8")).toBe("claude-opus-4-8")
   })
 })

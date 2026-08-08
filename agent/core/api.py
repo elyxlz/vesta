@@ -312,6 +312,9 @@ async def _provider_get_handler(request: web.Request) -> web.Response:
     # picker can restrict >200K windows to Max, the only plan entitled to the 1M-context beta.
     if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is not None:
         body["plan"] = config.provider.oauth.subscription_type
+    # The concrete model the live session runs as, so clients can label a floating alias exactly.
+    if state.resolved_model is not None:
+        body["resolved_model"] = state.resolved_model
     return web.json_response(body)
 
 

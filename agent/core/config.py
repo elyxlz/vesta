@@ -184,8 +184,12 @@ def provider_auxiliary_model(kind: ProviderKind) -> str | None:
 
 
 def provider_harness_model(kind: ProviderKind, model: str, context: int) -> str:
-    """Apply catalog-declared Claude-harness model suffixes without transport constants in code."""
+    """Apply catalog-declared Claude-harness model suffixes without transport constants in code.
+    The stored Claude aliases carry a -latest suffix so the config is self-documenting; the CLI
+    knows them as bare "opus"/"sonnet", so the suffix is stripped here, the one harness-model owner."""
     base_model = model.removesuffix("[1m]")
+    if kind == "claude":
+        base_model = base_model.removesuffix("-latest")
     policy = _provider_model_policy(kind, base_model)
     if policy is not None and policy.harness_suffix_above is not None and context > policy.harness_suffix_above:
         return f"{base_model}[1m]"
@@ -209,7 +213,7 @@ def _validate_catalog_provider(kind: str, model: str, max_context_tokens: int | 
 # New-agent defaults, read from the manifest (the one source) so they aren't restated in code.
 DEFAULT_PROVIDER = _MANIFEST_MODEL.default_provider
 _DEFAULT_PERSONALITY = _MANIFEST_MODEL.default_personality
-_DEFAULT_CLAUDE_MODEL = _MANIFEST_MODEL.providers["claude"].default_model or "opus"
+_DEFAULT_CLAUDE_MODEL = _MANIFEST_MODEL.providers["claude"].default_model or "opus-latest"
 
 # claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback when the user
 # hasn't explicitly chosen a context window.

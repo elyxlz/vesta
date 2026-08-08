@@ -98,14 +98,14 @@ function providerResult(
 }
 
 // The initial model-step selection: the in-progress choice wins, else Claude
-// defaults to the "opus" alias, else the manifest's per-provider default.
+// defaults to the "opus-latest" alias, else the manifest's per-provider default.
 function modelStepInitialModel(
   provider: ProviderMode | null,
   model: string,
   manifest: Manifest,
 ): string {
   if (model) return model;
-  if (provider === "claude") return "opus";
+  if (provider === "claude") return "opus-latest";
   if (provider === null) return "";
   return manifest.providers[provider]?.default_model ?? "";
 }

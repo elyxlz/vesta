@@ -68,10 +68,10 @@ class Client:
     def fetch_agent_defaults(self) -> dict[str, Any]:
         # Read straight from the manifest, the single source of these defaults (the default provider's
         # default model + the default personality). A missing key is a real error, not a silent default.
-        # A live catalog (default_model null) has no manifest default, so fall back to the "opus" alias.
+        # A live catalog (default_model null) has no manifest default, so fall back to the "opus-latest" alias.
         manifest = self.fetch_manifest()
         provider = manifest["providers"][manifest["default_provider"]]
-        return {"model": provider["default_model"] or "opus", "personality": manifest["default_personality"]}
+        return {"model": provider["default_model"] or "opus-latest", "personality": manifest["default_personality"]}
 
     def fetch_personalities(self) -> list[dict[str, Any]]:
         # The personality catalog the manifest carries (merged from the skill presets by vestad).
@@ -83,7 +83,7 @@ class Client:
         # two stable aliases. Shape either into {id} entries for the picker.
         models = self.fetch_manifest()["providers"]["claude"]["models"]
         if models == "live":
-            return [{"id": "opus"}, {"id": "sonnet"}]
+            return [{"id": "opus-latest"}, {"id": "sonnet-latest"}]
         return [{"id": slug} for slug in models]
 
     # --- control plane: account pre-create (authed as THIS vesta) ------------

@@ -9,6 +9,7 @@ import { ProviderIcon } from "../ProviderIcon";
 import { ProviderStep } from "../ProviderStep";
 import { fuzzyMatch } from "../fuzzy";
 import { CLAUDE_ALIASES } from "../model-options";
+import { canonicalClaudeModel } from "@vesta/core";
 
 export function ModelStep({
   initialModel,
@@ -37,9 +38,10 @@ export function ModelStep({
 }) {
   const isFixed = models !== undefined;
   const isClaude = claudeLiveModels !== undefined;
-  const [model, setModelInternal] = useState(
-    initialModel || (models?.[0]?.slug ?? ""),
-  );
+  const [model, setModelInternal] = useState(() => {
+    const initial = initialModel || (models?.[0]?.slug ?? "");
+    return isClaude ? canonicalClaudeModel(initial) : initial;
+  });
   const [query, setQuery] = useState("");
   const [topModels, setTopModels] = useState<OpenRouterModelOption[] | null>(
     models ?? null,

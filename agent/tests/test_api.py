@@ -582,6 +582,32 @@ async def test_provider_get_surfaces_claude_plan_tier():
 
 
 @pytest.mark.anyio
+async def test_provider_get_surfaces_the_resolved_model():
+    # A floating alias like "opus" stays in config; the live session reports the concrete model it
+    # resolved to, and /provider surfaces it so clients can label the alias exactly.
+    import core.api as api_mod
+    from core.config import ClaudeConfig
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config = cfg.VestaConfig.model_construct(provider=ClaudeConfig())
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+    state.resolved_model = "claude-opus-4-8"
+
+    class _Req:
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
+
+    resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
+    body = json.loads(typing.cast("str", resp.text))
+    assert body["resolved_model"] == "claude-opus-4-8"
+
+    state.resolved_model = None
+    resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
+    assert "resolved_model" not in json.loads(typing.cast("str", resp.text))
+
+
+@pytest.mark.anyio
 async def test_status_reports_unprovisioned_distinct_from_unauthenticated(config):
     # A fresh agent (no provider chosen) reports provider_configured=False, so vestad can show
     # "needs first sign-in" rather than "re-authenticate".

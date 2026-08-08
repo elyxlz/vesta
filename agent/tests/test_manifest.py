@@ -50,8 +50,19 @@ def test_model_defaults_come_from_the_manifest():
     # Claude's catalog is live, so it has no manifest default; the code-owned fallback applies instead.
     manifest = _manifest()
     assert manifest["providers"]["claude"]["default_model"] is None
-    assert ClaudeConfig().model == "opus"
+    assert ClaudeConfig().model == "opus-latest"
     assert VestaConfig().agent_personality == manifest["default_personality"]
+
+
+def test_claude_latest_aliases_reach_the_harness_bare():
+    # The stored -latest form is config-facing only: the CLI resolves the bare alias itself, and a
+    # legacy bare alias or a pinned slug passes through unchanged.
+    from core.config import provider_harness_model
+
+    assert provider_harness_model("claude", "opus-latest", 1_000_000) == "opus"
+    assert provider_harness_model("claude", "sonnet-latest", 200_000) == "sonnet"
+    assert provider_harness_model("claude", "opus", 1_000_000) == "opus"
+    assert provider_harness_model("claude", "claude-opus-4-8", 1_000_000) == "claude-opus-4-8"
 
 
 def test_openrouter_requires_a_key():

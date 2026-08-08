@@ -9,20 +9,20 @@ describe("ModelStep claude two-tier", () => {
     const onSubmit = vi.fn();
     render(
       <ModelStep
-        initialModel="opus"
+        initialModel="opus-latest"
         onSubmit={onSubmit}
         claudeLiveModels={null}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /^Sonnet$/ }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    expect(onSubmit).toHaveBeenCalledWith("sonnet");
+    expect(onSubmit).toHaveBeenCalledWith("sonnet-latest");
   });
 
   it("shows a specific slug once the live list expands", () => {
     render(
       <ModelStep
-        initialModel="opus"
+        initialModel="opus-latest"
         onSubmit={vi.fn()}
         claudeLiveModels={[
           {

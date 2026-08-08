@@ -131,7 +131,7 @@ describe("ProviderPicker defaults-only onboarding", () => {
     expect(onDone).toHaveBeenCalledWith({
       kind: "claude",
       credentials: CLAUDE_CREDS,
-      model: "opus",
+      model: "opus-latest",
       maxContextTokens: 200_000,
     });
   });

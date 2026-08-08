@@ -39,6 +39,7 @@ vi.mock("./use-usage", () => ({
 const claudeProviderInfo: ProviderInfo = {
   kind: "claude",
   model: "sonnet",
+  resolved_model: null,
   max_context_tokens: null,
   authed: true,
   plan: null,
@@ -82,7 +83,7 @@ describe("ProviderCard claude model switcher", () => {
     fireEvent.click(screen.getByRole("button", { name: /switch model/i }));
 
     await waitFor(() =>
-      expect(setModelSpy).toHaveBeenCalledWith("apollo", "sonnet"),
+      expect(setModelSpy).toHaveBeenCalledWith("apollo", "sonnet-latest"),
     );
   });
 
