@@ -11,6 +11,7 @@ Routes:
   - PUT  /provider             sign in / switch provider (OAuth or subscription/provider key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
+  - GET  /provider/models      the signed-in Claude account's live model catalog
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 
@@ -30,6 +31,7 @@ import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
+from . import claude_models
 from .config import (
     ClaudeConfig,
     KeyProviderKind,
@@ -399,6 +401,19 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def _provider_models_handler(_request: web.Request) -> web.Response:
+    """The signed-in Claude account's live model catalog, for the settings model picker."""
+    token = claude_models.read_claude_access_token()
+    if token is None:
+        return web.json_response({"error": "no claude credentials"}, status=409)
+    try:
+        models = await claude_models.fetch_claude_models(token)
+    except _aiohttp.ClientError as exc:
+        logger.error("claude models fetch failed: %s", exc)
+        return web.json_response({"error": "claude models fetch failed"}, status=502)
+    return web.json_response(models)
+
+
 async def _memory_get_handler(request: web.Request) -> web.Response:
     """Return current contents of MEMORY.md."""
     config: VestaConfig = request.app["config"]
@@ -461,6 +476,7 @@ async def start_ws_server(
     app.router.add_get("/config", _config_get_handler)
     app.router.add_put("/config", _config_put_handler)
     app.router.add_get("/provider", _provider_get_handler)
+    app.router.add_get("/provider/models", _provider_models_handler)
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)
     app.router.add_delete("/provider", _provider_delete_handler)
