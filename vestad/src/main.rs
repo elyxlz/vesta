@@ -986,7 +986,7 @@ fn main() {
         }
 
         Command::Update => {
-            let outcome = update::perform_update(channel::Channel::effective())
+            let outcome = update::update_from_cli(channel::Channel::effective())
                 .unwrap_or_else(|e| die(e.to_string()));
             if outcome.updated {
                 println!("✓ updated v{} → v{}", outcome.current, outcome.latest);

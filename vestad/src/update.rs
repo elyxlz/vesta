@@ -46,10 +46,6 @@ pub(crate) fn version_less_than(a: &str, b: &str) -> bool {
     parse(a) < parse(b)
 }
 
-pub fn fetch_latest_tag(channel: Channel) -> Option<String> {
-    fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS), channel).ok()
-}
-
 // Persisted across restarts so the conditional request below keeps working
 // after vestad bounces. GitHub does not count a 304 response against the
 // unauthenticated rate limit, so a stored ETag makes steady-state polling free.
@@ -534,16 +530,17 @@ pub struct UpdateOutcome {
     pub latest: String,
 }
 
-/// Downloads the latest vestad binary from GitHub, replaces the current binary,
-/// and restarts the systemd service. Agent code and container restarts are
-/// handled on the next vestad startup.
-/// No-op when the running version is already at or above the latest release on the
-/// given channel. Channel switching never downgrades: a stable channel whose latest
-/// is older than the running (beta) version is simply a no-op.
-pub fn perform_update(channel: crate::channel::Channel) -> Result<UpdateOutcome, UpdateError> {
+/// `vestad update` from a terminal: the same release resolve, the same binary swap, and the same
+/// ledger the orchestrated update writes, so a CLI update that dies is recovered at the next daemon
+/// boot exactly like one asked for over the API. The operation slot is deliberately absent: it lives
+/// in the daemon this process is not, and the ledger is the durable half of the record anyway.
+/// No-op when the running version is already at or above the latest release on the given channel.
+/// Channel switching never downgrades: a stable channel whose latest is older than the running
+/// (beta) version is simply a no-op.
+pub fn update_from_cli(channel: crate::channel::Channel) -> Result<UpdateOutcome, UpdateError> {
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let latest = fetch_latest_tag(channel)
-        .ok_or_else(|| UpdateError::Download("cannot determine latest version".into()))?;
+    let latest = fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS), channel)
+        .map_err(|error| UpdateError::Download(format!("cannot determine latest version: {error}")))?;
 
     if !version_less_than(&current, &latest) {
         tracing::info!(current = %current, latest = %latest, "already up to date, skipping");
@@ -557,24 +554,27 @@ pub fn perform_update(channel: crate::channel::Channel) -> Result<UpdateOutcome,
 
     tracing::info!(tag = %latest, "starting update");
 
-    update_binary(&latest)?;
-
     // Don't reinstall the systemd service here — self-replace puts the new
     // binary at the same path, so the ExecStart line doesn't change. And
     // reading /proc/self/exe after self-replace returns the path with
     // " (deleted)" appended, which would break the service file.
     // The new binary calls ensure_service_installed() on startup if needed.
+    let restarted = crate::systemd::is_active();
+    apply_and_record(
+        crate::paths::config_dir().as_deref(),
+        &latest,
+        restarted,
+        update_binary,
+    )?;
 
-    let restarted = if crate::systemd::is_active() {
+    if restarted {
         tracing::info!("restarting vestad...");
         if let Err(e) = crate::systemd::restart() {
             tracing::error!("failed to restart: {e}");
         }
-        true
     } else {
         tracing::info!("updated. run 'vestad' to start.");
-        false
-    };
+    }
 
     Ok(UpdateOutcome {
         updated: true,
@@ -582,6 +582,48 @@ pub fn perform_update(channel: crate::channel::Channel) -> Result<UpdateOutcome,
         current,
         latest,
     })
+}
+
+/// Swap the binary between the two ledger writes that make the swap recoverable: `Applying` before
+/// it, `Restarting` after when something is going to restart into the new version. A swap that
+/// fails, or one nothing will restart, leaves no ledger at all, so the next boot reads a normal
+/// start rather than an interruption that never happened. `config_dir` is None only when HOME is
+/// unset, which costs the record and never the update.
+fn apply_and_record(
+    config_dir: Option<&Path>,
+    target: &str,
+    will_restart: bool,
+    swap: impl FnOnce(&str) -> Result<(), UpdateError>,
+) -> Result<(), UpdateError> {
+    let record = |phase| {
+        if let Some(dir) = config_dir {
+            write_ledger(
+                dir,
+                &UpdateLedger {
+                    target_version: target.to_string(),
+                    phase,
+                    warnings: Vec::new(),
+                },
+            );
+        }
+    };
+    let forget = || {
+        if let Some(dir) = config_dir {
+            clear_ledger(dir);
+        }
+    };
+
+    record(UpdatePhase::Applying);
+    if let Err(error) = swap(target) {
+        forget();
+        return Err(error);
+    }
+    if will_restart {
+        record(UpdatePhase::Restarting);
+    } else {
+        forget();
+    }
+    Ok(())
 }
 
 fn update_binary(tag: &str) -> Result<(), UpdateError> {
@@ -757,6 +799,40 @@ mod tests {
                 UpdatePhase::Snapshotting { agent: Some("scout".into()), done: 2, total: 3 },
             ]
         );
+    }
+
+    #[test]
+    fn the_cli_swap_records_exactly_what_the_next_boot_must_recover() {
+        // A swap that lands with a restart coming leaves the ledger that boot reads as the update
+        // landing; one that fails, and one nothing will restart, leave nothing to recover.
+        let cases = [
+            (true, true, Some(UpdatePhase::Restarting)),
+            (true, false, None),
+            (false, true, None),
+            (false, false, None),
+        ];
+        for (swap_ok, will_restart, expected) in cases {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let swapped_at = std::cell::Cell::new(None);
+            let result = apply_and_record(Some(dir.path()), "0.1.190", will_restart, |target| {
+                // The ledger is already durable when the binary is replaced, which is the whole
+                // point: a death inside the swap is what the next boot has to explain.
+                swapped_at.set(read_ledger(dir.path()).map(|ledger| ledger.phase));
+                assert_eq!(target, "0.1.190");
+                if swap_ok {
+                    Ok(())
+                } else {
+                    Err(UpdateError::Download("curl failed".into()))
+                }
+            });
+            assert_eq!(swapped_at.into_inner(), Some(UpdatePhase::Applying));
+            assert_eq!(result.is_ok(), swap_ok);
+            assert_eq!(
+                read_ledger(dir.path()).map(|ledger| ledger.phase),
+                expected,
+                "swap_ok {swap_ok}, will_restart {will_restart}"
+            );
+        }
     }
 
     #[test]
