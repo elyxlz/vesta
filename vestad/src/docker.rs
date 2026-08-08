@@ -1654,8 +1654,10 @@ pub async fn load_image_from_file(
     let mut loaded_image = String::new();
     while let Some(msg) = stream.next().await {
         let info = msg.map_err(|e| DockerError::Failed(format!("import failed: {e}")))?;
-        if let Some(status) = info.status {
-            if let Some(name) = status.strip_prefix(LOADED_IMAGE_PREFIX) {
+        // The daemon reports the loaded tag on the `stream` field (not `status`), terminated
+        // with a newline meant for direct terminal output: {"stream":"Loaded image: name:tag\n"}.
+        if let Some(line) = info.stream {
+            if let Some(name) = line.trim_end().strip_prefix(LOADED_IMAGE_PREFIX) {
                 loaded_image = name.to_string();
             }
         }
@@ -4228,6 +4230,40 @@ mod tests {
         fn drop(&mut self) {
             docker_cleanup(&["rmi", &self.tag]);
         }
+    }
+
+    /// Regression test for the daemon's real `/images/load` response shape: it reports the
+    /// loaded tag on the `stream` field (newline-terminated), never `status`. A minimal,
+    /// hermetic source image (`docker import` of a one-file tarball, no registry pull) keeps
+    /// this cheap so it runs on every Docker-gated pass rather than only the full bundle test.
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn save_and_load_image_round_trips_the_tag() {
+        let docker = test_docker();
+        let img = TestImage::new("save-load");
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let fs_tar = dir.path().join("fs.tar");
+        let file = std::fs::File::create(&fs_tar).expect("create fs tar");
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(5);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, "hello.txt", &b"hello"[..]).expect("append");
+        builder.into_inner().expect("finish tar");
+        let status = std::process::Command::new("docker")
+            .args(["import", &fs_tar.display().to_string(), &img.tag])
+            .status()
+            .expect("docker import runs");
+        assert!(status.success());
+
+        let saved = dir.path().join("image.tar");
+        save_image_to_file(&docker, &img.tag, &saved).await.expect("save");
+        docker_cleanup(&["rmi", &img.tag]);
+
+        let loaded = load_image_from_file(&docker, &saved).await.expect("load");
+        assert_eq!(loaded, img.tag, "load must report the same tag it was saved under");
     }
 
     /// Clean up a test agent network on drop.

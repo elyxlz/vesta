@@ -651,8 +651,65 @@ mod tests {
         std::env::var(crate::docker::AGENT_IMAGE_ENV).unwrap_or_else(|_| crate::docker::vesta_image())
     }
 
+    /// Plants fake OAuth credentials and a scrubbable `config.json` into `cname` via `docker cp`,
+    /// staged under `dir`. Shared by the scrub test and the export/import round-trip test.
+    fn plant_credentials(cname: &str, dir: &Path) {
+        let creds = dir.join(".credentials.json");
+        std::fs::write(&creds, r#"{"claudeAiOauth":{"accessToken":"secret"}}"#).expect("write creds");
+        let config_json = dir.join("config.json");
+        std::fs::write(
+            &config_json,
+            r#"{"provider":{"kind":"openrouter","key":"sk-secret","model":"m"},"timezone":"Europe/London"}"#,
+        )
+        .expect("write config");
+
+        let cp = |src: &Path, dst: &str| {
+            let status = std::process::Command::new("docker")
+                .args(["cp", &src.display().to_string(), &format!("{cname}:{dst}")])
+                .status()
+                .expect("docker cp runs");
+            assert!(status.success(), "docker cp {dst} failed");
+        };
+        // ~/.claude exists in the image (created by the Dockerfile), so the file cp lands directly.
+        cp(&creds, "/root/.claude/.credentials.json");
+        // /root/agent/data may be absent in a never-booted container, and docker cp cannot mkdir
+        // -p, so stage the whole data dir and cp the directory.
+        let data_dir = dir.join("data");
+        std::fs::create_dir_all(&data_dir).expect("mkdir data");
+        std::fs::copy(&config_json, data_dir.join("config.json")).expect("stage config");
+        cp(&data_dir, "/root/agent/data");
+    }
+
+    /// Runs the "no credentials, prefs retained" probe from the scrub test against `image`,
+    /// removing the throwaway verify container it starts. Shared by the scrub test and the
+    /// export/import round-trip test.
+    async fn assert_no_credentials(docker: &Docker, image: &str, verify_cname: &str) {
+        let exit = crate::docker::run_oneshot_container(
+            docker,
+            crate::docker::OneshotSpec {
+                image,
+                cname: verify_cname,
+                cmd: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "test ! -f /root/.claude/.credentials.json && \
+                     test ! -f /root/agent/data/claude-code-proxy/codex/auth.json && \
+                     grep -q Europe/London /root/agent/data/config.json && \
+                     ! grep -q sk-secret /root/agent/data/config.json"
+                        .into(),
+                ],
+                ro_binds: vec![],
+            },
+            60,
+        )
+        .await
+        .expect("verify runs");
+        assert_eq!(exit, 0, "image must have no credentials and keep prefs");
+        crate::docker::remove_container_force(docker, verify_cname).await.ok();
+    }
+
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires Docker + the local agent image"]
     async fn scrub_image_removes_credentials_and_clears_provider() {
         let docker = test_docker();
         let image = test_agent_image();
@@ -663,36 +720,13 @@ mod tests {
         // Build a fixture image with credentials planted: create (never start) a container from the
         // agent image, docker cp the files in, commit.
         let dir = tempfile::TempDir::new().expect("tempdir");
-        let creds = dir.path().join(".credentials.json");
-        std::fs::write(&creds, r#"{"claudeAiOauth":{"accessToken":"secret"}}"#).expect("write creds");
-        let config_json = dir.path().join("config.json");
-        std::fs::write(
-            &config_json,
-            r#"{"provider":{"kind":"openrouter","key":"sk-secret","model":"m"},"timezone":"Europe/London"}"#,
-        )
-        .expect("write config");
-
         crate::docker::create_plain_container(&docker, &image, &fixture_cname).await.expect("create fixture");
-        let cp = |src: &std::path::Path, dst: &str| {
-            let status = std::process::Command::new("docker")
-                .args(["cp", &src.display().to_string(), &format!("{fixture_cname}:{dst}")])
-                .status()
-                .expect("docker cp runs");
-            assert!(status.success(), "docker cp {dst} failed");
-        };
-        // ~/.claude exists in the image (created by the Dockerfile), so the file cp lands directly.
-        cp(&creds, "/root/.claude/.credentials.json");
-        // /root/agent/data may be absent in a never-booted image; docker cp cannot mkdir -p, so
-        // stage the whole data dir and cp the directory.
-        let data_dir = dir.path().join("data");
-        std::fs::create_dir_all(&data_dir).expect("mkdir data");
-        std::fs::copy(&config_json, data_dir.join("config.json")).expect("stage config");
-        cp(&data_dir, "/root/agent/data");
-        let status = std::process::Command::new("docker")
+        plant_credentials(&fixture_cname, dir.path());
+        let commit_status = std::process::Command::new("docker")
             .args(["commit", &fixture_cname, &fixture_image])
             .status()
             .expect("docker commit runs");
-        assert!(status.success());
+        assert!(commit_status.success());
 
         // Scrub. core_dir: extract the embedded agent code into a temp config dir, as the CLI does.
         let config_dir = tempfile::TempDir::new().expect("tempdir");
@@ -703,30 +737,184 @@ mod tests {
 
         // Verify inside the scrubbed image: both credential files gone, provider cleared, timezone kept.
         let verify_cname = format!("vesta-scrub-verify-{name}");
-        let exit = crate::docker::run_oneshot_container(
-            &docker,
-            crate::docker::OneshotSpec {
-                image: &scrubbed,
-                cname: &verify_cname,
-                cmd: vec!["sh".into(), "-c".into(),
-                    "test ! -f /root/.claude/.credentials.json && \
-                     test ! -f /root/agent/data/claude-code-proxy/codex/auth.json && \
-                     grep -q Europe/London /root/agent/data/config.json && \
-                     ! grep -q sk-secret /root/agent/data/config.json".into()],
-                ro_binds: vec![],
-            },
-            60,
-        )
-        .await
-        .expect("verify runs");
-        assert_eq!(exit, 0, "scrubbed image must have no credentials and keep prefs");
+        assert_no_credentials(&docker, &scrubbed, &verify_cname).await;
 
         // Cleanup.
-        for cname in [&fixture_cname, &verify_cname] {
-            crate::docker::remove_container_force(&docker, cname).await.ok();
-        }
+        crate::docker::remove_container_force(&docker, &fixture_cname).await.ok();
         for img in [&fixture_image, &scrubbed] {
             crate::docker::remove_image(&docker, img).await.ok();
         }
+    }
+
+    /// Removes a test agent network on drop, mirroring `docker.rs`'s own `TestNetwork`
+    /// (private to that module's tests, so not reusable here).
+    struct TestNetwork {
+        name: String,
+    }
+
+    impl Drop for TestNetwork {
+        fn drop(&mut self) {
+            std::process::Command::new("docker").args(["network", "rm", &self.name]).status().ok();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker + the local agent image"]
+    async fn export_import_round_trip_reproduces_agent_without_credentials() {
+        let docker = test_docker();
+        let source_name = format!("exp-src-{}", std::process::id());
+        let target_name = format!("exp-dst-{}", std::process::id());
+        let config_dir = tempfile::TempDir::new().expect("tempdir");
+        let agents_dir = config_dir.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).expect("agents dir");
+        let code_dir = crate::agent_code::ensure_agent_code(config_dir.path()).expect("agent code");
+        crate::upstream::ensure_upstream(config_dir.path(), &code_dir).expect("upstream");
+        let env_config = crate::docker::AgentEnvConfig {
+            config_dir: config_dir.path().to_path_buf(),
+            agents_dir: agents_dir.clone(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let _source_net = TestNetwork { name: crate::docker::agent_network_name(&source_name) };
+        let _target_net = TestNetwork { name: crate::docker::agent_network_name(&target_name) };
+
+        // Source agent: created (never started), credentials planted as in the scrub test.
+        let src_cname = crate::docker::container_name(&source_name);
+        let port = crate::docker::allocate_port().expect("port");
+        crate::docker::create_container(
+            &docker,
+            &env_config,
+            crate::docker::ContainerSpec {
+                cname: &src_cname,
+                image: &test_agent_image(),
+                port,
+                agent_name: &source_name,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create source");
+        let creds_dir = tempfile::TempDir::new().expect("tempdir");
+        plant_credentials(&src_cname, creds_dir.path());
+        std::fs::write(crate::docker::constitution_host_path(&agents_dir, &source_name), "be kind").expect("constitution");
+
+        let bundle_path = config_dir.path().join("agent.tar.gz");
+        export_agent(
+            &docker,
+            ExportRequest {
+                name: &source_name,
+                output: &bundle_path,
+                core_dir: &code_dir.join("core"),
+                constitution: "be kind".into(),
+                user_desired: crate::settings::UserDesired::Stopped,
+                mounts: vec![crate::mounts::HostMount {
+                    host_path: "/tmp".into(),
+                    container_path: "/mnt/t".into(),
+                    writable: false,
+                }],
+            },
+        )
+        .await
+        .expect("export");
+
+        let outcome = import_agent(
+            &docker,
+            ImportRequest {
+                input: &bundle_path,
+                name_override: Some(&target_name),
+                env_config: &env_config,
+            },
+        )
+        .await
+        .expect("import");
+        assert_eq!(outcome.name, target_name);
+        let manifest = outcome.manifest.expect("bundle manifest");
+        assert_eq!(manifest.agent_name, source_name);
+        assert_eq!(manifest.user_desired, crate::settings::UserDesired::Stopped);
+        assert_eq!(manifest.mounts.len(), 1);
+
+        // Stopped stays stopped: the imported container exists but is not running.
+        let dst_cname = crate::docker::container_name(&target_name);
+        assert_eq!(
+            crate::docker::container_status(&docker, &dst_cname).await,
+            crate::docker::ContainerStatus::Stopped
+        );
+        // Constitution landed on the new host side.
+        let imported_constitution =
+            std::fs::read_to_string(crate::docker::constitution_host_path(&agents_dir, &target_name)).expect("read constitution");
+        assert_eq!(imported_constitution, "be kind");
+
+        // No credentials inside the imported container: commit it and reuse the scrub-test probe.
+        let target_verify_image = format!("vesta-export-verify:{target_name}");
+        let commit_status = std::process::Command::new("docker")
+            .args(["commit", &dst_cname, &target_verify_image])
+            .status()
+            .expect("docker commit runs");
+        assert!(commit_status.success());
+        let verify_cname = format!("vesta-export-verify-run-{target_name}");
+        assert_no_credentials(&docker, &target_verify_image, &verify_cname).await;
+
+        // Cleanup: containers, the loaded scrubbed image (re-tagged from the source name on
+        // load), the verify image, and the bundle. Networks clean up via TestNetwork's Drop.
+        crate::docker::remove_container_force(&docker, &src_cname).await.ok();
+        crate::docker::remove_container_force(&docker, &dst_cname).await.ok();
+        crate::docker::remove_image(&docker, &target_verify_image).await.ok();
+        crate::docker::remove_image(&docker, &format!("vesta-export-{source_name}:scrubbed")).await.ok();
+        std::fs::remove_file(&bundle_path).ok();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker + the local agent image"]
+    async fn import_legacy_gzipped_image_creates_and_starts_agent() {
+        let docker = test_docker();
+        let image = test_agent_image();
+        let target_name = format!("exp-legacy-{}", std::process::id());
+        let config_dir = tempfile::TempDir::new().expect("tempdir");
+        let agents_dir = config_dir.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).expect("agents dir");
+        let code_dir = crate::agent_code::ensure_agent_code(config_dir.path()).expect("agent code");
+        crate::upstream::ensure_upstream(config_dir.path(), &code_dir).expect("upstream");
+        let env_config = crate::docker::AgentEnvConfig {
+            config_dir: config_dir.path().to_path_buf(),
+            agents_dir,
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let _target_net = TestNetwork { name: crate::docker::agent_network_name(&target_name) };
+
+        // A legacy export: a gzipped `docker save` tar with no manifest.
+        let tar_path = config_dir.path().join("legacy-image.tar");
+        crate::docker::save_image_to_file(&docker, &image, &tar_path).await.expect("save image");
+        let legacy_path = config_dir.path().join("legacy.tar.gz");
+        let mut input = std::fs::File::open(&tar_path).expect("open tar");
+        let output = std::fs::File::create(&legacy_path).expect("create gz");
+        let mut encoder = flate2::write::GzEncoder::new(output, flate2::Compression::default());
+        std::io::copy(&mut input, &mut encoder).expect("gzip tar");
+        encoder.finish().expect("finish gzip");
+        std::fs::remove_file(&tar_path).ok();
+
+        let outcome = import_agent(
+            &docker,
+            ImportRequest {
+                input: &legacy_path,
+                name_override: Some(&target_name),
+                env_config: &env_config,
+            },
+        )
+        .await
+        .expect("import legacy");
+        assert_eq!(outcome.name, target_name);
+        assert!(outcome.manifest.is_none());
+
+        let dst_cname = crate::docker::container_name(&target_name);
+        assert_eq!(
+            crate::docker::container_status(&docker, &dst_cname).await,
+            crate::docker::ContainerStatus::Running
+        );
+
+        // Cleanup: container and bundle file. The image tag is the pre-existing base agent
+        // image (docker save/load round-trips the tag unchanged), so it is left alone.
+        crate::docker::remove_container_force(&docker, &dst_cname).await.ok();
+        std::fs::remove_file(&legacy_path).ok();
     }
 }
