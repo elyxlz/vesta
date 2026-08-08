@@ -100,6 +100,18 @@ else
     bad "notifications dir is not writable: every producer is silently mute"
 fi
 
+# Append-only history. A single run can only say "how many REDs right now", which is the same
+# one-night horizon that let this probe silently stop being run for three nights in Aug 2026
+# without anyone noticing. Recording every run means the SERIES is checkable and, more importantly,
+# a GAP in it is itself the finding: the gauge cannot quietly lapse without leaving a hole.
+rc_hist="$HOME/agent/data/reality-history.tsv"
+mkdir -p "$(dirname "$rc_hist")" 2>/dev/null
+printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$red" >> "$rc_hist"
+
+prior=$(tail -n 6 "$rc_hist" 2>/dev/null | awk '{printf "%s ", $2}')
+[ -n "$prior" ] && printf 'RED count over last runs (oldest first): %s\n' "$prior"
+printf 'last run recorded: %s\n' "$(tail -n 1 "$rc_hist" | cut -f1)"
+
 if [ "$red" -gt 0 ]; then
     printf '%s RED: fix each tonight or write the reason off in the summary.\n' "$red"
     exit 1
