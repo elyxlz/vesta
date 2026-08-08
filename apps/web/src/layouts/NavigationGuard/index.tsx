@@ -24,7 +24,14 @@ export function NavigationGuard() {
     return <Navigate to="/" replace />;
   }
 
-  if (agentsFetched && agents.length === 0 && location.pathname !== "/new") {
+  // Not while an update runs: /new is unreachable then, so this redirect would ping-pong with the
+  // one above, and home is the update screen regardless of the roster.
+  if (
+    updateOperation === null &&
+    agentsFetched &&
+    agents.length === 0 &&
+    location.pathname !== "/new"
+  ) {
     return <Navigate to="/new" replace />;
   }
 

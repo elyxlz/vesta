@@ -16,6 +16,7 @@ import {
   checkForGatewayUpdate,
   devicesEqual,
   dismissGatewayUpdate as requestDismissUpdate,
+  gatewayOperationsEqual,
   rosterFromTree,
   rostersEqual,
   selectDevices,
@@ -74,6 +75,8 @@ function useUpdateResolution(
   useEffect(() => {
     // The empty version is "no gateway branch yet", which resolves nothing either way.
     if (operation !== null) {
+      // A new operation supersedes a still-showing notice.
+      setUpdatedTo(null);
       if (versionBeforeUpdate.current === "")
         versionBeforeUpdate.current = version;
       return;
@@ -99,6 +102,7 @@ function ReplicaGateway({
   const updateOperation = useReplica(
     controller.replica,
     selectGatewayOperation,
+    gatewayOperationsEqual,
   );
   const agents = useReplica(controller.replica, rosterFromTree, rostersEqual);
   const devices = useReplica(controller.replica, selectDevices, devicesEqual);

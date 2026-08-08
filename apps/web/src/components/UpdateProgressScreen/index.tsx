@@ -36,9 +36,12 @@ export function UpdateProgressScreen() {
 
   const failed = updateOperation.phase === "failed";
 
+  // The flag covers only the request itself; once vestad answers, the operation's phase owns this
+  // screen. A granted retry that kept the flag would leave a second failure's retry stuck.
   const handleRetry = async () => {
     setRetrying(true);
-    if (!(await triggerGatewayUpdate())) setRetrying(false);
+    await triggerGatewayUpdate();
+    setRetrying(false);
   };
 
   return (
@@ -53,7 +56,7 @@ export function UpdateProgressScreen() {
           {failed
             ? (updateOperation.error ??
               "the update stopped before it finished. your agents are untouched.")
-            : "Vesta backs up every agent before installing, so this can take a few minutes. keep the app open."}
+            : "your gateway backs up every agent before installing, so this can take a few minutes. keep the app open."}
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>

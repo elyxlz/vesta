@@ -2,41 +2,34 @@ import type { GatewayUpdateOperation, GatewayUpdatePhase, Tree } from "../protoc
 
 const PHASES: readonly GatewayUpdatePhase[] = ["snapshotting", "applying", "restarting", "failed"]
 
-function record(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null
-}
-
-function str(value: unknown): string | null {
-  return typeof value === "string" ? value : null
-}
-
-function num(value: unknown): number | null {
-  return typeof value === "number" ? value : null
-}
-
-// The one reader of the gateway's operation branch, for every app. The phase is the one field worth
-// narrowing: an app that met a phase from a newer gateway and rendered it as "something is happening"
-// would lock the user on a screen it cannot describe or resolve, so an unknown phase reads as idle.
+// The one reader of the gateway's operation branch, for every app. The shape is trusted like every
+// sibling tree field (vestad's serialization is contract-tested at the fixture seam); the phase is
+// the one field narrowed, because an app that met a phase from a newer gateway and rendered it as
+// "something is happening" would lock the user on a screen it cannot describe or resolve, so an
+// unknown phase reads as idle.
 export function selectGatewayOperation(tree: Tree | null): GatewayUpdateOperation | null {
-  const operation = record(tree?.gateway.operation)
-  if (operation === null) return null
-  const phase = str(operation.phase)
-  if (phase === null || !PHASES.includes(phase as GatewayUpdatePhase)) return null
-  const targetVersion = str(operation.targetVersion)
-  if (targetVersion === null) return null
-  const warnings = Array.isArray(operation.warnings)
-    ? operation.warnings.filter((warning): warning is string => typeof warning === "string")
-    : []
-  return {
-    kind: "update",
-    phase: phase as GatewayUpdatePhase,
-    agent: str(operation.agent),
-    done: num(operation.done),
-    total: num(operation.total),
-    targetVersion,
-    warnings,
-    error: str(operation.error),
-  }
+  const operation = tree?.gateway.operation ?? null
+  if (operation === null || !PHASES.includes(operation.phase)) return null
+  return operation
+}
+
+// Structural equality for the replica subscription: every delta rebuilds the tree, so the selected
+// operation must compare by value or each delta would read as a change and re-render.
+export function gatewayOperationsEqual(
+  a: GatewayUpdateOperation | null,
+  b: GatewayUpdateOperation | null,
+): boolean {
+  if (a === null || b === null) return a === b
+  return (
+    a.phase === b.phase &&
+    a.agent === b.agent &&
+    a.done === b.done &&
+    a.total === b.total &&
+    a.targetVersion === b.targetVersion &&
+    a.error === b.error &&
+    a.warnings.length === b.warnings.length &&
+    a.warnings.every((warning, index) => b.warnings[index] === warning)
+  )
 }
 
 // The one line every surface shows for a running update. Progress counts from the agent being worked

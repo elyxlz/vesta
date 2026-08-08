@@ -23,9 +23,12 @@ export function UpdatePill({ className }: { className?: string }) {
     updateOperation !== null && updateOperation.phase !== "failed";
   const failed = updateOperation?.phase === "failed";
 
+  // The flag covers only the request itself; once vestad answers, the operation on /sync owns the
+  // pill's state. A granted request that kept the flag would leave the next failure's retry stuck.
   const handleUpdate = async () => {
     setRequesting(true);
-    if (!(await triggerGatewayUpdate())) setRequesting(false);
+    await triggerGatewayUpdate();
+    setRequesting(false);
   };
 
   const title = () => {

@@ -26,10 +26,12 @@ export function GatewayUpdateProgressSheet({
   const [retrying, setRetrying] = useState(false);
   const failed = operation.phase === "failed";
 
+  // The flag covers only the request itself; once vestad answers, the operation's phase owns this
+  // sheet. A granted retry that kept the flag would leave a second failure's retry stuck.
   const handleRetry = () => {
     setRetrying(true);
-    void triggerGatewayUpdate(api).then((ok) => {
-      if (!ok) setRetrying(false);
+    void triggerGatewayUpdate(api).finally(() => {
+      setRetrying(false);
     });
   };
 
@@ -47,7 +49,7 @@ export function GatewayUpdateProgressSheet({
           {failed
             ? (operation.error ??
               "The update stopped before it finished. Your agents are untouched.")
-            : "Vesta backs up every agent before installing, so this can take a few minutes."}
+            : "Your gateway backs up every agent before installing, so this can take a few minutes."}
         </Text>
         {!failed && (
           <Text style={[styles.phase, { color: colors.text }]}>

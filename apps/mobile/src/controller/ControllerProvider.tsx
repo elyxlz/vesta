@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Constants from "expo-constants";
 import {
+  gatewayOperationsEqual,
   resolveClientVersion,
   selectGatewayOperation,
   type Controller,
@@ -63,6 +64,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
   const updateOperation = useOptionalControllerReplica(
     controller,
     selectGatewayOperation,
+    gatewayOperationsEqual,
   );
 
   useEffect(() => {

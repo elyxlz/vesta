@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import type { GatewayInfo, Tree } from "../protocol/tree"
-import { gatewayOperationLabel, selectGatewayOperation } from "./gateway-operation"
+import type { GatewayInfo, GatewayUpdateOperation, Tree } from "../protocol/tree"
+import {
+  gatewayOperationLabel,
+  gatewayOperationsEqual,
+  selectGatewayOperation,
+} from "./gateway-operation"
 
 function treeWith(operation: unknown): Tree {
   const gateway = {
@@ -67,21 +71,34 @@ describe("selectGatewayOperation", () => {
       ),
     ).toBeNull()
   })
+})
 
-  it("defaults the optional parts so a partial operation still renders", () => {
-    const operation = selectGatewayOperation(
-      treeWith({ kind: "update", phase: "applying", targetVersion: "0.1.190" }),
-    )
-    expect(operation).toEqual({
-      kind: "update",
-      phase: "applying",
-      agent: null,
-      done: null,
-      total: null,
-      targetVersion: "0.1.190",
-      warnings: [],
-      error: null,
-    })
+describe("gatewayOperationsEqual", () => {
+  const operation = (overrides: Partial<GatewayUpdateOperation> = {}): GatewayUpdateOperation => ({
+    kind: "update",
+    phase: "snapshotting",
+    agent: "axel",
+    done: 1,
+    total: 4,
+    targetVersion: "0.1.190",
+    warnings: ["mona: backup failed (disk full)"],
+    error: null,
+    ...overrides,
+  })
+
+  it("treats structurally identical operations as equal, so a rebuilt tree does not re-render", () => {
+    expect(gatewayOperationsEqual(operation(), operation())).toBe(true)
+    expect(gatewayOperationsEqual(null, null)).toBe(true)
+  })
+
+  it("sees every field that moves during an update", () => {
+    expect(gatewayOperationsEqual(operation(), null)).toBe(false)
+    expect(gatewayOperationsEqual(operation(), operation({ done: 2 }))).toBe(false)
+    expect(gatewayOperationsEqual(operation(), operation({ phase: "applying" }))).toBe(false)
+    expect(gatewayOperationsEqual(operation(), operation({ warnings: [] }))).toBe(false)
+    expect(
+      gatewayOperationsEqual(operation(), operation({ error: "while installing: curl failed" })),
+    ).toBe(false)
   })
 })
 

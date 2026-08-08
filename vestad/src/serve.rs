@@ -422,14 +422,8 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
 // Force an immediate GitHub release check (instead of waiting for the periodic
 // background task) and return the refreshed version info.
 async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    let channel = effective_channel(&state).await;
-    match tokio::task::spawn_blocking(move || update::check_once(channel)).await {
-        Ok(Ok(info)) => {
-            let mut slot = state.update_info.lock().await;
-            *slot = Some(info);
-        }
-        Ok(Err(e)) => tracing::warn!("manual update check failed: {}", e),
-        Err(e) => tracing::error!("manual update check task failed: {}", e),
+    if let Err(e) = update::refresh_update_info(&state).await {
+        tracing::warn!("manual update check failed: {}", e);
     }
     Json(version_json(&state).await)
 }
@@ -506,31 +500,33 @@ async fn gateway_logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-/// Refuse while the gateway is mid-operation, naming the phase so the client renders what is
-/// running instead of a bare conflict. Both the restart and the update route through this: a restart
-/// during an update is what orphaned a backup mid-export once.
-fn ensure_no_gateway_operation(
-    active: Option<update::ActiveUpdate>,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let Some(active) = active else {
-        return Ok(());
-    };
-    if matches!(active.phase, update::UpdatePhase::Failed { .. }) {
-        return Ok(());
-    }
-    Err((
+/// The 409 every mid-operation refusal answers with, naming the live phase so the client renders
+/// what is running instead of a bare conflict.
+fn update_conflict(phase: &update::UpdatePhase) -> (StatusCode, Json<serde_json::Value>) {
+    (
         StatusCode::CONFLICT,
         Json(serde_json::json!({
             "error": "update in progress",
-            "phase": active.phase,
+            "phase": phase,
         })),
-    ))
+    )
+}
+
+/// Refuse while the gateway is mid-operation. The restart, the update, and the dismiss all route
+/// through this: a restart during an update is what orphaned a backup mid-export once.
+fn ensure_no_gateway_operation(
+    running: Option<update::UpdatePhase>,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    match running {
+        None => Ok(()),
+        Some(phase) => Err(update_conflict(&phase)),
+    }
 }
 
 async fn restart_gateway_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    ensure_no_gateway_operation(state.update_operation.snapshot())?;
+    ensure_no_gateway_operation(state.update_operation.running_phase())?;
     if !systemd::is_active() {
         return Err(err_response(
             StatusCode::PRECONDITION_FAILED,
@@ -539,8 +535,14 @@ async fn restart_gateway_handler(
     }
     tracing::info!("gateway restart requested via API");
     // Delay so the HTTP response can flush before systemctl kills this process.
-    tokio::spawn(async {
+    tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
+        // Re-checked at the moment of the kill: an update accepted during the flush delay must not
+        // be shot mid-snapshot; the client re-tries its restart once the update settles.
+        if let Some(phase) = state.update_operation.running_phase() {
+            tracing::warn!(?phase, "gateway restart skipped: an update started meanwhile");
+            return;
+        }
         match tokio::task::spawn_blocking(systemd::restart).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => tracing::error!(error = %e, "gateway restart failed"),
@@ -563,7 +565,7 @@ async fn gateway_update_handler(
     // Accepted, not finished: the update runs on its own task (pre-update snapshots, the binary
     // swap, the restart) and every client watches its phases on /sync. A retry of a failed update
     // is this same call, which is why a terminal operation yields the slot.
-    match update::start_update(state, update::UpdateIntent::Manual).await {
+    match update::start_update(state).await {
         Ok(update::UpdateStart::Started { target_version }) => Ok((
             StatusCode::ACCEPTED,
             Json(serde_json::json!({"started": true, "target_version": target_version})),
@@ -582,10 +584,7 @@ async fn gateway_update_handler(
             StatusCode::SERVICE_UNAVAILABLE,
             &format!("cannot check for a new release: {error}"),
         )),
-        Err(phase) => Err((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": "update in progress", "phase": phase})),
-        )),
+        Err(phase) => Err(update_conflict(&phase)),
     }
 }
 
@@ -594,7 +593,7 @@ async fn gateway_update_handler(
 async fn dismiss_gateway_update_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    ensure_no_gateway_operation(state.update_operation.snapshot())?;
+    ensure_no_gateway_operation(state.update_operation.running_phase())?;
     Ok(Json(
         serde_json::json!({"dismissed": state.update_operation.dismiss()}),
     ))
@@ -2346,11 +2345,9 @@ async fn put_gateway_settings_handler(
 
     // A channel switch must refresh the cached update info so /version reflects the new
     // channel without waiting for the next periodic poll (mirrors the old channel handler).
-    if let Some(channel) = parsed_channel {
-        match tokio::task::spawn_blocking(move || update::check_once(channel)).await {
-            Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
-            Ok(Err(e)) => tracing::warn!("update check after channel switch failed: {}", e),
-            Err(e) => tracing::error!("update check task after channel switch failed: {}", e),
+    if parsed_channel.is_some() {
+        if let Err(e) = update::refresh_update_info(&state).await {
+            tracing::warn!("update check after channel switch failed: {}", e);
         }
     }
 
@@ -2950,11 +2947,8 @@ pub fn build_router(state: SharedState) -> Router {
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            let channel = effective_channel(&state).await;
-            match tokio::task::spawn_blocking(move || update::check_once(channel)).await {
-                Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
-                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
-                Err(e) => tracing::error!("update check task failed: {}", e),
+            if let Err(e) = update::refresh_update_info(&state).await {
+                tracing::warn!("update check failed: {}", e);
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(update::CHECK_INTERVAL_SECS))
                 .await;
@@ -3032,7 +3026,7 @@ async fn run_maintenance(state: &SharedState) {
         tracing::info!("maintenance: applying pending update");
         // The same one entry point a manual update takes. A failed apply retries next cycle; the
         // fresh pre-update snapshot set is reused (<24h).
-        match update::start_update(state.clone(), update::UpdateIntent::Auto).await {
+        match update::start_update(state.clone()).await {
             Ok(update::UpdateStart::Started { .. }) => {
                 state.update_operation.wait_until_settled().await;
             }
@@ -3468,18 +3462,11 @@ mod tests {
 
     #[test]
     fn gateway_restart_and_update_conflict_while_an_update_runs() {
-        use crate::update::{ActiveUpdate, UpdatePhase, UpdateStage};
+        use crate::update::{UpdatePhase, UpdateStage};
 
-        let active = |phase| {
-            Some(ActiveUpdate {
-                target_version: "0.1.190".into(),
-                phase,
-                warnings: Vec::new(),
-            })
-        };
         assert!(super::ensure_no_gateway_operation(None).is_ok(), "idle lets both through");
 
-        let err = super::ensure_no_gateway_operation(active(UpdatePhase::Snapshotting {
+        let err = super::ensure_no_gateway_operation(Some(UpdatePhase::Snapshotting {
             agent: Some("axel".into()),
             done: 1,
             total: 4,
@@ -3491,12 +3478,11 @@ mod tests {
         assert_eq!(body["phase"]["phase"], serde_json::json!("snapshotting"));
         assert_eq!(body["phase"]["agent"], serde_json::json!("axel"));
 
-        // A failure the user has not dismissed still projects, but never blocks the retry.
-        assert!(super::ensure_no_gateway_operation(active(UpdatePhase::Failed {
-            during: UpdateStage::Applying,
-            error: "curl failed".into(),
-        }))
-        .is_ok());
+        // A failure the user has not dismissed still projects, but never blocks the retry: it is
+        // filtered out before this guard by `running_phase` (covered in update.rs).
+        let operation = crate::update::UpdateOperation::new();
+        operation.set_interrupted("0.1.190".into(), UpdateStage::Applying);
+        assert!(super::ensure_no_gateway_operation(operation.running_phase()).is_ok());
     }
 
     #[test]

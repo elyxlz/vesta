@@ -27,6 +27,11 @@ describe("triggerGatewayUpdate", () => {
     expect((call[1] as RequestInit).method).toBe("POST")
   })
 
+  it("reads a pre-0.1.190 gateway's {ok} answer as started, since that gateway applied the update synchronously", async () => {
+    const json = vi.fn().mockResolvedValue({ ok: true, updated: true, restarting: true })
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(true)
+  })
+
   it("returns false when the gateway is already current, so nothing is left to watch", async () => {
     const json = vi
       .fn()

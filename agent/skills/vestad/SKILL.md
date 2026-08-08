@@ -309,8 +309,9 @@ periodic release check; `POST /version/check` forces a fresh check first.
 - `202 {"started": true, "target_version": "0.1.190"}`: the update is running.
 - `200 {"started": false, "reason": "already_current", "version": "0.1.190"}`: the gateway already
   runs the newest release on its channel.
-- `409 {"error": "update in progress", "phase": {...}}`: an update is already running, and `phase`
-  names the step it is on. A gateway restart answers the same way while one runs.
+- `409 {"error": "update in progress", "phase": {"phase": "snapshotting", "agent": "axel", "done": 1, "total": 4}}`:
+  an update is already running, and `phase` names the step it is on. A gateway restart answers the
+  same way while one runs.
 - `503`: the release check could not answer, so no update was attempted. Retry later.
 - `400`: this is a dev-mode vestad, where self-update is disabled.
 

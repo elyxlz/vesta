@@ -9,8 +9,13 @@ export const VERSION_CHECK_TIMEOUT_MS = 15000
 // A started update reports its phases as gateway state on /sync; nothing here waits for it.
 export async function triggerGatewayUpdate(http: HttpClient): Promise<boolean> {
   try {
-    const body = await http.json<{ started?: unknown }>("/gateway/update", { method: "POST" })
-    return body.started === true
+    const body = await http.json<{ started?: unknown; ok?: unknown }>("/gateway/update", {
+      method: "POST",
+    })
+    // LEGACY(remove-when: no gateway older than v0.1.190 remains): a pre-0.1.190 gateway answers
+    // {ok: true} after applying the update synchronously, and this call is how the
+    // gateway-behind screens update exactly such a gateway.
+    return body.started === true || body.ok === true
   } catch {
     return false
   }

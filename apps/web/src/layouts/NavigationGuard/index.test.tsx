@@ -1,7 +1,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import type { GatewayUpdateOperation } from "@vesta/core";
+import type { AgentRow, GatewayUpdateOperation } from "@vesta/core";
 import {
   GatewayContext,
   disconnectedValue,
@@ -12,6 +12,16 @@ import { NavigationGuard } from "./index";
 vi.mock("@/providers/AuthProvider", () => ({
   useAuth: () => ({ connected: true, initialized: true }),
 }));
+
+const ADA: AgentRow = {
+  name: "ada",
+  status: "alive",
+  activityState: "idle",
+  buildPhase: null,
+  operation: null,
+  startedAt: null,
+  services: {},
+};
 
 const RUNNING: GatewayUpdateOperation = {
   kind: "update",
@@ -28,7 +38,7 @@ function renderAt(path: string, overrides: Partial<GatewayContextValue>) {
   const value: GatewayContextValue = {
     ...disconnectedValue,
     agentsFetched: true,
-    agents: [{ name: "ada" }] as GatewayContextValue["agents"],
+    agents: [ADA],
     ...overrides,
   };
   return render(
@@ -65,5 +75,13 @@ describe("NavigationGuard", () => {
   it("keeps settings reachable during an update, since that is where a stuck one is diagnosed", () => {
     const { getByText } = renderAt("/settings", { updateOperation: RUNNING });
     expect(getByText("settings")).toBeTruthy();
+  });
+
+  it("stays home during an update with zero agents instead of ping-ponging with the /new redirect", () => {
+    const { getByText } = renderAt("/", {
+      agents: [],
+      updateOperation: RUNNING,
+    });
+    expect(getByText("home")).toBeTruthy();
   });
 });
