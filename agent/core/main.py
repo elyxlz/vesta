@@ -87,16 +87,16 @@ async def run_vesta(
     message_queue: asyncio.Queue[vm.QueuedTurn] = asyncio.Queue()
 
     # Boot-time control-flow runs as boot turns: enqueued first (before the processor/input/monitor
-    # tasks start) and processed in order before other work, so the agent converges and orients
-    # first. Migrations may opt into interruptible batches; every other boot turn is non-interruptible.
-    for turn in collect_boot_turns(
+    # tasks start), processed immediately and non-interruptibly so the agent converges and orients
+    # before taking any other work.
+    for body in collect_boot_turns(
         state=state,
         config=config,
         config_issues=config_issues or [],
         agent_message=restart_reason.agent_message,
         first_start=first_start,
     ):
-        await message_queue.put(turn)
+        await message_queue.put(vm.QueuedTurn(body, False, [], interruptible=False))
 
     # Bind the HTTP/WS server on every boot, including first start. vestad reaches
     # GET/PUT /config over this port to read auth state and deliver credentials, so a
@@ -165,7 +165,7 @@ def config_issues_turn(issues: list[str]) -> str | None:
 
 def collect_boot_turns(
     *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], agent_message: str, first_start: bool
-) -> list[vm.QueuedTurn]:
+) -> list[str]:
     """Boot-time control-flow as ordered prompt bodies: before-sync migrations as a boot barrier;
     otherwise upstream sync, after-sync migrations, config issues, and the greeting last —
     converge first, orient and reach out last. Each is delivered as a boot turn (immediate,
@@ -183,21 +183,21 @@ def collect_boot_turns(
     brings daemons up, while a boot that restarts mid-converge (sync merge, before-sync barrier)
     abandons the still-queued greeting and the next boot re-queues it. Daemons therefore stay down
     for the whole converge, by design, and come up once on the boot that finally settles."""
-    turns: list[vm.QueuedTurn] = []
+    turns: list[str] = []
     before_sync_turns = before_sync_migration_turns(state=state, config=config, first_start=first_start)
     if before_sync_turns:
         turns.extend(before_sync_turns)
     else:
         sync_turn = upstream_sync_turn(config=config, first_start=first_start)
         if sync_turn is not None:
-            turns.append(vm.QueuedTurn(sync_turn, False, [], interruptible=False))
+            turns.append(sync_turn)
         turns.extend(after_sync_migration_turns(state=state, config=config, first_start=first_start))
     config_turn = config_issues_turn(config_issues)
     if config_turn is not None:
-        turns.append(vm.QueuedTurn(config_turn, False, [], interruptible=False))
+        turns.append(config_turn)
     greeting = greeting_turn(config=config, state=state, agent_message=agent_message, first_start=first_start)
     if greeting is not None:
-        turns.append(vm.QueuedTurn(greeting, False, [], interruptible=False))
+        turns.append(greeting)
     return turns
 
 

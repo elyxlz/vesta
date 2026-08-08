@@ -46,12 +46,12 @@ def test_boot_turns_ordered_sync_then_migrations_then_config_then_greeting(tmp_p
     # No converge turn carries a daemon-restore preamble: the sync turn opens with its own marker and
     # the migration turn with the batch instructions. Daemons come up at the greeting (last), after
     # the sync and migrations have landed, so a migration reshaping the Daemons block runs first.
-    assert turns[0].text.startswith("[Upstream sync]")
-    assert turns[1].text.startswith(MIGRATION_BATCH_INSTRUCTIONS)
-    assert "[Migration: 001-x]" in turns[1].text
-    assert "[Migration: 002-y]" in turns[1].text
-    assert "BAD=1" in turns[2].text
-    assert turns[3].text.startswith("[System Restart]\nReason: You restarted after a routine shutdown.")
+    assert turns[0].startswith("[Upstream sync]")
+    assert turns[1].startswith(MIGRATION_BATCH_INSTRUCTIONS)
+    assert "[Migration: 001-x]" in turns[1]
+    assert "[Migration: 002-y]" in turns[1]
+    assert "BAD=1" in turns[2]
+    assert turns[3].startswith("[System Restart]\nReason: You restarted after a routine shutdown.")
 
 
 def test_before_sync_migrations_are_a_boot_barrier(tmp_path):
@@ -69,11 +69,11 @@ def test_before_sync_migrations_are_a_boot_barrier(tmp_path):
     )
 
     # The before-sync barrier turn opens with the batch instructions, no daemon-restore preamble.
-    assert turns[0].text.startswith(MIGRATION_BATCH_INSTRUCTIONS)
-    assert "[Migration: 001-before]" in turns[0].text
-    assert "call `restart_vesta` once" in turns[0].text
-    assert all("[Upstream sync]" not in turn.text for turn in turns)
-    assert all("[Migration: 999-later]" not in turn.text for turn in turns)
+    assert turns[0].startswith(MIGRATION_BATCH_INSTRUCTIONS)
+    assert "[Migration: 001-before]" in turns[0]
+    assert "call `restart_vesta` once" in turns[0]
+    assert all("[Upstream sync]" not in turn for turn in turns)
+    assert all("[Migration: 999-later]" not in turn for turn in turns)
 
 
 def test_applied_before_sync_migration_allows_sync_then_after_sync_migrations(tmp_path):
@@ -92,8 +92,8 @@ def test_applied_before_sync_migration_allows_sync_then_after_sync_migrations(tm
         first_start=False,
     )
 
-    assert turns[0].text.startswith("[Upstream sync]")
-    assert "[Migration: 999-later]" in turns[1].text
+    assert turns[0].startswith("[Upstream sync]")
+    assert "[Migration: 999-later]" in turns[1]
 
 
 def test_after_sync_migration_boot_defers_daemons_to_the_greeting(tmp_path):
@@ -114,29 +114,10 @@ def test_after_sync_migration_boot_defers_daemons_to_the_greeting(tmp_path):
     )
 
     assert len(turns) == 2
-    assert turns[0].text.startswith(MIGRATION_BATCH_INSTRUCTIONS)
-    assert "[Migration: 001-x]" in turns[0].text
-    assert turns[1].text.startswith("[System Restart]")  # greeting is last, the daemon-restore point
-    assert all("[Upstream sync]" not in turn.text for turn in turns)
-
-
-def test_boot_turns_carry_interruptible_flags(tmp_path):
-    config = _boot_config(tmp_path)
-    (config.agent_dir / "core" / "migrations" / "001-safe.md").write_text("---\ninterruptible: true\n---\n\nsafe")
-    (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
-    _record_snapshot(config, "9.9.9")
-
-    turns = collect_boot_turns(
-        state=_authed_state(),
-        config=config,
-        config_issues=["BAD=1 is invalid; reverted to default"],
-        agent_message="You restarted after a routine shutdown.",
-        first_start=False,
-    )
-
-    # Interruptible migration batch, then config issues and greeting, which stay non-interruptible.
-    assert [turn.interruptible for turn in turns] == [True, False, False]
-    assert all(turn.is_user is False and turn.file_paths == [] for turn in turns)
+    assert turns[0].startswith(MIGRATION_BATCH_INSTRUCTIONS)
+    assert "[Migration: 001-x]" in turns[0]
+    assert turns[1].startswith("[System Restart]")  # greeting is last, the daemon-restore point
+    assert all("[Upstream sync]" not in turn for turn in turns)
 
 
 def test_restart_only_boot_is_just_the_greeting(tmp_path):
@@ -157,7 +138,7 @@ def test_restart_only_boot_is_just_the_greeting(tmp_path):
         )
 
     assert len(turns) == 1
-    assert turns[0].text.startswith("[System Restart]")
+    assert turns[0].startswith("[System Restart]")
     startup_log.assert_called_once_with("Boot turn: restart greeting")
 
 
@@ -172,7 +153,7 @@ def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     turns = collect_boot_turns(state=state, config=config, config_issues=[], agent_message="first start", first_start=True)
 
     assert len(turns) == 1
-    assert "welcome, run setup" in turns[0].text
+    assert "welcome, run setup" in turns[0]
     assert state.persisted.applied_migrations == ["001-x", "002-before"]
     # Birth owns the initial attach, so no separate sync turn fires on first start.
 
@@ -193,7 +174,7 @@ def test_restart_greeting_carries_pending_boot_message(tmp_path):
     )
 
     assert len(turns) == 1
-    assert "new day: greet warmly" in turns[0].text
+    assert "new day: greet warmly" in turns[0]
     # The message is consumed so it isn't re-surfaced on the next boot.
     assert state.persisted.pending_boot_message is None
 

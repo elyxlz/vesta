@@ -272,34 +272,6 @@ async def test_processor_collects_mid_turn_items_without_interrupting(config, st
     assert processed == ["first", "second"], f"the undelivered item must run next: {processed}"
 
 
-@pytest.mark.anyio
-@pytest.mark.parametrize("interruptible", [False, True])
-async def test_boot_turn_interruptibility_drives_the_preempt_gate(config, state, interruptible):
-    """The processor bars preemption exactly while a non-interruptible turn runs: an
-    interruptible migration batch leaves the send_preempt gate open mid-turn."""
-    from core.loops import _run_messages_with_preempts
-
-    queue: asyncio.Queue = asyncio.Queue()
-    fake_process, processed, first_started, release_first = _blocking_processor()
-
-    with patch("core.loops.process_message", fake_process):
-        task = asyncio.create_task(
-            _run_messages_with_preempts(
-                vm.QueuedTurn("first", False, [], interruptible=interruptible),
-                queue=queue,
-                state=state,
-                config=config,
-            )
-        )
-        await first_started.wait()
-        assert state.noninterruptible_turn_active is (not interruptible)
-        release_first.set()
-        await task
-
-    assert not state.noninterruptible_turn_active
-    assert processed == ["first"]
-
-
 # --- end to end: the 2026-07-14 incident (Beyonce test) ---
 
 
