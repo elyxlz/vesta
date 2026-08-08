@@ -16,6 +16,9 @@ use crate::docker::read_agent_port_and_token;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longer timeout for config writes — the agent does file I/O.
 const SET_TIMEOUT: Duration = Duration::from_secs(10);
+/// Timeout for the live model-catalog relay: the agent's handler calls the Anthropic
+/// Models API with a 15s budget (`claude_models.py`), so the relay must outlast it.
+const MODELS_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The agent's `GET /status`: the readiness slice vestad needs to gate Alive vs `SettingUp` vs
 /// `NotAuthenticated`. Distinct from the provider config it relays to the app via `GET /provider`.
@@ -82,7 +85,7 @@ impl<'a> AgentProvider<'a> {
 
     /// GET the agent's /provider/models (live Claude catalog; vestad relays it to the app).
     pub async fn get_provider_models(&self) -> Result<serde_json::Value, String> {
-        self.get_json("/provider/models", STATUS_TIMEOUT, "/provider/models")
+        self.get_json("/provider/models", MODELS_TIMEOUT, "/provider/models")
             .await
     }
 

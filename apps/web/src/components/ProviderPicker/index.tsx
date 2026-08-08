@@ -21,11 +21,11 @@ import {
 } from "./logos";
 import type { ProviderMode } from "./types";
 import { useManifest } from "@/hooks/use-manifest";
+import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, errorMessage } from "@/lib/utils";
 import { contextForModel, type Manifest } from "@/api/manifest";
-import { providerModelOptions, CLAUDE_ALIASES } from "./model-options";
-import type { OpenRouterModelOption } from "@/api/providers/openrouter";
+import { providerModelOptions } from "./model-options";
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
@@ -108,29 +108,6 @@ function modelStepInitialModel(
   if (provider === "claude") return "opus";
   if (provider === null) return "";
   return manifest.providers[provider]?.default_model ?? "";
-}
-
-// The fixed model list ModelStep renders directly. OpenRouter fetches its own
-// live catalog and Claude uses claudeMode instead, so both pass undefined.
-function modelStepModels(
-  provider: ProviderMode | null,
-  providerModels: OpenRouterModelOption[] | undefined,
-): OpenRouterModelOption[] | undefined {
-  if (provider === "openrouter" || provider === "claude") return undefined;
-  return providerModels;
-}
-
-function claudeModeProps(
-  provider: ProviderMode | null,
-  liveModels: OpenRouterModelOption[] | null,
-):
-  | {
-      aliases: OpenRouterModelOption[];
-      liveModels: OpenRouterModelOption[] | null;
-    }
-  | undefined {
-  if (provider !== "claude") return undefined;
-  return { aliases: CLAUDE_ALIASES, liveModels };
 }
 
 function providerUsesOAuth(
@@ -219,21 +196,15 @@ export function ProviderPicker({
   const [credentials, setCredentials] = useState<string | null>(null);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
-  // The live Claude catalog, prefetched at auth completion so it is ready by
-  // the time the model step renders. null while loading, [] on fetch failure.
-  const [claudeLiveModels, setClaudeLiveModels] = useState<
-    OpenRouterModelOption[] | null
-  >(null);
+  // The live Claude catalog, fetched as soon as auth stashes the credentials so
+  // it is ready by the time the model step renders.
+  const claudeLiveModels = useClaudeModels(
+    provider === "claude" ? credentials : null,
+    claudeProvider.fetchClaudeModels,
+  );
   // Creation catalog (per-provider context window + presets) comes from the manifest, not a local copy.
   const manifest = useManifest();
-  // The claude branch of providerModelOptions is only returned for provider === "claude", which
-  // modelStepModels below always discards in favor of claudeMode, so the aliases passed here never
-  // reach the picker; CLAUDE_ALIASES is still the right value to pass (matching ProviderCard).
-  const providerModels = providerModelOptions(
-    provider,
-    manifest,
-    CLAUDE_ALIASES,
-  );
+  const providerModels = providerModelOptions(provider, manifest);
   const stepLogo = providerLogo(provider);
   const keyCopy = keyStepCopy(provider);
 
@@ -277,7 +248,6 @@ export function ProviderPicker({
     setCredentials(null);
     setKey("");
     setModel("");
-    setClaudeLiveModels(null);
     setProvider(next);
     // Claude authenticates first; key-backed providers take a key first. All then walk
     // the shared model -> context steps.
@@ -291,13 +261,6 @@ export function ProviderPicker({
     if (defaultsOnly && !catalogIsLive(provider, manifest)) {
       finishWithDefaults(creds, key);
       return;
-    }
-    if (provider === "claude") {
-      setClaudeLiveModels(null);
-      claudeProvider
-        .fetchClaudeModels(creds)
-        .then(setClaudeLiveModels)
-        .catch(() => setClaudeLiveModels([]));
     }
     setStep("model");
   };
@@ -359,7 +322,6 @@ export function ProviderPicker({
     setCredentials(null);
     setKey("");
     setModel("");
-    setClaudeLiveModels(null);
     setProvider(null);
     setStep("choice");
   };
@@ -434,8 +396,10 @@ export function ProviderPicker({
                 setStep("context");
               }
             }}
-            models={modelStepModels(provider, providerModels)}
-            claudeMode={claudeModeProps(provider, claudeLiveModels)}
+            models={providerModels}
+            claudeLiveModels={
+              provider === "claude" ? claudeLiveModels : undefined
+            }
             allowCustom={provider === "openrouter"}
             logo={stepLogo}
             onCancel={cancelToChoice}

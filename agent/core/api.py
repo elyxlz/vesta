@@ -403,12 +403,13 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
 
 async def _provider_models_handler(_request: web.Request) -> web.Response:
     """The signed-in Claude account's live model catalog, for the settings model picker."""
-    token = claude_models.read_claude_access_token()
+    token = await asyncio.to_thread(claude_models.read_claude_access_token)
     if token is None:
         return web.json_response({"error": "no claude credentials"}, status=409)
     try:
         models = await claude_models.fetch_claude_models(token)
-    except (_aiohttp.ClientError, TimeoutError) as exc:
+    # ValueError covers a malformed 200 body: pydantic ValidationError and json.JSONDecodeError.
+    except (_aiohttp.ClientError, TimeoutError, ValueError) as exc:
         logger.error("claude models fetch failed: %s", exc)
         return web.json_response({"error": "claude models fetch failed"}, status=502)
     return web.json_response(models)

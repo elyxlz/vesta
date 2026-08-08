@@ -121,6 +121,7 @@ export {
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
 
 export {
+  CLAUDE_ALIASES,
   normalizeProviderInfo,
   providerPutBody,
   resolveProviderIdentity,

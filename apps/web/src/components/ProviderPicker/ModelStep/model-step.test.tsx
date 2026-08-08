@@ -2,11 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { ModelStep } from "./index";
 
-const aliases = [
-  { slug: "opus", label: "Opus", author: "Anthropic" },
-  { slug: "sonnet", label: "Sonnet", author: "Anthropic" },
-];
-
 describe("ModelStep claude two-tier", () => {
   afterEach(cleanup);
 
@@ -16,7 +11,7 @@ describe("ModelStep claude two-tier", () => {
       <ModelStep
         initialModel="opus"
         onSubmit={onSubmit}
-        claudeMode={{ aliases, liveModels: null }}
+        claudeLiveModels={null}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /^Sonnet$/ }));
@@ -29,16 +24,13 @@ describe("ModelStep claude two-tier", () => {
       <ModelStep
         initialModel="opus"
         onSubmit={vi.fn()}
-        claudeMode={{
-          aliases,
-          liveModels: [
-            {
-              slug: "claude-opus-5",
-              label: "Claude Opus 5",
-              author: "Anthropic",
-            },
-          ],
-        }}
+        claudeLiveModels={[
+          {
+            slug: "claude-opus-5",
+            label: "Claude Opus 5",
+            author: "Anthropic",
+          },
+        ]}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /more models/i }));

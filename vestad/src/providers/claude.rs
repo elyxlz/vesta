@@ -19,6 +19,8 @@ const ANTHROPIC_MODELS_URL: &str = "https://api.anthropic.com/v1/models";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_OAUTH_BETA: &str = "oauth-2025-04-20";
 const ANTHROPIC_AUTHOR: &str = "Anthropic";
+/// The Models API paginates (default page 20); ask for its maximum so the catalog is one page.
+const ANTHROPIC_MODELS_PAGE_LIMIT: &str = "1000";
 
 #[derive(Serialize)]
 pub struct OAuthStartResponse {
@@ -147,6 +149,7 @@ async fn fetch_claude_models(
 ) -> Result<Vec<ClaudeModel>, (StatusCode, Json<serde_json::Value>)> {
     let resp = client
         .get(ANTHROPIC_MODELS_URL)
+        .query(&[("limit", ANTHROPIC_MODELS_PAGE_LIMIT)])
         .bearer_auth(access_token)
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("anthropic-beta", ANTHROPIC_OAUTH_BETA)

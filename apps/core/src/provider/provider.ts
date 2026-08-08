@@ -137,13 +137,18 @@ export interface ProviderIdentity {
   modelName: string | null
 }
 
-// Claude's live catalog carries no model_names (the manifest ships only the two stable aliases,
-// "opus" and "sonnet"), so this is the display label for each alias when the manifest entry has
-// no name for it. A live slug (e.g. "claude-opus-5") falls through to the raw slug, which is fine.
-const CLAUDE_ALIAS_LABELS: Record<string, string> = {
-  opus: "Opus",
-  sonnet: "Sonnet",
-}
+/// The two stable Claude aliases and their display labels. Claude's live catalog carries no
+/// model_names, so this pair is the one owner of the alias set: web and mobile pickers offer it
+/// as primary options and resolveProviderIdentity labels it. A live slug (e.g. "claude-opus-5")
+/// falls through to the raw slug, which is fine.
+export const CLAUDE_ALIASES: { slug: string; label: string }[] = [
+  { slug: "opus", label: "Opus" },
+  { slug: "sonnet", label: "Sonnet" },
+]
+
+const CLAUDE_ALIAS_LABELS: Record<string, string> = Object.fromEntries(
+  CLAUDE_ALIASES.map((alias) => [alias.slug, alias.label]),
+)
 
 /// Who is running this agent, as the user reads it: the manifest owns both names, and the wire
 /// identifiers stand in on a gateway whose manifest predates them. Null while disconnected.

@@ -326,14 +326,16 @@ def test_claude_signin_accepts_specific_slug(config):
     from core.config import validate_config_updates
 
     updates = validate_config_updates(config, {"provider": {"kind": "claude", "model": "claude-opus-5"}})
-    assert updates["provider"]["model"] == "claude-opus-5"
+    provider = updates["provider"]
+    assert isinstance(provider, dict) and provider["model"] == "claude-opus-5"
 
 
 def test_claude_signin_still_accepts_alias(config):
     from core.config import validate_config_updates
 
     updates = validate_config_updates(config, {"provider": {"kind": "claude", "model": "sonnet"}})
-    assert updates["provider"]["model"] == "sonnet"
+    provider = updates["provider"]
+    assert isinstance(provider, dict) and provider["model"] == "sonnet"
 
 
 def test_sign_in_body_parses_each_provider():

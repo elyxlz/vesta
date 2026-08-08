@@ -8,10 +8,12 @@ import aiohttp
 import pydantic as pyd
 
 from .config import read_claude_oauth
+from .provider import ANTHROPIC_API_URL, OAUTH_BETA_HEADER
 
-_MODELS_URL = "https://api.anthropic.com/v1/models"
+_MODELS_URL = f"{ANTHROPIC_API_URL}/v1/models"
 _ANTHROPIC_VERSION = "2023-06-01"
-_OAUTH_BETA = "oauth-2025-04-20"
+# The Models API paginates (default page 20); ask for its maximum so the catalog is one page.
+_MODELS_PAGE_LIMIT = "1000"
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
@@ -48,11 +50,11 @@ async def fetch_claude_models(access_token: str) -> list[ClaudeModelOption]:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "anthropic-version": _ANTHROPIC_VERSION,
-        "anthropic-beta": _OAUTH_BETA,
+        "anthropic-beta": OAUTH_BETA_HEADER,
     }
     async with (
         aiohttp.ClientSession() as session,
-        session.get(_MODELS_URL, headers=headers, timeout=_HTTP_TIMEOUT) as resp,
+        session.get(_MODELS_URL, headers=headers, params={"limit": _MODELS_PAGE_LIMIT}, timeout=_HTTP_TIMEOUT) as resp,
     ):
         resp.raise_for_status()
         return parse_models(await resp.json())
