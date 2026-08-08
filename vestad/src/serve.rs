@@ -2649,6 +2649,10 @@ pub fn build_router(state: SharedState) -> Router {
             post(crate::providers::openai::oauth_complete_handler),
         )
         .route(
+            "/providers/claude/models",
+            post(crate::providers::claude::list_models_handler),
+        )
+        .route(
             "/providers/openrouter/models/top",
             get(crate::providers::openrouter::list_top_models_handler),
         )

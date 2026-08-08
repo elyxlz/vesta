@@ -15,6 +15,11 @@ const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callb
 const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
+const ANTHROPIC_MODELS_URL: &str = "https://api.anthropic.com/v1/models";
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+const ANTHROPIC_OAUTH_BETA: &str = "oauth-2025-04-20";
+const ANTHROPIC_AUTHOR: &str = "Anthropic";
+
 #[derive(Serialize)]
 pub struct OAuthStartResponse {
     pub auth_url: String,
@@ -74,6 +79,126 @@ pub async fn oauth_complete_handler(
     .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
 
     Ok(Json(serde_json::json!({ "credentials": credentials })))
+}
+
+#[derive(Deserialize)]
+pub struct ClaudeModelsBody {
+    pub credentials: String,
+}
+
+#[derive(Serialize)]
+pub struct ClaudeModel {
+    pub slug: String,
+    pub label: String,
+    pub author: String,
+}
+
+#[derive(Deserialize)]
+struct OAuthBlob {
+    #[serde(rename = "claudeAiOauth")]
+    claude_ai_oauth: OAuthInner,
+}
+
+#[derive(Deserialize)]
+struct OAuthInner {
+    #[serde(rename = "accessToken")]
+    access_token: String,
+}
+
+#[derive(Deserialize)]
+struct AnthropicModelsResponse {
+    data: Vec<AnthropicModel>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicModel {
+    id: String,
+    display_name: String,
+}
+
+/// Pull the access token out of the browser-held OAuth blob. A blob missing
+/// `claudeAiOauth.accessToken` is a client error, not an upstream one.
+fn parse_oauth_access_token(credentials: &str) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    let blob: OAuthBlob = serde_json::from_str(credentials).map_err(|_| {
+        err_response(
+            StatusCode::BAD_REQUEST,
+            "credentials blob is not valid claude oauth json",
+        )
+    })?;
+    Ok(blob.claude_ai_oauth.access_token)
+}
+
+/// Lists the account's Claude models from the Anthropic Models API, authenticated with the
+/// browser-held OAuth token. Onboarding uses this before the agent is signed in.
+pub async fn list_models_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<ClaudeModelsBody>,
+) -> Result<Json<Vec<ClaudeModel>>, (StatusCode, Json<serde_json::Value>)> {
+    let access_token = parse_oauth_access_token(&body.credentials)?;
+    let models = fetch_claude_models(&state.http_client, &access_token).await?;
+    Ok(Json(models))
+}
+
+/// Calls the Anthropic Models API with the browser-held OAuth token and maps its
+/// response into the shape the onboarding model picker reads.
+async fn fetch_claude_models(
+    client: &reqwest::Client,
+    access_token: &str,
+) -> Result<Vec<ClaudeModel>, (StatusCode, Json<serde_json::Value>)> {
+    let resp = client
+        .get(ANTHROPIC_MODELS_URL)
+        .bearer_auth(access_token)
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header("anthropic-beta", ANTHROPIC_OAUTH_BETA)
+        .send()
+        .await
+        .map_err(|e| {
+            err_response(
+                StatusCode::BAD_GATEWAY,
+                &format!("anthropic request failed: {e}"),
+            )
+        })?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "claude credentials rejected by anthropic",
+        ));
+    }
+    if !resp.status().is_success() {
+        return Err(err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("anthropic returned HTTP {}", resp.status()),
+        ));
+    }
+    let parsed: AnthropicModelsResponse = resp.json().await.map_err(|e| {
+        err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("anthropic response parse failed: {e}"),
+        )
+    })?;
+    Ok(parsed
+        .data
+        .into_iter()
+        .map(|m| ClaudeModel {
+            slug: m.id,
+            label: m.display_name,
+            author: ANTHROPIC_AUTHOR.to_string(),
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_oauth_access_token;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn claude_models_rejects_blob_without_access_token() {
+        // A credentials blob missing claudeAiOauth.accessToken is a client error.
+        let err = parse_oauth_access_token("{\"claudeAiOauth\":{}}")
+            .expect_err("blob without accessToken should be rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
 }
 
 fn percent_encode(s: &str) -> String {
