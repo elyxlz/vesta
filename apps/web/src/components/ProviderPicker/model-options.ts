@@ -2,6 +2,14 @@ import type { Manifest } from "@/api/manifest";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import type { ProviderMode } from "./types";
 
+/// The two Claude aliases every picker offers as primary buttons ahead of the
+/// expandable live-slug list. Shared by onboarding (ProviderPicker) and the
+/// settings model switcher (ProviderCard) so the pair never drifts apart.
+export const CLAUDE_ALIASES: OpenRouterModelOption[] = [
+  { slug: "opus", label: "Opus", author: "Anthropic" },
+  { slug: "sonnet", label: "Sonnet", author: "Anthropic" },
+];
+
 /** Build the fixed-model picker options from the manifest; OpenRouter owns a live catalog. */
 export function providerModelOptions(
   provider: ProviderMode | null,

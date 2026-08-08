@@ -25,13 +25,8 @@ import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, errorMessage } from "@/lib/utils";
 import { contextForModel, type Manifest } from "@/api/manifest";
-import { providerModelOptions } from "./model-options";
+import { providerModelOptions, CLAUDE_ALIASES } from "./model-options";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
-
-const CLAUDE_ALIASES: OpenRouterModelOption[] = [
-  { slug: "opus", label: "Opus", author: "Anthropic" },
-  { slug: "sonnet", label: "Sonnet", author: "Anthropic" },
-];
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 

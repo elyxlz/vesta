@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeftRight,
   MoreHorizontal,
@@ -40,7 +40,10 @@ import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
 import { planContextOptions } from "@/components/ProviderPicker/context-plan";
 import { providerMeta } from "@/components/ProviderPicker/providers";
-import { providerModelOptions } from "@/components/ProviderPicker/model-options";
+import {
+  providerModelOptions,
+  CLAUDE_ALIASES,
+} from "@/components/ProviderPicker/model-options";
 import type { ProviderMode } from "@/components/ProviderPicker/types";
 import {
   setModel,
@@ -50,12 +53,12 @@ import {
   type Usage,
   type UsageMeter,
 } from "@/api/agents";
+import { fetchAgentClaudeModels } from "@/api/providers/claude";
 import { contextForModel, type Manifest } from "@/api/manifest";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import { formatTokens } from "@/lib/format";
 import { errorMessage } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
-import { useClaudeModels } from "@/hooks/use-claude-models";
 import { useManifest } from "@/hooks/use-manifest";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
@@ -267,7 +270,7 @@ function ModelDialog({
   applying,
   error,
   provider,
-  claudeModels,
+  claudeLiveModels,
   manifest,
   onSubmit,
 }: {
@@ -276,18 +279,22 @@ function ModelDialog({
   applying: boolean;
   error: string | null;
   provider: ProviderInfo;
-  claudeModels: OpenRouterModelOption[];
+  claudeLiveModels: OpenRouterModelOption[] | null;
   manifest: Manifest | undefined;
   onSubmit: (model: string) => void;
 }) {
   const isOpenRouter = provider.kind === "openrouter";
+  const isClaude = provider.kind === "claude";
   const configuredKind = provider.kind === "none" ? null : provider.kind;
   const fixedModels = providerModelOptions(
     configuredKind,
     manifest,
-    claudeModels,
+    CLAUDE_ALIASES,
     provider.model,
   );
+  const claudeMode = isClaude
+    ? { aliases: CLAUDE_ALIASES, liveModels: claudeLiveModels }
+    : undefined;
   return (
     <Dialog
       open={open}
@@ -310,7 +317,8 @@ function ModelDialog({
           <div className="flex flex-col items-center gap-4 py-2">
             <ModelStep
               initialModel={provider.model ?? ""}
-              models={isOpenRouter ? undefined : fixedModels}
+              models={isOpenRouter || isClaude ? undefined : fixedModels}
+              claudeMode={claudeMode}
               allowCustom={isOpenRouter}
               submitLabel="switch model"
               onSubmit={onSubmit}
@@ -458,7 +466,6 @@ export function ProviderCard() {
   // Revalidate on status change so a provider switch (which restarts the agent)
   // is reflected here without a manual reload.
   const { provider, refresh } = useProvider(name, agent.status);
-  const claudeModels = useClaudeModels(provider?.kind === "claude");
   // Context-window presets come from the manifest (GET /manifest); the context dialog needs the
   // active provider's presets just like the setup wizard does.
   const manifest = useManifest();
@@ -467,6 +474,29 @@ export function ProviderCard() {
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The live Claude catalog for the change-model dialog: fetched from the agent's own stored
+  // credentials each time the dialog opens. null while loading, [] on fetch failure or an empty
+  // catalog, which degrades the picker to the alias buttons alone.
+  const [claudeLiveModels, setClaudeLiveModels] = useState<
+    OpenRouterModelOption[] | null
+  >(null);
+  const providerKind = provider?.kind;
+
+  useEffect(() => {
+    if (!modelOpen || providerKind !== "claude" || !name) return;
+    let cancelled = false;
+    setClaudeLiveModels(null);
+    fetchAgentClaudeModels(name)
+      .then((models) => {
+        if (!cancelled) setClaudeLiveModels(models);
+      })
+      .catch(() => {
+        if (!cancelled) setClaudeLiveModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modelOpen, providerKind, name]);
 
   const {
     usage,
@@ -611,7 +641,7 @@ export function ProviderCard() {
         applying={applying}
         error={error}
         provider={provider}
-        claudeModels={claudeModels}
+        claudeLiveModels={claudeLiveModels}
         manifest={manifest}
         onSubmit={(model) => void applyModel(model)}
       />
