@@ -1,4 +1,5 @@
 import { apiJson, jsonInit } from "../client";
+import type { OpenRouterModelOption } from "./openrouter";
 
 export interface OAuthStartResult {
   auth_url: string;
@@ -21,4 +22,25 @@ export async function completeOAuth(
     jsonInit("POST", { session_id: sessionId, code }),
   );
   return resp.credentials;
+}
+
+// The live Claude catalog during onboarding: the browser holds the fresh OAuth blob and
+// vestad calls the Anthropic Models API with it (the agent is not signed in yet).
+export async function fetchClaudeModels(
+  credentials: string,
+): Promise<OpenRouterModelOption[]> {
+  return apiJson<OpenRouterModelOption[]>(
+    "/providers/claude/models",
+    jsonInit("POST", { credentials }),
+  );
+}
+
+// The live Claude catalog in settings: the agent is signed in, so it lists models from its own
+// stored token; vestad relays the read.
+export async function fetchAgentClaudeModels(
+  agentName: string,
+): Promise<OpenRouterModelOption[]> {
+  return apiJson<OpenRouterModelOption[]>(
+    `/agents/${encodeURIComponent(agentName)}/provider/models`,
+  );
 }
