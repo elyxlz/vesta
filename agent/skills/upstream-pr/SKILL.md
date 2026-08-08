@@ -120,9 +120,13 @@ Keep the worktree until the end. Steps 5 and 6 both need it: CI fixes are commit
 
 Only report a PR as done once every CI check is green.
 
+**"None failed" is not "green": a check still `in_progress` has not passed, it has not finished.** Count the conclusions, never just the failures, and treat any run that is not `completed` as outstanding. Report it as "N green, M still running", never as green. Reading a zero failure count as success while checks are mid-flight is the same error as reading an empty result as evidence, applied to the one thing you are least neutral about, your own deliverable.
+
 ## Apply the fix locally too
 
 A merged PR reaches you at the next release; your user keeps hitting the bug until then. So apply any workspace fix to your own tree in the same pass, all of it, tests and lint refactors included, since a half-applied fix leaves the tree lint-red and unguarded. A local apply is a stopgap: maintainers edit and consolidate PRs before merging, so the released form can differ from what you applied, the next sync then conflicts on that file, and the released side wins, it is your own fix repaired.
+
+**Apply the changed hunks, never copy the file.** `cp /tmp/vesta-pr/agent/skills/<skill>/<path> ~/agent/skills/<skill>/<path>` looks like the same operation and is not: the branch is cut from master, so it carries none of your local edits and the copy deletes every one not upstream yet. It also destroys the evidence, because the verify diff below is then empty by construction and passes. If a file was already copied over, `git -C ~ show HEAD:agent/skills/<skill>/<path>` is the only copy left to recover from.
 
 Verify by diff instead of memory, at step 6 while the worktree exists:
 
