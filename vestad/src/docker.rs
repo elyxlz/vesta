@@ -4257,9 +4257,11 @@ mod tests {
         )
         .await;
 
-        // The name backup.rs gives the throwaway commit image and export container.
-        let temp = TestContainer::new(&format!("backup-tmp-{agent}"));
+        // What backup.rs builds: one commit image, and one throwaway container created from it.
+        // The image is declared first so it is dropped last, since Docker refuses to remove an
+        // image a container still references.
         let image = TestImage::new(&format!("backup-tmp-{agent}"));
+        let temp = TestContainer::new(&format!("backup-tmp-{agent}"));
         let (repo, tag) = image.tag.split_once(':').expect("a test image tag");
         commit_container_to_image(&docker, &tc.name, repo, tag)
             .await
@@ -4268,13 +4270,26 @@ mod tests {
             .await
             .expect("create the export container");
 
-        let managed = list_managed_agents(&docker).await;
-        assert!(
-            managed.iter().any(|found| found.cname == tc.name),
-            "the agent itself still enumerates"
+        // Docker merges the image's labels with the create's, and this is the assertion that the
+        // create wins: the committed image carries `vesta.managed=true` from the agent it was made
+        // from, and the export container built from it must still read false.
+        let labels = docker
+            .inspect_container(&temp.name, None)
+            .await
+            .expect("inspect the export container")
+            .config
+            .and_then(|config| config.labels)
+            .unwrap_or_default();
+        assert_eq!(
+            labels.get(LABEL_MANAGED).map(String::as_str),
+            Some("false"),
+            "the export container must carry the managed label as false, got {labels:?}"
         );
         assert!(
-            !managed.iter().any(|found| found.cname == temp.name),
+            !list_managed_agents(&docker)
+                .await
+                .iter()
+                .any(|found| found.cname == temp.name),
             "an export container must never enumerate as an agent"
         );
     }
