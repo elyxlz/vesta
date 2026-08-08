@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Start every daemon in this skill's SKILL.md fenced block, read from the file on disk.
+#
+# SKILL.md reaches you as a context snapshot that can be one line out of date, so a daemon added to
+# the block after that snapshot was taken is invisible to you and is silently never started. Nothing
+# reports it missing, because every daemon you can see does come up. The file is the only copy of
+# the block that is current, so the start path reads the file.
+#
+# Idempotent: a daemon that is already up answers {"status":"already_running"} and spawns nothing,
+# and each start returns only once its daemon is up, so the lines cannot race.
+set -uo pipefail
+
+SKILL="$(cd "$(dirname "$0")" && pwd)/SKILL.md"
+
+if ! grep -q '^```bash' "$SKILL"; then
+  echo "no fenced bash block in $SKILL: has it moved or been renamed?" >&2
+  exit 1
+fi
+
+# Only lines inside the fenced block, so a `daemon start` quoted in the prose above it (the
+# `--instance` example) can never be executed as a real line. Every flag on a line is preserved.
+mapfile -t lines < <(awk '/^```bash/{b=1;next} /^```/{b=0} b && /^[a-z0-9-]+ daemon start/' "$SKILL")
+
+# A workspace with no daemons set up yet has the block and no lines in it. That is not an error.
+if [ "${#lines[@]}" -eq 0 ]; then
+  echo "no daemon lines in $SKILL, nothing to start"
+  exit 0
+fi
+
+# Output contract: stdout carries only daemons that came up. A start that failed is this command
+# failing to do its job, so it goes to stderr and the exit is non-zero. Otherwise
+# `start-daemons | tail` shows a wall of green and swallows the one line that mattered.
+fail=0
+for cmd in "${lines[@]}"; do
+  name="${cmd%% daemon*}"
+  out="$(sh -c "$cmd" 2>&1 | tr -d '\n')"
+  if printf '%s' "$out" | grep -q '"status": *"\(started\|already_running\)"'; then
+    printf "%-12s %s\n" "$name" "$out"
+  else
+    printf "%-12s %s\n" "$name" "$out" >&2
+    fail=1
+  fi
+done
+
+printf "\n%s daemon line(s) in %s\n" "${#lines[@]}" "$SKILL"
+[ "$fail" -eq 0 ] || echo "one or more daemons did not come up" >&2
+exit $fail
