@@ -21,7 +21,6 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import (
     PermissionResultAllow,
-    SdkBeta,
     ThinkingConfigAdaptive,
     ThinkingConfigDisabled,
     ThinkingConfigEnabled,
@@ -31,7 +30,6 @@ from claude_agent_sdk.types import (
 from . import config as cfg
 from . import diagnostics, logger, sdk_parsing, state_store, vestad_client
 from . import models as vm
-from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from .helpers import get_constitution_path, get_memory_path
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
@@ -515,7 +513,7 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
         _close_turn(state, turn)
 
 
-_SDKSettings = tuple[dict[str, str], list[SdkBeta], ThinkingConfig]
+_SDKSettings = tuple[dict[str, str], ThinkingConfig]
 
 
 def _adaptive_thinking() -> ThinkingConfigAdaptive:
@@ -550,7 +548,7 @@ def _openrouter_sdk_settings(provider: cfg.OpenRouterConfig, state: vm.State) ->
     context = state.openrouter_max_tokens or provider.max_context_tokens
     if context:
         env.update(_context_cap_env(context))
-    return env, [], ThinkingConfigDisabled(type="disabled")
+    return env, ThinkingConfigDisabled(type="disabled")
 
 
 def _zai_sdk_settings(provider: cfg.ZaiConfig) -> _SDKSettings:
@@ -564,7 +562,7 @@ def _zai_sdk_settings(provider: cfg.ZaiConfig) -> _SDKSettings:
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         **_context_cap_env(_fixed_provider_context(provider)),
     }
-    return env, [], _adaptive_thinking()
+    return env, _adaptive_thinking()
 
 
 def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
@@ -585,7 +583,7 @@ def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
         "CLAUDE_CODE_SUBAGENT_MODEL",
     ):
         env[name] = harness_model
-    return env, [], _adaptive_thinking()
+    return env, _adaptive_thinking()
 
 
 def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSettings:
@@ -603,14 +601,13 @@ def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSet
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
     }
-    return env, [], _adaptive_thinking()
+    return env, _adaptive_thinking()
 
 
 def _claude_sdk_settings(provider: cfg.ClaudeConfig) -> _SDKSettings:
     chosen = provider.max_context_tokens
-    betas = [CONTEXT_1M_BETA] if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW else []
     env = _context_cap_env(chosen) if chosen is not None else {}
-    return env, betas, provider.thinking
+    return env, provider.thinking
 
 
 def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> _SDKSettings:
@@ -670,7 +667,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     if provider is None:
         raise RuntimeError("build_client_options reached with no authenticated provider")
 
-    sdk_env, betas, thinking_config = _provider_sdk_settings(provider, state)
+    sdk_env, thinking_config = _provider_sdk_settings(provider, state)
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (capped via CLAUDE_CODE_AUTO_COMPACT_WINDOW above); the headless
@@ -678,7 +675,6 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=_harness_model(provider),
-        betas=betas,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
