@@ -20,7 +20,7 @@ use crate::settings::{
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
     agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
-    maintenance_window, mobile_app, self_update, systemd, update_check,
+    maintenance_window, mobile_app, systemd, update,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -423,7 +423,7 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
 // background task) and return the refreshed version info.
 async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let channel = effective_channel(&state).await;
-    match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+    match tokio::task::spawn_blocking(move || update::check_once(channel)).await {
         Ok(Ok(info)) => {
             let mut slot = state.update_info.lock().await;
             *slot = Some(info);
@@ -553,7 +553,7 @@ async fn gateway_update_handler(
     // The same pre-update snapshot pass the maintenance cycle runs, immediately: the user
     // asked now, so no window or idle wait. Restart-free, so it only delays the apply.
     run_snapshot_pass(&state, maintenance::PassKind::pre_update_from_current()).await;
-    let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
+    let join = tokio::task::spawn_blocking(move || update::perform_update(channel)).await;
     state
         .updating
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -2325,7 +2325,7 @@ async fn put_gateway_settings_handler(
     // A channel switch must refresh the cached update info so /version reflects the new
     // channel without waiting for the next periodic poll (mirrors the old channel handler).
     if let Some(channel) = parsed_channel {
-        match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+        match tokio::task::spawn_blocking(move || update::check_once(channel)).await {
             Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
             Ok(Err(e)) => tracing::warn!("update check after channel switch failed: {}", e),
             Err(e) => tracing::error!("update check task after channel switch failed: {}", e),
@@ -2937,12 +2937,12 @@ fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
             let channel = effective_channel(&state).await;
-            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+            match tokio::task::spawn_blocking(move || update::check_once(channel)).await {
                 Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
                 Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
                 Err(e) => tracing::error!("update check task failed: {}", e),
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS))
+            tokio::time::sleep(tokio::time::Duration::from_secs(update::CHECK_INTERVAL_SECS))
                 .await;
         }
     });
@@ -3018,7 +3018,7 @@ async fn run_maintenance(state: &SharedState) {
         run_snapshot_pass(state, maintenance::PassKind::pre_update_from_current()).await;
         let channel = effective_channel(state).await;
         tracing::info!(channel = channel.as_str(), "maintenance: applying pending update");
-        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+        match tokio::task::spawn_blocking(move || update::perform_update(channel)).await {
             Ok(Ok(outcome)) => tracing::info!(
                 updated = outcome.updated,
                 restarted = outcome.restarted,

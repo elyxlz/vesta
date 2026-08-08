@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::settings::{load_settings, Settings};
-use crate::{agent_status, docker, mobile_app, update_check};
+use crate::{agent_status, docker, mobile_app, update};
 
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -118,7 +118,7 @@ pub struct AppState {
     pub(crate) refresh_live: Mutex<HashMap<String, RefreshFamily>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     pub(crate) tunnel_url: Mutex<Option<String>>,
-    pub(crate) update_info: Mutex<Option<update_check::UpdateInfo>>,
+    pub(crate) update_info: Mutex<Option<update::UpdateInfo>>,
     pub(crate) updating: AtomicBool,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
