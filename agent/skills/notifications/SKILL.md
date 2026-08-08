@@ -128,6 +128,46 @@ Spend effort proportional to value. If the same low-value thing keeps showing up
 
 **The check is mechanical and takes seconds: open the raw body and look at the template identifier and the call to action.** An accept-invitation link means it is a reminder; a reply link with quoted message text means a person actually wrote. Never let a first-person subject line stand in for a human sender, because that phrasing is chosen precisely to read as one.
 
+## A rule keyed on a field the source never sends can never fire, and looks exactly like silence
+
+An `interrupt` rule that never matches is indistinguishable from a topic that never came up. Both
+produce nothing, so the failure is silent by construction, and the honest self-report is "my
+interrupts work", because a positive signal can only ever fire when something works.
+
+**Where it bites:** a predicate over a field the producing skill does not attach for that kind of
+notification. A predicate on an absent field does not match, so ANDed with anything it kills the
+whole rule, and the notification falls through to whatever broader rule sits below, typically a
+snooze.
+
+**`sender` and `text` are safer than a concrete key**, because they are aliases expanding to every
+per-source synonym (identity: `sender`, `contact_name`, `handle`, `from`, `author`,
+`sender_address`) and match if ANY is present. A rule keyed on `sender` still fires for a source that
+only sends `from`; a rule keyed on `from` will not fire for a source that only sends `contact_name`.
+
+**So prefer the alias, or a field confirmed present.** `notifications facets` lists the fields
+actually seen in past notifications, which is the cheap check before writing the rule.
+
+**Verify a rule rather than assume it.** There is no dry-run subcommand, but the policy is a pure
+function and can be exercised directly:
+
+```python
+import sys, json, subprocess, datetime
+sys.path.insert(0, 'core')
+from core import notification_interrupt_policy as pol
+from core.notification import Notification
+rules = [pol.NotificationInterruptRule(**r)
+         for r in json.loads(subprocess.run(['notifications','list'], capture_output=True, text=True).stdout)]
+n = Notification(timestamp=datetime.datetime.now(datetime.timezone.utc),
+                 source='email-client', type='email', interrupt=False, body='subject line',
+                 **{'from': 'Someone <someone@example.com>', 'subject': 'subject line'})
+print(pol.notif_disposition(n, rules))   # -> interrupt / snooze / trash
+```
+
+Payload keys other than `source`, `type`, `interrupt`, `timestamp` and `body` pass as keyword
+arguments and land in `model_extra`, which is where the matcher reads them. **Run a control
+alongside:** feed a payload that should snooze or trash and confirm it does, so a passing result is
+not simply a rule that matches everything.
+
 ## Learned Patterns
 
 ### Must always reach me
