@@ -185,7 +185,7 @@ pub(crate) async fn resolve_bridge_ip(
 // a hard crash-loop so a wedged agent eventually stays down instead of thrashing forever.
 const RESTART_MAX_RETRIES: i64 = 5;
 const ENV_MOUNT_DEST: &str = "/run/vestad-env";
-const CORE_MOUNT_DEST: &str = "/root/agent/core";
+pub(crate) const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// User-authored charter, bind-mounted read-only so the agent reads but cannot edit it.
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
@@ -1580,10 +1580,11 @@ async fn remove_snapshots<'a>(docker: &Docker, tags: impl Iterator<Item = &'a st
     }
 }
 
-/// Export a Docker image to a gzip-compressed tar file.
-/// Streams from Docker through gzip to disk without buffering the full image in memory.
-/// Cleans up the partial file on failure.
-pub async fn export_image_gzip(
+/// Export a Docker image to an uncompressed tar file.
+/// Streams from Docker straight to disk without buffering the full image in memory, and cleans
+/// up the partial file on failure. Bundle export owns its own compression, so this writes chunks
+/// through unmodified rather than through a `GzEncoder`.
+pub async fn save_image_to_file(
     docker: &Docker,
     image: &str,
     output: &std::path::Path,
@@ -1593,16 +1594,12 @@ pub async fn export_image_gzip(
 
     let write_output = output.clone();
     let write_handle = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-        let file = std::fs::File::create(&write_output)
+        let mut file = std::fs::File::create(&write_output)
             .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
         while let Some(chunk) = rx.blocking_recv() {
-            std::io::Write::write_all(&mut encoder, &chunk)
-                .map_err(|e| DockerError::Failed(format!("failed to write export data: {e}")))?;
+            std::io::Write::write_all(&mut file, &chunk)
+                .map_err(|e| DockerError::Failed(format!("failed to write save data: {e}")))?;
         }
-        encoder
-            .finish()
-            .map_err(|e| DockerError::Failed(format!("failed to finalize gzip: {e}")))?;
         Ok(())
     });
 
@@ -1616,7 +1613,7 @@ pub async fn export_image_gzip(
                 }
             }
             Err(e) => {
-                stream_err = Some(DockerError::Failed(format!("export stream error: {e}")));
+                stream_err = Some(DockerError::Failed(format!("save stream error: {e}")));
                 break;
             }
         }
@@ -1630,16 +1627,16 @@ pub async fn export_image_gzip(
 
     write_handle
         .await
-        .map_err(|e| DockerError::Failed(format!("export task failed: {e}")))?
+        .map_err(|e| DockerError::Failed(format!("save task failed: {e}")))?
         .inspect_err(|_| {
             std::fs::remove_file(&output).ok();
         })
 }
 
-/// Import a Docker image from a gzip-compressed tar file (replaces `gunzip | docker load`).
-/// Streams the file directly — Docker's load API accepts gzip natively.
+/// Import a Docker image from a tar file, gzip-compressed or not (replaces `gunzip | docker
+/// load`). Streams the file directly, since Docker's load API accepts both natively.
 /// Returns the loaded image name (e.g. "vesta-backup:name_12345").
-pub async fn import_image_gzip(
+pub async fn load_image_from_file(
     docker: &Docker,
     input: &std::path::Path,
 ) -> Result<String, DockerError> {
@@ -1657,8 +1654,10 @@ pub async fn import_image_gzip(
     let mut loaded_image = String::new();
     while let Some(msg) = stream.next().await {
         let info = msg.map_err(|e| DockerError::Failed(format!("import failed: {e}")))?;
-        if let Some(status) = info.status {
-            if let Some(name) = status.strip_prefix(LOADED_IMAGE_PREFIX) {
+        // The daemon reports the loaded tag on the `stream` field (not `status`), terminated
+        // with a newline meant for direct terminal output: {"stream":"Loaded image: name:tag\n"}.
+        if let Some(line) = info.stream {
+            if let Some(name) = line.trim_end().strip_prefix(LOADED_IMAGE_PREFIX) {
                 loaded_image = name.to_string();
             }
         }
@@ -1670,6 +1669,82 @@ pub async fn import_image_gzip(
         ));
     }
     Ok(loaded_image)
+}
+
+/// A container run to completion for a single command, never restarted or kept around.
+pub struct OneshotSpec<'a> {
+    pub image: &'a str,
+    pub cname: &'a str,
+    pub cmd: Vec<String>,
+    /// Full `host:container:ro,z` bind strings.
+    pub ro_binds: Vec<String>,
+}
+
+/// Create, start, and wait out a one-shot container, returning its exit status code. Network
+/// isolated (`network_mode: "none"`) and carries no restart policy, since it exists only to run
+/// `spec.cmd` and exit. On success the caller removes the container; every failure past creation
+/// force-removes it before returning, so a retry never collides on the name.
+pub async fn run_oneshot_container(
+    docker: &Docker,
+    spec: OneshotSpec<'_>,
+    timeout_secs: u64,
+) -> Result<i64, DockerError> {
+    let options = CreateContainerOptions {
+        name: Some(spec.cname.to_string()),
+        ..Default::default()
+    };
+    let body = ContainerCreateBody {
+        image: Some(spec.image.to_string()),
+        cmd: Some(spec.cmd),
+        host_config: Some(bollard::models::HostConfig {
+            binds: Some(spec.ro_binds),
+            network_mode: Some("none".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    docker
+        .create_container(Some(options), body)
+        .await
+        .map_err(|e| DockerError::Failed(format!("docker create for oneshot failed: {e}")))?;
+
+    if let Err(e) = docker.start_container(spec.cname, None).await {
+        remove_container_force(docker, spec.cname).await?;
+        return Err(DockerError::Failed(format!(
+            "docker start for oneshot failed: {e}"
+        )));
+    }
+
+    let mut wait_stream = docker
+        .wait_container(spec.cname, None::<bollard::query_parameters::WaitContainerOptions>);
+    let wait_result = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        wait_stream.next(),
+    )
+    .await;
+
+    // Every branch past this point has an already-created (and started) container to clean up:
+    // only the success path leaves it for the caller to remove.
+    match wait_result {
+        Err(_) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(format!(
+                "oneshot container timed out after {timeout_secs}s"
+            )))
+        }
+        Ok(Some(Ok(response))) => Ok(response.status_code),
+        Ok(Some(Err(bollard::errors::Error::DockerContainerWaitError { code, .. }))) => Ok(code),
+        Ok(Some(Err(e))) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(format!("oneshot container wait failed: {e}")))
+        }
+        Ok(None) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(
+                "oneshot container wait stream ended with no response".into(),
+            ))
+        }
+    }
 }
 
 pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
@@ -4157,6 +4232,40 @@ mod tests {
         }
     }
 
+    /// Regression test for the daemon's real `/images/load` response shape: it reports the
+    /// loaded tag on the `stream` field (newline-terminated), never `status`. A minimal,
+    /// hermetic source image (`docker import` of a one-file tarball, no registry pull) keeps
+    /// this cheap so it runs on every Docker-gated pass rather than only the full bundle test.
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn save_and_load_image_round_trips_the_tag() {
+        let docker = test_docker();
+        let img = TestImage::new("save-load");
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let fs_tar = dir.path().join("fs.tar");
+        let file = std::fs::File::create(&fs_tar).expect("create fs tar");
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(5);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, "hello.txt", &b"hello"[..]).expect("append");
+        builder.into_inner().expect("finish tar");
+        let status = std::process::Command::new("docker")
+            .args(["import", &fs_tar.display().to_string(), &img.tag])
+            .status()
+            .expect("docker import runs");
+        assert!(status.success());
+
+        let saved = dir.path().join("image.tar");
+        save_image_to_file(&docker, &img.tag, &saved).await.expect("save");
+        docker_cleanup(&["rmi", &img.tag]);
+
+        let loaded = load_image_from_file(&docker, &saved).await.expect("load");
+        assert_eq!(loaded, img.tag, "load must report the same tag it was saved under");
+    }
+
     /// Clean up a test agent network on drop.
     struct TestNetwork {
         name: String,
@@ -5518,5 +5627,45 @@ mod tests {
             !missing.success,
             "without a grant, the host path must not appear inside the container"
         );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn run_oneshot_container_returns_exit_code_and_respects_ro_bind() {
+        let docker = test_docker();
+        let tc = TestContainer::new("oneshot");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::write(dir.path().join("marker"), "present").expect("write marker");
+        let bind = format!("{}:/mnt/probe:ro,z", dir.path().display());
+
+        let exit = run_oneshot_container(
+            &docker,
+            OneshotSpec {
+                image: &test_agent_image(),
+                cname: &tc.name,
+                cmd: vec!["sh".into(), "-c".into(), "test -f /mnt/probe/marker".into()],
+                ro_binds: vec![bind.clone()],
+            },
+            60,
+        )
+        .await
+        .expect("oneshot runs");
+        assert_eq!(exit, 0);
+
+        remove_container_force(&docker, &tc.name).await.expect("cleanup");
+        let tc_fail = TestContainer::new("oneshot-fail");
+        let exit_fail = run_oneshot_container(
+            &docker,
+            OneshotSpec {
+                image: &test_agent_image(),
+                cname: &tc_fail.name,
+                cmd: vec!["sh".into(), "-c".into(), "exit 7".into()],
+                ro_binds: vec![],
+            },
+            60,
+        )
+        .await
+        .expect("oneshot runs");
+        assert_eq!(exit_fail, 7);
     }
 }
