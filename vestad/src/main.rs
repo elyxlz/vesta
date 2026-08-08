@@ -22,6 +22,7 @@ mod maintenance_window;
 mod manifest;
 mod mobile_app;
 mod mounts;
+mod operation;
 mod paths;
 mod providers;
 mod restic;

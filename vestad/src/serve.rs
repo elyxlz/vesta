@@ -17,10 +17,12 @@ use crate::settings::{
     load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry,
     Settings, UserDesired,
 };
-use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
+use crate::state::{
+    agent_write_guard, err_response, map_docker_err, ok_json, AppState, SharedState,
+};
 use crate::{
     agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
-    maintenance_window, mobile_app, systemd, update,
+    maintenance_window, mobile_app, operation, systemd, update,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -147,14 +149,6 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
         std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
     Ok(key)
-}
-
-/// Acquire the per-agent serialization lock as an owned write guard — the single
-/// owner of the `agent_lock(name).write_owned()` idiom every mutating agent
-/// handler repeats. Owned so it can be held across the rest of an `async move`
-/// (e.g. the spawned backup/restore pipelines) without borrowing `state`.
-async fn agent_write_guard(state: &AppState, name: &str) -> tokio::sync::OwnedRwLockWriteGuard<()> {
-    state.agent_lock(name).await.write_owned().await
 }
 
 /// Refuse a container-mutating operation while the agent's container is mid-rebuild: the rebuild
@@ -502,7 +496,7 @@ async fn gateway_logs_handler(
 
 /// The 409 every mid-operation refusal answers with, naming the live phase so the client renders
 /// what is running instead of a bare conflict.
-fn update_conflict(phase: &update::UpdatePhase) -> (StatusCode, Json<serde_json::Value>) {
+fn update_conflict(phase: &operation::UpdatePhase) -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::CONFLICT,
         Json(serde_json::json!({
@@ -515,7 +509,7 @@ fn update_conflict(phase: &update::UpdatePhase) -> (StatusCode, Json<serde_json:
 /// Refuse while the gateway is mid-operation. The restart, the update, and the dismiss all route
 /// through this: a restart during an update is what orphaned a backup mid-export once.
 fn ensure_no_gateway_operation(
-    running: Option<update::UpdatePhase>,
+    running: Option<operation::UpdatePhase>,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     match running {
         None => Ok(()),
@@ -3065,81 +3059,10 @@ async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
     futures_util::stream::iter(agents)
         .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| async move {
             // Each failure already logged itself; a routine pass has no caller to report to.
-            let _ = snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
+            let _ = maintenance::snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
         })
         .await;
     tracing::info!(kind = ?kind, "maintenance: snapshot pass complete");
-}
-
-/// Snapshot one agent if the pass selects it, then apply retention. The error is reported as well as
-/// logged, because the pre-update pass turns it into the warning the user sees on the update screen;
-/// an agent the pass skips (backups off, too young, snapshot still fresh) is a plain Ok.
-pub(crate) async fn snapshot_agent(
-    state: &SharedState,
-    name: &str,
-    kind: &maintenance::PassKind,
-    backup_settings: &BackupGlobalSettings,
-    now_epoch: u64,
-) -> Result<(), docker::DockerError> {
-    let (agent_enabled, retention) = backup_settings.effective_for(name);
-    if !agent_enabled {
-        tracing::debug!(agent = %name, "maintenance: backups disabled for agent, skipping");
-        return Ok(());
-    }
-    if let Some(age) = backup::container_age_secs(&state.docker, name).await {
-        if age < backup::MIN_AGE_FOR_BACKUP_SECS {
-            tracing::debug!(agent = %name, age_hours = age / 3600, "maintenance: skipping young agent");
-            return Ok(());
-        }
-    }
-
-    let _guard = agent_write_guard(state, name).await;
-    let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(agent = %name, error = %e, "maintenance: failed to list backups");
-            return Err(e);
-        }
-    };
-    if maintenance::agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
-        let _file_lock = match backup::agent_file_lock(name) {
-            Ok(lock) => lock,
-            Err(e) => {
-                tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
-                return Err(e);
-            }
-        };
-        match backup::create_backup(&state.docker, name, kind.backup_type(), kind.version_tag()).await {
-            Ok(info) => {
-                if info.backup_type == crate::types::BackupType::PreUpdate {
-                    let superseded: Vec<String> = backups
-                        .iter()
-                        .filter(|b| b.backup_type == crate::types::BackupType::Periodic)
-                        .map(|b| b.id.clone())
-                        .collect();
-                    if !superseded.is_empty() {
-                        tracing::info!(agent = %name, count = superseded.len(), "maintenance: clearing periodic snapshots superseded by pre-update set");
-                        if let Err(e) = crate::restic::forget(name, &superseded).await {
-                            tracing::warn!(agent = %name, error = %e, "maintenance: failed to clear periodic snapshots");
-                        } else {
-                            backups.retain(|b| b.backup_type != crate::types::BackupType::Periodic);
-                        }
-                    }
-                }
-                backups.insert(0, info);
-            }
-            Err(e) => {
-                tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed");
-                // Retention still runs below for a failed snapshot, so report the failure after it.
-                backup::cleanup_backups(name, &backups, &retention).await;
-                return Err(e);
-            }
-        }
-    }
-    // Retention runs even when no snapshot was taken, so a tightened policy prunes on the
-    // next pass instead of waiting days for the next snapshot to trigger it.
-    backup::cleanup_backups(name, &backups, &retention).await;
-    Ok(())
 }
 
 /// Settle whatever the previous vestad left behind, once, before anything serves: an update that
@@ -3462,7 +3385,7 @@ mod tests {
 
     #[test]
     fn gateway_restart_and_update_conflict_while_an_update_runs() {
-        use crate::update::{UpdatePhase, UpdateStage};
+        use crate::operation::{UpdatePhase, UpdateStage};
 
         assert!(super::ensure_no_gateway_operation(None).is_ok(), "idle lets both through");
 
@@ -3480,7 +3403,7 @@ mod tests {
 
         // A failure the user has not dismissed still projects, but never blocks the retry: it is
         // filtered out before this guard by `running_phase` (covered in update.rs).
-        let operation = crate::update::UpdateOperation::new();
+        let operation = crate::operation::UpdateOperation::new();
         operation.set_interrupted("0.1.190".into(), UpdateStage::Applying);
         assert!(super::ensure_no_gateway_operation(operation.running_phase()).is_ok());
     }

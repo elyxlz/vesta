@@ -62,9 +62,9 @@ pub(crate) struct GatewayOperation {
     pub error: Option<String>,
 }
 
-impl From<crate::update::ActiveUpdate> for GatewayOperation {
-    fn from(active: crate::update::ActiveUpdate) -> Self {
-        use crate::update::UpdatePhase;
+impl From<crate::operation::ActiveUpdate> for GatewayOperation {
+    fn from(active: crate::operation::ActiveUpdate) -> Self {
+        use crate::operation::UpdatePhase;
         let (phase, agent, done, total, error) = match active.phase {
             UpdatePhase::Snapshotting { agent, done, total } => (
                 GatewayUpdatePhase::Snapshotting,
@@ -316,9 +316,9 @@ mod tests {
 
     #[test]
     fn a_running_update_projects_its_phase_and_progress() {
-        let active = crate::update::ActiveUpdate {
+        let active = crate::operation::ActiveUpdate {
             target_version: "0.1.190".into(),
-            phase: crate::update::UpdatePhase::Snapshotting {
+            phase: crate::operation::UpdatePhase::Snapshotting {
                 agent: Some("axel".into()),
                 done: 1,
                 total: 4,
@@ -338,10 +338,10 @@ mod tests {
 
     #[test]
     fn a_failed_update_projects_the_stage_it_died_on() {
-        let active = crate::update::ActiveUpdate {
+        let active = crate::operation::ActiveUpdate {
             target_version: "0.1.190".into(),
-            phase: crate::update::UpdatePhase::Failed {
-                during: crate::update::UpdateStage::Applying,
+            phase: crate::operation::UpdatePhase::Failed {
+                during: crate::operation::UpdateStage::Applying,
                 error: "curl failed".into(),
             },
             warnings: Vec::new(),

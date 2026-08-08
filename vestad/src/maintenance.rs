@@ -1,7 +1,9 @@
-//! Decision logic for the maintenance cycle: when the pass fires and which agents it
-//! snapshots. The pass itself runs in serve.rs, where the per-agent write guards and
-//! the update state live.
+//! The maintenance cycle: when the pass fires, which agents it snapshots, and the snapshot itself
+//! applied to one agent. The routine pass and the update's pre-update pass both drive
+//! `snapshot_agent` from here, so neither owns the other's module.
 
+use crate::settings::BackupGlobalSettings;
+use crate::state::{agent_write_guard, AppState};
 use crate::types::{BackupInfo, BackupType};
 
 /// Concurrent snapshots per pass. Repos are per-agent so restic never contends;
@@ -79,6 +81,77 @@ pub fn agent_needs_snapshot(
             })
         }
     }
+}
+
+/// Snapshot one agent if the pass selects it, then apply retention. The error is reported as well as
+/// logged, because the pre-update pass turns it into the warning the user sees on the update screen;
+/// an agent the pass skips (backups off, too young, snapshot still fresh) is a plain Ok.
+pub(crate) async fn snapshot_agent(
+    state: &AppState,
+    name: &str,
+    kind: &PassKind,
+    backup_settings: &BackupGlobalSettings,
+    now_epoch: u64,
+) -> Result<(), crate::docker::DockerError> {
+    let (agent_enabled, retention) = backup_settings.effective_for(name);
+    if !agent_enabled {
+        tracing::debug!(agent = %name, "maintenance: backups disabled for agent, skipping");
+        return Ok(());
+    }
+    if let Some(age) = crate::backup::container_age_secs(&state.docker, name).await {
+        if age < crate::backup::MIN_AGE_FOR_BACKUP_SECS {
+            tracing::debug!(agent = %name, age_hours = age / 3600, "maintenance: skipping young agent");
+            return Ok(());
+        }
+    }
+
+    let _guard = agent_write_guard(state, name).await;
+    let mut backups = match crate::backup::list_backups(&state.env_config.agents_dir, name).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(agent = %name, error = %e, "maintenance: failed to list backups");
+            return Err(e);
+        }
+    };
+    if agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
+        let _file_lock = match crate::backup::agent_file_lock(name) {
+            Ok(lock) => lock,
+            Err(e) => {
+                tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
+                return Err(e);
+            }
+        };
+        match crate::backup::create_backup(&state.docker, name, kind.backup_type(), kind.version_tag()).await {
+            Ok(info) => {
+                if info.backup_type == crate::types::BackupType::PreUpdate {
+                    let superseded: Vec<String> = backups
+                        .iter()
+                        .filter(|b| b.backup_type == crate::types::BackupType::Periodic)
+                        .map(|b| b.id.clone())
+                        .collect();
+                    if !superseded.is_empty() {
+                        tracing::info!(agent = %name, count = superseded.len(), "maintenance: clearing periodic snapshots superseded by pre-update set");
+                        if let Err(e) = crate::restic::forget(name, &superseded).await {
+                            tracing::warn!(agent = %name, error = %e, "maintenance: failed to clear periodic snapshots");
+                        } else {
+                            backups.retain(|b| b.backup_type != crate::types::BackupType::Periodic);
+                        }
+                    }
+                }
+                backups.insert(0, info);
+            }
+            Err(e) => {
+                tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed");
+                // Retention still runs below for a failed snapshot, so report the failure after it.
+                crate::backup::cleanup_backups(name, &backups, &retention).await;
+                return Err(e);
+            }
+        }
+    }
+    // Retention runs even when no snapshot was taken, so a tightened policy prunes on the
+    // next pass instead of waiting days for the next snapshot to trigger it.
+    crate::backup::cleanup_backups(name, &backups, &retention).await;
+    Ok(())
 }
 
 #[cfg(test)]
