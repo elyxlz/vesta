@@ -80,6 +80,12 @@ impl<'a> AgentProvider<'a> {
             .await
     }
 
+    /// GET the agent's /provider/models (live Claude catalog; vestad relays it to the app).
+    pub async fn get_provider_models(&self) -> Result<serde_json::Value, String> {
+        self.get_json("/provider/models", STATUS_TIMEOUT, "/provider/models")
+            .await
+    }
+
     /// PUT a prefs body to the agent's /config. Write only — caller restarts to apply.
     pub async fn put_config(&self, body: &serde_json::Value) -> Result<(), String> {
         self.write("PUT", "/config", Some(body)).await

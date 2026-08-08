@@ -1155,6 +1155,20 @@ async fn get_provider_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
+/// Relay the agent's `GET /provider/models` (live Claude catalog; vestad proxies it).
+async fn provider_models_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let provider = agent_provider_for(&state, &name).await?;
+    provider
+        .get_provider_models()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
+}
+
 /// Sign in / switch: forward the provider body to the agent's `PUT /provider`. Write only — caller restarts.
 async fn set_provider_handler(
     State(state): State<SharedState>,
@@ -2680,6 +2694,7 @@ pub fn build_router(state: SharedState) -> Router {
                 .patch(patch_provider_handler)
                 .delete(clear_provider_handler),
         )
+        .route("/agents/{name}/provider/models", get(provider_models_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route(
