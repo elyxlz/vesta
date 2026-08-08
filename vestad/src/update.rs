@@ -7,6 +7,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::state::SharedState;
+
 // Poll GitHub for new releases every 5 hours: often enough that the UpdatePill and a
 // power user's manual update see a release promptly. This only governs detection; an
 // auto-update is applied later, by the maintenance cycle in the fleet's 4-5am quiet
@@ -390,6 +392,345 @@ pub fn recover_at_boot(config_dir: &Path, running_version: &str) -> BootRecovery
     }
 }
 
+// --- Orchestrator ---
+
+/// Ceiling on one agent's pre-update snapshot. Generous next to the worst observed fleet backup
+/// (tens of seconds): it is there so a wedged export cannot stall the update forever, not to cut a
+/// slow but live one short. Past it the agent keeps its older periodic snapshot as its rollback
+/// point, the update records a warning, and the pass moves to the next agent.
+pub const SNAPSHOT_PER_AGENT_TIMEOUT_SECS: u64 = 15 * 60;
+
+/// One update as clients see it. Held in memory only: the ledger is what survives a restart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveUpdate {
+    pub target_version: String,
+    pub phase: UpdatePhase,
+    pub warnings: Vec<String>,
+}
+
+/// The single gateway operation slot. Holding it IS the lock on updating: a second update, and a
+/// gateway restart, are refused while a live operation sits here. A terminal (failed) operation
+/// keeps projecting so the user sees the failure, but yields the slot to a retry.
+pub struct UpdateOperation {
+    active: std::sync::Mutex<Option<ActiveUpdate>>,
+    changes: tokio::sync::watch::Sender<u64>,
+}
+
+impl Default for UpdateOperation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UpdateOperation {
+    pub fn new() -> Self {
+        let (changes, _keep_open) = tokio::sync::watch::channel(0);
+        Self {
+            active: std::sync::Mutex::new(None),
+            changes,
+        }
+    }
+
+    /// What every `/sync` session projects, and what the guards read.
+    pub fn snapshot(&self) -> Option<ActiveUpdate> {
+        self.lock().clone()
+    }
+
+    /// Wake on every phase transition, so a client sees "backing up axel 2/4" as it happens.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
+    /// Take the slot for a new update, or hand back the live phase already holding it.
+    fn claim(&self, target_version: &str) -> Result<(), UpdatePhase> {
+        let mut active = self.lock();
+        if let Some(running) = active.as_ref() {
+            if !matches!(running.phase, UpdatePhase::Failed { .. }) {
+                return Err(running.phase.clone());
+            }
+        }
+        *active = Some(ActiveUpdate {
+            target_version: target_version.to_string(),
+            phase: UpdatePhase::Snapshotting {
+                agent: None,
+                done: 0,
+                total: 0,
+            },
+            warnings: Vec::new(),
+        });
+        drop(active);
+        self.bump();
+        Ok(())
+    }
+
+    /// Move the operation to `phase` and report the warnings collected so far, which the caller
+    /// writes into the ledger alongside it.
+    fn set_phase(&self, phase: UpdatePhase) -> Vec<String> {
+        let mut active = self.lock();
+        let warnings = match active.as_mut() {
+            Some(running) => {
+                running.phase = phase;
+                running.warnings.clone()
+            }
+            None => Vec::new(),
+        };
+        drop(active);
+        self.bump();
+        warnings
+    }
+
+    fn warn(&self, warning: String) {
+        tracing::warn!(%warning, "gateway update warning");
+        let mut active = self.lock();
+        if let Some(running) = active.as_mut() {
+            running.warnings.push(warning);
+        }
+        drop(active);
+        self.bump();
+    }
+
+    pub fn clear(&self) {
+        *self.lock() = None;
+        self.bump();
+    }
+
+    /// Project the failure a previous vestad never got to report (see `recover_at_boot`), so the
+    /// user meets an explicit "update failed" with a retry instead of silence.
+    pub fn set_interrupted(&self, target_version: String, during: UpdateStage) {
+        *self.lock() = Some(ActiveUpdate {
+            target_version,
+            phase: UpdatePhase::Failed {
+                during,
+                error: "the update stopped before it finished".into(),
+            },
+            warnings: Vec::new(),
+        });
+        self.bump();
+    }
+
+    /// Drop a failure the user has acknowledged. False when there is nothing terminal to dismiss,
+    /// which is what makes a dismiss during a running update a 409 rather than a silent no-op.
+    pub fn dismiss(&self) -> bool {
+        let mut active = self.lock();
+        if !matches!(
+            active.as_ref().map(|running| &running.phase),
+            Some(UpdatePhase::Failed { .. })
+        ) {
+            return false;
+        }
+        *active = None;
+        drop(active);
+        self.bump();
+        true
+    }
+
+    /// Resolve once the operation is over: cleared (the process is about to be replaced, or there
+    /// was nothing to do) or terminal. The auto-update path awaits this so one maintenance cycle
+    /// never overlaps the next.
+    pub async fn wait_until_settled(&self) {
+        let mut changes = self.subscribe();
+        loop {
+            match self.snapshot() {
+                None | Some(ActiveUpdate { phase: UpdatePhase::Failed { .. }, .. }) => return,
+                Some(_) => {}
+            }
+            if changes.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<ActiveUpdate>> {
+        self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn bump(&self) {
+        self.changes.send_modify(|version| *version = version.wrapping_add(1));
+    }
+}
+
+/// Start an update, unless one already holds the operation slot. Returns whether work actually
+/// started: a gateway already on the newest release is a no-op, not a failure. The update itself
+/// runs on its own task, so the caller (an HTTP handler) returns immediately and every client
+/// watches the phases on `/sync`.
+pub async fn start_update(state: SharedState, intent: UpdateIntent) -> Result<bool, UpdatePhase> {
+    let Some(target) = resolve_target(&state).await else {
+        return Ok(false);
+    };
+    state.update_operation.claim(&target)?;
+    let run = UpdateRun {
+        state,
+        intent,
+        target,
+        started_at: crate::time_utils::now_epoch_secs(),
+    };
+    tokio::spawn(run_update(run));
+    Ok(true)
+}
+
+/// The release this update installs, or None when the gateway is already current. Reuses the
+/// periodic check's answer and only reaches GitHub when there is none yet.
+async fn resolve_target(state: &SharedState) -> Option<String> {
+    let known = state
+        .update_info
+        .lock()
+        .await
+        .as_ref()
+        .map(|info| info.latest.clone());
+    let latest = if let Some(latest) = known {
+        latest
+    } else {
+        refresh_latest_tag(state).await?
+    };
+    if version_less_than(env!("CARGO_PKG_VERSION"), &latest) {
+        Some(latest)
+    } else {
+        tracing::info!(latest = %latest, "gateway is already current; nothing to update");
+        None
+    }
+}
+
+/// Reach GitHub for the newest release and remember it, so the check the `UpdatePill` reads and the
+/// one an update starts from are the same answer.
+async fn refresh_latest_tag(state: &SharedState) -> Option<String> {
+    let channel = crate::channel::Channel::resolve(&state.settings.read().await.channel);
+    match tokio::task::spawn_blocking(move || check_once(channel)).await {
+        Ok(Ok(info)) => {
+            let latest = info.latest.clone();
+            *state.update_info.lock().await = Some(info);
+            Some(latest)
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "cannot start an update: release check failed");
+            None
+        }
+        Err(error) => {
+            tracing::error!(%error, "cannot start an update: release check task failed");
+            None
+        }
+    }
+}
+
+/// One update in flight: the state it drives and the identity it records at every transition.
+struct UpdateRun {
+    state: SharedState,
+    intent: UpdateIntent,
+    target: String,
+    started_at: u64,
+}
+
+impl UpdateRun {
+    /// Move to `phase` in one place: the projected operation and the durable ledger never disagree.
+    fn advance(&self, phase: UpdatePhase) {
+        tracing::info!(target_version = %self.target, phase = ?phase, "gateway update phase");
+        let warnings = self.state.update_operation.set_phase(phase.clone());
+        write_ledger(
+            &self.state.env_config.config_dir,
+            &UpdateLedger {
+                target_version: self.target.clone(),
+                phase,
+                intent: self.intent,
+                started_at: self.started_at,
+                warnings,
+            },
+        );
+    }
+
+    /// End the update loudly: the ledger goes (this vestad reported the failure itself, so the next
+    /// boot has nothing to recover) and the failure keeps projecting until retried or dismissed.
+    fn fail(&self, during: UpdateStage, error: String) {
+        tracing::error!(target_version = %self.target, %during, %error, "gateway update failed");
+        clear_ledger(&self.state.env_config.config_dir);
+        self.state
+            .update_operation
+            .set_phase(UpdatePhase::Failed { during, error });
+    }
+
+    /// End the update quietly: nothing left to watch, nothing left to recover.
+    fn finish(&self) {
+        clear_ledger(&self.state.env_config.config_dir);
+        self.state.update_operation.clear();
+    }
+}
+
+async fn run_update(run: UpdateRun) {
+    let backup_settings = run.state.settings.read().await.backup.clone();
+    let agents = crate::backup::list_agent_names(&run.state.docker).await;
+    let kind = crate::maintenance::PassKind::pre_update_from_current();
+    let now_epoch = crate::time_utils::now_epoch_secs();
+    let warnings = run_snapshots(
+        &agents,
+        std::time::Duration::from_secs(SNAPSHOT_PER_AGENT_TIMEOUT_SECS),
+        |phase| run.advance(phase),
+        |agent| {
+            let (state, kind, settings) = (&run.state, &kind, &backup_settings);
+            async move { crate::serve::snapshot_agent(state, &agent, kind, settings, now_epoch).await }
+        },
+    )
+    .await;
+    for warning in warnings {
+        run.state.update_operation.warn(warning);
+    }
+
+    run.advance(UpdatePhase::Applying);
+    let tag = run.target.clone();
+    match tokio::task::spawn_blocking(move || update_binary(&tag)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return run.fail(UpdateStage::Applying, error.to_string()),
+        Err(error) => return run.fail(UpdateStage::Applying, error.to_string()),
+    }
+
+    // Without systemd nothing can restart this process, so the swapped binary takes effect the next
+    // time the user starts vestad. That is the end of the update, not a pending restart: leaving a
+    // `Restarting` ledger behind would make the next boot report an interruption that never happened.
+    if !crate::systemd::is_active() {
+        tracing::info!(target_version = %run.target, "gateway binary updated; run 'vestad' to start it");
+        return run.finish();
+    }
+    run.advance(UpdatePhase::Restarting);
+    match tokio::task::spawn_blocking(crate::systemd::restart).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => run.fail(UpdateStage::Restarting, error),
+        Err(error) => run.fail(UpdateStage::Restarting, error.to_string()),
+    }
+}
+
+/// Snapshot each agent in turn under a per-agent budget, reporting progress as it goes and turning a
+/// timeout or a failure into a warning. A snapshot never blocks the update: the agent keeps whatever
+/// rollback point it already had. Sequential, so the reported progress is one honest "backing up
+/// axel 2/4" rather than several at once.
+async fn run_snapshots<Snapshot, Snapshotting>(
+    agents: &[String],
+    budget: std::time::Duration,
+    progress: impl Fn(UpdatePhase),
+    snapshot: Snapshot,
+) -> Vec<String>
+where
+    Snapshot: Fn(String) -> Snapshotting,
+    Snapshotting: std::future::Future<Output = Result<(), crate::docker::DockerError>>,
+{
+    let total = u32::try_from(agents.len()).unwrap_or(u32::MAX);
+    let mut warnings = Vec::new();
+    for (index, agent) in agents.iter().enumerate() {
+        progress(UpdatePhase::Snapshotting {
+            agent: Some(agent.clone()),
+            done: u32::try_from(index).unwrap_or(u32::MAX),
+            total,
+        });
+        match tokio::time::timeout(budget, snapshot(agent.clone())).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warnings.push(format!("{agent}: backup failed ({error})")),
+            Err(_) => warnings.push(format!(
+                "{agent}: backup did not finish within {} minutes",
+                budget.as_secs() / 60
+            )),
+        }
+    }
+    warnings
+}
+
 // --- Binary swap ---
 
 #[derive(Debug)]
@@ -598,6 +939,95 @@ mod tests {
                 target_version: "0.1.190".into(),
                 during: UpdateStage::Restarting,
             }
+        );
+    }
+
+    #[test]
+    fn a_live_operation_holds_the_slot_and_a_failed_one_yields_it() {
+        let operation = UpdateOperation::new();
+        assert_eq!(operation.snapshot(), None);
+
+        operation.claim("0.1.190").expect("the first claim takes the free slot");
+        let live = UpdatePhase::Snapshotting { agent: None, done: 0, total: 0 };
+        assert_eq!(operation.claim("0.1.190"), Err(live.clone()));
+
+        // A failure the user has not dismissed still projects, but a retry replaces it.
+        operation.set_phase(UpdatePhase::Failed {
+            during: UpdateStage::Applying,
+            error: "curl failed".into(),
+        });
+        assert!(operation.claim("0.1.191").is_ok());
+        assert_eq!(
+            operation.snapshot().map(|active| active.target_version),
+            Some("0.1.191".to_string())
+        );
+
+        operation.clear();
+        assert_eq!(operation.snapshot(), None);
+    }
+
+    #[test]
+    fn dismiss_clears_only_a_terminal_operation() {
+        let operation = UpdateOperation::new();
+        assert!(!operation.dismiss(), "nothing to dismiss when idle");
+
+        operation.claim("0.1.190").expect("claim");
+        assert!(!operation.dismiss(), "a running update is not dismissable");
+        assert!(operation.snapshot().is_some());
+
+        operation.set_phase(UpdatePhase::Failed {
+            during: UpdateStage::Snapshotting,
+            error: "boom".into(),
+        });
+        assert!(operation.dismiss());
+        assert_eq!(operation.snapshot(), None);
+    }
+
+    #[test]
+    fn a_recovered_interruption_projects_as_a_failure() {
+        let operation = UpdateOperation::new();
+        operation.set_interrupted("0.1.190".into(), UpdateStage::Snapshotting);
+        let active = operation.snapshot().expect("the interruption projects");
+        assert_eq!(active.target_version, "0.1.190");
+        assert!(matches!(
+            active.phase,
+            UpdatePhase::Failed { during: UpdateStage::Snapshotting, .. }
+        ));
+        assert!(operation.dismiss(), "the user can dismiss a recovered failure");
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_that_overruns_its_budget_warns_and_the_pass_continues() {
+        let agents = ["axel".to_string(), "mona".to_string(), "scout".to_string()];
+        let phases = std::sync::Mutex::new(Vec::new());
+        let warnings = run_snapshots(
+            &agents,
+            std::time::Duration::from_millis(20),
+            |phase| phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(phase),
+            |agent| async move {
+                match agent.as_str() {
+                    // Wedged: it never returns, so only the budget ends it.
+                    "axel" => std::future::pending::<Result<(), crate::docker::DockerError>>().await,
+                    "mona" => Err(crate::docker::DockerError::Failed("disk full".into())),
+                    _ => Ok(()),
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(warnings.len(), 2, "one warning each for the timeout and the failure");
+        assert!(warnings[0].contains("axel"));
+        assert!(warnings[1].contains("mona"), "the pass carried on past the wedged agent");
+        assert!(warnings[1].contains("disk full"));
+
+        let phases = phases.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            phases,
+            vec![
+                UpdatePhase::Snapshotting { agent: Some("axel".into()), done: 0, total: 3 },
+                UpdatePhase::Snapshotting { agent: Some("mona".into()), done: 1, total: 3 },
+                UpdatePhase::Snapshotting { agent: Some("scout".into()), done: 2, total: 3 },
+            ]
         );
     }
 

@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
 use axum::{http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
@@ -119,7 +119,9 @@ pub struct AppState {
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     pub(crate) tunnel_url: Mutex<Option<String>>,
     pub(crate) update_info: Mutex<Option<update::UpdateInfo>>,
-    pub(crate) updating: AtomicBool,
+    /// The gateway's one operation slot (see update.rs): what an update is doing right now, and the
+    /// lock that keeps a second update or a gateway restart from racing it.
+    pub(crate) update_operation: update::UpdateOperation,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
     /// Revocable, per-service credentials the agent proxy accepts for a private service.
@@ -193,7 +195,7 @@ impl AppState {
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
                 update_info: Mutex::new(None),
-                updating: AtomicBool::new(false),
+                update_operation: update::UpdateOperation::new(),
                 http_client,
                 settings: RwLock::new(settings),
                 service_keys: RwLock::new(crate::service_keys::load_store()),
