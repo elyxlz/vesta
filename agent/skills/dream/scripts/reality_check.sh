@@ -4,11 +4,13 @@
 # one OK/RED line per probe and exits 1 if anything is RED. Probes read only fleet-generic state
 # (daemon records, logs, disk, the events DB, the notifications dir), so a RED is real on any box.
 
-# Disk-probe knobs: RED once this agent's own files could plausibly fill a disk, note the host's
-# percentage as context past the note threshold, and bound the du walk so a pathological tree or a
-# stuck filesystem can never hang the dream that runs this probe.
+# Disk-probe knobs: RED once this agent's own files could plausibly fill a disk, or once the host is
+# close enough to full that writes start failing; note the host's percentage as context in between,
+# and bound the du walk so a pathological tree or a stuck filesystem can never hang the dream that
+# runs this probe.
 OWN_USAGE_RED_MB=20000
 HOST_DISK_NOTE_PERCENT=90
+HOST_DISK_RED_PERCENT=97
 DU_TIMEOUT_SECS=120
 
 red=0
@@ -33,8 +35,9 @@ done
 
 # Disk: a full disk fails writes quietly all over the box, never loudly in one place. On a shared
 # host the filesystem under $HOME is the host's, so its percentage is mostly other tenants and no
-# amount of cleanup here moves it. RED only on what this agent can actually act on, and report the
-# host figure as context, so the probe never hands you a RED you cannot clear.
+# amount of cleanup here moves it, so report it as context rather than a RED. Past the ceiling that
+# stops being true: not yours to clear is not the same as not your problem, because writes start
+# failing across the box, so that one is a RED to escalate rather than to fix here.
 usage=$(df -P "$HOME" | awk 'NR==2 {gsub("%","",$5); print $5}')
 du_lines=$(timeout "$DU_TIMEOUT_SECS" du -sm "$HOME" /tmp 2>/dev/null)
 du_status=$?
@@ -43,6 +46,8 @@ if [ "$du_status" -eq 124 ]; then
     bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
     bad "this agent is using ${mine}MB across \$HOME and /tmp: clean up tonight (workspace cleanup)"
+elif [ "${usage:-0}" -ge "$HOST_DISK_RED_PERCENT" ]; then
+    bad "disk at ${usage}%, and only ${mine}MB is this agent's: you cannot clear this, so escalate it to the user or vestad; writes will start failing"
 elif [ "${usage:-0}" -ge "$HOST_DISK_NOTE_PERCENT" ]; then
     ok "disk at ${usage}% but only ${mine}MB is this agent's; the rest is the host, not yours to clear"
 else
