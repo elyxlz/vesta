@@ -312,7 +312,7 @@ def run(interval: int | None = None) -> None:
 
     def log(msg: str) -> None:
         with log_lock:
-            print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
     shutdown_event = threading.Event()
     shutdown_reason = "unknown"
