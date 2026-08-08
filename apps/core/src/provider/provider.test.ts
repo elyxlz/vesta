@@ -121,8 +121,19 @@ describe("resolveProviderIdentity", () => {
     expect(resolveProviderIdentity({ ...provider, model: "claude-opus-5" }, manifest)).toEqual({
       kind: "claude",
       providerName: "Claude",
-      modelName: "claude-opus-5",
+      modelName: "Opus 5",
     })
+    expect(
+      resolveProviderIdentity({ ...provider, model: "claude-opus-4-8" }, manifest)?.modelName,
+    ).toBe("Opus 4.8")
+    expect(
+      resolveProviderIdentity({ ...provider, model: "claude-haiku-4-5-20251001" }, manifest)
+        ?.modelName,
+    ).toBe("Haiku 4.5")
+    expect(
+      resolveProviderIdentity({ ...provider, model: "claude-3-5-sonnet-20241022" }, manifest)
+        ?.modelName,
+    ).toBe("claude-3-5-sonnet-20241022")
   })
 
   it("falls back to wire identifiers and hides disconnected providers", () => {

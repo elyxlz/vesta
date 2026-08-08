@@ -140,7 +140,7 @@ export interface ProviderIdentity {
 /// The two stable Claude aliases and their display labels. Claude's live catalog carries no
 /// model_names, so this pair is the one owner of the alias set: web and mobile pickers offer it
 /// as primary options and resolveProviderIdentity labels it. A live slug (e.g. "claude-opus-5")
-/// falls through to the raw slug, which is fine.
+/// is prettified by formatClaudeSlug below.
 export const CLAUDE_ALIASES: { slug: string; label: string }[] = [
   { slug: "opus", label: "Opus" },
   { slug: "sonnet", label: "Sonnet" },
@@ -149,6 +149,21 @@ export const CLAUDE_ALIASES: { slug: string; label: string }[] = [
 const CLAUDE_ALIAS_LABELS: Record<string, string> = Object.fromEntries(
   CLAUDE_ALIASES.map((alias) => [alias.slug, alias.label]),
 )
+
+/// A modern Claude slug ("claude-opus-4-8", dated pins included) as its short display name
+/// ("Opus 4.8"). A trailing 8-digit date is a snapshot pin, not a version part, so it is dropped.
+/// Anything the pattern does not match (legacy version-first slugs, other providers) returns null
+/// and the caller shows the raw identifier.
+function formatClaudeSlug(slug: string): string | null {
+  const match = /^claude-([a-z]+)((?:-\d+)+)$/.exec(slug)
+  if (match?.[1] === undefined || match[2] === undefined) return null
+  const family = match[1].charAt(0).toUpperCase() + match[1].slice(1)
+  const parts = match[2].slice(1).split("-")
+  const last = parts[parts.length - 1]
+  if (last?.length === 8) parts.pop()
+  if (parts.length === 0) return null
+  return `${family} ${parts.join(".")}`
+}
 
 /// Who is running this agent, as the user reads it: the manifest owns both names, and the wire
 /// identifiers stand in on a gateway whose manifest predates them. Null while disconnected.
@@ -164,6 +179,7 @@ export function resolveProviderIdentity(
     modelName: provider.model
       ? (entry?.model_names?.[provider.model] ??
         CLAUDE_ALIAS_LABELS[provider.model] ??
+        formatClaudeSlug(provider.model) ??
         provider.model)
       : null,
   }
