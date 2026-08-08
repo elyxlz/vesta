@@ -8,7 +8,7 @@ Vesta is an AI guardian angel: the live agent that runs inside a Docker containe
 
 Vesta's capabilities come from **skills**: self-contained directories (a `SKILL.md` plus scripts) loaded on demand, covering messaging, tasks and reminders, email, web browsing, and more, with each agent activating the ones it needs. See Adding a skill below.
 
-> **cc_sdk is dormant, leave it alone.** `agent/core/cc_sdk/` drives the interactive `claude` CLI inside tmux behind the same `ClaudeSDKClient` lifecycle, message/block types, hook plumbing, and MCP registration, retained as an alternative driver. It ships in the image but nothing in `core/` imports it. Swapping it back in is not a one-line change: `core/` also depends on `claude_agent_sdk`'s `ProcessError`, which cc_sdk does not define. Do not delete it, tidy it, or wire it back in without an explicit ask. Keep its transport tests (`tests/test_cc_sdk.py`, `tests/test_e2e_transport.py`, `tests/test_stop_race.py`) green.
+> **cc_sdk is dormant, leave it alone.** `agent/core/cc_sdk/` drives the interactive `claude` CLI inside tmux behind the same `ClaudeSDKClient` lifecycle, message/block types, hook plumbing, and MCP registration, retained as an alternative driver. It ships in the image but nothing in `core/` imports it. Swapping it back in is not a one-line change: `core/` also depends on `claude_agent_sdk`'s `ProcessError` and `SdkBeta`, which cc_sdk does not define. Do not delete it, tidy it, or wire it back in without an explicit ask. Keep its transport tests (`tests/test_cc_sdk.py`, `tests/test_e2e_transport.py`, `tests/test_stop_race.py`) green.
 
 ## Architecture
 
