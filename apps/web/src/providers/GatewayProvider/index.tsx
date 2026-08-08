@@ -1,11 +1,26 @@
-import { useCallback, useContext, useEffect, type ReactNode } from "react";
-import type { Controller, SyncState, Tree } from "@vesta/core";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import type {
+  Controller,
+  GatewayUpdateOperation,
+  SyncState,
+  Tree,
+} from "@vesta/core";
 import {
   checkForGatewayUpdate,
   devicesEqual,
+  dismissGatewayUpdate as requestDismissUpdate,
+  gatewayOperationsEqual,
   rosterFromTree,
   rostersEqual,
   selectDevices,
+  selectGatewayOperation,
   triggerGatewayRestart as requestGatewayRestart,
   triggerGatewayUpdate as requestGatewayUpdate,
 } from "@vesta/core";
@@ -38,11 +53,42 @@ function selectGateway(tree: Tree | null) {
   return tree?.gateway ?? null;
 }
 
+// How long the "updated to vX.Y.Z" resolution stays up before the app returns to normal.
+const UPDATED_NOTICE_MS = 6000;
+
 // Route compatibility screens inside the provider because their shared navbar reads gateway state.
 function routeContent(syncState: SyncState, children: ReactNode): ReactNode {
   if (syncState === "app_behind") return <AppBehindScreen />;
   if (syncState === "gateway_behind") return <GatewayBehindScreen />;
   return children;
+}
+
+// Resolve the update the user watched: remember the version it started from, and once the operation
+// clears against a different one, report it for a moment. Timing rather than derivable state, so it
+// lives in an Effect with its own cleanup.
+function useUpdateResolution(
+  operation: GatewayUpdateOperation | null,
+  version: string,
+): string | null {
+  const versionBeforeUpdate = useRef("");
+  const [updatedTo, setUpdatedTo] = useState<string | null>(null);
+  useEffect(() => {
+    // The empty version is "no gateway branch yet", which resolves nothing either way.
+    if (operation !== null) {
+      // A new operation supersedes a still-showing notice.
+      setUpdatedTo(null);
+      if (versionBeforeUpdate.current === "")
+        versionBeforeUpdate.current = version;
+      return;
+    }
+    const before = versionBeforeUpdate.current;
+    versionBeforeUpdate.current = "";
+    if (before === "" || version === "" || before === version) return;
+    setUpdatedTo(version);
+    const clear = setTimeout(() => setUpdatedTo(null), UPDATED_NOTICE_MS);
+    return () => clearTimeout(clear);
+  }, [operation, version]);
+  return updatedTo;
 }
 
 function ReplicaGateway({
@@ -53,6 +99,11 @@ function ReplicaGateway({
   children: ReactNode;
 }) {
   const gateway = useReplica(controller.replica, selectGateway);
+  const updateOperation = useReplica(
+    controller.replica,
+    selectGatewayOperation,
+    gatewayOperationsEqual,
+  );
   const agents = useReplica(controller.replica, rosterFromTree, rostersEqual);
   const devices = useReplica(controller.replica, selectDevices, devicesEqual);
   const syncState = useSyncState(controller);
@@ -66,12 +117,20 @@ function ReplicaGateway({
     useAgentOps.getState().reconcile(agents);
   }, [agents]);
 
-  const triggerGatewayUpdate = useCallback(async (): Promise<boolean> => {
-    const ok = await requestGatewayUpdate(controller.http);
-    // Force a fresh controller/socket so the app re-attaches to the restarting gateway.
-    if (ok) reconnect();
-    return ok;
-  }, [controller, reconnect]);
+  const gatewayVersion = gateway?.version ?? "";
+  const updatedTo = useUpdateResolution(updateOperation, gatewayVersion);
+
+  // An update no longer ends the socket the moment it is asked for: vestad accepts it and reports
+  // its phases on /sync, and the live socket reconnects on its own through the restart phase.
+  const triggerGatewayUpdate = useCallback(
+    () => requestGatewayUpdate(controller.http),
+    [controller],
+  );
+
+  const dismissUpdate = useCallback(
+    () => requestDismissUpdate(controller.http),
+    [controller],
+  );
 
   const triggerGatewayRestart = useCallback(async (): Promise<boolean> => {
     const ok = await requestGatewayRestart(controller.http);
@@ -92,18 +151,21 @@ function ReplicaGateway({
   const value: GatewayContextValue = {
     reachable: syncState === "open",
     managed: gateway?.managed ?? false,
-    gatewayVersion: gateway?.version ?? "",
+    gatewayVersion,
     gatewayChannel: gateway?.channel ?? "stable",
     gatewayAutoUpdate: gateway?.autoUpdate ?? true,
     gatewayPort: gateway?.port ?? 0,
     versionChecked: true,
     updateAvailable: gateway?.updateAvailable ?? false,
     latestVersion: gateway?.latestVersion ?? null,
+    updateOperation,
+    updatedTo,
     agents,
     agentsFetched: gateway !== null,
     devices,
     triggerGatewayUpdate,
     triggerGatewayRestart,
+    dismissUpdate,
     checkForUpdate,
   };
 

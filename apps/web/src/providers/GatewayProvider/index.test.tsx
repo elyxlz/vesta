@@ -27,6 +27,7 @@ function gatewayInfo(overrides: Partial<GatewayInfo> = {}): GatewayInfo {
     updateAvailable: false,
     latestVersion: null,
     managed: false,
+    operation: null,
     ...overrides,
   };
 }

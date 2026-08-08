@@ -1,6 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Constants from "expo-constants";
-import { resolveClientVersion, type Controller } from "@vesta/core";
+import {
+  gatewayOperationsEqual,
+  resolveClientVersion,
+  selectGatewayOperation,
+  type Controller,
+} from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
@@ -9,10 +14,14 @@ import { deviceIdentity } from "./device-identity";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
 import { createAppStateForegroundSignal } from "./foreground-signal";
-import { useOptionalControllerSyncState } from "./optional-controller-store";
+import {
+  useOptionalControllerReplica,
+  useOptionalControllerSyncState,
+} from "./optional-controller-store";
 import { runReauthCheck } from "./reauth-poll";
 import { AppBehindScreen } from "./AppBehindScreen";
 import { GatewayUpdateGate } from "./gateway-update-gate";
+import { GatewayUpdateProgressSheet } from "./gateway-update-progress-sheet";
 
 // Development variants drift with source rather than releases, so they deliberately fail open.
 // Production variants compare their release against the gateway's compatibility window.
@@ -50,6 +59,13 @@ function ConnectedController({ children }: { children: ReactNode }) {
     };
   }, []);
   const syncState = useOptionalControllerSyncState(controller);
+  // A gateway update takes over the app for as long as it runs: every agent may be mid-backup and
+  // the gateway is about to restart, so there is nothing else to do but watch it.
+  const updateOperation = useOptionalControllerReplica(
+    controller,
+    selectGatewayOperation,
+    gatewayOperationsEqual,
+  );
 
   useEffect(() => {
     let prev: GateInput = { connected: false, foreground: false };
@@ -111,6 +127,8 @@ function ConnectedController({ children }: { children: ReactNode }) {
     <ControllerContext.Provider value={controller}>
       {syncState === "app_behind" ? (
         <AppBehindScreen />
+      ) : updateOperation !== null ? (
+        <GatewayUpdateProgressSheet operation={updateOperation} />
       ) : (
         <GatewayUpdateGate blocked={syncState === "gateway_behind"}>
           {children}

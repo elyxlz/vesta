@@ -302,12 +302,23 @@ curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/gateway/update -H "X-Agent-Token
 ```
 
 `GET /version` returns `{version, latest_version, update_available, channel, ...}` from a
-periodic release check; `POST /version/check` forces a fresh check first. An update is
-host-global: vestad replaces itself, restarts, and in doing so stops and restarts every
-agent on the host, this one included. Expect the update call's response to never arrive
-when it succeeds; the container simply comes back on the new version, like `restart_vesta`.
-Only run it when the user asks or has standing approval. On a dev-mode vestad the endpoint
-returns 400 (self-update disabled).
+periodic release check; `POST /version/check` forces a fresh check first.
+
+`POST /gateway/update` answers as soon as vestad decides, and every answer says what happened:
+
+- `202 {"started": true, "target_version": "0.1.190"}`: the update is running.
+- `200 {"started": false, "reason": "already_current", "version": "0.1.190"}`: the gateway already
+  runs the newest release on its channel.
+- `409 {"error": "update in progress", "phase": {"phase": "snapshotting", "agent": "axel", "done": 1, "total": 4}}`:
+  an update is already running, and `phase` names the step it is on. A gateway restart answers the
+  same way while one runs.
+- `503`: the release check could not answer, so no update was attempted. Retry later.
+- `400`: this is a dev-mode vestad, where self-update is disabled.
+
+A started update then runs on its own: vestad snapshots every agent, replaces its binary, and
+restarts. That restart is host-global, so it stops and restarts every agent on the host, this one
+included, minutes after the call answered; the container comes back on the new version, like
+`restart_vesta`. Only run an update when the user asks or has standing approval.
 
 ## Gateway logs (self-diagnosis)
 

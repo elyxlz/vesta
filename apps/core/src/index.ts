@@ -27,6 +27,8 @@ export type {
   DeviceKind,
   GatewayInfo,
   GatewayLan,
+  GatewayUpdateOperation,
+  GatewayUpdatePhase,
   ReleaseChannel,
   ServiceInfo,
   Tree,
@@ -34,6 +36,11 @@ export type {
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
 export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
 export { selectDevices, devicesEqual } from "./tree/devices"
+export {
+  gatewayOperationLabel,
+  gatewayOperationsEqual,
+  selectGatewayOperation,
+} from "./tree/gateway-operation"
 
 export { createReplica } from "./replica/store"
 export type { Replica } from "./replica/store"
@@ -91,6 +98,7 @@ export type { IdGenerator, SendFailure, SendMessageBody, SentMessage } from "./i
 
 export {
   checkForGatewayUpdate,
+  dismissGatewayUpdate,
   triggerGatewayRestart,
   triggerGatewayUpdate,
 } from "./intents/gateway-update"

@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
 use axum::{http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::settings::{load_settings, Settings};
-use crate::{agent_status, docker, mobile_app, update_check};
+use crate::{agent_status, docker, mobile_app, update};
 
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -118,8 +118,10 @@ pub struct AppState {
     pub(crate) refresh_live: Mutex<HashMap<String, RefreshFamily>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     pub(crate) tunnel_url: Mutex<Option<String>>,
-    pub(crate) update_info: Mutex<Option<update_check::UpdateInfo>>,
-    pub(crate) updating: AtomicBool,
+    pub(crate) update_info: Mutex<Option<update::UpdateInfo>>,
+    /// The gateway's one operation slot (see update.rs): what an update is doing right now, and the
+    /// lock that keeps a second update or a gateway restart from racing it.
+    pub(crate) update_operation: update::UpdateOperation,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
     /// Revocable, per-service credentials the agent proxy accepts for a private service.
@@ -193,7 +195,7 @@ impl AppState {
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
                 update_info: Mutex::new(None),
-                updating: AtomicBool::new(false),
+                update_operation: update::UpdateOperation::new(),
                 http_client,
                 settings: RwLock::new(settings),
                 service_keys: RwLock::new(crate::service_keys::load_store()),

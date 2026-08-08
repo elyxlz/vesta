@@ -26,7 +26,6 @@ mod paths;
 mod providers;
 mod restic;
 mod self_log;
-mod self_update;
 mod serve;
 mod service_keys;
 mod settings;
@@ -37,7 +36,7 @@ mod systemd;
 mod time_utils;
 mod tunnel;
 mod types;
-mod update_check;
+mod update;
 mod upstream;
 mod vendored_bin;
 mod vesta_cloud;
@@ -986,7 +985,7 @@ fn main() {
         }
 
         Command::Update => {
-            let outcome = self_update::perform_update(channel::Channel::effective())
+            let outcome = update::perform_update(channel::Channel::effective())
                 .unwrap_or_else(|e| die(e.to_string()));
             if outcome.updated {
                 println!("✓ updated v{} → v{}", outcome.current, outcome.latest);

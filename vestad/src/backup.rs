@@ -88,6 +88,18 @@ async fn remove_temp_artifacts(docker: &Docker, temp_cname: &str, image: &str) {
     crate::docker::remove_image(docker, image).await.ok();
 }
 
+/// Clear the throwaway container/image a killed backup can leave behind, for every agent. Named
+/// after the agent, so the sweep needs no listing of its own, and idempotent: an agent with nothing
+/// left over costs two no-op Docker calls. Run at boot after an interrupted update, which is how one
+/// of these ends up outliving the vestad that made it.
+pub async fn sweep_backup_temp_artifacts(docker: &Docker) {
+    for name in list_agent_names(docker).await {
+        let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
+        let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
+        remove_temp_artifacts(docker, &temp_cname, &image).await;
+    }
+}
+
 /// Create a backup of the given agent without ever stopping it. A running container is captured
 /// via `docker commit` (Docker pauses it for the seconds the commit takes), then the committed
 /// image is exported through a temp container into restic; a stopped container exports directly.

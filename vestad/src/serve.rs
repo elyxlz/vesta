@@ -20,7 +20,7 @@ use crate::settings::{
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
     agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
-    maintenance_window, mobile_app, self_update, systemd, update_check,
+    maintenance_window, mobile_app, systemd, update,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -422,14 +422,8 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
 // Force an immediate GitHub release check (instead of waiting for the periodic
 // background task) and return the refreshed version info.
 async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    let channel = effective_channel(&state).await;
-    match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
-        Ok(Ok(info)) => {
-            let mut slot = state.update_info.lock().await;
-            *slot = Some(info);
-        }
-        Ok(Err(e)) => tracing::warn!("manual update check failed: {}", e),
-        Err(e) => tracing::error!("manual update check task failed: {}", e),
+    if let Err(e) = update::refresh_update_info(&state).await {
+        tracing::warn!("manual update check failed: {}", e);
     }
     Json(version_json(&state).await)
 }
@@ -506,8 +500,33 @@ async fn gateway_logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
+/// The 409 every mid-operation refusal answers with, naming the live phase so the client renders
+/// what is running instead of a bare conflict.
+fn update_conflict(phase: &update::UpdatePhase) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "update in progress",
+            "phase": phase,
+        })),
+    )
+}
+
+/// Refuse while the gateway is mid-operation. The restart, the update, and the dismiss all route
+/// through this: a restart during an update is what orphaned a backup mid-export once.
+fn ensure_no_gateway_operation(
+    running: Option<update::UpdatePhase>,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    match running {
+        None => Ok(()),
+        Some(phase) => Err(update_conflict(&phase)),
+    }
+}
+
 async fn restart_gateway_handler(
+    State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    ensure_no_gateway_operation(state.update_operation.running_phase())?;
     if !systemd::is_active() {
         return Err(err_response(
             StatusCode::PRECONDITION_FAILED,
@@ -516,8 +535,14 @@ async fn restart_gateway_handler(
     }
     tracing::info!("gateway restart requested via API");
     // Delay so the HTTP response can flush before systemctl kills this process.
-    tokio::spawn(async {
+    tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
+        // Re-checked at the moment of the kill: an update accepted during the flush delay must not
+        // be shot mid-snapshot; the client re-tries its restart once the update settles.
+        if let Some(phase) = state.update_operation.running_phase() {
+            tracing::warn!(?phase, "gateway restart skipped: an update started meanwhile");
+            return;
+        }
         match tokio::task::spawn_blocking(systemd::restart).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => tracing::error!(error = %e, "gateway restart failed"),
@@ -529,53 +554,49 @@ async fn restart_gateway_handler(
 
 async fn gateway_update_handler(
     State(state): State<SharedState>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     if state.dev_mode {
         return Err(err_response(
             StatusCode::BAD_REQUEST,
             "self-update disabled in dev mode",
         ));
     }
-    if state
-        .updating
-        .swap(true, std::sync::atomic::Ordering::SeqCst)
-    {
-        return Err(err_response(
-            StatusCode::CONFLICT,
-            "update already in progress",
-        ));
-    }
-    let channel = effective_channel(&state).await;
-    tracing::info!(
-        channel = channel.as_str(),
-        "gateway update requested via API"
-    );
-    // The same pre-update snapshot pass the maintenance cycle runs, immediately: the user
-    // asked now, so no window or idle wait. Restart-free, so it only delays the apply.
-    run_snapshot_pass(&state, maintenance::PassKind::pre_update_from_current()).await;
-    let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
-    state
-        .updating
-        .store(false, std::sync::atomic::Ordering::SeqCst);
-    let result = join.map_err(|e| {
-        err_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("update task panicked: {e}"),
-        )
-    })?;
-    match result {
-        Ok(outcome) => Ok(Json(serde_json::json!({
-            "ok": true,
-            "updated": outcome.updated,
-            "restarting": outcome.restarted,
-            "current": outcome.current,
-            "latest": outcome.latest,
-        }))),
-        Err(e) => Err(err_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &e.to_string(),
+    tracing::info!("gateway update requested via API");
+    // Accepted, not finished: the update runs on its own task (pre-update snapshots, the binary
+    // swap, the restart) and every client watches its phases on /sync. A retry of a failed update
+    // is this same call, which is why a terminal operation yields the slot.
+    match update::start_update(state).await {
+        Ok(update::UpdateStart::Started { target_version }) => Ok((
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"started": true, "target_version": target_version})),
         )),
+        // Nothing to do rather than a failure: say which "nothing" it was, so a caller never has to
+        // guess whether the gateway is current or the check could not answer.
+        Ok(update::UpdateStart::AlreadyCurrent { version }) => Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "started": false,
+                "reason": "already_current",
+                "version": version,
+            })),
+        )),
+        Ok(update::UpdateStart::ReleaseCheckFailed { error }) => Err(err_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!("cannot check for a new release: {error}"),
+        )),
+        Err(phase) => Err(update_conflict(&phase)),
     }
+}
+
+/// Drop a failed update the user has acknowledged, releasing the client from the update screen.
+/// Only a terminal operation is dismissable; a running one is a conflict.
+async fn dismiss_gateway_update_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    ensure_no_gateway_operation(state.update_operation.running_phase())?;
+    Ok(Json(
+        serde_json::json!({"dismissed": state.update_operation.dismiss()}),
+    ))
 }
 
 async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoResponse {
@@ -2324,11 +2345,9 @@ async fn put_gateway_settings_handler(
 
     // A channel switch must refresh the cached update info so /version reflects the new
     // channel without waiting for the next periodic poll (mirrors the old channel handler).
-    if let Some(channel) = parsed_channel {
-        match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
-            Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
-            Ok(Err(e)) => tracing::warn!("update check after channel switch failed: {}", e),
-            Err(e) => tracing::error!("update check task after channel switch failed: {}", e),
+    if parsed_channel.is_some() {
+        if let Err(e) = update::refresh_update_info(&state).await {
+            tracing::warn!("update check after channel switch failed: {}", e);
         }
     }
 
@@ -2856,9 +2875,13 @@ pub fn build_router(state: SharedState) -> Router {
     // flow). These paths carry no agent name, so the middleware accepts any of this
     // host's agent tokens. Update is host-global: it restarts vestad, which stops and
     // restarts every agent on the host, the caller included.
+    // The update routes belong here too: both return immediately (the update runs on its own task
+    // and reports its phases through /sync), so they need no deadline of their own.
     let gateway_agent_shared = Router::new()
         .route("/version", get(version))
         .route("/version/check", post(version_check))
+        .route("/gateway/update", post(gateway_update_handler))
+        .route("/gateway/update/dismiss", post(dismiss_gateway_update_handler))
         // Vesta Cloud pairing is host-global like the update surface: the apps
         // drive it with the api key / access token, an agent with its own
         // token, and `vestad vesta-cloud login` runs the same core directly.
@@ -2866,17 +2889,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/vesta-cloud/pair/poll", post(vesta_cloud_pair_poll_handler))
         .route("/vesta-cloud/unpair", post(vesta_cloud_unpair_handler))
         .layer(control_timeout_layer())
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::auth_middleware_api_or_any_agent_token,
-        ));
-
-    // Update shares gateway_agent_shared's auth but rides the longrun deadline: it runs the
-    // pre-update snapshot pass inline before applying, and a first full snapshot of a
-    // multi-GB agent exceeds the control deadline, which would cancel the pass mid-stream.
-    let gateway_update = Router::new()
-        .route("/gateway/update", post(gateway_update_handler))
-        .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_any_agent_token,
@@ -2895,7 +2907,6 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(gateway_agent_shared)
-        .merge(gateway_update)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
@@ -2936,13 +2947,10 @@ pub fn build_router(state: SharedState) -> Router {
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            let channel = effective_channel(&state).await;
-            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
-                Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
-                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
-                Err(e) => tracing::error!("update check task failed: {}", e),
+            if let Err(e) = update::refresh_update_info(&state).await {
+                tracing::warn!("update check failed: {}", e);
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS))
+            tokio::time::sleep(tokio::time::Duration::from_secs(update::CHECK_INTERVAL_SECS))
                 .await;
         }
     });
@@ -3002,9 +3010,9 @@ fn spawn_maintenance_task(state: SharedState) {
     });
 }
 
-/// One fired maintenance cycle: the snapshot pass, then a pending update as its add-on.
-/// `perform_update` restarts this process on success, so control usually never returns
-/// from the apply branch.
+/// One fired maintenance cycle: the snapshot pass, or a pending update (which owns the pre-update
+/// snapshot pass itself) as its add-on. The update restarts this process on success, so control
+/// usually never returns from the update branch.
 async fn run_maintenance(state: &SharedState) {
     let update_pending = state
         .update_info
@@ -3015,20 +3023,15 @@ async fn run_maintenance(state: &SharedState) {
     let auto_update = state.settings.read().await.auto_update;
 
     if update_pending && auto_update && !state.dev_mode {
-        run_snapshot_pass(state, maintenance::PassKind::pre_update_from_current()).await;
-        let channel = effective_channel(state).await;
-        tracing::info!(channel = channel.as_str(), "maintenance: applying pending update");
-        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
-            Ok(Ok(outcome)) => tracing::info!(
-                updated = outcome.updated,
-                restarted = outcome.restarted,
-                current = %outcome.current,
-                latest = %outcome.latest,
-                "auto-update finished",
-            ),
-            // A failed apply retries next cycle; the fresh pre-update set is reused (<24h).
-            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
-            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+        tracing::info!("maintenance: applying pending update");
+        // The same one entry point a manual update takes. A failed apply retries next cycle; the
+        // fresh pre-update snapshot set is reused (<24h).
+        match update::start_update(state.clone()).await {
+            Ok(update::UpdateStart::Started { .. }) => {
+                state.update_operation.wait_until_settled().await;
+            }
+            Ok(outcome) => tracing::info!(?outcome, "maintenance: no update to apply"),
+            Err(phase) => tracing::warn!(?phase, "maintenance: an update is already running"),
         }
     } else {
         run_snapshot_pass(state, maintenance::PassKind::Routine).await;
@@ -3061,28 +3064,32 @@ async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
     let backup_settings = &backup_settings;
     futures_util::stream::iter(agents)
         .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| async move {
-            snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
+            // Each failure already logged itself; a routine pass has no caller to report to.
+            let _ = snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
         })
         .await;
     tracing::info!(kind = ?kind, "maintenance: snapshot pass complete");
 }
 
-async fn snapshot_agent(
+/// Snapshot one agent if the pass selects it, then apply retention. The error is reported as well as
+/// logged, because the pre-update pass turns it into the warning the user sees on the update screen;
+/// an agent the pass skips (backups off, too young, snapshot still fresh) is a plain Ok.
+pub(crate) async fn snapshot_agent(
     state: &SharedState,
     name: &str,
     kind: &maintenance::PassKind,
     backup_settings: &BackupGlobalSettings,
     now_epoch: u64,
-) {
+) -> Result<(), docker::DockerError> {
     let (agent_enabled, retention) = backup_settings.effective_for(name);
     if !agent_enabled {
         tracing::debug!(agent = %name, "maintenance: backups disabled for agent, skipping");
-        return;
+        return Ok(());
     }
     if let Some(age) = backup::container_age_secs(&state.docker, name).await {
         if age < backup::MIN_AGE_FOR_BACKUP_SECS {
             tracing::debug!(agent = %name, age_hours = age / 3600, "maintenance: skipping young agent");
-            return;
+            return Ok(());
         }
     }
 
@@ -3091,7 +3098,7 @@ async fn snapshot_agent(
         Ok(b) => b,
         Err(e) => {
             tracing::error!(agent = %name, error = %e, "maintenance: failed to list backups");
-            return;
+            return Err(e);
         }
     };
     if maintenance::agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
@@ -3099,7 +3106,7 @@ async fn snapshot_agent(
             Ok(lock) => lock,
             Err(e) => {
                 tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
-                return;
+                return Err(e);
             }
         };
         match backup::create_backup(&state.docker, name, kind.backup_type(), kind.version_tag()).await {
@@ -3121,12 +3128,44 @@ async fn snapshot_agent(
                 }
                 backups.insert(0, info);
             }
-            Err(e) => tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed"),
+            Err(e) => {
+                tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed");
+                // Retention still runs below for a failed snapshot, so report the failure after it.
+                backup::cleanup_backups(name, &backups, &retention).await;
+                return Err(e);
+            }
         }
     }
     // Retention runs even when no snapshot was taken, so a tightened policy prunes on the
     // next pass instead of waiting days for the next snapshot to trigger it.
     backup::cleanup_backups(name, &backups, &retention).await;
+    Ok(())
+}
+
+/// Settle whatever the previous vestad left behind, once, before anything serves: an update that
+/// landed is logged and forgotten, while one that died projects as a failure the user can retry, and
+/// its half-finished backup artifacts are swept so no leftover container can be read as an agent.
+fn recover_interrupted_update(state: &SharedState) {
+    match update::recover_at_boot(&state.env_config.config_dir, env!("CARGO_PKG_VERSION")) {
+        update::BootRecovery::Normal => {}
+        update::BootRecovery::Updated { version, warnings } => {
+            tracing::info!(version = %version, "gateway updated");
+            for warning in warnings {
+                tracing::warn!(%warning, "the update finished with a warning");
+            }
+        }
+        update::BootRecovery::Interrupted {
+            target_version,
+            during,
+        } => {
+            tracing::error!(%target_version, %during, "the previous update never finished");
+            state
+                .update_operation
+                .set_interrupted(target_version, during);
+            let docker = state.docker.clone();
+            tokio::spawn(async move { backup::sweep_backup_temp_artifacts(&docker).await });
+        }
+    }
 }
 
 // --- Server start ---
@@ -3218,6 +3257,7 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
+    recover_interrupted_update(&state);
     // The device registry persists on a background flush task: every mutation (a /sync connect or a
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();
@@ -3418,6 +3458,31 @@ mod tests {
         assert_eq!(truncate_chars(multibyte, 2), "éé…");
         assert_eq!(truncate_chars(multibyte, 3), "éé😀…");
         assert_eq!(truncate_chars(multibyte, 4), "éé😀é");
+    }
+
+    #[test]
+    fn gateway_restart_and_update_conflict_while_an_update_runs() {
+        use crate::update::{UpdatePhase, UpdateStage};
+
+        assert!(super::ensure_no_gateway_operation(None).is_ok(), "idle lets both through");
+
+        let err = super::ensure_no_gateway_operation(Some(UpdatePhase::Snapshotting {
+            agent: Some("axel".into()),
+            done: 1,
+            total: 4,
+        }))
+        .expect_err("a running update refuses restart and a second update");
+        assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
+        // The body names the live phase so the client renders what is running, not a bare conflict.
+        let body = serde_json::to_value(&err.1.0).expect("serialize the conflict body");
+        assert_eq!(body["phase"]["phase"], serde_json::json!("snapshotting"));
+        assert_eq!(body["phase"]["agent"], serde_json::json!("axel"));
+
+        // A failure the user has not dismissed still projects, but never blocks the retry: it is
+        // filtered out before this guard by `running_phase` (covered in update.rs).
+        let operation = crate::update::UpdateOperation::new();
+        operation.set_interrupted("0.1.190".into(), UpdateStage::Applying);
+        assert!(super::ensure_no_gateway_operation(operation.running_phase()).is_ok());
     }
 
     #[test]
