@@ -112,7 +112,7 @@ mkdir -p "$(dirname "$rc_hist")" 2>/dev/null
 printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$red" >> "$rc_hist"
 
 prior=$(tail -n 6 "$rc_hist" 2>/dev/null | awk '{printf "%s ", $2}')
-[ -n "$prior" ] && printf 'RED count over last runs (oldest first): %s\n' "$prior"
+[ -n "$prior" ] && printf 'flagged-probe count over recent runs (oldest first): %s\n' "$prior"
 printf 'last run recorded: %s\n' "$(tail -n 1 "$rc_hist" | cut -f1)"
 
 if [ "$red" -gt 0 ]; then
