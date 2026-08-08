@@ -176,7 +176,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     let mut devices_rx = state.device_registry.subscribe_devices();
     // Update phases move on their own clock, so they get their own wake: without it a "backing up
     // axel 2/4" would sit unsent until the next roster poll or keepalive.
-    let mut operation_rx = state.update_operation.subscribe();
+    let mut operation_rx = state.operation.subscribe();
     operation_rx.borrow_and_update();
     agents_rx.borrow_and_update();
     activity_rx.borrow_and_update();
@@ -579,7 +579,7 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
         (settings.auto_update, crate::channel::Channel::resolve(&settings.channel).as_str().to_string())
     };
     let tunnel_url = state.tunnel_url.lock().await.clone();
-    let operation = state.update_operation.snapshot().map(Into::into);
+    let operation = state.operation.snapshot().map(Into::into);
     GatewayInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         channel,

@@ -8,7 +8,7 @@ import {
 } from "react";
 import type {
   Controller,
-  GatewayUpdateOperation,
+  GatewayOperation,
   SyncState,
   Tree,
 } from "@vesta/core";
@@ -65,9 +65,10 @@ function routeContent(syncState: SyncState, children: ReactNode): ReactNode {
 
 // Resolve the update the user watched: remember the version it started from, and once the operation
 // clears against a different one, report it for a moment. Timing rather than derivable state, so it
-// lives in an Effect with its own cleanup.
+// lives in an Effect with its own cleanup. A restart lands on the same version, so it resolves to
+// nothing, which is exactly right.
 function useUpdateResolution(
-  operation: GatewayUpdateOperation | null,
+  operation: GatewayOperation | null,
   version: string,
 ): string | null {
   const versionBeforeUpdate = useRef("");
@@ -99,7 +100,7 @@ function ReplicaGateway({
   children: ReactNode;
 }) {
   const gateway = useReplica(controller.replica, selectGateway);
-  const updateOperation = useReplica(
+  const gatewayOperation = useReplica(
     controller.replica,
     selectGatewayOperation,
     gatewayOperationsEqual,
@@ -118,7 +119,7 @@ function ReplicaGateway({
   }, [agents]);
 
   const gatewayVersion = gateway?.version ?? "";
-  const updatedTo = useUpdateResolution(updateOperation, gatewayVersion);
+  const updatedTo = useUpdateResolution(gatewayOperation, gatewayVersion);
 
   // An update no longer ends the socket the moment it is asked for: vestad accepts it and reports
   // its phases on /sync, and the live socket reconnects on its own through the restart phase.
@@ -158,7 +159,7 @@ function ReplicaGateway({
     versionChecked: true,
     updateAvailable: gateway?.updateAvailable ?? false,
     latestVersion: gateway?.latestVersion ?? null,
-    updateOperation,
+    gatewayOperation,
     updatedTo,
     agents,
     agentsFetched: gateway !== null,

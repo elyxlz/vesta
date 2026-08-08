@@ -1,6 +1,6 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GatewayUpdateOperation } from "@vesta/core";
+import type { GatewayOperation } from "@vesta/core";
 import {
   GatewayContext,
   disconnectedValue,
@@ -9,8 +9,8 @@ import {
 import { UpdatePill } from "./index";
 
 function operation(
-  overrides: Partial<GatewayUpdateOperation> = {},
-): GatewayUpdateOperation {
+  overrides: Partial<GatewayOperation> = {},
+): GatewayOperation {
   return {
     kind: "update",
     phase: "snapshotting",
@@ -56,16 +56,32 @@ describe("UpdatePill", () => {
   });
 
   it("shows the live phase and refuses a second click while an update runs", () => {
-    const { getByRole } = renderPill({ updateOperation: operation() });
+    const { getByRole } = renderPill({ gatewayOperation: operation() });
     const button = getByRole("button");
     expect(button.textContent).toContain("updating");
     expect(button.getAttribute("title")).toBe("backing up ada 2/4");
     expect(button.hasAttribute("disabled")).toBe(true);
   });
 
+  it("says restarting and refuses a click while the gateway restarts", () => {
+    const { getByRole } = renderPill({
+      gatewayOperation: operation({
+        kind: "restart",
+        phase: "restarting",
+        agent: null,
+        done: null,
+        total: null,
+        targetVersion: null,
+      }),
+    });
+    const button = getByRole("button");
+    expect(button.textContent).toContain("restarting");
+    expect(button.hasAttribute("disabled")).toBe(true);
+  });
+
   it("offers a retry once an update has failed", () => {
     const { getByRole } = renderPill({
-      updateOperation: operation({
+      gatewayOperation: operation({
         phase: "failed",
         error: "while installing: curl failed",
       }),

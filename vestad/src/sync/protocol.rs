@@ -28,55 +28,74 @@ pub(crate) struct GatewayInfo {
     pub operation: Option<GatewayOperation>,
 }
 
-/// The one kind of gateway operation there is. An enum rather than a bare string so a second kind
+/// The kinds of gateway operation there are. An enum rather than a bare string so a third kind
 /// cannot be added without every reader being told about it.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum GatewayOperationKind {
     Update,
+    Restart,
 }
 
-/// The wire face of an update's phase. Terminal success is deliberately absent: a finished update
-/// clears the operation, and the client reads the new version off the gateway node itself.
+/// The wire face of an operation's phase. Terminal success is deliberately absent: a finished
+/// operation clears the slot, and the client reads the new version off the gateway node itself.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum GatewayUpdatePhase {
+pub(crate) enum GatewayOperationPhase {
     Snapshotting,
     Applying,
     Restarting,
     Failed,
 }
 
-/// One in-flight gateway update, flattened for the wire: the progress fields carry values only while
-/// snapshotting, and `error` only on a failure.
+/// One in-flight gateway operation, flattened for the wire: the progress fields carry values only
+/// while snapshotting, `error` only on a failure, and `targetVersion` only for an update, a restart
+/// having no release to name.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GatewayOperation {
     pub kind: GatewayOperationKind,
-    pub phase: GatewayUpdatePhase,
+    pub phase: GatewayOperationPhase,
     pub agent: Option<String>,
     pub done: Option<u32>,
     pub total: Option<u32>,
-    pub target_version: String,
+    pub target_version: Option<String>,
     pub warnings: Vec<String>,
     pub error: Option<String>,
 }
 
-impl From<crate::operation::ActiveUpdate> for GatewayOperation {
-    fn from(active: crate::operation::ActiveUpdate) -> Self {
-        use crate::operation::UpdatePhase;
-        let (phase, agent, done, total, error) = match active.phase {
+impl From<crate::operation::ActiveOperation> for GatewayOperation {
+    fn from(active: crate::operation::ActiveOperation) -> Self {
+        use crate::operation::{ActiveOperation, UpdatePhase};
+        // A restart is one phase with nothing to report, and it is deliberately the phase an update
+        // ends on, so every client renders it on the screen it already has.
+        let update = match active {
+            ActiveOperation::Restart => {
+                return Self {
+                    kind: GatewayOperationKind::Restart,
+                    phase: GatewayOperationPhase::Restarting,
+                    agent: None,
+                    done: None,
+                    total: None,
+                    target_version: None,
+                    warnings: Vec::new(),
+                    error: None,
+                }
+            }
+            ActiveOperation::Update(update) => update,
+        };
+        let (phase, agent, done, total, error) = match update.phase {
             UpdatePhase::Snapshotting { agent, done, total } => (
-                GatewayUpdatePhase::Snapshotting,
+                GatewayOperationPhase::Snapshotting,
                 agent,
                 Some(done),
                 Some(total),
                 None,
             ),
-            UpdatePhase::Applying => (GatewayUpdatePhase::Applying, None, None, None, None),
-            UpdatePhase::Restarting => (GatewayUpdatePhase::Restarting, None, None, None, None),
+            UpdatePhase::Applying => (GatewayOperationPhase::Applying, None, None, None, None),
+            UpdatePhase::Restarting => (GatewayOperationPhase::Restarting, None, None, None, None),
             UpdatePhase::Failed { during, error } => (
-                GatewayUpdatePhase::Failed,
+                GatewayOperationPhase::Failed,
                 None,
                 None,
                 None,
@@ -89,8 +108,8 @@ impl From<crate::operation::ActiveUpdate> for GatewayOperation {
             agent,
             done,
             total,
-            target_version: active.target_version,
-            warnings: active.warnings,
+            target_version: Some(update.target_version),
+            warnings: update.warnings,
             error,
         }
     }
@@ -225,11 +244,11 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         managed: false,
         operation: Some(GatewayOperation {
             kind: GatewayOperationKind::Update,
-            phase: GatewayUpdatePhase::Snapshotting,
+            phase: GatewayOperationPhase::Snapshotting,
             agent: Some("sample-agent".into()),
             done: Some(1),
             total: Some(2),
-            target_version: "0.1.1".into(),
+            target_version: Some("0.1.1".into()),
             warnings: vec!["other-agent: backup failed (disk full)".into()],
             error: None,
         }),
@@ -316,7 +335,7 @@ mod tests {
 
     #[test]
     fn a_running_update_projects_its_phase_and_progress() {
-        let active = crate::operation::ActiveUpdate {
+        let active = crate::operation::ActiveOperation::Update(crate::operation::ActiveUpdate {
             target_version: "0.1.190".into(),
             phase: crate::operation::UpdatePhase::Snapshotting {
                 agent: Some("axel".into()),
@@ -324,7 +343,7 @@ mod tests {
                 total: 4,
             },
             warnings: vec!["mona: backup failed (disk full)".into()],
-        };
+        });
         let value = serde_json::to_value(GatewayOperation::from(active)).expect("serialize");
         assert_eq!(value["kind"], serde_json::json!("update"));
         assert_eq!(value["phase"], serde_json::json!("snapshotting"));
@@ -338,18 +357,32 @@ mod tests {
 
     #[test]
     fn a_failed_update_projects_the_stage_it_died_on() {
-        let active = crate::operation::ActiveUpdate {
+        let active = crate::operation::ActiveOperation::Update(crate::operation::ActiveUpdate {
             target_version: "0.1.190".into(),
             phase: crate::operation::UpdatePhase::Failed {
                 during: crate::operation::UpdateStage::Applying,
                 error: "curl failed".into(),
             },
             warnings: Vec::new(),
-        };
+        });
         let operation = GatewayOperation::from(active);
-        assert_eq!(operation.phase, GatewayUpdatePhase::Failed);
+        assert_eq!(operation.phase, GatewayOperationPhase::Failed);
         assert_eq!(operation.error.as_deref(), Some("while installing: curl failed"));
         assert_eq!(operation.agent, None);
+    }
+
+    #[test]
+    fn a_restart_projects_as_the_restarting_phase_with_nothing_to_report() {
+        let value = serde_json::to_value(GatewayOperation::from(
+            crate::operation::ActiveOperation::Restart,
+        ))
+        .expect("serialize");
+        assert_eq!(value["kind"], serde_json::json!("restart"));
+        assert_eq!(value["phase"], serde_json::json!("restarting"));
+        // A restart installs nothing, so it names no release and carries no progress.
+        assert_eq!(value["targetVersion"], serde_json::Value::Null);
+        assert_eq!(value["agent"], serde_json::Value::Null);
+        assert_eq!(value["warnings"], serde_json::json!([]));
     }
 
     #[test]

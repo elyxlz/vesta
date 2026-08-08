@@ -19,12 +19,11 @@ import {
 // connection briefly, so it confirms first; on accept the app re-attaches via
 // the same reconnect the update flow uses (triggerGatewayRestart calls reconnect).
 export function GatewayRestart() {
-  const { triggerGatewayRestart, updateOperation } = useGateway();
+  const { triggerGatewayRestart, gatewayOperation } = useGateway();
   const [restarting, setRestarting] = useState(false);
-  // vestad refuses a restart mid-update (that race is what orphaned a backup once), so the control
-  // says so instead of offering a click that 409s.
-  const updating =
-    updateOperation !== null && updateOperation.phase !== "failed";
+  // vestad refuses a second operation while one holds the slot (a restart mid-update is what
+  // orphaned a backup once), so the control says so instead of offering a click that 409s.
+  const busy = gatewayOperation !== null && gatewayOperation.phase !== "failed";
 
   const handleRestart = async () => {
     setRestarting(true);
@@ -38,10 +37,16 @@ export function GatewayRestart() {
         <Button
           variant="outline"
           className="w-full shrink-0 whitespace-nowrap sm:w-auto"
-          disabled={restarting || updating}
-          title={updating ? "an update is running" : undefined}
+          disabled={restarting || busy}
+          title={
+            busy
+              ? gatewayOperation.kind === "restart"
+                ? "the gateway is restarting"
+                : "an update is running"
+              : undefined
+          }
         >
-          {restarting || updating ? (
+          {restarting || busy ? (
             <Spinner className="size-4" data-icon="inline-start" />
           ) : (
             <RotateCw data-icon="inline-start" />

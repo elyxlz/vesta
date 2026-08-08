@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { gatewayOperationLabel } from "@vesta/core";
+import { gatewayOperationLabel, type GatewayOperation } from "@vesta/core";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -11,16 +11,45 @@ import {
   EmptyContent,
 } from "@/components/ui/empty";
 
-// The one screen a gateway update lives on, from the first pre-update backup to the moment the app
-// reconnects on the new version. It takes over home while the update runs (agent pages are
+// What the screen calls the operation it is watching, and what it tells the user to expect. A
+// restart names no release and touches nothing, so it says so.
+function operationCopy(operation: GatewayOperation): {
+  title: string;
+  detail: string;
+} {
+  if (operation.phase === "failed") {
+    return {
+      title: "update failed",
+      detail:
+        operation.error ??
+        "the update stopped before it finished. your agents are untouched.",
+    };
+  }
+  if (operation.kind === "restart") {
+    return {
+      title: "restarting the gateway",
+      detail:
+        "your agents keep running. the app reconnects on its own once the gateway is back.",
+    };
+  }
+  return {
+    title: `updating to v${operation.targetVersion ?? ""}`,
+    detail:
+      "your gateway backs up every agent before installing, so this can take a few minutes. keep the app open.",
+  };
+}
+
+// The one screen a gateway operation lives on, from the first pre-update backup to the moment the
+// app reconnects on the new version. It takes over home while the operation runs (agent pages are
 // unavailable, settings stay reachable) and morphs through the phases in place, so a slow backup and
-// a restart read as the same operation rather than the app changing mode under the user.
+// a restart read as the same operation rather than the app changing mode under the user. A bare
+// gateway restart is an operation too, and lands on this screen at its one phase.
 export function UpdateProgressScreen() {
-  const { updateOperation, updatedTo, triggerGatewayUpdate, dismissUpdate } =
+  const { gatewayOperation, updatedTo, triggerGatewayUpdate, dismissUpdate } =
     useGateway();
   const [retrying, setRetrying] = useState(false);
 
-  if (updateOperation === null) {
+  if (gatewayOperation === null) {
     if (updatedTo === null) return null;
     return (
       <Empty>
@@ -34,7 +63,8 @@ export function UpdateProgressScreen() {
     );
   }
 
-  const failed = updateOperation.phase === "failed";
+  const failed = gatewayOperation.phase === "failed";
+  const { title, detail } = operationCopy(gatewayOperation);
 
   // The flag covers only the request itself; once vestad answers, the operation's phase owns this
   // screen. A granted retry that kept the flag would leave a second failure's retry stuck.
@@ -47,17 +77,8 @@ export function UpdateProgressScreen() {
   return (
     <Empty>
       <EmptyHeader className="max-w-lg">
-        <EmptyTitle>
-          {failed
-            ? "update failed"
-            : `updating to v${updateOperation.targetVersion}`}
-        </EmptyTitle>
-        <EmptyDescription>
-          {failed
-            ? (updateOperation.error ??
-              "the update stopped before it finished. your agents are untouched.")
-            : "your gateway backs up every agent before installing, so this can take a few minutes. keep the app open."}
-        </EmptyDescription>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{detail}</EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
         {failed ? (
@@ -83,12 +104,12 @@ export function UpdateProgressScreen() {
         ) : (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Spinner className="size-4" />
-            {gatewayOperationLabel(updateOperation)}
+            {gatewayOperationLabel(gatewayOperation)}
           </div>
         )}
-        {updateOperation.warnings.length > 0 && (
+        {gatewayOperation.warnings.length > 0 && (
           <div className="max-w-lg text-xs text-muted-foreground">
-            {updateOperation.warnings.map((warning) => (
+            {gatewayOperation.warnings.map((warning) => (
               <p key={warning}>{warning}</p>
             ))}
           </div>

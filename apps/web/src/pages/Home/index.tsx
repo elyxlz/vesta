@@ -3,8 +3,8 @@ import { UpdateProgressScreen } from "@/components/UpdateProgressScreen";
 import { useGateway } from "@/providers/GatewayProvider";
 
 export function Home() {
-  const { updateOperation, updatedTo } = useGateway();
-  if (updateOperation !== null || updatedTo !== null) {
+  const { gatewayOperation, updatedTo } = useGateway();
+  if (gatewayOperation !== null || updatedTo !== null) {
     return <UpdateProgressScreen />;
   }
   return <HomeContent />;

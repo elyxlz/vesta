@@ -1,9 +1,5 @@
 import { createContext, useContext } from "react";
-import type {
-  DeviceInfo,
-  GatewayUpdateOperation,
-  ReleaseChannel,
-} from "@vesta/core";
+import type { DeviceInfo, GatewayOperation, ReleaseChannel } from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
 
 // Context + hook live here, separate from the GatewayProvider component, so the
@@ -21,8 +17,9 @@ export interface GatewayContextValue {
   versionChecked: boolean;
   updateAvailable: boolean;
   latestVersion: string | null;
-  /** The gateway update in flight, null while the gateway is idle. Locks the app to home. */
-  updateOperation: GatewayUpdateOperation | null;
+  /** The gateway operation in flight (an update or a restart), null while the gateway is idle.
+   * Locks the app to home. */
+  gatewayOperation: GatewayOperation | null;
   /** The version an update just landed on, held briefly after the operation clears. */
   updatedTo: string | null;
   agents: AgentRow[];
@@ -46,7 +43,7 @@ export const disconnectedValue: GatewayContextValue = {
   versionChecked: true,
   updateAvailable: false,
   latestVersion: null,
-  updateOperation: null,
+  gatewayOperation: null,
   updatedTo: null,
   agents: [],
   agentsFetched: false,

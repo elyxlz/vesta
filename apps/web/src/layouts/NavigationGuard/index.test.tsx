@@ -1,7 +1,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import type { AgentRow, GatewayUpdateOperation } from "@vesta/core";
+import type { AgentRow, GatewayOperation } from "@vesta/core";
 import {
   GatewayContext,
   disconnectedValue,
@@ -23,7 +23,7 @@ const ADA: AgentRow = {
   services: {},
 };
 
-const RUNNING: GatewayUpdateOperation = {
+const RUNNING: GatewayOperation = {
   kind: "update",
   phase: "applying",
   agent: null,
@@ -68,19 +68,19 @@ describe("NavigationGuard", () => {
   });
 
   it("sends agent pages home while a gateway update runs", () => {
-    const { getByText } = renderAt("/agent/ada", { updateOperation: RUNNING });
+    const { getByText } = renderAt("/agent/ada", { gatewayOperation: RUNNING });
     expect(getByText("home")).toBeTruthy();
   });
 
   it("keeps settings reachable during an update, since that is where a stuck one is diagnosed", () => {
-    const { getByText } = renderAt("/settings", { updateOperation: RUNNING });
+    const { getByText } = renderAt("/settings", { gatewayOperation: RUNNING });
     expect(getByText("settings")).toBeTruthy();
   });
 
   it("stays home during an update with zero agents instead of ping-ponging with the /new redirect", () => {
     const { getByText } = renderAt("/", {
       agents: [],
-      updateOperation: RUNNING,
+      gatewayOperation: RUNNING,
     });
     expect(getByText("home")).toBeTruthy();
   });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { GatewayInfo, GatewayUpdateOperation, Tree } from "../protocol/tree"
+import type { GatewayInfo, GatewayOperation, Tree } from "../protocol/tree"
 import {
   gatewayOperationLabel,
   gatewayOperationsEqual,
@@ -55,6 +55,40 @@ describe("selectGatewayOperation", () => {
     expect(selectGatewayOperation(null)).toBeNull()
   })
 
+  it("reads a running restart, which reports the phase an update also ends on", () => {
+    const operation = selectGatewayOperation(
+      treeWith({
+        kind: "restart",
+        phase: "restarting",
+        agent: null,
+        done: null,
+        total: null,
+        targetVersion: null,
+        warnings: [],
+        error: null,
+      }),
+    )
+    expect(operation?.kind).toBe("restart")
+    expect(operation?.phase).toBe("restarting")
+  })
+
+  it("ignores a kind it does not know, so a newer gateway never locks this app on an unknown operation", () => {
+    expect(
+      selectGatewayOperation(
+        treeWith({
+          kind: "reindexing",
+          phase: "applying",
+          agent: null,
+          done: null,
+          total: null,
+          targetVersion: null,
+          warnings: [],
+          error: null,
+        }),
+      ),
+    ).toBeNull()
+  })
+
   it("ignores a phase it does not know, so a newer gateway never locks this app on an unknown state", () => {
     expect(
       selectGatewayOperation(
@@ -74,7 +108,7 @@ describe("selectGatewayOperation", () => {
 })
 
 describe("gatewayOperationsEqual", () => {
-  const operation = (overrides: Partial<GatewayUpdateOperation> = {}): GatewayUpdateOperation => ({
+  const operation = (overrides: Partial<GatewayOperation> = {}): GatewayOperation => ({
     kind: "update",
     phase: "snapshotting",
     agent: "axel",
@@ -91,8 +125,9 @@ describe("gatewayOperationsEqual", () => {
     expect(gatewayOperationsEqual(null, null)).toBe(true)
   })
 
-  it("sees every field that moves during an update", () => {
+  it("sees every field that moves during an operation", () => {
     expect(gatewayOperationsEqual(operation(), null)).toBe(false)
+    expect(gatewayOperationsEqual(operation(), operation({ kind: "restart" }))).toBe(false)
     expect(gatewayOperationsEqual(operation(), operation({ done: 2 }))).toBe(false)
     expect(gatewayOperationsEqual(operation(), operation({ phase: "applying" }))).toBe(false)
     expect(gatewayOperationsEqual(operation(), operation({ warnings: [] }))).toBe(false)
@@ -116,6 +151,21 @@ describe("gatewayOperationLabel", () => {
         error: null,
       }),
     ).toBe("backing up axel 2/4")
+  })
+
+  it("labels a restart with its one phase", () => {
+    expect(
+      gatewayOperationLabel({
+        kind: "restart",
+        phase: "restarting",
+        agent: null,
+        done: null,
+        total: null,
+        targetVersion: null,
+        warnings: [],
+        error: null,
+      }),
+    ).toBe("restarting")
   })
 
   it("falls back to a plain phrase when there is no agent to name", () => {

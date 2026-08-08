@@ -8,7 +8,7 @@ const REACHABLE_WHILE_UPDATING = ["/", "/settings"];
 
 export function NavigationGuard() {
   const { initialized, connected } = useAuth();
-  const { agentsFetched, agents, updateOperation } = useGateway();
+  const { agentsFetched, agents, gatewayOperation } = useGateway();
   const location = useLocation();
 
   if (!initialized) return null;
@@ -18,7 +18,7 @@ export function NavigationGuard() {
   // be mid-backup, and the gateway is about to restart), so everything else routes to home, which
   // renders the update.
   if (
-    updateOperation !== null &&
+    gatewayOperation !== null &&
     !REACHABLE_WHILE_UPDATING.includes(location.pathname)
   ) {
     return <Navigate to="/" replace />;
@@ -27,7 +27,7 @@ export function NavigationGuard() {
   // Not while an update runs: /new is unreachable then, so this redirect would ping-pong with the
   // one above, and home is the update screen regardless of the roster.
   if (
-    updateOperation === null &&
+    gatewayOperation === null &&
     agentsFetched &&
     agents.length === 0 &&
     location.pathname !== "/new"

@@ -4,7 +4,7 @@ import {
   dismissGatewayUpdate,
   gatewayOperationLabel,
   triggerGatewayUpdate,
-  type GatewayUpdateOperation,
+  type GatewayOperation,
 } from "@vesta/core";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { Button } from "@/components/ui/Button";
@@ -12,18 +12,47 @@ import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-// Home while the gateway updates itself: one page from the first pre-update backup to the restart,
-// morphing through the phases in place. Home is where the update lives so app settings stay one tap
-// away throughout, which is what a user reaches for when an update looks stuck.
+// What the page calls the operation it is watching, and what it tells the user to expect. A restart
+// names no release and touches nothing, so it says so.
+function operationCopy(operation: GatewayOperation): {
+  title: string;
+  detail: string;
+} {
+  if (operation.phase === "failed") {
+    return {
+      title: "Update failed",
+      detail:
+        operation.error ??
+        "The update stopped before it finished. Your agents are untouched.",
+    };
+  }
+  if (operation.kind === "restart") {
+    return {
+      title: "Restarting the gateway",
+      detail:
+        "Your agents keep running. The app reconnects on its own once the gateway is back.",
+    };
+  }
+  return {
+    title: `Updating to v${operation.targetVersion ?? ""}`,
+    detail:
+      "Your gateway backs up every agent before installing, so this can take a few minutes.",
+  };
+}
+
+// Home while the gateway works on itself: one page from the first pre-update backup to the restart,
+// morphing through the phases in place. Home is where the operation lives so app settings stay one
+// tap away throughout, which is what a user reaches for when an update looks stuck.
 export function GatewayUpdateProgress({
   operation,
 }: {
-  operation: GatewayUpdateOperation;
+  operation: GatewayOperation;
 }) {
   const { colors } = usePreferences();
   const { api } = useSession();
   const [retrying, setRetrying] = useState(false);
   const failed = operation.phase === "failed";
+  const { title, detail } = operationCopy(operation);
 
   // The flag covers only the request itself; once vestad answers, the operation's phase owns this
   // page. A granted retry that kept the flag would leave a second failure's retry stuck.
@@ -42,13 +71,10 @@ export function GatewayUpdateProgress({
           family="heading"
           style={[styles.title, { color: colors.text }]}
         >
-          {failed ? "Update failed" : `Updating to v${operation.targetVersion}`}
+          {title}
         </Text>
         <Text style={[styles.detail, { color: colors.secondaryText }]}>
-          {failed
-            ? (operation.error ??
-              "The update stopped before it finished. Your agents are untouched.")
-            : "Your gateway backs up every agent before installing, so this can take a few minutes."}
+          {detail}
         </Text>
         {!failed && (
           <Text style={[styles.phase, { color: colors.text }]}>

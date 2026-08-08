@@ -496,52 +496,46 @@ async fn gateway_logs_handler(
 
 /// The 409 every mid-operation refusal answers with, naming the live phase so the client renders
 /// what is running instead of a bare conflict.
-fn update_conflict(phase: &operation::UpdatePhase) -> (StatusCode, Json<serde_json::Value>) {
+fn operation_conflict(phase: &operation::UpdatePhase) -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::CONFLICT,
         Json(serde_json::json!({
-            "error": "update in progress",
+            "error": "a gateway operation is in progress",
             "phase": phase,
         })),
     )
 }
 
-/// Refuse while the gateway is mid-operation. The restart, the update, and the dismiss all route
-/// through this: a restart during an update is what orphaned a backup mid-export once.
-fn ensure_no_gateway_operation(
-    running: Option<operation::UpdatePhase>,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    match running {
-        None => Ok(()),
-        Some(phase) => Err(update_conflict(&phase)),
-    }
-}
-
 async fn restart_gateway_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    ensure_no_gateway_operation(state.update_operation.running_phase())?;
     if !systemd::is_active() {
         return Err(err_response(
             StatusCode::PRECONDITION_FAILED,
             "vestad is not running under systemd — cannot self-restart",
         ));
     }
+    // Taking the slot is the guard: an update holding it refuses this restart (that race is what
+    // orphaned a backup mid-export once), and holding it refuses an update asked for during the
+    // flush delay below, with no window between the check and the act. Nothing releases it: the
+    // process this restarts comes back with an empty slot.
+    state
+        .operation
+        .claim(operation::ActiveOperation::Restart)
+        .map_err(|phase| operation_conflict(&phase))?;
     tracing::info!("gateway restart requested via API");
     // Delay so the HTTP response can flush before systemctl kills this process.
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
-        // Re-checked at the moment of the kill: an update accepted during the flush delay must not
-        // be shot mid-snapshot; the client re-tries its restart once the update settles.
-        if let Some(phase) = state.update_operation.running_phase() {
-            tracing::warn!(?phase, "gateway restart skipped: an update started meanwhile");
-            return;
-        }
-        match tokio::task::spawn_blocking(systemd::restart).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!(error = %e, "gateway restart failed"),
-            Err(e) => tracing::error!(error = %e, "gateway restart task panicked"),
-        }
+        let error = match tokio::task::spawn_blocking(systemd::restart).await {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error,
+            Err(error) => error.to_string(),
+        };
+        tracing::error!(%error, "gateway restart failed");
+        // No new process is coming to empty the slot, so this one must, or every client would sit
+        // on the restarting screen forever.
+        state.operation.clear();
     });
     Ok(Json(serde_json::json!({"ok": true, "restarting": true})))
 }
@@ -578,7 +572,7 @@ async fn gateway_update_handler(
             StatusCode::SERVICE_UNAVAILABLE,
             &format!("cannot check for a new release: {error}"),
         )),
-        Err(phase) => Err(update_conflict(&phase)),
+        Err(phase) => Err(operation_conflict(&phase)),
     }
 }
 
@@ -587,9 +581,11 @@ async fn gateway_update_handler(
 async fn dismiss_gateway_update_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    ensure_no_gateway_operation(state.update_operation.running_phase())?;
+    if let Some(phase) = state.operation.running_phase() {
+        return Err(operation_conflict(&phase));
+    }
     Ok(Json(
-        serde_json::json!({"dismissed": state.update_operation.dismiss()}),
+        serde_json::json!({"dismissed": state.operation.dismiss()}),
     ))
 }
 
@@ -3022,7 +3018,7 @@ async fn run_maintenance(state: &SharedState) {
         // fresh pre-update snapshot set is reused (<24h).
         match update::start_update(state.clone()).await {
             Ok(update::UpdateStart::Started { .. }) => {
-                state.update_operation.wait_until_settled().await;
+                state.operation.wait_until_settled().await;
             }
             Ok(outcome) => tracing::info!(?outcome, "maintenance: no update to apply"),
             Err(phase) => tracing::warn!(?phase, "maintenance: an update is already running"),
@@ -3083,7 +3079,7 @@ fn recover_interrupted_update(state: &SharedState) {
         } => {
             tracing::error!(%target_version, %during, "the previous update never finished");
             state
-                .update_operation
+                .operation
                 .set_interrupted(target_version, during);
             let docker = state.docker.clone();
             tokio::spawn(async move { backup::sweep_backup_temp_artifacts(&docker).await });
@@ -3384,28 +3380,34 @@ mod tests {
     }
 
     #[test]
-    fn gateway_restart_and_update_conflict_while_an_update_runs() {
-        use crate::operation::{UpdatePhase, UpdateStage};
+    fn a_refused_claim_answers_409_with_the_live_phase() {
+        use crate::operation::{ActiveOperation, ActiveUpdate, OperationSlot, UpdatePhase, UpdateStage};
 
-        assert!(super::ensure_no_gateway_operation(None).is_ok(), "idle lets both through");
-
-        let err = super::ensure_no_gateway_operation(Some(UpdatePhase::Snapshotting {
-            agent: Some("axel".into()),
-            done: 1,
-            total: 4,
+        let slot = OperationSlot::new();
+        let snapshotting = UpdatePhase::Snapshotting { agent: Some("axel".into()), done: 1, total: 4 };
+        slot.claim(ActiveOperation::Update(ActiveUpdate {
+            target_version: "0.1.190".into(),
+            phase: snapshotting,
+            warnings: Vec::new(),
         }))
-        .expect_err("a running update refuses restart and a second update");
+        .expect("the free slot takes the update");
+
+        // What the restart handler does with the claim it is refused: a 409 naming the live phase,
+        // so the client renders what is running instead of a bare conflict.
+        let phase = slot
+            .claim(ActiveOperation::Restart)
+            .expect_err("a running update refuses the restart");
+        let err = super::operation_conflict(&phase);
         assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
-        // The body names the live phase so the client renders what is running, not a bare conflict.
         let body = serde_json::to_value(&err.1.0).expect("serialize the conflict body");
         assert_eq!(body["phase"]["phase"], serde_json::json!("snapshotting"));
         assert_eq!(body["phase"]["agent"], serde_json::json!("axel"));
 
-        // A failure the user has not dismissed still projects, but never blocks the retry: it is
-        // filtered out before this guard by `running_phase` (covered in update.rs).
-        let operation = crate::operation::UpdateOperation::new();
-        operation.set_interrupted("0.1.190".into(), UpdateStage::Applying);
-        assert!(super::ensure_no_gateway_operation(operation.running_phase()).is_ok());
+        // A failure the user has not dismissed still projects, but never blocks: the dismiss
+        // handler's guard reads `running_phase`, which filters it out.
+        let slot = OperationSlot::new();
+        slot.set_interrupted("0.1.190".into(), UpdateStage::Applying);
+        assert_eq!(slot.running_phase(), None);
     }
 
     #[test]

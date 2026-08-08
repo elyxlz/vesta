@@ -1,26 +1,39 @@
-import type { GatewayUpdateOperation, GatewayUpdatePhase, Tree } from "../protocol/tree"
+import type {
+  GatewayOperation,
+  GatewayOperationKind,
+  GatewayOperationPhase,
+  Tree,
+} from "../protocol/tree"
 
-const PHASES: readonly GatewayUpdatePhase[] = ["snapshotting", "applying", "restarting", "failed"]
+const PHASES: readonly GatewayOperationPhase[] = [
+  "snapshotting",
+  "applying",
+  "restarting",
+  "failed",
+]
+const KINDS: readonly GatewayOperationKind[] = ["update", "restart"]
 
 // The one reader of the gateway's operation branch, for every app. The shape is trusted like every
-// sibling tree field (vestad's serialization is contract-tested at the fixture seam); the phase is
-// the one field narrowed, because an app that met a phase from a newer gateway and rendered it as
-// "something is happening" would lock the user on a screen it cannot describe or resolve, so an
-// unknown phase reads as idle.
-export function selectGatewayOperation(tree: Tree | null): GatewayUpdateOperation | null {
+// sibling tree field (vestad's serialization is contract-tested at the fixture seam); the kind and
+// the phase are the two fields narrowed, because an app that met either from a newer gateway and
+// rendered it as "something is happening" would lock the user on a screen it cannot describe or
+// resolve, so an unknown kind or phase reads as idle.
+export function selectGatewayOperation(tree: Tree | null): GatewayOperation | null {
   const operation = tree?.gateway.operation ?? null
-  if (operation === null || !PHASES.includes(operation.phase)) return null
+  if (operation === null) return null
+  if (!KINDS.includes(operation.kind) || !PHASES.includes(operation.phase)) return null
   return operation
 }
 
 // Structural equality for the replica subscription: every delta rebuilds the tree, so the selected
 // operation must compare by value or each delta would read as a change and re-render.
 export function gatewayOperationsEqual(
-  a: GatewayUpdateOperation | null,
-  b: GatewayUpdateOperation | null,
+  a: GatewayOperation | null,
+  b: GatewayOperation | null,
 ): boolean {
   if (a === null || b === null) return a === b
   return (
+    a.kind === b.kind &&
     a.phase === b.phase &&
     a.agent === b.agent &&
     a.done === b.done &&
@@ -32,9 +45,10 @@ export function gatewayOperationsEqual(
   )
 }
 
-// The one line every surface shows for a running update. Progress counts from the agent being worked
-// on, so the first of four reads "1/4" rather than "0/4".
-export function gatewayOperationLabel(operation: GatewayUpdateOperation): string {
+// The one line every surface shows for a running operation. Progress counts from the agent being
+// worked on, so the first of four reads "1/4" rather than "0/4". A restart is only ever
+// "restarting", the phase an update ends on.
+export function gatewayOperationLabel(operation: GatewayOperation): string {
   switch (operation.phase) {
     case "snapshotting": {
       const { agent, done, total } = operation

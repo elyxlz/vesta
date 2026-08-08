@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::operation::{UpdateInfo, UpdatePhase, UpdateStage};
+use crate::operation::{ActiveOperation, ActiveUpdate, UpdateInfo, UpdatePhase, UpdateStage};
 use crate::state::SharedState;
 
 // Poll GitHub for new releases every 5 hours: often enough that the UpdatePill and a
@@ -335,12 +335,16 @@ pub async fn start_update(state: SharedState) -> Result<UpdateStart, UpdatePhase
             // A projected failure describing an update that is moot (or, per `recover_at_boot`'s
             // edge, actually landed) must not outlive this answer: an "already current" retry has
             // nothing left to retry, so it doubles as the dismiss.
-            state.update_operation.dismiss();
+            state.operation.dismiss();
             return Ok(UpdateStart::AlreadyCurrent { version });
         }
         Target::Unknown(error) => return Ok(UpdateStart::ReleaseCheckFailed { error }),
     };
-    state.update_operation.claim(&target)?;
+    state.operation.claim(ActiveOperation::Update(ActiveUpdate {
+        target_version: target.clone(),
+        phase: UpdatePhase::Snapshotting { agent: None, done: 0, total: 0 },
+        warnings: Vec::new(),
+    }))?;
     let run = UpdateRun {
         state,
         target: target.clone(),
@@ -407,7 +411,7 @@ impl UpdateRun {
     /// Move to `phase` in one place: the projected operation and the durable ledger never disagree.
     fn advance(&self, phase: UpdatePhase) {
         tracing::info!(target_version = %self.target, phase = ?phase, "gateway update phase");
-        let warnings = self.state.update_operation.set_phase(phase.clone());
+        let warnings = self.state.operation.set_phase(phase.clone());
         write_ledger(
             &self.state.env_config.config_dir,
             &UpdateLedger {
@@ -424,7 +428,7 @@ impl UpdateRun {
     fn fail(&self, during: UpdateStage, error: String) {
         tracing::error!(target_version = %self.target, %during, %error, "gateway update failed");
         self.state
-            .update_operation
+            .operation
             .set_phase(UpdatePhase::Failed { during, error });
         clear_ledger(&self.state.env_config.config_dir);
     }
@@ -432,7 +436,7 @@ impl UpdateRun {
     /// End the update quietly: nothing left to watch, nothing left to recover.
     fn finish(&self) {
         clear_ledger(&self.state.env_config.config_dir);
-        self.state.update_operation.clear();
+        self.state.operation.clear();
     }
 }
 
@@ -444,7 +448,7 @@ async fn run_update(run: UpdateRun) {
     run_snapshots(
         &agents,
         |phase| run.advance(phase),
-        |warning| run.state.update_operation.warn(warning),
+        |warning| run.state.operation.warn(warning),
         |agent| {
             let (state, kind, settings) = (&run.state, &kind, &backup_settings);
             async move { crate::maintenance::snapshot_agent(state, &agent, kind, settings, now_epoch).await }

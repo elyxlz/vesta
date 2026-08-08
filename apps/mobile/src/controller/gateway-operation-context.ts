@@ -1,11 +1,11 @@
 import { createContext, use } from "react";
-import type { GatewayUpdateOperation } from "@vesta/core";
+import type { GatewayOperation } from "@vesta/core";
 
 // The gateway's running operation, selected once from the replica by ControllerProvider. Home
 // renders it and the route effect blocks agent pages on it, so both read the same value.
 export const GatewayOperationContext =
-  createContext<GatewayUpdateOperation | null>(null);
+  createContext<GatewayOperation | null>(null);
 
-export function useGatewayOperation(): GatewayUpdateOperation | null {
+export function useGatewayOperation(): GatewayOperation | null {
   return use(GatewayOperationContext);
 }

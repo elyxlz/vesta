@@ -119,9 +119,9 @@ pub struct AppState {
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     pub(crate) tunnel_url: Mutex<Option<String>>,
     pub(crate) update_info: Mutex<Option<operation::UpdateInfo>>,
-    /// The gateway's one operation slot (see operation.rs): what an update is doing right now, and the
-    /// lock that keeps a second update or a gateway restart from racing it.
-    pub(crate) update_operation: operation::UpdateOperation,
+    /// The gateway's one operation slot (see operation.rs): what the gateway is doing to itself
+    /// right now, and the lock that keeps an update and a restart from racing each other.
+    pub(crate) operation: operation::OperationSlot,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
     /// Revocable, per-service credentials the agent proxy accepts for a private service.
@@ -195,7 +195,7 @@ impl AppState {
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
                 update_info: Mutex::new(None),
-                update_operation: operation::UpdateOperation::new(),
+                operation: operation::OperationSlot::new(),
                 http_client,
                 settings: RwLock::new(settings),
                 service_keys: RwLock::new(crate::service_keys::load_store()),
