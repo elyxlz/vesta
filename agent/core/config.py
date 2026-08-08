@@ -12,7 +12,7 @@ import uuid
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
-from claude_agent_sdk.types import SdkBeta, ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
+from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 from core import logger
 
@@ -210,13 +210,6 @@ def _validate_catalog_provider(kind: str, model: str, max_context_tokens: int | 
 DEFAULT_PROVIDER = _MANIFEST_MODEL.default_provider
 _DEFAULT_PERSONALITY = _MANIFEST_MODEL.default_personality
 _DEFAULT_CLAUDE_MODEL = _MANIFEST_MODEL.providers["claude"].default_model or "opus"
-
-# claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback when the user
-# hasn't explicitly chosen a context window.
-DEFAULT_CONTEXT_WINDOW = 200_000
-
-# The 1M-context beta. build_client_options enables it when the chosen window exceeds the 200k default.
-CONTEXT_1M_BETA: SdkBeta = "context-1m-2025-08-07"
 
 # Stable persisted-shape floor. Exact provider/model ceilings are manifest policy enforced only on
 # new PUT/PATCH selections, so catalog churn cannot invalidate an existing agent at boot.
