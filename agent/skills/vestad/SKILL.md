@@ -200,6 +200,54 @@ curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<nam
 Invalidate optionally takes `{"scope": "<part>"}` (e.g. `{"scope": "stt"}`) to mark what
 changed; omit the body for a full invalidation.
 
+### The notification JSON a daemon writes
+
+A daemon reports an event to the agent by writing one JSON object into `~/agent/notifications/`.
+The agent reads every `*.json` there in lexicographic filename order, so name the file
+`<time_ns>-<skill>-<type>.json`: the fixed-width nanosecond prefix is what keeps one daemon's own
+notifications in the order it wrote them. Write it under a temporary name that does not end in
+`.json`, then rename it into place, because the agent reads a file the instant it appears. Three
+fields are required, they have no defaults, and their names are exact:
+
+- `timestamp`: an ISO 8601 datetime.
+- `source`: which skill it came from, and the string the user's interrupt rules match on. `core` is
+  reserved for the agent's own control flow, so never write it.
+- `type`: the kind of event within that source.
+
+The rest is optional. `interrupt` (bool, default `true`) is the producer's own disposition, used
+when no user rule matches, so write `false` for something that should pool until the agent is idle.
+Extra fields are allowed and are how a notification carries its metadata: the first present of
+`message`, `text`, or `content` becomes the message, and every remaining field renders as an
+attribute on the delivered element. An empty or false value is dropped, so name a boolean to make
+`true` the interesting case. Carry the message in `message`: `body` belongs to core's own
+control-flow notifications and is rendered raw, while `message` is escaped.
+
+```json
+{"timestamp": "2025-01-31T09:30:00", "source": "my-skill", "type": "alert", "message": "disk at 91%", "interrupt": false}
+```
+
+**A notification that fails validation is logged to `~/agent/logs/vesta.log`, the file is deleted,
+and the daemon that wrote it is never told.** A daemon can log healthy work for hours while every
+alert it emits is discarded, so write one notification and confirm it reached the agent before
+trusting the path.
+
+### State that must survive a restart
+
+A daemon restarts often: a crash, a container restart, a rebuild, or `daemon restart` run by hand.
+Treat everything in process memory as lost at every restart.
+
+So any guard whose subject outlives the process is persisted, not held in a variable: backoffs,
+rate-limit lockouts, quota counters, and "already notified" markers. A ban imposed by a remote API
+survives your restart; a module global does not, so the first call after each restart spends the
+lockout it was supposed to be waiting out, and re-arms it.
+
+Schedule periodic-but-expensive work on the wall clock, from a persisted last-run timestamp, never
+a cycle counter. A counter starting at zero both resets the schedule on every restart and
+front-loads the costliest path into the first cycle after one.
+
+Keep that state with the skill's own data (`~/agent/data/<skill>/` for a new skill), never in
+`~/agent/data/daemons/`, which holds the pid and port records alone.
+
 ## Share a private service (mint a service key)
 
 vestad is the only gate in front of a private service, and a service key is the credential
