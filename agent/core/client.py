@@ -605,7 +605,15 @@ def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSet
 def _claude_sdk_settings(provider: cfg.ClaudeConfig) -> _SDKSettings:
     chosen = provider.max_context_tokens
     betas = [CONTEXT_1M_BETA] if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW else []
-    env = {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(chosen)} if chosen is not None else {}
+    # The CLI sizes a natively-1M Claude model's window from the model alone and only reads
+    # CLAUDE_CODE_MAX_CONTEXT_TOKENS for non-claude model names, so the chosen cap must also
+    # ride CLAUDE_CODE_AUTO_COMPACT_WINDOW: min'd against the model window, it is what
+    # get_context_usage reports and where auto-compaction fires.
+    env = (
+        {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(chosen), "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(chosen)}
+        if chosen is not None
+        else {}
+    )
     return env, betas, provider.thinking
 
 
@@ -669,7 +677,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     sdk_env, betas, thinking_config = _provider_sdk_settings(provider, state)
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
-    # against the CLI's own window (set via CLAUDE_CODE_MAX_CONTEXT_TOKENS above); the headless
+    # against the CLI's own window (capped via CLAUDE_CODE_AUTO_COMPACT_WINDOW above); the headless
     # ClaudeAgentOptions has no context_window field, so nothing is passed here.
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
