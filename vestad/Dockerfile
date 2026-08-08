@@ -87,15 +87,12 @@ WORKDIR /root/agent
 RUN UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --no-install-project --project core
 ENV PATH="/root/agent/.venv/bin:${PATH}"
 
-# Install Claude Code on PATH, pinned: the fleet runs one known CLI version, and a release built
-# from a bumped pin rebuilds every agent container onto it, so upgrades are deliberate and
-# fleet-wide. claude_agent_sdk would otherwise fall back to its own bundled CLI (deep in
-# site-packages), but skills shell out to `claude` directly (e.g. video-use), so it must be
-# resolvable on PATH; the SDK then reuses this same binary. cc_sdk stays in the tree (tmux is
+# Install Claude Code on PATH. claude_agent_sdk would otherwise fall back to its own bundled CLI
+# (deep in site-packages), but skills shell out to `claude` directly (e.g. video-use), so it must
+# be resolvable on PATH; the SDK then reuses this same binary. cc_sdk stays in the tree (tmux is
 # kept) but is dormant; if ever reactivated it fetches its own pinned binary under ~/.cache/cc-sdk.
-ARG CLAUDE_CODE_VERSION=2.1.226
-RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION" && \
-    claude --version | grep -F "$CLAUDE_CODE_VERSION" && \
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    claude --version && \
     mkdir -p /root/.claude
 WORKDIR /root
 
