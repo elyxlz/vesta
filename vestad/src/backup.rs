@@ -88,15 +88,21 @@ async fn remove_temp_artifacts(docker: &Docker, temp_cname: &str, image: &str) {
     crate::docker::remove_image(docker, image).await.ok();
 }
 
-/// Clear the throwaway container/image a killed backup can leave behind, for every agent. Named
-/// after the agent, so the sweep needs no listing of its own, and idempotent: an agent with nothing
-/// left over costs two no-op Docker calls. Run at boot after an interrupted update, which is how one
-/// of these ends up outliving the vestad that made it.
+/// Clear the throwaway container/image a killed backup can leave behind for one agent. Idempotent:
+/// an agent with nothing left over costs two no-op Docker calls. Called when an agent is destroyed,
+/// which is otherwise the moment its leftovers stop having anything to be swept by.
+pub async fn remove_agent_temp_artifacts(docker: &Docker, name: &str) {
+    let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
+    let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
+    remove_temp_artifacts(docker, &temp_cname, &image).await;
+}
+
+/// The same clearing for every agent this vestad owns. Named after the agent, so the sweep needs no
+/// listing of its own. Run at every boot: a backup killed with the process (an interrupted update,
+/// a crash, a reboot mid-export) is exactly the case where nothing else is left to clean up after it.
 pub async fn sweep_backup_temp_artifacts(docker: &Docker) {
     for name in list_agent_names(docker).await {
-        let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
-        let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
-        remove_temp_artifacts(docker, &temp_cname, &image).await;
+        remove_agent_temp_artifacts(docker, &name).await;
     }
 }
 

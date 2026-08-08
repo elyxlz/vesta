@@ -873,6 +873,9 @@ async fn destroy_agent_handler(
     docker::destroy_agent(&state.docker, &name, &state.env_config.agents_dir)
         .await
         .map_err(map_docker_err)?;
+    // The boot sweep finds leftovers by agent name, and this agent is about to have none, so its
+    // throwaway backup artifacts go now or never.
+    backup::remove_agent_temp_artifacts(&state.docker, &name).await;
     crate::restic::remove_repo(&name);
     state.agent_status_cache.clear_bridge_ip(&name);
     {
@@ -3062,8 +3065,7 @@ async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
 }
 
 /// Settle whatever the previous vestad left behind, once, before anything serves: an update that
-/// landed is logged and forgotten, while one that died projects as a failure the user can retry, and
-/// its half-finished backup artifacts are swept so no leftover container can be read as an agent.
+/// landed is logged and forgotten, while one that died projects as a failure the user can retry.
 fn recover_interrupted_update(state: &SharedState) {
     match update::recover_at_boot(&state.env_config.config_dir, env!("CARGO_PKG_VERSION")) {
         update::BootRecovery::Normal => {}
@@ -3078,11 +3080,7 @@ fn recover_interrupted_update(state: &SharedState) {
             during,
         } => {
             tracing::error!(%target_version, %during, "the previous update never finished");
-            state
-                .operation
-                .set_interrupted(target_version, during);
-            let docker = state.docker.clone();
-            tokio::spawn(async move { backup::sweep_backup_temp_artifacts(&docker).await });
+            state.operation.set_interrupted(target_version, during);
         }
     }
 }
@@ -3177,6 +3175,10 @@ pub async fn run_server(cfg: ServerConfig) {
     );
     let state = Arc::new(app_state);
     recover_interrupted_update(&state);
+    // Every boot, not only after an interrupted update: a backup killed with its process (a crash,
+    // a reboot mid-export) leaves the same throwaway container behind and nothing else collects it.
+    let sweep_docker = docker.clone();
+    tokio::spawn(async move { backup::sweep_backup_temp_artifacts(&sweep_docker).await });
     // The device registry persists on a background flush task: every mutation (a /sync connect or a
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();
