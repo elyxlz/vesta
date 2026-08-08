@@ -7,16 +7,15 @@ import {
   type GatewayUpdateOperation,
 } from "@vesta/core";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
-import { AuthSheet } from "@/components/auth-sheet";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-// The whole app while the gateway updates itself: one screen from the first pre-update backup to the
-// restart, morphing through the phases in place. It clears itself when the operation does, which is
-// when the app reconnects on the new version.
-export function GatewayUpdateProgressSheet({
+// Home while the gateway updates itself: one page from the first pre-update backup to the restart,
+// morphing through the phases in place. Home is where the update lives so app settings stay one tap
+// away throughout, which is what a user reaches for when an update looks stuck.
+export function GatewayUpdateProgress({
   operation,
 }: {
   operation: GatewayUpdateOperation;
@@ -27,7 +26,7 @@ export function GatewayUpdateProgressSheet({
   const failed = operation.phase === "failed";
 
   // The flag covers only the request itself; once vestad answers, the operation's phase owns this
-  // sheet. A granted retry that kept the flag would leave a second failure's retry stuck.
+  // page. A granted retry that kept the flag would leave a second failure's retry stuck.
   const handleRetry = () => {
     setRetrying(true);
     void triggerGatewayUpdate(api).finally(() => {
@@ -36,7 +35,7 @@ export function GatewayUpdateProgressSheet({
   };
 
   return (
-    <AuthSheet gap={20}>
+    <View style={styles.page}>
       <View style={styles.copy}>
         <Text
           accessibilityRole="header"
@@ -75,11 +74,18 @@ export function GatewayUpdateProgressSheet({
           </Button>
         </View>
       )}
-    </AuthSheet>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  page: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 24,
+    paddingHorizontal: 28,
+  },
   copy: { alignItems: "center", gap: 7 },
   title: {
     fontSize: 25,
@@ -89,6 +95,6 @@ const styles = StyleSheet.create({
   },
   detail: { fontSize: 15, lineHeight: 21, textAlign: "center" },
   phase: { fontSize: 15, lineHeight: 21, textAlign: "center" },
-  actions: { gap: 12 },
+  actions: { alignSelf: "stretch", gap: 12 },
   actionLabel: { fontSize: 14.5, lineHeight: 18, fontWeight: "600" },
 });

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Constants from "expo-constants";
+import { useRouter, useSegments } from "expo-router";
 import {
   gatewayOperationsEqual,
   resolveClientVersion,
@@ -20,8 +21,9 @@ import {
 } from "./optional-controller-store";
 import { runReauthCheck } from "./reauth-poll";
 import { AppBehindScreen } from "./AppBehindScreen";
+import { GatewayOperationContext } from "./gateway-operation-context";
+import { gatewayOperationRouteAction } from "./gateway-operation-route-model";
 import { GatewayUpdateGate } from "./gateway-update-gate";
-import { GatewayUpdateProgressSheet } from "./gateway-update-progress-sheet";
 
 // Development variants drift with source rather than releases, so they deliberately fail open.
 // Production variants compare their release against the gateway's compatibility window.
@@ -42,6 +44,8 @@ const REAUTH_POLL_MS = 60000;
 // Backgrounding closes the socket; returning to foreground builds a new epoch.
 function ConnectedController({ children }: { children: ReactNode }) {
   const { connection, api, refreshAccessToken } = useSession();
+  const router = useRouter();
+  const segments = useSegments();
   const [signal] = useState(createAppStateForegroundSignal);
   const [controller, setController] = useState<Controller | null>(null);
   const [device, setDevice] = useState<{ id: string; descriptor: string } | undefined>(undefined);
@@ -59,13 +63,18 @@ function ConnectedController({ children }: { children: ReactNode }) {
     };
   }, []);
   const syncState = useOptionalControllerSyncState(controller);
-  // A gateway update takes over the app for as long as it runs: every agent may be mid-backup and
-  // the gateway is about to restart, so there is nothing else to do but watch it.
+  // A gateway update takes the app back to home for as long as it runs: every agent may be
+  // mid-backup and the gateway is about to restart, so home renders the update and only settings
+  // stays reachable beside it.
   const updateOperation = useOptionalControllerReplica(
     controller,
     selectGatewayOperation,
     gatewayOperationsEqual,
   );
+  const routeAction = gatewayOperationRouteAction({
+    operating: updateOperation !== null,
+    activeRoute: segments[0] as string | undefined,
+  });
 
   useEffect(() => {
     let prev: GateInput = { connected: false, foreground: false };
@@ -123,17 +132,22 @@ function ConnectedController({ children }: { children: ReactNode }) {
     };
   }, [controller, api, refreshAccessToken]);
 
+  useEffect(() => {
+    if (routeAction === "none") return;
+    router.dismissTo("/");
+  }, [routeAction, router]);
+
   return (
     <ControllerContext.Provider value={controller}>
-      {syncState === "app_behind" ? (
-        <AppBehindScreen />
-      ) : updateOperation !== null ? (
-        <GatewayUpdateProgressSheet operation={updateOperation} />
-      ) : (
-        <GatewayUpdateGate blocked={syncState === "gateway_behind"}>
-          {children}
-        </GatewayUpdateGate>
-      )}
+      <GatewayOperationContext.Provider value={updateOperation}>
+        {syncState === "app_behind" ? (
+          <AppBehindScreen />
+        ) : (
+          <GatewayUpdateGate blocked={syncState === "gateway_behind"}>
+            {children}
+          </GatewayUpdateGate>
+        )}
+      </GatewayOperationContext.Provider>
     </ControllerContext.Provider>
   );
 }
