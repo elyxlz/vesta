@@ -255,15 +255,15 @@ async def _config_put_handler(request: web.Request) -> web.Response:
     return await _validate_and_store(config, data, label="config")
 
 
+_NonEmptyString = tp.Annotated[str, pyd.StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class _ClaudeSignIn(pyd.BaseModel):
     kind: tp.Literal["claude"]
     # None on re-auth: preserve the agent's existing model rather than reset it.
-    model: tp.Literal["opus", "sonnet"] | None = None
+    model: _NonEmptyString | None = None
     max_context_tokens: int | None = None
     credentials: str
-
-
-_NonEmptyString = tp.Annotated[str, pyd.StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class _KeySignIn(pyd.BaseModel):
