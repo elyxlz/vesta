@@ -179,7 +179,20 @@ If it won't matter in two weeks, delete it.
 Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts
+- **Sweep the harness's own scratch, which no one else will.** `~/.claude/projects/*/tool-results/`
+  accumulates every image and PDF any WebFetch ever pulled, silently and forever: on one box it
+  reached 109MB across 209 files spanning three weeks. Delete what is older than a week
+  (`find ~/.claude/projects -path '*tool-results*' -type f -mtime +7 -delete`). **The `.jsonl` files
+  in that same tree are NOT scratch**, compaction recovery points at them, so never sweep those.
+  If the box uses the harness task tool, `~/.claude/tasks/` grows the same way and is worse, because
+  the harness re-injects that list into context every turn, so it quietly colours what you surface.
+  Read it, fold anything genuinely open into memory, then clear it.
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
+- **Before deleting anything large, check what it actually is, and beware two specific traps.**
+  `du -sh <dir>/*` silently misses hidden entries, so a directory holding only a `.venv` reports
+  nothing and reads as empty. And a multi-gigabyte CUDA or model cache may be load-bearing: confirm
+  against `/dev/nvidia*` and the active skill list before assuming it is dead weight. Both nearly
+  cost a working 7.6GB install on 9 Aug 2026.
 - Stop daemons nothing needs any more (`<skill> daemon stop`), e.g. a file-host or sign-service you brought up for one errand
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
 
