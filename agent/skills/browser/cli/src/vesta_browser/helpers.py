@@ -100,8 +100,37 @@ def _eval_value(expression: str, context: str | None = None):
 
 
 def js(expression: str, target_id: str | None = None):
-    """Evaluate a JS expression. `target_id` to run inside an iframe/tab context."""
-    wrapped = f"Promise.resolve({expression}).then(v => JSON.stringify(v === undefined ? null : v))"
+    """Evaluate a JS expression. `target_id` to run inside an iframe/tab context.
+
+    A synchronous expression is stringified WITHOUT creating a promise, because on a page that has
+    replaced the global Promise this is the difference between working and crashing.
+
+    Zone.js, which Angular installs, replaces `window.Promise` with its own ZoneAwarePromise.
+    WebDriver BiDi's `awaitPromise` recognises only a native promise, so on such a page it does not
+    await: it serialises the ZoneAwarePromise object, and the result arrives as
+    `[["__zone_symbol__state", ...], ["__zone_symbol__value", ...]]`. `_eval_value` then calls
+    json.loads() on a list and raises
+
+        TypeError: the JSON object must be str, bytes or bytearray, not list
+
+    Wrapping unconditionally in `Promise.resolve(...)` triggers this on EVERY call, including a
+    plain `document.title`, so `js()` and everything built on it (`navigate`, `tabs`, `snapshot`)
+    traceback against an Angular site while the page is loaded and healthy. That reads like the site
+    fighting automation, and it is not: it is this wrapper.
+
+    Taking the constructor from `window.__zone_symbol__Promise` does NOT fix it. That symbol is
+    present and is a function, so the approach looks right, while the value it returns is still a
+    ZoneAwarePromise and the crash is unchanged.
+
+    LIMIT: an expression that itself evaluates to a Zone-patched thenable still will not be awaited,
+    because that is BiDi's promise detection and nothing here can change it. Keep such an expression
+    synchronous, or drive it through `browser bidi` directly.
+    """
+    wrapped = (
+        "(() => { const v = (" + expression + "); return (v && typeof v.then === 'function')"
+        " ? v.then(x => JSON.stringify(x === undefined ? null : x))"
+        " : JSON.stringify(v === undefined ? null : v); })()"
+    )
     return _eval_value(wrapped, context=target_id)
 
 
