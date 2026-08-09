@@ -3,6 +3,7 @@
 import os
 import pathlib as pl
 import subprocess
+import time
 
 SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "dream" / "scripts" / "reality_check.sh"
 
@@ -161,3 +162,54 @@ def test_stale_events_db_goes_red(tmp_path):
 
     assert run.returncode == 1
     assert "RED events.db" in run.stdout
+
+
+def _dreamer_summary(home: pl.Path, hours_old: float) -> pl.Path:
+    summary = home / "agent" / "dreamer"
+    summary.mkdir(parents=True, exist_ok=True)
+    written = summary / "2026-01-01.md"
+    written.write_text("summary")
+    aged = time.time() - hours_old * 3600
+    os.utime(written, (aged, aged))
+    return written
+
+
+def test_a_recent_dreamer_summary_stays_green(tmp_path):
+    home = _healthy_home(tmp_path)
+    _dreamer_summary(home, 17)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  last dreamer summary 17h old" in run.stdout
+
+
+def test_a_summary_a_night_late_stays_green(tmp_path):
+    # The bound is 30h rather than 24h on purpose: a nightly cadence is exactly 24h, so a run that
+    # slips a few hours would report RED on a box that never missed a night.
+    home = _healthy_home(tmp_path)
+    _dreamer_summary(home, 26)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "cadence intact" in run.stdout
+
+
+def test_a_missed_night_goes_red(tmp_path):
+    home = _healthy_home(tmp_path)
+    _dreamer_summary(home, 40)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED last dreamer summary is 40h old" in run.stdout
+
+
+def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
+    """A fresh box has no summaries at all, and a probe that reads that as a missed night is red
+    from birth with nothing the agent can do about it."""
+    run = _run(_healthy_home(tmp_path))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "no dreamer summaries yet" in run.stdout
