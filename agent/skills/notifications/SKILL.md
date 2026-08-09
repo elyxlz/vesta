@@ -138,3 +138,43 @@ Spend effort proportional to value. If the same low-value thing keeps showing up
 
 ### Focus habits
 [When the user wants you heads-down, and what they still want let through]
+
+## How to verify a rule is actually firing
+
+A trash rule is invisible by design, so a rule that silently matches nothing looks exactly like a quiet inbox. That symmetry has already produced a wrong conclusion on a live box: a trash regex was written against the `sender` facet, which holds display names, while every pattern in it was written for addresses. It matched almost nothing for hours, and the conclusion drawn from the resulting quiet was "the notification rules have failed" rather than "this rule never matched anything".
+
+**Check the field first.** `sender` is the display name, `sender_address` is the address. A pattern full of domains belongs on `sender_address`.
+
+**Read the config back from the server, never from the PUT response.** The response tells you the request was accepted, not what is now stored.
+
+**Then run a positive control, because an empty result is unverified rather than evidence.** Trashed notifications are written to `~/agent/notifications/trash/`, so a rule that fires leaves a trail:
+
+```bash
+for f in $(ls -t ~/agent/notifications/trash/*.json | head -10); do
+  python3 -c "import json,sys;d=json.load(open('$f'));print(d.get('timestamp','')[:16],'|',d.get('sender_address') or d.get('sender'),'|',(d.get('subject') or '')[:50])"
+done
+```
+
+If a pattern you added is not represented there after mail that should have matched it, the rule is not firing, whatever the config says. If the directory is empty of everything, the mechanism itself is not working and no rule can be trusted.
+
+**Before relying on a broadened pattern, test it against real addresses, including the ones that must NOT match.** Widening a rule is where a notification rule stops being housekeeping and starts hiding things. The failure is asymmetric and quiet: nobody notices the alert that never arrived. Take the addresses that actually reach this box, list the ones that must survive, and check them explicitly:
+
+```bash
+python3 - <<'PY'
+import json, os, re, urllib.request
+url = f"http://127.0.0.1:{os.environ['WS_PORT']}/config"
+cfg = json.load(urllib.request.urlopen(urllib.request.Request(url, headers={"X-Agent-Token": os.environ['AGENT_TOKEN']})))
+pattern = [m for r in cfg['notification_rules'] if r.get('action') == 'trash'
+           for m in r.get('match', []) if m.get('field') == 'sender_address'][0]['value']
+rx = re.compile(pattern, re.I)
+# Left column: addresses that SHOULD be trashed. Right: ones that must always get through.
+for addr, note in [("hello@mkt.example.com", "bulk marketing"),
+                   ("billing@utility.example", "a bill, MUST PASS"),
+                   ("someone@gmail.com", "a real person, MUST PASS")]:
+    print(f"  {'TRASH ' if rx.search(addr) else 'PASSES'}  {addr}  ({note})")
+PY
+```
+
+**Prefer the narrowest pattern that does the job.** A payment provider that sends both advertising and payment-due notices should be matched on its marketing subdomain, not on its name; matching the name would drop the notice that mattered on the day it mattered. Marketing subdomain prefixes (`@mailing.`, `@mkt.`, `@newsletter.`, `@hello.`) are a reasonable class to trash wholesale, anchored on the at-sign so they cannot match the local part of an address.
+
+**The reason this stays safe: `trash` drops the NOTIFICATION, not the mail.** A wrong trash rule costs you an interruption; the message is still in the mailbox and turns up on the next sweep. That bounds the damage, and it is the argument for tuning rules confidently rather than leaving every newsletter on snooze forever.
