@@ -66,6 +66,20 @@ tasks remind delete <id>
 DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/logs/daemon.log`; startup log
 `~/agent/logs/tasks.log`; pid and port records `~/agent/data/daemons/tasks.pid` and `tasks.port`.
 
+The store sits outside the tracked `agent/` tree, so the reasoning accumulated in metadata files has
+no history and a bad overwrite is unrecoverable. Tracking the store itself would churn, since it is
+rewritten many times a day. Export it instead:
+
+```bash
+tasks snapshot ~/agent/tasks-snapshot
+```
+
+Writes `tasks.json` (durable columns only, sorted by id) plus a copy of each metadata file, pruning
+metadata for tasks that no longer exist. Reminders are excluded: the auto ladder is regenerated on
+every due-date change and carries no reasoning. The output is deterministic, so a run that changes
+nothing produces no diff, which is what makes it safe to commit on a schedule. It reads the store
+directly and needs no daemon, so it still works when the daemon is the thing that broke.
+
 ## Setup
 
 ```bash

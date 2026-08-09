@@ -1098,3 +1098,37 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         "next_run": _next_run_for_row(reminder),
         "status": "updated",
     }
+
+
+SNAPSHOT_COLUMNS = ("id", "title", "status", "priority", "due_date", "created_at", "completed_at", "backburner")
+
+
+def snapshot_tasks(config: Config, *, out_dir: Path) -> dict:
+    """Export the store to a diff-friendly tree so task reasoning can be version controlled.
+
+    The live store is a sqlite db plus loose metadata files, rewritten many times a day, so tracking
+    it directly churns. This writes a stable projection instead: `tasks.json` sorted by id with only
+    the durable columns, and a copy of each metadata file. Reminders are excluded because the auto
+    ladder is regenerated on every due-date change and carries no reasoning. Output is deterministic,
+    so a run that changes nothing produces no diff and the snapshot can be committed on a schedule.
+    """
+    metadata_out = out_dir / "metadata"
+    metadata_out.mkdir(parents=True, exist_ok=True)
+    with closing(db.get_db(config.data_dir)) as conn:
+        rows = conn.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+    tasks = [{column: dict(row).get(column) for column in SNAPSHOT_COLUMNS} for row in rows]
+    (out_dir / "tasks.json").write_text(json.dumps(tasks, indent=2, sort_keys=True) + "\n")
+
+    written = set()
+    for task in tasks:
+        source = _get_metadata_path(config.data_dir, task["id"])
+        if source.is_file():
+            (metadata_out / source.name).write_text(source.read_text())
+            written.add(source.name)
+    # A deleted task must lose its snapshot too, or the tree grows forever and the history says the
+    # note is still live. Only .md files are pruned, so nothing else placed here is touched.
+    pruned = [stale for stale in sorted(metadata_out.glob("*.md")) if stale.name not in written]
+    for stale in pruned:
+        stale.unlink()
+
+    return {"out": str(out_dir), "tasks": len(tasks), "metadata": len(written), "pruned": len(pruned)}

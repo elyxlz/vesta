@@ -171,6 +171,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--show-completed", action="store_true")
     _add_format_flags(p_search)
 
+    # snapshot
+    p_snapshot = sub.add_parser("snapshot", help="Export tasks and their metadata to a version-controllable directory")
+    p_snapshot.add_argument("out_pos", nargs="?", default=None, metavar="out-dir")
+    p_snapshot.add_argument("--out", default=None)
+
     # remind (placeholder for --help)
     sub.add_parser("remind", help="Set, list, delete, or update reminders")
 
@@ -205,6 +210,13 @@ def main():
 
         if args.command == "daemon":
             sys.exit(daemon.daemon_cmd(args.action))
+
+        if args.command == "snapshot":
+            # Deliberately above the daemon gate: a snapshot reads the store and schedules nothing,
+            # and a store worth snapshotting is exactly the one whose daemon has stopped.
+            out = _require_arg(args.out_pos or args.out, "out-dir", "tasks snapshot <out-dir>")
+            print(json.dumps(commands.snapshot_tasks(config, out_dir=Path(out).expanduser()), indent=2))
+            return None
 
         _require_daemon()
         _handle_task(args, config)
