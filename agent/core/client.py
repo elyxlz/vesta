@@ -670,6 +670,14 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
 
     sdk_env, thinking_config = _provider_sdk_settings(provider, state)
 
+    # Vesta ships its own task system (the `tasks` skill: a sqlite store, reminders, a dashboard
+    # page), so the harness's built-in Task* tools are a second, competing one. Left on, they cost
+    # more than duplication: each call writes a JSON file under ~/.claude/tasks/, and the harness
+    # re-injects that whole list into context as a system-reminder on EVERY turn, so a months-old
+    # pile quietly shapes what the agent surfaces and is hard to trace back. Provider-independent,
+    # so it is set once here rather than in each adapter.
+    sdk_env["CLAUDE_CODE_ENABLE_TASKS"] = "0"
+
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (capped via CLAUDE_CODE_AUTO_COMPACT_WINDOW above); the headless
     # ClaudeAgentOptions has no context_window field, so nothing is passed here.
