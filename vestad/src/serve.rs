@@ -428,7 +428,7 @@ async fn version_json(state: &SharedState) -> serde_json::Value {
     let update_available = update.as_ref().map(|info| info.update_available);
     let auto_update = state.settings.read().await.auto_update;
     serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": update::running_version(),
         "api_compat": "0.2",
         "latest_version": latest,
         "update_available": update_available,
@@ -3067,7 +3067,7 @@ async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
 /// Settle whatever the previous vestad left behind, once, before anything serves: an update that
 /// landed is logged and forgotten, while one that died projects as a failure the user can retry.
 fn recover_interrupted_update(state: &SharedState) {
-    match update::recover_at_boot(&state.env_config.config_dir, env!("CARGO_PKG_VERSION")) {
+    match update::recover_at_boot(&state.env_config.config_dir, update::running_version()) {
         update::BootRecovery::Normal => {}
         update::BootRecovery::Updated { version, warnings } => {
             tracing::info!(version = %version, "gateway updated");

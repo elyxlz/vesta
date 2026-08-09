@@ -154,7 +154,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
 
     // 1. hello: the served compatibility window (this gateway's version + the oldest client it accepts)
     let hello = Frame::Hello {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::update::running_version().to_string(),
         min_supported: MIN_SUPPORTED_CLIENT_VERSION.to_string(),
     };
     if send_frame(&mut tx, &hello).await.is_err() {
@@ -581,7 +581,7 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
     let tunnel_url = state.tunnel_url.lock().await.clone();
     let operation = state.operation.snapshot().map(Into::into);
     GatewayInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::update::running_version().to_string(),
         channel,
         auto_update,
         port: state.https_port,

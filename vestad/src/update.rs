@@ -30,10 +30,53 @@ const GITHUB_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/elyxlz/vesta/releases/latest";
 const GITHUB_RELEASES_LIST_URL: &str =
     "https://api.github.com/repos/elyxlz/vesta/releases?per_page=10";
+const GITHUB_RELEASES_DOWNLOAD_BASE: &str =
+    "https://github.com/elyxlz/vesta/releases/download";
+const RELEASES_BASE_URL_ENV: &str = "VESTAD_RELEASES_BASE_URL";
+
+/// The three release URLs this binary reads: the stable alias, the prerelease-inclusive list, and
+/// the base every downloaded artifact hangs off.
+struct ReleaseSource {
+    latest: String,
+    list: String,
+    download_base: String,
+}
+
+/// Where releases come from. Unset (every published build) this is GitHub, whose metadata and
+/// artifacts live on two different hosts; `VESTAD_RELEASES_BASE_URL` points all three at one base
+/// instead, keeping GitHub's path scheme so a whole release can be served from somewhere else.
+/// Read per call, so a caller that sets it per process never has to restart to change it.
+fn release_source() -> ReleaseSource {
+    let base = std::env::var(RELEASES_BASE_URL_ENV).unwrap_or_default();
+    let base = base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return ReleaseSource {
+            latest: GITHUB_RELEASES_LATEST_URL.to_string(),
+            list: GITHUB_RELEASES_LIST_URL.to_string(),
+            download_base: GITHUB_RELEASES_DOWNLOAD_BASE.to_string(),
+        };
+    }
+    ReleaseSource {
+        latest: format!("{base}/releases/latest"),
+        list: format!("{base}/releases?per_page=10"),
+        download_base: format!("{base}/releases/download"),
+    }
+}
+
+/// The version this binary is, for every update decision it makes: what a release is compared
+/// against, what the ledger's target must match at boot, and what it reports on the wire.
+/// `VESTAD_VERSION_OVERRIDE` is compile-time only and unset in every published build, so a release
+/// binary reports its package version and nothing branches at runtime.
+pub const fn running_version() -> &'static str {
+    match option_env!("VESTAD_VERSION_OVERRIDE") {
+        Some(version) => version,
+        None => env!("CARGO_PKG_VERSION"),
+    }
+}
 
 pub fn check_once(channel: Channel) -> Result<UpdateInfo, String> {
     let latest = fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS), channel)?;
-    let update_available = version_less_than(env!("CARGO_PKG_VERSION"), &latest);
+    let update_available = version_less_than(running_version(), &latest);
 
     Ok(UpdateInfo {
         latest,
@@ -124,11 +167,12 @@ fn fetch_latest_release_tag(timeout_secs: Option<u64>, channel: Channel) -> Resu
         args.push("--max-time".into());
         args.push(t.to_string());
     }
+    let source = release_source();
     let url = match channel {
-        Channel::Stable => GITHUB_RELEASES_LATEST_URL,
-        Channel::Beta => GITHUB_RELEASES_LIST_URL,
+        Channel::Stable => source.latest,
+        Channel::Beta => source.list,
     };
-    args.push(url.into());
+    args.push(url);
 
     let output = std::process::Command::new("curl")
         .args(&args)
@@ -373,7 +417,7 @@ async fn resolve_target(state: &SharedState) -> Target {
         Ok(info) if info.update_available => Target::Newer(info.latest),
         Ok(info) => {
             tracing::info!(latest = %info.latest, "gateway is already current; nothing to update");
-            Target::Current(env!("CARGO_PKG_VERSION").to_string())
+            Target::Current(running_version().to_string())
         }
         Err(error) => {
             tracing::warn!(%error, "cannot start an update: release check failed");
@@ -538,7 +582,7 @@ pub struct UpdateOutcome {
 /// Channel switching never downgrades: a stable channel whose latest is older than the running
 /// (beta) version is simply a no-op.
 pub fn update_from_cli(channel: crate::channel::Channel) -> Result<UpdateOutcome, UpdateError> {
-    let current = env!("CARGO_PKG_VERSION").to_string();
+    let current = running_version().to_string();
     let latest = fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS), channel)
         .map_err(|error| UpdateError::Download(format!("cannot determine latest version: {error}")))?;
 
@@ -637,9 +681,7 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
     // Download from the resolved tag's release, not the `/latest/` alias: beta tags
     // are prereleases that `/latest/` never points at, and a pinned tag also avoids
     // racing a concurrent release that moves `latest`.
-    let url = format!(
-        "https://github.com/elyxlz/vesta/releases/download/v{tag}/{archive}"
-    );
+    let url = format!("{}/v{tag}/{archive}", release_source().download_base);
     let tmp = format!("/tmp/vestad-update-{}", std::process::id());
     std::fs::create_dir_all(&tmp).ok();
 
@@ -894,6 +936,46 @@ mod tests {
     #[test]
     fn extract_tag_beta_errors_on_empty_list() {
         assert!(extract_tag("[]", Channel::Beta).is_err());
+    }
+
+    /// The release source and the running version are both seams an e2e drives; with neither set
+    /// this binary must read exactly the published GitHub release and its own package version.
+    /// Serialized against `a_release_base_url_derives_all_three_urls`, which sets the env var.
+    #[test]
+    fn the_default_release_source_is_github_and_the_version_is_the_package_version() {
+        let _guard = env_lock();
+        std::env::remove_var(RELEASES_BASE_URL_ENV);
+        let source = release_source();
+        assert_eq!(source.latest, GITHUB_RELEASES_LATEST_URL);
+        assert_eq!(source.list, GITHUB_RELEASES_LIST_URL);
+        assert_eq!(
+            format!("{}/v0.1.190/vestad-x86_64-unknown-linux-gnu.tar.gz", source.download_base),
+            "https://github.com/elyxlz/vesta/releases/download/v0.1.190/vestad-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(running_version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn a_release_base_url_derives_all_three_urls() {
+        let _guard = env_lock();
+        // The trailing slash is the caller's, not the scheme's: one base, three GitHub-shaped paths.
+        std::env::set_var(RELEASES_BASE_URL_ENV, "http://127.0.0.1:8123/");
+        let source = release_source();
+        assert_eq!(source.latest, "http://127.0.0.1:8123/releases/latest");
+        assert_eq!(source.list, "http://127.0.0.1:8123/releases?per_page=10");
+        assert_eq!(source.download_base, "http://127.0.0.1:8123/releases/download");
+
+        // An empty value is not a base: it falls back to GitHub rather than deriving from nothing.
+        std::env::set_var(RELEASES_BASE_URL_ENV, "  ");
+        assert_eq!(release_source().latest, GITHUB_RELEASES_LATEST_URL);
+        std::env::remove_var(RELEASES_BASE_URL_ENV);
+    }
+
+    /// Both release-source tests mutate one process-wide env var, so they take this lock rather
+    /// than racing each other under the default parallel test runner.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[test]
