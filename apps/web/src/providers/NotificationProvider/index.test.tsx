@@ -85,6 +85,7 @@ function tree(statuses: Record<string, AgentRow["status"]>): Tree {
       updateAvailable: false,
       latestVersion: null,
       managed: false,
+      operation: null,
     },
     agents,
     devices: [],
@@ -298,6 +299,49 @@ describe("NotificationProvider", () => {
     expect(built).toEqual([
       { title: "ada hit a Claude rate limit", body: "resets at 3pm" },
     ]);
+  });
+
+  it("toasts the gateway's update announcement with the title the gateway chose", async () => {
+    const { controller, emit } = makeController({ ada: "alive" });
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    blur();
+
+    act(() => {
+      emit({
+        type: "user_notification",
+        agent: "",
+        kind: "gateway_updated",
+        title: "Updated to v0.1.190",
+        body: "Your gateway updated to v0.1.190.",
+      });
+    });
+
+    expect(built).toEqual([
+      {
+        title: "Updated to v0.1.190",
+        body: "Your gateway updated to v0.1.190.",
+      },
+    ]);
+  });
+
+  it("does not announce a gateway update to a client that is focused", async () => {
+    const { controller, emit } = makeController({ ada: "alive" });
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    focus();
+
+    act(() => {
+      emit({
+        type: "user_notification",
+        agent: "",
+        kind: "gateway_updated",
+        title: "Updated to v0.1.190",
+        body: "Your gateway updated to v0.1.190.",
+      });
+    });
+
+    expect(built).toEqual([]);
   });
 
   it("lights the unseen badge when the fleet's pending count grows while hidden", async () => {

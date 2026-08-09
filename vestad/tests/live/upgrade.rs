@@ -7,7 +7,7 @@
 //! covers the migration *runner*, but only a live upgrade proves the new release actually
 //! converges an old agent without breaking it.
 //!
-//! The upgrade is functionally identical to `vestad update` (`self_update::perform_update`)
+//! The upgrade is functionally identical to `vestad update` (`update::update_from_cli`)
 //! minus systemd: the installed vestad binary is replaced in place via an atomic rename (exactly
 //! what `self_replace` does) and the daemon is restarted. On the next startup the new binary
 //! re-extracts its embedded core (`ensure_agent_code`, fingerprinted in `agent_code.rs`) and
@@ -145,7 +145,7 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
     );
 
     // ── The update: replace the installed binary in place, then restart the daemon ────────────
-    // Functionally identical to `vestad update` (perform_update) without systemd: self_replace the
+    // Functionally identical to `vestad update` (`update_from_cli`) without systemd: self_replace the
     // binary, then restart. The old daemon is still running from the file; an atomic rename over
     // it is safe (the running process keeps the old inode), just as self_replace relies on.
     eprintln!("upgrade e2e: replacing installed vestad with {target_label} and restarting");

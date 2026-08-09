@@ -20,6 +20,99 @@ pub(crate) struct GatewayInfo {
     pub update_available: bool,
     pub latest_version: Option<String>,
     pub managed: bool,
+    /// The gateway-wide operation in flight, or None when the gateway is idle. Mirrors the agent
+    /// nodes' `operation`: work that outlives the request that started it, so every client sees it
+    /// rather than only the one that asked. Defaulted so a tree written by an older gateway (before
+    /// the field existed) still parses.
+    #[serde(default)]
+    pub operation: Option<GatewayOperation>,
+}
+
+/// The kinds of gateway operation there are. An enum rather than a bare string so a third kind
+/// cannot be added without every reader being told about it.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GatewayOperationKind {
+    Update,
+    Restart,
+}
+
+/// The wire face of an operation's phase. Terminal success is deliberately absent: a finished
+/// operation clears the slot, and the client reads the new version off the gateway node itself.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GatewayOperationPhase {
+    Snapshotting,
+    Applying,
+    Restarting,
+    Failed,
+}
+
+/// One in-flight gateway operation, flattened for the wire: the progress fields carry values only
+/// while snapshotting, `error` only on a failure, and `targetVersion` only for an update, a restart
+/// having no release to name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GatewayOperation {
+    pub kind: GatewayOperationKind,
+    pub phase: GatewayOperationPhase,
+    pub agent: Option<String>,
+    pub done: Option<u32>,
+    pub total: Option<u32>,
+    pub target_version: Option<String>,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+}
+
+impl From<crate::operation::ActiveOperation> for GatewayOperation {
+    fn from(active: crate::operation::ActiveOperation) -> Self {
+        use crate::operation::{ActiveOperation, UpdatePhase};
+        // A restart is one phase with nothing to report, and it is deliberately the phase an update
+        // ends on, so every client renders it on the screen it already has.
+        let update = match active {
+            ActiveOperation::Restart => {
+                return Self {
+                    kind: GatewayOperationKind::Restart,
+                    phase: GatewayOperationPhase::Restarting,
+                    agent: None,
+                    done: None,
+                    total: None,
+                    target_version: None,
+                    warnings: Vec::new(),
+                    error: None,
+                }
+            }
+            ActiveOperation::Update(update) => update,
+        };
+        let (phase, agent, done, total, error) = match update.phase {
+            UpdatePhase::Snapshotting { agent, done, total } => (
+                GatewayOperationPhase::Snapshotting,
+                agent,
+                Some(done),
+                Some(total),
+                None,
+            ),
+            UpdatePhase::Applying => (GatewayOperationPhase::Applying, None, None, None, None),
+            UpdatePhase::Restarting => (GatewayOperationPhase::Restarting, None, None, None, None),
+            UpdatePhase::Failed { during, error } => (
+                GatewayOperationPhase::Failed,
+                None,
+                None,
+                None,
+                Some(format!("while {during}: {error}")),
+            ),
+        };
+        Self {
+            kind: GatewayOperationKind::Update,
+            phase,
+            agent,
+            done,
+            total,
+            target_version: Some(update.target_version),
+            warnings: update.warnings,
+            error,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -149,6 +242,16 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         update_available: true,
         latest_version: Some("0.1.1".into()),
         managed: false,
+        operation: Some(GatewayOperation {
+            kind: GatewayOperationKind::Update,
+            phase: GatewayOperationPhase::Snapshotting,
+            agent: Some("sample-agent".into()),
+            done: Some(1),
+            total: Some(2),
+            target_version: Some("0.1.1".into()),
+            warnings: vec!["other-agent: backup failed (disk full)".into()],
+            error: None,
+        }),
     };
     let mut services = BTreeMap::new();
     services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3 });
@@ -215,6 +318,7 @@ mod tests {
             update_available: false,
             latest_version: None,
             managed: false,
+            operation: None,
         }
     }
 
@@ -227,6 +331,71 @@ mod tests {
         assert!(value.get("updateAvailable").is_some());
         assert!(value.get("latestVersion").is_some());
         assert!(value.get("auto_update").is_none());
+    }
+
+    #[test]
+    fn a_running_update_projects_its_phase_and_progress() {
+        let active = crate::operation::ActiveOperation::Update(crate::operation::ActiveUpdate {
+            target_version: "0.1.190".into(),
+            phase: crate::operation::UpdatePhase::Snapshotting {
+                agent: Some("axel".into()),
+                done: 1,
+                total: 4,
+            },
+            warnings: vec!["mona: backup failed (disk full)".into()],
+        });
+        let value = serde_json::to_value(GatewayOperation::from(active)).expect("serialize");
+        assert_eq!(value["kind"], serde_json::json!("update"));
+        assert_eq!(value["phase"], serde_json::json!("snapshotting"));
+        assert_eq!(value["agent"], serde_json::json!("axel"));
+        assert_eq!(value["done"], serde_json::json!(1));
+        assert_eq!(value["total"], serde_json::json!(4));
+        assert_eq!(value["targetVersion"], serde_json::json!("0.1.190"));
+        assert_eq!(value["warnings"][0], serde_json::json!("mona: backup failed (disk full)"));
+        assert_eq!(value["error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_failed_update_projects_the_stage_it_died_on() {
+        let active = crate::operation::ActiveOperation::Update(crate::operation::ActiveUpdate {
+            target_version: "0.1.190".into(),
+            phase: crate::operation::UpdatePhase::Failed {
+                during: crate::operation::UpdateStage::Applying,
+                error: "curl failed".into(),
+            },
+            warnings: Vec::new(),
+        });
+        let operation = GatewayOperation::from(active);
+        assert_eq!(operation.phase, GatewayOperationPhase::Failed);
+        assert_eq!(operation.error.as_deref(), Some("while installing: curl failed"));
+        assert_eq!(operation.agent, None);
+    }
+
+    #[test]
+    fn a_restart_projects_as_the_restarting_phase_with_nothing_to_report() {
+        let value = serde_json::to_value(GatewayOperation::from(
+            crate::operation::ActiveOperation::Restart,
+        ))
+        .expect("serialize");
+        assert_eq!(value["kind"], serde_json::json!("restart"));
+        assert_eq!(value["phase"], serde_json::json!("restarting"));
+        // A restart installs nothing, so it names no release and carries no progress.
+        assert_eq!(value["targetVersion"], serde_json::Value::Null);
+        assert_eq!(value["agent"], serde_json::Value::Null);
+        assert_eq!(value["warnings"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn an_idle_gateway_carries_a_null_operation() {
+        let value = serde_json::to_value(sample_gateway()).expect("serialize");
+        assert_eq!(value["operation"], serde_json::Value::Null);
+
+        // A gateway node from an older vestad has no `operation` key at all; parsing must not need one.
+        let mut older = value.clone();
+        let object = older.as_object_mut().expect("gateway object");
+        object.remove("operation");
+        let parsed: GatewayInfo = serde_json::from_value(older).expect("parse a gateway without the field");
+        assert_eq!(parsed.operation, None);
     }
 
     #[test]

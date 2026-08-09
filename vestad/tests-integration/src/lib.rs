@@ -1,4 +1,5 @@
 pub mod client;
+pub mod release_server;
 pub mod types;
 
 use std::path::PathBuf;
@@ -64,6 +65,7 @@ pub struct TestServerBuilder {
     home: Option<PathBuf>,
     vestad_bin: Option<PathBuf>,
     env_remove: Vec<String>,
+    env_set: Vec<(String, String)>,
 }
 
 impl TestServerBuilder {
@@ -101,10 +103,34 @@ impl TestServerBuilder {
         self
     }
 
+    /// Set an env var on the spawned vestad. The gateway-update e2e uses it for the release source
+    /// (`VESTAD_RELEASES_BASE_URL`), the dev-mode off switch, and a `PATH` carrying its systemctl stub.
+    #[must_use]
+    pub fn env(mut self, key: &str, value: &str) -> Self {
+        self.env_set.push((key.to_string(), value.to_string()));
+        self
+    }
+
     pub fn start(self) -> Result<TestServer, String> {
         let user = self.user.unwrap_or_else(|| unique_user("test"));
-        TestServer::start_with_options(Some(&user), self.home, self.vestad_bin, &self.env_remove)
+        TestServer::start_with_options(StartOptions {
+            user: Some(user),
+            home: self.home,
+            vestad_bin: self.vestad_bin,
+            env_remove: self.env_remove,
+            env_set: self.env_set,
+        })
     }
+}
+
+/// Everything that varies between one spawned vestad and the next.
+#[derive(Default)]
+struct StartOptions {
+    user: Option<String>,
+    home: Option<PathBuf>,
+    vestad_bin: Option<PathBuf>,
+    env_remove: Vec<String>,
+    env_set: Vec<(String, String)>,
 }
 
 /// Remove Docker containers left behind by previous test runs that crashed
@@ -189,15 +215,17 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn start() -> Result<Self, String> {
-        Self::start_with_options(None, None, None, &[])
+        Self::start_with_options(StartOptions::default())
     }
 
-    fn start_with_options(
-        user: Option<&str>,
-        home: Option<PathBuf>,
-        vestad_bin: Option<PathBuf>,
-        env_remove: &[String],
-    ) -> Result<Self, String> {
+    fn start_with_options(options: StartOptions) -> Result<Self, String> {
+        let StartOptions {
+            user,
+            home,
+            vestad_bin,
+            env_remove,
+            env_set,
+        } = options;
         rustls::crypto::ring::default_provider()
             .install_default()
             .ok();
@@ -231,11 +259,14 @@ impl TestServer {
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
-        if let Some(user_name) = user {
+        if let Some(user_name) = &user {
             cmd.env("USER", user_name);
         }
-        for key in env_remove {
+        for key in &env_remove {
             cmd.env_remove(key);
+        }
+        for (key, value) in &env_set {
+            cmd.env(key, value);
         }
 
         let process = cmd.spawn().map_err(|e| format!("spawn vestad: {e}"))?;

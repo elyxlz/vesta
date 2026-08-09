@@ -3,13 +3,20 @@ import type { Controller, SyncState, Tree } from "@vesta/core";
 import {
   checkForGatewayUpdate,
   devicesEqual,
+  dismissGatewayUpdate as requestDismissUpdate,
+  gatewayOperationsEqual,
   rosterFromTree,
   rostersEqual,
   selectDevices,
+  selectGatewayOperation,
   triggerGatewayRestart as requestGatewayRestart,
   triggerGatewayUpdate as requestGatewayUpdate,
 } from "@vesta/core";
-import { useReplica, useSyncState } from "@vesta/core/react";
+import {
+  useReplica,
+  useSyncState,
+  useUpdateResolution,
+} from "@vesta/core/react";
 import { AppBehindScreen } from "@/components/AppBehindScreen";
 import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
 import { useAuth } from "@/providers/AuthProvider";
@@ -53,6 +60,11 @@ function ReplicaGateway({
   children: ReactNode;
 }) {
   const gateway = useReplica(controller.replica, selectGateway);
+  const gatewayOperation = useReplica(
+    controller.replica,
+    selectGatewayOperation,
+    gatewayOperationsEqual,
+  );
   const agents = useReplica(controller.replica, rosterFromTree, rostersEqual);
   const devices = useReplica(controller.replica, selectDevices, devicesEqual);
   const syncState = useSyncState(controller);
@@ -66,12 +78,20 @@ function ReplicaGateway({
     useAgentOps.getState().reconcile(agents);
   }, [agents]);
 
-  const triggerGatewayUpdate = useCallback(async (): Promise<boolean> => {
-    const ok = await requestGatewayUpdate(controller.http);
-    // Force a fresh controller/socket so the app re-attaches to the restarting gateway.
-    if (ok) reconnect();
-    return ok;
-  }, [controller, reconnect]);
+  const gatewayVersion = gateway?.version ?? "";
+  const updatedTo = useUpdateResolution(gatewayOperation, gatewayVersion);
+
+  // An update no longer ends the socket the moment it is asked for: vestad accepts it and reports
+  // its phases on /sync, and the live socket reconnects on its own through the restart phase.
+  const triggerGatewayUpdate = useCallback(
+    () => requestGatewayUpdate(controller.http),
+    [controller],
+  );
+
+  const dismissUpdate = useCallback(
+    () => requestDismissUpdate(controller.http),
+    [controller],
+  );
 
   const triggerGatewayRestart = useCallback(async (): Promise<boolean> => {
     const ok = await requestGatewayRestart(controller.http);
@@ -92,18 +112,21 @@ function ReplicaGateway({
   const value: GatewayContextValue = {
     reachable: syncState === "open",
     managed: gateway?.managed ?? false,
-    gatewayVersion: gateway?.version ?? "",
+    gatewayVersion,
     gatewayChannel: gateway?.channel ?? "stable",
     gatewayAutoUpdate: gateway?.autoUpdate ?? true,
     gatewayPort: gateway?.port ?? 0,
     versionChecked: true,
     updateAvailable: gateway?.updateAvailable ?? false,
     latestVersion: gateway?.latestVersion ?? null,
+    gatewayOperation,
+    updatedTo,
     agents,
     agentsFetched: gateway !== null,
     devices,
     triggerGatewayUpdate,
     triggerGatewayRestart,
+    dismissUpdate,
     checkForUpdate,
   };
 

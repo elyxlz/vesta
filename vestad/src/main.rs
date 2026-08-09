@@ -22,11 +22,11 @@ mod maintenance_window;
 mod manifest;
 mod mobile_app;
 mod mounts;
+mod operation;
 mod paths;
 mod providers;
 mod restic;
 mod self_log;
-mod self_update;
 mod serve;
 mod service_keys;
 mod settings;
@@ -37,7 +37,7 @@ mod systemd;
 mod time_utils;
 mod tunnel;
 mod types;
-mod update_check;
+mod update;
 mod upstream;
 mod vendored_bin;
 mod vesta_cloud;
@@ -345,6 +345,17 @@ async fn wait_for_health(
 
 /// Best-effort primary LAN IPv4 — the source address the kernel uses to reach
 /// off-box via the default route, i.e. the address other LAN devices can reach.
+/// Dev mode: a debug build is one, and `VESTAD_DEV` decides either way when set (`0`/`false`/`off`
+/// turn it off, anything else on). A published build is a release build that sets nothing, so it
+/// reads `false` exactly as before; the off-switch is what lets a debug binary be driven through
+/// the real self-update in an e2e.
+fn dev_mode_enabled() -> bool {
+    match std::env::var("VESTAD_DEV") {
+        Ok(value) => !matches!(value.trim(), "0" | "false" | "off"),
+        Err(_) => cfg!(debug_assertions),
+    }
+}
+
 /// `ip route get` is used first so Docker/VPN bridge addresses (172.17.x and the
 /// like, always present since vestad needs Docker) are skipped; it falls back to
 /// the first non-loopback, non-Docker-bridge address from `hostname -I`. Either
@@ -490,7 +501,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool, f
             let user = std::env::var("USER")
                 .or_else(|_| std::env::var("LOGNAME"))
                 .unwrap_or_else(|_| "unknown".into());
-            let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
+            let dev_mode = dev_mode_enabled();
 
             // Build the status snapshot, persist it before the API opens (so any
             // reader that sees the daemon reachable also sees status.json), and
@@ -986,7 +997,7 @@ fn main() {
         }
 
         Command::Update => {
-            let outcome = self_update::perform_update(channel::Channel::effective())
+            let outcome = update::update_from_cli(channel::Channel::effective())
                 .unwrap_or_else(|e| die(e.to_string()));
             if outcome.updated {
                 println!("✓ updated v{} → v{}", outcome.current, outcome.latest);

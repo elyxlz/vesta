@@ -11,6 +11,21 @@ const PASSWORD_FILE: &str = "restic-password";
 const RESTIC_BIN: &str = "restic";
 const RESTIC_TIMEOUT_SECS: u64 = 7200; // 2 hours — multi-GB agents stream the whole fs
 
+/// Ceiling on one pre-update snapshot, far under `RESTIC_TIMEOUT_SECS`: the gateway update screen
+/// is live while these run, so a wedged export is killed (the timeout below fires the kill switch)
+/// and reported as a warning, with the agent keeping its older snapshot as its rollback point,
+/// instead of one agent stalling the whole update. Generous next to the worst observed fleet
+/// backup (tens of seconds), so it never cuts a slow but live snapshot short.
+const PRE_UPDATE_SNAPSHOT_TIMEOUT_SECS: u64 = 15 * 60;
+
+/// The per-type snapshot budget, owned here beside the kill switch it arms.
+fn snapshot_timeout_secs(backup_type: &BackupType) -> u64 {
+    match backup_type {
+        BackupType::PreUpdate => PRE_UPDATE_SNAPSHOT_TIMEOUT_SECS,
+        BackupType::Manual | BackupType::Periodic | BackupType::PreRestore => RESTIC_TIMEOUT_SECS,
+    }
+}
+
 fn config_dir() -> PathBuf {
     crate::paths::config_dir_or_relative()
 }
@@ -322,6 +337,7 @@ pub async fn snapshot(
     let tar_name = agent_tar_name(name);
     let agent_tag = format!("agent:{name}");
     let type_tag = format!("type:{backup_type}");
+    let timeout_secs = snapshot_timeout_secs(backup_type);
     let version_tag = from_version.map(|v| format!("from-version:{v}"));
     let from_version = from_version.map(str::to_string);
     let backup_type = backup_type.clone();
@@ -379,11 +395,11 @@ pub async fn snapshot(
     });
 
     let summary =
-        if let Ok(join_result) = tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await { join_result
+        if let Ok(join_result) = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), task).await { join_result
         .map_err(|e| DockerError::Failed(format!("backup task failed: {e}")))?? } else {
             kill_switch.kill_all();
             return Err(DockerError::Failed(format!(
-                "backup timed out after {RESTIC_TIMEOUT_SECS}s"
+                "backup timed out after {timeout_secs}s"
             )));
         };
 

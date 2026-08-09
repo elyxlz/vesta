@@ -24,10 +24,12 @@ export interface NotificationsDelta {
   pending: NotificationEvent[]
 }
 
-// The always-on, server-decided user-facing notification (a new chat reply or a rate limit), carrying
-// the display triple directly. Chat leaves the event union, so the user notification no longer embeds
-// an event: the client routes on `kind` and renders `title`/`body`. Independent of any subscription;
-// clients toast it. Additive: an old client on the pre-user-notification union simply ignores it.
+// The always-on, server-decided user-facing notification, carrying the display triple directly. Chat
+// leaves the event union, so the user notification no longer embeds an event: the client routes on
+// `kind` (`message`, `rate_limited`, `gateway_updated`) and renders `title`/`body`. `kind` stays a
+// plain string so an unknown one is rendered rather than dropped, which is what keeps a new kind
+// additive. `agent` is the source, and `gateway_updated` comes from the gateway itself, so it is
+// empty there. Independent of any subscription; clients toast it.
 export interface UserNotificationDelta {
   type: "user_notification"
   agent: string

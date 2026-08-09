@@ -11,8 +11,9 @@ use super::events::{NotificationChange, PendingNotifications};
 const USER_NOTIFICATION_BROADCAST_CAPACITY: usize = 256;
 
 /// One user-facing notification fanned out to every `/sync` session: the source agent plus the
-/// display triple (`kind` in `message`/`rate_limited`, a title, and a body). Injected by the agent
-/// through `POST /agents/{name}/user-notification`; the client routes the toast on `kind`.
+/// display triple (`kind` in `message`/`rate_limited`/`gateway_updated`, a title, and a body).
+/// Injected by the agent through `POST /agents/{name}/user-notification`, except `gateway_updated`,
+/// which the gateway publishes itself and names no agent. The client routes the toast on `kind`.
 #[derive(Clone, Debug)]
 pub(crate) struct UserNotification {
     pub agent: String,

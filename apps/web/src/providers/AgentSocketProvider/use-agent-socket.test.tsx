@@ -84,6 +84,7 @@ function tree(): Tree {
       updateAvailable: false,
       latestVersion: null,
       managed: false,
+      operation: null,
     },
     agents: {
       [AGENT]: {

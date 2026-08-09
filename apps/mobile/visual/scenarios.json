@@ -271,6 +271,34 @@
       "screenshot": "settings-gateway-update-confirm.png"
     },
     {
+      "id": "gateway-update-snapshotting",
+      "title": "Backing up before the update",
+      "description": "Home locked to the update while the gateway snapshots each agent, with app settings still reachable.",
+      "group": "Gateway update",
+      "screenshot": "gateway-update-snapshotting.png"
+    },
+    {
+      "id": "gateway-update-failed",
+      "title": "Gateway update failed",
+      "description": "Stopped update on home, naming the failure and offering retry and dismiss.",
+      "group": "Gateway update",
+      "screenshot": "gateway-update-failed.png"
+    },
+    {
+      "id": "gateway-restarting",
+      "title": "Gateway restarting",
+      "description": "Home during a plain gateway restart, which reuses the update page's restarting state.",
+      "group": "Gateway update",
+      "screenshot": "gateway-restarting.png"
+    },
+    {
+      "id": "gateway-updated",
+      "title": "Gateway updated",
+      "description": "The resolution a client that watched the update sees for a moment: the version the gateway landed on.",
+      "group": "Gateway update",
+      "screenshot": "gateway-updated.png"
+    },
+    {
       "id": "diagnostics",
       "title": "Diagnostics",
       "description": "Application, simulator, gateway, and roster details with the native sharing action.",
