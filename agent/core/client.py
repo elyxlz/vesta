@@ -686,6 +686,10 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         model=_harness_model(provider),
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
+        # Setting CLAUDE_CODE_ENABLE_TASKS=0 above brings back the legacy TodoWrite tool, which is
+        # the same competing-task-system problem in an older shape (and carries its own per-turn
+        # reminder). Deny it so the swap does not simply reintroduce what the env var removed.
+        disallowed_tools=["TodoWrite"],
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
         # "user" enables discovery of ~/.claude/skills, where agent startup symlinks active
