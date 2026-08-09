@@ -76,6 +76,10 @@ const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 const AGENT_TOKEN_BYTES: usize = 32;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
+/// The label `list_managed_agents` filters on: an agent's container carries it as "true", and the
+/// throwaway export container a backup builds carries it as "false", so a leftover one can never be
+/// read back as an agent.
+const LABEL_MANAGED: &str = "vesta.managed";
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
@@ -1422,8 +1426,15 @@ pub async fn create_plain_container(
         name: Some(cname.to_string()),
         ..Default::default()
     };
+    // `docker commit` copies the agent's labels onto the image this is created from, managed label
+    // included, so it is overridden here rather than inherited: a container this one leaves behind
+    // must never enumerate as the agent it was made from.
     let body = ContainerCreateBody {
         image: Some(image.to_string()),
+        labels: Some(HashMap::from([(
+            LABEL_MANAGED.to_string(),
+            "false".to_string(),
+        )])),
         ..Default::default()
     };
     docker
@@ -1986,7 +1997,7 @@ pub async fn create_container(
     );
 
     let mut labels = HashMap::new();
-    labels.insert("vesta.managed".to_string(), "true".to_string());
+    labels.insert(LABEL_MANAGED.to_string(), "true".to_string());
     labels.insert(LABEL_USER.to_string(), crate::paths::current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
@@ -4332,6 +4343,63 @@ mod tests {
                 .iter()
                 .any(|h| h.starts_with("host.docker.internal:")),
             "expected a host.docker.internal mapping, got {extra_hosts:?}"
+        );
+    }
+
+    /// `docker commit` copies an agent's labels onto the image a backup exports through, so the
+    /// throwaway container created from it would wear `vesta.managed=true` and that agent's name
+    /// unless the create overrides it. One left behind by a killed backup is what once shadowed a
+    /// healthy container in the name-keyed roster and crash-looped it.
+    #[tokio::test]
+    #[ignore]
+    async fn a_backup_export_container_never_enumerates_as_an_agent() {
+        let docker = test_docker();
+        let agent = format!("exporttmp-{}", std::process::id());
+        let tc = TestContainer::for_agent(&agent);
+        create_test_container_with_binds_async(
+            &docker,
+            &tc,
+            Vec::new(),
+            agent_container_cmd(),
+            NETWORK_MODE,
+            RESTART_POLICY,
+        )
+        .await;
+
+        // What backup.rs builds: one commit image, and one throwaway container created from it.
+        // The image is declared first so it is dropped last, since Docker refuses to remove an
+        // image a container still references.
+        let image = TestImage::new(&format!("backup-tmp-{agent}"));
+        let temp = TestContainer::new(&format!("backup-tmp-{agent}"));
+        let (repo, tag) = image.tag.split_once(':').expect("a test image tag");
+        commit_container_to_image(&docker, &tc.name, repo, tag)
+            .await
+            .expect("commit the agent for export");
+        create_plain_container(&docker, &image.tag, &temp.name)
+            .await
+            .expect("create the export container");
+
+        // Docker merges the image's labels with the create's, and this is the assertion that the
+        // create wins: the committed image carries `vesta.managed=true` from the agent it was made
+        // from, and the export container built from it must still read false.
+        let labels = docker
+            .inspect_container(&temp.name, None)
+            .await
+            .expect("inspect the export container")
+            .config
+            .and_then(|config| config.labels)
+            .unwrap_or_default();
+        assert_eq!(
+            labels.get(LABEL_MANAGED).map(String::as_str),
+            Some("false"),
+            "the export container must carry the managed label as false, got {labels:?}"
+        );
+        assert!(
+            !list_managed_agents(&docker)
+                .await
+                .iter()
+                .any(|found| found.cname == temp.name),
+            "an export container must never enumerate as an agent"
         );
     }
 

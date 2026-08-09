@@ -108,6 +108,7 @@ export function providerPutBody(selection: ProviderSelection): ProviderPutBody {
 export interface ProviderInfo {
   kind: ProviderKind | "none"
   model: string | null
+  resolved_model: string | null
   max_context_tokens: number | null
   authed: boolean
   plan: string | null
@@ -116,6 +117,7 @@ export interface ProviderInfo {
 export interface ProviderInfoWire {
   kind?: ProviderKind
   model?: string | null
+  resolved_model?: string | null
   max_context_tokens?: number | null
   authed?: boolean
   plan?: string | null
@@ -125,6 +127,7 @@ export function normalizeProviderInfo(provider: ProviderInfoWire): ProviderInfo 
   return {
     kind: provider.kind ?? "none",
     model: provider.model ?? null,
+    resolved_model: provider.resolved_model ?? null,
     max_context_tokens: provider.max_context_tokens ?? null,
     authed: provider.authed ?? false,
     plan: provider.plan ?? null,
@@ -135,6 +138,72 @@ export interface ProviderIdentity {
   kind: ProviderKind
   providerName: string
   modelName: string | null
+}
+
+/// The two stable Claude aliases and their display labels. Claude's live catalog carries no
+/// model_names, so this pair is the one owner of the alias set: web and mobile pickers offer it
+/// as primary options and resolveProviderIdentity labels it. A live slug (e.g. "claude-opus-5")
+/// is prettified by formatClaudeSlug below.
+export const CLAUDE_ALIASES: { slug: string; label: string }[] = [
+  { slug: "opus-latest", label: "Opus" },
+  { slug: "sonnet-latest", label: "Sonnet" },
+]
+
+/// Agents provisioned before the -latest form persisted the bare alias; both spell the same
+/// floating choice, so both label and canonicalize identically.
+const LEGACY_CLAUDE_ALIASES: Record<string, string> = {
+  opus: "opus-latest",
+  sonnet: "sonnet-latest",
+}
+
+const CLAUDE_ALIAS_LABELS: Record<string, string> = {
+  ...Object.fromEntries(CLAUDE_ALIASES.map((alias) => [alias.slug, alias.label])),
+  ...Object.fromEntries(
+    Object.entries(LEGACY_CLAUDE_ALIASES).map(([legacy, canonical]) => [
+      legacy,
+      CLAUDE_ALIASES.find((alias) => alias.slug === canonical)?.label ?? legacy,
+    ]),
+  ),
+}
+
+/// The canonical spelling of a Claude model selection: a legacy bare alias maps to its -latest
+/// form so pickers can mark the matching button selected; anything else is already canonical.
+export function canonicalClaudeModel(model: string): string {
+  return LEGACY_CLAUDE_ALIASES[model] ?? model
+}
+
+/// A modern Claude slug ("claude-opus-4-8", dated pins included) as its short display name
+/// ("Opus 4.8"). A trailing 8-digit date is a snapshot pin, not a version part, so it is dropped.
+/// Anything the pattern does not match (legacy version-first slugs, other providers) returns null
+/// and the caller shows the raw identifier.
+function formatClaudeSlug(slug: string): string | null {
+  const match = /^claude-([a-z]+)((?:-\d+)+)$/.exec(slug)
+  if (match?.[1] === undefined || match[2] === undefined) return null
+  const family = match[1].charAt(0).toUpperCase() + match[1].slice(1)
+  const parts = match[2].slice(1).split("-")
+  const last = parts[parts.length - 1]
+  if (last?.length === 8) parts.pop()
+  if (parts.length === 0) return null
+  return `${family} ${parts.join(".")}`
+}
+
+/// The user-facing model label. A floating alias keeps its label until the session reports the
+/// concrete model it resolved to; then the exact model wins ("Opus 4.8"). Fixed catalogs keep
+/// their manifest names, and anything unrecognized shows the raw identifier.
+function resolveModelName(
+  provider: ProviderInfo,
+  entry: ProviderManifestEntry | undefined,
+): string | null {
+  const model = provider.model
+  if (!model) return null
+  const manifestName = entry?.model_names?.[model]
+  if (manifestName !== undefined) return manifestName
+  const aliasLabel = CLAUDE_ALIAS_LABELS[model]
+  if (aliasLabel !== undefined) {
+    const resolved = provider.resolved_model ? formatClaudeSlug(provider.resolved_model) : null
+    return resolved ?? aliasLabel
+  }
+  return formatClaudeSlug(model) ?? model
 }
 
 /// Who is running this agent, as the user reads it: the manifest owns both names, and the wire
@@ -148,6 +217,6 @@ export function resolveProviderIdentity(
   return {
     kind: provider.kind,
     providerName: entry?.display ?? provider.kind,
-    modelName: provider.model ? (entry?.model_names?.[provider.model] ?? provider.model) : null,
+    modelName: provider.model ? resolveModelName(provider, entry) : null,
   }
 }

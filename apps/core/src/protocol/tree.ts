@@ -44,6 +44,29 @@ export interface GatewayLan {
   url: string | null
 }
 
+// The steps a gateway operation moves through. Terminal success is absent by design: a finished
+// operation clears the slot and the new version shows up on the gateway node itself.
+export type GatewayOperationPhase = "snapshotting" | "applying" | "restarting" | "failed"
+
+// What the gateway is doing to itself. A restart is an operation too, reported on the one phase an
+// update also ends on, so it renders on the screen the update already has.
+export type GatewayOperationKind = "update" | "restart"
+
+// The gateway-wide operation in flight. Like an agent's `operation`, it outlives the request that
+// started it, so every client sees the same progress rather than only the one that asked. The
+// progress fields carry values only while snapshotting, `error` only on a failure, and
+// `targetVersion` only for an update, a restart having no release to name.
+export interface GatewayOperation {
+  kind: GatewayOperationKind
+  phase: GatewayOperationPhase
+  agent: string | null
+  done: number | null
+  total: number | null
+  targetVersion: string | null
+  warnings: string[]
+  error: string | null
+}
+
 export interface GatewayInfo {
   version: string
   channel: ReleaseChannel
@@ -54,6 +77,7 @@ export interface GatewayInfo {
   updateAvailable: boolean
   latestVersion: string | null
   managed: boolean
+  operation: GatewayOperation | null
 }
 
 export interface AgentNode {

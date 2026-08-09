@@ -14,6 +14,7 @@ function gateway(): GatewayInfo {
     updateAvailable: false,
     latestVersion: null,
     managed: false,
+    operation: null,
   }
 }
 

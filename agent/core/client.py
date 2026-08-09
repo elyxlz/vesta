@@ -21,7 +21,6 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import (
     PermissionResultAllow,
-    SdkBeta,
     ThinkingConfigAdaptive,
     ThinkingConfigDisabled,
     ThinkingConfigEnabled,
@@ -31,7 +30,6 @@ from claude_agent_sdk.types import (
 from . import config as cfg
 from . import diagnostics, logger, sdk_parsing, state_store, vestad_client
 from . import models as vm
-from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from .helpers import get_constitution_path, get_memory_path
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
@@ -233,6 +231,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
     if turn and thinking_estimate is not None:
         diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
+    state.resolved_model = sdk_parsing.init_resolved_model(msg) or state.resolved_model
     texts, thinking_blocks, session_id, error_texts = sdk_parsing.parse_sdk_message(msg)
     if session_id and session_id != state.persisted.session_id:
         if state.persisted.session_id:
@@ -515,7 +514,7 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
         _close_turn(state, turn)
 
 
-_SDKSettings = tuple[dict[str, str], list[SdkBeta], ThinkingConfig]
+_SDKSettings = tuple[dict[str, str], ThinkingConfig]
 
 
 def _adaptive_thinking() -> ThinkingConfigAdaptive:
@@ -530,6 +529,15 @@ def _fixed_provider_context(provider: cfg.ZaiConfig | cfg.KimiConfig | cfg.OpenA
     return context
 
 
+def _context_cap_env(context: int) -> dict[str, str]:
+    """The CLI honors CLAUDE_CODE_AUTO_COMPACT_WINDOW on claude-named models and
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS on other model names, so a cap sets both."""
+    return {
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(context),
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context),
+    }
+
+
 def _openrouter_sdk_settings(provider: cfg.OpenRouterConfig, state: vm.State) -> _SDKSettings:
     if not state.openrouter_proxy_url:
         raise RuntimeError("OpenRouter cache proxy not started before building client options")
@@ -540,8 +548,8 @@ def _openrouter_sdk_settings(provider: cfg.OpenRouterConfig, state: vm.State) ->
     }
     context = state.openrouter_max_tokens or provider.max_context_tokens
     if context:
-        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
-    return env, [], ThinkingConfigDisabled(type="disabled")
+        env.update(_context_cap_env(context))
+    return env, ThinkingConfigDisabled(type="disabled")
 
 
 def _zai_sdk_settings(provider: cfg.ZaiConfig) -> _SDKSettings:
@@ -553,11 +561,9 @@ def _zai_sdk_settings(provider: cfg.ZaiConfig) -> _SDKSettings:
         "ANTHROPIC_DEFAULT_SONNET_MODEL": harness_model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": harness_model,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        **_context_cap_env(_fixed_provider_context(provider)),
     }
-    context = _fixed_provider_context(provider)
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
-    return env, [], _adaptive_thinking()
+    return env, _adaptive_thinking()
 
 
 def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
@@ -566,6 +572,7 @@ def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
         "ANTHROPIC_BASE_URL": KIMI_ANTHROPIC_URL,
         "ANTHROPIC_API_KEY": provider.key.get_secret_value(),
         "CLAUDE_CODE_EFFORT_LEVEL": "high",
+        **_context_cap_env(_fixed_provider_context(provider)),
     }
     # Kimi's Claude Code guide maps every internal model role to the selected Kimi model.
     for name in (
@@ -577,10 +584,7 @@ def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
         "CLAUDE_CODE_SUBAGENT_MODEL",
     ):
         env[name] = harness_model
-    context = _fixed_provider_context(provider)
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
-    return env, [], _adaptive_thinking()
+    return env, _adaptive_thinking()
 
 
 def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSettings:
@@ -594,19 +598,17 @@ def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSet
         "ANTHROPIC_BASE_URL": state.codex_proxy_url,
         "ANTHROPIC_AUTH_TOKEN": "unused",
         "ANTHROPIC_SMALL_FAST_MODEL": cfg.provider_harness_model(provider.kind, auxiliary_model, context),
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(context),
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context),
+        **_context_cap_env(context),
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
     }
-    return env, [], _adaptive_thinking()
+    return env, _adaptive_thinking()
 
 
 def _claude_sdk_settings(provider: cfg.ClaudeConfig) -> _SDKSettings:
     chosen = provider.max_context_tokens
-    betas = [CONTEXT_1M_BETA] if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW else []
-    env = {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(chosen)} if chosen is not None else {}
-    return env, betas, provider.thinking
+    env = _context_cap_env(chosen) if chosen is not None else {}
+    return env, provider.thinking
 
 
 def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> _SDKSettings:
@@ -666,15 +668,14 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     if provider is None:
         raise RuntimeError("build_client_options reached with no authenticated provider")
 
-    sdk_env, betas, thinking_config = _provider_sdk_settings(provider, state)
+    sdk_env, thinking_config = _provider_sdk_settings(provider, state)
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
-    # against the CLI's own window (set via CLAUDE_CODE_MAX_CONTEXT_TOKENS above); the headless
+    # against the CLI's own window (capped via CLAUDE_CODE_AUTO_COMPACT_WINDOW above); the headless
     # ClaudeAgentOptions has no context_window field, so nothing is passed here.
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=_harness_model(provider),
-        betas=betas,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,

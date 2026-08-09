@@ -322,6 +322,22 @@ def test_config_update_rejects_bad_provider_values(config):
             validate_config_updates(config, bad)
 
 
+def test_claude_signin_accepts_specific_slug(config):
+    from core.config import validate_config_updates
+
+    updates = validate_config_updates(config, {"provider": {"kind": "claude", "model": "claude-opus-5"}})
+    provider = updates["provider"]
+    assert isinstance(provider, dict) and provider["model"] == "claude-opus-5"
+
+
+def test_claude_signin_still_accepts_alias(config):
+    from core.config import validate_config_updates
+
+    updates = validate_config_updates(config, {"provider": {"kind": "claude", "model": "sonnet"}})
+    provider = updates["provider"]
+    assert isinstance(provider, dict) and provider["model"] == "sonnet"
+
+
 def test_sign_in_body_parses_each_provider():
     from core.api import _SIGN_IN_ADAPTER, _ClaudeSignIn, _KeySignIn, _OpenAISignIn
 
@@ -563,6 +579,32 @@ async def test_provider_get_surfaces_claude_plan_tier():
     resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     body = json.loads(typing.cast("str", resp.text))
     assert body["plan"] == "pro"
+
+
+@pytest.mark.anyio
+async def test_provider_get_surfaces_the_resolved_model():
+    # A floating alias like "opus" stays in config; the live session reports the concrete model it
+    # resolved to, and /provider surfaces it so clients can label the alias exactly.
+    import core.api as api_mod
+    from core.config import ClaudeConfig
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config = cfg.VestaConfig.model_construct(provider=ClaudeConfig())
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+    state.resolved_model = "claude-opus-4-8"
+
+    class _Req:
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
+
+    resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
+    body = json.loads(typing.cast("str", resp.text))
+    assert body["resolved_model"] == "claude-opus-4-8"
+
+    state.resolved_model = None
+    resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
+    assert "resolved_model" not in json.loads(typing.cast("str", resp.text))
 
 
 @pytest.mark.anyio

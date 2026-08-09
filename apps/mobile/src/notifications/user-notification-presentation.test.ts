@@ -16,6 +16,15 @@ function rateLimitedUserNotification(agent: string): UserNotificationDelta {
   };
 }
 
+// The gateway's own announcement names no agent, so it can never be the one on screen.
+const gatewayUpdatedNotification: UserNotificationDelta = {
+  type: "user_notification",
+  agent: "",
+  kind: "gateway_updated",
+  title: "Updated to v0.1.190",
+  body: "Your gateway updated to v0.1.190.",
+};
+
 describe("shouldPresentUserNotification", () => {
   const cases: {
     name: string;
@@ -45,6 +54,12 @@ describe("shouldPresentUserNotification", () => {
       name: "a chat user notification shows when no agent is active",
       delta: chatUserNotification("alex"),
       activeAgent: null,
+      expected: true,
+    },
+    {
+      name: "the gateway's update announcement shows whatever chat is open",
+      delta: gatewayUpdatedNotification,
+      activeAgent: "alex",
       expected: true,
     },
   ];

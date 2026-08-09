@@ -8,12 +8,15 @@ import { formatTokens } from "@/lib/format";
 import { ProviderIcon } from "../ProviderIcon";
 import { ProviderStep } from "../ProviderStep";
 import { fuzzyMatch } from "../fuzzy";
+import { CLAUDE_ALIASES } from "../model-options";
+import { canonicalClaudeModel } from "@vesta/core";
 
 export function ModelStep({
   initialModel,
   onModelChange,
   onSubmit,
   models,
+  claudeLiveModels,
   allowCustom = true,
   submitLabel = "continue",
   logo,
@@ -22,18 +25,23 @@ export function ModelStep({
   initialModel: string;
   onModelChange?: (model: string) => void;
   onSubmit: (model: string) => void;
-  /// Fixed model list (e.g. Claude opus/sonnet/haiku). When provided, the step
-  /// shows just these and skips the OpenRouter fetch, search, and custom-slug.
+  /// Fixed model list (e.g. Z.AI's). When provided, the step shows just these
+  /// and skips the OpenRouter fetch, search, and custom-slug.
   models?: OpenRouterModelOption[];
+  /// Claude's two-tier picker: the alias buttons plus this expandable live-slug
+  /// list (null while loading). Takes over the render when not undefined.
+  claudeLiveModels?: OpenRouterModelOption[] | null;
   allowCustom?: boolean;
   submitLabel?: string;
   logo?: ReactNode;
   onCancel?: () => void;
 }) {
   const isFixed = models !== undefined;
-  const [model, setModelInternal] = useState(
-    initialModel || (models?.[0]?.slug ?? ""),
-  );
+  const isClaude = claudeLiveModels !== undefined;
+  const [model, setModelInternal] = useState(() => {
+    const initial = initialModel || (models?.[0]?.slug ?? "");
+    return isClaude ? canonicalClaudeModel(initial) : initial;
+  });
   const [query, setQuery] = useState("");
   const [topModels, setTopModels] = useState<OpenRouterModelOption[] | null>(
     models ?? null,
@@ -51,7 +59,7 @@ export function ModelStep({
   };
 
   useEffect(() => {
-    if (isFixed) return;
+    if (isFixed || isClaude) return;
     let cancelled = false;
     openrouterProvider
       .fetchTopModels()
@@ -71,7 +79,7 @@ export function ModelStep({
     return () => {
       cancelled = true;
     };
-  }, [isFixed, onModelChange]);
+  }, [isFixed, isClaude, onModelChange]);
 
   const filtered = useMemo(() => {
     if (!topModels) return [];
@@ -91,7 +99,9 @@ export function ModelStep({
       logo={logo}
       title="pick a model"
       subtitle={
-        isFixed ? "choose a model." : "top models on OpenRouter this week."
+        isClaude || isFixed
+          ? "choose a model."
+          : "top models on OpenRouter this week."
       }
       submitLabel={submitLabel}
       submitDisabled={!canContinue}
@@ -102,7 +112,13 @@ export function ModelStep({
     >
       <FieldGroup className="w-full gap-3">
         <Field>
-          {isFixed ? (
+          {claudeLiveModels !== undefined ? (
+            <ClaudeModelPicker
+              liveModels={claudeLiveModels}
+              model={model}
+              onSelect={setModel}
+            />
+          ) : isFixed ? (
             <ModelCardList
               models={filtered}
               selected={model}
@@ -154,6 +170,56 @@ export function ModelStep({
         </Field>
       </FieldGroup>
     </ProviderStep>
+  );
+}
+
+// The Claude two-tier control: two primary alias buttons (opus/sonnet) plus an
+// expandable live-slug list. Alias and slug selection are mutually exclusive
+// because both write the one `model` value via `onSelect`.
+function ClaudeModelPicker({
+  liveModels,
+  model,
+  onSelect,
+}: {
+  liveModels: OpenRouterModelOption[] | null;
+  model: string;
+  onSelect: (slug: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="flex w-full flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2">
+        {CLAUDE_ALIASES.map((a) => (
+          <button
+            key={a.slug}
+            type="button"
+            onClick={() => onSelect(a.slug)}
+            className={`rounded-xl border p-3 text-center text-sm font-medium transition-all cursor-pointer ${
+              model === a.slug
+                ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
+                : "border-border bg-input/30 hover:bg-input/60"
+            }`}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "← fewer models" : "more models →"}
+      </button>
+      {expanded && (
+        <ModelCardList
+          models={liveModels ?? []}
+          selected={model}
+          onSelect={onSelect}
+          loading={liveModels === null}
+        />
+      )}
+    </div>
   );
 }
 
@@ -224,15 +290,11 @@ function ModelCard({
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{model.label}</span>
         <span className="truncate text-[11px] text-muted-foreground">
-          {model.note ?? (
-            <>
-              {model.author}
-              {model.context_length
-                ? ` · ${formatTokens(model.context_length)} ctx`
-                : ""}
-              {price ? ` · ${price}` : ""}
-            </>
-          )}
+          {model.author}
+          {model.context_length
+            ? ` · ${formatTokens(model.context_length)} ctx`
+            : ""}
+          {price ? ` · ${price}` : ""}
         </span>
       </div>
     </button>

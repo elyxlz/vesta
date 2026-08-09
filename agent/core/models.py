@@ -84,6 +84,9 @@ class State:
     # Bound by run_vesta on every boot (mark_setup_done re-binds only as a fallback). The open WS port is the readiness signal vestad polls.
     ws_runner: AppRunner | None = None
     provider_status: ProviderStatus | None = None
+    # The concrete model the CLI resolved for the live session (from the init message). A floating
+    # alias like "opus" stays in config; this is what it currently runs as. None until a session opens.
+    resolved_model: str | None = None
     # Effective context window passed via CLAUDE_CODE_MAX_CONTEXT_TOKENS: the OpenRouter
     # model's real window (claude-code wrongly assumes 200k for non-Anthropic models,
     # claude-code#46416), optionally capped by config.provider.max_context_tokens. With no user cap,

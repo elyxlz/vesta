@@ -64,6 +64,7 @@ function ReplicaNotifications({
   anyFocusedRef,
   notifyAssistant,
   notifyRateLimited,
+  notifyGateway,
   markUnseen,
 }: {
   controller: Controller;
@@ -71,6 +72,7 @@ function ReplicaNotifications({
   anyFocusedRef: RefObject<boolean>;
   notifyAssistant: (agentName: string, text: string) => void;
   notifyRateLimited: (agentName: string, text: string) => void;
+  notifyGateway: (title: string, text: string) => void;
   markUnseen: () => void;
 }) {
   // Mirror the global "any client focused" flag into the parent's ref so notifyAssistant can gate on
@@ -87,9 +89,15 @@ function ReplicaNotifications({
   useEffect(() => {
     return controller.subscribeDeltas((delta: Delta) => {
       if (delta.type !== "user_notification") return;
-      const { agent, kind, body } = delta;
+      const { agent, kind, title, body } = delta;
       if (kind === "rate_limited") {
         notifyRateLimited(agent, body);
+        return;
+      }
+      // The gateway's own announcement, sent only to clients that missed the update: it names no
+      // agent, so it carries its own title and lights no unseen badge.
+      if (kind === "gateway_updated") {
+        notifyGateway(title, body);
         return;
       }
       markUnseen();
@@ -100,6 +108,7 @@ function ReplicaNotifications({
     controller,
     notifyAssistant,
     notifyRateLimited,
+    notifyGateway,
     chattingAgentRef,
     markUnseen,
   ]);
@@ -215,6 +224,18 @@ export function NotificationProvider({
     [onOpenAgent],
   );
 
+  // The gateway announces an update only to clients that were away for it, so this raises with the
+  // same focus mute as a chat preview and opens nothing: there is no agent behind it.
+  const notifyGateway = useCallback((title: string, text: string) => {
+    if (focusedRef.current || anyFocusedRef.current) return;
+    if (!permissionRef.current) return;
+    try {
+      new Notification(title, { body: truncate(text), tag: "gateway" });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const setChattingAgent = useCallback((agentName: string | null) => {
     chattingAgentRef.current = agentName;
   }, []);
@@ -272,6 +293,7 @@ export function NotificationProvider({
           anyFocusedRef={anyFocusedRef}
           notifyAssistant={notifyAssistant}
           notifyRateLimited={notifyRateLimited}
+          notifyGateway={notifyGateway}
           markUnseen={markUnseen}
         />
       ) : null}

@@ -76,10 +76,10 @@ def test_returns_all_migrations_in_one_turn_in_order(mig):
     turns = after_sync_migration_turns(state=state, config=config)
 
     assert len(turns) == 1
-    assert "[Migration: 001-first]" in turns[0]
-    assert "first body" in turns[0]
-    assert "[Migration: 002-second]" in turns[0]
-    assert turns[0].index("[Migration: 001-first]") < turns[0].index("[Migration: 002-second]")
+    assert "[Migration: 001-first]" in turns[0].text
+    assert "first body" in turns[0].text
+    assert "[Migration: 002-second]" in turns[0].text
+    assert turns[0].text.index("[Migration: 001-first]") < turns[0].text.index("[Migration: 002-second]")
 
 
 def test_declared_phase_splits_migrations_before_and_after_sync(mig):
@@ -90,12 +90,12 @@ def test_declared_phase_splits_migrations_before_and_after_sync(mig):
     [before_turn] = before_sync_migration_turns(state=state, config=config)
     [after_turn] = after_sync_migration_turns(state=state, config=config)
 
-    assert "[Migration: 001-before]" in before_turn
-    assert "[Migration: 002-after]" not in before_turn
-    assert "migration_phase" not in before_turn
-    assert "[Migration: 002-after]" in after_turn
-    assert "[Migration: 001-before]" not in after_turn
-    assert "migration_phase" not in after_turn
+    assert "[Migration: 001-before]" in before_turn.text
+    assert "[Migration: 002-after]" not in before_turn.text
+    assert "migration_phase" not in before_turn.text
+    assert "[Migration: 002-after]" in after_turn.text
+    assert "[Migration: 001-before]" not in after_turn.text
+    assert "migration_phase" not in after_turn.text
 
 
 def test_invalid_migration_phase_is_rejected(mig):
@@ -104,6 +104,70 @@ def test_invalid_migration_phase_is_rejected(mig):
 
     with pytest.raises(ValueError, match="migration_phase must be one of"):
         list_pending(state=state, config=config)
+
+
+def test_interruptible_field_parses_and_defaults_false(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-yes.md").write_text("---\ninterruptible: true\n---\n\nbody a")
+    (migrations_dir / "002-no.md").write_text("---\ninterruptible: false\n---\n\nbody b")
+    (migrations_dir / "003-default.md").write_text("body c")
+
+    pending = list_pending(state=state, config=config)
+
+    assert [migration.interruptible for migration in pending] == [True, False, False]
+    assert "interruptible" not in pending[0].content
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_interruptible_rejected_on_before_sync(mig, value):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-bad.md").write_text(f"---\nmigration_phase: before_sync\ninterruptible: {value}\n---\n\nbody")
+
+    with pytest.raises(ValueError, match="interruptible is not allowed on a before_sync migration"):
+        list_pending(state=state, config=config)
+
+
+def test_invalid_interruptible_value_rejected(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-bad.md").write_text("---\ninterruptible: yes\n---\n\nbody")
+
+    with pytest.raises(ValueError, match="interruptible must be true or false"):
+        list_pending(state=state, config=config)
+
+
+def test_after_sync_splits_noninterruptible_batch_first(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-safe.md").write_text("---\ninterruptible: true\n---\n\nsafe body")
+    (migrations_dir / "002-critical.md").write_text("critical body")
+
+    turns = after_sync_migration_turns(state=state, config=config)
+
+    assert len(turns) == 2
+    assert turns[0].interruptible is False
+    assert "[Migration: 002-critical]" in turns[0].text
+    assert "[Migration: 001-safe]" not in turns[0].text
+    assert turns[1].interruptible is True
+    assert "[Migration: 001-safe]" in turns[1].text
+    assert "[Migration: 002-critical]" not in turns[1].text
+
+
+def test_all_interruptible_yields_one_interruptible_batch(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-safe.md").write_text("---\ninterruptible: true\n---\n\nsafe body")
+
+    [turn] = after_sync_migration_turns(state=state, config=config)
+
+    assert turn.interruptible is True
+    assert "[Migration: 001-safe]" in turn.text
+
+
+def test_before_sync_batch_is_never_interruptible(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-before.md").write_text(f"{BEFORE_SYNC_FRONTMATTER}before body")
+
+    [turn] = before_sync_migration_turns(state=state, config=config)
+
+    assert turn.interruptible is False
 
 
 def test_every_shipped_migration_parses():
@@ -133,9 +197,9 @@ def test_before_sync_batch_owns_restart_barrier(mig):
 
     [turn] = before_sync_migration_turns(state=state, config=config)
 
-    assert "Upstream sync is blocked" in turn
-    assert "call `restart_vesta` once" in turn
-    assert "only proceed to upstream sync" in turn
+    assert "Upstream sync is blocked" in turn.text
+    assert "call `restart_vesta` once" in turn.text
+    assert "only proceed to upstream sync" in turn.text
 
 
 def test_batch_instructions_keep_stop_local_and_later_boot_tasks_separate(mig):
@@ -145,12 +209,12 @@ def test_batch_instructions_keep_stop_local_and_later_boot_tasks_separate(mig):
 
     [turn] = after_sync_migration_turns(state=state, config=config)
 
-    assert "stop only that migration" in turn
-    assert "continue with the next migration section" in turn
-    assert "Defer any requested `restart_vesta`" in turn
-    assert "Do not start other boot" in turn
-    assert "tasks yourself" in turn
-    assert "[Migration: 002-second]" in turn
+    assert "stop only that migration" in turn.text
+    assert "continue with the next migration section" in turn.text
+    assert "Defer any requested `restart_vesta`" in turn.text
+    assert "Do not start other boot" in turn.text
+    assert "tasks yourself" in turn.text
+    assert "[Migration: 002-second]" in turn.text
 
 
 def test_appends_mark_applied_step_with_correct_name(mig):
@@ -160,7 +224,7 @@ def test_appends_mark_applied_step_with_correct_name(mig):
 
     turns = after_sync_migration_turns(state=state, config=config)
 
-    assert 'Call `mark_migration_applied` with `name="001-first"`.' in turns[0]
+    assert 'Call `mark_migration_applied` with `name="001-first"`.' in turns[0].text
 
 
 def test_no_pending_returns_empty(mig):
@@ -348,6 +412,6 @@ def test_post_first_start_migration_added_later_runs(mig):
     turns = after_sync_migration_turns(state=state, config=config, first_start=False)
 
     assert len(turns) == 1
-    assert "[Migration: 002-second]" in turns[0]
+    assert "[Migration: 002-second]" in turns[0].text
     # Returning a turn alone doesn't mark — only the first-start pre-mark is in applied_migrations.
     assert state.persisted.applied_migrations == ["001-first"]

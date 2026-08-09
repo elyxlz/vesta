@@ -94,3 +94,78 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: settings-gateway-update-confirm.png
+
+# Home while the gateway works on itself. Each phase is its own launch: the tree carries one
+# operation at a time and no public action advances it.
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=snapshotting"
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Updating to v0.2.1"
+    timeout: 30000
+- extendedWaitUntil:
+    visible: "backing up nova 2/3"
+    timeout: 10000
+- assertVisible:
+    text: "App settings.*"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-snapshotting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-snapshotting.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=failed"
+- extendedWaitUntil:
+    visible: "Update failed"
+    timeout: 30000
+- extendedWaitUntil:
+    visible: "Retry update"
+    timeout: 10000
+- assertVisible: "Dismiss"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-failed
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-failed.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=restarting"
+- extendedWaitUntil:
+    visible: "Restarting the gateway"
+    timeout: 30000
+- assertVisible:
+    text: "App settings.*"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-restarting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-restarting.png
+
+# The moment the update ends: home reports the version it landed on before the roster returns.
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdated=0.2.1"
+- extendedWaitUntil:
+    visible: "Updated to v0.2.1"
+    timeout: 30000
+- assertVisible: "Your gateway is on the new version."
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-updated
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-updated.png

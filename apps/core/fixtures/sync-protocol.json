@@ -64,6 +64,18 @@
         },
         "latestVersion": "0.1.1",
         "managed": false,
+        "operation": {
+          "agent": "sample-agent",
+          "done": 1,
+          "error": null,
+          "kind": "update",
+          "phase": "snapshotting",
+          "targetVersion": "0.1.1",
+          "total": 2,
+          "warnings": [
+            "other-agent: backup failed (disk full)"
+          ]
+        },
         "port": 4111,
         "tunnelUrl": "https://sample.vesta.run",
         "updateAvailable": true,
@@ -79,7 +91,7 @@
     }
   },
   "hello": {
-    "min_supported": "0.1.185",
+    "min_supported": "0.1.189",
     "type": "hello",
     "version": "0.1.0"
   },
@@ -133,6 +145,18 @@
         },
         "latestVersion": "0.1.1",
         "managed": false,
+        "operation": {
+          "agent": "sample-agent",
+          "done": 1,
+          "error": null,
+          "kind": "update",
+          "phase": "snapshotting",
+          "targetVersion": "0.1.1",
+          "total": 2,
+          "warnings": [
+            "other-agent: backup failed (disk full)"
+          ]
+        },
         "port": 4111,
         "tunnelUrl": "https://sample.vesta.run",
         "updateAvailable": true,

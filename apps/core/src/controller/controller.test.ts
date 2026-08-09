@@ -30,6 +30,7 @@ function baseGateway(): GatewayInfo {
     updateAvailable: false,
     latestVersion: null,
     managed: false,
+    operation: null,
   }
 }
 

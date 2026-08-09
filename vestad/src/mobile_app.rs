@@ -184,15 +184,21 @@ impl MobileApp {
         )
     }
 
-    /// Enqueue a mobile push for an agent-injected user notification (`POST /agents/{name}/user-notification`).
-    /// Only a new message pushes: it reuses the existing `chat` device subscription, so registered
-    /// devices need no change. A `rate_limited` user notification toasts on connected clients but is
-    /// never a mobile push, so it is skipped here (chat-only device subscriptions dropped it before too).
+    /// Enqueue a mobile push for a user notification. Each pushable kind rides the device
+    /// subscription that already covers it, so registered devices need no change: a new agent reply
+    /// is `chat`, and the gateway announcing its own update is a `status` change. A `rate_limited`
+    /// user notification toasts on connected clients and never pushes.
     pub(crate) fn push_user_notification(&self, agent: &str, kind: &str, title: &str, body: &str) {
-        if kind != "message" {
-            return;
-        }
-        self.queue_event(agent, "chat", serde_json::json!({"type": "chat", "title": title, "body": body}));
+        let (subscription, event_type) = match kind {
+            "message" => ("chat", "chat"),
+            crate::update::UPDATED_NOTIFICATION_KIND => ("status", "gateway_updated"),
+            _ => return,
+        };
+        self.queue_event(
+            agent,
+            subscription,
+            serde_json::json!({"type": event_type, "title": title, "body": body}),
+        );
     }
 
     /// Compare two gateway-owned lifecycle snapshots and enqueue only real status
@@ -344,14 +350,22 @@ fn text_field<'a>(event: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     event.get(key).and_then(serde_json::Value::as_str)
 }
 
+/// Render one queued event as its push. The event's own `type` says what happened and decides the
+/// text; `event_type` is the subscription that carried it, which only decided who receives it.
 fn message_for(
     device: &PushSubscription,
     agent: &str,
     event_type: &str,
     event: &serde_json::Value,
 ) -> ExpoPushMessage {
-    let (title, body, route) = match event_type {
-        "chat" => {
+    let (title, body, route) = match text_field(event, "type") {
+        Some("gateway_updated") => (
+            // The gateway decides its own text: there is no agent to name and nowhere to navigate.
+            text_field(event, "title").unwrap_or("Gateway updated").to_string(),
+            text_field(event, "body").unwrap_or("Your gateway updated.").to_string(),
+            "/".to_string(),
+        ),
+        Some("chat") => {
             let title = text_field(event, "title").unwrap_or(agent).to_string();
             let body = match text_field(event, "body") {
                 Some(text) if device.previews && !text.is_empty() => text.to_string(),
@@ -359,7 +373,7 @@ fn message_for(
             };
             (title, body, format!("/agent/{agent}/chat"))
         }
-        "status" => {
+        Some("status") => {
             let state = text_field(event, "state").unwrap_or("updated");
             let body = match state {
                 "alive" => format!("{agent} is available."),
@@ -574,6 +588,47 @@ mod tests {
         let message = message_for(&device(false, &["status"]), "alex", "status", &event);
         assert_eq!(message.body, "alex is available.");
         assert_eq!(message.data["eventType"], "status");
+    }
+
+    #[test]
+    fn a_gateway_update_push_carries_the_gateway_s_own_text() {
+        let event = serde_json::json!({
+            "type": "gateway_updated",
+            "title": "Updated to v0.1.190",
+            "body": "Your gateway updated to v0.1.190.",
+        });
+        // No previews opt-in and no agent to name: the gateway's copy carries nothing private.
+        let message = message_for(&device(false, &["status"]), "", "status", &event);
+        assert_eq!(message.title, "Updated to v0.1.190");
+        assert_eq!(message.body, "Your gateway updated to v0.1.190.");
+        assert_eq!(message.data["route"], "/");
+    }
+
+    #[tokio::test]
+    async fn each_pushable_kind_rides_the_subscription_that_already_covers_it() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (app, mut worker) = MobileApp::new(
+            registry(directory.path()),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
+        app.push_user_notification("alex", "message", "alex", "hi");
+        app.push_user_notification("", crate::update::UPDATED_NOTIFICATION_KIND, "Updated to v0.1.190", "done");
+        // Never a push: it toasts on connected clients only.
+        app.push_user_notification("alex", "rate_limited", "alex", "slow down");
+        drop(app);
+
+        let mut queued = Vec::new();
+        while let Some(event) = worker.event_rx.recv().await {
+            queued.push((event.event_type, event.event["type"].as_str().unwrap_or_default().to_string()));
+        }
+        assert_eq!(
+            queued,
+            vec![
+                ("chat".to_string(), "chat".to_string()),
+                ("status".to_string(), "gateway_updated".to_string()),
+            ]
+        );
     }
 
     #[test]

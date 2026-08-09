@@ -34,6 +34,7 @@ describe("server frame and tree shapes", () => {
         updateAvailable: false,
         latestVersion: null,
         managed: false,
+        operation: null,
       },
       agents: {
         scout: {
