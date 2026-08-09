@@ -107,6 +107,14 @@ Falling back to another channel is the entire remedy available to you.
   in the 463 section): `SELECT chat_jid, SUM(is_from_me=0), SUM(is_from_me=1), MAX(timestamp) FROM
   messages GROUP BY chat_jid` shows a split identity at a glance. Group chats (`<id>@g.us`) hold a
   third slice of the same relationship, so include them when computing "last heard from".
+- **The live send target is the JID they last messaged you from.** Both keys reach the person, so a
+  LID send is delivered and acted on like any other; what breaks is corroboration. Receipts key by
+  the canonical JID and never match a LID-addressed outgoing row, so `delivery_status` stays
+  `unconfirmed` forever and their reply lands on the other key, leaving the thread one-sided. Sent to
+  the phone JID (or plain `--to "+<number>"`), the same message gets real `delivered` and `read`
+  receipts. So read the target off the per-chat sum above and prefer a `chat_jid` whose inbound count
+  is nonzero: a key carrying only outbound rows is the wrong half of the split. Same logic as picking
+  a channel by their last inbound, one level down.
 
 ## Profile
 
