@@ -1821,8 +1821,9 @@ struct UserNotificationBody {
     body: String,
 }
 
-/// User-notification kinds are a closed set: `message` (a new agent reply) and `rate_limited`. An
-/// unknown kind is rejected so the user-notification surface cannot drift open.
+/// The kinds an agent may inject are a closed set: `message` (a new agent reply) and `rate_limited`.
+/// An unknown kind is rejected so the user-notification surface cannot drift open, and that includes
+/// the gateway's own `gateway_updated`: only a real update publishes one, so no agent can forge it.
 fn valid_user_notification_kind(kind: &str) -> bool {
     matches!(kind, "message" | "rate_limited")
 }
@@ -3065,9 +3066,12 @@ async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
 }
 
 /// Settle whatever the previous vestad left behind, once, before anything serves: an update that
-/// landed is logged and forgotten, while one that died projects as a failure the user can retry.
+/// landed announces itself to whoever missed it, while one that died projects as a failure the user
+/// can retry.
 fn recover_interrupted_update(state: &SharedState) {
-    match update::recover_at_boot(&state.env_config.config_dir, update::running_version()) {
+    let recovery = update::recover_at_boot(&state.env_config.config_dir, update::running_version());
+    let announcement = update::announcement(&recovery);
+    match recovery {
         update::BootRecovery::Normal => {}
         update::BootRecovery::Updated { version, warnings } => {
             tracing::info!(version = %version, "gateway updated");
@@ -3082,6 +3086,11 @@ fn recover_interrupted_update(state: &SharedState) {
             tracing::error!(%target_version, %during, "the previous update never finished");
             state.operation.set_interrupted(target_version, during);
         }
+    }
+    // The restart the update performed left zero clients connected, so the announcement runs on its
+    // own task: it waits out a reconnect window before speaking, and serving must not wait for it.
+    if let Some((title, body)) = announcement {
+        tokio::spawn(update::announce(state.clone(), title, body));
     }
 }
 
@@ -3357,13 +3366,17 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         allocate_service_port, ensure_not_rebuilding, resolve_public, spawn_pipeline_sse,
-        truncate_chars, valid_user_notification_kind, RegisterServiceBody,
+        truncate_chars, update, valid_user_notification_kind, RegisterServiceBody,
     };
 
     #[test]
     fn user_notification_kind_is_a_closed_set() {
         assert!(valid_user_notification_kind("message"));
         assert!(valid_user_notification_kind("rate_limited"));
+        assert!(
+            !valid_user_notification_kind(update::UPDATED_NOTIFICATION_KIND),
+            "the gateway owns its update announcement; an agent cannot inject one"
+        );
         assert!(!valid_user_notification_kind("chat"));
         assert!(!valid_user_notification_kind("status"));
         assert!(!valid_user_notification_kind(""));

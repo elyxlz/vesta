@@ -5,6 +5,7 @@
 
 use std::fmt;
 use std::path::Path;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -352,6 +353,80 @@ pub fn recover_at_boot(config_dir: &Path, running_version: &str) -> BootRecovery
         during: ledger.phase.stage(),
         target_version: ledger.target_version,
     }
+}
+
+// --- Announcing an update that landed ---
+
+/// The kind the announcement rides on the `user_notification` delta. Owned by the gateway: the
+/// agent-injected endpoint refuses it, so nothing but a real update can produce one.
+pub const UPDATED_NOTIFICATION_KIND: &str = "gateway_updated";
+
+/// The `agent` a gateway-owned user notification names: none. The field identifies the source, and
+/// the gateway is not an agent. Every shipped client degrades gracefully on it, rendering the
+/// server-decided title and body and routing nowhere.
+pub const GATEWAY_NOTIFICATION_AGENT: &str = "";
+
+/// How long the announcement waits for a client to come back after the restart the update performed.
+const ANNOUNCE_GRACE_SECS: u64 = 30;
+const ANNOUNCE_GRACE_ENV: &str = "VESTAD_UPDATE_ANNOUNCE_GRACE_SECS";
+
+/// The reconnect grace window. `VESTAD_UPDATE_ANNOUNCE_GRACE_SECS` shortens it for the end-to-end
+/// suite, exactly as `VESTAD_RELEASES_BASE_URL` redirects the release source; unset in every
+/// published build, so nothing branches in production.
+fn announce_grace() -> Duration {
+    let seconds = std::env::var(ANNOUNCE_GRACE_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(ANNOUNCE_GRACE_SECS);
+    Duration::from_secs(seconds)
+}
+
+/// The title and body a boot recovery owes the user, if any. Only an update that landed has anything
+/// to announce: a plain boot has nothing to say, and an interrupted one already projects a failure.
+pub fn announcement(recovery: &BootRecovery) -> Option<(String, String)> {
+    let BootRecovery::Updated { version, warnings } = recovery else {
+        return None;
+    };
+    let backup_warnings = if warnings.is_empty() {
+        String::new()
+    } else {
+        format!(" Backup warnings: {}.", warnings.join("; "))
+    };
+    Some((
+        format!("Updated to v{version}"),
+        format!("Your gateway updated to v{version}.{backup_warnings}"),
+    ))
+}
+
+/// Whether the grace window passed with no client connected and focused. A client that focused at
+/// any point inside it watched the update across the restart and shows the in-app resolution itself,
+/// so it is already told.
+async fn no_client_returned(presence: &crate::sync::Presence, grace: Duration) -> bool {
+    let mut focused = presence.subscribe_any_focused();
+    let returned = tokio::time::timeout(grace, focused.wait_for(|focused| *focused))
+        .await
+        .is_ok();
+    !returned
+}
+
+/// Announce an update that landed to the clients that never came back for it. The restart the update
+/// performed left every client disconnected, so the announcement waits out a reconnect grace window
+/// first and then fans the `user_notification` delta plus its mobile push.
+pub async fn announce(state: SharedState, title: String, body: String) {
+    if !no_client_returned(&state.presence, announce_grace()).await {
+        tracing::info!("a client watched the update land; nothing to announce");
+        return;
+    }
+    tracing::info!(%title, "announcing the update to the clients that missed it");
+    state
+        .mobile_app
+        .push_user_notification(GATEWAY_NOTIFICATION_AGENT, UPDATED_NOTIFICATION_KIND, &title, &body);
+    state.sync_hub.publish_user_notification(
+        GATEWAY_NOTIFICATION_AGENT,
+        UPDATED_NOTIFICATION_KIND.to_string(),
+        title,
+        body,
+    );
 }
 
 // --- Orchestrator ---
@@ -801,6 +876,92 @@ mod tests {
                 during: UpdateStage::Restarting,
             }
         );
+    }
+
+    #[test]
+    fn only_an_update_that_landed_has_something_to_announce() {
+        assert_eq!(announcement(&BootRecovery::Normal), None, "a plain restart says nothing");
+        assert_eq!(
+            announcement(&BootRecovery::Interrupted {
+                target_version: "0.1.190".into(),
+                during: UpdateStage::Applying,
+            }),
+            None,
+            "an interrupted update already projects a failure to act on"
+        );
+        assert_eq!(
+            announcement(&BootRecovery::Updated {
+                version: "0.1.190".into(),
+                warnings: Vec::new(),
+            }),
+            Some(("Updated to v0.1.190".into(), "Your gateway updated to v0.1.190.".into()))
+        );
+    }
+
+    #[test]
+    fn the_announcement_carries_the_warnings_the_update_finished_with() {
+        let (title, body) = announcement(&BootRecovery::Updated {
+            version: "0.1.190".into(),
+            warnings: vec!["axel: snapshot timed out".into(), "mona: disk full".into()],
+        })
+        .expect("an update that landed announces");
+        assert_eq!(title, "Updated to v0.1.190");
+        assert_eq!(
+            body,
+            "Your gateway updated to v0.1.190. Backup warnings: axel: snapshot timed out; mona: disk full."
+        );
+    }
+
+    fn focused_context() -> crate::sync::protocol::ClientContext {
+        crate::sync::protocol::ClientContext {
+            focused: true,
+            client: crate::types::ClientKind::Web,
+            resync: false,
+            ..Default::default()
+        }
+    }
+
+    /// A window short enough that waiting it out is the fast path of a test.
+    const TEST_GRACE: Duration = Duration::from_millis(50);
+
+    #[tokio::test]
+    async fn a_grace_window_nobody_returns_to_announces() {
+        let presence = crate::sync::Presence::new();
+        assert!(no_client_returned(&presence, TEST_GRACE).await);
+    }
+
+    #[tokio::test]
+    async fn a_client_focused_before_the_window_opens_is_already_told() {
+        let presence = crate::sync::Presence::new();
+        let conn = presence.connect();
+        presence.record(conn, focused_context(), tokio::time::Instant::now());
+        assert!(!no_client_returned(&presence, TEST_GRACE).await);
+    }
+
+    #[tokio::test]
+    async fn a_client_focusing_inside_the_window_shows_the_resolution_itself() {
+        let presence = crate::sync::Presence::new();
+        // A full-length window the focus below ends early, so the answer is the focus and never a
+        // timeout the test raced.
+        let full_window = Duration::from_secs(ANNOUNCE_GRACE_SECS);
+        let (returned, ()) = tokio::join!(no_client_returned(&presence, full_window), async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let conn = presence.connect();
+            presence.record(conn, focused_context(), tokio::time::Instant::now());
+        });
+        assert!(!returned);
+    }
+
+    #[tokio::test]
+    async fn a_client_that_connects_without_focusing_is_still_announced_to() {
+        let presence = crate::sync::Presence::new();
+        let conn = presence.connect();
+        presence.record(
+            conn,
+            crate::sync::protocol::ClientContext { focused: false, ..focused_context() },
+            tokio::time::Instant::now(),
+        );
+        assert!(no_client_returned(&presence, TEST_GRACE).await);
     }
 
     #[tokio::test]

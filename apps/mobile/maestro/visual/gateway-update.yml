@@ -153,3 +153,19 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: gateway-restarting.png
+
+# The moment the update ends: home reports the version it landed on before the roster returns.
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdated=0.2.1"
+- extendedWaitUntil:
+    visible: "Updated to v0.2.1"
+    timeout: 30000
+- assertVisible: "Your gateway is on the new version."
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-updated
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-updated.png

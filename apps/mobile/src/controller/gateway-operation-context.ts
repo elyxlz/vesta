@@ -1,11 +1,19 @@
 import { createContext, use } from "react";
 import type { GatewayOperation } from "@vesta/core";
 
-// The gateway's running operation, selected once from the replica by ControllerProvider. Home
-// renders it and the route effect blocks agent pages on it, so both read the same value.
-export const GatewayOperationContext =
-  createContext<GatewayOperation | null>(null);
+// What the gateway is doing to itself, and what it just finished doing. Selected once from the
+// replica by ControllerProvider: home renders both and the route effect blocks agent pages on the
+// operation alone, so a resolution the user is still reading never holds the app on home.
+export interface GatewayOperationState {
+  operation: GatewayOperation | null;
+  updatedTo: string | null;
+}
 
-export function useGatewayOperation(): GatewayOperation | null {
+export const GatewayOperationContext = createContext<GatewayOperationState>({
+  operation: null,
+  updatedTo: null,
+});
+
+export function useGatewayOperation(): GatewayOperationState {
   return use(GatewayOperationContext);
 }

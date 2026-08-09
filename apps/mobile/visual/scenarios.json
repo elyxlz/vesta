@@ -292,6 +292,13 @@
       "screenshot": "gateway-restarting.png"
     },
     {
+      "id": "gateway-updated",
+      "title": "Gateway updated",
+      "description": "The resolution a client that watched the update sees for a moment: the version the gateway landed on.",
+      "group": "Gateway update",
+      "screenshot": "gateway-updated.png"
+    },
+    {
       "id": "diagnostics",
       "title": "Diagnostics",
       "description": "Application, simulator, gateway, and roster details with the native sharing action.",

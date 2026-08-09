@@ -59,11 +59,16 @@ const operation =
   typeof requestedOperation === "string"
     ? (operations.get(requestedOperation) ?? null)
     : null;
+// The moment after an update the client watched: the operation is gone and home reports the version
+// it landed on. A live app holds this for a few seconds, so the launch pins it instead.
+const requestedUpdatedTo = query?.visualGatewayUpdated;
+const updatedTo =
+  typeof requestedUpdatedTo === "string" ? requestedUpdatedTo : null;
 
 export function ControllerProvider({ children }: { children: ReactNode }) {
   return (
     <ControllerContext.Provider value={null}>
-      <GatewayOperationContext.Provider value={operation}>
+      <GatewayOperationContext.Provider value={{ operation, updatedTo }}>
         <GatewayUpdateGate blocked={needsGatewayUpdate}>
           {children}
         </GatewayUpdateGate>

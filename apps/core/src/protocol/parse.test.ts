@@ -69,6 +69,28 @@ describe("parseServerFrame", () => {
     }
   })
 
+  it("carries the gateway's own update announcement, which names no agent", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        agent: "",
+        kind: "gateway_updated",
+        title: "Updated to v0.1.190",
+        body: "Your gateway updated to v0.1.190.",
+      }),
+    )
+    expect(parsed).toEqual({
+      kind: "delta",
+      delta: {
+        type: "user_notification",
+        agent: "",
+        kind: "gateway_updated",
+        title: "Updated to v0.1.190",
+        body: "Your gateway updated to v0.1.190.",
+      },
+    })
+  })
+
   it("ignores a user_notification missing its kind, title, or body", () => {
     const inputs = [
       JSON.stringify({ type: "user_notification", agent: "scout", title: "scout", body: "hi" }),

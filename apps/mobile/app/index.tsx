@@ -54,7 +54,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status } = useSession();
   const { agents, agentsReady } = useRoster();
-  const operation = useGatewayOperation();
+  const { operation, updatedTo } = useGatewayOperation();
   const { colors } = usePreferences();
   const carouselRef = useRef<FlatList<AgentRow>>(null);
   const hapticPageIndex = useRef(0);
@@ -118,12 +118,13 @@ export default function HomeScreen() {
   }, [agents, restoreRequest, scrollX, width]);
 
   // Ahead of the roster gate: the gateway is mid-backup or about to restart, so the roster it would
-  // wait on is exactly what stops arriving.
-  if (operation !== null) {
+  // wait on is exactly what stops arriving. The resolution holds the same page for its moment, so
+  // the update reads as one page that finishes rather than a screen that vanishes.
+  if (operation !== null || updatedTo !== null) {
     return (
       <Screen scroll={false} contentStyle={styles.screen}>
         <HomeHeader showCreate={false} />
-        <GatewayUpdateProgress operation={operation} />
+        <GatewayUpdateProgress operation={operation} updatedTo={updatedTo} />
       </Screen>
     );
   }

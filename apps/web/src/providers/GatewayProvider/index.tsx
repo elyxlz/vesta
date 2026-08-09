@@ -1,17 +1,5 @@
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import type {
-  Controller,
-  GatewayOperation,
-  SyncState,
-  Tree,
-} from "@vesta/core";
+import { useCallback, useContext, useEffect, type ReactNode } from "react";
+import type { Controller, SyncState, Tree } from "@vesta/core";
 import {
   checkForGatewayUpdate,
   devicesEqual,
@@ -24,7 +12,11 @@ import {
   triggerGatewayRestart as requestGatewayRestart,
   triggerGatewayUpdate as requestGatewayUpdate,
 } from "@vesta/core";
-import { useReplica, useSyncState } from "@vesta/core/react";
+import {
+  useReplica,
+  useSyncState,
+  useUpdateResolution,
+} from "@vesta/core/react";
 import { AppBehindScreen } from "@/components/AppBehindScreen";
 import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
 import { useAuth } from "@/providers/AuthProvider";
@@ -53,43 +45,11 @@ function selectGateway(tree: Tree | null) {
   return tree?.gateway ?? null;
 }
 
-// How long the "updated to vX.Y.Z" resolution stays up before the app returns to normal.
-const UPDATED_NOTICE_MS = 6000;
-
 // Route compatibility screens inside the provider because their shared navbar reads gateway state.
 function routeContent(syncState: SyncState, children: ReactNode): ReactNode {
   if (syncState === "app_behind") return <AppBehindScreen />;
   if (syncState === "gateway_behind") return <GatewayBehindScreen />;
   return children;
-}
-
-// Resolve the update the user watched: remember the version it started from, and once the operation
-// clears against a different one, report it for a moment. Timing rather than derivable state, so it
-// lives in an Effect with its own cleanup. A restart lands on the same version, so it resolves to
-// nothing, which is exactly right.
-function useUpdateResolution(
-  operation: GatewayOperation | null,
-  version: string,
-): string | null {
-  const versionBeforeUpdate = useRef("");
-  const [updatedTo, setUpdatedTo] = useState<string | null>(null);
-  useEffect(() => {
-    // The empty version is "no gateway branch yet", which resolves nothing either way.
-    if (operation !== null) {
-      // A new operation supersedes a still-showing notice.
-      setUpdatedTo(null);
-      if (versionBeforeUpdate.current === "")
-        versionBeforeUpdate.current = version;
-      return;
-    }
-    const before = versionBeforeUpdate.current;
-    versionBeforeUpdate.current = "";
-    if (before === "" || version === "" || before === version) return;
-    setUpdatedTo(version);
-    const clear = setTimeout(() => setUpdatedTo(null), UPDATED_NOTICE_MS);
-    return () => clearTimeout(clear);
-  }, [operation, version]);
-  return updatedTo;
 }
 
 function ReplicaGateway({

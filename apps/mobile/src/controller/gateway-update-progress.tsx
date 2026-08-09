@@ -41,16 +41,40 @@ function operationCopy(operation: GatewayOperation): {
 }
 
 // Home while the gateway works on itself: one page from the first pre-update backup to the restart,
-// morphing through the phases in place. Home is where the operation lives so app settings stay one
-// tap away throughout, which is what a user reaches for when an update looks stuck.
+// morphing through the phases in place, and holding for a moment on the version it landed on. Home
+// is where the operation lives so app settings stay one tap away throughout, which is what a user
+// reaches for when an update looks stuck.
 export function GatewayUpdateProgress({
   operation,
+  updatedTo,
 }: {
-  operation: GatewayOperation;
+  operation: GatewayOperation | null;
+  updatedTo: string | null;
 }) {
   const { colors } = usePreferences();
   const { api } = useSession();
   const [retrying, setRetrying] = useState(false);
+
+  if (operation === null) {
+    if (updatedTo === null) return null;
+    return (
+      <View style={styles.page}>
+        <View style={styles.copy}>
+          <Text
+            accessibilityRole="header"
+            family="heading"
+            style={[styles.title, { color: colors.text }]}
+          >
+            {`Updated to v${updatedTo}`}
+          </Text>
+          <Text style={[styles.detail, { color: colors.secondaryText }]}>
+            Your gateway is on the new version.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   const failed = operation.phase === "failed";
   const { title, detail } = operationCopy(operation);
 

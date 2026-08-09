@@ -36,6 +36,9 @@ const PHASE_TIMEOUT: Duration = Duration::from_secs(180);
 /// Budget for a file (the ledger, a swept container) to reach its expected state.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// The reconnect grace window every gateway here runs with (production is 30s). Long enough that the
+/// test's socket is always connected before it expires, short enough not to pad the suite.
+const ANNOUNCE_GRACE_SECS: u64 = 10;
 
 static GATEWAY_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -142,6 +145,10 @@ impl Gateway {
             .vestad_bin(self.installed.clone())
             .env("VESTAD_RELEASES_BASE_URL", releases_base_url)
             .env("VESTAD_DEV", "0")
+            .env(
+                "VESTAD_UPDATE_ANNOUNCE_GRACE_SECS",
+                &ANNOUNCE_GRACE_SECS.to_string(),
+            )
             .env("PATH", &self.path)
             .start()
             .expect("start the gateway under test")
@@ -406,6 +413,30 @@ async fn an_update_walks_its_phases_and_the_next_boot_reports_the_new_version() 
     assert_eq!(
         updated_client.gateway_version().expect("GET /version")["version"].as_str(),
         Some(NEWER_VERSION)
+    );
+
+    // This socket never reported focus, so nobody watched the update land: once the grace window
+    // closes the gateway announces it, which is the only signal an unattended client ever gets.
+    let announcement = sock
+        .expect_frame_matching(
+            |frame| frame["type"].as_str() == Some("user_notification"),
+            Duration::from_secs(ANNOUNCE_GRACE_SECS) + PHASE_TIMEOUT,
+        )
+        .await
+        .expect("the gateway announces the update to the clients that missed it");
+    assert_eq!(announcement["kind"].as_str(), Some("gateway_updated"));
+    assert_eq!(
+        announcement["agent"].as_str(),
+        Some(""),
+        "a gateway-owned notification names no agent"
+    );
+    assert_eq!(
+        announcement["title"].as_str(),
+        Some(format!("Updated to v{NEWER_VERSION}").as_str())
+    );
+    assert_eq!(
+        announcement["body"].as_str(),
+        Some(format!("Your gateway updated to v{NEWER_VERSION}.").as_str())
     );
 
     destroy_agent(&updated_client, &agent);
