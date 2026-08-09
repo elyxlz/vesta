@@ -221,6 +221,7 @@ def _remind_list_cmd(config: Config, argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
     p.add_argument("--task", default=None, dest="task_id")
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--show-completed", action="store_true")
     _add_format_flags(p)
     args = p.parse_args(argv)
     # JSON is consumed by scripts asking absence questions ("is anything scheduled for X?"), so a
@@ -232,7 +233,8 @@ def _remind_list_cmd(config: Config, argv: list[str]) -> None:
         limit = None
     else:
         limit = REMIND_LIST_PAGE_SIZE
-    _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=limit), fmt.format_reminder_list)
+    reminders = commands.remind_list(config, task_id=args.task_id, limit=limit, show_completed=args.show_completed)
+    _print_list(args, reminders, fmt.format_reminder_list)
 
 
 def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:
