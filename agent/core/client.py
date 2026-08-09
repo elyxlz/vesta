@@ -671,12 +671,13 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     sdk_env, thinking_config = _provider_sdk_settings(provider, state)
 
     # Vesta ships its own task system (the `tasks` skill: a sqlite store, reminders, a dashboard
-    # page), so the harness's built-in Task* tools are a second, competing one. Left on, they cost
-    # more than duplication: each call writes a JSON file under ~/.claude/tasks/, and the harness
-    # re-injects that whole list into context as a system-reminder on EVERY turn, so a months-old
-    # pile quietly shapes what the agent surfaces and is hard to trace back. Provider-independent,
-    # so it is set once here rather than in each adapter.
+    # page), so the harness's built-in task tools are a second, competing one. ENABLE_TASKS=0 drops
+    # the six Task* tools; each call otherwise writes a JSON file under ~/.claude/tasks/ that the
+    # harness re-injects into context on EVERY turn. That flag alone re-enables the legacy TodoWrite
+    # tool, and either way one task reminder keeps firing each turn, gated only by TODO_REMINDER_MODE,
+    # so =off silences both the Task and the TodoWrite nudge. Provider-independent, so both sit here.
     sdk_env["CLAUDE_CODE_ENABLE_TASKS"] = "0"
+    sdk_env["CLAUDE_CODE_TODO_REMINDER_MODE"] = "off"
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (capped via CLAUDE_CODE_AUTO_COMPACT_WINDOW above); the headless
@@ -686,9 +687,9 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         model=_harness_model(provider),
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
-        # Setting CLAUDE_CODE_ENABLE_TASKS=0 above brings back the legacy TodoWrite tool, which is
-        # the same competing-task-system problem in an older shape (and carries its own per-turn
-        # reminder). Deny it so the swap does not simply reintroduce what the env var removed.
+        # CLAUDE_CODE_ENABLE_TASKS=0 above re-enables the legacy TodoWrite tool. TODO_REMINDER_MODE
+        # already stopped its nudge, so denying the tool just closes the last door into this second
+        # task system; the deny-list blocks the call but never gates the reminder.
         disallowed_tools=["TodoWrite"],
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
