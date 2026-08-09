@@ -685,6 +685,43 @@ impl Client {
         Ok(response.status().as_u16())
     }
 
+    /// Ask the gateway to update itself (`POST /gateway/update`), returning `(status, body)` rather
+    /// than mapping a refusal to an error: dev-mode refusal, "already current", and a live-operation
+    /// conflict are all answers a test asserts on. A 202 means accepted, never finished; the phases
+    /// arrive on `/sync`.
+    pub fn start_gateway_update(&self) -> Result<(u16, serde_json::Value), String> {
+        self.post_for_status("/gateway/update")
+    }
+
+    /// Drop a failed update the user has acknowledged (`POST /gateway/update/dismiss`).
+    pub fn dismiss_gateway_update(&self) -> Result<(u16, serde_json::Value), String> {
+        self.post_for_status("/gateway/update/dismiss")
+    }
+
+    fn post_for_status(&self, path: &str) -> Result<(u16, serde_json::Value), String> {
+        let response = self
+            .agent
+            .post(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_empty()
+            .map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// The gateway's own version report (`GET /version`): the running version plus what the release
+    /// check last saw.
+    pub fn gateway_version(&self) -> Result<serde_json::Value, String> {
+        let resp = self.get("/version")?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
     pub fn stream_logs(&self, name: &str) -> Result<(), String> {
         let resp = self.get(&format!("/agents/{name}/logs"))?;
         let reader = std::io::BufReader::new(resp.into_body().into_reader());
