@@ -14,7 +14,18 @@
 # Usage: scan_files_for_secrets.sh [roots], default `/tmp $HOME`.
 # Exit 0 clean, 1 if candidates were found, 2 if the scan could not run.
 
-ROOTS="${1:-/tmp $HOME}"
+# Globbing off, word splitting kept. The -name patterns below are arguments for find, not paths
+# here, so if the shell expands them first they become whatever happens to sit in the CALLER'S cwd:
+# two matching files turn one -name into two words, find rejects the expression, the redirect eats
+# the error, and the by-name scan reports clean. A scanner that goes blind according to where it was
+# invoked from is worse than no scanner, because it still prints a confident all-clear.
+set -f
+
+# Every root, not just the first. The usage line offers `[roots]` and the old read of "$1" dropped
+# the rest in silence, which is the same failure this script exists to prevent: an uncovered root
+# reading as a clean one.
+[ "$#" -gt 0 ] || set -- /tmp "$HOME"
+ROOTS="$*"
 
 # Excluded because they are large, self-refreshing, and full of false positives: package caches,
 # the git object store, and the message stores redact_secrets.sh already covers properly.
@@ -37,7 +48,7 @@ NAMES='-name *.pem -o -name *.key -o -name id_rsa* -o -name id_ed25519* -o -name
 # anything reporting "nothing found" is the same shape as the leak this script exists for, one
 # level up, absence mistaken for evidence.
 usable=0
-for root in $ROOTS; do
+for root in "$@"; do
     if [ -d "$root" ]; then
         usable=$((usable + 1))
     else
@@ -49,7 +60,7 @@ if [ "$usable" -eq 0 ]; then
     exit 2
 fi
 
-for root in $ROOTS; do
+for root in "$@"; do
     [ -d "$root" ] || continue
 
     # By name. Report the path and size, never the contents: printing a credential to solve a
@@ -71,7 +82,7 @@ done
 # The subshells above cannot raise a counter in this shell, so recount from the same finds a reader
 # would. Cheap, and it keeps the exit code honest rather than always zero.
 total=$(
-    for root in $ROOTS; do
+    for root in "$@"; do
         [ -d "$root" ] || continue
         find "$root" \( $PRUNE \) -prune -o -type f \( $NAMES \) -print 2>/dev/null
         find "$root" \( $PRUNE \) -prune -o -type f -size -256k -print 2>/dev/null |
