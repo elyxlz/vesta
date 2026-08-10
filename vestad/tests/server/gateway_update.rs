@@ -39,6 +39,10 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// The reconnect grace window every gateway here runs with (production is 30s). Long enough that the
 /// test's socket is always connected before it expires, short enough not to pad the suite.
 const ANNOUNCE_GRACE_SECS: u64 = 10;
+/// The boot settle the maintenance-update test runs with (production is 60s). Comfortably longer
+/// than the handshake plus the one `/version` read the test does before it offers the newer release,
+/// so the window never fires while the release is still hidden.
+const MAINTENANCE_SETTLE_SECS: u64 = 12;
 
 static GATEWAY_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -91,6 +95,7 @@ struct Gateway {
     installed: PathBuf,
     path: String,
     systemctl_log: PathBuf,
+    settle_secs: Option<u64>,
 }
 
 impl Gateway {
@@ -132,14 +137,34 @@ impl Gateway {
             installed,
             path: format!("{}:{inherited}", bin_dir.display()),
             systemctl_log,
+            settle_secs: None,
             _tmp: tmp,
         }
+    }
+
+    /// Let the maintenance cycle apply a pending release on its own, instead of only when the test
+    /// POSTs an update. Rewrites the settings this gateway booted with.
+    fn with_auto_update(self, on: bool) -> Self {
+        let config_dir = self.home.join(".config/vesta/vestad");
+        std::fs::write(
+            config_dir.join("settings.json"),
+            format!(r#"{{"auto_update": {on}}}"#),
+        )
+        .expect("write settings");
+        self
+    }
+
+    /// Shorten the boot settle before the first maintenance decision, so the window fires seconds
+    /// after boot rather than the production minute.
+    fn with_settle_secs(mut self, secs: u64) -> Self {
+        self.settle_secs = Some(secs);
+        self
     }
 
     /// Boot this gateway against `releases_base_url`. Every start is the same installed file, so a
     /// relaunch after an update runs whatever the update put there.
     fn start(&self, releases_base_url: &str) -> TestServer {
-        TestServerBuilder::new()
+        let mut builder = TestServerBuilder::new()
             .user(&self.user)
             .home(self.home.clone())
             .vestad_bin(self.installed.clone())
@@ -149,9 +174,11 @@ impl Gateway {
                 "VESTAD_UPDATE_ANNOUNCE_GRACE_SECS",
                 &ANNOUNCE_GRACE_SECS.to_string(),
             )
-            .env("PATH", &self.path)
-            .start()
-            .expect("start the gateway under test")
+            .env("PATH", &self.path);
+        if let Some(secs) = self.settle_secs {
+            builder = builder.env("VESTAD_MAINTENANCE_SETTLE_SECS", &secs.to_string());
+        }
+        builder.start().expect("start the gateway under test")
     }
 
     fn ledger(&self) -> Option<serde_json::Value> {
@@ -555,4 +582,47 @@ async fn a_broken_release_projects_a_failure_until_it_is_dismissed() {
         .await
         .expect("the dismiss clears the projection");
     assert!(gateway_of(&cleared)["operation"].is_null());
+}
+
+/// The maintenance window applies a release the periodic detection poll had not yet cached: it
+/// resolves the release freshly at the window rather than trusting the poll's last answer, so a
+/// release published between the poll and the window is not missed for a whole day. No manual POST,
+/// and no agents, so every window is the current one.
+#[tokio::test]
+async fn maintenance_applies_a_release_the_cached_check_had_not_yet_seen() {
+    let releases =
+        FakeReleaseServer::start(NEWER_VERSION, ArtifactMode::Serve(newer_release_archive()))
+            .expect("start the fake release source");
+    // At boot the source reports only the running version, so the boot-time detection poll caches
+    // "no update": exactly the stale answer the window must not trust.
+    releases.set_version(env!("CARGO_PKG_VERSION"));
+
+    let gateway = Gateway::install("maintenance")
+        .with_auto_update(true)
+        .with_settle_secs(MAINTENANCE_SETTLE_SECS);
+    let server = gateway.start(releases.base_url());
+    let client = server.client();
+
+    let mut sock = client.open_sync().await.expect("open /sync");
+    handshake(&mut sock).await;
+
+    // Wait until the boot poll has cached "no update", so the newer release is offered only after
+    // the cache the old code trusted already says there is nothing to do.
+    wait_until("the boot poll to cache no-update", || {
+        let info = client.gateway_version().ok()?;
+        (info["update_available"].as_bool() == Some(false)).then_some(())
+    });
+    releases.set_version(NEWER_VERSION);
+
+    // The maintenance window fires on its own and its fresh check finds the release the cache still
+    // calls absent, walking the update to the restart.
+    let operations = collect_until_phase(&mut sock, "restarting")
+        .await
+        .expect("maintenance drives the update to the restart");
+    assert_phases_in_order(&operations, NEWER_VERSION);
+    wait_until("the service restart to be requested", || {
+        gateway.restart_was_requested().then_some(())
+    });
+    let ledger = gateway.ledger().expect("a restarting update leaves its ledger");
+    assert_eq!(ledger["target_version"].as_str(), Some(NEWER_VERSION));
 }
