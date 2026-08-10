@@ -13,6 +13,7 @@ import pathlib as pl
 import subprocess
 import threading
 import typing as tp
+from datetime import UTC, datetime, timedelta
 
 from https_stub import free_port
 
@@ -52,7 +53,23 @@ def _home(tmp_path, daemons: str = "") -> pl.Path:
     restart = tmp_path / "agent/skills/restart"
     restart.mkdir(parents=True)
     restart.joinpath("SKILL.md").write_text(f"# Restart\n\n```bash\n{daemons}\n```\n")
+    _reality_check(tmp_path)
     return tmp_path
+
+
+def _reality_check(home: pl.Path, body: str = "echo 'all probes green'\n", ran_hours_ago: float | None = 1.0) -> None:
+    """A stub reality_check.sh, plus a run record of the given age (None writes no record)."""
+    scripts = home / "agent/skills/dream/scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    scripts.joinpath("reality_check.sh").write_text(f"#!/bin/sh\n{body}")
+    data = home / "agent/data"
+    data.mkdir(parents=True, exist_ok=True)
+    record = data / "reality-history.tsv"
+    if ran_hours_ago is None:
+        record.unlink(missing_ok=True)
+        return
+    when = datetime.now(UTC) - timedelta(hours=ran_hours_ago)
+    record.write_text(f"{when.strftime('%Y-%m-%dT%H:%M:%SZ')}\t0\n")
 
 
 def _shim(home: pl.Path, name: str, script: str) -> None:
@@ -276,3 +293,77 @@ def test_a_missing_restart_skill_goes_red(tmp_path):
 
     assert run.returncode == 1, run.stdout + run.stderr
     assert "no daemon is checked at all" in run.stdout
+
+
+def test_a_recent_reality_check_leaves_the_watchdog_silent(tmp_path):
+    # The dream ran last night, so the probe is fresh and this tick costs one file read.
+    home = _home(tmp_path)
+    _reality_check(home, ran_hours_ago=3)
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "WATCHDOG" not in run.stdout
+
+
+def test_a_stale_reality_check_is_run_from_the_tick(tmp_path):
+    # The point of the whole branch: the probe that detects a missed dream is run by the dream, so
+    # something that is not the dream has to be able to run it.
+    home = _home(tmp_path)
+    _reality_check(home, body="echo 'all probes green'\n", ran_hours_ago=40)
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "WATCHDOG the reality check last ran 40h ago" in run.stdout
+    assert "WATCHDOG the reality check ran clean (exit 0)." in run.stdout
+    assert "CHECK" not in run.stdout
+
+
+def test_a_stale_reality_check_that_reds_reaches_the_exit_code(tmp_path):
+    home = _home(tmp_path)
+    _reality_check(home, body="echo 'RED events.db missing at /nope'\nexit 1\n", ran_hours_ago=40)
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED events.db missing at /nope" in run.stdout
+    assert "CHECK the reality check exited 1" in run.stdout
+
+
+def test_a_clean_probe_is_not_a_finding_because_a_line_starts_with_red(tmp_path):
+    # The probe's own summary can open with the word RED while reporting nothing wrong, so the
+    # verdict is its exit code. A text match here calls a healthy box a finding on every tick.
+    home = _home(tmp_path)
+    _reality_check(home, body="echo 'RED count over last runs (oldest first): 0 0 0'\n", ran_hours_ago=40)
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "WATCHDOG the reality check ran clean (exit 0)." in run.stdout
+    assert "CHECK" not in run.stdout
+
+
+def test_the_watchdog_stamps_its_own_run_when_nothing_records_one(tmp_path):
+    # Not every box keeps a run record. Without a stamp of its own the watchdog would re-run the
+    # probe on every tick, which for a probe that walks the filesystem is not a cheap mistake.
+    home = _home(tmp_path)
+    _reality_check(home, ran_hours_ago=None)
+
+    first = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+    second = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert "WATCHDOG the reality check ran clean (exit 0)." in first.stdout
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "WATCHDOG" not in second.stdout
+
+
+def test_a_missing_reality_check_script_goes_red(tmp_path):
+    # The probe that catches silent failures cannot itself be allowed to go missing silently.
+    home = _home(tmp_path)
+    (home / "agent/skills/dream/scripts/reality_check.sh").unlink()
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "CHECK reality_check.sh is missing" in run.stdout

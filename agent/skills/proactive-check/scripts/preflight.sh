@@ -218,6 +218,58 @@ EOF
     fi
 fi
 
+# --- Reality-check watchdog ----------------------------------------------------------------------
+# reality_check.sh carries the probe that detects a missed dream, and the dream is the only thing
+# that runs reality_check.sh, so a missed night takes its own detector down with it. This tick is
+# daemon-driven and fires whether or not anything is remembered, so it is the one place the probe
+# can be re-run from. A recent run leaves a fresh record and this stays silent, costing one file
+# read.
+RC_HIST="$HOME/agent/data/reality-history.tsv"
+RC_STAMP="$HOME/agent/data/reality-watchdog.stamp"
+RC_SCRIPT="$HOME/agent/skills/dream/scripts/reality_check.sh"
+RC_STALE_HOURS=25
+
+# Whole hours since an ISO-8601 stamp, or 999 when there is nothing readable to age.
+rc_age_hours() {
+    [ -n "$1" ] || {
+        echo 999
+        return
+    }
+    rc_epoch=$(date -u -d "$1" +%s 2>/dev/null)
+    [ -n "$rc_epoch" ] || {
+        echo 999
+        return
+    }
+    echo $((($(date -u +%s) - rc_epoch) / 3600))
+}
+
+if [ -f "$RC_SCRIPT" ]; then
+    rc_last=""
+    [ -s "$RC_HIST" ] && rc_last=$(tail -n 1 "$RC_HIST" | cut -f1)
+    rc_age=$(rc_age_hours "$rc_last")
+    # Not every box keeps a run record, so the watchdog stamps its own runs and ages by whichever
+    # record is newer. Without the stamp, a box with no record re-runs the probe every tick.
+    rc_stamp_age=$(rc_age_hours "$(cat "$RC_STAMP" 2>/dev/null)")
+    [ "$rc_stamp_age" -lt "$rc_age" ] && rc_age=$rc_stamp_age
+    if [ "$rc_age" -ge "$RC_STALE_HOURS" ]; then
+        printf 'WATCHDOG the reality check last ran %sh ago (>= %sh): running it now, because the dream that normally runs it may have been missed.\n' "$rc_age" "$RC_STALE_HOURS"
+        rc_out=$(sh "$RC_SCRIPT" 2>&1)
+        rc_status=$?
+        mkdir -p "$(dirname "$RC_STAMP")" 2>/dev/null
+        date -u +%Y-%m-%dT%H:%M:%SZ > "$RC_STAMP" 2>/dev/null || true
+        # Judged by the probe's exit code, which is its contract, never by grepping its output for
+        # '^RED': any summary line opening with that word then reads as a finding of its own.
+        printf '%s\n' "$rc_out" | grep -E '^RED [a-z]' || true
+        if [ "$rc_status" -ne 0 ]; then
+            bad "the reality check exited ${rc_status} with the REDs above, after ${rc_age}h without running"
+        else
+            printf 'WATCHDOG the reality check ran clean (exit 0).\n'
+        fi
+    fi
+else
+    bad "reality_check.sh is missing at $RC_SCRIPT: the probe that catches silent failures is itself absent"
+fi
+
 if [ "$red" -gt 0 ]; then
     printf '%s CHECK: each one is a real finding; clear it before spending the tick.\n' "$red"
     exit 1
