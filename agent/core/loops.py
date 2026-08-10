@@ -292,6 +292,13 @@ async def _watch_queue_during_turn(
             await cancel_task(queue_task)
 
 
+def _consume_boot_turn(state: vm.State, turn: vm.QueuedTurn) -> None:
+    """Count a consumed non-interruptible boot turn (run or deferred), so GET /status flips
+    boot_complete exactly when the last one is done and the agent is preemptible again."""
+    if not turn.interruptible:
+        state.boot_turns_pending = max(0, state.boot_turns_pending - 1)
+
+
 async def _run_messages_with_preempts(
     first: vm.QueuedTurn,
     *,
@@ -320,6 +327,7 @@ async def _run_messages_with_preempts(
             # monitor_loop re-reads the dir and re-queues it. (Migrations regenerate on boot anyway.)
             if is_unauthenticated(state.provider_status):
                 logger.client("Provider not authenticated; deferring message until re-auth")
+                _consume_boot_turn(state, current)
                 continue
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
@@ -336,6 +344,7 @@ async def _run_messages_with_preempts(
             await _watch_queue_during_turn(process_task, queue=queue, pending=pending, state=state, config=config)
             await process_task
             state.noninterruptible_turn_active = False
+            _consume_boot_turn(state, current)
             # Keep the file if the turn flipped auth to not_authenticated (converse detects a
             # terminal 401/402 mid-turn) or the query never reached the CLI (state.query_not_delivered):
             # like a deferred message above, either way it must re-run, on re-auth or on the next

@@ -13,15 +13,17 @@ export function AgentStatusBadge({
   status,
   activityState = "idle",
   operation = null,
+  booting = false,
   centered = false,
 }: {
   status: AgentStatus;
   activityState?: AgentActivityState;
   operation?: AgentOperation | null;
+  booting?: boolean;
   centered?: boolean;
 }) {
   const { colors } = usePreferences();
-  const active = status === "alive";
+  const active = status === "alive" && !booting;
   const thinking = active && activityState === "thinking";
   const attention = operation === null && agentNeedsUser(status);
   const color = thinking
@@ -41,7 +43,7 @@ export function AgentStatusBadge({
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
       <Text style={[styles.label, { color }]}>
-        {agentStatusLabel(status, activityState, operation)}
+        {agentStatusLabel(status, activityState, operation, booting)}
       </Text>
     </View>
   );

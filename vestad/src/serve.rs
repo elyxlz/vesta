@@ -3821,12 +3821,14 @@ mod tests {
                 name: "sample-agent".into(),
                 status: AgentStatus::Alive,
                 ws_port: 4200,
+                booting: false,
                 started_at: Some("2026-01-01T00:00:00Z".into()),
             },
             ListEntry {
                 name: "stopped-agent".into(),
                 status: AgentStatus::Stopped,
                 ws_port: 4201,
+                booting: false,
                 started_at: None,
             },
         ];

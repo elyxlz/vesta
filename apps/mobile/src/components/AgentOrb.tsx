@@ -16,6 +16,7 @@ interface AgentOrbProps {
   status: AgentStatus;
   activityState?: AgentActivityState;
   operation?: AgentOperation | null;
+  booting?: boolean;
   size?: number;
   animated?: boolean;
   pulseScale?: number;
@@ -27,6 +28,7 @@ export function AgentOrb({
   status,
   activityState = "idle",
   operation = null,
+  booting = false,
   size = 88,
   animated = true,
   pulseScale,
@@ -37,7 +39,7 @@ export function AgentOrb({
   const [pulse] = useState(() => new Animated.Value(1));
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
-  const orbState = agentOrbState(status, activityState, operation);
+  const orbState = agentOrbState(status, activityState, operation, booting);
   const shouldAnimate = animated && !transitionFrozen && orbIsLive(orbState);
   const colors = designTokens.orb[orbState];
   // Breathing is what "the agent itself is up" looks like, so it follows the resolved orb state:

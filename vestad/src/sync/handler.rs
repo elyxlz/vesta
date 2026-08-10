@@ -499,6 +499,7 @@ fn synthetic_building_info(phase: BuildPhase) -> AgentInfo {
         activity_state: "idle".into(),
         build_phase: Some(phase),
         operation: None,
+        booting: false,
         started_at: None,
         services: BTreeMap::new(),
     }
@@ -530,6 +531,7 @@ fn agent_info(
         activity_state,
         build_phase,
         operation,
+        booting: entry.booting,
         started_at: entry.started_at.clone(),
         services,
     }
@@ -602,7 +604,7 @@ mod tests {
     use crate::agent_status::AgentStatusCache;
 
     fn entry(name: &str, status: AgentStatus) -> ListEntry {
-        ListEntry { name: name.to_string(), status, ws_port: 4200, started_at: Some("2026-01-01T00:00:00Z".into()) }
+        ListEntry { name: name.to_string(), status, ws_port: 4200, booting: false, started_at: Some("2026-01-01T00:00:00Z".into()) }
     }
 
     #[test]
@@ -624,7 +626,7 @@ mod tests {
     }
 
     fn info_of(status: AgentStatus) -> AgentInfo {
-        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, started_at: None, services: BTreeMap::new() }
+        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, booting: false, started_at: None, services: BTreeMap::new() }
     }
 
     #[test]

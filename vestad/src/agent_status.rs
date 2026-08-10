@@ -85,10 +85,13 @@ pub async fn list_agents(
     let mut entries = Vec::new();
     for docker::ManagedAgent { cname, agent_name } in &agents {
         let info = docker::inspect_container(docker, cname, Some(agents_dir)).await;
+        let status = combined_status(docker, http_client, agents_dir, cache, cname, &info).await;
         entries.push(ListEntry {
             name: agent_name.clone(),
-            status: combined_status(docker, http_client, agents_dir, cache, cname, &info).await,
+            status,
             ws_port: info.port.unwrap_or(0),
+            booting: status == docker::AgentStatus::Alive
+                && cache.readiness(agent_name).is_some_and(|r| !r.boot_complete),
             started_at: info.started_at.clone(),
         });
     }
@@ -117,6 +120,7 @@ fn apply_restarting(
                 name: name.clone(),
                 status: docker::AgentStatus::Restarting,
                 ws_port: 0,
+                booting: false,
                 started_at: None,
             }),
         }
@@ -137,6 +141,7 @@ fn apply_rebuilding(mut entries: Vec<ListEntry>, mut rebuilding: Vec<String>) ->
                 name,
                 status: docker::AgentStatus::Rebuilding,
                 ws_port: 0,
+                booting: false,
                 started_at: None,
             }),
         }
@@ -175,15 +180,14 @@ async fn combined_status(
                     cache.set_readiness(
                         &agent_name,
                         Readiness {
-                            authed: s.authed,
-                            setup_complete: s.setup_complete,
-                            provider_configured: s.provider_configured,
+                            status: status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
+                            boot_complete: s.boot_complete,
                         },
                     );
                 }
             }
             match cache.readiness(&agent_name) {
-                Some(r) => status_from_readiness(r.authed, r.setup_complete, r.provider_configured),
+                Some(r) => r.status,
                 None => docker::AgentStatus::Starting,
             }
         }
@@ -284,12 +288,12 @@ pub struct AgentStatusCache {
     readiness: Mutex<HashMap<String, Readiness>>,
 }
 
-/// The slice of the agent's `GET /status` that decides which reachable state it is in.
+/// What the last successful `GET /status` fetch resolved to: the readiness-derived reachable
+/// state, plus the boot-progress flag the roster labels with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Readiness {
-    pub authed: bool,
-    pub setup_complete: bool,
-    pub provider_configured: bool,
+    pub status: docker::AgentStatus,
+    pub boot_complete: bool,
 }
 
 impl AgentStatusCache {
@@ -864,12 +868,14 @@ mod tests {
                 name: "apollo".into(),
                 status: docker::AgentStatus::Alive,
                 ws_port: 4200,
+                booting: false,
                 started_at: None,
             },
             ListEntry {
                 name: "hera".into(),
                 status: docker::AgentStatus::Stopped,
                 ws_port: 4201,
+                booting: false,
                 started_at: None,
             },
         ]);
@@ -894,12 +900,14 @@ mod tests {
                 name: "apollo".into(),
                 status: docker::AgentStatus::Stopped,
                 ws_port: 4200,
+                booting: false,
                 started_at: None,
             },
             ListEntry {
                 name: "hera".into(),
                 status: docker::AgentStatus::Alive,
                 ws_port: 4201,
+                booting: false,
                 started_at: Some("2026-01-01T00:00:00Z".into()),
             },
         ];
@@ -925,12 +933,14 @@ mod tests {
                 name: "apollo".into(),
                 status: docker::AgentStatus::Stopped,
                 ws_port: 4200,
+                booting: false,
                 started_at: None,
             },
             ListEntry {
                 name: "hera".into(),
                 status: docker::AgentStatus::Alive,
                 ws_port: 4201,
+                booting: false,
                 started_at: None,
             },
         ];
@@ -1010,18 +1020,21 @@ mod tests {
                     name: "scout".into(),
                     status: docker::AgentStatus::Alive,
                     ws_port: 1,
+                    booting: false,
                     started_at: None,
                 },
                 ListEntry {
                     name: "quiet".into(),
                     status: docker::AgentStatus::Alive,
                     ws_port: 2,
+                    booting: false,
                     started_at: None,
                 },
                 ListEntry {
                     name: "asleep".into(),
                     status: docker::AgentStatus::Stopped,
                     ws_port: 3,
+                    booting: false,
                     started_at: None,
                 },
                 // Mid-restart: outside the tapped set, so its preference has been dropped and an
@@ -1030,6 +1043,7 @@ mod tests {
                     name: "booting".into(),
                     status: docker::AgentStatus::Starting,
                     ws_port: 4,
+                    booting: false,
                     started_at: None,
                 },
             ]);

@@ -659,6 +659,7 @@ mod tests {
             name: name.to_string(),
             status,
             ws_port: 4200,
+            booting: false,
             started_at: None,
         }
     }

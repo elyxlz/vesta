@@ -300,6 +300,47 @@ async def test_boot_turn_interruptibility_drives_the_preempt_gate(config, state,
     assert processed == ["first"]
 
 
+@pytest.mark.anyio
+async def test_boot_turns_pending_counts_down_only_on_noninterruptible_turns(config, state):
+    """GET /status reports boot_complete once the counted non-interruptible boot turns have all
+    been consumed; an interruptible turn never moves the counter."""
+    from core.loops import _run_messages_with_preempts
+
+    queue: asyncio.Queue = asyncio.Queue()
+    fake_process, _processed, first_started, release_first = _blocking_processor()
+    state.boot_turns_pending = 2
+
+    with patch("core.loops.process_message", fake_process):
+        task = asyncio.create_task(
+            _run_messages_with_preempts(
+                vm.QueuedTurn("first", False, [], interruptible=False),
+                queue=queue,
+                state=state,
+                config=config,
+            )
+        )
+        await first_started.wait()
+        assert state.boot_turns_pending == 2, "a still-running boot turn is not yet consumed"
+        release_first.set()
+        await task
+    assert state.boot_turns_pending == 1
+
+    fake_chat, _chat_processed, chat_started, release_chat = _blocking_processor()
+    with patch("core.loops.process_message", fake_chat):
+        task = asyncio.create_task(
+            _run_messages_with_preempts(
+                vm.QueuedTurn("first", True, [], interruptible=True),
+                queue=queue,
+                state=state,
+                config=config,
+            )
+        )
+        await chat_started.wait()
+        release_chat.set()
+        await task
+    assert state.boot_turns_pending == 1, "an interruptible turn is not a boot turn"
+
+
 # --- end to end: the 2026-07-14 incident (Beyonce test) ---
 
 

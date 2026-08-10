@@ -35,6 +35,10 @@ export interface AgentInfo {
   activityState: AgentActivityState
   buildPhase: BuildPhase | null
   operation: AgentOperation | null
+  // An alive agent still working through its boot turns (migrations, sync, greeting): its API
+  // serves and chat queues durably, but surfaces label it as still waking up. Absent on older
+  // gateways, so readers treat undefined as false.
+  booting?: boolean
   startedAt: string | null
   services: Record<string, ServiceInfo>
 }

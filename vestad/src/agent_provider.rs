@@ -36,6 +36,10 @@ pub struct AgentStatusView {
     /// `provider_configured: false` explicitly.
     #[serde(default = "default_true")]
     pub provider_configured: bool,
+    /// Whether this boot's non-interruptible boot turns are done. Defaults to `true` for the brief
+    /// pre-restart window where an older agent process omits the field, so it never reads as booting.
+    #[serde(default = "default_true")]
+    pub boot_complete: bool,
 }
 
 fn default_true() -> bool {

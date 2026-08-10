@@ -432,6 +432,10 @@ pub struct ListEntry {
     pub name: String,
     pub status: AgentStatus,
     pub ws_port: u16,
+    /// An `Alive` agent still working through its boot turns (migrations, sync, greeting): the
+    /// API serves and chat queues durably, but clients label it as still waking up.
+    #[serde(default)]
+    pub booting: bool,
     // Container start time; the web app watches it change to retire a "restart to apply" flag.
     // camelCase on the wire to match the web's AgentInfo; omitted when the agent has never started.
     #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
