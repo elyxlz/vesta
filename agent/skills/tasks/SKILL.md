@@ -10,26 +10,25 @@ One CLI, one daemon, one SQLite DB. Tasks are what needs doing; reminders are nu
 ## Tasks
 
 ```bash
-tasks add "Submit report" --priority high --due-in-hours 4
-tasks add "Meeting prep" --due-datetime "2026-12-01T10:00:00" --timezone "Europe/London"
+tasks create "Submit report" --priority high --due-in-hours 4
+tasks create "Meeting prep" --due-datetime "2026-12-01T10:00:00" --timezone "Europe/London"
 tasks list                        # pending tasks, overdue first
-tasks done <id>                   # mark done
+tasks done <id>                   # mark completed
 tasks postpone <id> --in-days 2   # new due date, measured from now
 tasks search "report"
 tasks get <id>
-tasks update <id> --title "..." --priority low --status pending
+tasks update <id> --subject "..." --priority low --status pending
 tasks update <id> --clear-due     # remove the due date (and its auto reminders)
 tasks delete <id>                 # cascades to linked reminders
 ```
 
 - Due date: `--due-in-minutes/--due-in-hours/--due-in-days` (relative) or `--due-datetime` + `--timezone` (absolute, both required). `--priority` low/normal/high. `--initial-metadata "..."` attaches notes.
-- Keep the title under ~100 characters: it is the one field `tasks list`, the digest, and the app show, so a paragraph there is unreadable everywhere. Detail and running state go in metadata (`--initial-metadata` on add, or edit the task's `metadata_path` file). A longer title still saves, with a warning.
+- Keep the subject under ~100 characters: it is the one field `tasks list`, the digest, and the app show, so a paragraph there is unreadable everywhere. Detail and running state go in metadata (`--initial-metadata` on create, or edit the task's `metadata_path` file). A longer subject still saves, with a warning.
 - `postpone` also takes `--in-minutes/--in-hours` or `--at` + `--tz`, and works on a task with no due date (gives it one).
 - `update --clear-due` removes a due date. Every other due flag can only move a date, so without this a due date is a one-way door: auto reminders are regenerated from `due_date`, so deleting them by hand does not stick. Reach for it when a date was set by mistake or by a bulk `postpone` over a backlog, since a backburner item with a due date fires a whole reminder cascade it never earned.
-- `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, title, status, priority, due_date, created_at, completed_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
-- `list`/`search` print compact tables (`--show-completed` to include done); add `--json` or `--json-pretty` for JSON.
-- `create` is an alias of `add`. `--subject` is an alias of `--title` on both `add` and `update`.
-- A task's status is `pending`, `in_progress`, or `completed` (`completed` is the same as `done`). `tasks done <id>` and `tasks update <id> --status completed` both close it. `tasks update <id> --status in_progress` marks a task started: it stays open, so it still shows in `tasks list` and still fires its due-date reminders.
+- `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, subject, status, priority, due_date, created_at, completed_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
+- `list`/`search` print compact tables (`--show-completed` to include completed); add `--json` or `--json-pretty` for JSON.
+- A task's status is `pending`, `in_progress`, or `completed`. `tasks done <id>` and `tasks update <id> --status completed` both close it. `tasks update <id> --status in_progress` marks a task started: it stays open, so it still shows in `tasks list` and still fires its due-date reminders.
 
 ## Reminders
 

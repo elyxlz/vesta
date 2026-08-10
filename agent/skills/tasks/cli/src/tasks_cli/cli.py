@@ -27,17 +27,17 @@ def _require_arg(value: str | None, name: str, usage: str) -> str:
     return value
 
 
-# Soft cap only: a warning, never a rejection, because a legitimately long title exists. The title
-# is the one field every list and digest shows, so detail belongs in metadata, not appended here.
-TITLE_SOFT_CAP_CHARS = 100
+# Soft cap only: a warning, never a rejection, because a legitimately long subject exists. The
+# subject is the one field every list and digest shows, so detail belongs in metadata, not here.
+SUBJECT_SOFT_CAP_CHARS = 100
 
 
-def _warn_long_title(title: str) -> None:
-    if len(title) <= TITLE_SOFT_CAP_CHARS:
+def _warn_long_subject(subject: str) -> None:
+    if len(subject) <= SUBJECT_SOFT_CAP_CHARS:
         return
     msg = (
-        f"title is {len(title)} chars; keep the title short and scannable, and put the detail "
-        "in the task's metadata instead (the metadata_path file in this result, or --initial-metadata on add)"
+        f"subject is {len(subject)} chars; keep the subject short and scannable, and put the detail "
+        "in the task's metadata instead (the metadata_path file in this result, or --initial-metadata on create)"
     )
     print(json.dumps({"warning": msg}), file=sys.stderr)
 
@@ -104,14 +104,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_daemon = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
     p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
-    # add
-    p_add = sub.add_parser("add", aliases=["create"], help="Add a new task (alias: create)")
-    p_add.add_argument("title_pos", nargs="?", default=None, metavar="title")
-    p_add.add_argument("--title", default=None)
-    p_add.add_argument("--subject", default=None, help="Alias for --title")
-    _add_due_args(p_add)
-    p_add.add_argument("--priority", default="normal", help="low/normal/high or 1/2/3")
-    p_add.add_argument("--initial-metadata", default=None)
+    # create
+    p_create = sub.add_parser("create", help="Create a new task")
+    p_create.add_argument("subject_pos", nargs="?", default=None, metavar="subject")
+    p_create.add_argument("--subject", default=None)
+    _add_due_args(p_create)
+    p_create.add_argument("--priority", default="normal", help="low/normal/high or 1/2/3")
+    p_create.add_argument("--initial-metadata", default=None)
 
     # list
     p_list = sub.add_parser("list", help="List tasks")
@@ -132,9 +131,8 @@ def _build_parser() -> argparse.ArgumentParser:
     # update
     p_update = sub.add_parser("update", help="Update a task")
     _add_id_args(p_update)
-    p_update.add_argument("--status", default=None, help="pending, in_progress, or completed (completed == done)")
-    p_update.add_argument("--title", default=None)
-    p_update.add_argument("--subject", default=None, help="Alias for --title")
+    p_update.add_argument("--status", default=None, help="pending, in_progress, or completed")
+    p_update.add_argument("--subject", default=None)
     p_update.add_argument("--priority", default=None)
     _add_due_args(p_update)
     p_update.add_argument("--clear-due", action="store_true", help="Remove the task's due date and its auto reminders")
@@ -150,7 +148,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # done
-    p_done = sub.add_parser("done", help="Mark a task done")
+    p_done = sub.add_parser("done", help="Mark a task completed")
     _add_id_args(p_done)
 
     # postpone
@@ -167,7 +165,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_id_args(p_delete)
 
     # search
-    p_search = sub.add_parser("search", help="Search tasks by title")
+    p_search = sub.add_parser("search", help="Search tasks by subject")
     p_search.add_argument("query_pos", nargs="?", default=None, metavar="query")
     p_search.add_argument("--query", default=None)
     p_search.add_argument("--show-completed", action="store_true")
@@ -389,12 +387,12 @@ subcommands:
 
 
 def _handle_task(args, config: Config):
-    if args.command in ("add", "create"):
-        title = _require_arg(args.title_pos or args.title or args.subject, "title", 'tasks add "title" or tasks add --title "title"')
-        _warn_long_title(title)
+    if args.command == "create":
+        subject = _require_arg(args.subject_pos or args.subject, "subject", 'tasks create "subject" or tasks create --subject "subject"')
+        _warn_long_subject(subject)
         result = commands.add_task(
             config,
-            title=title,
+            subject=subject,
             due=commands.DueSpec(
                 due_datetime=args.due_datetime,
                 timezone=args.timezone,
@@ -420,14 +418,14 @@ def _handle_task(args, config: Config):
         result = commands.get_task(config, task_id=task_id)
     elif args.command == "update":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks update <id> or tasks update --id <id>")
-        title = args.title or args.subject
-        if title is not None:
-            _warn_long_title(title)
+        subject = args.subject
+        if subject is not None:
+            _warn_long_subject(subject)
         result = commands.update_task(
             config,
             task_id=task_id,
             status=args.status,
-            title=title,
+            subject=subject,
             priority=args.priority,
             due=commands.DueSpec(
                 due_datetime=args.due_datetime,
@@ -441,7 +439,7 @@ def _handle_task(args, config: Config):
         )
     elif args.command == "done":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks done <id> or tasks done --id <id>")
-        result = commands.update_task(config, task_id=task_id, status="done")
+        result = commands.update_task(config, task_id=task_id, status="completed")
     elif args.command == "postpone":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks postpone <id> --in-days N")
         result = commands.postpone_task(

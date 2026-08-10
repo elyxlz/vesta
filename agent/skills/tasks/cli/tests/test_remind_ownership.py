@@ -22,7 +22,7 @@ def _reminders(config: Config, task_id: str) -> list[dict]:
 
 
 def _task_with_auto_reminders(config: Config) -> tuple[str, dict]:
-    task = commands.add_task(config, title="original title", due=commands.DueSpec(due_in_days=3))
+    task = commands.add_task(config, subject="original title", due=commands.DueSpec(due_in_days=3))
     autos = _reminders(config, task["id"])
     assert autos, "a task with a due date must start with auto reminders"
     return task["id"], autos[0]
@@ -70,7 +70,7 @@ def test_marking_a_task_done_clears_owned_reminders_too(tmp_config: Config):
     task_id, auto = _task_with_auto_reminders(tmp_config)
     commands.remind_update(tmp_config, reminder_id=auto["id"], message="hand written checkpoint")
 
-    commands.update_task(tmp_config, task_id=task_id, status="done")
+    commands.update_task(tmp_config, task_id=task_id, status="completed")
 
     assert _reminders(tmp_config, task_id) == [], "a done task must clear all its reminders, owned included"
 

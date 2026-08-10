@@ -19,9 +19,9 @@ def _completion_notifs(notif_dir: Path) -> list[dict]:
 def test_app_completion_writes_a_snoozed_notification(tmp_config: Config, tmp_path: Path):
     notif_dir = tmp_path / "notifications"
     notif_dir.mkdir()
-    task = commands.add_task(tmp_config, title="call the dentist")
+    task = commands.add_task(tmp_config, subject="call the dentist")
 
-    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(status="done"))
+    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(status="completed"))
 
     notifs = _completion_notifs(notif_dir)
     assert len(notifs) == 1
@@ -33,10 +33,10 @@ def test_app_completion_writes_a_snoozed_notification(tmp_config: Config, tmp_pa
 def test_app_completion_notifies_once_not_on_a_repeat(tmp_config: Config, tmp_path: Path):
     notif_dir = tmp_path / "notifications"
     notif_dir.mkdir()
-    task = commands.add_task(tmp_config, title="x")
+    task = commands.add_task(tmp_config, subject="x")
 
-    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(status="done"))
-    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(status="done"))
+    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(status="completed"))
+    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(status="completed"))
 
     assert len(_completion_notifs(notif_dir)) == 1, "re-sending done on an already-done task must not re-notify"
 
@@ -44,9 +44,9 @@ def test_app_completion_notifies_once_not_on_a_repeat(tmp_config: Config, tmp_pa
 def test_app_edit_that_is_not_a_completion_does_not_notify(tmp_config: Config, tmp_path: Path):
     notif_dir = tmp_path / "notifications"
     notif_dir.mkdir()
-    task = commands.add_task(tmp_config, title="x")
+    task = commands.add_task(tmp_config, subject="x")
 
-    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(title="renamed"))
+    server._apply_task_update(tmp_config, notif_dir, task["id"], server.UpdateTaskBody(subject="renamed"))
 
     assert _completion_notifs(notif_dir) == []
 
@@ -54,8 +54,8 @@ def test_app_edit_that_is_not_a_completion_does_not_notify(tmp_config: Config, t
 def test_cli_completion_does_not_notify(tmp_config: Config, tmp_path: Path):
     notif_dir = tmp_path / "notifications"
     notif_dir.mkdir()
-    task = commands.add_task(tmp_config, title="x")
+    task = commands.add_task(tmp_config, subject="x")
 
-    commands.update_task(tmp_config, task_id=task["id"], status="done")
+    commands.update_task(tmp_config, task_id=task["id"], status="completed")
 
     assert _completion_notifs(notif_dir) == [], "the agent's own CLI completion is self-evident and must stay silent"

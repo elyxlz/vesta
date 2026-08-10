@@ -118,86 +118,86 @@ def shared_env(tmp_path_factory):
 class TestAddTask:
     def test_add_basic(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "buy milk"))
-        assert data["title"] == "buy milk"
+        data = parse(tasks_cli(home, "create", "buy milk"))
+        assert data["subject"] == "buy milk"
         assert data["status"] == "pending"
         assert data["priority"] == 2
 
     def test_add_with_flag(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "--title", "flag title"))
-        assert data["title"] == "flag title"
+        data = parse(tasks_cli(home, "create", "--subject", "flag title"))
+        assert data["subject"] == "flag title"
 
     def test_add_with_priority_high(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "urgent", "--priority", "high"))
+        data = parse(tasks_cli(home, "create", "urgent", "--priority", "high"))
         assert data["priority"] == 3
 
     def test_add_with_priority_low(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "low prio", "--priority", "low"))
+        data = parse(tasks_cli(home, "create", "low prio", "--priority", "low"))
         assert data["priority"] == 1
 
     def test_add_with_priority_numeric(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "numeric", "--priority", "3"))
+        data = parse(tasks_cli(home, "create", "numeric", "--priority", "3"))
         assert data["priority"] == 3
 
     def test_add_with_due_in_hours(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "due soon", "--due-in-hours", "2"))
+        data = parse(tasks_cli(home, "create", "due soon", "--due-in-hours", "2"))
         assert data["due_date"] is not None
 
     def test_add_with_due_in_days(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "due later", "--due-in-days", "7"))
+        data = parse(tasks_cli(home, "create", "due later", "--due-in-days", "7"))
         assert data["due_date"] is not None
 
     def test_add_with_due_in_minutes(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "due asap", "--due-in-minutes", "30"))
+        data = parse(tasks_cli(home, "create", "due asap", "--due-in-minutes", "30"))
         assert data["due_date"] is not None
 
     def test_add_with_datetime_and_tz(self, shared_env):
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%S")
-        data = parse(tasks_cli(home, "add", "timed", "--due-datetime", future, "--timezone", "UTC"))
+        data = parse(tasks_cli(home, "create", "timed", "--due-datetime", future, "--timezone", "UTC"))
         assert data["due_date"] is not None
 
     def test_add_no_due_date(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "no deadline"))
+        data = parse(tasks_cli(home, "create", "no deadline"))
         assert data["due_date"] is None
 
     def test_add_requires_title(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "add")
+        r = tasks_cli(home, "create")
         assert r.returncode != 0
 
     def test_add_requires_tz_with_datetime(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "add", "test", "--due-datetime", "2025-06-15T10:00:00")
+        r = tasks_cli(home, "create", "test", "--due-datetime", "2025-06-15T10:00:00")
         assert r.returncode != 0
         assert "timezone" in parse(r)["error"].lower()
 
     def test_add_invalid_timezone(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "add", "test", "--due-datetime", "2025-06-15T10:00:00", "--timezone", "Fake/Zone")
+        r = tasks_cli(home, "create", "test", "--due-datetime", "2025-06-15T10:00:00", "--timezone", "Fake/Zone")
         assert r.returncode != 0
 
     def test_add_rejects_negative_due(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "add", "bad", "--due-in-hours", "-1")
+        r = tasks_cli(home, "create", "bad", "--due-in-hours", "-1")
         assert r.returncode != 0
 
     def test_add_invalid_priority(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "add", "bad", "--priority", "5")
+        r = tasks_cli(home, "create", "bad", "--priority", "5")
         assert r.returncode != 0
 
     def test_add_with_metadata(self, shared_env):
         home, _, _ = shared_env
-        data = parse(tasks_cli(home, "add", "with meta", "--initial-metadata", "some notes here"))
+        data = parse(tasks_cli(home, "create", "with meta", "--initial-metadata", "some notes here"))
         assert data["metadata_path"]
         assert Path(data["metadata_path"]).exists()
         assert Path(data["metadata_path"]).read_text() == "some notes here"
@@ -225,16 +225,16 @@ class TestListTasks:
 class TestGetTask:
     def test_get_by_id(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "get me", "--initial-metadata", "details"))
+        added = parse(tasks_cli(home, "create", "get me", "--initial-metadata", "details"))
         data = parse(tasks_cli(home, "get", added["id"]))
-        assert data["title"] == "get me"
+        assert data["subject"] == "get me"
         assert data["metadata_content"] == "details"
 
     def test_get_via_flag(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "get flag"))
+        added = parse(tasks_cli(home, "create", "get flag"))
         data = parse(tasks_cli(home, "get", "--id", added["id"]))
-        assert data["title"] == "get flag"
+        assert data["subject"] == "get flag"
 
     def test_get_nonexistent(self, shared_env):
         home, _, _ = shared_env
@@ -250,56 +250,56 @@ class TestGetTask:
 class TestUpdateTask:
     def test_update_status_done(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "to complete"))
-        data = parse(tasks_cli(home, "update", added["id"], "--status", "done"))
-        assert data["status"] == "done"
+        added = parse(tasks_cli(home, "create", "to complete"))
+        data = parse(tasks_cli(home, "update", added["id"], "--status", "completed"))
+        assert data["status"] == "completed"
         assert data["completed_at"] is not None
 
     def test_update_status_back_to_pending(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "reopen"))
-        tasks_cli(home, "update", added["id"], "--status", "done")
+        added = parse(tasks_cli(home, "create", "reopen"))
+        tasks_cli(home, "update", added["id"], "--status", "completed")
         data = parse(tasks_cli(home, "update", added["id"], "--status", "pending"))
         assert data["status"] == "pending"
         assert data["completed_at"] is None
 
     def test_update_title(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "old title"))
-        data = parse(tasks_cli(home, "update", added["id"], "--title", "new title"))
-        assert data["title"] == "new title"
+        added = parse(tasks_cli(home, "create", "old title"))
+        data = parse(tasks_cli(home, "update", added["id"], "--subject", "new title"))
+        assert data["subject"] == "new title"
 
     def test_update_priority(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "reprioritize"))
+        added = parse(tasks_cli(home, "create", "reprioritize"))
         data = parse(tasks_cli(home, "update", added["id"], "--priority", "high"))
         assert data["priority"] == 3
 
     def test_update_via_flag(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "flag update"))
-        data = parse(tasks_cli(home, "update", "--id", added["id"], "--title", "updated"))
-        assert data["title"] == "updated"
+        added = parse(tasks_cli(home, "create", "flag update"))
+        data = parse(tasks_cli(home, "update", "--id", added["id"], "--subject", "updated"))
+        assert data["subject"] == "updated"
 
     def test_update_nonexistent(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "update", "nope", "--title", "x")
+        r = tasks_cli(home, "update", "nope", "--subject", "x")
         assert r.returncode != 0
 
     def test_update_requires_id(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "update", "--title", "x")
+        r = tasks_cli(home, "update", "--subject", "x")
         assert r.returncode != 0
 
     def test_update_invalid_status(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "bad status"))
+        added = parse(tasks_cli(home, "create", "bad status"))
         r = tasks_cli(home, "update", added["id"], "--status", "invalid")
         assert r.returncode != 0
 
     def test_update_due_in_hours(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "push me", "--due-in-hours", "1"))
+        added = parse(tasks_cli(home, "create", "push me", "--due-in-hours", "1"))
         assert added["due_date"] is not None
         original_due = added["due_date"]
         data = parse(tasks_cli(home, "update", added["id"], "--due-in-days", "7"))
@@ -308,7 +308,7 @@ class TestUpdateTask:
 
     def test_update_due_datetime(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "specific time"))
+        added = parse(tasks_cli(home, "create", "specific time"))
         data = parse(
             tasks_cli(
                 home,
@@ -327,20 +327,20 @@ class TestUpdateTask:
 class TestDeleteTask:
     def test_delete(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "delete me"))
+        added = parse(tasks_cli(home, "create", "delete me"))
         data = parse(tasks_cli(home, "delete", added["id"]))
         assert data["status"] == "deleted"
 
     def test_delete_removes_from_list(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "delete me 2"))
+        added = parse(tasks_cli(home, "create", "delete me 2"))
         tasks_cli(home, "delete", added["id"])
         items = parse(tasks_cli(home, "list", "--json"))
         assert not any(i["id"] == added["id"] for i in items)
 
     def test_delete_removes_metadata_file(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "with meta", "--initial-metadata", "notes"))
+        added = parse(tasks_cli(home, "create", "with meta", "--initial-metadata", "notes"))
         meta_path = Path(added["metadata_path"])
         assert meta_path.exists()
         tasks_cli(home, "delete", added["id"])
@@ -348,7 +348,7 @@ class TestDeleteTask:
 
     def test_delete_via_flag(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "flag delete"))
+        added = parse(tasks_cli(home, "create", "flag delete"))
         data = parse(tasks_cli(home, "delete", "--id", added["id"]))
         assert data["status"] == "deleted"
 
@@ -366,10 +366,10 @@ class TestDeleteTask:
 class TestSearchTasks:
     def test_search_finds_match(self, shared_env):
         home, _, _ = shared_env
-        parse(tasks_cli(home, "add", "unique_searchterm_xyz"))
+        parse(tasks_cli(home, "create", "unique_searchterm_xyz"))
         items = parse(tasks_cli(home, "search", "unique_searchterm_xyz", "--json"))
         assert len(items) >= 1
-        assert any("unique_searchterm_xyz" in i["title"] for i in items)
+        assert any("unique_searchterm_xyz" in i["subject"] for i in items)
 
     def test_search_no_match(self, shared_env):
         home, _, _ = shared_env
@@ -388,29 +388,29 @@ class TestSearchTasks:
 
     def test_search_excludes_completed(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "searchdone_abc"))
-        tasks_cli(home, "update", added["id"], "--status", "done")
+        added = parse(tasks_cli(home, "create", "searchdone_abc"))
+        tasks_cli(home, "update", added["id"], "--status", "completed")
         items = parse(tasks_cli(home, "search", "searchdone_abc", "--json"))
         assert not any(i["id"] == added["id"] for i in items)
 
     def test_search_show_completed(self, shared_env):
         home, _, _ = shared_env
         items = parse(tasks_cli(home, "search", "searchdone_abc", "--show-completed", "--json"))
-        assert any("searchdone_abc" in i["title"] for i in items)
+        assert any("searchdone_abc" in i["subject"] for i in items)
 
 
 class TestCompletedFiltering:
     def test_list_excludes_completed(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "will complete"))
-        tasks_cli(home, "update", added["id"], "--status", "done")
+        added = parse(tasks_cli(home, "create", "will complete"))
+        tasks_cli(home, "update", added["id"], "--status", "completed")
         items = parse(tasks_cli(home, "list", "--json"))
         assert not any(i["id"] == added["id"] for i in items)
 
     def test_list_show_completed(self, shared_env):
         home, _, _ = shared_env
         items = parse(tasks_cli(home, "list", "--show-completed", "--json"))
-        assert any(i["status"] == "done" for i in items)
+        assert any(i["status"] == "completed" for i in items)
 
 
 # === Reminder CRUD ===
@@ -443,7 +443,7 @@ class TestRemindSet:
 
     def test_set_linked_to_task(self, shared_env):
         home, _, _ = shared_env
-        task = parse(tasks_cli(home, "add", "linked task"))
+        task = parse(tasks_cli(home, "create", "linked task"))
         data = parse(tasks_cli(home, "remind", "check this", "--task", task["id"], "--in-hours", "1"))
         assert data["task_id"] == task["id"]
         assert data["status"] == "scheduled"
@@ -513,7 +513,7 @@ class TestRemindList:
 
     def test_list_filter_by_task(self, shared_env):
         home, _, _ = shared_env
-        task = parse(tasks_cli(home, "add", "filter task"))
+        task = parse(tasks_cli(home, "create", "filter task"))
         parse(tasks_cli(home, "remind", "linked reminder", "--task", task["id"], "--in-hours", "2"))
         parse(tasks_cli(home, "remind", "unlinked reminder", "--in-hours", "2"))
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
@@ -546,12 +546,12 @@ class TestRemindDelete:
 
     def test_delete_does_not_affect_task(self, shared_env):
         home, _, _ = shared_env
-        task = parse(tasks_cli(home, "add", "survives"))
+        task = parse(tasks_cli(home, "create", "survives"))
         s = parse(tasks_cli(home, "remind", "linked delete test", "--task", task["id"], "--in-hours", "1"))
         tasks_cli(home, "remind", "delete", s["id"])
         # Task should still exist
         data = parse(tasks_cli(home, "get", task["id"]))
-        assert data["title"] == "survives"
+        assert data["subject"] == "survives"
 
 
 class TestRemindUpdate:
@@ -574,7 +574,7 @@ class TestRemindUpdate:
 class TestCascadeDeletion:
     def test_delete_task_cascades_reminders(self, shared_env):
         home, _, _ = shared_env
-        task = parse(tasks_cli(home, "add", "cascade test"))
+        task = parse(tasks_cli(home, "create", "cascade test"))
         r1 = parse(tasks_cli(home, "remind", "linked 1", "--task", task["id"], "--in-hours", "1"))
         r2 = parse(tasks_cli(home, "remind", "linked 2", "--task", task["id"], "--in-hours", "2"))
 
@@ -593,7 +593,7 @@ class TestAutoReminders:
     def test_due_date_creates_auto_reminders(self, shared_env):
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "add", "auto reminder task", "--due-datetime", future, "--timezone", "UTC"))
+        task = parse(tasks_cli(home, "create", "auto reminder task", "--due-datetime", future, "--timezone", "UTC"))
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         auto = [i for i in items if i["auto_generated"]]
         # Should have reminders for 1 week, 1 day, 1 hour, 15 min before
@@ -603,7 +603,7 @@ class TestAutoReminders:
         home, _, _ = shared_env
         # Due in 30 minutes: only the 15-min pre-due reminder plus the at-due decision fire remain
         future = (datetime.now(UTC) + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "add", "soon task", "--due-datetime", future, "--timezone", "UTC"))
+        task = parse(tasks_cli(home, "create", "soon task", "--due-datetime", future, "--timezone", "UTC"))
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         auto = [i for i in items if i["auto_generated"]]
         assert len(auto) == 2
@@ -614,7 +614,7 @@ class TestAutoReminders:
     def test_at_due_reminder_carries_decision_menu(self, shared_env):
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "add", "decision task", "--due-datetime", future, "--timezone", "UTC"))
+        task = parse(tasks_cli(home, "create", "decision task", "--due-datetime", future, "--timezone", "UTC"))
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         at_due = [i for i in items if i["schedule"] == "auto: at due"]
         assert len(at_due) == 1
@@ -626,12 +626,12 @@ class TestAutoReminders:
     def test_done_status_cleans_auto_reminders(self, shared_env):
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "add", "done cleanup", "--due-datetime", future, "--timezone", "UTC"))
+        task = parse(tasks_cli(home, "create", "done cleanup", "--due-datetime", future, "--timezone", "UTC"))
         # Verify auto reminders exist
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         assert any(i["auto_generated"] for i in items)
         # Mark done
-        tasks_cli(home, "update", task["id"], "--status", "done")
+        tasks_cli(home, "update", task["id"], "--status", "completed")
         # Auto reminders should be gone
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         auto = [i for i in items if i["auto_generated"]]
@@ -640,7 +640,7 @@ class TestAutoReminders:
     def test_cascade_deletes_auto_reminders(self, shared_env):
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "add", "cascade auto", "--due-datetime", future, "--timezone", "UTC"))
+        task = parse(tasks_cli(home, "create", "cascade auto", "--due-datetime", future, "--timezone", "UTC"))
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         assert len(items) >= 1
         tasks_cli(home, "delete", task["id"])
@@ -655,19 +655,19 @@ class TestAutoReminders:
 class TestVerbs:
     def test_done_marks_task_done(self, shared_env):
         home, _, _ = shared_env
-        task = parse(tasks_cli(home, "add", "verb done"))
+        task = parse(tasks_cli(home, "create", "verb done"))
         data = parse(tasks_cli(home, "done", task["id"]))
-        assert data["status"] == "done"
+        assert data["status"] == "completed"
 
     def test_postpone_sets_new_due_from_now(self, shared_env):
         home, _, _ = shared_env
-        task = parse(tasks_cli(home, "add", "verb postpone"))
+        task = parse(tasks_cli(home, "create", "verb postpone"))
         data = parse(tasks_cli(home, "postpone", task["id"], "--in-days", "2"))
         assert data["due_date"] is not None
 
     def test_postpone_without_timing_errors(self, shared_env):
         home, _, _ = shared_env
-        task = parse(tasks_cli(home, "add", "verb postpone bad"))
+        task = parse(tasks_cli(home, "create", "verb postpone bad"))
         r = tasks_cli(home, "postpone", task["id"])
         assert r.returncode != 0
 
@@ -742,7 +742,7 @@ class TestDaemonNotifications:
         home, notif_dir = test_home
         proc = start_daemon(home, notif_dir)
         try:
-            task = parse(tasks_cli(home, "add", "already late", "--due-in-minutes", "5"))
+            task = parse(tasks_cli(home, "create", "already late", "--due-in-minutes", "5"))
             past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
             conn = sqlite3.connect(home / ".tasks" / "tasks.db")
             conn.execute("UPDATE tasks SET due_date = ? WHERE id = ?", (past, task["id"]))
@@ -1285,36 +1285,36 @@ class TestDaemonLifecycle:
 
 
 class TestNativeSurface:
-    """CLI parity with the native task tools: the `create` verb and `--subject`/status aliases."""
+    """CLI parity with the native task tools: the `create` verb, `--subject`, and status words."""
 
-    def test_create_is_an_alias_of_add(self, shared_env):
+    def test_create_makes_a_task(self, shared_env):
         home, _, _ = shared_env
         data = parse(tasks_cli(home, "create", "made with create"))
-        assert data["title"] == "made with create"
+        assert data["subject"] == "made with create"
         assert data["status"] == "pending"
 
-    def test_subject_sets_title_on_create(self, shared_env):
+    def test_subject_sets_the_subject_on_create(self, shared_env):
         home, _, _ = shared_env
         data = parse(tasks_cli(home, "create", "--subject", "subject wins"))
-        assert data["title"] == "subject wins"
+        assert data["subject"] == "subject wins"
 
-    def test_subject_sets_title_on_update(self, shared_env):
+    def test_subject_sets_the_subject_on_update(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "before subject"))
+        added = parse(tasks_cli(home, "create", "before subject"))
         data = parse(tasks_cli(home, "update", added["id"], "--subject", "after subject"))
-        assert data["title"] == "after subject"
+        assert data["subject"] == "after subject"
 
     def test_update_status_in_progress_stays_listed(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "wip via cli"))
+        added = parse(tasks_cli(home, "create", "wip via cli"))
         data = parse(tasks_cli(home, "update", added["id"], "--status", "in_progress"))
         assert data["status"] == "in_progress"
         listing = parse(tasks_cli(home, "list", "--json"))
         assert any(t["id"] == added["id"] for t in listing)
 
-    def test_update_status_completed_is_done(self, shared_env):
+    def test_update_status_completed_closes_a_task(self, shared_env):
         home, _, _ = shared_env
-        added = parse(tasks_cli(home, "add", "close via completed"))
+        added = parse(tasks_cli(home, "create", "close via completed"))
         data = parse(tasks_cli(home, "update", added["id"], "--status", "completed"))
-        assert data["status"] == "done"
+        assert data["status"] == "completed"
         assert data["completed_at"] is not None

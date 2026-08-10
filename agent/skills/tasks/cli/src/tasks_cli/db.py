@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 # Head schema version. Bump this in the same commit as a new _migrate_vN_to_vN+1, and assert against
 # it in tests rather than hard-coding an integer, so adding a migration cannot break unrelated tests.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class Task(TypedDict, total=False):
     id: str
-    title: str
+    subject: str
     status: str
     priority: int
     due_date: str | None
@@ -349,6 +349,32 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection):
     logger.info("Migrated schema v5 -> v6")
 
 
+def _migrate_v6_to_v7(conn: sqlite3.Connection):
+    """v6 -> v7: rename the `title` column to `subject` and the `done` status value to `completed`.
+    SQLite cannot alter a column name inside a CHECK in place, so rebuild the table, preserving
+    every row."""
+    conn.execute("""
+        CREATE TABLE tasks_v7 (
+            id TEXT PRIMARY KEY,
+            subject TEXT NOT NULL,
+            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed')),
+            priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
+            due_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            backburner INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        INSERT INTO tasks_v7 (id, subject, status, priority, due_date, created_at, completed_at, backburner)
+        SELECT id, title, CASE WHEN status = 'done' THEN 'completed' ELSE status END,
+               priority, due_date, created_at, completed_at, backburner FROM tasks
+    """)
+    conn.execute("DROP TABLE tasks")
+    conn.execute("ALTER TABLE tasks_v7 RENAME TO tasks")
+    logger.info("Migrated schema v6 -> v7")
+
+
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else None
@@ -418,6 +444,11 @@ def init_db(data_dir: Path):
             _migrate_v5_to_v6(conn)
             conn.execute("UPDATE schema_version SET version = 6")
             version = 6
+
+        if version < 7:
+            _migrate_v6_to_v7(conn)
+            conn.execute("UPDATE schema_version SET version = 7")
+            version = 7
 
         conn.commit()
 
