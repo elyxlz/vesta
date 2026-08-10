@@ -339,6 +339,7 @@ function AgentCarouselItem({
         status={agent.status}
         activityState={agent.activityState}
         operation={agent.operation}
+        booting={agent.booting}
         orb={
           <Animated.View
             style={[styles.orbHandoff, { transform: [{ scale: orbScale }] }]}
@@ -356,6 +357,7 @@ function AgentCarouselItem({
                   status={agent.status}
                   activityState={agent.activityState}
                   operation={agent.operation}
+                  booting={agent.booting}
                   size={AGENT_IDENTITY_ORB_SIZE}
                 />
               </BootTransitionTarget>

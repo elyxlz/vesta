@@ -108,6 +108,10 @@ class State:
     # this, so a concurrent interrupting notification queues and waits rather than preempting the
     # boot turn mid-stream.
     noninterruptible_turn_active: bool = False
+    # Non-interruptible boot turns still to finish this boot. Set once at startup from the
+    # collected boot batch and decremented as each is consumed; GET /status reports
+    # boot_complete when it reaches zero, which is how clients label a booting agent.
+    boot_turns_pending: int = 0
     # File paths of the notification the current turn is handling (empty for user-message turns).
     # The message loop clears these after the turn; the restart/stop tools clear them first when an
     # intentional restart fires mid-turn, since the notification is already handled and its file

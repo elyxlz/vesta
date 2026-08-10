@@ -12,6 +12,7 @@ export { orbColors } from "@/design-tokens";
 interface AgentLike {
   status: AgentStatus;
   operation: ServerOperation | null;
+  booting?: boolean;
 }
 
 export function getAgentVisualStatus(
@@ -39,8 +40,18 @@ function resolveStatus(
   if (!agent) return { label: "", orbState: "off" };
 
   return {
-    label: agentStatusLabel(agent.status, activityState, agent.operation),
-    orbState: agentOrbState(agent.status, activityState, agent.operation),
+    label: agentStatusLabel(
+      agent.status,
+      activityState,
+      agent.operation,
+      agent.booting,
+    ),
+    orbState: agentOrbState(
+      agent.status,
+      activityState,
+      agent.operation,
+      agent.booting,
+    ),
   };
 }
 

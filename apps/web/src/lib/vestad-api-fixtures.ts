@@ -21,12 +21,14 @@ export const vestadApiFixtures = {
   ],
   "agents": [
     {
+      "booting": false,
       "name": "sample-agent",
       "startedAt": "2026-01-01T00:00:00Z",
       "status": "alive",
       "ws_port": 4200
     },
     {
+      "booting": false,
       "name": "stopped-agent",
       "status": "stopped",
       "ws_port": 4201

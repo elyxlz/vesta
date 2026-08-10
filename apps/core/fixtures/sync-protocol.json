@@ -3,6 +3,7 @@
     "agent": {
       "info": {
         "activityState": "thinking",
+        "booting": false,
         "buildPhase": null,
         "operation": "backing_up",
         "services": {
@@ -101,6 +102,7 @@
         "sample-agent": {
           "info": {
             "activityState": "thinking",
+            "booting": false,
             "buildPhase": null,
             "operation": "backing_up",
             "services": {

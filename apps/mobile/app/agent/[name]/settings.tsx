@@ -64,6 +64,7 @@ function AgentSettingsContent() {
         status={agent?.status ?? "not_found"}
         activityState={activityState}
         operation={agent?.operation ?? null}
+        booting={agent?.booting}
         style={styles.identityCard}
       />
       <FormSection

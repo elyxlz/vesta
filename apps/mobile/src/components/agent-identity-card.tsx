@@ -17,6 +17,7 @@ export function AgentIdentityCard({
   status,
   activityState,
   operation = null,
+  booting = false,
   orb,
   showStatus = true,
   style,
@@ -25,6 +26,7 @@ export function AgentIdentityCard({
   status: AgentStatus;
   activityState: AgentActivityState;
   operation?: AgentOperation | null;
+  booting?: boolean;
   orb?: ReactNode;
   showStatus?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -38,6 +40,7 @@ export function AgentIdentityCard({
           status={status}
           activityState={activityState}
           operation={operation}
+          booting={booting}
           size={AGENT_IDENTITY_ORB_SIZE}
         />
       )}
@@ -47,6 +50,7 @@ export function AgentIdentityCard({
             status={status}
             activityState={activityState}
             operation={operation}
+            booting={booting}
             centered
           />
         ) : null}

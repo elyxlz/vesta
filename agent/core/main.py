@@ -89,13 +89,17 @@ async def run_vesta(
     # Boot-time control-flow runs as boot turns: enqueued first (before the processor/input/monitor
     # tasks start) and processed in order before other work, so the agent converges and orients
     # first. Migrations may opt into interruptible batches; every other boot turn is non-interruptible.
-    for turn in collect_boot_turns(
+    boot_turns = collect_boot_turns(
         state=state,
         config=config,
         config_issues=config_issues or [],
         agent_message=restart_reason.agent_message,
         first_start=first_start,
-    ):
+    )
+    # Counted before the WS server binds, so GET /status never reports a boot complete that hasn't
+    # started. Only the non-interruptible turns count: once they are done the agent is preemptible.
+    state.boot_turns_pending = sum(1 for turn in boot_turns if not turn.interruptible)
+    for turn in boot_turns:
         await message_queue.put(turn)
 
     # Bind the HTTP/WS server on every boot, including first start. vestad reaches
