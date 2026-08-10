@@ -105,9 +105,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     # add
-    p_add = sub.add_parser("add", help="Add a new task")
+    p_add = sub.add_parser("add", aliases=["create"], help="Add a new task (alias: create)")
     p_add.add_argument("title_pos", nargs="?", default=None, metavar="title")
     p_add.add_argument("--title", default=None)
+    p_add.add_argument("--subject", default=None, help="Alias for --title")
     _add_due_args(p_add)
     p_add.add_argument("--priority", default="normal", help="low/normal/high or 1/2/3")
     p_add.add_argument("--initial-metadata", default=None)
@@ -131,8 +132,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # update
     p_update = sub.add_parser("update", help="Update a task")
     _add_id_args(p_update)
-    p_update.add_argument("--status", default=None)
+    p_update.add_argument("--status", default=None, help="pending, in_progress, or completed (completed == done)")
     p_update.add_argument("--title", default=None)
+    p_update.add_argument("--subject", default=None, help="Alias for --title")
     p_update.add_argument("--priority", default=None)
     _add_due_args(p_update)
     p_update.add_argument("--clear-due", action="store_true", help="Remove the task's due date and its auto reminders")
@@ -387,8 +389,8 @@ subcommands:
 
 
 def _handle_task(args, config: Config):
-    if args.command == "add":
-        title = _require_arg(args.title_pos or args.title, "title", 'tasks add "title" or tasks add --title "title"')
+    if args.command in ("add", "create"):
+        title = _require_arg(args.title_pos or args.title or args.subject, "title", 'tasks add "title" or tasks add --title "title"')
         _warn_long_title(title)
         result = commands.add_task(
             config,
@@ -418,13 +420,14 @@ def _handle_task(args, config: Config):
         result = commands.get_task(config, task_id=task_id)
     elif args.command == "update":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks update <id> or tasks update --id <id>")
-        if args.title is not None:
-            _warn_long_title(args.title)
+        title = args.title or args.subject
+        if title is not None:
+            _warn_long_title(title)
         result = commands.update_task(
             config,
             task_id=task_id,
             status=args.status,
-            title=args.title,
+            title=title,
             priority=args.priority,
             due=commands.DueSpec(
                 due_datetime=args.due_datetime,

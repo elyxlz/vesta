@@ -70,13 +70,13 @@ class ReminderSpec(BaseModel):
     fuzz_minutes: int | None = None
 
 
-# Overdue pending tasks (past due_date) always float to the top, ordered by most overdue first.
-# datetime() normalizes the ISO 'T'/offset form to SQLite's space-separated form so the
+# Overdue open tasks (not done, past due_date) always float to the top, ordered by most overdue
+# first. datetime() normalizes the ISO 'T'/offset form to SQLite's space-separated form so the
 # comparison is chronological, not lexicographic. Non-overdue tasks keep priority/due/created order.
 _TASK_ORDER_BY = (
     " ORDER BY"
-    " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN 0 ELSE 1 END ASC,"
-    " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN datetime(due_date) END ASC,"
+    " CASE WHEN status != 'done' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN 0 ELSE 1 END ASC,"
+    " CASE WHEN status != 'done' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN datetime(due_date) END ASC,"
     " priority DESC, due_date ASC NULLS LAST, created_at DESC"
 )
 
@@ -366,9 +366,10 @@ def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status
     if not new_due_date:
         return
     reminder_title = title if title is not None else row["title"]
-    # Only create reminders if the task is (or will be) pending.
+    # Only create reminders if the task is (or will be) open. in_progress is open like pending;
+    # only done stops reminding.
     effective_status = status if status is not None else row["status"]
-    if effective_status == "pending":
+    if effective_status != "done":
         db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
 
 
@@ -428,8 +429,12 @@ def update_task(
     due: DueSpec | None = None,
     backburner: bool | None = None,
 ) -> dict:
-    if status and status not in ("pending", "done"):
-        raise ValueError(f"Status must be pending or done, got {status}")
+    # `completed` is accepted as an alias for the stored `done`; the store keeps one status
+    # vocabulary (pending/in_progress/done).
+    if status == "completed":
+        status = "done"
+    if status and status not in ("pending", "in_progress", "done"):
+        raise ValueError(f"Status must be pending, in_progress, or completed, got {status}")
     if priority is not None:
         priority = normalize_priority(priority)
 
@@ -445,21 +450,21 @@ def update_task(
         if status is not None:
             updates.append("status = ?")
             params.append(status)
+            was_done = result["status"] == "done"
             if status == "done":
                 updates.append("completed_at = ?")
                 params.append(_now_utc().isoformat())
                 # A finished task stops reminding entirely, so this clears owned reminders too, not
                 # just auto ones. A due-date change below rebuilds only the auto ones (delete_auto).
                 db.delete_task_reminders(conn, task_id)
-            elif status == "pending":
+            elif was_done:
+                # Reopening from done (to pending or in_progress): clear completion and, unless the
+                # due date is being changed below (that block rebuilds them), recreate the auto
+                # reminders the done transition deleted. A pending<->in_progress toggle is not a
+                # reopen, so it never touches reminders and cannot duplicate them.
                 updates.append("completed_at = NULL")
-                # Recreate auto-reminders if task has a due date and is reopened.
-                # If due date is also being updated in this call, skip here;
-                # the due-date block below handles reminder recreation with the new value.
-                if not due_date_changed:
-                    old_due = result["due_date"]
-                    if old_due:
-                        db.create_auto_reminders(conn, task_id, result["title"], old_due)
+                if not due_date_changed and result["due_date"]:
+                    db.create_auto_reminders(conn, task_id, result["title"], result["due_date"])
 
         new_backburner = _backburner_update(
             conn, result, backburner=backburner, due_date_changed=due_date_changed, new_due_date=new_due_date, updates=updates
@@ -599,7 +604,7 @@ def build_digest(config: Config, *, now: datetime | None = None) -> str | None:
     """The daily digest message, or None when nothing needs attention."""
     now = now or _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        pending = conn.execute("SELECT id, title, priority, due_date, created_at, backburner FROM tasks WHERE status = 'pending'").fetchall()
+        pending = conn.execute("SELECT id, title, priority, due_date, created_at, backburner FROM tasks WHERE status != 'done'").fetchall()
 
     overdue: list[tuple[dict, datetime]] = []
     stale: list[tuple[dict, datetime]] = []
