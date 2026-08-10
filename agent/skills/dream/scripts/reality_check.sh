@@ -53,7 +53,11 @@ fi
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | grep -icE 'error|traceback')
+    # A healthy summary line such as "45 matching, 0 new, 0 error(s)" carries the word without
+    # reporting a failure, so drop lines whose error or warning count is zero before counting.
+    errors=$(tail -n 2000 "$log" \
+        | grep -ivE '(^|[^0-9])0 (error|warning)s?\(?s?\)?|no errors' \
+        | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in its recent tail; read it and find the producer"
     else
