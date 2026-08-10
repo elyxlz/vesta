@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib as pl
 import typing as tp
 
 from aiohttp import web
@@ -29,6 +30,10 @@ class SttProvider(tp.Protocol):
 
     async def relay(self, browser_ws: web.WebSocketResponse, creds: dict[str, str], stt_domain: dict) -> None:
         """Open upstream STT connection, relay audio frames <-> transcript events."""
+        ...
+
+    async def transcribe_file(self, audio_path: pl.Path, creds: dict[str, str], stt_domain: dict) -> str:
+        """One-shot transcription of an audio file. Returns the trimmed transcript, empty when none."""
         ...
 
     async def usage(self, creds: dict[str, str]) -> dict:

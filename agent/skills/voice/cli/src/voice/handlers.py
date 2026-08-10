@@ -62,21 +62,6 @@ def _spawn_invalidation(scope: str) -> None:
     task.add_done_callback(_INVALIDATION_TASKS.discard)
 
 
-def _provider_name(entry: voice_config.Domain | None) -> str | None:
-    """The domain's configured provider name, or None when unset."""
-    if not entry or "provider" not in entry:
-        return None
-    name = entry["provider"]
-    return name if isinstance(name, str) and name else None
-
-
-def _provider_creds(entry: voice_config.Domain, provider_name: str) -> dict[str, str]:
-    creds = entry["credentials"] if "credentials" in entry else None
-    if not isinstance(creds, dict) or provider_name not in creds:
-        return {}
-    return creds[provider_name]
-
-
 def _resolve_domain(
     domain: tp.Literal["stt", "tts"],
 ) -> tuple[dict, str, tp.Any, dict[str, str]] | web.Response:
@@ -86,13 +71,13 @@ def _resolve_domain(
     """
     cfg = voice_config.load(DATA_DIR)
     entry = cfg[domain]
-    provider_name = _provider_name(entry)
+    provider_name = voice_config.provider_name(entry)
     if not entry or provider_name is None:
         return web.json_response({"error": f"{domain.upper()} not configured"}, status=503)
     provider = providers.get_stt(provider_name) if domain == "stt" else providers.get_tts(provider_name)
     if not provider:
         return web.json_response({"error": f"unknown {domain} provider: {provider_name}"}, status=500)
-    return entry, provider_name, provider, _provider_creds(entry, provider_name)
+    return entry, provider_name, provider, voice_config.provider_creds(entry, provider_name)
 
 
 async def _json_body(request: web.Request) -> dict | web.Response:
@@ -128,7 +113,7 @@ async def stt_status(_request: web.Request) -> web.Response:
     cfg = voice_config.load(DATA_DIR)
     stt_entry = cfg["stt"]
 
-    provider_name = _provider_name(stt_entry)
+    provider_name = voice_config.provider_name(stt_entry)
     if not stt_entry or provider_name is None:
         return web.json_response({"configured": False, "provider": None})
 
@@ -223,7 +208,7 @@ async def tts_status(_request: web.Request) -> web.Response:
     cfg = voice_config.load(DATA_DIR)
     tts_entry = cfg["tts"]
 
-    provider_name = _provider_name(tts_entry)
+    provider_name = voice_config.provider_name(tts_entry)
     if not tts_entry or provider_name is None:
         return web.json_response({"configured": False, "provider": None})
 
