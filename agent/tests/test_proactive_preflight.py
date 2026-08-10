@@ -57,19 +57,32 @@ def _home(tmp_path, daemons: str = "") -> pl.Path:
     return tmp_path
 
 
-def _reality_check(home: pl.Path, body: str = "echo 'all probes green'\n", ran_hours_ago: float | None = 1.0) -> None:
-    """A stub reality_check.sh, plus a run record of the given age (None writes no record)."""
+def _reality_check(home: pl.Path, body: str = "echo 'all probes green'\n", dreamed_hours_ago: float | None = 1.0) -> None:
+    """A stub reality_check.sh, plus a dreamer summary of the given age (None writes no dream record).
+
+    The summary files are the record the watchdog ages off, because they are written by the dream
+    itself on every box that dreams.
+    """
     scripts = home / "agent/skills/dream/scripts"
     scripts.mkdir(parents=True, exist_ok=True)
     scripts.joinpath("reality_check.sh").write_text(f"#!/bin/sh\n{body}")
+    (home / "agent/data").mkdir(parents=True, exist_ok=True)
+    dreamer = home / "agent/dreamer"
+    dreamer.mkdir(parents=True, exist_ok=True)
+    for stale in dreamer.glob("*.md"):
+        stale.unlink()
+    if dreamed_hours_ago is None:
+        return
+    when = datetime.now(UTC) - timedelta(hours=dreamed_hours_ago)
+    dreamer.joinpath(f"{when.strftime('%Y-%m-%dT%H%M')}.md").write_text("nightly summary\n")
+
+
+def _history(home: pl.Path, ran_hours_ago: float) -> None:
+    """The optional history file some boxes keep, which is the fallback record."""
     data = home / "agent/data"
     data.mkdir(parents=True, exist_ok=True)
-    record = data / "reality-history.tsv"
-    if ran_hours_ago is None:
-        record.unlink(missing_ok=True)
-        return
     when = datetime.now(UTC) - timedelta(hours=ran_hours_ago)
-    record.write_text(f"{when.strftime('%Y-%m-%dT%H:%M:%SZ')}\t0\n")
+    data.joinpath("reality-history.tsv").write_text(f"{when.strftime('%Y-%m-%dT%H:%M:%SZ')}\t0\n")
 
 
 def _shim(home: pl.Path, name: str, script: str) -> None:
@@ -295,10 +308,11 @@ def test_a_missing_restart_skill_goes_red(tmp_path):
     assert "no daemon is checked at all" in run.stdout
 
 
-def test_a_recent_reality_check_leaves_the_watchdog_silent(tmp_path):
-    # The dream ran last night, so the probe is fresh and this tick costs one file read.
+def test_a_recent_dream_leaves_the_watchdog_silent(tmp_path):
+    # The dream ran last night and wrote its summary, so nothing is missed and this tick costs one
+    # directory listing. No history file exists here, which is the state of every stock box.
     home = _home(tmp_path)
-    _reality_check(home, ran_hours_ago=3)
+    _reality_check(home, dreamed_hours_ago=2)
 
     run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
 
@@ -306,23 +320,36 @@ def test_a_recent_reality_check_leaves_the_watchdog_silent(tmp_path):
     assert "WATCHDOG" not in run.stdout
 
 
-def test_a_stale_reality_check_is_run_from_the_tick(tmp_path):
+def test_a_stale_dream_runs_the_reality_check_from_the_tick(tmp_path):
     # The point of the whole branch: the probe that detects a missed dream is run by the dream, so
     # something that is not the dream has to be able to run it.
     home = _home(tmp_path)
-    _reality_check(home, body="echo 'all probes green'\n", ran_hours_ago=40)
+    _reality_check(home, body="echo 'all probes green'\n", dreamed_hours_ago=40)
 
     run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "WATCHDOG the reality check last ran 40h ago" in run.stdout
+    assert "WATCHDOG the last dream was 40h ago" in run.stdout
     assert "WATCHDOG the reality check ran clean (exit 0)." in run.stdout
     assert "CHECK" not in run.stdout
 
 
+def test_the_history_file_is_the_fallback_when_a_box_keeps_one(tmp_path):
+    # Nothing in the repo writes that file, so it cannot be the primary record, but a box that does
+    # keep one is still aged off it when there are no summaries to read.
+    home = _home(tmp_path)
+    _reality_check(home, dreamed_hours_ago=None)
+    _history(home, ran_hours_ago=3)
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "WATCHDOG" not in run.stdout
+
+
 def test_a_stale_reality_check_that_reds_reaches_the_exit_code(tmp_path):
     home = _home(tmp_path)
-    _reality_check(home, body="echo 'RED events.db missing at /nope'\nexit 1\n", ran_hours_ago=40)
+    _reality_check(home, body="echo 'RED events.db missing at /nope'\nexit 1\n", dreamed_hours_ago=40)
 
     run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
 
@@ -335,24 +362,26 @@ def test_a_clean_probe_is_not_a_finding_because_a_line_starts_with_red(tmp_path)
     # The probe's own summary can open with the word RED while reporting nothing wrong, so the
     # verdict is its exit code. A text match here calls a healthy box a finding on every tick.
     home = _home(tmp_path)
-    _reality_check(home, body="echo 'RED count over last runs (oldest first): 0 0 0'\n", ran_hours_ago=40)
+    _reality_check(home, body="echo 'RED count over last runs (oldest first): 0 0 0'\n", dreamed_hours_ago=40)
 
     run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
 
     assert run.returncode == 0, run.stdout + run.stderr
+    assert "RED count over last runs" not in run.stdout
     assert "WATCHDOG the reality check ran clean (exit 0)." in run.stdout
     assert "CHECK" not in run.stdout
 
 
-def test_the_watchdog_stamps_its_own_run_when_nothing_records_one(tmp_path):
-    # Not every box keeps a run record. Without a stamp of its own the watchdog would re-run the
-    # probe on every tick, which for a probe that walks the filesystem is not a cheap mistake.
+def test_no_record_at_all_is_reported_as_unknown_not_as_missed(tmp_path):
+    # A box that has never dreamed and never stamped has no evidence either way, and the stamp is a
+    # throttle rather than evidence, so a second tick stays quiet instead of walking the filesystem.
     home = _home(tmp_path)
-    _reality_check(home, ran_hours_ago=None)
+    _reality_check(home, dreamed_hours_ago=None)
 
     first = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
     second = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
 
+    assert "WATCHDOG no dream record found at all" in first.stdout
     assert "WATCHDOG the reality check ran clean (exit 0)." in first.stdout
     assert second.returncode == 0, second.stdout + second.stderr
     assert "WATCHDOG" not in second.stdout
