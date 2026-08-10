@@ -18,8 +18,13 @@ FAKE_TOKEN = "ghs_" + "A1b2C3d4E5" * 4
 
 
 def _run(*roots: object) -> subprocess.CompletedProcess[str]:
-    """The script takes its roots as one whitespace separated argument."""
-    return subprocess.run(["sh", str(SCRIPT), " ".join(str(r) for r in roots)], capture_output=True, text=True, timeout=180, check=False)
+    """Roots are separate arguments, one per root.
+
+    They used to be joined into a single whitespace separated argument, which made a path
+    containing a space unrepresentable and only worked because the script re-split it. Passing
+    them separately is what a shell caller does, and it is the form the roots loop now reads.
+    """
+    return subprocess.run(["sh", str(SCRIPT), *(str(r) for r in roots)], capture_output=True, text=True, timeout=180, check=False)
 
 
 def test_a_clean_tree_exits_zero(tmp_path):
@@ -107,3 +112,37 @@ def test_package_caches_and_the_git_object_store_are_pruned(tmp_path):
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "HIT" not in run.stdout
+
+
+def test_the_callers_cwd_cannot_blind_the_by_name_scan(tmp_path):
+    # The name patterns are arguments for find, not paths in the caller's shell. When they were
+    # left to glob, two matching files in the cwd turned one `-name` into two words, find rejected
+    # the whole expression, the error was swallowed, and the scan printed a confident all-clear
+    # while a real credential store sat in the root it was pointed at.
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / "a.key").write_text("")
+    (cwd / "b.key").write_text("")
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / ".env").write_text("PASSPHRASE=hunter2\n")
+
+    run = subprocess.run(["sh", str(SCRIPT), str(target)], capture_output=True, text=True, timeout=180, check=False, cwd=cwd)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "by NAME" in run.stdout
+    assert ".env" in run.stdout
+
+
+def test_roots_with_a_space_in_the_path_are_one_root_not_two(tmp_path):
+    # The old interface joined roots into a single whitespace separated argument and re-split it,
+    # so a directory whose name contains a space could not be expressed at all.
+    spaced = tmp_path / "my documents"
+    spaced.mkdir()
+    (spaced / "note.txt").write_text(f"TOKEN={FAKE_TOKEN}\n")
+
+    run = _run(spaced)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "was NOT scanned" not in run.stderr
+    assert "by CONTENT" in run.stdout
