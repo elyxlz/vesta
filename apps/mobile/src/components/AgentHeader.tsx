@@ -23,7 +23,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const { colors, dark } = usePreferences();
   const status = agent?.status ?? "not_found";
   const operation = agent?.operation ?? null;
-  const booting = agent?.booting ?? false;
+  const booting = agent?.booting;
   const openSettings = () =>
     router.push({
       pathname: "/agent/[name]/settings",

@@ -59,9 +59,7 @@ pub async fn get_status(
 
     let status = if rebuilding.is_rebuilding(name) {
         docker::AgentStatus::Rebuilding
-    } else if cache.operations().get(&docker::normalize_name(name))
-        == Some(&docker::AgentOperation::Restarting)
-    {
+    } else if cache.operation(name) == Some(docker::AgentOperation::Restarting) {
         docker::AgentStatus::Restarting
     } else {
         combined_status(docker, http_client, agents_dir, cache, &cname, &info).await
@@ -95,51 +93,45 @@ pub async fn list_agents(
             started_at: info.started_at.clone(),
         });
     }
-    let entries = apply_restarting(entries, &cache.operations());
-    apply_rebuilding(entries, rebuilding.names())
+    let entries = overlay_status(
+        entries,
+        restarting_names(cache.operations()),
+        docker::AgentStatus::Restarting,
+    );
+    overlay_status(entries, rebuilding.names(), docker::AgentStatus::Rebuilding)
 }
 
-/// Overlay planned restarts onto the listing: an agent mid-restart reports `Restarting` for the
-/// whole cycle, its container possibly stopped or momentarily recreated, so clients render one
-/// deliberate action instead of stopped then starting. Names are sorted for the same
-/// determinism `apply_rebuilding` keeps.
-fn apply_restarting(
-    mut entries: Vec<ListEntry>,
-    operations: &HashMap<String, docker::AgentOperation>,
-) -> Vec<ListEntry> {
-    let mut restarting: Vec<&String> = operations
-        .iter()
-        .filter(|(_, operation)| **operation == docker::AgentOperation::Restarting)
+/// The agents whose in-flight operation projects a status of its own. Only a restart does: it owns
+/// the whole stop/start cycle, while a backup or restore rides the roster's `operation` field and
+/// leaves the container's own status alone.
+fn restarting_names(operations: HashMap<String, docker::AgentOperation>) -> Vec<String> {
+    operations
+        .into_iter()
+        .filter(|(_, operation)| *operation == docker::AgentOperation::Restarting)
         .map(|(name, _)| name)
-        .collect();
-    restarting.sort();
-    for name in restarting {
-        match entries.iter_mut().find(|entry| entry.name == *name) {
-            Some(entry) => entry.status = docker::AgentStatus::Restarting,
-            None => entries.push(ListEntry {
-                name: name.clone(),
-                status: docker::AgentStatus::Restarting,
-                ws_port: 0,
-                booting: false,
-                started_at: None,
-            }),
-        }
-    }
-    entries
+        .collect()
 }
 
-/// Overlay live rebuild state onto the docker-derived listing: a mid-rebuild agent reports
-/// `Rebuilding`, and one whose container is momentarily removed (between the rebuild's remove
-/// and create steps) stays listed instead of vanishing. Names are sorted so the merged list is
+/// Overlay a transitional status onto the docker-derived listing: a named agent takes the status,
+/// and one whose container is momentarily removed (mid-rebuild, or recreated by a restart) stays
+/// listed instead of vanishing, so clients render one deliberate action rather than a gone agent.
+/// Both sides join on the normalized name, and names are sorted so the merged list is
 /// deterministic across polls (the watch channel diffs on equality).
-fn apply_rebuilding(mut entries: Vec<ListEntry>, mut rebuilding: Vec<String>) -> Vec<ListEntry> {
-    rebuilding.sort();
-    for name in rebuilding {
-        match entries.iter_mut().find(|entry| entry.name == name) {
-            Some(entry) => entry.status = docker::AgentStatus::Rebuilding,
+fn overlay_status(
+    mut entries: Vec<ListEntry>,
+    mut names: Vec<String>,
+    status: docker::AgentStatus,
+) -> Vec<ListEntry> {
+    names.sort();
+    for name in names {
+        match entries
+            .iter_mut()
+            .find(|entry| docker::normalize_name(&entry.name) == name)
+        {
+            Some(entry) => entry.status = status,
             None => entries.push(ListEntry {
                 name,
-                status: docker::AgentStatus::Rebuilding,
+                status,
                 ws_port: 0,
                 booting: false,
                 started_at: None,
@@ -495,6 +487,15 @@ impl AgentStatusCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(name);
         let _ = self.invalidations_tx.send(());
+    }
+
+    /// One agent's in-flight operation, joined on the normalized name the registry is keyed by.
+    pub fn operation(&self, name: &str) -> Option<docker::AgentOperation> {
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&docker::normalize_name(name))
+            .copied()
     }
 
     /// Snapshot of every in-flight operation (normalized name -> operation).
@@ -894,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_rebuilding_overrides_status_and_keeps_missing_agents_listed() {
+    fn overlay_status_overrides_status_and_keeps_missing_agents_listed() {
         let entries = vec![
             ListEntry {
                 name: "apollo".into(),
@@ -913,7 +914,11 @@ mod tests {
         ];
         // apollo is mid-rebuild with its container still present; zeus is mid-rebuild
         // with its container removed (it dropped out of the docker listing entirely).
-        let merged = apply_rebuilding(entries, vec!["apollo".into(), "zeus".into()]);
+        let merged = overlay_status(
+            entries,
+            vec!["apollo".into(), "zeus".into()],
+            docker::AgentStatus::Rebuilding,
+        );
         assert_eq!(merged.len(), 3);
         assert_eq!(merged[0].name, "apollo");
         assert_eq!(merged[0].status, docker::AgentStatus::Rebuilding);
@@ -927,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_restarting_projects_the_planned_cycle_even_through_a_recreate() {
+    fn a_planned_restart_projects_its_cycle_even_through_a_recreate() {
         let entries = vec![
             ListEntry {
                 name: "apollo".into(),
@@ -952,7 +957,11 @@ mod tests {
             ("zeus".to_string(), docker::AgentOperation::Restarting),
             ("hera".to_string(), docker::AgentOperation::BackingUp),
         ]);
-        let merged = apply_restarting(entries, &operations);
+        let merged = overlay_status(
+            entries,
+            restarting_names(operations),
+            docker::AgentStatus::Restarting,
+        );
         assert_eq!(merged.len(), 3);
         assert_eq!(merged[0].status, docker::AgentStatus::Restarting);
         assert_eq!(merged[1].status, docker::AgentStatus::Alive);

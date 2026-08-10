@@ -44,13 +44,13 @@ function resolveStatus(
       agent.status,
       activityState,
       agent.operation,
-      agent.booting ?? false,
+      agent.booting,
     ),
     orbState: agentOrbState(
       agent.status,
       activityState,
       agent.operation,
-      agent.booting ?? false,
+      agent.booting,
     ),
   };
 }

@@ -211,7 +211,7 @@ impl MobileApp {
             let mut stable = self
                 .stable_statuses
                 .lock()
-                .expect("stable statuses mutex");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut transitions = Vec::new();
             for agent in agents {
                 // Operations are keyed by normalized name, exactly as the roster joins them.

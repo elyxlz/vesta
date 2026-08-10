@@ -11,6 +11,7 @@ interface AgentLike {
   name: string;
   status: AgentStatus;
   operation: AgentOperation | null;
+  booting?: boolean;
 }
 
 export function useOrbStatus(

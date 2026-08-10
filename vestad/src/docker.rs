@@ -328,13 +328,11 @@ impl AgentStatus {
         }
     }
 
-    /// True while the container is up with its WS/HTTP server bound and serving. The sync tap
-    /// connects in every one of these states: the app-chat echo and the event stream are
-    /// credential-independent, so an unauthenticated or unprovisioned agent still streams events and
-    /// accepts relayed chat (the raw per-agent WS proxy this hub replaced served it regardless of
-    /// auth). The push projection rides the same tap, so it too observes these states, wider than
-    /// the old Alive-only listener, bounded by the same alert-worthiness gate.
-    /// Excludes `Starting` (port not yet bound) and every down/rebuilding state.
+    /// True while the container is up with its WS/HTTP server bound and serving, in every state
+    /// reaching it: the app-chat echo and the event stream are credential-independent, so an
+    /// unauthenticated or unprovisioned agent still streams events and accepts relayed chat (the
+    /// raw per-agent WS proxy this hub replaced served it regardless of auth). Excludes the
+    /// transitional running states, which `dialable` covers, and every down state.
     pub fn serves_ws(self) -> bool {
         matches!(
             self,
@@ -3062,7 +3060,7 @@ mod tests {
             AgentStatus::NotAuthenticated,
             AgentStatus::Unprovisioned,
         ] {
-            assert!(status.serves_ws(), "{} should be tappable", status.human_text());
+            assert!(status.serves_ws(), "{} should serve", status.human_text());
         }
         for status in [
             AgentStatus::Starting,
@@ -3072,10 +3070,8 @@ mod tests {
             AgentStatus::Dead,
             AgentStatus::NotFound,
         ] {
-            assert!(!status.serves_ws(), "{} must not be tapped", status.human_text());
+            assert!(!status.serves_ws(), "{} must not serve", status.human_text());
         }
-        // The dial set is wider than the serving set: the tap connecting is what ends a boot
-        // or a planned restart, so both transitional running states keep their dial loop.
         assert!(AgentStatus::Starting.dialable());
         assert!(AgentStatus::Restarting.dialable());
         assert!(!AgentStatus::Rebuilding.dialable());

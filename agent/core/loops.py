@@ -258,6 +258,14 @@ async def _run_one_turn(
         state.event_bus.set_state("idle")
 
 
+def _consume_boot_turn(state: vm.State, turn: vm.QueuedTurn) -> None:
+    """Count a consumed non-interruptible boot turn (run, delivered as a preempt, or deferred), so
+    GET /status flips boot_complete exactly when the last one is done and the agent is preemptible
+    again. Every path that finishes with an item calls this, or the count never reaches zero."""
+    if not turn.interruptible:
+        state.boot_turns_pending = max(0, state.boot_turns_pending - 1)
+
+
 async def _watch_queue_during_turn(
     process_task: asyncio.Task[None],
     *,
@@ -286,17 +294,11 @@ async def _watch_queue_during_turn(
                 )
                 logger.debug("Preempt sent (priority=now)")
                 clear_notifications(state, arrived.file_paths)
+                _consume_boot_turn(state, arrived)
             else:
                 pending.append(arrived)
         else:
             await cancel_task(queue_task)
-
-
-def _consume_boot_turn(state: vm.State, turn: vm.QueuedTurn) -> None:
-    """Count a consumed non-interruptible boot turn (run or deferred), so GET /status flips
-    boot_complete exactly when the last one is done and the agent is preemptible again."""
-    if not turn.interruptible:
-        state.boot_turns_pending = max(0, state.boot_turns_pending - 1)
 
 
 async def _run_messages_with_preempts(

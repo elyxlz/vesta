@@ -27,6 +27,7 @@ export function rostersEqual(a: AgentRow[], b: AgentRow[]): boolean {
       other.activityState === row.activityState &&
       other.buildPhase === row.buildPhase &&
       other.operation === row.operation &&
+      (other.booting ?? false) === (row.booting ?? false) &&
       other.startedAt === row.startedAt &&
       servicesEqual(row.services, other.services)
     )

@@ -34,7 +34,7 @@ export function GeneralSection() {
           <AgentOrb
             status={agent?.status ?? "not_found"}
             activityState={activityState}
-            booting={agent?.booting ?? false}
+            booting={agent?.booting}
             size={84}
           />
           <View style={styles.identity}>
