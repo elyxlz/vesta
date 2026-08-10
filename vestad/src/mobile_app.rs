@@ -245,6 +245,15 @@ impl MobileApp {
         }
     }
 
+    /// Drop a destroyed agent's last stable status, so a later agent created under the same
+    /// name seeds silently instead of diffing against its predecessor.
+    pub(crate) fn forget_agent(&self, agent: &str) {
+        self.stable_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(agent);
+    }
+
     fn queue_event(&self, agent: &str, event_type: &str, event: serde_json::Value) {
         let queued = QueuedAgentEvent {
             agent: agent.to_string(),
@@ -704,6 +713,17 @@ mod tests {
             drain_status_events(app, worker).await,
             vec![("luna".to_string(), "alive".to_string(), "stopped".to_string())]
         );
+    }
+
+    #[tokio::test]
+    async fn a_forgotten_agents_successor_seeds_silently_under_the_old_name() {
+        let (app, worker, _dir) = lifecycle_app();
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        // Destroyed, then recreated under the same name: the fresh agent's first stable state
+        // must seed like any first sighting, not diff against the dead predecessor.
+        app.forget_agent("luna");
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::SettingUp)]);
+        assert!(drain_status_events(app, worker).await.is_empty());
     }
 
     #[tokio::test]

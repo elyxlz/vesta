@@ -882,6 +882,10 @@ async fn destroy_agent_handler(
     backup::remove_agent_temp_artifacts(&state.docker, &name).await;
     crate::restic::remove_repo(&name);
     state.agent_status_cache.clear_bridge_ip(&name);
+    // Forget the destroyed agent's lifecycle-observation state, so an agent later created under
+    // the same name seeds fresh instead of diffing against its predecessor.
+    state.agent_status_cache.forget_agent(&name);
+    state.mobile_app.forget_agent(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -3232,7 +3236,6 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
-    let operation_state = state.clone();
     agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
         cache: state.agent_status_cache.clone(),
         docker,
@@ -3242,9 +3245,7 @@ pub async fn run_server(cfg: ServerConfig) {
         rebuilding: state.rebuilding.clone(),
         mobile_app: state.mobile_app.clone(),
         sync_hub: state.sync_hub.clone(),
-        gateway_operation_running: Arc::new(move || {
-            operation_state.operation.running_phase().is_some()
-        }),
+        gateway_operation: state.operation.clone(),
     });
     let app = build_router(state.clone());
     spawn_maintenance_task(state.clone());

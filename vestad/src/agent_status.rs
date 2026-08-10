@@ -354,6 +354,17 @@ impl AgentStatusCache {
             .copied()
     }
 
+    /// Drop a destroyed agent's observation state (readiness, tap mark), so a later agent
+    /// created under the same name starts from nothing instead of its predecessor's flags.
+    pub fn forget_agent(&self, name: &str) {
+        let normalized = docker::normalize_name(name);
+        self.readiness
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&normalized);
+        self.set_tap_connected(&normalized, false);
+    }
+
     pub fn subscribe_agents(&self) -> watch::Receiver<Vec<ListEntry>> {
         self.agents_rx.clone()
     }
@@ -572,9 +583,9 @@ pub struct AgentStatusTaskDeps {
     pub rebuilding: docker::RebuildTracker,
     pub mobile_app: MobileApp,
     pub sync_hub: Arc<SyncHub>,
-    /// Whether the gateway's own operation (an update) is running, read per poll: while it is,
+    /// The gateway's one operation slot, read per poll: while an operation (an update) runs,
     /// every agent's lifecycle churn is that operation's doing, not agent news.
-    pub gateway_operation_running: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub gateway_operation: Arc<crate::operation::OperationSlot>,
 }
 
 /// Spawns the background polling loop that keeps the cache fresh and manages
@@ -589,7 +600,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
         rebuilding,
         mobile_app,
         sync_hub,
-        gateway_operation_running,
+        gateway_operation,
     } = deps;
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
@@ -605,7 +616,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             mobile_app.observe_agent_statuses(
                 &agents,
                 &cache.operations().into_keys().collect(),
-                gateway_operation_running(),
+                gateway_operation.running_phase().is_some(),
             );
 
             // Update the agents watch channel (only notifies if changed)
