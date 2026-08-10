@@ -382,6 +382,42 @@ func TestAddContactAllowsTheSameNameForOnePeerUnderBothKeyForms(t *testing.T) {
 	}
 }
 
+// A dual-key peer holds two rows under one name, one LID and one phone JID, so the name the reply
+// command emits matches both. Both rows are the same person, so the name must resolve to that one
+// peer's deliverable phone JID rather than fail as ambiguous (#1961).
+func TestResolveRecipientCollapsesADualKeyPeerToItsPhoneJID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	saveContactUnderBothKeys(t, wac, "Emmy", "Emmy")
+
+	resolved, err := wac.ResolveRecipient("Emmy")
+	if err != nil {
+		t.Fatalf("a name held by one peer under both key forms must resolve, got %v", err)
+	}
+	if resolved.String() != splitContactPhone {
+		t.Errorf("name must resolve to the deliverable phone JID %q, got %q", splitContactPhone, resolved)
+	}
+	if resolved.Server != types.DefaultUserServer {
+		t.Errorf("name must resolve to a phone-server JID, got %v", resolved.Server)
+	}
+}
+
+// Two genuinely different people cannot share one name a reply command emits, so a name held by
+// two distinct peers stays ambiguous and is refused with the disambiguation remedy.
+func TestResolveRecipientStillErrorsForDifferentPeersSharingAName(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.store.SaveManualContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("failed to seed first peer: %v", err)
+	}
+	if _, err := wac.store.SaveManualContact("Emmy", "+447700900123"); err != nil {
+		t.Fatalf("failed to seed second peer: %v", err)
+	}
+
+	_, err := wac.ResolveRecipient("Emmy")
+	if err == nil || !strings.Contains(err.Error(), "multiple contacts share the exact name") {
+		t.Fatalf("a name held by two different peers must stay ambiguous, got %v", err)
+	}
+}
+
 // A token that is not a chat id at all must be named as one. Reporting a mistyped id as a group
 // is the one answer that stops the caller retrying, since a group genuinely needs no contact.
 func TestAddContactByChatRefusesAMalformedChatID(t *testing.T) {

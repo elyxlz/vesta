@@ -258,7 +258,7 @@ func (wac *WhatsAppClient) resolveRecipientJID(identifier string) (types.JID, er
 	// Search contacts by name
 	contacts, err := wac.store.SearchContacts(identifier, 50)
 	if err == nil {
-		if jid, err := resolveFromContacts(contacts, identifier); err != nil || jid.User != "" {
+		if jid, err := wac.resolveFromContacts(contacts, identifier); err != nil || jid.User != "" {
 			return jid, err
 		}
 	}
@@ -274,12 +274,12 @@ func (wac *WhatsAppClient) resolveRecipientJID(identifier string) (types.JID, er
 	return types.JID{}, fmt.Errorf("no contact or group found matching '%s'. Use search_contacts or list_groups to find available recipients", identifier)
 }
 
-func resolveFromContacts(contacts []Contact, identifier string) (types.JID, error) {
+func (wac *WhatsAppClient) resolveFromContacts(contacts []Contact, identifier string) (types.JID, error) {
 	if len(contacts) == 0 {
 		return types.JID{}, nil
 	}
 
-	if jid, handled, err := preferExactContactMatch(contacts, identifier); handled {
+	if jid, handled, err := wac.preferExactContactMatch(contacts, identifier); handled {
 		return jid, err
 	}
 
@@ -307,7 +307,7 @@ func resolveFromContacts(contacts []Contact, identifier string) (types.JID, erro
 		identifier, strings.Join(names, ", "))
 }
 
-func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, bool, error) {
+func (wac *WhatsAppClient) preferExactContactMatch(contacts []Contact, identifier string) (types.JID, bool, error) {
 	trimmed := strings.TrimSpace(identifier)
 	if trimmed == "" {
 		return types.JID{}, false, nil
@@ -321,7 +321,7 @@ func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, 
 	}
 
 	if len(matches) > 1 {
-		return types.JID{}, true, fmt.Errorf("multiple contacts share the exact name '%s'. Please disambiguate with the precise phone number (+1234567890)", identifier)
+		return wac.collapseSamePeerMatches(matches, identifier)
 	}
 
 	if len(matches) == 1 {
@@ -350,6 +350,31 @@ func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, 
 
 	jid, err := types.ParseJID(phoneMatch.JID)
 	return jid, true, err
+}
+
+// collapseSamePeerMatches folds exact-name matches that resolve to one peer into that peer's
+// deliverable phone JID: one person holds a row under each key form (phone JID and LID), so a name
+// held under both is not ambiguous. It reuses canonicalChatJID, the one owner of peer identity, so
+// the collapse cannot disagree with the send gate about who two rows are. canonicalChatJID resolves
+// a LID to its phone JID, so the returned identity is the deliverable phone form. The name stays
+// ambiguous only when the matches are genuinely different peers.
+func (wac *WhatsAppClient) collapseSamePeerMatches(matches []Contact, identifier string) (types.JID, bool, error) {
+	var peer types.JID
+	for _, c := range matches {
+		jid, err := types.ParseJID(c.JID)
+		if err != nil {
+			return types.JID{}, true, err
+		}
+		canonical := wac.canonicalChatJID(jid)
+		if peer.IsEmpty() {
+			peer = canonical
+			continue
+		}
+		if canonical.String() != peer.String() {
+			return types.JID{}, true, fmt.Errorf("multiple contacts share the exact name '%s'. Please disambiguate with the precise phone number (+1234567890)", identifier)
+		}
+	}
+	return peer, true, nil
 }
 
 func resolveFromGroups(groups []Chat, identifier string) (types.JID, error) {
