@@ -53,7 +53,7 @@ def _due_col(iso: str | None, now: datetime) -> str:
 
 
 def format_task_list(tasks: list[dict[str, Any]], now: datetime | None = None) -> str:
-    """One line per task: status  prio  due  id  title (backburner tasks marked, never hidden)."""
+    """One line per task: status  prio  due  id  subject (backburner tasks marked, never hidden)."""
     if not tasks:
         return "(no tasks)"
     now = now or datetime.now(UTC)
@@ -62,7 +62,7 @@ def format_task_list(tasks: list[dict[str, Any]], now: datetime | None = None) -
         f"{_prio(_pick(t, 'priority', None))}\t"
         f"{_due_col(_pick(t, 'due_date', None), now)}\t"
         f"{_pick(t, 'id')}\t"
-        f"{'[parked] ' if _pick(t, 'backburner', False) else ''}{_trunc(_pick(t, 'title'), 80)}"
+        f"{'[parked] ' if _pick(t, 'backburner', False) else ''}{_trunc(_pick(t, 'subject'), 80)}"
         for t in tasks
     )
 
