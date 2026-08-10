@@ -103,34 +103,11 @@ func unsavedGroupCtx(dir string) NotifContext {
 	return ctx
 }
 
-// Identity rides in contact_name alone. A group notification used to carry a second `sender`
-// field that repeated the participant, so pin that no notification, direct or group, saved or
-// unsaved, ever emits one.
-func TestNotificationsCarryNoSeparateSenderField(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		ctx  func(string) NotifContext
-	}{
-		{"direct-saved", savedCtx},
-		{"direct-unsaved", unsavedCtx},
-		{"group-saved", groupCtx},
-		{"group-unsaved", unsavedGroupCtx},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := WriteNotification(tc.ctx(dir), "3EB0A1", "hi", "", false, "", ""); err != nil {
-				t.Fatalf("write failed: %v", err)
-			}
-			if _, present := soleNotifFields(t, dir)["sender"]; present {
-				t.Errorf("notification carries a separate sender field; identity must ride in contact_name alone")
-			}
-		})
-	}
-}
-
-// contact_name is the single identity field. It is set for every message, direct or group, and
-// carries the saved name when the contact is saved and the formatted number otherwise.
-func TestContactNameCarriesTheIdentityForEveryMessage(t *testing.T) {
+// contact_name is the sole identity field: it is set for every message, direct or group, and
+// carries the saved name when the contact is saved and the formatted number otherwise. A group
+// notification used to carry a second `sender` field that repeated the participant, so this also
+// pins that no notification, direct or group, saved or unsaved, emits one.
+func TestContactNameIsTheSoleIdentityField(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		ctx  func(string) NotifContext
@@ -146,9 +123,13 @@ func TestContactNameCarriesTheIdentityForEveryMessage(t *testing.T) {
 			if err := WriteNotification(tc.ctx(dir), "3EB0A1", "hi", "", false, "", ""); err != nil {
 				t.Fatalf("write failed: %v", err)
 			}
+			fields := soleNotifFields(t, dir)
+			if _, present := fields["sender"]; present {
+				t.Errorf("notification carries a separate sender field; identity must ride in contact_name alone")
+			}
 			var name string
-			if err := json.Unmarshal(soleNotifFields(t, dir)["contact_name"], &name); err != nil || name != tc.want {
-				t.Errorf("contact_name = %q, want %q (the single identity field)", name, tc.want)
+			if err := json.Unmarshal(fields["contact_name"], &name); err != nil || name != tc.want {
+				t.Errorf("contact_name = %q, want %q (the sole identity field)", name, tc.want)
 			}
 		})
 	}
