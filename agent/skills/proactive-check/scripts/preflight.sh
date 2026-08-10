@@ -202,6 +202,12 @@ else:
 $report
 EOF
                 worst=$(printf '%s\n' "$report" | sed -n 's/^WORST //p')
+                # Publish the measurement for the PreToolUse budget hook, which otherwise has to
+                # infer the number from rate-limit lines in vesta.log. This one already folds every
+                # rate window AND the credit balance into one worst case, so the hook can read a
+                # measured budget instead of log residue nothing guarantees is there.
+                printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$worst" \
+                    > "$HOME/agent/data/budget-utilization.tsv" 2>/dev/null || true
                 if [ "${worst:-100}" -ge "$BAND_TIGHT_PCT" ]; then
                     band tight "${worst}% used"
                 elif [ "${worst:-100}" -ge "$BAND_WATCH_PCT" ]; then
