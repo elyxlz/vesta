@@ -19,8 +19,6 @@ import { cn } from "@/lib/utils";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
-// One mono line is ~19px; off-screen rows reserve this via contain-intrinsic-size.
-const ESTIMATED_LINE_HEIGHT = 20;
 // How close to the bottom still counts as pinned for follow-on-append.
 const AT_BOTTOM_THRESHOLD_PX = 80;
 // The opening `tail -n N -f` dumps the recent tail back-to-back, then `-f` idles.
@@ -90,13 +88,17 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   const quiesceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flushBuffer = useCallback(() => {
-    if (!fillingRef.current) return;
-    fillingRef.current = false;
+  const clearFillTimers = useCallback(() => {
     if (quiesceTimerRef.current) clearTimeout(quiesceTimerRef.current);
     if (capTimerRef.current) clearTimeout(capTimerRef.current);
     quiesceTimerRef.current = null;
     capTimerRef.current = null;
+  }, []);
+
+  const flushBuffer = useCallback(() => {
+    if (!fillingRef.current) return;
+    fillingRef.current = false;
+    clearFillTimers();
     const buffered = bufferRef.current;
     bufferRef.current = [];
     setLines(
@@ -104,7 +106,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
         ? buffered.slice(-LOG_SCROLLBACK_LINES)
         : buffered,
     );
-  }, []);
+  }, [clearFillTimers]);
 
   const connect = useRef<(replay: boolean) => void>(undefined);
 
@@ -116,10 +118,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
       // Only a fresh replay connect buffers a tail; a reconnect (tail=0) appends live.
       fillingRef.current = replay;
       bufferRef.current = [];
-      if (quiesceTimerRef.current) clearTimeout(quiesceTimerRef.current);
-      if (capTimerRef.current) clearTimeout(capTimerRef.current);
-      quiesceTimerRef.current = null;
-      capTimerRef.current = null;
+      clearFillTimers();
 
       // Resolves when the stream ends; every failure arrives as a stream event instead.
       void streamLogs(
@@ -199,11 +198,10 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
     return () => {
       activeRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      if (quiesceTimerRef.current) clearTimeout(quiesceTimerRef.current);
-      if (capTimerRef.current) clearTimeout(capTimerRef.current);
+      clearFillTimers();
       if (name) void stopLogs(name);
     };
-  }, [name]);
+  }, [name, clearFillTimers]);
 
   // Resume a fresh stream only when the agent comes back up after a stop. We never
   // re-stream on the down transition (that re-dumped the same final tail), and never
@@ -234,8 +232,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   const newestLineId = lines.at(-1)?.id;
 
   // Every log line stays in the DOM (no windowing) so a native text selection survives
-  // scrolling and copies the full range; off-screen rows skip layout/paint via
-  // content-visibility, so 5000 lines still scroll smoothly.
+  // scrolling and copies the full range. Rows must lay out for real, not behind a
+  // content-visibility size estimate: lines wrap to unpredictable heights, and an
+  // estimate makes scrollHeight shift mid-scroll, so scrolling jumps.
   const updatePinned = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -290,10 +289,6 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
                 <div
                   key={line.id}
                   className={cn("break-words whitespace-pre-wrap", linePad)}
-                  style={{
-                    contentVisibility: "auto",
-                    containIntrinsicSize: `auto ${String(ESTIMATED_LINE_HEIGHT)}px`,
-                  }}
                   dangerouslySetInnerHTML={{ __html: line.html }}
                 />
               ))}

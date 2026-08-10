@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
@@ -6,7 +6,6 @@ import { useAgent } from "@/agent/AgentProvider";
 import { openAgentLogStream } from "@/agent/agent-log-stream";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { subscribeLogs } from "@/agent/log-stream-subscription";
-import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -15,6 +14,12 @@ import { useSession } from "@/session/SessionProvider";
 import { navHeaderHeight } from "@/theme/layout";
 
 const LOG_RETRY_DELAY_MS = 1_000;
+// Visual-top chrome the pager overlays on the list (agent header + page dots).
+const PAGER_HEADER_HEIGHT = 104;
+// Lines prepend at index 0, the visual bottom of the inverted list. Holding the
+// first visible line in place keeps arrivals from shifting the view mid-read;
+// within the threshold of the newest line the list follows the tail instead.
+const FOLLOW_TAIL = { minIndexForVisible: 0, autoscrollToTopThreshold: 32 };
 
 interface LogsPageProps {
   presentation?: "pager" | "standalone";
@@ -87,54 +92,29 @@ function LogList({
 }) {
   const { colors } = usePreferences();
   const insets = useSafeAreaInsets();
-  const standalone = presentation === "standalone";
-  const displayLogs = useMemo(
-    () => (standalone ? [...logs].reverse() : logs),
-    [logs, standalone],
-  );
-  const bottomAnchor = useBottomAnchoredFeed<LogLine>(displayLogs.length);
+  const topChrome =
+    presentation === "standalone" ? navHeaderHeight : PAGER_HEADER_HEIGHT;
 
   return (
     <View style={styles.screen}>
       <FlatList
-        ref={standalone ? bottomAnchor.listRef : undefined}
-        style={[
-          styles.list,
-          standalone && !bottomAnchor.contentVisible
-            ? styles.positioningList
-            : null,
-        ]}
-        data={displayLogs}
-        inverted={!standalone}
+        style={styles.list}
+        data={logs}
+        inverted
+        maintainVisibleContentPosition={FOLLOW_TAIL}
         keyExtractor={(line) => String(line.id)}
         renderItem={({ item }) => (
           <AnsiText value={item.text} selectable style={styles.logLine} />
         )}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={
-          standalone
-            ? [
-                styles.listContent,
-                {
-                  paddingTop: insets.top + navHeaderHeight,
-                  paddingBottom: insets.bottom,
-                },
-                displayLogs.length > 0 ? styles.bottomAligned : null,
-              ]
-            : [
-                styles.listContent,
-                {
-                  paddingTop: insets.bottom,
-                  paddingBottom: insets.top + 104,
-                },
-              ]
-        }
-        onContentSizeChange={
-          standalone ? bottomAnchor.onContentSizeChange : undefined
-        }
-        onScroll={standalone ? bottomAnchor.onScroll : undefined}
-        scrollEventThrottle={standalone ? 16 : undefined}
+        contentContainerStyle={[
+          styles.listContent,
+          {
+            paddingTop: insets.bottom,
+            paddingBottom: insets.top + topChrome,
+          },
+        ]}
         ListHeaderComponent={
           logError ? (
             <Text style={[styles.logError, { color: colors.warning }]}>
@@ -155,9 +135,7 @@ function LogList({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   list: { flex: 1 },
-  positioningList: { opacity: 0 },
   listContent: { paddingHorizontal: 12 },
-  bottomAligned: { flexGrow: 1, justifyContent: "flex-end" },
   logLine: { fontSize: 13, lineHeight: 18 },
   logError: { paddingBottom: 8, paddingHorizontal: 2, fontSize: 12 },
   empty: { textAlign: "center", padding: 40, fontSize: 14 },
