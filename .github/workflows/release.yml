@@ -41,6 +41,9 @@ jobs:
         with:
           ref: master
           token: ${{ secrets.RELEASE_PAT }}
+          # Full history + tags so the release body can diff migrations against the previous tag.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install Rust
         uses: ./.github/actions/install-rust
@@ -110,10 +113,25 @@ jobs:
           MESSAGE: ${{ inputs.message }}
           MOBILE_DELIVERY: ${{ inputs.mobile_delivery }}
         run: |
+          # Prompt migrations this release introduces: files added under agent/core/migrations/
+          # since the previous tag. They are append-only, so "added since the last release" is the
+          # exact set an upgrading agent runs. Developer-facing, so this sits below the whats-new
+          # block the app parses. HEAD is the bump commit and the new tag does not exist yet, so
+          # the nearest ancestor tag is the previous release.
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
+          MIGRATIONS=""
+          if [ -n "$PREV_TAG" ]; then
+            MIGRATIONS=$(git log --diff-filter=A --name-only --pretty=format: "${PREV_TAG}..HEAD" -- agent/core/migrations/ \
+              | sed -n 's#agent/core/migrations/\(.*\)\.md$#- \1#p' | sort -u)
+          fi
+          MIGRATIONS_SECTION=""
+          if [ -n "$MIGRATIONS" ]; then
+            MIGRATIONS_SECTION=$(printf '\n\n## Migrations\n\n%s' "$MIGRATIONS")
+          fi
           BODY="<!-- whats-new -->
           ${MESSAGE}
           <!-- /whats-new -->
-          <!-- mobile-delivery: ${MOBILE_DELIVERY} -->"
+          <!-- mobile-delivery: ${MOBILE_DELIVERY} -->${MIGRATIONS_SECTION}"
           gh release create "$TAG" --title "$TAG" --notes "$BODY" --generate-notes --target master --prerelease
           echo "Created prerelease $TAG with mobile delivery: $MOBILE_DELIVERY"
 
