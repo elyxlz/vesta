@@ -231,10 +231,6 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   // instead so a full console continues to follow live output.
   const newestLineId = lines.at(-1)?.id;
 
-  // Every log line stays in the DOM (no windowing) so a native text selection survives
-  // scrolling and copies the full range. Rows must lay out for real, not behind a
-  // content-visibility size estimate: lines wrap to unpredictable heights, and an
-  // estimate makes scrollHeight shift mid-scroll, so scrolling jumps.
   const updatePinned = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -250,7 +246,10 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
     if (el && count > 0 && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [count, newestLineId]);
 
-  const linePad = fullscreen ? "px-page" : "px-5";
+  const lineClass = cn(
+    "break-words whitespace-pre-wrap",
+    fullscreen ? "px-page" : "px-5",
+  );
 
   return (
     <div
@@ -285,10 +284,15 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
               ) : (
                 <div className="h-6" />
               )}
+              {/* Every log line stays in the DOM (no windowing) so a native text selection
+                  survives scrolling and copies the full range. Rows must lay out for real,
+                  not behind a content-visibility size estimate: lines wrap to unpredictable
+                  heights, and an estimate makes scrollHeight shift mid-scroll, so scrolling
+                  jumps. */}
               {lines.map((line) => (
                 <div
                   key={line.id}
-                  className={cn("break-words whitespace-pre-wrap", linePad)}
+                  className={lineClass}
                   dangerouslySetInnerHTML={{ __html: line.html }}
                 />
               ))}
