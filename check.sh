@@ -145,7 +145,13 @@ check_app_mobile() {
     if [ ! -e node_modules/@vesta/mobile ]; then
       npm install
     fi
-    (cd mobile && npx expo install --check)
+    # Advisory only. `expo install --check` compares our pins against Expo's live SDK
+    # expectations, which Expo bumps on its own patch cadence, so a hard failure here couples
+    # every release to that cadence for no release-time safety (the mobile-ios/mobile-android
+    # native compile jobs gate real breakage). Warn, never block; catch up deliberately with
+    # `npx expo install --fix`.
+    (cd mobile && npx expo install --check) \
+      || echo "warning: expo deps are behind Expo's expected versions (advisory; run 'npx expo install --fix' to update)"
     npm -w @vesta/mobile run lint
     npm -w @vesta/mobile run check
     npm -w @vesta/mobile run test
