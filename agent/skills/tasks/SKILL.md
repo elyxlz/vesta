@@ -28,6 +28,8 @@ tasks delete <id>                 # cascades to linked reminders
 - `update --clear-due` removes a due date. Every other due flag can only move a date, so without this a due date is a one-way door: auto reminders are regenerated from `due_date`, so deleting them by hand does not stick. Reach for it when a date was set by mistake or by a bulk `postpone` over a backlog, since a backburner item with a due date fires a whole reminder cascade it never earned.
 - `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, title, status, priority, due_date, created_at, completed_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
 - `list`/`search` print compact tables (`--show-completed` to include done); add `--json` or `--json-pretty` for JSON.
+- `create` is an alias of `add`. `--subject` is an alias of `--title` on both `add` and `update`.
+- A task's status is `pending`, `in_progress`, or `completed` (`completed` is the same as `done`). `tasks done <id>` and `tasks update <id> --status completed` both close it. `tasks update <id> --status in_progress` marks a task started: it stays open, so it still shows in `tasks list` and still fires its due-date reminders.
 
 ## Reminders
 

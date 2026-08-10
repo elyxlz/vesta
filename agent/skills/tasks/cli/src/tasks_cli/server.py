@@ -29,7 +29,7 @@ class AddTaskBody(BaseModel):
 
 
 class UpdateTaskBody(BaseModel):
-    status: Literal["pending", "done"] | None = None
+    status: Literal["pending", "in_progress", "done", "completed"] | None = None
     title: str | None = None
     priority: str | int | None = None
     due_datetime: str | None = None
@@ -59,7 +59,7 @@ def _apply_task_update(config: Config, notif_dir: Path, task_id: str, body: Upda
     """Apply a task update coming from the app. A pending->done transition here is the one completion
     the agent does not already know about (its own CLI edits are self-evident), so it notifies,
     snoozed (interrupt=False), which the CLI path never does."""
-    already_done = body.status == "done" and commands.get_task(config, task_id=task_id)["status"] == "done"
+    already_done = body.status in ("done", "completed") and commands.get_task(config, task_id=task_id)["status"] == "done"
     result = commands.update_task(
         config,
         task_id=task_id,
@@ -75,7 +75,7 @@ def _apply_task_update(config: Config, notif_dir: Path, task_id: str, body: Upda
             clear=body.clear_due,
         ),
     )
-    if body.status == "done" and not already_done:
+    if body.status in ("done", "completed") and not already_done:
         write_notification(notif_dir, "task_completed", interrupt=False, task_id=task_id, message=f"Task completed: {result['title']}")
     return result
 

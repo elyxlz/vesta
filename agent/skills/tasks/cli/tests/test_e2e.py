@@ -1282,3 +1282,39 @@ class TestDaemonLifecycle:
     def test_a_stop_with_nothing_running_is_a_no_op(self, test_home):
         home, _ = test_home
         assert parse(daemon_cli(home, "stop")) == {"status": "already_stopped"}
+
+
+class TestNativeSurface:
+    """CLI parity with the native task tools: the `create` verb and `--subject`/status aliases."""
+
+    def test_create_is_an_alias_of_add(self, shared_env):
+        home, _, _ = shared_env
+        data = parse(tasks_cli(home, "create", "made with create"))
+        assert data["title"] == "made with create"
+        assert data["status"] == "pending"
+
+    def test_subject_sets_title_on_create(self, shared_env):
+        home, _, _ = shared_env
+        data = parse(tasks_cli(home, "create", "--subject", "subject wins"))
+        assert data["title"] == "subject wins"
+
+    def test_subject_sets_title_on_update(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "add", "before subject"))
+        data = parse(tasks_cli(home, "update", added["id"], "--subject", "after subject"))
+        assert data["title"] == "after subject"
+
+    def test_update_status_in_progress_stays_listed(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "add", "wip via cli"))
+        data = parse(tasks_cli(home, "update", added["id"], "--status", "in_progress"))
+        assert data["status"] == "in_progress"
+        listing = parse(tasks_cli(home, "list", "--json"))
+        assert any(t["id"] == added["id"] for t in listing)
+
+    def test_update_status_completed_is_done(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "add", "close via completed"))
+        data = parse(tasks_cli(home, "update", added["id"], "--status", "completed"))
+        assert data["status"] == "done"
+        assert data["completed_at"] is not None
