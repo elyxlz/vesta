@@ -152,6 +152,10 @@ async fn combined_status(
     match info.status {
         docker::ContainerStatus::Running => {
             let agent_name = docker::name_from_cname(cname);
+            // Resolve the agent's address before anything can return: the tap dial loop reads
+            // the cached address and never resolves one itself, so a status that returned first
+            // would deadlock it (no address, so no tap, so no address).
+            let host = cache.bridge_ip_or_resolve(docker, cname, &agent_name).await;
             // The held tap connection is the liveness truth: it rides through backup pauses
             // and IO load that make one-shot probes flap, and the listener redials until the
             // agent's API genuinely serves. Running without a tap is the one meaning of
@@ -161,7 +165,7 @@ async fn combined_status(
             }
             // Refresh the readiness flags best-effort: a fetch that fails under load keeps
             // the last known flags rather than demoting a connected agent.
-            if let Some(host) = cache.bridge_ip_or_resolve(docker, cname, &agent_name).await {
+            if let Some(host) = host {
                 let provider = crate::agent_provider::AgentProvider::new(
                     http_client,
                     agents_dir,
@@ -634,9 +638,11 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             // Reconcile internal WS connections (the tap: liveness, activity, and the sync live
             // edge) for every agent with a running container, `Starting` included: the dial
             // loop connecting is what ends `Starting`, never a one-shot probe.
+            // A listener captures its port once, so an agent whose port is not readable yet is
+            // left for a later poll rather than dialed at zero and wedged until it stops.
             let tappable_agents: HashMap<String, u16> = agents
                 .iter()
-                .filter(|a| a.status.dialable())
+                .filter(|a| a.status.dialable() && a.ws_port != 0)
                 .map(|a| (a.name.clone(), a.ws_port))
                 .collect();
 
