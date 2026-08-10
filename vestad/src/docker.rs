@@ -297,6 +297,10 @@ pub enum AgentStatus {
     /// Reachable, but no provider is chosen yet (fresh agent, or signed out) — needs first sign-in,
     /// distinct from `NotAuthenticated` (a chosen provider whose credential is invalid/expired).
     Unprovisioned,
+    /// A planned stop/start cycle vestad is performing (a user restart, an agent self-restart
+    /// such as the nightly dream). Projected from the restart operation so clients render the
+    /// cycle as one deliberate action instead of stopped then starting.
+    Restarting,
     /// Container is being rebuilt (post-update reconcile, user rebuild, or a grant recreate).
     /// The snapshot takes minutes and the container is briefly removed, so without this state
     /// the agent would read as `Stopped`/gone and invite a manual restart mid-rebuild.
@@ -316,6 +320,7 @@ impl AgentStatus {
             AgentStatus::Starting => "starting",
             AgentStatus::NotAuthenticated => "not authenticated",
             AgentStatus::Unprovisioned => "unprovisioned",
+            AgentStatus::Restarting => "restarting",
             AgentStatus::Rebuilding => "rebuilding",
             AgentStatus::Stopped => "stopped",
             AgentStatus::Dead => "dead",
@@ -340,18 +345,21 @@ impl AgentStatus {
         )
     }
 
-    /// Whether vestad should be dialing this agent's WS tap: every state with a running
-    /// container behind it. `Starting` is included deliberately, because the tap connecting
-    /// is the very edge that ends it.
+    /// Whether vestad should be dialing this agent's WS tap: every state with a running (or
+    /// imminently returning) container behind it. `Starting` is included deliberately, because
+    /// the tap connecting is the very edge that ends it.
     pub fn dialable(self) -> bool {
-        self.serves_ws() || matches!(self, AgentStatus::Starting)
+        self.serves_ws() || matches!(self, AgentStatus::Starting | AgentStatus::Restarting)
     }
 
     /// Whether this is a settled state rather than one the agent is moving through. The
-    /// lifecycle push advances only on stable observations, so transient boot and rebuild
-    /// states can never masquerade as agent news.
+    /// lifecycle push advances only on stable observations, so transient boot, restart, and
+    /// rebuild states can never masquerade as agent news.
     pub fn is_stable(self) -> bool {
-        !matches!(self, AgentStatus::Starting | AgentStatus::Rebuilding)
+        !matches!(
+            self,
+            AgentStatus::Starting | AgentStatus::Restarting | AgentStatus::Rebuilding
+        )
     }
 }
 
@@ -3054,6 +3062,7 @@ mod tests {
         }
         for status in [
             AgentStatus::Starting,
+            AgentStatus::Restarting,
             AgentStatus::Rebuilding,
             AgentStatus::Stopped,
             AgentStatus::Dead,
@@ -3061,6 +3070,11 @@ mod tests {
         ] {
             assert!(!status.serves_ws(), "{} must not be tapped", status.human_text());
         }
+        // The dial set is wider than the serving set: the tap connecting is what ends a boot
+        // or a planned restart, so both transitional running states keep their dial loop.
+        assert!(AgentStatus::Starting.dialable());
+        assert!(AgentStatus::Restarting.dialable());
+        assert!(!AgentStatus::Rebuilding.dialable());
     }
 
     #[test]

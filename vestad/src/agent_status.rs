@@ -59,6 +59,10 @@ pub async fn get_status(
 
     let status = if rebuilding.is_rebuilding(name) {
         docker::AgentStatus::Rebuilding
+    } else if cache.operations().get(&docker::normalize_name(name))
+        == Some(&docker::AgentOperation::Restarting)
+    {
+        docker::AgentStatus::Restarting
     } else {
         combined_status(docker, http_client, agents_dir, cache, &cname, &info).await
     };
@@ -88,7 +92,36 @@ pub async fn list_agents(
             started_at: info.started_at.clone(),
         });
     }
+    let entries = apply_restarting(entries, &cache.operations());
     apply_rebuilding(entries, rebuilding.names())
+}
+
+/// Overlay planned restarts onto the listing: an agent mid-restart reports `Restarting` for the
+/// whole cycle, its container possibly stopped or momentarily recreated, so clients render one
+/// deliberate action instead of stopped then starting. Names are sorted for the same
+/// determinism `apply_rebuilding` keeps.
+fn apply_restarting(
+    mut entries: Vec<ListEntry>,
+    operations: &HashMap<String, docker::AgentOperation>,
+) -> Vec<ListEntry> {
+    let mut restarting: Vec<&String> = operations
+        .iter()
+        .filter(|(_, operation)| **operation == docker::AgentOperation::Restarting)
+        .map(|(name, _)| name)
+        .collect();
+    restarting.sort();
+    for name in restarting {
+        match entries.iter_mut().find(|entry| entry.name == *name) {
+            Some(entry) => entry.status = docker::AgentStatus::Restarting,
+            None => entries.push(ListEntry {
+                name: name.clone(),
+                status: docker::AgentStatus::Restarting,
+                ws_port: 0,
+                started_at: None,
+            }),
+        }
+    }
+    entries
 }
 
 /// Overlay live rebuild state onto the docker-derived listing: a mid-rebuild agent reports
@@ -883,6 +916,38 @@ mod tests {
         assert_eq!(merged[2].status, docker::AgentStatus::Rebuilding);
         assert_eq!(merged[2].ws_port, 0);
         assert_eq!(merged[2].started_at, None);
+    }
+
+    #[test]
+    fn apply_restarting_projects_the_planned_cycle_even_through_a_recreate() {
+        let entries = vec![
+            ListEntry {
+                name: "apollo".into(),
+                status: docker::AgentStatus::Stopped,
+                ws_port: 4200,
+                started_at: None,
+            },
+            ListEntry {
+                name: "hera".into(),
+                status: docker::AgentStatus::Alive,
+                ws_port: 4201,
+                started_at: None,
+            },
+        ];
+        // apollo is mid-restart with its container stopped; zeus is mid-restart with its
+        // container momentarily recreated (off the docker listing); hera's backup must not
+        // touch its status, because the roster's operation field already carries it.
+        let operations = HashMap::from([
+            ("apollo".to_string(), docker::AgentOperation::Restarting),
+            ("zeus".to_string(), docker::AgentOperation::Restarting),
+            ("hera".to_string(), docker::AgentOperation::BackingUp),
+        ]);
+        let merged = apply_restarting(entries, &operations);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].status, docker::AgentStatus::Restarting);
+        assert_eq!(merged[1].status, docker::AgentStatus::Alive);
+        assert_eq!(merged[2].name, "zeus");
+        assert_eq!(merged[2].status, docker::AgentStatus::Restarting);
     }
 
     #[test]

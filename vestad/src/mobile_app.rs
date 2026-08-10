@@ -722,6 +722,7 @@ mod tests {
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
         observe(&app, &[]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Restarting)]);
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
         assert!(drain_status_events(app, worker).await.is_empty());
