@@ -16,6 +16,12 @@ pub(crate) const CONSTITUTION_ENTRY: &str = "constitution.md";
 pub(crate) const IMAGE_ENTRY: &str = "image.tar";
 
 const IMAGE_CHUNK_BYTES: usize = 64 * 1024;
+const IMAGE_STREAM_BUFFERED_CHUNKS: usize = 16;
+/// Cap on the manifest and constitution entries, which are read whole from untrusted files.
+const MAX_HEAD_ENTRY_BYTES: u64 = 256 * 1024;
+const IMAGE_SPOOL_SUFFIX: &str = ".image-partial";
+const EXPORT_IMAGE_REPO_PREFIX: &str = "vesta-export";
+pub const SCRUB_TIMEOUT_SECS: u64 = 300;
 
 const CORRUPT_BUNDLE_MESSAGE: &str = "bundle is corrupt or was modified";
 const NOT_A_BUNDLE_MESSAGE: &str = "not a vesta export file";
@@ -114,7 +120,7 @@ fn read_named_entry<R: std::io::Read>(entries: &mut tar::Entries<'_, R>, expecte
         .ok_or_else(|| DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()))?
         .map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
     let entry_path = entry.path().map_err(|err| docker_failed(CORRUPT_BUNDLE_MESSAGE, err))?;
-    if entry_path.as_ref() != Path::new(expected_name) {
+    if entry_path.as_ref() != Path::new(expected_name) || entry.size() > MAX_HEAD_ENTRY_BYTES {
         return Err(DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()));
     }
     let mut data = Vec::new();
@@ -174,10 +180,8 @@ pub(crate) fn read_bundle_image<F: FnMut(&[u8]) -> Result<(), DockerError>>(path
     Ok(())
 }
 
-pub const SCRUB_TIMEOUT_SECS: u64 = 300;
-
-/// The one pinned invocation of core's credential wipe. cwd /root/agent puts the core package
-/// (bind-mounted at /root/agent/core) on sys.path; the venv is baked into the image.
+/// The one pinned invocation of core's LLM provider sign-out. cwd /root/agent puts the core
+/// package (bind-mounted at /root/agent/core) on sys.path; the venv is baked into the image.
 pub fn scrub_cmd() -> Vec<String> {
     vec![
         "sh".into(),
@@ -186,23 +190,32 @@ pub fn scrub_cmd() -> Vec<String> {
     ]
 }
 
-/// Scrub credentials from `source_image` by running core's `clear_provider` (via `scrub_cmd`) in a
-/// throwaway container, then committing the result to `vesta-export-{agent_name}:scrubbed`.
-/// `core_dir` is bind-mounted read-only at `docker::CORE_MOUNT_DEST` so the invocation reaches the
-/// same core package the agent runs. Any leftover same-named container/image from a crashed prior
-/// run is removed first (mirrors `backup.rs::remove_temp_artifacts`).
+fn scrub_container_name(agent_name: &str) -> String {
+    format!("{EXPORT_IMAGE_REPO_PREFIX}-scrub-{agent_name}")
+}
+
+/// Strip the LLM provider sign-in from `source_image` by running core's `clear_provider` (via
+/// `scrub_cmd`) in a throwaway container, then committing the result to
+/// `vesta-export-{agent_name}:scrubbed-{epoch}`. The epoch keeps the tag unique per run: `docker
+/// load` on the import host recreates it, and a fixed tag there would collide with a later
+/// export's scratch image on the same host. `core_dir` is bind-mounted read-only at
+/// `docker::CORE_MOUNT_DEST` so the invocation reaches the same core package the agent runs.
 pub async fn scrub_image(
     docker: &Docker,
     agent_name: &str,
     source_image: &str,
     core_dir: &Path,
 ) -> Result<String, DockerError> {
-    let cname = format!("vesta-export-scrub-{agent_name}");
-    let image_repo = format!("vesta-export-{agent_name}");
-    let output_image = format!("{image_repo}:scrubbed");
+    let cname = scrub_container_name(agent_name);
+    let image_repo = format!("{EXPORT_IMAGE_REPO_PREFIX}-{agent_name}");
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let scrubbed_tag = format!("scrubbed-{epoch}");
+    let output_image = format!("{image_repo}:{scrubbed_tag}");
 
     crate::docker::remove_container_force(docker, &cname).await.ok();
-    crate::docker::remove_image(docker, &output_image).await.ok();
 
     let core_bind = format!("{}:{}:ro", core_dir.display(), crate::docker::CORE_MOUNT_DEST);
     let exit_code = crate::docker::run_oneshot_container(
@@ -219,13 +232,13 @@ pub async fn scrub_image(
 
     if exit_code != 0 {
         // Leave the container in place: the error advises `docker logs {cname}`, and the next
-        // scrub_image call's leftover sweep above reclaims it.
+        // export's leftover sweep in `export_agent` reclaims it.
         return Err(DockerError::Failed(format!(
-            "credential scrub failed (exit {exit_code}); see docker logs {cname}"
+            "LLM provider scrub failed (exit {exit_code}); see docker logs {cname}"
         )));
     }
 
-    let commit_result = crate::docker::commit_container_to_image(docker, &cname, &image_repo, "scrubbed").await;
+    let commit_result = crate::docker::commit_container_to_image(docker, &cname, &image_repo, &scrubbed_tag).await;
     crate::docker::remove_container_force(docker, &cname).await.ok();
     commit_result?;
 
@@ -243,8 +256,6 @@ pub struct ExportRequest<'a> {
     pub user_desired: crate::settings::UserDesired,
     pub mounts: Vec<crate::mounts::HostMount>,
 }
-
-const IMAGE_SPOOL_SUFFIX: &str = ".image-partial";
 
 /// The uncompressed image tar spooled next to `output` while a bundle is assembled, so the
 /// final rename-free write via `write_bundle` reads from the same filesystem it writes to.
@@ -279,10 +290,12 @@ async fn export_from_snapshot(docker: &Docker, request: ExportRequest<'_>, snaps
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| docker_failed("formatting export timestamp", err))?;
 
-    eprintln!("scrubbing credentials...");
-    let scrub_result = scrub_image(docker, request.name, snapshot_tag, request.core_dir).await;
+    eprintln!("scrubbing the LLM provider sign-in...");
+    // A failed scrub keeps its container (for `docker logs`), and that container pins the
+    // snapshot image: removing the tag here would only dangle the image unreclaimably, so the
+    // snapshot is removed on success alone and `export_agent`'s sweep reclaims both leftovers.
+    let scrubbed_tag = scrub_image(docker, request.name, snapshot_tag, request.core_dir).await?;
     crate::docker::remove_image(docker, snapshot_tag).await.ok();
-    let scrubbed_tag = scrub_result?;
 
     let manifest = build_manifest(request.name, request.user_desired, request.mounts, now_rfc3339);
 
@@ -309,10 +322,13 @@ async fn export_from_snapshot(docker: &Docker, request: ExportRequest<'_>, snaps
 pub async fn export_agent(docker: &Docker, request: ExportRequest<'_>) -> Result<(), DockerError> {
     crate::docker::validate_name(request.name)?;
     let cname = crate::docker::container_name(request.name);
-    let status = crate::docker::container_status(docker, &cname).await;
-    if status == crate::docker::ContainerStatus::NotFound {
-        return Err(DockerError::Failed(format!("agent '{}' not found", request.name)));
-    }
+    let status = crate::docker::guard_alive(crate::docker::container_status(docker, &cname).await, request.name)?;
+
+    let snapshot_tag = format!("{EXPORT_IMAGE_REPO_PREFIX}-{}:snapshot", request.name);
+    // Reclaim what a prior failed scrub deliberately left behind, container first so the
+    // snapshot image it pins becomes removable, before this run's snapshot takes the tag.
+    crate::docker::remove_container_force(docker, &scrub_container_name(request.name)).await.ok();
+    crate::docker::remove_image(docker, &snapshot_tag).await.ok();
 
     let was_running = status == crate::docker::ContainerStatus::Running;
     if was_running {
@@ -322,7 +338,6 @@ pub async fn export_agent(docker: &Docker, request: ExportRequest<'_>) -> Result
     }
 
     eprintln!("snapshotting container...");
-    let snapshot_tag = format!("vesta-export-{}:snapshot", request.name);
     if let Err(err) = crate::docker::snapshot_container(docker, &cname, &snapshot_tag, &[]).await {
         if was_running {
             crate::docker::handoff_boot_reason(docker, request.name, &cname, &crate::lifecycle::BACKUP_EXPORT).await;
@@ -390,11 +405,13 @@ pub fn peek_import_name(input: &Path, name_override: Option<&str>) -> Result<Str
 }
 
 fn agent_exists_error(name: &str) -> DockerError {
-    DockerError::Failed(format!("agent '{name}' already exists — destroy it first or pass a different --name"))
+    DockerError::Failed(format!("agent '{name}' already exists; destroy it first or pass a different --name"))
 }
 
-/// Import a legacy plain-image export (a bare `docker save` tar, gzipped or not, with no
-/// manifest): load the image directly and create+start the agent, always running.
+/// LEGACY(remove-when: 2027-08-01; plain-image files from the removed `vestad backup export`
+/// are by then over a year stale): import a legacy plain-image export (a bare `docker save`
+/// tar, gzipped or not, with no manifest): load the image directly and create+start the agent,
+/// always running.
 async fn import_legacy(docker: &Docker, request: ImportRequest<'_>) -> Result<ImportOutcome, DockerError> {
     let name = resolve_import_name(BundleKind::Legacy, None, request.name_override)?;
     crate::docker::validate_name(&name)?;
@@ -429,13 +446,31 @@ async fn import_legacy(docker: &Docker, request: ImportRequest<'_>) -> Result<Im
     Ok(ImportOutcome { name, port, manifest: None })
 }
 
-/// Spools the bundle's image entry to `spool_path` next to the input file, streaming rather
-/// than buffering the whole (potentially multi-GB) image tar in memory.
-fn spool_bundle_image(input: &Path, spool_path: &Path) -> Result<(), DockerError> {
-    let mut file = std::fs::File::create(spool_path).map_err(|err| docker_failed("creating image spool file", err))?;
-    read_bundle_image(input, |chunk| {
-        std::io::Write::write_all(&mut file, chunk).map_err(|err| docker_failed("writing image spool file", err))
-    })
+/// Streams the bundle's image entry straight into `docker load`: the blocking tar+gzip read
+/// feeds a bounded channel from its own thread, so the multi-GB image tar never needs a spool
+/// file beside an input that may sit on read-only media. A read failure is pushed into the
+/// stream, so the one load error carries whichever side actually failed.
+async fn load_bundle_image(docker: &Docker, input: &Path) -> Result<String, DockerError> {
+    let (chunk_tx, chunk_rx) =
+        tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(IMAGE_STREAM_BUFFERED_CHUNKS);
+    let input_path = input.to_path_buf();
+    let reader = tokio::task::spawn_blocking(move || {
+        let read_result = read_bundle_image(&input_path, |chunk| {
+            chunk_tx
+                .blocking_send(Ok(bytes::Bytes::copy_from_slice(chunk)))
+                .map_err(|_| DockerError::Failed("image load stopped consuming the bundle".into()))
+        });
+        if let Err(err) = read_result {
+            chunk_tx.blocking_send(Err(std::io::Error::other(err.to_string()))).ok();
+        }
+    });
+
+    let byte_stream = futures_util::stream::unfold(chunk_rx, |mut receiver| async move {
+        receiver.recv().await.map(|item| (item, receiver))
+    });
+    let load_result = crate::docker::load_image_from_stream(docker, byte_stream).await;
+    reader.await.map_err(|err| docker_failed("bundle read task panicked", err))?;
+    load_result
 }
 
 /// Steps that follow a loaded image: write the constitution (before `create_container`, whose
@@ -446,13 +481,12 @@ async fn finish_bundle_import(
     request: &ImportRequest<'_>,
     name: &str,
     cname: &str,
-    manifest: &BundleManifest,
+    manifest: BundleManifest,
     constitution: &str,
     image: &str,
 ) -> Result<ImportOutcome, DockerError> {
     eprintln!("creating agent '{name}'...");
-    std::fs::write(crate::docker::constitution_host_path(&request.env_config.agents_dir, name), constitution)
-        .map_err(|err| docker_failed("writing constitution", err))?;
+    crate::docker::write_constitution(&request.env_config.agents_dir, name, constitution)?;
 
     let port = crate::docker::allocate_port()?;
     crate::docker::create_container(
@@ -473,16 +507,16 @@ async fn finish_bundle_import(
         return Err(DockerError::Failed("failed to start imported agent".to_string()));
     }
 
-    Ok(ImportOutcome { name: name.to_string(), port, manifest: Some(manifest.clone()) })
+    Ok(ImportOutcome { name: name.to_string(), port, manifest: Some(manifest) })
 }
 
 /// Import a bundle: warn on a manifest from a newer vestad, resolve and validate the name,
-/// spool and load the image, then hand off to `finish_bundle_import`. A failure anywhere past
+/// stream-load the image, then hand off to `finish_bundle_import`. A failure anywhere past
 /// the load removes the freshly loaded image so a retry doesn't trip over it.
 async fn import_bundle(docker: &Docker, request: ImportRequest<'_>) -> Result<ImportOutcome, DockerError> {
     let (manifest, constitution) = open_bundle(request.input)?;
 
-    if crate::update_check::version_less_than(env!("CARGO_PKG_VERSION"), &manifest.vestad_version) {
+    if crate::update::version_less_than(env!("CARGO_PKG_VERSION"), &manifest.vestad_version) {
         eprintln!(
             "warning: this bundle was exported by vestad v{}, newer than this vestad v{}; the agent's first boot will converge it, but consider updating vestad first",
             manifest.vestad_version,
@@ -497,17 +531,10 @@ async fn import_bundle(docker: &Docker, request: ImportRequest<'_>) -> Result<Im
         return Err(agent_exists_error(&name));
     }
 
-    let spool_path = spool_path_for(request.input);
     eprintln!("loading image...");
-    let write_result = spool_bundle_image(request.input, &spool_path);
-    let image_result = match write_result {
-        Ok(()) => crate::docker::load_image_from_file(docker, &spool_path).await,
-        Err(err) => Err(err),
-    };
-    std::fs::remove_file(&spool_path).ok();
-    let image = image_result?;
+    let image = load_bundle_image(docker, request.input).await?;
 
-    let outcome = finish_bundle_import(docker, &request, &name, &cname, &manifest, &constitution, &image).await;
+    let outcome = finish_bundle_import(docker, &request, &name, &cname, manifest, &constitution, &image).await;
     if outcome.is_err() {
         crate::docker::remove_image(docker, &image).await.ok();
     }
@@ -899,12 +926,19 @@ mod tests {
         let verify_cname = format!("vesta-export-verify-run-{target_name}");
         assert_no_credentials(&docker, &target_verify_image, &verify_cname).await;
 
-        // Cleanup: containers, the loaded scrubbed image (re-tagged from the source name on
-        // load), the verify image, and the bundle. Networks clean up via TestNetwork's Drop.
+        // Cleanup: containers, the loaded scrubbed image (timestamp-tagged under the source
+        // name on load, so list by repo), the verify image, and the bundle. Networks clean up
+        // via TestNetwork's Drop.
         crate::docker::remove_container_force(&docker, &src_cname).await.ok();
         crate::docker::remove_container_force(&docker, &dst_cname).await.ok();
         crate::docker::remove_image(&docker, &target_verify_image).await.ok();
-        crate::docker::remove_image(&docker, &format!("vesta-export-{source_name}:scrubbed")).await.ok();
+        let listed = std::process::Command::new("docker")
+            .args(["images", "-q", &format!("vesta-export-{source_name}")])
+            .output()
+            .expect("docker images runs");
+        for image_id in String::from_utf8_lossy(&listed.stdout).split_whitespace() {
+            crate::docker::remove_image(&docker, image_id).await.ok();
+        }
         std::fs::remove_file(&bundle_path).ok();
     }
 

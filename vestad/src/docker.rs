@@ -1644,20 +1644,17 @@ pub async fn save_image_to_file(
         })
 }
 
-/// Import a Docker image from a tar file, gzip-compressed or not (replaces `gunzip | docker
-/// load`). Streams the file directly, since Docker's load API accepts both natively.
-/// Returns the loaded image name (e.g. "vesta-backup:name_12345").
-pub async fn load_image_from_file(
+/// Import a Docker image from a byte stream of a `docker save` tar, gzip-compressed or not
+/// (Docker's load API accepts both natively). Returns the loaded image name
+/// (e.g. "vesta-backup:name_12345").
+pub async fn load_image_from_stream<S, E>(
     docker: &Docker,
-    input: &std::path::Path,
-) -> Result<String, DockerError> {
-    let file = tokio::fs::File::open(input)
-        .await
-        .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
-    let byte_stream =
-        tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
-            .map(|r| r.map(bytes::BytesMut::freeze));
-
+    byte_stream: S,
+) -> Result<String, DockerError>
+where
+    S: futures_util::Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
+{
     let opts = ImportImageOptions {
         ..Default::default()
     };
@@ -1680,6 +1677,21 @@ pub async fn load_image_from_file(
         ));
     }
     Ok(loaded_image)
+}
+
+/// Import a Docker image from a tar file (replaces `gunzip | docker load`), streaming rather
+/// than buffering it in memory.
+pub async fn load_image_from_file(
+    docker: &Docker,
+    input: &std::path::Path,
+) -> Result<String, DockerError> {
+    let file = tokio::fs::File::open(input)
+        .await
+        .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
+    let byte_stream =
+        tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
+            .map(|r| r.map(bytes::BytesMut::freeze));
+    load_image_from_stream(docker, byte_stream).await
 }
 
 /// A container run to completion for a single command, never restarted or kept around.

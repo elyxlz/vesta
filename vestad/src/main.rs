@@ -839,7 +839,14 @@ fn main() {
                     }
                 }
             }
-            eprintln!("imported: {} (port {}); the agent is signed out; sign in from the app", outcome.name, outcome.port);
+            if outcome.manifest.is_some() {
+                eprintln!(
+                    "imported: {} (port {}); the LLM provider is signed out; sign in from the app",
+                    outcome.name, outcome.port
+                );
+            } else {
+                eprintln!("imported: {} (port {})", outcome.name, outcome.port);
+            }
         }
 
         Command::Export { name, output } => {
@@ -871,7 +878,10 @@ fn main() {
                 )
                 .await
                 .unwrap_or_else(|e| die(format!("export failed: {e}")));
-                eprintln!("exported: {} (credentials stripped; the import signs in fresh)", output.display());
+                eprintln!(
+                    "exported: {} (the LLM provider sign-in is stripped; other in-container credentials ride along)",
+                    output.display()
+                );
             });
         }
 
