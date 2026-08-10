@@ -286,13 +286,15 @@ func (wac *WhatsAppClient) dropDeadDevice() {
 }
 
 // buildNotifContext assembles the NotifContext shared by message and reaction
-// notifications.
-func (wac *WhatsAppClient) buildNotifContext(chatJID, chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
+// notifications. senderDisplay is the one identity a notification names: the saved contact
+// name when saved, otherwise the formatted number or JID. It rides in ContactName for every
+// chat, so a group participant is named there while ChatName names the group.
+func (wac *WhatsAppClient) buildNotifContext(chatJID, chatName, senderDisplay, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
 	return NotifContext{
 		NotifDir: wac.notificationsDir, ChatJID: chatJID, ChatName: chatName,
-		ContactName: contactName, ContactPhone: contactPhone,
+		ContactName: senderDisplay, ContactPhone: contactPhone,
 		Instance: wac.instance, ContactSaved: contactSaved,
-		IsDirectChat: isDirectChat, Sender: senderDisplay,
+		IsDirectChat: isDirectChat,
 	}
 }
 
@@ -339,7 +341,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		return
 	}
 
-	resolvedSender, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
+	resolvedSender, senderDisplay, _, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
 	chatName := wac.getChatName(info.Chat)
 	// Canonical storage key: resolve the peer LID to its phone JID so this chat is keyed the same
 	// whether the message arrived under the peer's LID or a reply resolves them to their number.
@@ -389,7 +391,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	shouldNotify := wac.notificationsDir != "" && !wac.noNotify && !info.IsFromMe && !wac.skipSenders[contactPhone]
 	var notifCtx NotifContext
 	if shouldNotify {
-		notifCtx = wac.buildNotifContext(info.Chat.String(), chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
+		notifCtx = wac.buildNotifContext(info.Chat.String(), chatName, senderDisplay, contactPhone, contactSaved, isDirectChat)
 	}
 
 	// Audio messages: transcribe asynchronously, then send notification
@@ -514,8 +516,8 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 	chatName := wac.getChatName(evt.Info.Chat)
 
 	if wac.notificationsDir != "" {
-		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
-		ctx := wac.buildNotifContext(evt.Info.Chat.String(), chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
+		_, senderDisplay, _, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
+		ctx := wac.buildNotifContext(evt.Info.Chat.String(), chatName, senderDisplay, contactPhone, contactSaved, isDirectChat)
 		WriteReactionNotification(ctx, targetID, emoji, isRemoved)
 	}
 }
@@ -598,11 +600,11 @@ func (wac *WhatsAppClient) notifContextFor(evt *events.Message) (NotifContext, b
 	if wac.notificationsDir == "" || wac.noNotify || evt.Info.IsFromMe {
 		return NotifContext{}, false
 	}
-	_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
+	_, senderDisplay, _, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
 	if wac.skipSenders[contactPhone] {
 		return NotifContext{}, false
 	}
-	return wac.buildNotifContext(evt.Info.Chat.String(), wac.getChatName(evt.Info.Chat), senderDisplay, contactName, contactPhone, contactSaved, isDirectChat), true
+	return wac.buildNotifContext(evt.Info.Chat.String(), wac.getChatName(evt.Info.Chat), senderDisplay, contactPhone, contactSaved, isDirectChat), true
 }
 
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
