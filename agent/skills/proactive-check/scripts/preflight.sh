@@ -243,25 +243,42 @@ rc_age_hours() {
     echo $((($(date -u +%s) - rc_epoch) / 3600))
 }
 
+# When the DREAM last ran, which is the only thing that can justify saying one was missed. The
+# dreamer's summaries are that record and they already exist on any box that dreams: one file per
+# night, ISO timestamp in the name, written by the very thing being watched. The optional history
+# file is used when a box keeps one, but nothing in the repo writes it, so it cannot be the primary.
+dream_last_iso() {
+    rc_newest=$(ls -1 "$HOME/agent/dreamer"/[0-9]*T[0-9]*.md 2>/dev/null | sed 's|.*/||; s|\.md$||' | sort | tail -n 1)
+    if [ -n "$rc_newest" ]; then
+        # 2026-08-10T0330 -> 2026-08-10 03:30
+        printf '%s %s:%s\n' "${rc_newest%T*}" "$(echo "${rc_newest#*T}" | cut -c1-2)" "$(echo "${rc_newest#*T}" | cut -c3-4)"
+        return
+    fi
+    [ -s "$RC_HIST" ] && tail -n 1 "$RC_HIST" | cut -f1
+}
+
 if [ -f "$RC_SCRIPT" ]; then
-    rc_last=""
-    [ -s "$RC_HIST" ] && rc_last=$(tail -n 1 "$RC_HIST" | cut -f1)
-    rc_age=$(rc_age_hours "$rc_last")
-    # Not every box keeps a run record, so the watchdog stamps its own runs and ages by whichever
-    # record is newer. Without the stamp, a box with no record re-runs the probe every tick.
-    rc_stamp_age=$(rc_age_hours "$(cat "$RC_STAMP" 2>/dev/null)")
-    [ "$rc_stamp_age" -lt "$rc_age" ] && rc_age=$rc_stamp_age
-    if [ "$rc_age" -ge "$RC_STALE_HOURS" ]; then
-        printf 'WATCHDOG the reality check last ran %sh ago (>= %sh): running it now, because the dream that normally runs it may have been missed.\n' "$rc_age" "$RC_STALE_HOURS"
+    rc_dream_age=$(rc_age_hours "$(dream_last_iso)")
+    # The stamp records when THIS WATCHDOG last ran, never when the dream did, so it is a throttle
+    # and nothing else. Letting it stand in as dream evidence is what made the alarm fire on a box
+    # whose dream was running perfectly: the watchdog was reporting on itself.
+    rc_probe_age=$(rc_age_hours "$(cat "$RC_STAMP" 2>/dev/null)")
+    if [ "$rc_dream_age" -ge "$RC_STALE_HOURS" ] && [ "$rc_probe_age" -ge "$RC_STALE_HOURS" ]; then
+        if [ "$rc_dream_age" -ge 999 ]; then
+            printf 'WATCHDOG no dream record found at all, so whether one ran is UNKNOWN, not missed. Running the probe once to see the live system.\n'
+        else
+            printf 'WATCHDOG the last dream was %sh ago (>= %sh): running the reality check now, because the dream that normally runs it looks missed.\n' "$rc_dream_age" "$RC_STALE_HOURS"
+        fi
         rc_out=$(sh "$RC_SCRIPT" 2>&1)
         rc_status=$?
         mkdir -p "$(dirname "$RC_STAMP")" 2>/dev/null
         date -u +%Y-%m-%dT%H:%M:%SZ > "$RC_STAMP" 2>/dev/null || true
-        # Judged by the probe's exit code, which is its contract, never by grepping its output for
-        # '^RED': any summary line opening with that word then reads as a finding of its own.
-        printf '%s\n' "$rc_out" | grep -E '^RED [a-z]' || true
+        # The exit code is the probe's contract, so findings are printed only when it fails. Grepping
+        # the output for RED lines instead surfaces its own summary counter ("RED count over last
+        # runs: 0 0 0") on a clean run, which reads as a finding that is due now and is not one.
         if [ "$rc_status" -ne 0 ]; then
-            bad "the reality check exited ${rc_status} with the REDs above, after ${rc_age}h without running"
+            printf '%s\n' "$rc_out" | grep -E '^RED ' || true
+            bad "the reality check exited ${rc_status} with the REDs above"
         else
             printf 'WATCHDOG the reality check ran clean (exit 0).\n'
         fi
