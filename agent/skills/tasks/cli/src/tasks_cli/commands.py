@@ -365,12 +365,12 @@ def _rebuild_due_reminders(conn, task_id: str, row, *, subject: str | None, stat
     db.delete_auto_reminders(conn, task_id)
     if not new_due_date:
         return
-    reminder_title = subject if subject is not None else row["subject"]
+    reminder_subject = subject if subject is not None else row["subject"]
     # Only create reminders if the task is (or will be) open. in_progress is open like pending;
     # only completed stops reminding.
     effective_status = status if status is not None else row["status"]
     if effective_status != "completed":
-        db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
+        db.create_auto_reminders(conn, task_id, reminder_subject, new_due_date)
 
 
 def _retitle_auto_reminder_messages(conn, task_id: str, new_title: str) -> None:

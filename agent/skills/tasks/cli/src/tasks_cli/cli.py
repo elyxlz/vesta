@@ -29,11 +29,11 @@ def _require_arg(value: str | None, name: str, usage: str) -> str:
 
 # Soft cap only: a warning, never a rejection, because a legitimately long subject exists. The
 # subject is the one field every list and digest shows, so detail belongs in metadata, not here.
-TITLE_SOFT_CAP_CHARS = 100
+SUBJECT_SOFT_CAP_CHARS = 100
 
 
 def _warn_long_subject(subject: str) -> None:
-    if len(subject) <= TITLE_SOFT_CAP_CHARS:
+    if len(subject) <= SUBJECT_SOFT_CAP_CHARS:
         return
     msg = (
         f"subject is {len(subject)} chars; keep the subject short and scannable, and put the detail "
@@ -105,12 +105,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     # create
-    p_add = sub.add_parser("create", help="Create a new task")
-    p_add.add_argument("subject_pos", nargs="?", default=None, metavar="subject")
-    p_add.add_argument("--subject", default=None)
-    _add_due_args(p_add)
-    p_add.add_argument("--priority", default="normal", help="low/normal/high or 1/2/3")
-    p_add.add_argument("--initial-metadata", default=None)
+    p_create = sub.add_parser("create", help="Create a new task")
+    p_create.add_argument("subject_pos", nargs="?", default=None, metavar="subject")
+    p_create.add_argument("--subject", default=None)
+    _add_due_args(p_create)
+    p_create.add_argument("--priority", default="normal", help="low/normal/high or 1/2/3")
+    p_create.add_argument("--initial-metadata", default=None)
 
     # list
     p_list = sub.add_parser("list", help="List tasks")

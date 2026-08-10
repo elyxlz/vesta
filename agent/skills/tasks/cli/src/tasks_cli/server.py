@@ -56,10 +56,10 @@ class SnoozeReminderBody(BaseModel):
 
 
 def _apply_task_update(config: Config, notif_dir: Path, task_id: str, body: UpdateTaskBody) -> dict:
-    """Apply a task update coming from the app. A pending->done transition here is the one completion
+    """Apply a task update coming from the app. A pending->completed transition here is the one completion
     the agent does not already know about (its own CLI edits are self-evident), so it notifies,
     snoozed (interrupt=False), which the CLI path never does."""
-    already_done = body.status == "completed" and commands.get_task(config, task_id=task_id)["status"] == "completed"
+    already_completed = body.status == "completed" and commands.get_task(config, task_id=task_id)["status"] == "completed"
     result = commands.update_task(
         config,
         task_id=task_id,
@@ -75,7 +75,7 @@ def _apply_task_update(config: Config, notif_dir: Path, task_id: str, body: Upda
             clear=body.clear_due,
         ),
     )
-    if body.status == "completed" and not already_done:
+    if body.status == "completed" and not already_completed:
         write_notification(notif_dir, "task_completed", interrupt=False, task_id=task_id, message=f"Task completed: {result['subject']}")
     return result
 
