@@ -42,16 +42,26 @@ usage=$(df -P "$HOME" | awk 'NR==2 {gsub("%","",$5); print $5}')
 du_lines=$(timeout "$DU_TIMEOUT_SECS" du -sm "$HOME" /tmp 2>/dev/null)
 du_status=$?
 mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
+# Two independent facts, reported independently: a large own footprint must not suppress the host
+# reading, because the night both are true is the night the host figure matters most.
 if [ "$du_status" -eq 124 ]; then
     bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
+    mine_str="an unmeasured share"
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
     bad "this agent is using ${mine}MB across \$HOME and /tmp: clean up tonight (workspace cleanup)"
-elif [ "${usage:-0}" -ge "$HOST_DISK_RED_PERCENT" ]; then
-    bad "disk at ${usage}%, and only ${mine}MB is this agent's: you cannot clear this, so escalate it to the user or vestad; writes will start failing"
+fi
+# On a du timeout the footprint is unknown, so the host lines must not quote a figure of 0MB that
+# would read as "none of this is mine".
+mine_str="${mine_str:-${mine:-0}MB}"
+
+# Naming an actor who cannot act is the same as naming none: vestad has no surface that frees host
+# disk, so the escalation is to the user, who is the only party able to clear another tenant's space.
+if [ "${usage:-0}" -ge "$HOST_DISK_RED_PERCENT" ]; then
+    bad "host disk at ${usage}% with ${mine_str} of it this agent's: cleanup here cannot fix it, so tell the user tonight; writes will start failing across the box"
 elif [ "${usage:-0}" -ge "$HOST_DISK_NOTE_PERCENT" ]; then
-    ok "disk at ${usage}% but only ${mine}MB is this agent's; the rest is the host, not yours to clear"
+    ok "host disk at ${usage}%, ${mine_str} of it this agent's; the rest is the host, not yours to clear"
 else
-    ok "disk at ${usage:-unknown}%, ${mine}MB of it this agent's"
+    ok "host disk at ${usage:-unknown}%, ${mine_str} of it this agent's"
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.
