@@ -592,6 +592,19 @@ pub struct AgentStatusTaskDeps {
     pub gateway_operation: Arc<crate::operation::OperationSlot>,
 }
 
+/// The agents the poll loop keeps a WS tap open to, and the port each is dialed on: every agent
+/// with a running (or transitionally running) container, whose port is known. A dialable agent
+/// whose port is not readable yet (a transiently unreadable env file) is left for a later poll
+/// rather than dialed at zero, because a listener captures its port once and would redial zero
+/// forever, wedging the agent at `Starting`.
+fn tappable_agents(agents: &[ListEntry]) -> HashMap<String, u16> {
+    agents
+        .iter()
+        .filter(|agent| agent.status.dialable() && agent.ws_port != 0)
+        .map(|agent| (agent.name.clone(), agent.ws_port))
+        .collect()
+}
+
 /// Spawns the background polling loop that keeps the cache fresh and manages
 /// internal WebSocket connections to observe live events from alive agents.
 pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
@@ -638,13 +651,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             // Reconcile internal WS connections (the tap: liveness, activity, and the sync live
             // edge) for every agent with a running container, `Starting` included: the dial
             // loop connecting is what ends `Starting`, never a one-shot probe.
-            // A listener captures its port once, so an agent whose port is not readable yet is
-            // left for a later poll rather than dialed at zero and wedged until it stops.
-            let tappable_agents: HashMap<String, u16> = agents
-                .iter()
-                .filter(|a| a.status.dialable() && a.ws_port != 0)
-                .map(|a| (a.name.clone(), a.ws_port))
-                .collect();
+            let tappable_agents = tappable_agents(&agents);
 
             // Close connections for agents whose container is no longer running
             agent_ws_handles.retain(|name, handle| {
@@ -946,6 +953,32 @@ mod tests {
         assert_eq!(merged[2].status, docker::AgentStatus::Rebuilding);
         assert_eq!(merged[2].ws_port, 0);
         assert_eq!(merged[2].started_at, None);
+    }
+
+    #[test]
+    fn tappable_agents_dials_running_agents_with_a_known_port_only() {
+        let entry = |name: &str, status: docker::AgentStatus, ws_port: u16| ListEntry {
+            name: name.into(),
+            status,
+            ws_port,
+            booting: false,
+            started_at: None,
+        };
+        let dialed = tappable_agents(&[
+            // Dialed: alive and starting are both running-container states with a known port.
+            entry("alive", docker::AgentStatus::Alive, 4200),
+            entry("booting", docker::AgentStatus::Starting, 4201),
+            // Not dialed: a stopped container has nothing to tap.
+            entry("stopped", docker::AgentStatus::Stopped, 4202),
+            // Not dialed: dialable but its port is not readable yet, so it waits for a later poll
+            // rather than being dialed at zero and wedged (the deadlock class this guards).
+            entry("portless", docker::AgentStatus::Alive, 0),
+        ]);
+        assert_eq!(dialed.len(), 2);
+        assert_eq!(dialed.get("alive"), Some(&4200));
+        assert_eq!(dialed.get("booting"), Some(&4201));
+        assert!(!dialed.contains_key("stopped"));
+        assert!(!dialed.contains_key("portless"));
     }
 
     #[test]
