@@ -8,7 +8,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Bytes the stalled artifact answers before it goes quiet, so curl has a live response to wait on.
 const STALL_PREFIX: &[u8] = b"\x1f\x8b";
@@ -28,6 +28,7 @@ pub struct FakeReleaseServer {
     base_url: String,
     stop: Arc<AtomicBool>,
     port: u16,
+    tag: Arc<Mutex<String>>,
 }
 
 impl FakeReleaseServer {
@@ -43,6 +44,7 @@ impl FakeReleaseServer {
         let stop = Arc::new(AtomicBool::new(false));
 
         let routes = Arc::new(Routes::new(version, mode)?);
+        let tag = routes.tag.clone();
         let stop_flag = stop.clone();
         std::thread::spawn(move || {
             for incoming in listener.incoming() {
@@ -61,12 +63,20 @@ impl FakeReleaseServer {
             base_url: format!("http://127.0.0.1:{port}"),
             stop,
             port,
+            tag,
         })
     }
 
     /// What `VESTAD_RELEASES_BASE_URL` is set to for a vestad that should update from here.
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Change the release the metadata endpoints report, so a test can offer a version only after a
+    /// gateway's boot-time check has already cached an older answer. The artifact stays the binary
+    /// built at construction, so only a `version` that names that binary downloads successfully.
+    pub fn set_version(&self, version: &str) {
+        *self.tag.lock().expect("release server tag lock") = format!("v{version}");
     }
 }
 
@@ -79,7 +89,7 @@ impl Drop for FakeReleaseServer {
 }
 
 struct Routes {
-    tag: String,
+    tag: Arc<Mutex<String>>,
     artifact_path: String,
     mode: ArtifactMode,
 }
@@ -87,7 +97,7 @@ struct Routes {
 impl Routes {
     fn new(version: &str, mode: ArtifactMode) -> Result<Self, String> {
         Ok(Self {
-            tag: format!("v{version}"),
+            tag: Arc::new(Mutex::new(format!("v{version}"))),
             artifact_path: format!(
                 "/releases/download/v{version}/vestad-{}.tar.gz",
                 rust_target()?
@@ -96,17 +106,21 @@ impl Routes {
         })
     }
 
+    fn tag(&self) -> String {
+        self.tag.lock().expect("release server tag lock").clone()
+    }
+
     fn serve(&self, mut stream: TcpStream, stop: &AtomicBool) {
         let Some(path) = read_request_path(&stream) else {
             return;
         };
         if path == "/releases/latest" {
-            let body = format!(r#"{{"tag_name": "{}", "prerelease": false}}"#, self.tag);
+            let body = format!(r#"{{"tag_name": "{}", "prerelease": false}}"#, self.tag());
             let _ = write_json(&mut stream, &body);
             return;
         }
         if path.starts_with("/releases?") {
-            let body = format!(r#"[{{"tag_name": "{}", "prerelease": true}}]"#, self.tag);
+            let body = format!(r#"[{{"tag_name": "{}", "prerelease": true}}]"#, self.tag());
             let _ = write_json(&mut stream, &body);
             return;
         }

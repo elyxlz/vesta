@@ -2959,6 +2959,18 @@ const WINDOW_POLL: jiff::SignedDuration = jiff::SignedDuration::from_secs(15 * 6
 // maintenance decision, so a pass pending at startup targets the fleet's real windows instead of
 // resolving a still-empty cache to host-local.
 const STARTUP_SETTLE_SECS: u64 = 60;
+const STARTUP_SETTLE_ENV: &str = "VESTAD_MAINTENANCE_SETTLE_SECS";
+
+/// The boot settle before the first maintenance decision. `VESTAD_MAINTENANCE_SETTLE_SECS` shortens
+/// it for the maintenance-update test, exactly as `VESTAD_UPDATE_ANNOUNCE_GRACE_SECS` shortens the
+/// announce window; unset in every published build, so nothing branches in production.
+fn startup_settle() -> tokio::time::Duration {
+    let seconds = std::env::var(STARTUP_SETTLE_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(STARTUP_SETTLE_SECS);
+    tokio::time::Duration::from_secs(seconds)
+}
 
 /// The local timezone of every alive agent, falling back to host-local for any agent that hasn't
 /// reported one (pre-upstream-sync fleet). Drives which 4-5am window maintenance targets.
@@ -2975,12 +2987,12 @@ fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
 
 /// One maintenance cycle owns all scheduled disk and restart work: it fires in the fleet's
 /// best-coverage 4-5am agent-local window, at a poll where every agent is idle (or at the
-/// window's last poll), runs the restart-free snapshot pass, and applies a pending update
-/// as an add-on to that same pass.
+/// window's last poll), and either applies a pending update or runs the restart-free snapshot
+/// pass.
 fn spawn_maintenance_task(state: SharedState) {
     tokio::spawn(async move {
         // Settle first so the timezone cache is populated before the first window decision.
-        tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
+        tokio::time::sleep(startup_settle()).await;
         let mut last_pass_epoch: u64 = 0;
         loop {
             let now_epoch = crate::time_utils::now_epoch_secs();
@@ -3004,32 +3016,29 @@ fn spawn_maintenance_task(state: SharedState) {
     });
 }
 
-/// One fired maintenance cycle: the snapshot pass, or a pending update (which owns the pre-update
-/// snapshot pass itself) as its add-on. The update restarts this process on success, so control
-/// usually never returns from the update branch.
+/// One fired maintenance cycle: a pending update (which owns the pre-update snapshot pass itself),
+/// or the routine snapshot pass. The update restarts this process on success, so control usually
+/// never returns from the update branch.
 async fn run_maintenance(state: &SharedState) {
-    let update_pending = state
-        .update_info
-        .lock()
-        .await
-        .as_ref()
-        .is_some_and(|info| info.update_available);
     let auto_update = state.settings.read().await.auto_update;
-
-    if update_pending && auto_update && !state.dev_mode {
-        tracing::info!("maintenance: applying pending update");
-        // The same one entry point a manual update takes. A failed apply retries next cycle; the
-        // fresh pre-update snapshot set is reused (<24h).
+    // Resolve the release freshly here rather than reading the periodic poll's cache: that poll
+    // runs every CHECK_INTERVAL_SECS and can straddle a release published the same night, leaving
+    // the cache stale for the one daily moment this window reads it. start_update runs its own
+    // fresh check and is the single owner of the pending-release decision.
+    if auto_update && !state.dev_mode {
         match update::start_update(state.clone()).await {
             Ok(update::UpdateStart::Started { .. }) => {
                 state.operation.wait_until_settled().await;
+                return;
             }
             Ok(outcome) => tracing::info!(?outcome, "maintenance: no update to apply"),
-            Err(phase) => tracing::warn!(?phase, "maintenance: an update is already running"),
+            Err(phase) => {
+                tracing::warn!(?phase, "maintenance: an update is already running");
+                return;
+            }
         }
-    } else {
-        run_snapshot_pass(state, maintenance::PassKind::Routine).await;
     }
+    run_snapshot_pass(state, maintenance::PassKind::Routine).await;
 }
 
 /// Snapshot every agent the pass selects, restart-free and concurrently (bounded). After a
