@@ -10,7 +10,51 @@ import (
 )
 
 func (wac *WhatsAppClient) AddContact(name, phone string) (Contact, error) {
+	if digits, _, err := normalizePhoneInput(phone); err == nil {
+		peer := wac.canonicalChatJID(types.NewJID(digits, types.DefaultUserServer))
+		if err := wac.rejectDuplicateContactName(name, peer); err != nil {
+			return Contact{}, err
+		}
+	}
 	return wac.store.SaveManualContact(name, phone)
+}
+
+// rejectDuplicateContactName keeps every saved name pointing at one person, so `whatsapp send --to
+// '<name>'` and the reply command that emits a name are never ambiguous. The peer's own rows are
+// excluded: one person holds a row under each of their key forms (phone JID and LID), so re-saving
+// or renaming the same person is an update, never a clash. The match is case-insensitive and trimmed
+// so a near-copy cannot reintroduce the ambiguity.
+func (wac *WhatsAppClient) rejectDuplicateContactName(name string, peer types.JID) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return nil
+	}
+	existing, err := wac.store.ManualContactsByName(trimmed)
+	if err != nil {
+		return fmt.Errorf("failed to check for a duplicate contact name: %v", err)
+	}
+	own := make(map[string]struct{})
+	for _, key := range wac.contactKeys(peer) {
+		own[key] = struct{}{}
+	}
+	for _, contact := range existing {
+		if _, mine := own[contact.JID]; mine {
+			continue
+		}
+		return fmt.Errorf(
+			"a contact named '%s' already exists (%s); choose a distinct name like '%s R' so a reply names one person",
+			trimmed, contactLabel(contact), trimmed,
+		)
+	}
+	return nil
+}
+
+// contactLabel names the peer already holding a name, its number when known, otherwise its chat id.
+func contactLabel(contact Contact) string {
+	if contact.PhoneNumber != "" {
+		return contact.PhoneNumber
+	}
+	return contact.JID
 }
 
 // AddContactByChat saves a contact for a chat given by its own id, the form for a peer WhatsApp
@@ -35,6 +79,9 @@ func (wac *WhatsAppClient) AddContactByChat(name, chat string) (Contact, error) 
 		return Contact{}, fmt.Errorf("'%s' is a group, not a person; only people need a saved contact", chat)
 	}
 	peer := wac.canonicalChatJID(jid)
+	if err := wac.rejectDuplicateContactName(name, peer); err != nil {
+		return Contact{}, err
+	}
 	if peer.Server == types.DefaultUserServer {
 		return wac.store.SaveManualContact(name, "+"+peer.User)
 	}

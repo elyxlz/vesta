@@ -323,6 +323,65 @@ func TestNotificationNamesAPeerSavedByChatIDAfterTheMappingIsLearned(t *testing.
 	}
 }
 
+// A saved contact name is the word a reply command addresses, so two different people cannot share
+// one. Saving a name already held by a different number is refused with a distinct-name remedy, so
+// `whatsapp send --to '<name>'` always names exactly one person.
+func TestAddContactRejectsDuplicateNameForADifferentNumber(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("first save must succeed, got %v", err)
+	}
+	_, err := wac.AddContact("Emmy", "+447700900123")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("a name already used by another number must be refused, got %v", err)
+	}
+}
+
+// A duplicate name matches after trimming and ignoring case, so a near-copy cannot slip past the
+// rule and reintroduce the ambiguity.
+func TestAddContactDuplicateNameIgnoresCaseAndSpace(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("first save must succeed, got %v", err)
+	}
+	_, err := wac.AddContact("  emmy ", "+447700900123")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("a name differing only by case or spacing must still collide, got %v", err)
+	}
+}
+
+// Renaming or re-saving the same number is an update, never a collision with itself.
+func TestAddContactAllowsRenamingAndReSavingTheSameNumber(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("first save must succeed, got %v", err)
+	}
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Errorf("re-saving the same name and number must succeed, got %v", err)
+	}
+	if _, err := wac.AddContact("Emmy R", "+15551110000"); err != nil {
+		t.Errorf("renaming the same number must succeed, got %v", err)
+	}
+}
+
+// One peer holds a row under each key form (phone JID and LID), and those rows may carry the same
+// name, so saving the phone row for a peer already saved by chat id is the same person, not a clash.
+func TestAddContactAllowsTheSameNameForOnePeerUnderBothKeyForms(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid := types.NewJID("99988877766655", types.HiddenUserServer)
+	phone := types.NewJID("15551110000", types.DefaultUserServer)
+
+	if _, err := wac.AddContactByChat("Emmy", lid.String()); err != nil {
+		t.Fatalf("saving by chat id must succeed, got %v", err)
+	}
+	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
+		t.Fatalf("failed to record the learned mapping: %v", err)
+	}
+	if _, err := wac.AddContact("Emmy", "+"+phone.User); err != nil {
+		t.Errorf("the same peer's phone row must not collide with their own LID row, got %v", err)
+	}
+}
+
 // A token that is not a chat id at all must be named as one. Reporting a mistyped id as a group
 // is the one answer that stops the caller retrying, since a group genuinely needs no contact.
 func TestAddContactByChatRefusesAMalformedChatID(t *testing.T) {

@@ -615,6 +615,30 @@ func (ms *MessageStore) ManualContactJIDsByName(name string) ([]string, error) {
 	return jids, rows.Err()
 }
 
+// ManualContactsByName returns every contact row whose name equals name once trimmed and lowercased,
+// so a duplicate-name check catches a near-copy that differs only by case or surrounding spaces.
+func (ms *MessageStore) ManualContactsByName(name string) ([]Contact, error) {
+	rows, err := ms.db.Query(
+		`SELECT jid, name, phone_number FROM contacts WHERE lower(trim(name)) = lower(trim(?))`,
+		name,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var contacts []Contact
+	for rows.Next() {
+		var jid, phone string
+		var rowName sql.NullString
+		if err := rows.Scan(&jid, &rowName, &phone); err != nil {
+			return nil, err
+		}
+		contacts = append(contacts, Contact{JID: jid, Name: rowName.String, PhoneNumber: phone, IsManual: true})
+	}
+	return contacts, rows.Err()
+}
+
 // DeleteManualContactsByJID removes the contact rows under the given keys, reporting whether any
 // did. Callers pass every key form of one peer, so a revoke leaves nothing behind.
 func (ms *MessageStore) DeleteManualContactsByJID(jids []string) (bool, error) {

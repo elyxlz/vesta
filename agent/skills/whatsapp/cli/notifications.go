@@ -130,10 +130,19 @@ func chatType(ctx NotifContext) string {
 	return "group"
 }
 
-// Every notification carries a complete reply command. The target is always the chat JID, which
-// ResolveRecipient matches first and which needs no saved contact, so there is no case where the
-// agent has to work the recipient out for itself. It stops at `--message -`: the notification is
-// rendered as an XML attribute, so a heredoc here would reach the agent as &lt;&lt; and &#10;
+// replyTarget picks who a reply addresses. A saved contact in a direct chat is named, the same word
+// the user uses; a unique saved name resolves to the peer's stored phone JID, the address that
+// carries delivery and read receipts. An unsaved contact and every group keep the chat JID, which
+// needs no saved contact and always resolves.
+func replyTarget(ctx NotifContext) string {
+	if ctx.ContactSaved && ctx.IsDirectChat && ctx.ContactName != "" {
+		return ctx.ContactName
+	}
+	return ctx.ChatJID
+}
+
+// Every notification carries a complete reply command. It stops at `--message -`: the notification
+// is rendered as an XML attribute, so a heredoc here would reach the agent as &lt;&lt; and &#10;
 // entities. `-` says the body comes from stdin and SKILL.md carries the one heredoc shape, which
 // keeps the reply body out of the shell's reach.
 func notificationReplyCommand(ctx NotifContext) string {
@@ -141,7 +150,7 @@ func notificationReplyCommand(ctx NotifContext) string {
 	if ctx.Instance != "" {
 		command += " --instance " + quoteReplyArg(ctx.Instance)
 	}
-	return command + " --to " + quoteReplyArg(ctx.ChatJID) + " --message -"
+	return command + " --to " + quoteReplyArg(replyTarget(ctx)) + " --message -"
 }
 
 func writeNotificationFile(notifDir string, data any, notifType string) error {
