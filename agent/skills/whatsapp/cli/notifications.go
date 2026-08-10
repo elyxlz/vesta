@@ -19,7 +19,6 @@ type messageNotif struct {
 	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
 	Message         string `json:"message"`
-	Sender          string `json:"sender,omitempty"`
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
 	MediaType       string `json:"media_type,omitempty"`
@@ -43,7 +42,6 @@ type reactionNotif struct {
 	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
 	Emoji           string `json:"emoji,omitempty"`
-	Sender          string `json:"sender,omitempty"`
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
 	IsRemoved       bool   `json:"is_removed,omitempty"`
@@ -63,7 +61,6 @@ type editNotif struct {
 	Type            string `json:"type"`
 	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
-	Sender          string `json:"sender,omitempty"`
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
 	OldText         string `json:"old_text,omitempty"`
@@ -195,10 +192,6 @@ func WriteNotification(
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName
 		n.ReplyHint = "think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
-		// Drop Sender when it's just the same JID as the chat (happens for unsaved group participants).
-		if ctx.Sender != ctx.ChatName {
-			n.Sender = ctx.Sender
-		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "message")
 }
@@ -222,23 +215,17 @@ func WriteReactionNotification(
 	}
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName
-		if ctx.Sender != ctx.ChatName {
-			n.Sender = ctx.Sender
-		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "reaction")
 }
 
 // applyChatContext mirrors the group-chat handling the message and reaction writers do:
-// name the chat, and name the sender unless it is just the chat's own JID.
+// name the group in chat_name. The participant identity rides in contact_name, set for every chat.
 func (n *editNotif) applyChatContext(ctx NotifContext) {
 	if ctx.IsDirectChat {
 		return
 	}
 	n.ChatName = ctx.ChatName
-	if ctx.Sender != ctx.ChatName {
-		n.Sender = ctx.Sender
-	}
 }
 
 func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText string) error {

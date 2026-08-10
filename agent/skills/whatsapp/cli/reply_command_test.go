@@ -133,12 +133,12 @@ func TestBuildNotifContextFlagsANameAGroupShares(t *testing.T) {
 		t.Fatalf("failed to seed group: %v", err)
 	}
 
-	shared := wac.buildNotifContext("15551110000@s.whatsapp.net", "Book Club", "Book Club", "Book Club", "+15551110000", true, true)
+	shared := wac.buildNotifContext("15551110000@s.whatsapp.net", "Book Club", "Book Club", "+15551110000", true, true)
 	if !shared.NameSharedWithGroup {
 		t.Errorf("a saved contact name a group also holds must be flagged")
 	}
 
-	distinct := wac.buildNotifContext("15551110000@s.whatsapp.net", "Alice", "Alice", "Alice", "+15551110000", true, true)
+	distinct := wac.buildNotifContext("15551110000@s.whatsapp.net", "Alice", "Alice", "+15551110000", true, true)
 	if distinct.NameSharedWithGroup {
 		t.Errorf("a name no group holds must not be flagged")
 	}
