@@ -70,10 +70,8 @@ def provider_name(entry: Domain | None) -> str | None:
 
 def provider_creds(entry: Domain, provider: str) -> dict[str, str]:
     """The credentials stored for one provider under a domain, or an empty dict."""
-    creds = entry["credentials"] if "credentials" in entry else None
-    if not isinstance(creds, dict) or provider not in creds:
-        return {}
-    value = creds[provider]
+    creds = _credentials(entry)
+    value = creds[provider] if provider in creds else {}
     return dict(value) if isinstance(value, dict) else {}
 
 

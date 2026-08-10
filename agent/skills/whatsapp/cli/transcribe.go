@@ -178,9 +178,10 @@ func readWAVSamples(path string) ([]float32, error) {
 // a real transcription. whisper.cpp emits bracketed tags ("[Musica]",
 // "[BLANK_AUDIO]", "[Musik]", "[tk]") for near-silent or low-content clips
 // instead of returning an error, and those would otherwise reach the agent as if
-// they were the transcript. Treat empty/whitespace or any single "[...]" tag-only
-// result as silence. (arxiv 2501.11378 documents the hallucination mode.)
-var tagOnlyRe = regexp.MustCompile(`^\[[^\[\]]+\]\s*$`)
+// they were the transcript. Treat empty/whitespace or a result made only of
+// "[...]" tags (a multi-segment silent clip joins several) as silence. (arxiv
+// 2501.11378 documents the hallucination mode.)
+var tagOnlyRe = regexp.MustCompile(`^(\s*\[[^\[\]]+\]\s*)+$`)
 
 func whisperOutputJunk(text string) bool {
 	t := strings.TrimSpace(text)

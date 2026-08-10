@@ -42,7 +42,9 @@ func TestWhisperOutputJunk(t *testing.T) {
 		"[BLANK_AUDIO]",
 		"[Musik]",
 		"[tk]",
-		"[Musica]  ", // trailing whitespace still tag-only
+		"[Musica]  ",                 // trailing whitespace still tag-only
+		"[BLANK_AUDIO][BLANK_AUDIO]", // multi-segment silence joins adjacent tags
+		"[Musica] [Musik]",           // several tags separated by whitespace
 	}
 	for _, in := range junk {
 		if !whisperOutputJunk(in) {
