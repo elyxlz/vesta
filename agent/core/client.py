@@ -671,13 +671,11 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     sdk_env, thinking_config = _provider_sdk_settings(provider, state)
 
     # Vesta ships its own task system (the `tasks` skill: a sqlite store, reminders, a dashboard
-    # page), so the harness's built-in task tools are a second, competing one. ENABLE_TASKS=0 drops
-    # the six Task* tools; each call otherwise writes a JSON file under ~/.claude/tasks/ that the
-    # harness re-injects into context on EVERY turn. That flag alone re-enables the legacy TodoWrite
-    # tool, and either way one task reminder keeps firing each turn, gated only by TODO_REMINDER_MODE,
-    # so =off silences both the Task and the TodoWrite nudge. Provider-independent, so both sit here.
+    # page), so the harness's task tools are a competing one. ENABLE_TASKS=0 drops four of them
+    # (Task{Create,Get,List,Update}, which each write a JSON file under ~/.claude/tasks/) and stops
+    # the per-turn "task tools unused" reminder, which this same flag gates at its source. Provider-
+    # independent, so it sits here rather than in each adapter.
     sdk_env["CLAUDE_CODE_ENABLE_TASKS"] = "0"
-    sdk_env["CLAUDE_CODE_TODO_REMINDER_MODE"] = "off"
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (capped via CLAUDE_CODE_AUTO_COMPACT_WINDOW above); the headless
@@ -687,10 +685,11 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         model=_harness_model(provider),
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
-        # CLAUDE_CODE_ENABLE_TASKS=0 above re-enables the legacy TodoWrite tool. TODO_REMINDER_MODE
-        # already stopped its nudge, so denying the tool just closes the last door into this second
-        # task system; the deny-list blocks the call but never gates the reminder.
-        disallowed_tools=["TodoWrite"],
+        # ENABLE_TASKS=0 leaves TaskOutput and TaskStop (gated separately) and re-enables the legacy
+        # TodoWrite tool. Deny all three: a disallowed tool drops out of the model's tool list, which
+        # also stops the TodoWrite reminder, since that nudge only fires while the tool is offered.
+        # The Task subagent tool is unrelated and stays.
+        disallowed_tools=["TodoWrite", "TaskOutput", "TaskStop"],
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
         # "user" enables discovery of ~/.claude/skills, where agent startup symlinks active
