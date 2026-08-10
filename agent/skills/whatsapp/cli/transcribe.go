@@ -1,14 +1,18 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 	wav "github.com/go-audio/wav"
@@ -164,6 +168,102 @@ func readWAVSamples(path string) ([]float32, error) {
 	return samples, nil
 }
 
+// whisperOutputJunk reports whether whisper's output is a real transcription.
+// whisper.cpp emits bracketed tags ("[Musica]", "[BLANK_AUDIO]", "[Musik]",
+// "[tk]") for near-silent or low-content clips instead of returning an error,
+// and these get delivered to the agent as if they were the transcript. Treat
+// empty/whitespace or any single "[...]" tag-only result as silence and fall
+// back to Deepgram. (arxiv 2501.11378 documents the hallucination mode.)
+var tagOnlyRe = regexp.MustCompile(`^\[[^\[\]]+\]\s*$`)
+
+func whisperOutputJunk(text string) bool {
+	t := strings.TrimSpace(text)
+	return t == "" || tagOnlyRe.MatchString(t)
+}
+
+// transcribeWithDeepgram is the fallback when whisper failed or produced only a
+// junk tag. Synchronous POST to Deepgram nova-3, reusing the WHISPER_LANGUAGE
+// hint (defaults to auto). The key is read from the voice skill config at
+// ~/.voice/voice_config.json (stt.credentials.deepgram.api_key), overridable
+// via VOICE_CONFIG_PATH. If no key is configured the fallback returns an error
+// and the caller logs it (no crash, no regression vs delivering a junk tag).
+func transcribeWithDeepgram(audioPath string) (string, error) {
+	key, err := readDeepgramKey()
+	if err != nil {
+		return "", fmt.Errorf("deepgram key unavailable: %w", err)
+	}
+	f, err := os.Open(audioPath)
+	if err != nil {
+		return "", fmt.Errorf("open audio for deepgram: %w", err)
+	}
+	defer f.Close()
+
+	url := "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true"
+	if lang := getLanguage(); lang != "" && lang != "auto" {
+		url += "&language=" + lang
+	}
+	req, err := http.NewRequest("POST", url, f)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Token "+key)
+	req.Header.Set("Content-Type", "audio/*")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("deepgram request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("deepgram HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	var dg struct {
+		Results struct {
+			Channels []struct {
+				Alternatives []struct {
+					Transcript string `json:"transcript"`
+				} `json:"alternatives"`
+			} `json:"channels"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&dg); err != nil {
+		return "", fmt.Errorf("decode deepgram response: %w", err)
+	}
+	if len(dg.Results.Channels) == 0 || len(dg.Results.Channels[0].Alternatives) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(dg.Results.Channels[0].Alternatives[0].Transcript), nil
+}
+
+func readDeepgramKey() (string, error) {
+	path := os.Getenv("VOICE_CONFIG_PATH")
+	if path == "" {
+		path = filepath.Join(os.Getenv("HOME"), ".voice", "voice_config.json")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var cfg struct {
+		STT struct {
+			Credentials struct {
+				Deepgram struct {
+					APIKey string `json:"api_key"`
+				} `json:"deepgram"`
+			} `json:"credentials"`
+		} `json:"stt"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", err
+	}
+	if cfg.STT.Credentials.Deepgram.APIKey == "" {
+		return "", fmt.Errorf("no deepgram api_key in %s", path)
+	}
+	return cfg.STT.Credentials.Deepgram.APIKey, nil
+}
+
 // Convenience wrapper used by handleMessage. Returns the transcription text and any error.
 func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) (string, error) {
 	// Download audio to temp file
@@ -177,13 +277,25 @@ func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) (st
 	}
 
 	text, err := transcribeAudioBuiltIn(path)
-	if err != nil {
-		wac.logger.Warnf("Transcription failed: %v", err)
-		return "", err
+	switch {
+	case err != nil:
+		wac.logger.Warnf("Whisper failed for %s (%v); trying Deepgram fallback", messageID, err)
+	case !whisperOutputJunk(text):
+		wac.logger.Infof("Transcribed audio %s: %s", messageID, text)
+		return text, nil
+	default:
+		wac.logger.Infof("Whisper produced tag-only/silence %q for %s; trying Deepgram fallback", text, messageID)
 	}
 
-	if text != "" {
-		wac.logger.Infof("Transcribed audio %s: %s", messageID, text)
+	// Fallback (whisper error OR junk like "[Musica]"). `path` is still on disk
+	// here; this method's deferred os.Remove runs only on return.
+	dgText, dgErr := transcribeWithDeepgram(path)
+	if dgErr != nil {
+		wac.logger.Warnf("Deepgram fallback failed for %s: %v", messageID, dgErr)
+		return "", dgErr
 	}
-	return text, nil
+	if dgText != "" {
+		wac.logger.Infof("Deepgram transcribed audio %s: %s", messageID, dgText)
+	}
+	return dgText, nil
 }

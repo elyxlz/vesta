@@ -22,3 +22,38 @@ func TestWhisperThreadsClampsToMaxOnBigBoxes(t *testing.T) {
 		}
 	}
 }
+
+// whisper.cpp emits bracketed silence/tags like "[Musica]", "[BLANK_AUDIO]",
+// "[Musik]", "[tk]" instead of erroring on near-silent clips; those must be
+// treated as junk so we fall back to Deepgram, while a real transcript that
+// merely contains a bracketed word must NOT be dropped. The regex anchors to
+// the whole string, which is what makes the distinction.
+func TestWhisperOutputJunk(t *testing.T) {
+	junk := []string{
+		"",
+		"   ",
+		"\t\n",
+		"[Musica]",
+		"[BLANK_AUDIO]",
+		"[Musik]",
+		"[tk]",
+		"[Musica]  ", // trailing whitespace still tag-only
+	}
+	for _, in := range junk {
+		if !whisperOutputJunk(in) {
+			t.Errorf("whisperOutputJunk(%q) = false, want true", in)
+		}
+	}
+	real := []string{
+		"Ciao, come stai?",
+		"See you at [the pub] later",   // bracketed word inside a real transcript
+		"[Musica] and then he said go", // tag plus real content
+		"uh [tk] hmm actually no",
+		"x",
+	}
+	for _, in := range real {
+		if whisperOutputJunk(in) {
+			t.Errorf("whisperOutputJunk(%q) = true, want false", in)
+		}
+	}
+}
