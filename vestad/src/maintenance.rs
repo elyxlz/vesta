@@ -121,6 +121,13 @@ pub(crate) async fn snapshot_agent(
                 return Err(e);
             }
         };
+        // Scheduled snapshots carry the same roster badge a manual backup does, and mark the
+        // work as planned for the lifecycle push.
+        let _operation = crate::agent_status::PublishedOperation::new(
+            state.agent_status_cache.clone(),
+            name,
+            crate::docker::AgentOperation::BackingUp,
+        );
         match crate::backup::create_backup(&state.docker, name, kind.backup_type(), kind.version_tag()).await {
             Ok(info) => {
                 if info.backup_type == crate::types::BackupType::PreUpdate {

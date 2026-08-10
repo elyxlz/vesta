@@ -4,8 +4,8 @@
 //! then this module owns the complete remote-notification path: device registration,
 //! subscription policy, persistence, payload rendering, queueing, and Expo delivery.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{extract::State, http::StatusCode, Json};
@@ -65,6 +65,12 @@ struct DeliveryContext {
 pub(crate) struct MobileApp {
     registry: Arc<DeviceRegistry>,
     event_tx: mpsc::Sender<QueuedAgentEvent>,
+    /// Each agent's last stable status: the one source of lifecycle pushes. It advances only
+    /// when the agent is observed in a stable state with no planned operation covering it, so
+    /// probe noise, boots, and vestad's own work can never masquerade as agent news, while a
+    /// real change (died, stopped, signed out, recovered) pushes exactly once. An agent's
+    /// first stable observation seeds silently, which is what keeps every boot quiet.
+    stable_statuses: Arc<Mutex<HashMap<String, AgentStatus>>>,
 }
 
 #[derive(Debug)]
@@ -148,19 +154,6 @@ fn pushable_event_type(event_type: &str) -> bool {
     PUSHABLE_EVENT_TYPES.contains(&event_type)
 }
 
-fn agent_status_changes(
-    previous: &[ListEntry],
-    current: &[ListEntry],
-) -> Vec<(String, AgentStatus, AgentStatus)> {
-    current
-        .iter()
-        .filter_map(|agent| {
-            let old = previous.iter().find(|old| old.name == agent.name)?;
-            (old.status != agent.status).then(|| (agent.name.clone(), old.status, agent.status))
-        })
-        .collect()
-}
-
 impl MobileApp {
     pub(crate) fn new(
         registry: Arc<DeviceRegistry>,
@@ -176,7 +169,11 @@ impl MobileApp {
             presence,
         };
         (
-            Self { registry, event_tx },
+            Self {
+                registry,
+                event_tx,
+                stable_statuses: Arc::new(Mutex::new(HashMap::new())),
+            },
             MobileAppWorker {
                 context: delivery_context,
                 event_rx,
@@ -201,15 +198,41 @@ impl MobileApp {
         );
     }
 
-    /// Compare two gateway-owned lifecycle snapshots and enqueue only real status
-    /// transitions. Agents absent from either side are ignored: this suppresses the
-    /// initial vestad snapshot and avoids treating creation/deletion as a transition.
-    pub(crate) fn observe_agent_status_changes(
+    /// Advance each agent's last stable status from a fresh poll and enqueue a push per real
+    /// change. An agent in a transient state, covered by a planned operation, or momentarily
+    /// off the list does not move; an agent observed for the first time seeds silently.
+    pub(crate) fn observe_agent_statuses(
         &self,
-        previous: &[ListEntry],
-        current: &[ListEntry],
+        agents: &[ListEntry],
+        operated: &HashSet<String>,
+        gateway_operation_running: bool,
     ) {
-        for (agent, previous_status, status) in agent_status_changes(previous, current) {
+        let transitions: Vec<(String, AgentStatus, AgentStatus)> = {
+            let mut stable = self
+                .stable_statuses
+                .lock()
+                .expect("stable statuses mutex");
+            let mut transitions = Vec::new();
+            for agent in agents {
+                // Operations are keyed by normalized name, exactly as the roster joins them.
+                if gateway_operation_running
+                    || operated.contains(&crate::docker::normalize_name(&agent.name))
+                {
+                    continue;
+                }
+                if !agent.status.is_stable() {
+                    continue;
+                }
+                match stable.insert(agent.name.clone(), agent.status) {
+                    Some(before) if before != agent.status => {
+                        transitions.push((agent.name.clone(), before, agent.status));
+                    }
+                    _ => {}
+                }
+            }
+            transitions
+        };
+        for (agent, previous_status, status) in transitions {
             self.queue_event(
                 &agent,
                 "status",
@@ -631,25 +654,104 @@ mod tests {
         );
     }
 
-    #[test]
-    fn lifecycle_diff_ignores_initial_agents_and_activity_only_changes() {
-        let entry = |name: &str, status: AgentStatus, ws_port: u16| ListEntry {
+    fn lifecycle_entry(name: &str, status: AgentStatus) -> ListEntry {
+        ListEntry {
             name: name.to_string(),
             status,
-            ws_port,
+            ws_port: 4200,
             started_at: None,
-        };
-        let initial = vec![entry("alex", AgentStatus::Alive, 4200)];
-        assert!(agent_status_changes(&[], &initial).is_empty());
+        }
+    }
 
-        let same_status = vec![entry("alex", AgentStatus::Alive, 4300)];
-        assert!(agent_status_changes(&initial, &same_status).is_empty());
-
-        let stopped = vec![entry("alex", AgentStatus::Stopped, 0)];
-        assert_eq!(
-            agent_status_changes(&initial, &stopped),
-            vec![("alex".to_string(), AgentStatus::Alive, AgentStatus::Stopped,)]
+    fn lifecycle_app() -> (MobileApp, MobileAppWorker, tempfile::TempDir) {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (app, worker) = MobileApp::new(
+            registry(directory.path()),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
         );
+        (app, worker, directory)
+    }
+
+    fn observe(app: &MobileApp, agents: &[ListEntry]) {
+        app.observe_agent_statuses(agents, &HashSet::new(), false);
+    }
+
+    async fn drain_status_events(
+        app: MobileApp,
+        mut worker: MobileAppWorker,
+    ) -> Vec<(String, String, String)> {
+        drop(app);
+        let mut queued = Vec::new();
+        while let Some(event) = worker.event_rx.recv().await {
+            queued.push((
+                event.agent,
+                event.event["previousState"].as_str().unwrap_or_default().to_string(),
+                event.event["state"].as_str().unwrap_or_default().to_string(),
+            ));
+        }
+        queued
+    }
+
+    #[tokio::test]
+    async fn a_stable_change_of_an_unoperated_agent_pushes_exactly_once() {
+        let (app, worker, _dir) = lifecycle_app();
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Stopped)]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Stopped)]);
+        assert_eq!(
+            drain_status_events(app, worker).await,
+            vec![("luna".to_string(), "alive".to_string(), "stopped".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn first_stable_observations_seed_silently_so_boots_are_quiet() {
+        let (app, worker, _dir) = lifecycle_app();
+        // A boot: agents come up through starting, then land alive. Nothing is news.
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        assert!(drain_status_events(app, worker).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn transient_states_and_absence_never_move_the_stable_status() {
+        let (app, worker, _dir) = lifecycle_app();
+        // The backup-storm regression: a healthy agent flaps through probe noise (starting,
+        // momentarily off the list) and back. Its stable status never moved, so no push.
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
+        observe(&app, &[]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        assert!(drain_status_events(app, worker).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_operated_agents_planned_cycle_is_silent_but_a_real_death_reports() {
+        let (app, worker, _dir) = lifecycle_app();
+        let operated: HashSet<String> = HashSet::from(["luna".to_string()]);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        // A planned restart: the stop and recovery under the operation never move the map.
+        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Stopped)], &operated, false);
+        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Starting)], &operated, false);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        // A backup that killed the agent: once the operation clears, dead is real news.
+        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Dead)], &operated, false);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Dead)]);
+        assert_eq!(
+            drain_status_events(app, worker).await,
+            vec![("luna".to_string(), "alive".to_string(), "dead".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_running_gateway_operation_covers_every_agent() {
+        let (app, worker, _dir) = lifecycle_app();
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Stopped)], &HashSet::new(), true);
+        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        assert!(drain_status_events(app, worker).await.is_empty());
     }
 
     #[test]

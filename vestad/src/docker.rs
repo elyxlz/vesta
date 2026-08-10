@@ -339,6 +339,20 @@ impl AgentStatus {
                 | AgentStatus::Unprovisioned
         )
     }
+
+    /// Whether vestad should be dialing this agent's WS tap: every state with a running
+    /// container behind it. `Starting` is included deliberately, because the tap connecting
+    /// is the very edge that ends it.
+    pub fn dialable(self) -> bool {
+        self.serves_ws() || matches!(self, AgentStatus::Starting)
+    }
+
+    /// Whether this is a settled state rather than one the agent is moving through. The
+    /// lifecycle push advances only on stable observations, so transient boot and rebuild
+    /// states can never masquerade as agent news.
+    pub fn is_stable(self) -> bool {
+        !matches!(self, AgentStatus::Starting | AgentStatus::Rebuilding)
+    }
 }
 
 /// Live registry of agents whose container is mid-rebuild (stop → snapshot → remove → create).
@@ -2087,6 +2101,17 @@ pub enum BuildPhase {
 pub enum AgentOperation {
     BackingUp,
     Restoring,
+    /// A planned stop/start cycle vestad performs (a user restart, an agent self-restart such
+    /// as the nightly dream). Internal only: it exists to mark the cycle as planned work for
+    /// the lifecycle push, and `on_wire` keeps it off the roster shipped clients parse.
+    Restarting,
+}
+
+impl AgentOperation {
+    /// Whether shipped clients know this operation; the roster projects only these.
+    pub fn on_wire(self) -> bool {
+        matches!(self, AgentOperation::BackingUp | AgentOperation::Restoring)
+    }
 }
 
 /// A cheap, clonable sink for `BuildPhase` updates. The create handler wires one

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -122,27 +122,36 @@ async fn combined_status(
     match info.status {
         docker::ContainerStatus::Running => {
             let agent_name = docker::name_from_cname(cname);
-            // Unresolved right after a start/create races the caller (see
-            // AgentStatusCache::bridge_ip_or_resolve); the next ~3s poll retries.
-            let Some(host) = cache.bridge_ip_or_resolve(docker, cname, &agent_name).await else {
-                return docker::AgentStatus::Starting;
-            };
-            // WS port not yet bound → agent still booting.
-            if !info.port.is_some_and(|port| is_agent_ready(&host, port)) {
+            // The held tap connection is the liveness truth: it rides through backup pauses
+            // and IO load that make one-shot probes flap, and the listener redials until the
+            // agent's API genuinely serves. Running without a tap is the one meaning of
+            // `Starting`: booting, or actually stalled.
+            if !cache.tap_connected(&agent_name) {
                 return docker::AgentStatus::Starting;
             }
-            // Agent's own GET /config is the source of truth for provider auth.
-            // If the WS server is up but /config isn't responding yet (transient
-            // mid-boot state), treat as Starting; the next ~3s poll will resolve.
-            let provider = crate::agent_provider::AgentProvider::new(
-                http_client,
-                agents_dir,
-                agent_name,
-                host,
-            );
-            match provider.status().await {
-                Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
-                Err(_) => docker::AgentStatus::Starting,
+            // Refresh the readiness flags best-effort: a fetch that fails under load keeps
+            // the last known flags rather than demoting a connected agent.
+            if let Some(host) = cache.bridge_ip_or_resolve(docker, cname, &agent_name).await {
+                let provider = crate::agent_provider::AgentProvider::new(
+                    http_client,
+                    agents_dir,
+                    agent_name.clone(),
+                    host,
+                );
+                if let Ok(s) = provider.status().await {
+                    cache.set_readiness(
+                        &agent_name,
+                        Readiness {
+                            authed: s.authed,
+                            setup_complete: s.setup_complete,
+                            provider_configured: s.provider_configured,
+                        },
+                    );
+                }
+            }
+            match cache.readiness(&agent_name) {
+                Some(r) => status_from_readiness(r.authed, r.setup_complete, r.provider_configured),
+                None => docker::AgentStatus::Starting,
             }
         }
         docker::ContainerStatus::Dead => docker::AgentStatus::Dead,
@@ -167,18 +176,29 @@ fn status_from_readiness(
     }
 }
 
-/// The agent binds its WS port only once it's ready to serve requests.
-const AGENT_READY_TIMEOUT_MS: u64 = 200;
+/// Publishes an agent's in-flight operation on the roster for as long as it is held, clearing it on
+/// drop so an early `?` return cannot strand the agent looking busy forever. The lifecycle push
+/// also reads the operations registry: an operated agent's status changes are planned work, not news.
+pub struct PublishedOperation {
+    cache: Arc<AgentStatusCache>,
+    name: String,
+}
 
-fn is_agent_ready(host: &str, port: u16) -> bool {
-    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
-        return false;
-    };
-    std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::new(ip, port),
-        std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
-    )
-    .is_ok()
+impl PublishedOperation {
+    pub fn new(cache: Arc<AgentStatusCache>, name: &str, operation: docker::AgentOperation) -> Self {
+        let normalized = docker::normalize_name(name);
+        cache.set_operation(&normalized, operation);
+        Self {
+            cache,
+            name: normalized,
+        }
+    }
+}
+
+impl Drop for PublishedOperation {
+    fn drop(&mut self) {
+        self.cache.clear_operation(&self.name);
+    }
 }
 
 /// Invoked with the fresh agent list whenever the polled list actually changes
@@ -221,6 +241,22 @@ pub struct AgentStatusCache {
     /// and restore handlers for the duration of the work, so every connected client sees it and not
     /// just the one holding the SSE stream.
     operations: Mutex<HashMap<String, docker::AgentOperation>>,
+    /// Agents whose WS tap is currently connected. The tap is the liveness primitive: a held
+    /// connection rides through backup pauses and IO load that make per-poll probes flap, so a
+    /// running container is `Starting` exactly while its tap is down and never in between.
+    tap_connected: Mutex<HashSet<String>>,
+    /// Each agent's last successfully fetched readiness flags. Status derivation reads these
+    /// while the tap is connected, so a flags fetch that fails under load keeps the last known
+    /// answer instead of demoting a live agent.
+    readiness: Mutex<HashMap<String, Readiness>>,
+}
+
+/// The slice of the agent's `GET /status` that decides which reachable state it is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Readiness {
+    pub authed: bool,
+    pub setup_complete: bool,
+    pub provider_configured: bool,
 }
 
 impl AgentStatusCache {
@@ -248,7 +284,45 @@ impl AgentStatusCache {
             build_phases: Mutex::new(HashMap::new()),
             bridge_ips: Mutex::new(HashMap::new()),
             operations: Mutex::new(HashMap::new()),
+            tap_connected: Mutex::new(HashSet::new()),
+            readiness: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record whether `name`'s WS tap is connected; the listener writes this on every connect
+    /// and disconnect, and status derivation reads it as the liveness truth.
+    pub fn set_tap_connected(&self, name: &str, connected: bool) {
+        let mut taps = self
+            .tap_connected
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if connected {
+            taps.insert(name.to_string());
+        } else {
+            taps.remove(name);
+        }
+    }
+
+    pub fn tap_connected(&self, name: &str) -> bool {
+        self.tap_connected
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(name)
+    }
+
+    fn set_readiness(&self, name: &str, readiness: Readiness) {
+        self.readiness
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_string(), readiness);
+    }
+
+    fn readiness(&self, name: &str) -> Option<Readiness> {
+        self.readiness
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(name)
+            .copied()
     }
 
     pub fn subscribe_agents(&self) -> watch::Receiver<Vec<ListEntry>> {
@@ -460,6 +534,9 @@ pub struct AgentStatusTaskDeps {
     pub rebuilding: docker::RebuildTracker,
     pub mobile_app: MobileApp,
     pub sync_hub: Arc<SyncHub>,
+    /// Whether the gateway's own operation (an update) is running, read per poll: while it is,
+    /// every agent's lifecycle churn is that operation's doing, not agent news.
+    pub gateway_operation_running: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 /// Spawns the background polling loop that keeps the cache fresh and manages
@@ -474,10 +551,10 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
         rebuilding,
         mobile_app,
         sync_hub,
+        gateway_operation_running,
     } = deps;
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
-        let mut previous_agents: Option<Vec<ListEntry>> = None;
         let (activity_event_tx, mut activity_event_rx) =
             tokio::sync::mpsc::channel::<(String, AgentUpdate)>(64);
 
@@ -485,13 +562,13 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             // Poll agent list via async bollard
             let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
 
-            // Mobile lifecycle notifications come from vestad's authoritative
-            // agent list, never the agent EventBus's thinking/idle activity. The
-            // first poll establishes a baseline without notifying every agent.
-            if let Some(previous) = &previous_agents {
-                mobile_app.observe_agent_status_changes(previous, &agents);
-            }
-            previous_agents = Some(agents.clone());
+            // Mobile lifecycle notifications come from vestad's authoritative agent list,
+            // never the agent EventBus's thinking/idle activity.
+            mobile_app.observe_agent_statuses(
+                &agents,
+                &cache.operations().into_keys().collect(),
+                gateway_operation_running(),
+            );
 
             // Update the agents watch channel (only notifies if changed)
             let changed = cache.agents_tx.send_if_modified(|current| {
@@ -505,21 +582,24 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                 on_agents_changed(&agents);
             }
 
-            // Reconcile internal WS connections (the tap: activity, mobile push, and the sync live
-            // edge) for every agent whose WS server is up, not just the fully-provisioned ones.
+            // Reconcile internal WS connections (the tap: liveness, activity, and the sync live
+            // edge) for every agent with a running container, `Starting` included: the dial
+            // loop connecting is what ends `Starting`, never a one-shot probe.
             let tappable_agents: HashMap<String, u16> = agents
                 .iter()
-                .filter(|a| a.status.serves_ws())
+                .filter(|a| a.status.dialable())
                 .map(|a| (a.name.clone(), a.ws_port))
                 .collect();
 
-            // Close connections for agents whose WS is no longer reachable
+            // Close connections for agents whose container is no longer running
             agent_ws_handles.retain(|name, handle| {
                 if tappable_agents.contains_key(name) {
                     true
                 } else {
                     handle.abort_handle.abort();
-                    // Clear activity + timezone state for dead agents
+                    // An aborted listener runs no cleanup of its own, so clear its liveness
+                    // mark and activity + timezone state here.
+                    cache.set_tap_connected(name, false);
                     cache.activity_tx.send_modify(|states| {
                         states.remove(name);
                     });
@@ -644,6 +724,7 @@ async fn agent_event_listener(
         match tokio_tungstenite::connect_async(&url).await {
             Ok((ws, _)) => {
                 delay_ms = RECONNECT_BASE_MS;
+                cache.set_tap_connected(&name, true);
                 let (_, mut read) = ws.split();
 
                 while let Some(Ok(msg)) = read.next().await {
@@ -694,8 +775,10 @@ async fn agent_event_listener(
                     }
                 }
 
-                // Connection lost: reset activity to idle so the frontend does not stay stuck on the
-                // last state.
+                // Connection lost: the agent is unreachable again (restarting, or genuinely
+                // stalled), and activity resets to idle so the frontend does not stay stuck on
+                // the last state.
+                cache.set_tap_connected(&name, false);
                 let _ = tx.send((name.clone(), AgentUpdate::Activity("idle".into()))).await;
             }
             Err(err) => {

@@ -832,6 +832,10 @@ async fn restart_agent_handler(
     // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
     spawn_detached(async move {
         let _guard = agent_write_guard(&state, &name).await;
+        // A vestad-performed restart (often the agent restarting itself, e.g. after the nightly
+        // dream) is planned work: registering it keeps the stop/start cycle out of the lifecycle push.
+        let _operation =
+            agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &name, docker::AgentOperation::Restarting);
 
         // A restart implies the agent should be running — record it so boot-start agrees with intent.
         {
@@ -2083,27 +2087,6 @@ where
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Publishes an agent's in-flight operation on the roster for as long as it is held, clearing it on
-/// drop so an early `?` return cannot strand the agent looking busy forever.
-struct PublishedOperation {
-    cache: Arc<crate::agent_status::AgentStatusCache>,
-    name: String,
-}
-
-impl PublishedOperation {
-    fn new(state: &SharedState, name: &str, operation: crate::docker::AgentOperation) -> Self {
-        let normalized = crate::docker::normalize_name(name);
-        state.agent_status_cache.set_operation(&normalized, operation);
-        Self { cache: state.agent_status_cache.clone(), name: normalized }
-    }
-}
-
-impl Drop for PublishedOperation {
-    fn drop(&mut self) {
-        self.cache.clear_operation(&self.name);
-    }
-}
-
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -2115,7 +2098,7 @@ async fn create_backup_handler(
         let _guard = agent_write_guard(&state, &name).await;
         let _file_lock = backup::agent_file_lock(&name)?;
         let _operation =
-            PublishedOperation::new(&state, &name, crate::docker::AgentOperation::BackingUp);
+            agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &name, crate::docker::AgentOperation::BackingUp);
         let info =
             backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual, None).await?;
         tracing::info!(backup_id = %info.id, size = info.size, "backup created");
@@ -2162,7 +2145,7 @@ async fn restore_backup_handler(
         let _guard = agent_write_guard(&state, &path.name).await;
         let _file_lock = backup::agent_file_lock(&path.name)?;
         let _operation =
-            PublishedOperation::new(&state, &path.name, crate::docker::AgentOperation::Restoring);
+            agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &path.name, crate::docker::AgentOperation::Restoring);
         let user_mounts = {
             let settings = state.settings.read().await;
             settings.agent_mounts(&path.name)
@@ -3249,6 +3232,7 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
+    let operation_state = state.clone();
     agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
         cache: state.agent_status_cache.clone(),
         docker,
@@ -3258,6 +3242,9 @@ pub async fn run_server(cfg: ServerConfig) {
         rebuilding: state.rebuilding.clone(),
         mobile_app: state.mobile_app.clone(),
         sync_hub: state.sync_hub.clone(),
+        gateway_operation_running: Arc::new(move || {
+            operation_state.operation.running_phase().is_some()
+        }),
     });
     let app = build_router(state.clone());
     spawn_maintenance_task(state.clone());

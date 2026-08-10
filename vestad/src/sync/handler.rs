@@ -480,7 +480,9 @@ fn build_roster(
         .map(|entry| {
             let normalized = crate::docker::normalize_name(&entry.name);
             let build_phase = build_phases.remove(&normalized);
-            let operation = operations.get(&normalized).copied();
+            // Only operations shipped clients know reach the wire; internal ones (a planned
+            // restart) exist for the lifecycle push alone.
+            let operation = operations.get(&normalized).copied().filter(|op| op.on_wire());
             (entry.name.clone(), agent_info(entry, activity, services, revs, build_phase, operation))
         })
         .collect();
