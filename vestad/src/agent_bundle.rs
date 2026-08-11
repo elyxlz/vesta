@@ -376,6 +376,32 @@ pub fn peek_import_name(input: &Path, name_override: Option<&str>) -> Result<Str
     Ok(name)
 }
 
+/// What an import must do about the vestad version that wrote a bundle. Newer state under older
+/// code is refused; older state converges on the agent's first boot, so that one is the user's
+/// call. A legacy file (`None`) and a version this vestad cannot compare both fail open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportGate {
+    Proceed,
+    ConfirmOlder { bundle: String, current: String },
+    RefuseNewer { bundle: String, current: String },
+}
+
+pub fn import_version_gate(bundle_version: Option<&str>, current: &str) -> ImportGate {
+    let Some(bundle) = bundle_version else {
+        return ImportGate::Proceed;
+    };
+    if !crate::update::version_comparable(bundle) || !crate::update::version_comparable(current) {
+        return ImportGate::Proceed;
+    }
+    if crate::update::version_less_than(current, bundle) {
+        ImportGate::RefuseNewer { bundle: bundle.to_string(), current: current.to_string() }
+    } else if crate::update::version_less_than(bundle, current) {
+        ImportGate::ConfirmOlder { bundle: bundle.to_string(), current: current.to_string() }
+    } else {
+        ImportGate::Proceed
+    }
+}
+
 fn agent_exists_error(name: &str) -> DockerError {
     DockerError::Failed(format!("agent '{name}' already exists; destroy it first or pass a different --name"))
 }
@@ -517,19 +543,11 @@ async fn finish_bundle_import(
     Ok(ImportOutcome { name: name.to_string(), port, manifest: Some(manifest) })
 }
 
-/// Import a bundle: warn on a manifest from a newer vestad, resolve and validate the name,
-/// import the image, then hand off to `finish_bundle_import`. A failure anywhere past the
-/// import removes the freshly imported image so a retry doesn't trip over it.
+/// Import a bundle: resolve and validate the name, import the image, then hand off to
+/// `finish_bundle_import`. A failure anywhere past the import removes the freshly imported
+/// image so a retry doesn't trip over it.
 async fn import_bundle(docker: &Docker, request: ImportRequest<'_>) -> Result<ImportOutcome, DockerError> {
     let (manifest, constitution) = open_bundle(request.input)?;
-
-    if crate::update::version_less_than(env!("CARGO_PKG_VERSION"), &manifest.vestad_version) {
-        eprintln!(
-            "warning: this bundle was exported by vestad v{}, newer than this vestad v{}; the agent's first boot will converge it, but consider updating vestad first",
-            manifest.vestad_version,
-            env!("CARGO_PKG_VERSION"),
-        );
-    }
 
     let name = resolve_import_name(BundleKind::Bundle, Some(&manifest.agent_name), request.name_override)?;
     crate::docker::validate_name(&name)?;
@@ -667,6 +685,18 @@ mod tests {
         std::fs::write(&truncated_path, &whole[..whole.len() / 2]).expect("write truncated");
         let result = read_bundle_image(&truncated_path, |_| Ok(()));
         assert!(result.is_err(), "truncated bundle must fail");
+    }
+
+    #[test]
+    fn import_version_gate_refuses_newer_confirms_older_passes_equal_and_legacy() {
+        assert!(matches!(import_version_gate(Some("9.9.9"), "0.2.1"), ImportGate::RefuseNewer { .. }));
+        assert!(matches!(import_version_gate(Some("0.1.0"), "0.2.1"), ImportGate::ConfirmOlder { .. }));
+        assert!(matches!(import_version_gate(Some("0.2.1"), "0.2.1"), ImportGate::Proceed));
+        assert!(matches!(import_version_gate(None, "0.2.1"), ImportGate::Proceed));
+        // Unparseable fails open, matching the client-compat convention. A `v` prefix is one such
+        // shape: comparing it would drop the major component and read v0.1.0 as newer than 0.2.1.
+        assert!(matches!(import_version_gate(Some("dev"), "0.2.1"), ImportGate::Proceed));
+        assert!(matches!(import_version_gate(Some("v0.1.0"), "0.2.1"), ImportGate::Proceed));
     }
 
     #[test]

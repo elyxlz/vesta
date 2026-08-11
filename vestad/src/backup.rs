@@ -172,8 +172,8 @@ pub async fn list_all_backups(docker: &Docker) -> Vec<BackupInfo> {
     all
 }
 
-/// Restore an agent from a backup snapshot.
-/// Creates a pre-restore safety backup first, then replaces the container.
+/// Restore an agent from a backup snapshot. Refuses a snapshot written by a newer vestad before
+/// touching anything, then creates a pre-restore safety backup and replaces the container.
 pub async fn restore_backup(
     docker: &Docker,
     name: &str,
@@ -189,10 +189,21 @@ pub async fn restore_backup(
     // container is already gone, e.g. a prior restore that died after removal, can
     // still restore instead of being locked out by the failure it's recovering from.
     let backups = list_backups(&env_config.agents_dir, name).await?;
-    if !backups.iter().any(|b| b.id == backup_id) {
+    let Some(info) = backups.iter().find(|b| b.id == backup_id) else {
         return Err(DockerError::NotFound(format!(
             "backup '{backup_id}' not found"
         )));
+    };
+
+    // State written by a newer vestad would run under this older code. Refuse while the agent is
+    // still untouched; updating vestad is what unblocks the restore.
+    let current = env!("CARGO_PKG_VERSION");
+    if let Some(made_by) = &info.vestad_version {
+        if crate::update::version_comparable(made_by) && crate::update::version_less_than(current, made_by) {
+            return Err(DockerError::Failed(format!(
+                "backup {backup_id} was made by vestad v{made_by}; this vestad is v{current} and cannot restore newer state; update vestad first"
+            )));
+        }
     }
 
     let status = container_status(docker, &cname).await;
@@ -375,6 +386,35 @@ mod tests {
         assert!(
             !restore_body.contains("remove_container_force"),
             "restore_backup must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
+    }
+
+    #[test]
+    fn restore_backup_refuses_a_newer_snapshot_before_touching_the_container() {
+        // State written by a newer vestad would run under older code, so the refusal must land
+        // before the stop plus safety-backup block rather than after the agent is already down.
+        let src = include_str!("backup.rs");
+        let restore_start = src
+            .find("pub async fn restore_backup")
+            .expect("restore_backup present");
+        let delete_start = src
+            .find("pub async fn delete_backup")
+            .expect("delete_backup present");
+        let restore_body = &src[restore_start..delete_start];
+
+        let guard_pos = restore_body
+            .find("vestad_version")
+            .expect("restore_backup must compare the snapshot's vestad_version");
+        let stop_pos = restore_body
+            .find("handoff_shutdown_reason")
+            .expect("restore_backup hands off a shutdown reason before stopping the container");
+        assert!(
+            guard_pos < stop_pos,
+            "the newer-version refusal must precede every destructive step"
+        );
+        assert!(
+            !restore_body.contains("from_version"),
+            "from_version carries a `v` prefix that compares wrong; the guard reads vestad_version"
         );
     }
 

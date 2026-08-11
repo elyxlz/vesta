@@ -90,6 +90,13 @@ pub(crate) fn version_less_than(a: &str, b: &str) -> bool {
     parse(a) < parse(b)
 }
 
+/// Whether `version_less_than` reads this string correctly. It drops every dot component that is
+/// not a number, so a `dev` sentinel compares as nothing and a `v`-prefixed tag loses its major
+/// component. A guard that must not act on a wrong comparison checks here and fails open.
+pub(crate) fn version_comparable(version: &str) -> bool {
+    !version.is_empty() && version.split('.').all(|part| part.parse::<u64>().is_ok())
+}
+
 // Persisted across restarts so the conditional request below keeps working
 // after vestad bounces. GitHub does not count a 304 response against the
 // unauthenticated rate limit, so a stored ETag makes steady-state polling free.
@@ -1044,6 +1051,14 @@ mod tests {
         assert!(version_less_than("0.1.9", "0.1.10"));
         assert!(!version_less_than("0.1.141", "0.1.132"));
         assert!(!version_less_than("0.1.141", "0.1.141"));
+    }
+
+    #[test]
+    fn version_comparable_rejects_the_shapes_that_compare_wrong() {
+        assert!(version_comparable("0.1.141"));
+        assert!(!version_comparable("v0.1.141"));
+        assert!(!version_comparable("dev"));
+        assert!(!version_comparable(""));
     }
 
     #[test]

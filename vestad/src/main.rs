@@ -120,6 +120,9 @@ enum Command {
         /// Agent name to create (defaults to the name embedded in the bundle)
         #[arg(long)]
         name: Option<String>,
+        /// Answer the older-bundle confirmation with yes (for scripts and non-interactive shells)
+        #[arg(long)]
+        yes: bool,
     },
     /// Update vestad to the latest version
     Update,
@@ -155,6 +158,49 @@ enum TunnelAction {
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("error: {msg}");
     std::process::exit(1);
+}
+
+/// Decide what this vestad does with the version that wrote a bundle, before the import takes
+/// the agent lock and loads a multi-GB image. A legacy file carries no manifest, so it is read
+/// only for the version and has nothing else to gate on.
+fn gate_import_version(input: &std::path::Path, yes: bool) {
+    let kind = agent_bundle::sniff_bundle(input).unwrap_or_else(|e| die(&e));
+    if kind != agent_bundle::BundleKind::Bundle {
+        return;
+    }
+    let (manifest, _) = agent_bundle::open_bundle(input).unwrap_or_else(|e| die(&e));
+    match agent_bundle::import_version_gate(Some(&manifest.vestad_version), env!("CARGO_PKG_VERSION")) {
+        agent_bundle::ImportGate::Proceed => {}
+        agent_bundle::ImportGate::RefuseNewer { bundle, current } => die(format!(
+            "this bundle was exported by vestad v{bundle}; this vestad is v{current} \
+             and cannot import newer state; update vestad first"
+        )),
+        agent_bundle::ImportGate::ConfirmOlder { bundle, current } => confirm_older_bundle(&bundle, &current, yes),
+    }
+}
+
+/// Confirm an import of state written by an older vestad. The import creates a new agent, so
+/// nothing here is replaced, and the agent converges its own state on its first boot.
+fn confirm_older_bundle(bundle: &str, current: &str, yes: bool) {
+    eprintln!("this bundle was exported by vestad v{bundle} and this vestad is v{current}.");
+    eprintln!("the import creates a new agent, so no agent on this machine is replaced.");
+    eprintln!("the new agent converges its state to v{current} on its first boot.");
+    if yes {
+        return;
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        die("cannot ask for confirmation without a terminal; pass --yes to import this bundle");
+    }
+    eprint!("continue? [y/N] ");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        die("failed to read input");
+    }
+    if !answer.trim().eq_ignore_ascii_case("y") {
+        eprintln!("Aborted.");
+        std::process::exit(0);
+    }
 }
 
 /// Run `docker <args>` with the parent's stdio inherited (for interactive TTY
@@ -784,11 +830,12 @@ fn main() {
             docker_exec_inherit(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"]);
         }
 
-        Command::Import { input, name } => {
+        Command::Import { input, name, yes } => {
             if !input.exists() {
                 die(format!("file not found: {}", input.display()));
             }
             let resolved_name = agent_bundle::peek_import_name(&input, name.as_deref()).unwrap_or_else(|e| die(&e));
+            gate_import_version(&input, yes);
             let _lock = backup::agent_file_lock(&resolved_name).unwrap_or_else(|e| die(&e));
 
             let config = config_dir();
