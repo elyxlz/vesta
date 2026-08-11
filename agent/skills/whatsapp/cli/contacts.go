@@ -360,19 +360,28 @@ func (wac *WhatsAppClient) preferExactContactMatch(contacts []Contact, identifie
 // ambiguous only when the matches are genuinely different peers.
 func (wac *WhatsAppClient) collapseSamePeerMatches(matches []Contact, identifier string) (types.JID, bool, error) {
 	var peer types.JID
+	seen := make(map[string]struct{})
+	var labels []string
 	for _, c := range matches {
 		jid, err := types.ParseJID(c.JID)
 		if err != nil {
 			return types.JID{}, true, err
 		}
 		canonical := wac.canonicalChatJID(jid)
-		if peer.IsEmpty() {
-			peer = canonical
+		if _, known := seen[canonical.String()]; known {
 			continue
 		}
-		if canonical.String() != peer.String() {
-			return types.JID{}, true, fmt.Errorf("multiple contacts share the exact name '%s'. Please disambiguate with the precise phone number (+1234567890)", identifier)
+		seen[canonical.String()] = struct{}{}
+		labels = append(labels, contactLabel(c))
+		if peer.IsEmpty() {
+			peer = canonical
 		}
+	}
+	if len(seen) > 1 {
+		return types.JID{}, true, fmt.Errorf(
+			"multiple contacts share the exact name '%s' (%s); address one by their exact phone number, or give one a distinct name so the name points at one person",
+			identifier, strings.Join(labels, ", "),
+		)
 	}
 	return peer, true, nil
 }

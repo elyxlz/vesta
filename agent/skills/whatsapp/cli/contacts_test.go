@@ -416,6 +416,10 @@ func TestResolveRecipientStillErrorsForDifferentPeersSharingAName(t *testing.T) 
 	if err == nil || !strings.Contains(err.Error(), "multiple contacts share the exact name") {
 		t.Fatalf("a name held by two different peers must stay ambiguous, got %v", err)
 	}
+	// The error names each colliding number, so the caller can address the right one instead of guessing.
+	if !strings.Contains(err.Error(), "+15551110000") || !strings.Contains(err.Error(), "+447700900123") {
+		t.Errorf("the ambiguity error must name both colliding numbers, got %v", err)
+	}
 }
 
 // A token that is not a chat id at all must be named as one. Reporting a mistyped id as a group
