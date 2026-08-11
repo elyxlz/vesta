@@ -379,7 +379,7 @@ func (wac *WhatsAppClient) collapseSamePeerMatches(matches []Contact, identifier
 	}
 	if len(seen) > 1 {
 		return types.JID{}, true, fmt.Errorf(
-			"multiple contacts share the exact name '%s' (%s); address one by their exact phone number, or give one a distinct name so the name points at one person",
+			"multiple contacts share the exact name '%s' (%s); address one by their exact phone number, or give one a different name",
 			identifier, strings.Join(labels, ", "),
 		)
 	}
