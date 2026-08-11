@@ -106,9 +106,9 @@ pub async fn sweep_backup_temp_artifacts(docker: &Docker) {
     }
 }
 
-/// Create a backup of the given agent without ever stopping it. A running container is captured
-/// via `docker commit` (Docker pauses it for the seconds the commit takes), then the committed
-/// image is exported through a temp container into restic; a stopped container exports directly.
+/// Create a backup of the given agent without ever stopping it. The container is captured via
+/// `docker commit` (Docker pauses a running one for the seconds the commit takes; a stopped one
+/// commits instantly), then the committed image is exported through a temp container into restic.
 pub async fn create_backup(
     docker: &Docker,
     name: &str,
@@ -117,26 +117,21 @@ pub async fn create_backup(
 ) -> Result<BackupInfo, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = guard_alive(container_status(docker, &cname).await, name)?;
+    guard_alive(container_status(docker, &cname).await, name)?;
     check_disk_space(docker, name, &cname).await?;
 
-    let result = if cs == ContainerStatus::Running {
-        // One shared name for the throwaway image repo and export container.
-        let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
-        let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
-        // A leftover temp container/image from a crashed run must not fail this one.
-        remove_temp_artifacts(docker, &temp_cname, &image).await;
-        tracing::info!(agent = %name, backup_type = %backup_type, "committing running container for backup");
-        crate::docker::commit_container_to_image(docker, &cname, &temp_cname, TEMP_IMAGE_TAG).await?;
-        let snap = match crate::docker::create_plain_container(docker, &image, &temp_cname).await {
-            Ok(()) => crate::restic::snapshot(name, &backup_type, from_version, &temp_cname).await,
-            Err(e) => Err(e),
-        };
-        remove_temp_artifacts(docker, &temp_cname, &image).await;
-        snap
-    } else {
-        crate::restic::snapshot(name, &backup_type, from_version, &cname).await
+    // One shared name for the throwaway image repo and export container.
+    let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
+    let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
+    // A leftover temp container/image from a crashed run must not fail this one.
+    remove_temp_artifacts(docker, &temp_cname, &image).await;
+    tracing::info!(agent = %name, backup_type = %backup_type, "committing container for backup");
+    crate::docker::commit_container_to_image(docker, &cname, &temp_cname, TEMP_IMAGE_TAG).await?;
+    let result = match crate::docker::create_plain_container(docker, &image, &temp_cname).await {
+        Ok(()) => crate::restic::snapshot(name, &backup_type, from_version, &temp_cname).await,
+        Err(e) => Err(e),
     };
+    remove_temp_artifacts(docker, &temp_cname, &image).await;
 
     match &result {
         Ok(info) => {
