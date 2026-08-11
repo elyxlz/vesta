@@ -1591,59 +1591,6 @@ async fn remove_snapshots<'a>(docker: &Docker, tags: impl Iterator<Item = &'a st
     }
 }
 
-/// Export a Docker image to an uncompressed tar file.
-/// Streams from Docker straight to disk without buffering the full image in memory, and cleans
-/// up the partial file on failure. Bundle export owns its own compression, so this writes chunks
-/// through unmodified rather than through a `GzEncoder`.
-pub async fn save_image_to_file(
-    docker: &Docker,
-    image: &str,
-    output: &std::path::Path,
-) -> Result<(), DockerError> {
-    let output = output.to_path_buf();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(8);
-
-    let write_output = output.clone();
-    let write_handle = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-        let mut file = std::fs::File::create(&write_output)
-            .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
-        while let Some(chunk) = rx.blocking_recv() {
-            std::io::Write::write_all(&mut file, &chunk)
-                .map_err(|e| DockerError::Failed(format!("failed to write save data: {e}")))?;
-        }
-        Ok(())
-    });
-
-    let mut stream = docker.export_image(image);
-    let mut stream_err = None;
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(data) => {
-                if tx.send(data).await.is_err() {
-                    break;
-                }
-            }
-            Err(e) => {
-                stream_err = Some(DockerError::Failed(format!("save stream error: {e}")));
-                break;
-            }
-        }
-    }
-    drop(tx);
-
-    if let Some(err) = stream_err {
-        tokio::fs::remove_file(&output).await.ok();
-        return Err(err);
-    }
-
-    write_handle
-        .await
-        .map_err(|e| DockerError::Failed(format!("save task failed: {e}")))?
-        .inspect_err(|_| {
-            std::fs::remove_file(&output).ok();
-        })
-}
-
 /// Import a Docker image from a byte stream of a `docker save` tar, gzip-compressed or not
 /// (Docker's load API accepts both natively). Returns the loaded image name
 /// (e.g. "vesta-backup:name_12345").
@@ -1716,9 +1663,16 @@ pub async fn run_oneshot_container(
         name: Some(spec.cname.to_string()),
         ..Default::default()
     };
+    // A throwaway container must never enumerate as an agent. It may run from an image committed
+    // off one, which carries that agent's labels, managed label included, so the create overrides
+    // the label rather than inheriting it.
     let body = ContainerCreateBody {
         image: Some(spec.image.to_string()),
         cmd: Some(spec.cmd),
+        labels: Some(HashMap::from([(
+            LABEL_MANAGED.to_string(),
+            "false".to_string(),
+        )])),
         host_config: Some(bollard::models::HostConfig {
             binds: Some(spec.ro_binds),
             network_mode: Some("none".into()),
@@ -4389,7 +4343,11 @@ mod tests {
         assert!(status.success());
 
         let saved = dir.path().join("image.tar");
-        save_image_to_file(&docker, &img.tag, &saved).await.expect("save");
+        let save_status = std::process::Command::new("docker")
+            .args(["save", "-o", &saved.display().to_string(), &img.tag])
+            .status()
+            .expect("docker save runs");
+        assert!(save_status.success());
         docker_cleanup(&["rmi", &img.tag]);
 
         let loaded = load_image_from_file(&docker, &saved).await.expect("load");
@@ -5838,6 +5796,21 @@ mod tests {
         .await
         .expect("oneshot runs");
         assert_eq!(exit, 0);
+
+        // The image a scrub runs from is committed off an agent and carries its labels, so the
+        // create must win: a oneshot left behind must never enumerate as that agent.
+        let labels = docker
+            .inspect_container(&tc.name, None)
+            .await
+            .expect("inspect the oneshot container")
+            .config
+            .and_then(|config| config.labels)
+            .unwrap_or_default();
+        assert_eq!(
+            labels.get(LABEL_MANAGED).map(String::as_str),
+            Some("false"),
+            "a oneshot container must carry the managed label as false, got {labels:?}"
+        );
 
         remove_container_force(&docker, &tc.name).await.expect("cleanup");
         let tc_fail = TestContainer::new("oneshot-fail");

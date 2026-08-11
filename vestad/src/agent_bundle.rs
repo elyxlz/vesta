@@ -1,7 +1,7 @@
 //! Portable agent export/import bundle format: a gzipped tar carrying a JSON
-//! manifest, the agent's constitution, and a `docker save` image tar, in that
-//! fixed entry order. `write_bundle` produces one, `sniff_bundle` tells a
-//! bundle apart from a legacy plain-image export without fully parsing it,
+//! manifest, the agent's constitution, and a flat `docker export` filesystem
+//! tar, in that fixed entry order. `write_bundle` produces one, `sniff_bundle`
+//! tells a bundle apart from a legacy plain-image export without fully parsing it,
 //! `open_bundle` reads the small head (manifest + constitution), and
 //! `read_bundle_image` streams the trailing image entry into a caller sink.
 
@@ -21,6 +21,8 @@ const IMAGE_STREAM_BUFFERED_CHUNKS: usize = 16;
 const MAX_HEAD_ENTRY_BYTES: u64 = 256 * 1024;
 const IMAGE_SPOOL_SUFFIX: &str = ".image-partial";
 const EXPORT_IMAGE_REPO_PREFIX: &str = "vesta-export";
+/// The one tag every export commits its capture under, reclaimed by the next run's sweep.
+const SNAPSHOT_TAG: &str = "snapshot";
 pub const SCRUB_TIMEOUT_SECS: u64 = 300;
 
 const CORRUPT_BUNDLE_MESSAGE: &str = "bundle is corrupt or was modified";
@@ -195,25 +197,17 @@ fn scrub_container_name(agent_name: &str) -> String {
 }
 
 /// Strip the LLM provider sign-in from `source_image` by running core's `clear_provider` (via
-/// `scrub_cmd`) in a throwaway container, then committing the result to
-/// `vesta-export-{agent_name}:scrubbed-{epoch}`. The epoch keeps the tag unique per run: `docker
-/// load` on the import host recreates it, and a fixed tag there would collide with a later
-/// export's scratch image on the same host. `core_dir` is bind-mounted read-only at
-/// `docker::CORE_MOUNT_DEST` so the invocation reaches the same core package the agent runs.
-pub async fn scrub_image(
+/// `scrub_cmd`) in a throwaway container, and return that container's name: its filesystem is
+/// the scrubbed copy the bundle carries, so the caller exports it directly and removes it.
+/// `core_dir` is bind-mounted read-only at `docker::CORE_MOUNT_DEST` so the invocation reaches
+/// the same core package the agent runs.
+pub async fn run_scrub_container(
     docker: &Docker,
     agent_name: &str,
     source_image: &str,
     core_dir: &Path,
 ) -> Result<String, DockerError> {
     let cname = scrub_container_name(agent_name);
-    let image_repo = format!("{EXPORT_IMAGE_REPO_PREFIX}-{agent_name}");
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let scrubbed_tag = format!("scrubbed-{epoch}");
-    let output_image = format!("{image_repo}:{scrubbed_tag}");
 
     crate::docker::remove_container_force(docker, &cname).await.ok();
 
@@ -238,11 +232,7 @@ pub async fn scrub_image(
         )));
     }
 
-    let commit_result = crate::docker::commit_container_to_image(docker, &cname, &image_repo, &scrubbed_tag).await;
-    crate::docker::remove_container_force(docker, &cname).await.ok();
-    commit_result?;
-
-    Ok(output_image)
+    Ok(cname)
 }
 
 /// Everything `export_agent` needs to build one bundle. `core_dir` is the host directory
@@ -257,7 +247,7 @@ pub struct ExportRequest<'a> {
     pub mounts: Vec<crate::mounts::HostMount>,
 }
 
-/// The uncompressed image tar spooled next to `output` while a bundle is assembled, so the
+/// The uncompressed filesystem tar spooled next to `output` while a bundle is assembled, so the
 /// final rename-free write via `write_bundle` reads from the same filesystem it writes to.
 fn spool_path_for(output: &Path) -> PathBuf {
     let mut spool = output.as_os_str().to_os_string();
@@ -281,28 +271,27 @@ fn build_manifest(
     }
 }
 
-/// Steps 5-9 of the export flow: scrub the snapshot, build the manifest, spool the scrubbed
-/// image, and package the bundle. Runs after the source container (if it was running) is
-/// already back up, so every failure here cleans up its own litter (spool file, scrubbed
-/// image) and leaves the source untouched; `write_bundle` removes a partial `output` itself.
-async fn export_from_snapshot(docker: &Docker, request: ExportRequest<'_>, snapshot_tag: &str) -> Result<(), DockerError> {
+/// Everything the export does to the captured copy: scrub it, build the manifest, spool the
+/// scrub container's filesystem, and package the bundle. The source agent is never touched
+/// here, so every failure cleans up its own litter (spool file, scrub container, snapshot
+/// image) and leaves the agent running; `write_bundle` removes a partial `output` itself.
+async fn export_from_snapshot(docker: &Docker, request: ExportRequest<'_>, snapshot_image: &str) -> Result<(), DockerError> {
     let now_rfc3339 = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| docker_failed("formatting export timestamp", err))?;
 
     eprintln!("scrubbing the LLM provider sign-in...");
-    // A failed scrub keeps its container (for `docker logs`), and that container pins the
-    // snapshot image: removing the tag here would only dangle the image unreclaimably, so the
-    // snapshot is removed on success alone and `export_agent`'s sweep reclaims both leftovers.
-    let scrubbed_tag = scrub_image(docker, request.name, snapshot_tag, request.core_dir).await?;
-    crate::docker::remove_image(docker, snapshot_tag).await.ok();
+    // A failed scrub keeps its container for `docker logs`, and that container pins the snapshot
+    // image. Neither is removed on that path, so `export_agent`'s sweep reclaims both on the next
+    // run. Past the scrub, the cleanup below always runs.
+    let scrub_cname = run_scrub_container(docker, request.name, snapshot_image, request.core_dir).await?;
 
     let manifest = build_manifest(request.name, request.user_desired, request.mounts, now_rfc3339);
 
     let spool_path = spool_path_for(request.output);
-    eprintln!("saving image...");
-    let save_result = crate::docker::save_image_to_file(docker, &scrubbed_tag, &spool_path).await;
-    let bundle_result = match save_result {
+    eprintln!("exporting filesystem...");
+    let export_result = crate::docker::export_container_to_file(&scrub_cname, &spool_path).await;
+    let bundle_result = match export_result {
         Ok(()) => {
             eprintln!("packaging bundle...");
             write_bundle(request.output, &manifest, &request.constitution, &spool_path)
@@ -311,47 +300,31 @@ async fn export_from_snapshot(docker: &Docker, request: ExportRequest<'_>, snaps
     };
 
     std::fs::remove_file(&spool_path).ok();
-    crate::docker::remove_image(docker, &scrubbed_tag).await.ok();
+    crate::docker::remove_container_force(docker, &scrub_cname).await.ok();
+    crate::docker::remove_image(docker, snapshot_image).await.ok();
     bundle_result
 }
 
-/// Export `request.name` to a portable bundle at `request.output`: stop the agent if running,
-/// snapshot its filesystem, restart it, then scrub and package the copy. Progress lines go to
-/// stderr, matching the prior `vestad backup export` UX. The source agent is back up (or was
-/// never stopped) before any of the copy-only work in `export_from_snapshot` runs.
+/// Export `request.name` to a portable bundle at `request.output`: commit the agent's
+/// filesystem, then scrub and package that copy. Progress lines go to stderr. The commit is
+/// the whole cost the agent pays, a pause of seconds, so an export never stops the agent and
+/// everything past the commit reads the copy alone.
 pub async fn export_agent(docker: &Docker, request: ExportRequest<'_>) -> Result<(), DockerError> {
     crate::docker::validate_name(request.name)?;
     let cname = crate::docker::container_name(request.name);
-    let status = crate::docker::guard_alive(crate::docker::container_status(docker, &cname).await, request.name)?;
+    crate::docker::guard_alive(crate::docker::container_status(docker, &cname).await, request.name)?;
 
-    let snapshot_tag = format!("{EXPORT_IMAGE_REPO_PREFIX}-{}:snapshot", request.name);
+    let image_repo = format!("{EXPORT_IMAGE_REPO_PREFIX}-{}", request.name);
+    let snapshot_image = format!("{image_repo}:{SNAPSHOT_TAG}");
     // Reclaim what a prior failed scrub deliberately left behind, container first so the
-    // snapshot image it pins becomes removable, before this run's snapshot takes the tag.
+    // snapshot image it pins becomes removable, before this run's capture takes the tag.
     crate::docker::remove_container_force(docker, &scrub_container_name(request.name)).await.ok();
-    crate::docker::remove_image(docker, &snapshot_tag).await.ok();
+    crate::docker::remove_image(docker, &snapshot_image).await.ok();
 
-    let was_running = status == crate::docker::ContainerStatus::Running;
-    if was_running {
-        eprintln!("stopping agent...");
-        crate::docker::handoff_shutdown_reason(docker, request.name, &cname, &crate::lifecycle::BACKUP_EXPORT).await;
-        crate::docker::stop_container_with_timeout(docker, &cname, crate::backup::BACKUP_STOP_TIMEOUT_SECS).await?;
-    }
+    eprintln!("capturing agent...");
+    crate::docker::commit_container_to_image(docker, &cname, &image_repo, SNAPSHOT_TAG).await?;
 
-    eprintln!("snapshotting container...");
-    if let Err(err) = crate::docker::snapshot_container(docker, &cname, &snapshot_tag, &[]).await {
-        if was_running {
-            crate::docker::handoff_boot_reason(docker, request.name, &cname, &crate::lifecycle::BACKUP_EXPORT).await;
-            crate::docker::start_container(docker, &cname).await;
-        }
-        return Err(err);
-    }
-
-    if was_running {
-        crate::docker::handoff_boot_reason(docker, request.name, &cname, &crate::lifecycle::BACKUP_EXPORT).await;
-        crate::docker::start_container(docker, &cname).await;
-    }
-
-    export_from_snapshot(docker, request, &snapshot_tag).await
+    export_from_snapshot(docker, request, &snapshot_image).await
 }
 
 // --- Import ---
@@ -803,7 +776,7 @@ mod tests {
         // Scrub. core_dir: extract the embedded agent code into a temp config dir, as the CLI does.
         let config_dir = tempfile::TempDir::new().expect("tempdir");
         let code_dir = crate::agent_code::ensure_agent_code(config_dir.path()).expect("agent code");
-        let scrubbed = scrub_image(&docker, &name, &fixture_image, &code_dir.join("core"))
+        let scrubbed = run_scrub_container(&docker, &name, &fixture_image, &code_dir.join("core"))
             .await
             .expect("scrub succeeds");
 
@@ -963,7 +936,11 @@ mod tests {
 
         // A legacy export: a gzipped `docker save` tar with no manifest.
         let tar_path = config_dir.path().join("legacy-image.tar");
-        crate::docker::save_image_to_file(&docker, &image, &tar_path).await.expect("save image");
+        let save_status = std::process::Command::new("docker")
+            .args(["save", "-o", &tar_path.display().to_string(), &image])
+            .status()
+            .expect("docker save runs");
+        assert!(save_status.success());
         let legacy_path = config_dir.path().join("legacy.tar.gz");
         let mut input = std::fs::File::open(&tar_path).expect("open tar");
         let output = std::fs::File::create(&legacy_path).expect("create gz");
