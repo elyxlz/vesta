@@ -3860,6 +3860,7 @@ mod tests {
                 created_at: "2026-01-01T00:00:00Z".into(),
                 size: 1234567890,
                 from_version: None,
+                vestad_version: None,
             })
             .expect("serialize BackupInfo")
         })

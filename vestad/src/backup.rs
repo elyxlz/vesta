@@ -419,6 +419,7 @@ mod tests {
             created_at: ts.to_string(),
             size: 1000,
             from_version: None,
+            vestad_version: None,
         }
     }
 

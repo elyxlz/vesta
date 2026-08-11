@@ -169,6 +169,7 @@ mod tests {
             created_at: crate::time_utils::now_timestamp_from_epoch(epoch),
             size: 1000,
             from_version: from_version.map(str::to_string),
+            vestad_version: None,
         }
     }
 

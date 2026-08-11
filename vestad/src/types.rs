@@ -76,6 +76,9 @@ pub struct BackupInfo {
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_version: Option<String>,
+    /// The vestad version that captured this snapshot; absent on pre-stamp snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vestad_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
