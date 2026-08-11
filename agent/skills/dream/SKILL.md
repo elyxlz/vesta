@@ -39,6 +39,8 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 
 Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. **If that file is not there, that is itself the first RED**: the probe that exists to catch silent failures had been silently absent, so restore it (`git -C ~ checkout upstream/agent-upstream -- agent/skills/dream/scripts/reality_check.sh`; if that ref is missing, run `bash ~/agent/core/skills/upstream-sync/scripts/fetch-upstream.sh` first) and run it before continuing. The retrospective reads your own record, so a failure nobody wrote down is invisible to it; the probe reads the running system. Every RED line gets fixed tonight or a one-line write-off in tonight's summary (what it is, why it can wait). Never carry a RED silently.
 
+Run `python3 ~/agent/skills/dream/scripts/verify_hooks.py` in the same pass. The guards below fail open, so a broken one blocks nothing and says nothing; the probe that reads the running system is the only thing that can tell you it is still there. See "Guards" below.
+
 ### 1. Retrospective
 
 Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
@@ -101,6 +103,48 @@ One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting
 - **Recurring user asks** (questions repeated across days: "what's my balance?", "did the build pass?"; states or numbers checked over and over): build a widget via the `dashboard` skill (the "ask first" gate has a dreamer carve-out, use it). Anything that kills the recurring ask is fair game: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links; pick the lightest form. Opposite: prune stale widgets (data source gone, never opened, broken at build).
 - **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a snooze rule via the `notifications` skill so it stops breaking your focus. Snoozing defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat snoozed when it should have reached you fast, propose an interrupt rule.
 - **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): read the producer before deciding, and judge by cost, not by arrival count. A non-interrupting alarm that re-notifies on a sane throttle and clears itself when its condition clears is doing its job for a still-open blocker; the repetition is the point, so close the blocker, never mute the reporter. Everything else that keeps arriving with a state you already know is a producer bug: fix the producer (stop emitting known state) or snooze it, preferring `--for <duration>` so the suppression cannot outlive the cause. Expectedness is a reason to fix it, not a reason to keep being woken by it.
+
+## Guards
+
+A rule you have to remember does not hold at 4am on the fourth command of a chain. When a mistake produces no error at all, so that the next command reads as confirmation of the one that failed, the fix belongs in a `PreToolUse` hook that refuses the call outright. `~/agent/skills/dream/scripts/` ships that family, one guard per silent failure shape:
+
+- `tmp_ref_guard.py` (`Write|Edit`): refuses to write a `/tmp` path into a task's metadata note. /tmp is cleared while the note survives, so the reference decays into a confident pointer at nothing, and a sweep that finds it later is a coroner, not a rescue.
+- `blind_mutation_guard.py` (`Bash`): refuses a state-changing command whose target id came out of a command substitution that scraped a human-readable table positionally (`awk` with no `-F`, `cut -c`). A column containing a space shifts every field after it, so the mutation names a row that does not exist, changes nothing, and exits 0.
+
+Both take `--self-test`, which runs their cases in both directions and is the first thing to run after editing one.
+
+### Wiring
+
+**A guard nobody wires does nothing.** Nothing imports these; the runtime runs them, so a guard sitting in the scripts directory is inert. Add each to `~/.claude/settings.json` under `hooks.PreToolUse`, with a `matcher` naming the tools it inspects:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [{ "type": "command", "command": "python3 /root/agent/skills/dream/scripts/tmp_ref_guard.py" }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "python3 /root/agent/skills/dream/scripts/blind_mutation_guard.py" }]
+      }
+    ]
+  }
+}
+```
+
+The matcher takes a tool name, a `|` alternation, or an MCP tool id (`mcp__vesta__mark_dreamer_complete`), so a guard can gate an agent-only action as well as a shell command. Startup writes this file only when it is absent and never rewrites an existing one, so the wiring survives upgrades: a guard that stops firing is a wiring or a script problem, never an upgrade that reverted it.
+
+A guard answers on stdout with `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}` and exits 0. Allow is silence. The reason string is the entire teaching moment, so it names the shape, why the failure is invisible, and the correct forms.
+
+**Fail open, always.** An unreadable payload, an unexpected shape, or any exception allows the call. A guard that can wedge ordinary work gets routed around, and a routed-around guard gets deleted.
+
+### Verifying
+
+Failing open means a broken guard is indistinguishable from a healthy one from the outside: nothing is blocked, nothing is said. `verify_hooks.py` is what tells them apart. It walks the settings structure (not a grep for `.py`, which misses `bash -lc` wrappers and unexpanded `~` paths), and asks of every wired hook: is it there and does it parse, does it allow a benign call, and does it still DENY an input it must refuse. Only the third question catches a guard gutted to `sys.exit(0)`.
+
+**When you add a guard, register its known-bad input in `must_deny()`** in the same pass. Without one, the guard can only be shown to parse and to allow, which is the state a gutted guard is in, and `verify_hooks.py` reports it by name as not fully exercised rather than counting it as a pass. Use the real call the guard was written for. For a guard whose verdict depends on state (a rolling budget, a file it reads), no fixed input can be known-bad: register cases in `STATEFUL` with a fixture that builds the state, and give BOTH directions, one it must refuse and one it must wave through. Deny-only cannot tell a working guard from one stuck on deny; allow-only cannot tell teeth from no teeth.
 
 ## Personality
 
