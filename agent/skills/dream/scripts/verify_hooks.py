@@ -83,17 +83,13 @@ def must_deny() -> dict[str, str]:
     }
 
 
-# State-dependent guards, whose answer to one input changes with what is on disk. A rolling budget
-# CORRECTLY allows the first call and CORRECTLY denies the third, and only one of those can sit in
-# `must_deny()`, so a fixed known-bad input cannot cover it. Register the cases here instead, as
-# (label, state fixture, payload, expected verdict); the fixture is a context manager yielding the
-# environment that points the guard at throwaway state it builds.
-#
-# BOTH DIRECTIONS ARE REQUIRED before `exercise()` calls such a guard covered. A deny-only suite
-# cannot tell a working guard from one stuck on deny; an allow-only suite cannot tell teeth from no
-# teeth. The allow case is the one that is easy to skip and expensive to lose: a guard that starts
-# refusing ordinary work fails in the direction nobody reports.
+# A fixture builds throwaway state and yields the environment that points a guard at it.
 Fixture = abc.Callable[[], contextlib.AbstractContextManager[dict[str, str]]]
+
+# Cases for guards whose answer to one input changes with what is on disk, keyed by script name:
+# (label, fixture, payload, expected verdict). A rolling budget CORRECTLY allows the first call and
+# CORRECTLY denies the third, so no fixed input is known-bad for it and `must_deny()` cannot cover
+# it. Give BOTH directions here (see `uncovered()`).
 STATEFUL: dict[str, list[tuple[str, Fixture, str, str]]] = {}
 
 
@@ -232,7 +228,13 @@ def toothless(script: pathlib.Path, bad: str) -> str | None:
 
 def uncovered(name: str) -> str | None:
     """Why a guard with no known-bad input was not fully exercised, or None when its STATEFUL cases
-    already show its teeth in both directions."""
+    already show its teeth in both directions.
+
+    Both directions are the bar, and one is not half of it. A deny-only suite cannot tell a working
+    guard from one stuck on deny; an allow-only suite cannot tell teeth from no teeth. The allow
+    case is the one that is easy to skip and expensive to lose, because a guard that starts refusing
+    ordinary work fails in the direction nobody reports.
+    """
     covered = {expected for _, _, _, expected in STATEFUL.get(name, [])}
     if {"allow", "deny"} <= covered:
         return None
