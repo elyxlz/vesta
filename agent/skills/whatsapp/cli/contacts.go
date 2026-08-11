@@ -319,6 +319,9 @@ func groupNames(groups []Chat) []string {
 // nameSharedWithGroup reports whether a group holds the exact name, used to keep a reply on the chat
 // JID when a saved contact's name would otherwise resolve ambiguously.
 func (wac *WhatsAppClient) nameSharedWithGroup(name string) bool {
+	if wac.store == nil {
+		return false
+	}
 	groups, err := wac.store.SearchGroups(name, 50)
 	if err != nil {
 		return false
