@@ -115,8 +115,8 @@ enum Command {
     },
     /// Import an agent from an export bundle
     Import {
-        /// Bundle file path (.tar.gz)
-        input: std::path::PathBuf,
+        /// Bundle file path (.tar.gz), or an http(s) URL to download it from
+        input: String,
         /// Agent name to create (defaults to the name embedded in the bundle)
         #[arg(long)]
         name: Option<String>,
@@ -160,47 +160,121 @@ fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
-/// Decide what this vestad does with the version that wrote a bundle, before the import takes
-/// the agent lock and loads a multi-GB image. A legacy file carries no manifest, so it is read
-/// only for the version and has nothing else to gate on.
-fn gate_import_version(input: &std::path::Path, yes: bool) {
-    let kind = agent_bundle::sniff_bundle(input).unwrap_or_else(|e| die(&e));
-    if kind != agent_bundle::BundleKind::Bundle {
-        return;
-    }
-    let (manifest, _) = agent_bundle::open_bundle(input).unwrap_or_else(|e| die(&e));
-    match agent_bundle::import_version_gate(Some(&manifest.vestad_version), env!("CARGO_PKG_VERSION")) {
-        agent_bundle::ImportGate::Proceed => {}
-        agent_bundle::ImportGate::RefuseNewer { bundle, current } => die(format!(
-            "this bundle was exported by vestad v{bundle}; this vestad is v{current} \
-             and cannot import newer state; update vestad first"
-        )),
-        agent_bundle::ImportGate::ConfirmOlder { bundle, current } => confirm_older_bundle(&bundle, &current, yes),
-    }
-}
-
-/// Confirm an import of state written by an older vestad. The import creates a new agent, so
-/// nothing here is replaced, and the agent converges its own state on its first boot.
-fn confirm_older_bundle(bundle: &str, current: &str, yes: bool) {
-    eprintln!("this bundle was exported by vestad v{bundle} and this vestad is v{current}.");
-    eprintln!("the import creates a new agent, so no agent on this machine is replaced.");
-    eprintln!("the new agent converges its state to v{current} on its first boot.");
-    if yes {
-        return;
-    }
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        die("cannot ask for confirmation without a terminal; pass --yes to import this bundle");
-    }
-    eprint!("continue? [y/N] ");
+/// Ask a yes/no question on stderr and read the answer from stdin. Anything but `y` is a no,
+/// an unreadable stdin included.
+fn confirm(prompt: &str) -> bool {
+    eprint!("{prompt} [y/N] ");
     std::io::Write::flush(&mut std::io::stderr()).ok();
     let mut answer = String::new();
     if std::io::stdin().read_line(&mut answer).is_err() {
-        die("failed to read input");
+        return false;
     }
-    if !answer.trim().eq_ignore_ascii_case("y") {
-        eprintln!("Aborted.");
-        std::process::exit(0);
+    answer.trim().eq_ignore_ascii_case("y")
+}
+
+/// Decide what this vestad does with the version that wrote a bundle, before the import takes
+/// the agent lock and loads a multi-GB image. `Ok(false)` is the user declining an older
+/// bundle: not a failure, so the caller still cleans up before it exits. The import creates a
+/// new agent, so nothing here is replaced, and the agent converges its state on its first boot.
+fn confirm_import_version(bundle_version: Option<&str>, yes: bool) -> Result<bool, String> {
+    match agent_bundle::import_version_gate(bundle_version, env!("CARGO_PKG_VERSION")) {
+        agent_bundle::ImportGate::Proceed => Ok(true),
+        agent_bundle::ImportGate::RefuseNewer { bundle, current } => Err(format!(
+            "this bundle was exported by vestad v{bundle}; this vestad is v{current} \
+             and cannot import newer state; update vestad first"
+        )),
+        agent_bundle::ImportGate::ConfirmOlder { bundle, current } => {
+            eprintln!("this bundle was exported by vestad v{bundle} and this vestad is v{current}.");
+            eprintln!("the import creates a new agent, so no agent on this machine is replaced.");
+            eprintln!("the new agent converges its state to v{current} on its first boot.");
+            if yes {
+                return Ok(true);
+            }
+            if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                return Err("cannot ask for confirmation without a terminal; pass --yes to import this bundle".to_string());
+            }
+            if confirm("continue?") {
+                return Ok(true);
+            }
+            eprintln!("Aborted.");
+            Ok(false)
+        }
     }
+}
+
+/// One import, from a bundle already on this filesystem to a created agent. `Ok(None)` is the
+/// declined confirmation above. Every outcome returns instead of exiting, so the caller can
+/// remove a downloaded temp file whichever way this went.
+fn import_from_file(
+    input: &std::path::Path,
+    name: Option<&str>,
+    yes: bool,
+    config: &std::path::Path,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<Option<agent_bundle::ImportOutcome>, String> {
+    let peek = agent_bundle::peek_import(input, name).map_err(|e| e.to_string())?;
+    if !confirm_import_version(peek.vestad_version.as_deref(), yes)? {
+        return Ok(None);
+    }
+    let _lock = backup::agent_file_lock(&peek.name).map_err(|e| e.to_string())?;
+
+    let env_config = docker::AgentEnvConfig {
+        config_dir: config.to_path_buf(),
+        agents_dir: config.join("agents"),
+        vestad_port: read_port_file(config).unwrap_or(0),
+        vestad_tunnel: tunnel::get_tunnel_config(config).map(|tc| tc.url()),
+    };
+    let code_dir =
+        agent_code::ensure_agent_code(config).map_err(|e| format!("failed to populate agent code: {e}"))?;
+    // The container bind-mounts the upstream dir; build it here like server startup does, or
+    // rootful Docker would create the missing host path as root and the next vestad startup
+    // could no longer write into it.
+    upstream::ensure_upstream(config, &code_dir).map_err(|e| e.to_string())?;
+
+    let docker = docker::connect().map_err(|e| e.to_string())?;
+    let outcome = runtime
+        .block_on(agent_bundle::import_agent(
+            &docker,
+            agent_bundle::ImportRequest {
+                input,
+                name_override: name,
+                env_config: &env_config,
+            },
+        ))
+        .map_err(|e| format!("import failed: {e}"))?;
+
+    let mut settings = settings::load_settings();
+    let entry = settings.agents.entry(outcome.name.clone()).or_default();
+    if let Some(manifest) = &outcome.manifest {
+        entry.user_desired = manifest.user_desired;
+    }
+    settings::save_settings(&settings);
+    Ok(Some(outcome))
+}
+
+/// An import's notes on stderr, then its one result line on stdout. A legacy file carries no
+/// manifest: nothing was scrubbed, no mounts are known, and the agent is always started.
+fn report_import(outcome: &agent_bundle::ImportOutcome) {
+    if let Some(manifest) = &outcome.manifest {
+        if !manifest.mounts.is_empty() {
+            eprintln!("the source agent had host folder access; re-grant from the app if wanted:");
+            for mount in &manifest.mounts {
+                let mode = if mount.writable { "read-write" } else { "read-only" };
+                eprintln!("  {} -> {} ({mode})", mount.host_path, mount.container_path);
+            }
+        }
+        eprintln!("the LLM provider is signed out; sign in from the app.");
+    }
+    let running = outcome
+        .manifest
+        .as_ref()
+        .is_none_or(|manifest| manifest.user_desired == settings::UserDesired::Running);
+    println!(
+        "imported: {} (port {}, {})",
+        outcome.name,
+        outcome.port,
+        if running { "running" } else { "stopped" },
+    );
 }
 
 /// Run `docker <args>` with the parent's stdio inherited (for interactive TTY
@@ -831,68 +905,34 @@ fn main() {
         }
 
         Command::Import { input, name, yes } => {
-            if !input.exists() {
-                die(format!("file not found: {}", input.display()));
-            }
-            let resolved_name = agent_bundle::peek_import_name(&input, name.as_deref()).unwrap_or_else(|e| die(&e));
-            gate_import_version(&input, yes);
-            let _lock = backup::agent_file_lock(&resolved_name).unwrap_or_else(|e| die(&e));
-
             let config = config_dir();
-            let vestad_port = read_port_file(&config).unwrap_or(0);
-            let vestad_tunnel = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
-            let env_config = docker::AgentEnvConfig {
-                config_dir: config.clone(),
-                agents_dir: config.join("agents"),
-                vestad_port,
-                vestad_tunnel,
-            };
-            let code_dir = agent_code::ensure_agent_code(&config)
-                .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
-            // The container bind-mounts the upstream dir; build it here like server
-            // startup does, or rootful Docker would create the missing host path as
-            // root and the next vestad startup could no longer write into it.
-            upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
-
-            let docker = docker::connect().unwrap_or_else(|e| die(&e));
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("tokio runtime builds");
-            let outcome = rt
-                .block_on(agent_bundle::import_agent(
-                    &docker,
-                    agent_bundle::ImportRequest {
-                        input: &input,
-                        name_override: name.as_deref(),
-                        env_config: &env_config,
-                    },
-                ))
-                .unwrap_or_else(|e| die(format!("import failed: {e}")));
-
-            let mut settings = settings::load_settings();
-            let entry = settings.agents.entry(outcome.name.clone()).or_default();
-            if let Some(manifest) = &outcome.manifest {
-                entry.user_desired = manifest.user_desired;
-            }
-            settings::save_settings(&settings);
-
-            if let Some(manifest) = &outcome.manifest {
-                if !manifest.mounts.is_empty() {
-                    eprintln!("the source agent had host folder access; re-grant from the app if wanted:");
-                    for mount in &manifest.mounts {
-                        let mode = if mount.writable { "read-write" } else { "read-only" };
-                        eprintln!("  {} -> {} ({mode})", mount.host_path, mount.container_path);
-                    }
-                }
-            }
-            if outcome.manifest.is_some() {
-                eprintln!(
-                    "imported: {} (port {}); the LLM provider is signed out; sign in from the app",
-                    outcome.name, outcome.port
-                );
+            // A downloaded bundle is this process's temp file, so it is removed once the import
+            // that reads it is over, whichever way that went.
+            let (source, temporary) = if agent_bundle::is_download_url(&input) {
+                let path = rt
+                    .block_on(agent_bundle::download_bundle(&input, &config))
+                    .unwrap_or_else(|e| die(&e));
+                (path, true)
             } else {
-                eprintln!("imported: {} (port {})", outcome.name, outcome.port);
+                let path = std::path::PathBuf::from(&input);
+                if !path.exists() {
+                    die(format!("file not found: {}", path.display()));
+                }
+                (path, false)
+            };
+
+            let result = import_from_file(&source, name.as_deref(), yes, &config, &rt);
+            if temporary {
+                std::fs::remove_file(&source).ok();
+            }
+            match result {
+                Err(message) => die(message),
+                Ok(None) => std::process::exit(0),
+                Ok(Some(outcome)) => report_import(&outcome),
             }
         }
 
@@ -911,25 +951,25 @@ fn main() {
             let agent_settings = settings.agents.get(&name).cloned().unwrap_or_default();
             let constitution_path = docker::constitution_host_path(&config.join("agents"), &name);
             let constitution = std::fs::read_to_string(&constitution_path).unwrap_or_default();
-            rt.block_on(async {
-                agent_bundle::export_agent(
-                    &docker,
-                    agent_bundle::ExportRequest {
-                        name: &name,
-                        output: &output,
-                        core_dir: &code_dir.join("core"),
-                        constitution,
-                        user_desired: agent_settings.user_desired,
-                        mounts: agent_settings.mounts,
-                    },
-                )
-                .await
-                .unwrap_or_else(|e| die(format!("export failed: {e}")));
-                eprintln!(
-                    "exported: {} (the LLM provider sign-in is stripped; other in-container credentials ride along)",
-                    output.display()
-                );
-            });
+            rt.block_on(agent_bundle::export_agent(
+                &docker,
+                agent_bundle::ExportRequest {
+                    name: &name,
+                    output: &output,
+                    core_dir: &code_dir.join("core"),
+                    constitution,
+                    user_desired: agent_settings.user_desired,
+                    mounts: agent_settings.mounts,
+                },
+            ))
+            .unwrap_or_else(|e| die(format!("export failed: {e}")));
+
+            eprintln!("the LLM provider sign-in is stripped; other in-container credentials ride along.");
+            // The bundle is written and readable, so a failed stat or canonicalize means the
+            // path moved under us: name what was asked for rather than fail a finished export.
+            let path = std::fs::canonicalize(&output).unwrap_or_else(|_| output.clone());
+            let size = std::fs::metadata(&output).map_or(0, |meta| meta.len());
+            println!("exported: {} ({})", path.display(), agent_bundle::human_size(size));
         }
 
         Command::Connect => {
@@ -1017,16 +1057,7 @@ fn main() {
         }
 
         Command::Uninstall => {
-            use std::io::Write;
-
-            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
-            std::io::stderr().flush().ok();
-            let mut answer = String::new();
-            if std::io::stdin().read_line(&mut answer).is_err() {
-                eprintln!("failed to read input");
-                std::process::exit(1);
-            }
-            if !answer.trim().eq_ignore_ascii_case("y") {
+            if !confirm("This will stop vestad, remove its systemd service, config, and binary. Continue?") {
                 eprintln!("Aborted.");
                 std::process::exit(0);
             }

@@ -4,11 +4,14 @@
 //! tells a bundle apart from a legacy plain-image export without fully parsing it,
 //! `open_bundle` reads the small head (manifest + constitution), and
 //! `read_bundle_image` streams the trailing image entry into a caller sink.
+//! `download_bundle` fetches one over http into a temp file the caller imports from.
 
 use crate::docker::DockerError;
 use bollard::Docker;
+use futures_util::StreamExt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use tokio::io::AsyncWriteExt;
 
 pub(crate) const BUNDLE_FORMAT_VERSION: u32 = 1;
 pub(crate) const MANIFEST_ENTRY: &str = "vesta-manifest.json";
@@ -326,6 +329,91 @@ pub async fn export_agent(docker: &Docker, request: ExportRequest<'_>) -> Result
     export_from_snapshot(docker, request, &snapshot_image).await
 }
 
+// --- Download ---
+
+const HUMAN_SIZE_UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+const HUMAN_SIZE_STEP: f64 = 1024.0;
+/// Progress cadence: one line per this much of a declared length, or per this many bytes when
+/// the response declares none.
+const DOWNLOAD_PROGRESS_STEP_PERCENT: u64 = 5;
+const DOWNLOAD_PROGRESS_STEP_BYTES: u64 = 50 * 1024 * 1024;
+
+/// A byte count to one decimal, in the largest unit that keeps it under 1024.
+pub fn human_size(bytes: u64) -> String {
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= HUMAN_SIZE_STEP && unit + 1 < HUMAN_SIZE_UNITS.len() {
+        value /= HUMAN_SIZE_STEP;
+        unit += 1;
+    }
+    format!("{value:.1} {}", HUMAN_SIZE_UNITS[unit])
+}
+
+/// True for an import input the CLI must fetch before it can read it.
+pub fn is_download_url(input: &str) -> bool {
+    input.starts_with("http://") || input.starts_with("https://")
+}
+
+/// The progress line `downloaded` earns, or `None` while it is still within one step of the
+/// `reported` point the last line named.
+fn download_progress_line(downloaded: u64, total: Option<u64>, reported: u64) -> Option<String> {
+    match total {
+        Some(total) if total > 0 => {
+            let percent = downloaded * 100 / total;
+            (percent >= reported * 100 / total + DOWNLOAD_PROGRESS_STEP_PERCENT)
+                .then(|| format!("downloading... {percent}%"))
+        }
+        _ => (downloaded >= reported + DOWNLOAD_PROGRESS_STEP_BYTES)
+            .then(|| format!("downloading... {}", human_size(downloaded))),
+    }
+}
+
+async fn download_to_file(url: &str, path: &Path) -> Result<(), DockerError> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|err| docker_failed("downloading bundle", err))?
+        .error_for_status()
+        .map_err(|err| docker_failed("downloading bundle", err))?;
+    let total = response.content_length();
+
+    let file = tokio::fs::File::create(path)
+        .await
+        .map_err(|err| docker_failed("creating download file", err))?;
+    let mut writer = tokio::io::BufWriter::new(file);
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut reported: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| docker_failed("downloading bundle", err))?;
+        writer.write_all(&chunk).await.map_err(|err| docker_failed("writing download", err))?;
+        downloaded += chunk.len() as u64;
+        if let Some(line) = download_progress_line(downloaded, total, reported) {
+            eprintln!("{line}");
+            reported = downloaded;
+        }
+    }
+    writer.flush().await.map_err(|err| docker_failed("writing download", err))?;
+    Ok(())
+}
+
+/// Fetch the bundle at `url` into a temp file under `config_dir`, and return that path for the
+/// import to read; the caller removes the file once it is done with it. Redirects are followed.
+/// Every failure removes the partial file, so a dead download leaves nothing behind.
+pub async fn download_bundle(url: &str, config_dir: &Path) -> Result<PathBuf, DockerError> {
+    let tmp_dir = config_dir.join("tmp");
+    std::fs::create_dir_all(&tmp_dir).map_err(|err| docker_failed("creating download directory", err))?;
+    let path = tmp_dir.join(format!("import-download-{}.tar.gz", std::process::id()));
+
+    eprintln!("downloading {url}...");
+    match download_to_file(url, &path).await {
+        Ok(()) => Ok(path),
+        Err(err) => {
+            std::fs::remove_file(&path).ok();
+            Err(err)
+        }
+    }
+}
+
 // --- Import ---
 
 pub struct ImportRequest<'a> {
@@ -360,20 +448,28 @@ pub fn resolve_import_name(
     }
 }
 
-/// The name `import_agent` would create, without holding the per-agent file lock the caller
-/// takes once it knows that name. Cheap: a bundle's manifest is only its small tar head.
-/// Validates before returning: the manifest's `agent_name` is untrusted file content, and the
-/// caller locks a `{name}.lock` path keyed on this name before any other validation runs, so an
-/// unvalidated name (e.g. `../evil` or an absolute path) could escape the lock directory.
-pub fn peek_import_name(input: &Path, name_override: Option<&str>) -> Result<String, DockerError> {
+/// What one decode of a bundle's head tells the caller: the name `import_agent` would create,
+/// and the vestad version that wrote the file (`None` for a legacy file, which has no manifest).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportPeek {
+    pub name: String,
+    pub vestad_version: Option<String>,
+}
+
+/// Read a bundle's head before the import takes the per-agent file lock or loads a multi-GB
+/// image. Cheap: a bundle's manifest is only its small tar head. Validates the name before
+/// returning: the manifest's `agent_name` is untrusted file content, and the caller locks a
+/// `{name}.lock` path keyed on this name before any other validation runs, so an unvalidated
+/// name (e.g. `../evil` or an absolute path) could escape the lock directory.
+pub fn peek_import(input: &Path, name_override: Option<&str>) -> Result<ImportPeek, DockerError> {
     let kind = sniff_bundle(input)?;
-    let manifest_name = match kind {
-        BundleKind::Bundle => Some(open_bundle(input)?.0.agent_name),
+    let manifest = match kind {
+        BundleKind::Bundle => Some(open_bundle(input)?.0),
         BundleKind::Legacy => None,
     };
-    let name = resolve_import_name(kind, manifest_name.as_deref(), name_override)?;
+    let name = resolve_import_name(kind, manifest.as_ref().map(|m| m.agent_name.as_str()), name_override)?;
     crate::docker::validate_name(&name)?;
-    Ok(name)
+    Ok(ImportPeek { name, vestad_version: manifest.map(|m| m.vestad_version) })
 }
 
 /// What an import must do about the vestad version that wrote a bundle. Newer state under older
@@ -700,6 +796,49 @@ mod tests {
     }
 
     #[test]
+    fn human_size_scales_to_the_largest_whole_unit() {
+        for (bytes, expected) in [(512u64, "512.0 B"), (1_572_864, "1.5 MB"), (3_221_225_472, "3.0 GB")] {
+            assert_eq!(human_size(bytes), expected);
+        }
+    }
+
+    #[test]
+    fn download_urls_are_told_apart_from_file_paths() {
+        assert!(is_download_url("https://example.com/apollo.tar.gz"));
+        assert!(is_download_url("http://example.com/apollo.tar.gz"));
+        assert!(!is_download_url("/home/u/apollo.tar.gz"));
+        assert!(!is_download_url("apollo.tar.gz"));
+    }
+
+    #[test]
+    fn download_progress_reports_per_percent_step_and_per_byte_step_without_a_total() {
+        assert_eq!(download_progress_line(4, Some(100), 0), None);
+        assert_eq!(download_progress_line(5, Some(100), 0).as_deref(), Some("downloading... 5%"));
+        assert_eq!(download_progress_line(9, Some(100), 5), None);
+        assert_eq!(download_progress_line(DOWNLOAD_PROGRESS_STEP_BYTES - 1, None, 0), None);
+        assert_eq!(
+            download_progress_line(DOWNLOAD_PROGRESS_STEP_BYTES, None, 0).as_deref(),
+            Some("downloading... 50.0 MB")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_download_leaves_no_partial_file() {
+        // Port 1 on loopback refuses instantly, so this stays hermetic and fast.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let err = download_bundle("http://127.0.0.1:1/apollo.tar.gz", dir.path())
+            .await
+            .expect_err("a refused connection must fail");
+        assert!(err.to_string().contains("downloading bundle"), "got: {err}");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("tmp"))
+            .expect("tmp dir exists")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        assert!(leftovers.is_empty(), "got: {leftovers:?}");
+    }
+
+    #[test]
     fn resolve_import_name_prefers_override_then_manifest() {
         assert_eq!(resolve_import_name(BundleKind::Bundle, Some("apollo"), Some("copy")).expect("ok"), "copy");
         assert_eq!(resolve_import_name(BundleKind::Bundle, Some("apollo"), None).expect("ok"), "apollo");
@@ -770,11 +909,11 @@ mod tests {
     }
 
     #[test]
-    fn peek_import_name_rejects_path_traversal_in_manifest_name() {
+    fn peek_import_rejects_path_traversal_in_manifest_name() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let bundle = bundle_with_manifest_name(dir.path(), "../evil");
 
-        let err = peek_import_name(&bundle, None).expect_err("must refuse traversal name");
+        let err = peek_import(&bundle, None).expect_err("must refuse traversal name");
         assert!(matches!(err, DockerError::InvalidName(_)), "got: {err}");
 
         // The traversal name must never have reached a caller that could lock/write a path
@@ -783,12 +922,13 @@ mod tests {
     }
 
     #[test]
-    fn peek_import_name_override_wins_and_is_validated() {
+    fn peek_import_override_wins_and_is_validated() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let bundle = bundle_with_manifest_name(dir.path(), "../evil");
 
-        let name = peek_import_name(&bundle, Some("apollo")).expect("valid override succeeds");
-        assert_eq!(name, "apollo");
+        let peek = peek_import(&bundle, Some("apollo")).expect("valid override succeeds");
+        assert_eq!(peek.name, "apollo");
+        assert_eq!(peek.vestad_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
     }
 
     fn test_docker() -> bollard::Docker {
