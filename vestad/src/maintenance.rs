@@ -15,6 +15,11 @@ pub const PRE_UPDATE_REUSE_SECS: u64 = 24 * 3600;
 /// Minimum gap between passes: one per day, tolerant of the window drifting across
 /// DST or a fleet timezone change.
 pub const PASS_DEDUP_SECS: u64 = 20 * 3600;
+/// The freshness window is this much shorter than the cadence. The pass lands at about the
+/// same clock time every night, so an exact `every_n_days * 86_400` window would read the
+/// previous pass's own snapshot as fresh by seconds and capture every other night. A
+/// snapshot counts as fresh only if it is meaningfully younger than the cadence.
+const SNAPSHOT_FRESHNESS_SLACK_SECS: u64 = 2 * 3600;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PassKind {
@@ -64,7 +69,9 @@ pub fn agent_needs_snapshot(
 ) -> bool {
     match kind {
         PassKind::Routine => {
-            let stale_before = now_epoch.saturating_sub(u64::from(every_n_days) * 86_400);
+            let stale_before = now_epoch
+                .saturating_sub(u64::from(every_n_days) * 86_400)
+                .saturating_add(SNAPSHOT_FRESHNESS_SLACK_SECS);
             !backups.iter().any(|b| {
                 matches!(b.backup_type, BackupType::Periodic | BackupType::PreUpdate)
                     && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
@@ -196,6 +203,22 @@ mod tests {
             NOW,
             3
         ));
+    }
+
+    #[test]
+    fn nightly_pass_survives_last_nights_snapshot_at_the_same_clock_time() {
+        // The pass lands at about the same clock time each night, so an exact one-day
+        // freshness window would read last night's own snapshot as fresh and capture
+        // every other night instead of nightly.
+        let kind = PassKind::Routine;
+        assert!(
+            agent_needs_snapshot(&kind, &[periodic_at(NOW - DAY + 30)], NOW, 1),
+            "last night's snapshot must not suppress tonight's pass"
+        );
+        assert!(
+            !agent_needs_snapshot(&kind, &[periodic_at(NOW - 3 * 3600)], NOW, 1),
+            "a snapshot from a few hours ago still suppresses the pass"
+        );
     }
 
     #[test]

@@ -445,16 +445,15 @@ mod tests {
 
     #[test]
     fn rolling_family_keeps_only_newest_across_periodic_and_pre_restore() {
-        // Periodic and pre-restore share the one rolling slot, so a fresh pre-restore
-        // point retires the periodic before it and vice versa.
+        // The one rolling slot spans both kinds: a pre-restore point newer than every
+        // periodic takes the slot, and both periodics age out behind it.
         let backups = vec![
             make_backup("a", BackupType::Periodic, "20260409-040000"),
-            make_backup("a", BackupType::PreRestore, "20260410-220000"),
-            make_backup("a", BackupType::Periodic, "20260411-040000"),
+            make_backup("a", BackupType::Periodic, "20260410-040000"),
+            make_backup("a", BackupType::PreRestore, "20260411-220000"),
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete.len(), 2);
-        assert!(!to_delete.contains(&backups[2].id));
+        assert_eq!(to_delete, vec![backups[1].id.clone(), backups[0].id.clone()]);
     }
 
     #[test]
