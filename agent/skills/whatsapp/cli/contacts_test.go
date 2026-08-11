@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow/types"
 )
@@ -457,5 +458,42 @@ func TestRequireManualContactLeavesGroupsUngated(t *testing.T) {
 
 	if err := wac.requireManualContact(types.NewJID(groupIDDigits, types.GroupServer)); err != nil {
 		t.Errorf("a group must not require a saved contact, got %v", err)
+	}
+}
+
+// A bare name held by both a saved contact and a group is ambiguous: refuse it so a message never
+// goes silently to the wrong one. The remedy renames the contact, the one name the agent controls.
+func TestResolveRecipientErrorsWhenANameIsBothAContactAndAGroup(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.store.SaveManualContact("Book Club", "+15551110000"); err != nil {
+		t.Fatalf("failed to seed contact: %v", err)
+	}
+	if err := wac.store.StoreChat("120363021234567890@g.us", "Book Club", time.Now()); err != nil {
+		t.Fatalf("failed to seed group: %v", err)
+	}
+
+	_, err := wac.ResolveRecipient("Book Club")
+	if err == nil || !strings.Contains(err.Error(), "both a saved contact and a group") {
+		t.Fatalf("a name shared by a contact and a group must be refused, got %v", err)
+	}
+}
+
+// A contact name that only appears inside a group name is not a collision: the exact contact still
+// resolves, so a near-match group never blocks addressing the person.
+func TestResolveRecipientResolvesAContactWhenAGroupOnlyPartiallyMatches(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.store.SaveManualContact("Sam", "+15551110000"); err != nil {
+		t.Fatalf("failed to seed contact: %v", err)
+	}
+	if err := wac.store.StoreChat("120363021234567890@g.us", "Sam's Book Club", time.Now()); err != nil {
+		t.Fatalf("failed to seed group: %v", err)
+	}
+
+	resolved, err := wac.ResolveRecipient("Sam")
+	if err != nil {
+		t.Fatalf("an exact contact name must resolve despite a partial group match, got %v", err)
+	}
+	if resolved.User != "15551110000" {
+		t.Errorf("must resolve to the contact, got %v", resolved)
 	}
 }

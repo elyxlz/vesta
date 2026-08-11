@@ -59,6 +59,9 @@ type NotifContext struct {
 	ContactSaved bool
 	IsDirectChat bool
 	Sender       string
+	// NameSharedWithGroup marks a saved contact whose name a group also holds, so the reply keeps
+	// the chat JID rather than an ambiguous name that could resolve to the group.
+	NameSharedWithGroup bool
 }
 
 type MediaInfo struct {

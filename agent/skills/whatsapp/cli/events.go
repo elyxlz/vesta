@@ -288,11 +288,13 @@ func (wac *WhatsAppClient) dropDeadDevice() {
 // buildNotifContext assembles the NotifContext shared by message and reaction
 // notifications.
 func (wac *WhatsAppClient) buildNotifContext(chatJID, chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
+	nameSharedWithGroup := contactSaved && isDirectChat && contactName != "" && wac.nameSharedWithGroup(contactName)
 	return NotifContext{
 		NotifDir: wac.notificationsDir, ChatJID: chatJID, ChatName: chatName,
 		ContactName: contactName, ContactPhone: contactPhone,
 		Instance: wac.instance, ContactSaved: contactSaved,
 		IsDirectChat: isDirectChat, Sender: senderDisplay,
+		NameSharedWithGroup: nameSharedWithGroup,
 	}
 }
 

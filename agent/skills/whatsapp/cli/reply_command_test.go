@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow/types"
 )
@@ -108,5 +109,37 @@ func TestReplyNameRoundTripsToTheDeliverablePhoneJID(t *testing.T) {
 	}
 	if resolved.Server != types.DefaultUserServer {
 		t.Errorf("name must resolve to a phone-server JID, got %v", resolved.Server)
+	}
+}
+
+// When a group shares the saved contact's name, the reply keeps the chat JID, so it can never
+// resolve to the group by that ambiguous name.
+func TestNotificationReplyCommandKeepsTheJIDWhenAGroupSharesTheName(t *testing.T) {
+	ctx := NotifContext{
+		ContactSaved: true, IsDirectChat: true, ContactName: "Book Club",
+		NameSharedWithGroup: true, ChatJID: "15551110000@s.whatsapp.net",
+	}
+	got := notificationReplyCommand(ctx)
+	if !strings.Contains(got, "--to '15551110000@s.whatsapp.net'") {
+		t.Fatalf("a name shared with a group must fall back to the chat JID, got %q", got)
+	}
+}
+
+// buildNotifContext flags a saved direct contact whose name a group also holds, and leaves a name no
+// group holds unflagged, so the reply command names the contact only when that name is unambiguous.
+func TestBuildNotifContextFlagsANameAGroupShares(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if err := wac.store.StoreChat("120363021234567890@g.us", "Book Club", time.Now()); err != nil {
+		t.Fatalf("failed to seed group: %v", err)
+	}
+
+	shared := wac.buildNotifContext("15551110000@s.whatsapp.net", "Book Club", "Book Club", "Book Club", "+15551110000", true, true)
+	if !shared.NameSharedWithGroup {
+		t.Errorf("a saved contact name a group also holds must be flagged")
+	}
+
+	distinct := wac.buildNotifContext("15551110000@s.whatsapp.net", "Alice", "Alice", "Alice", "+15551110000", true, true)
+	if distinct.NameSharedWithGroup {
+		t.Errorf("a name no group holds must not be flagged")
 	}
 }

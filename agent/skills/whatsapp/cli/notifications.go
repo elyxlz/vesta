@@ -131,11 +131,11 @@ func chatType(ctx NotifContext) string {
 }
 
 // replyTarget picks who a reply addresses. A saved contact in a direct chat is named, the same word
-// the user uses; a unique saved name resolves to the peer's stored phone JID, the address that
-// carries delivery and read receipts. An unsaved contact and every group keep the chat JID, which
-// needs no saved contact and always resolves.
+// the user uses, and that name resolves to the peer's stored phone JID, the address that carries
+// delivery and read receipts. When a group holds that same name the name is ambiguous, so the reply
+// keeps the chat JID. An unsaved contact and every group keep the chat JID, which always resolves.
 func replyTarget(ctx NotifContext) string {
-	if ctx.ContactSaved && ctx.IsDirectChat && ctx.ContactName != "" {
+	if ctx.ContactSaved && ctx.IsDirectChat && ctx.ContactName != "" && !ctx.NameSharedWithGroup {
 		return ctx.ContactName
 	}
 	return ctx.ChatJID

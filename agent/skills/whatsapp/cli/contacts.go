@@ -255,23 +255,75 @@ func (wac *WhatsAppClient) resolveRecipientJID(identifier string) (types.JID, er
 		return types.NewJID(identifier, types.DefaultUserServer), nil
 	}
 
-	// Search contacts by name
-	contacts, err := wac.store.SearchContacts(identifier, 50)
-	if err == nil {
+	// Both are searched with the same name-filtered query, cheap enough to run together so a name
+	// that reaches both a contact and a group can be caught before either resolves.
+	contacts, contactsErr := wac.store.SearchContacts(identifier, 50)
+	groups, groupsErr := wac.store.SearchGroups(identifier, 50)
+
+	// A bare name that exactly matches both a saved contact and a group is ambiguous: refuse it so a
+	// message never goes silently to the wrong one. The contact is the one name the caller controls,
+	// so the remedy renames it; the contact stays reachable meanwhile by their phone number.
+	if contactsErr == nil && groupsErr == nil && hasExactName(contactNames(contacts), identifier) && hasExactName(groupNames(groups), identifier) {
+		return types.JID{}, fmt.Errorf(
+			"'%s' is both a saved contact and a group; give the contact a different name so the name reaches one recipient, or address them by their phone number",
+			identifier,
+		)
+	}
+
+	if contactsErr == nil {
 		if jid, err := wac.resolveFromContacts(contacts, identifier); err != nil || jid.User != "" {
 			return jid, err
 		}
 	}
 
-	// Search groups by name (filtered query avoids loading all groups)
-	groups, err := wac.store.SearchGroups(identifier, 50)
-	if err == nil {
+	if groupsErr == nil {
 		if jid, err := resolveFromGroups(groups, identifier); err != nil || jid.User != "" {
 			return jid, err
 		}
 	}
 
 	return types.JID{}, fmt.Errorf("no contact or group found matching '%s'. Use search_contacts or list_groups to find available recipients", identifier)
+}
+
+// nameEquals is the one owner of "these two names are the same recipient name": non-empty, equal
+// once trimmed, ignoring case. Contact and group matching both go through it so they cannot drift.
+func nameEquals(candidate, target string) bool {
+	return candidate != "" && strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(target))
+}
+
+func hasExactName(candidates []string, target string) bool {
+	for _, candidate := range candidates {
+		if nameEquals(candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func contactNames(contacts []Contact) []string {
+	names := make([]string, len(contacts))
+	for i, c := range contacts {
+		names[i] = c.Name
+	}
+	return names
+}
+
+func groupNames(groups []Chat) []string {
+	names := make([]string, len(groups))
+	for i, g := range groups {
+		names[i] = g.Name
+	}
+	return names
+}
+
+// nameSharedWithGroup reports whether a group holds the exact name, used to keep a reply on the chat
+// JID when a saved contact's name would otherwise resolve ambiguously.
+func (wac *WhatsAppClient) nameSharedWithGroup(name string) bool {
+	groups, err := wac.store.SearchGroups(name, 50)
+	if err != nil {
+		return false
+	}
+	return hasExactName(groupNames(groups), name)
 }
 
 func (wac *WhatsAppClient) resolveFromContacts(contacts []Contact, identifier string) (types.JID, error) {
@@ -315,7 +367,7 @@ func (wac *WhatsAppClient) preferExactContactMatch(contacts []Contact, identifie
 
 	var matches []Contact
 	for _, c := range contacts {
-		if c.Name != "" && strings.EqualFold(strings.TrimSpace(c.Name), trimmed) {
+		if nameEquals(c.Name, trimmed) {
 			matches = append(matches, c)
 		}
 	}
