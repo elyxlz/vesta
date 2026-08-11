@@ -334,12 +334,11 @@ func (wac *WhatsAppClient) preferExactContactMatch(contacts []Contact, identifie
 		return types.JID{}, false, nil
 	}
 
+	// At most one row can hold a given non-empty phone number: the jid is the primary key and is
+	// derived from those digits, so a repeat save upserts the same row rather than adding a second.
 	var phoneMatch *Contact
 	for i := range contacts {
 		if digitsOnly(contacts[i].PhoneNumber) == digits {
-			if phoneMatch != nil {
-				return types.JID{}, true, fmt.Errorf("multiple contacts share that phone number. Please specify the exact contact name instead")
-			}
 			phoneMatch = &contacts[i]
 		}
 	}
