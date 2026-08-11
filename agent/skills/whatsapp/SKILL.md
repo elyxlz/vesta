@@ -141,6 +141,7 @@ Hold a live call in your own voice (the `voice` skill's TTS) and hear the other 
 `react`, `revoke-message`, `download-media`, `create-group`, `leave-group`, `rename-group`,
 `set-group-description`, `set-group-photo`, `get-group-invite-link`, `update-group-participants`,
 `archive-chat`, `delete-chat`, `remove-contact`.
+- **`download-media` flags are single-dash and required** (Go-style; `--output`/positional-ID don't work, cost 2 failed tries on 10/08): `-message-id <ID> -to <chat_jid> -download-path <path>`. The message ID comes from the inbound notification's `message_id`. Used to pull voice notes for Deepgram re-transcription (see `voice` skill).
 
 ## Rules
 
