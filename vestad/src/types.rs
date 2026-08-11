@@ -123,7 +123,7 @@ mod tests {
     fn retention_policy_deserializes_legacy_shape_with_defaults() {
         let ret: RetentionPolicy =
             serde_json::from_str(r#"{"daily": 3, "weekly": 2, "monthly": 1}"#).expect("valid");
-        assert_eq!(ret.periodic, 2);
-        assert_eq!(ret.pre_update_versions, 2);
+        assert_eq!(ret.periodic, 1);
+        assert_eq!(ret.pre_update_versions, 5);
     }
 }

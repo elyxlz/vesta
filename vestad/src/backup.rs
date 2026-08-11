@@ -10,8 +10,8 @@ use crate::docker::{
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
-pub const DEFAULT_RETENTION_PERIODIC: usize = 2;
-pub const DEFAULT_RETENTION_PRE_UPDATE_VERSIONS: usize = 2;
+pub const DEFAULT_RETENTION_PERIODIC: usize = 1;
+pub const DEFAULT_RETENTION_PRE_UPDATE_VERSIONS: usize = 5;
 const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
 pub const BACKUP_STOP_TIMEOUT_SECS: i32 = 30;
@@ -283,19 +283,21 @@ pub async fn delete_backup(
 }
 
 /// Determine which auto-backups should be deleted based on the retention policy.
-/// Returns the IDs of backups to delete.
+/// Returns the IDs of backups to delete. `retention.periodic` sizes one rolling
+/// family, periodic and pre-restore points counted together, so the newest capture
+/// of either kind is the rollback point. Manual snapshots never age out.
 pub fn compute_backups_to_delete(
     backups: &[BackupInfo],
     retention: &RetentionPolicy,
 ) -> Vec<String> {
     let mut to_delete = Vec::new();
 
-    let mut periodic: Vec<&BackupInfo> = backups
+    let mut family: Vec<&BackupInfo> = backups
         .iter()
-        .filter(|b| b.backup_type == BackupType::Periodic)
+        .filter(|b| matches!(b.backup_type, BackupType::Periodic | BackupType::PreRestore))
         .collect();
-    periodic.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    to_delete.extend(periodic.into_iter().skip(retention.periodic).map(|b| b.id.clone()));
+    family.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    to_delete.extend(family.into_iter().skip(retention.periodic).map(|b| b.id.clone()));
 
     // Pre-update snapshots are retained as whole version sets: the newest
     // `pre_update_versions` distinct from-versions survive, older versions go.
@@ -409,7 +411,10 @@ mod tests {
 
     // ── Retention policy tests ────────────────────────────────────
 
-    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy { periodic: 2, pre_update_versions: 2 };
+    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
+        periodic: DEFAULT_RETENTION_PERIODIC,
+        pre_update_versions: DEFAULT_RETENTION_PRE_UPDATE_VERSIONS,
+    };
 
     fn make_backup(agent: &str, bt: BackupType, ts: &str) -> BackupInfo {
         BackupInfo {
@@ -435,31 +440,53 @@ mod tests {
             make_backup("a", BackupType::Periodic, "20260407-120000"),
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete, vec![backups[0].id.clone()]);
+        assert_eq!(to_delete, vec![backups[1].id.clone(), backups[0].id.clone()]);
+    }
+
+    #[test]
+    fn rolling_family_keeps_only_newest_across_periodic_and_pre_restore() {
+        // Periodic and pre-restore share the one rolling slot, so a fresh pre-restore
+        // point retires the periodic before it and vice versa.
+        let backups = vec![
+            make_backup("a", BackupType::Periodic, "20260409-040000"),
+            make_backup("a", BackupType::PreRestore, "20260410-220000"),
+            make_backup("a", BackupType::Periodic, "20260411-040000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
+        assert_eq!(to_delete.len(), 2);
+        assert!(!to_delete.contains(&backups[2].id));
     }
 
     #[test]
     fn retention_keeps_newest_distinct_pre_update_versions() {
+        // A repeat snapshot of a kept version rides in that version's set, so it never
+        // takes a retained slot of its own.
+        const KEEP_TWO_VERSIONS: RetentionPolicy = RetentionPolicy { periodic: 1, pre_update_versions: 2 };
         let backups = vec![
             make_pre_update("a", "v0.1.180", "20260401-120000"),
             make_pre_update("a", "v0.1.181", "20260404-120000"),
             make_pre_update("a", "v0.1.182", "20260407-120000"),
-            // A second snapshot of a kept version stays (same set).
             make_pre_update("a", "v0.1.182", "20260407-130000"),
         ];
+        let to_delete = compute_backups_to_delete(&backups, &KEEP_TWO_VERSIONS);
+        assert_eq!(to_delete, vec![backups[0].id.clone()]);
+    }
+
+    #[test]
+    fn pre_update_keeps_five_version_sets_prunes_the_sixth() {
+        let backups: Vec<BackupInfo> = (1..=6)
+            .map(|n| make_pre_update("a", &format!("v0.1.{n}"), &format!("2026080{n}-040000")))
+            .collect();
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete, vec![backups[0].id.clone()]);
     }
 
     #[test]
-    fn retention_ignores_manual_and_pre_restore() {
+    fn retention_ignores_manual() {
         let backups = vec![
             make_backup("a", BackupType::Manual, "20260401-120000"),
             make_backup("a", BackupType::Manual, "20260402-120000"),
             make_backup("a", BackupType::Manual, "20260403-120000"),
-            make_backup("a", BackupType::PreRestore, "20260401-120000"),
-            make_backup("a", BackupType::PreRestore, "20260402-120000"),
-            make_backup("a", BackupType::PreRestore, "20260403-120000"),
         ];
         assert!(compute_backups_to_delete(&backups, &DEFAULT_RETENTION).is_empty());
     }

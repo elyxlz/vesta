@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const DEFAULT_EVERY_N_DAYS: u8 = 3;
+pub(crate) const DEFAULT_EVERY_N_DAYS: u8 = 1;
 
 #[derive(Serialize, Copy, Clone, PartialEq)]
 pub(crate) struct ServiceEntry {
@@ -283,9 +283,9 @@ mod tests {
         .expect("legacy settings.json must deserialize");
         assert_eq!(s.channel, "beta");
         assert!(!s.backup.enabled);
-        assert_eq!(s.backup.every_n_days, 3);
-        assert_eq!(s.backup.retention.periodic, 2);
-        assert_eq!(s.backup.retention.pre_update_versions, 2);
+        assert_eq!(s.backup.every_n_days, 1);
+        assert_eq!(s.backup.retention.periodic, 1);
+        assert_eq!(s.backup.retention.pre_update_versions, 5);
         assert!(s.services.contains_key("okami"));
     }
 
@@ -293,9 +293,9 @@ mod tests {
     fn backup_defaults() {
         let b = BackupGlobalSettings::default();
         assert!(b.enabled);
-        assert_eq!(b.every_n_days, 3);
-        assert_eq!(b.retention.periodic, 2);
-        assert_eq!(b.retention.pre_update_versions, 2);
+        assert_eq!(b.every_n_days, 1);
+        assert_eq!(b.retention.periodic, 1);
+        assert_eq!(b.retention.pre_update_versions, 5);
     }
 
     // --- expose_lan defaults off: a settings.json predating the field must keep the
