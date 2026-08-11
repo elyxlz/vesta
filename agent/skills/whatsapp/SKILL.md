@@ -65,6 +65,7 @@ same here
 MSG
 ```
 - Before texting an unknown raw number, save it first with `add-contact` (name + phone). A chat WhatsApp shows only as an id (`...@lid`) has no number to save, so save it by that id instead: `add-contact --name <name> --chat <chat_jid>`.
+- Give each contact a distinct name. `add-contact` refuses a name another number already holds, so a saved name always points at one person and a reply can address them by name. When it refuses, pick a name that tells them apart (e.g. `Emmy R`).
 
 **Error 463, `no signal session for this device yet`.** The send fails for one recipient while
 everyone else succeeds on the same number and daemon, so it looks like local state you can repair.

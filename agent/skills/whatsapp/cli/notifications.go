@@ -19,7 +19,6 @@ type messageNotif struct {
 	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
 	Message         string `json:"message"`
-	Sender          string `json:"sender,omitempty"`
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
 	MediaType       string `json:"media_type,omitempty"`
@@ -43,7 +42,6 @@ type reactionNotif struct {
 	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
 	Emoji           string `json:"emoji,omitempty"`
-	Sender          string `json:"sender,omitempty"`
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
 	IsRemoved       bool   `json:"is_removed,omitempty"`
@@ -63,7 +61,6 @@ type editNotif struct {
 	Type            string `json:"type"`
 	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
-	Sender          string `json:"sender,omitempty"`
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
 	OldText         string `json:"old_text,omitempty"`
@@ -130,10 +127,26 @@ func chatType(ctx NotifContext) string {
 	return "group"
 }
 
-// Every notification carries a complete reply command. The target is always the chat JID, which
-// ResolveRecipient matches first and which needs no saved contact, so there is no case where the
-// agent has to work the recipient out for itself. It stops at `--message -`: the notification is
-// rendered as an XML attribute, so a heredoc here would reach the agent as &lt;&lt; and &#10;
+// replyTarget picks who a reply addresses. A saved contact in a direct chat is named, the same word
+// the user uses, and that name resolves to the peer's stored phone JID, the address that carries
+// delivery and read receipts. When a group holds that same name the name is ambiguous, so the reply
+// keeps the chat JID. An unsaved contact and every group keep the chat JID, which always resolves.
+func replyTarget(ctx NotifContext) string {
+	if ctx.ContactSaved && ctx.IsDirectChat && ctx.ContactName != "" && !ctx.NameSharedWithGroup && nameAddressesAsContact(ctx.ContactName) {
+		return ctx.ContactName
+	}
+	return ctx.ChatJID
+}
+
+// nameAddressesAsContact reports whether resolveRecipientJID would look a name up as a saved contact
+// rather than parse it as a phone number or JID. A name that is all digits, starts with '+', or
+// holds an '@' would route to the wrong recipient, so a reply keeps the chat JID for it.
+func nameAddressesAsContact(name string) bool {
+	return !strings.Contains(name, "@") && !strings.HasPrefix(name, "+") && !isNumeric(name)
+}
+
+// Every notification carries a complete reply command. It stops at `--message -`: the notification
+// is rendered as an XML attribute, so a heredoc here would reach the agent as &lt;&lt; and &#10;
 // entities. `-` says the body comes from stdin and SKILL.md carries the one heredoc shape, which
 // keeps the reply body out of the shell's reach.
 func notificationReplyCommand(ctx NotifContext) string {
@@ -141,7 +154,7 @@ func notificationReplyCommand(ctx NotifContext) string {
 	if ctx.Instance != "" {
 		command += " --instance " + quoteReplyArg(ctx.Instance)
 	}
-	return command + " --to " + quoteReplyArg(ctx.ChatJID) + " --message -"
+	return command + " --to " + quoteReplyArg(replyTarget(ctx)) + " --message -"
 }
 
 func writeNotificationFile(notifDir string, data any, notifType string) error {
@@ -186,10 +199,6 @@ func WriteNotification(
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName
 		n.ReplyHint = "think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
-		// Drop Sender when it's just the same JID as the chat (happens for unsaved group participants).
-		if ctx.Sender != ctx.ChatName {
-			n.Sender = ctx.Sender
-		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "message")
 }
@@ -213,23 +222,17 @@ func WriteReactionNotification(
 	}
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName
-		if ctx.Sender != ctx.ChatName {
-			n.Sender = ctx.Sender
-		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "reaction")
 }
 
 // applyChatContext mirrors the group-chat handling the message and reaction writers do:
-// name the chat, and name the sender unless it is just the chat's own JID.
+// name the group in chat_name. The participant identity rides in contact_name, set for every chat.
 func (n *editNotif) applyChatContext(ctx NotifContext) {
 	if ctx.IsDirectChat {
 		return
 	}
 	n.ChatName = ctx.ChatName
-	if ctx.Sender != ctx.ChatName {
-		n.Sender = ctx.Sender
-	}
 }
 
 func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText string) error {

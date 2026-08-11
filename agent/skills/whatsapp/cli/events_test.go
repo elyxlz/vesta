@@ -248,3 +248,27 @@ func TestLoggedOutReason(t *testing.T) {
 		t.Fatal("a stream:error logout must carry a reason")
 	}
 }
+
+// buildNotifContext folds the sender display into the one identity field: ContactName carries the
+// saved name when saved and the formatted number otherwise, for both direct and group chats.
+func TestBuildNotifContextFoldsSenderDisplayIntoContactName(t *testing.T) {
+	wac := &WhatsAppClient{notificationsDir: "/n", instance: "personal"}
+	for _, tc := range []struct {
+		name          string
+		senderDisplay string
+		contactSaved  bool
+		isDirectChat  bool
+	}{
+		{"direct-saved", "Ana", true, true},
+		{"direct-unsaved", "+15559998888", false, true},
+		{"group-saved", "Ana", true, false},
+		{"group-unsaved", "+15559998888", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := wac.buildNotifContext("chat@jid", "Chat", tc.senderDisplay, "+15559998888", tc.contactSaved, tc.isDirectChat)
+			if ctx.ContactName != tc.senderDisplay {
+				t.Errorf("ContactName = %q, want the sender display %q as the single identity", ctx.ContactName, tc.senderDisplay)
+			}
+		})
+	}
+}
