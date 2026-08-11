@@ -2,6 +2,7 @@
 
 import os
 import pathlib as pl
+import re
 import subprocess
 import time
 
@@ -213,3 +214,28 @@ def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "no dreamer summaries yet" in run.stdout
+
+
+def test_the_documented_checkpoint_lookup_finds_a_differently_worded_commit(tmp_path):
+    """The curation review's baseline is found by a grep written in the skill, and the commit
+    subject it looks for is a convention nothing enforces. Pinned by running the documented
+    pattern against a real repo whose checkpoint is worded off-convention: a pattern that only
+    matches the conventional wording finds nothing, and the review then diffs against an older
+    tree while reporting success."""
+    skill = SCRIPT.parents[1] / "SKILL.md"
+    line = next(ln for ln in skill.read_text().splitlines() if "--grep" in ln and "checkpoint" in ln)
+    pattern = re.search(r"--grep '([^']+)'", line).group(1)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "config", "user.email", "t@example.com"], check=True)
+    subprocess.run([*git, "config", "user.name", "t"], check=True)
+    (repo / "f").write_text("x")
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "dream 7 Aug: preflight script, memory, personality"], check=True)
+
+    found = subprocess.run([*git, "log", "-n1", "--format=%H", "--grep", pattern], capture_output=True, text=True, check=True)
+
+    assert found.stdout.strip(), f"the documented pattern {pattern!r} misses an off-convention checkpoint"
