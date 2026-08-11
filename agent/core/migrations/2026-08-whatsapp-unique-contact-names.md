@@ -9,13 +9,15 @@ names that still collide.
 If `~/agent/skills/whatsapp` does not exist, you never installed the skill.
 Skip to the final step.
 
-### 2. List every saved contact
+### 2. List saved contacts
 
 ```bash
 whatsapp list-contacts --limit 1000
 ```
 
-Each entry has a `name` and a `phone_number`.
+Each entry has a `name` and a `phone_number`. Only an entry with `"is_manual": true` is a saved
+contact. An entry without that field is a chat the user never saved: skip it, and use only the
+saved contacts in the next step.
 
 ### 3. Rename apart any name two different people share
 

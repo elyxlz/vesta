@@ -478,7 +478,11 @@ func isNumeric(s string) bool {
 	return err == nil && len(s) > 0
 }
 
-// getChatName returns a human-readable name for a chat JID.
+// getChatName returns the name shown for a chat: a saved contact's name, a group's name, or, for a
+// person with no saved contact, their phone number. A direct chat never takes the peer's WhatsApp
+// profile name (pushname), so a name in the chats table is always a saved contact or a number. Two
+// different people cannot then share a chat name, which keeps a saved name pointing at one person
+// for name-based sends and replies.
 func (wac *WhatsAppClient) getChatName(jid types.JID) string {
 	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil && contact.Name != "" {
 		return contact.Name
@@ -491,9 +495,6 @@ func (wac *WhatsAppClient) getChatName(jid types.JID) string {
 			return groupInfo.Name
 		}
 		return fmt.Sprintf("Group %s", jid.User)
-	}
-	if contact, err := wac.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.FullName != "" {
-		return contact.FullName
 	}
 	if jid.Server == types.DefaultUserServer && jid.User != "" {
 		return "+" + jid.User

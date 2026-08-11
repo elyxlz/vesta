@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 // groupIDDigits is a WhatsApp group ID rendered numerically: all digits, but
@@ -420,6 +421,62 @@ func TestResolveRecipientStillErrorsForDifferentPeersSharingAName(t *testing.T) 
 	// The error names each colliding number, so the caller can address the right one instead of guessing.
 	if !strings.Contains(err.Error(), "+15551110000") || !strings.Contains(err.Error(), "+447700900123") {
 		t.Errorf("the ambiguity error must name both colliding numbers, got %v", err)
+	}
+}
+
+// An unsaved direct chat takes the peer's phone number as its name, never their WhatsApp profile
+// name, so no unsaved chat can share a name with a saved contact and make a name-based reply
+// ambiguous.
+func TestGetChatNameUsesTheNumberForAnUnsavedDirectChat(t *testing.T) {
+	wac := &WhatsAppClient{store: newTestStore(t), logger: waLog.Noop}
+	jid, err := types.ParseJID("15551234567@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("failed to parse jid: %v", err)
+	}
+	if name := wac.getChatName(jid); name != "+15551234567" {
+		t.Errorf("an unsaved direct chat must be named by its number, got %q", name)
+	}
+}
+
+// A WhatsApp profile name stored for an unsaved direct chat by an earlier version is cleared on the
+// next open, so a saved contact that shares that name resolves to exactly one person again.
+func TestStoredProfileNameIsScrubbedSoASavedNameResolves(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewMessageStore(dir)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	if _, err := first.SaveManualContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("failed to save contact: %v", err)
+	}
+	if err := first.StoreChat("15559998888@s.whatsapp.net", "Emmy", time.Now()); err != nil {
+		t.Fatalf("failed to store chat: %v", err)
+	}
+	// Before the scrub the unsaved chat shares the saved name, so the name is ambiguous.
+	preScrub := &WhatsAppClient{store: first, logger: waLog.Noop}
+	if _, err := preScrub.ResolveRecipient("Emmy"); err == nil {
+		t.Fatalf("a stored profile name sharing a saved name must be ambiguous before the scrub")
+	}
+	// Model a database that predates the scrub, so reopening it runs the scrub.
+	if _, err := first.db.Exec("PRAGMA user_version = 0"); err != nil {
+		t.Fatalf("failed to reset schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("failed to close store: %v", err)
+	}
+
+	second, err := NewMessageStore(dir)
+	if err != nil {
+		t.Fatalf("failed to reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	wac := &WhatsAppClient{store: second, logger: waLog.Noop}
+	resolved, err := wac.ResolveRecipient("Emmy")
+	if err != nil {
+		t.Fatalf("after the scrub a saved name must resolve, got %v", err)
+	}
+	if resolved.String() != "15551110000@s.whatsapp.net" {
+		t.Errorf("the saved contact must resolve to its phone JID, got %q", resolved)
 	}
 }
 

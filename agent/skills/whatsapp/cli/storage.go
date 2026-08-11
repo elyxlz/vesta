@@ -131,6 +131,27 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		db.Exec("ALTER TABLE messages ADD COLUMN delivery_timestamp TIMESTAMP")
 	}
 
+	// One-time scrub: clear the WhatsApp profile names (pushnames) that direct chats once stored, so
+	// a person with no saved contact holds no chat name that could collide with a saved contact's
+	// name. SearchContacts reads chats rows only for `@s.whatsapp.net` jids, so those are exactly the
+	// names to clear; saved names live in the contacts table and are untouched. getChatName writes a
+	// number back on the next message.
+	var schemaVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to read schema version: %v", err)
+	}
+	if schemaVersion < 1 {
+		if _, err := db.Exec("UPDATE chats SET name = NULL WHERE jid LIKE '%@s.whatsapp.net' AND name IS NOT NULL"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to clear stored profile names: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to set schema version: %v", err)
+		}
+	}
+
 	ms := &MessageStore{db: db}
 	if err := ms.rebuildFTS(); err != nil {
 		db.Close()
