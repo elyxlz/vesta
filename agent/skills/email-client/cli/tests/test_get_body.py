@@ -56,9 +56,7 @@ class _Box:
 
 def _run(monkeypatch, capsys, msg, body_chars=4000):
     monkeypatch.setattr(imap, "connect", lambda *a, **k: _Box(msg))
-    args = argparse.Namespace(
-        account=None, folder="INBOX", uid="1", body_chars=body_chars
-    )
+    args = argparse.Namespace(account=None, folder="INBOX", uid="1", body_chars=body_chars)
     imap.cmd_get(args)
     return json.loads(capsys.readouterr().out)
 
@@ -83,9 +81,7 @@ def test_html_body_keeps_link_targets(monkeypatch, capsys):
 
 
 def test_plain_text_part_is_preferred_untouched(monkeypatch, capsys):
-    out = _run(
-        monkeypatch, capsys, _Msg(text="plain <b>wins</b>", html=BULK_SENDER_SHAPED)
-    )
+    out = _run(monkeypatch, capsys, _Msg(text="plain <b>wins</b>", html=BULK_SENDER_SHAPED))
     assert out["body_format"] == "text"
     assert out["body"] == "plain <b>wins</b>"
 

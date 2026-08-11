@@ -39,7 +39,6 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-
 from html.parser import HTMLParser
 
 from imap_tools import AND, MailBox, MailboxUidsError, MailMessageFlags
@@ -498,9 +497,27 @@ def cmd_search(args):
 
 
 _HTML_BLOCK_TAGS = {
-    "p", "div", "br", "tr", "li", "ul", "ol", "table", "thead", "tbody",
-    "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "section", "article",
-    "header", "footer",
+    "p",
+    "div",
+    "br",
+    "tr",
+    "li",
+    "ul",
+    "ol",
+    "table",
+    "thead",
+    "tbody",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "blockquote",
+    "section",
+    "article",
+    "header",
+    "footer",
 }
 _HTML_CELL_TAGS = {"td", "th"}
 # Elements whose text is markup, not message. ``head`` carries the stylesheet a
