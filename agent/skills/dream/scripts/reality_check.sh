@@ -65,6 +65,39 @@ for log in "$HOME"/agent/logs/*.log; do
     fi
 done
 
+# UNPROTECTED HAND-MADE STATE. Every other probe takes its scope as an input (a list of daemons, a
+# list of logs), so a store nobody thought to list is invisible to all of them by construction. This
+# one derives its own scope: ask the filesystem what changed in the last week, subtract what git
+# tracks, subtract what an agent/*-snapshot/ dir already mirrors as readable text, subtract caches
+# and credentials, report the remainder. Credentials are dropped on purpose: they must never be
+# committed, and the artefact for them is a reissue path, not a backup. unprotected-accepted.txt
+# beside this script records exposures already judged, so a NEW store still goes RED.
+if command -v git >/dev/null 2>&1 && [ -d "$HOME/.git" ]; then
+    accepted_list="$(dirname "$0")/unprotected-accepted.txt"
+    snapshotted=$(git -C "$HOME" ls-files 'agent/*-snapshot/*' 2>/dev/null)
+    unprotected=$(
+        find "$HOME" -maxdepth 3 -type f \
+            \( -name '*.json' -o -name '*.db' -o -name '*.sqlite' -o -name '*.md' -o -name '*.yaml' -o -name '*.toml' \) \
+            -mtime -7 2>/dev/null \
+        | grep -vE '/(\.git|\.cache|\.npm|\.venv|node_modules|__pycache__|\.ruff_cache|go/pkg|dist|build|\.local/share/uv|\.claude/(projects|sessions|shell-snapshots|backups|session-env))/' \
+        | grep -vE "^$HOME/(agent/(core|notifications|logs)/|scratch/|Downloads/|\.browser/|\.camoufox/|\.microsoft/emails/)" \
+        | grep -vE '(credentials|auth_cache|cookies\.sqlite|key4\.db)' \
+        | while read -r f; do
+            rel=${f#"$HOME"/}
+            git -C "$HOME" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue
+            printf '%s\n' "$snapshotted" | grep -qF -- "$(basename "$f")" && continue
+            grep -v '^#' "$accepted_list" 2>/dev/null | grep -qxF -- "$rel" && continue
+            printf '%s\n' "$rel"
+        done
+    )
+    if [ -n "$unprotected" ]; then
+        count=$(printf '%s\n' "$unprotected" | wc -l | tr -d ' ')
+        bad "$count hand-made file(s) changed in 7d are neither tracked nor mirrored: $(printf '%s' "$unprotected" | tr '\n' ' ' | cut -c1-300)"
+    else
+        ok "no unprotected hand-made state changed in the last 7 days"
+    fi
+fi
+
 # Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between
 # checkpoints the recent commits touch only the -wal sibling; judge by the newest of the pair.
 db="$HOME/agent/data/events.db"
