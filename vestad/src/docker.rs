@@ -1944,6 +1944,75 @@ pub async fn snapshot_container(
     .map_err(|e| DockerError::Failed(format!("snapshot task failed: {e}")))?
 }
 
+/// Stream `docker export <cname>` (a flat filesystem tar) straight to a file, removing the
+/// partial file on failure. The caller owns the container's lifecycle: export reads a running
+/// container without stopping it.
+pub async fn export_container_to_file(
+    cname: &str,
+    output: &std::path::Path,
+) -> Result<(), DockerError> {
+    let cname = cname.to_string();
+    let output_path = output.to_path_buf();
+
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
+        tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
+            let file = std::fs::File::create(&output_path)
+                .map_err(|e| DockerError::Failed(format!("failed to create export file: {e}")))?;
+            let out = std::process::Command::new("docker")
+                .args(["export", &cname])
+                .stdout(std::process::Stdio::from(file))
+                .stderr(std::process::Stdio::piped())
+                .output()
+                .map_err(|e| DockerError::Failed(format!("failed to run docker export: {e}")))?;
+            if out.status.success() {
+                return Ok(());
+            }
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            Err(DockerError::Failed(format!(
+                "docker export failed: {stderr}"
+            )))
+        }),
+    )
+    .await;
+
+    let result = match outcome {
+        Ok(Ok(exported)) => exported,
+        Ok(Err(join_error)) => Err(DockerError::Failed(format!(
+            "export task failed: {join_error}"
+        ))),
+        Err(_) => Err(DockerError::Failed(format!(
+            "export timed out after {SNAPSHOT_TIMEOUT_SECS}s"
+        ))),
+    };
+    if result.is_err() {
+        tokio::fs::remove_file(output).await.ok();
+    }
+    result
+}
+
+/// The `docker import - <image_ref>` command a caller feeds a flat filesystem tar into.
+/// Stdin is piped so the reader owns the stream; `finish_import_output` reads the result.
+pub fn import_container_fs_tar_cmd(image_ref: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("docker");
+    cmd.args(["import", "-", image_ref])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    cmd
+}
+
+/// Map a finished `import_container_fs_tar_cmd` run to a result, naming docker's stderr.
+pub fn finish_import_output(output: &std::process::Output) -> Result<(), DockerError> {
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(DockerError::Failed(format!(
+        "docker import failed: {stderr}"
+    )))
+}
+
 // --- Container creation ---
 
 /// Assemble the full bind list for a container: base mounts (env, constitution, upstream,
@@ -3752,6 +3821,44 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(tries.get(), IMPORT_PIPELINE_MAX_ATTEMPTS);
+    }
+
+    #[test]
+    fn import_container_fs_tar_cmd_reads_the_tar_from_stdin() {
+        let cmd = import_container_fs_tar_cmd("vesta-restore:ada");
+        assert_eq!(cmd.get_program(), "docker");
+        let args: Vec<_> = cmd.get_args().map(std::ffi::OsStr::to_string_lossy).collect();
+        assert_eq!(args, ["import", "-", "vesta-restore:ada"]);
+    }
+
+    fn shell_output(script: &str) -> std::process::Output {
+        std::process::Command::new("sh")
+            .args(["-c", script])
+            .output()
+            .expect("sh runs")
+    }
+
+    #[test]
+    fn finish_import_output_passes_a_successful_import() {
+        assert!(finish_import_output(&shell_output("exit 0")).is_ok());
+    }
+
+    #[test]
+    fn finish_import_output_names_dockers_stderr_on_failure() {
+        let output = shell_output("printf 'unexpected EOF' >&2; exit 1");
+        let err = finish_import_output(&output).expect_err("non-zero import fails");
+        assert!(err.to_string().contains("unexpected EOF"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn export_container_to_file_fails_before_spawning_when_the_target_is_unwritable() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let unwritable = dir.path().join("no-such-dir").join("agent.tar");
+        let err = export_container_to_file("vesta-ada", &unwritable)
+            .await
+            .expect_err("an uncreatable output file fails");
+        assert!(err.to_string().contains("failed to create export file"), "{err}");
+        assert!(!unwritable.exists());
     }
 
     #[test]
