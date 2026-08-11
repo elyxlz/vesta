@@ -565,10 +565,11 @@ func (wac *WhatsAppClient) formatSenderForDisplay(jid types.JID) string {
 func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 	resolvedSender types.JID,
 	senderDisplay string,
-	contactName, contactPhone string,
+	contactPhone string,
 	contactSaved, isDirectChat bool,
 ) {
 	resolvedSender = wac.resolveSenderJID(info.Sender, info.SenderAlt)
+	var contactName string
 
 	// resolvedChat is the peer's number for display, read through the alt address the message
 	// itself carries, which the LID store need not hold. It never decides which rows are the

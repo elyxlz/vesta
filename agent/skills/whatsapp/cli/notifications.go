@@ -132,10 +132,17 @@ func chatType(ctx NotifContext) string {
 // delivery and read receipts. When a group holds that same name the name is ambiguous, so the reply
 // keeps the chat JID. An unsaved contact and every group keep the chat JID, which always resolves.
 func replyTarget(ctx NotifContext) string {
-	if ctx.ContactSaved && ctx.IsDirectChat && ctx.ContactName != "" && !ctx.NameSharedWithGroup {
+	if ctx.ContactSaved && ctx.IsDirectChat && ctx.ContactName != "" && !ctx.NameSharedWithGroup && nameAddressesAsContact(ctx.ContactName) {
 		return ctx.ContactName
 	}
 	return ctx.ChatJID
+}
+
+// nameAddressesAsContact reports whether resolveRecipientJID would look a name up as a saved contact
+// rather than parse it as a phone number or JID. A name that is all digits, starts with '+', or
+// holds an '@' would route to the wrong recipient, so a reply keeps the chat JID for it.
+func nameAddressesAsContact(name string) bool {
+	return !strings.Contains(name, "@") && !strings.HasPrefix(name, "+") && !isNumeric(name)
 }
 
 // Every notification carries a complete reply command. It stops at `--message -`: the notification

@@ -290,7 +290,7 @@ func (wac *WhatsAppClient) dropDeadDevice() {
 // name when saved, otherwise the formatted number or JID. It rides in ContactName for every
 // chat, so a group participant is named there while ChatName names the group.
 func (wac *WhatsAppClient) buildNotifContext(chatJID, chatName, senderDisplay, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
-	nameSharedWithGroup := contactSaved && isDirectChat && senderDisplay != "" && wac.nameSharedWithGroup(senderDisplay)
+	nameSharedWithGroup := contactSaved && isDirectChat && senderDisplay != "" && nameAddressesAsContact(senderDisplay) && wac.nameSharedWithGroup(senderDisplay)
 	return NotifContext{
 		NotifDir: wac.notificationsDir, ChatJID: chatJID, ChatName: chatName,
 		ContactName: senderDisplay, ContactPhone: contactPhone,
@@ -343,7 +343,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		return
 	}
 
-	resolvedSender, senderDisplay, _, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
+	resolvedSender, senderDisplay, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
 	chatName := wac.getChatName(info.Chat)
 	// Canonical storage key: resolve the peer LID to its phone JID so this chat is keyed the same
 	// whether the message arrived under the peer's LID or a reply resolves them to their number.
@@ -518,7 +518,7 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 	chatName := wac.getChatName(evt.Info.Chat)
 
 	if wac.notificationsDir != "" {
-		_, senderDisplay, _, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
+		_, senderDisplay, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
 		ctx := wac.buildNotifContext(evt.Info.Chat.String(), chatName, senderDisplay, contactPhone, contactSaved, isDirectChat)
 		WriteReactionNotification(ctx, targetID, emoji, isRemoved)
 	}
@@ -602,7 +602,7 @@ func (wac *WhatsAppClient) notifContextFor(evt *events.Message) (NotifContext, b
 	if wac.notificationsDir == "" || wac.noNotify || evt.Info.IsFromMe {
 		return NotifContext{}, false
 	}
-	_, senderDisplay, _, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
+	_, senderDisplay, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
 	if wac.skipSenders[contactPhone] {
 		return NotifContext{}, false
 	}

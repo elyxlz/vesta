@@ -310,15 +310,15 @@ func TestNotificationNamesAPeerSavedByChatIDAfterTheMappingIsLearned(t *testing.
 		t.Fatalf("failed to record the learned mapping: %v", err)
 	}
 
-	_, senderDisplay, contactName, contactPhone, contactSaved, _ := wac.prepareNotificationInfo(
+	_, senderDisplay, contactPhone, contactSaved, _ := wac.prepareNotificationInfo(
 		types.MessageSource{Chat: lid, Sender: lid, SenderAlt: phone},
 	)
 
 	if !contactSaved {
 		t.Errorf("a peer the gate treats as confirmed must not be reported as unknown")
 	}
-	if contactName != "Ana" || senderDisplay != "Ana" {
-		t.Errorf("expected the saved name, got contact_name %q and sender %q", contactName, senderDisplay)
+	if senderDisplay != "Ana" {
+		t.Errorf("expected the saved name, got sender %q", senderDisplay)
 	}
 	if contactPhone != "+"+phone.User {
 		t.Errorf("expected the learned number %q, got %q", "+"+phone.User, contactPhone)
