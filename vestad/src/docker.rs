@@ -1591,7 +1591,9 @@ async fn remove_snapshots<'a>(docker: &Docker, tags: impl Iterator<Item = &'a st
     }
 }
 
-/// Import a Docker image from a byte stream of a `docker save` tar, gzip-compressed or not
+/// LEGACY(remove-when: 2027-08-01; only `import_legacy` consumes docker-load tars, and every
+/// other capture path now moves flat filesystem tars through `import_container_fs_tar_cmd`):
+/// import a Docker image from a byte stream of a `docker save` tar, gzip-compressed or not
 /// (Docker's load API accepts both natively). Returns the loaded image name
 /// (e.g. "vesta-backup:name_12345").
 pub async fn load_image_from_stream<S, E>(
@@ -1626,8 +1628,9 @@ where
     Ok(loaded_image)
 }
 
-/// Import a Docker image from a tar file (replaces `gunzip | docker load`), streaming rather
-/// than buffering it in memory.
+/// The one caller of `load_image_from_stream`, and legacy on the same condition: import a
+/// Docker image from a tar file (replaces `gunzip | docker load`), streaming rather than
+/// buffering it in memory.
 pub async fn load_image_from_file(
     docker: &Docker,
     input: &std::path::Path,
@@ -1883,13 +1886,7 @@ pub async fn snapshot_container(
                         "docker export failed: {stderr}"
                     )));
                 }
-                if !import_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&import_output.stderr);
-                    return Err(DockerError::Failed(format!(
-                        "docker import failed: {stderr}"
-                    )));
-                }
-                Ok(())
+                finish_import_output(&import_output)
             })
         }),
     )

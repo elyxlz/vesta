@@ -16,7 +16,6 @@ pub(crate) const CONSTITUTION_ENTRY: &str = "constitution.md";
 pub(crate) const IMAGE_ENTRY: &str = "image.tar";
 
 const IMAGE_CHUNK_BYTES: usize = 64 * 1024;
-const IMAGE_STREAM_BUFFERED_CHUNKS: usize = 16;
 /// Cap on the manifest and constitution entries, which are read whole from untrusted files.
 const MAX_HEAD_ENTRY_BYTES: u64 = 256 * 1024;
 const IMAGE_SPOOL_SUFFIX: &str = ".image-partial";
@@ -419,31 +418,49 @@ async fn import_legacy(docker: &Docker, request: ImportRequest<'_>) -> Result<Im
     Ok(ImportOutcome { name, port, manifest: None })
 }
 
-/// Streams the bundle's image entry straight into `docker load`: the blocking tar+gzip read
-/// feeds a bounded channel from its own thread, so the multi-GB image tar never needs a spool
-/// file beside an input that may sit on read-only media. A read failure is pushed into the
-/// stream, so the one load error carries whichever side actually failed.
-async fn load_bundle_image(docker: &Docker, input: &Path) -> Result<String, DockerError> {
-    let (chunk_tx, chunk_rx) =
-        tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(IMAGE_STREAM_BUFFERED_CHUNKS);
+/// Imports the bundle's flat filesystem tar as `vesta-restore:{agent_name}`, the stable
+/// per-agent image name a restic restore also takes, so image cleanup treats restores and
+/// imports alike; a previous image under that name is force-removed first. The blocking
+/// tar+gzip read feeds `docker import`'s stdin from its own thread, so the multi-GB image tar
+/// never needs a spool file beside an input that may sit on read-only media.
+async fn load_bundle_image(input: &Path, agent_name: &str) -> Result<String, DockerError> {
+    let image_ref = format!("vesta-restore:{agent_name}");
     let input_path = input.to_path_buf();
-    let reader = tokio::task::spawn_blocking(move || {
-        let read_result = read_bundle_image(&input_path, |chunk| {
-            chunk_tx
-                .blocking_send(Ok(bytes::Bytes::copy_from_slice(chunk)))
-                .map_err(|_| DockerError::Failed("image load stopped consuming the bundle".into()))
-        });
-        if let Err(err) = read_result {
-            chunk_tx.blocking_send(Err(std::io::Error::other(err.to_string()))).ok();
-        }
-    });
+    let image_for_task = image_ref.clone();
 
-    let byte_stream = futures_util::stream::unfold(chunk_rx, |mut receiver| async move {
-        receiver.recv().await.map(|item| (item, receiver))
-    });
-    let load_result = crate::docker::load_image_from_stream(docker, byte_stream).await;
-    reader.await.map_err(|err| docker_failed("bundle read task panicked", err))?;
-    load_result
+    tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
+        std::process::Command::new("docker")
+            .args(["rmi", "-f", &image_for_task])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok();
+
+        let mut child = crate::docker::import_container_fs_tar_cmd(&image_for_task)
+            .spawn()
+            .map_err(|err| docker_failed("failed to start docker import", err))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| DockerError::Failed("docker import stdin not available".to_string()))?;
+        let read_result = read_bundle_image(&input_path, |chunk| {
+            std::io::Write::write_all(&mut stdin, chunk).map_err(|err| docker_failed("docker import stopped reading", err))
+        });
+        drop(stdin);
+        if read_result.is_err() {
+            // Plain EOF would have docker commit an image out of the partial stream it holds.
+            child.kill().ok();
+        }
+        let output = child.wait_with_output().map_err(|err| docker_failed("docker import wait failed", err))?;
+        // A killed or broken-pipe import names only the consequence, so the bundle read's own
+        // error outranks docker's stderr.
+        read_result?;
+        crate::docker::finish_import_output(&output)
+    })
+    .await
+    .map_err(|err| docker_failed("bundle import task panicked", err))??;
+
+    Ok(image_ref)
 }
 
 /// Steps that follow a loaded image: write the constitution (before `create_container`, whose
@@ -484,8 +501,8 @@ async fn finish_bundle_import(
 }
 
 /// Import a bundle: warn on a manifest from a newer vestad, resolve and validate the name,
-/// stream-load the image, then hand off to `finish_bundle_import`. A failure anywhere past
-/// the load removes the freshly loaded image so a retry doesn't trip over it.
+/// import the image, then hand off to `finish_bundle_import`. A failure anywhere past the
+/// import removes the freshly imported image so a retry doesn't trip over it.
 async fn import_bundle(docker: &Docker, request: ImportRequest<'_>) -> Result<ImportOutcome, DockerError> {
     let (manifest, constitution) = open_bundle(request.input)?;
 
@@ -505,7 +522,7 @@ async fn import_bundle(docker: &Docker, request: ImportRequest<'_>) -> Result<Im
     }
 
     eprintln!("loading image...");
-    let image = load_bundle_image(docker, request.input).await?;
+    let image = load_bundle_image(request.input, &name).await?;
 
     let outcome = finish_bundle_import(docker, &request, &name, &cname, manifest, &constitution, &image).await;
     if outcome.is_err() {
