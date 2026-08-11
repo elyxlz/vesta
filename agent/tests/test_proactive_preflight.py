@@ -267,6 +267,33 @@ def test_a_start_line_with_no_status_verb_is_unchecked_not_healthy(tmp_path):
     assert "UNCHK browser start" in run.stdout
 
 
+def test_a_line_matching_no_start_form_is_unchecked_not_absent(tmp_path):
+    # The restart skill sanctions a portless background line, which matches neither start form. On
+    # its own it used to leave both lists empty and print "no daemons yet", so the one shape the
+    # section exists to catch, a daemon running unwatched, read as a box with no daemons at all.
+    home = _home(tmp_path, "nohup my-thing --serve &\n")
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert "UNCHK nohup my-thing --serve &" in run.stdout
+    assert "lists no daemons yet" not in run.stdout
+
+
+def test_a_status_verb_reading_stdin_does_not_eat_the_rest_of_the_list(tmp_path):
+    # The loop is fed by a heredoc, so a status verb that reads stdin consumes the remaining lines
+    # and they go unchecked with the script still green.
+    home = _home(tmp_path, "alpha daemon start\nbravo daemon start\ncharlie daemon start\n")
+    _shim(home, "alpha", 'cat >/dev/null\necho \'{"running": true}\'')
+    for name in ("bravo", "charlie"):
+        _shim(home, name, 'echo \'{"running": true}\'')
+
+    run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    for name in ("alpha", "bravo", "charlie"):
+        assert f"OK    {name} daemon status" in run.stdout
+
+
 def test_a_missing_restart_skill_goes_red(tmp_path):
     # No daemon is checked at all, which must never read as every daemon being fine.
     home = tmp_path

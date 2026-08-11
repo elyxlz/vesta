@@ -62,7 +62,7 @@ Roughly once a week, one quiet tick becomes a deep block instead of a normal pas
 - **Spanning turns**: if the block ends before the piece does, park the state in §6 (done so far, next step) and set a reminder on your own channel (`reminders` skill) for the next quiet stretch. The dive is allowed to span turns; it doesn't die at one.
 - **Internal only**: the piece is yours. Never mention it unprompted; it surfaces only when a conversation already touches the topic and it genuinely belongs in the reply.
 - **The user always wins**: if anything for the user lands mid-dive, drop the dive without ceremony. The note in progress and §6 hold the state for next time.
-- **The preflight gates it**: a dive is discretionary spend, so it starts only on the `DIVE` line the preflight prints. In a tighter band it is deferred, not cancelled: the cadence marker is the newest file's date, so a dive that waits stays due and the next quiet tick with headroom takes it. The dive is also the one thing the overnight-stricter rule does not apply to, since its slot is the small hours and the bump would leave it no slot at all.
+- **The preflight gates it**: a dive is discretionary spend, so it starts only on the `DIVE` line the preflight prints. In a tighter band it is deferred, not cancelled: the cadence marker is the newest file's date, so a dive that waits stays due and the next quiet tick with headroom takes it.
 
 ## Nudging vs holding
 

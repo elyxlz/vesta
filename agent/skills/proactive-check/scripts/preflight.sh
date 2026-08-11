@@ -52,15 +52,28 @@ if [ ! -r "$restart_skill" ]; then
 else
     daemon_lines=$(grep -E '^[a-z0-9-]+ daemon start' "$restart_skill")
     other_lines=$(grep -E '^[a-z0-9-]+ (start|serve)' "$restart_skill" | grep -v ' daemon start')
-    if [ -z "$daemon_lines" ] && [ -z "$other_lines" ]; then
+    # Every runnable line inside the fenced block, so a form neither pattern matches is reported as
+    # unchecked instead of vanishing. The skill sanctions a portless background line, and one of
+    # those alone used to leave both lists empty, which printed "no daemons yet" and exited green
+    # while a daemon was running unwatched: the failure this whole section exists to prevent.
+    block_lines=$(sed -n '/^```bash$/,/^```$/p' "$restart_skill" | grep -vE '^```|^\s*#|^\s*$')
+    unmatched=$(printf '%s\n' "$block_lines" | grep -vE '^[a-z0-9-]+ (daemon start|start|serve)' | grep -v '^$')
+    if [ -z "$daemon_lines" ] && [ -z "$other_lines" ] && [ -z "$unmatched" ]; then
         ok "the restart skill lists no daemons yet, so there is none to check"
+    fi
+    if [ -n "$unmatched" ]; then
+        printf '%s\n' "$unmatched" | while IFS= read -r u; do
+            [ -n "$u" ] && printf 'UNCHK %s (matches no known start form, so nothing asked it: check by hand)\n' "$u"
+        done
     fi
     # Fed by redirect, never by a pipe: a `grep | while` loop runs in a subshell, where every red
     # this loop counts is discarded and a dead daemon exits 0.
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         query=$(printf '%s' "$line" | sed -E 's/^([a-z0-9-]+ daemon )start/\1status/')
-        out=$(sh -c "$query" 2>&1)
+        # stdin closed: the loop is fed by a heredoc, so without this a status verb that reads stdin
+        # swallows the remaining daemon lines and every one of them goes silently unchecked.
+        out=$(sh -c "$query" </dev/null 2>&1)
         rc=$?
         summary=$(printf '%s' "$out" | tr -d '\n' | cut -c1-60)
         case "$out" in
