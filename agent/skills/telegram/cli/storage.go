@@ -295,6 +295,23 @@ func (ms *MessageStore) SaveManualContact(name string, chatID int64, username st
 	if trimmedName == "" {
 		return Contact{}, fmt.Errorf("contact name cannot be empty")
 	}
+	// Keep every saved name pointing at one chat, so `telegram send --to '<name>'` reaches one
+	// person. A name another chat already holds is refused; re-saving or renaming the same chat is
+	// an update, because the check excludes this chat's own id. The match is case-insensitive and
+	// trimmed so a near-copy cannot reintroduce the ambiguity.
+	var existingID int64
+	dupErr := ms.db.QueryRow(
+		`SELECT chat_id FROM contacts WHERE LOWER(name) = LOWER(?) AND chat_id != ?`, trimmedName, chatID,
+	).Scan(&existingID)
+	if dupErr == nil {
+		return Contact{}, fmt.Errorf(
+			"a contact named %q already exists (chat %d); choose a distinct name like %q so a send names one person",
+			trimmedName, existingID, trimmedName+" R",
+		)
+	}
+	if dupErr != sql.ErrNoRows {
+		return Contact{}, fmt.Errorf("failed to check for a duplicate contact name: %v", dupErr)
+	}
 	_, err := ms.db.Exec(`
 		INSERT INTO contacts (chat_id, name, username, added_at, updated_at)
 		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -629,10 +646,27 @@ func (ms *MessageStore) ResolveRecipient(identifier string) (int64, error) {
 		return chatID, nil
 	}
 
-	// Try as contact name (exact match first)
-	err = ms.db.QueryRow(`SELECT chat_id FROM contacts WHERE LOWER(name) = LOWER(?)`, identifier).Scan(&chatID)
-	if err == nil {
-		return chatID, nil
+	// Try as contact name (exact match). Two saved contacts sharing a name are ambiguous, so error
+	// with their chat ids instead of silently reaching one.
+	if exactRows, exactErr := ms.db.Query(`SELECT chat_id FROM contacts WHERE LOWER(name) = LOWER(?)`, identifier); exactErr == nil {
+		var exactIDs []int64
+		for exactRows.Next() {
+			var id int64
+			if exactRows.Scan(&id) == nil {
+				exactIDs = append(exactIDs, id)
+			}
+		}
+		exactRows.Close()
+		if len(exactIDs) == 1 {
+			return exactIDs[0], nil
+		}
+		if len(exactIDs) > 1 {
+			var labels []string
+			for _, id := range exactIDs {
+				labels = append(labels, fmt.Sprintf("%d", id))
+			}
+			return 0, fmt.Errorf("ambiguous recipient %q: saved for multiple chats (%s); address one by its chat id, or rename one", identifier, strings.Join(labels, ", "))
+		}
 	}
 
 	// Try as chat name
