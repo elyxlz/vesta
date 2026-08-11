@@ -418,6 +418,21 @@ async fn import_legacy(docker: &Docker, request: ImportRequest<'_>) -> Result<Im
     Ok(ImportOutcome { name, port, manifest: None })
 }
 
+/// Which side of a finished import owns the error. A write that hit EPIPE only witnessed docker
+/// dying, so docker's own words win there; otherwise a bundle-read error outranks the EOF docker
+/// reports as its consequence.
+fn import_pipeline_result(
+    read_result: Result<(), DockerError>,
+    write_failed: bool,
+    output: &std::process::Output,
+) -> Result<(), DockerError> {
+    if write_failed {
+        crate::docker::finish_import_output(output)?;
+    }
+    read_result?;
+    crate::docker::finish_import_output(output)
+}
+
 /// Imports the bundle's flat filesystem tar as `vesta-restore:{agent_name}`, the stable
 /// per-agent image name a restic restore also takes, so image cleanup treats restores and
 /// imports alike; a previous image under that name is force-removed first. The blocking
@@ -443,19 +458,21 @@ async fn load_bundle_image(input: &Path, agent_name: &str) -> Result<String, Doc
             .stdin
             .take()
             .ok_or_else(|| DockerError::Failed("docker import stdin not available".to_string()))?;
+        let mut write_failed = false;
         let read_result = read_bundle_image(&input_path, |chunk| {
-            std::io::Write::write_all(&mut stdin, chunk).map_err(|err| docker_failed("docker import stopped reading", err))
+            std::io::Write::write_all(&mut stdin, chunk).map_err(|err| {
+                write_failed = true;
+                docker_failed("docker import stopped reading", err)
+            })
         });
-        drop(stdin);
         if read_result.is_err() {
-            // Plain EOF would have docker commit an image out of the partial stream it holds.
+            // Kill before the drop below delivers EOF: on EOF docker commits an image out
+            // of the partial stream it holds.
             child.kill().ok();
         }
+        drop(stdin);
         let output = child.wait_with_output().map_err(|err| docker_failed("docker import wait failed", err))?;
-        // A killed or broken-pipe import names only the consequence, so the bundle read's own
-        // error outranks docker's stderr.
-        read_result?;
-        crate::docker::finish_import_output(&output)
+        import_pipeline_result(read_result, write_failed, &output)
     })
     .await
     .map_err(|err| docker_failed("bundle import task panicked", err))??;
@@ -656,6 +673,45 @@ mod tests {
     fn resolve_import_name_prefers_override_then_manifest() {
         assert_eq!(resolve_import_name(BundleKind::Bundle, Some("apollo"), Some("copy")).expect("ok"), "copy");
         assert_eq!(resolve_import_name(BundleKind::Bundle, Some("apollo"), None).expect("ok"), "apollo");
+    }
+
+    fn shell_output(script: &str) -> std::process::Output {
+        std::process::Command::new("sh").args(["-c", script]).output().expect("sh runs")
+    }
+
+    #[test]
+    fn dockers_own_error_wins_when_the_write_side_only_saw_the_broken_pipe() {
+        let read_result = Err(docker_failed("docker import stopped reading", "Broken pipe"));
+        let output = shell_output("printf 'no space left on device' >&2; exit 1");
+        let err = import_pipeline_result(read_result, true, &output).expect_err("a failed import must error");
+        assert!(err.to_string().contains("no space left on device"), "got: {err}");
+    }
+
+    #[test]
+    fn dockers_error_surfaces_when_the_bundle_read_was_clean() {
+        let output = shell_output("printf 'unexpected EOF' >&2; exit 1");
+        let err = import_pipeline_result(Ok(()), false, &output).expect_err("a failed import must error");
+        assert!(err.to_string().contains("unexpected EOF"), "got: {err}");
+    }
+
+    #[test]
+    fn a_corrupt_bundle_outranks_the_eof_docker_reports_as_its_consequence() {
+        let read_result = Err(DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()));
+        let output = shell_output("printf 'unexpected EOF' >&2; exit 1");
+        let err = import_pipeline_result(read_result, false, &output).expect_err("a corrupt bundle must error");
+        assert!(err.to_string().contains(CORRUPT_BUNDLE_MESSAGE), "got: {err}");
+    }
+
+    #[test]
+    fn a_corrupt_bundle_errors_even_when_docker_exits_clean() {
+        let read_result = Err(DockerError::Failed(CORRUPT_BUNDLE_MESSAGE.to_string()));
+        let err = import_pipeline_result(read_result, false, &shell_output("exit 0")).expect_err("a corrupt bundle must error");
+        assert!(err.to_string().contains(CORRUPT_BUNDLE_MESSAGE), "got: {err}");
+    }
+
+    #[test]
+    fn a_clean_read_and_a_clean_docker_exit_pass() {
+        assert!(import_pipeline_result(Ok(()), false, &shell_output("exit 0")).is_ok());
     }
 
     #[test]
