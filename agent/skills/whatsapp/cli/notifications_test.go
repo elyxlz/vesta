@@ -13,15 +13,15 @@ func savedCtx(dir string) NotifContext {
 	return NotifContext{
 		NotifDir: dir, Instance: "personal", ChatJID: "4477000111@s.whatsapp.net", ChatName: "Ana",
 		ContactName: "Ana", ContactPhone: "+15551234567",
-		ContactSaved: true, IsDirectChat: true, Sender: "Ana",
+		ContactSaved: true, IsDirectChat: true,
 	}
 }
 
 func unsavedCtx(dir string) NotifContext {
 	return NotifContext{
 		NotifDir: dir, Instance: "personal", ChatJID: "15559998888@s.whatsapp.net", ChatName: "+15559998888",
-		ContactName: "", ContactPhone: "+15559998888",
-		ContactSaved: false, IsDirectChat: true, Sender: "+15559998888",
+		ContactName: "+15559998888", ContactPhone: "+15559998888",
+		ContactSaved: false, IsDirectChat: true,
 	}
 }
 
@@ -76,8 +76,9 @@ func TestUnsavedContactIsIdentifiedByNumber(t *testing.T) {
 	if err := json.Unmarshal(fields["contact_phone"], &phone); err != nil || phone != "+15559998888" {
 		t.Errorf("contact_phone = %q, want the number: it is the only way to reply to someone unsaved", phone)
 	}
-	if _, present := fields["contact_name"]; present {
-		t.Errorf("contact_name is present for an unsaved contact, want it absent")
+	var name string
+	if err := json.Unmarshal(fields["contact_name"], &name); err != nil || name != "+15559998888" {
+		t.Errorf("contact_name = %q, want the number: the single identity field names an unsaved contact too", name)
 	}
 	if _, present := fields["contact_unknown"]; !present {
 		t.Errorf("contact_unknown is absent for an unsaved contact, want it flagged")
@@ -90,6 +91,48 @@ func groupCtx(dir string) NotifContext {
 	ctx.ChatJID = "120363021234567890@g.us"
 	ctx.ChatName = "Bride squad"
 	return ctx
+}
+
+// unsavedGroupCtx is a group message from someone the user has not saved: the identity is the
+// formatted number, and there is no separate group vs participant name to reconcile.
+func unsavedGroupCtx(dir string) NotifContext {
+	ctx := groupCtx(dir)
+	ctx.ContactName = "+15559998888"
+	ctx.ContactPhone = "+15559998888"
+	ctx.ContactSaved = false
+	return ctx
+}
+
+// contact_name is the sole identity field: it is set for every message, direct or group, and
+// carries the saved name when the contact is saved and the formatted number otherwise. A group
+// notification used to carry a second `sender` field that repeated the participant, so this also
+// pins that no notification, direct or group, saved or unsaved, emits one.
+func TestContactNameIsTheSoleIdentityField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ctx  func(string) NotifContext
+		want string
+	}{
+		{"direct-saved", savedCtx, "Ana"},
+		{"direct-unsaved", unsavedCtx, "+15559998888"},
+		{"group-saved", groupCtx, "Ana"},
+		{"group-unsaved", unsavedGroupCtx, "+15559998888"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := WriteNotification(tc.ctx(dir), "3EB0A1", "hi", "", false, "", ""); err != nil {
+				t.Fatalf("write failed: %v", err)
+			}
+			fields := soleNotifFields(t, dir)
+			if _, present := fields["sender"]; present {
+				t.Errorf("notification carries a separate sender field; identity must ride in contact_name alone")
+			}
+			var name string
+			if err := json.Unmarshal(fields["contact_name"], &name); err != nil || name != tc.want {
+				t.Errorf("contact_name = %q, want %q (the sole identity field)", name, tc.want)
+			}
+		})
+	}
 }
 
 func notifChatType(t *testing.T, dir string) string {

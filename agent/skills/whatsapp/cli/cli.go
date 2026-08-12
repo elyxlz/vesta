@@ -354,13 +354,8 @@ func stripGlobalFlags(args []string) []string {
 
 func runOneShot(command string) {
 	sockPath := getSocketPath()
-	// Self-bootstrap the background daemon (idempotent no-op when it is already
-	// answering) so every agent command works cold, without the agent ever starting
-	// anything by hand. Replay the last run's recorded serve flags (the same source
-	// `daemon restart` reads), so a --read-only or --no-notifications daemon that
-	// crashed comes back with the operator's controls intact rather than write-capable.
-	if err := ensureDaemon(); err != nil {
-		failJSON("could not start the whatsapp daemon: %v; run `whatsapp status`", err)
+	if err := requireDaemon(); err != nil {
+		failJSON("%s", err.Error())
 	}
 	args, err := resolveStdinArgs(stripGlobalFlags(os.Args[1:]), "message", "text")
 	if err != nil {

@@ -137,6 +137,9 @@ pub(crate) struct AgentInfo {
     pub activity_state: String,
     pub build_phase: Option<BuildPhase>,
     pub operation: Option<AgentOperation>,
+    /// An `Alive` agent still working through its boot turns; clients label it as waking up.
+    #[serde(default)]
+    pub booting: bool,
     pub started_at: Option<String>,
     pub services: BTreeMap<String, ServiceInfo>,
 }
@@ -260,6 +263,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         activity_state: "thinking".into(),
         build_phase: None,
         operation: Some(AgentOperation::BackingUp),
+        booting: false,
         started_at: Some("2026-01-01T00:00:00Z".into()),
         services,
     };
@@ -405,6 +409,7 @@ mod tests {
             activity_state: "idle".into(),
             build_phase: None,
             operation: None,
+            booting: false,
             started_at: Some("2026-07-18T00:00:00Z".into()),
             services: std::collections::BTreeMap::new(),
         };
@@ -422,6 +427,7 @@ mod tests {
             activity_state: "idle".into(),
             build_phase: None,
             operation: None,
+            booting: false,
             started_at: None,
             services: BTreeMap::new(),
         }

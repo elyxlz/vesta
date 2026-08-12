@@ -50,15 +50,20 @@ type StoreMessageParams struct {
 }
 
 type NotifContext struct {
-	NotifDir     string
-	ChatJID      string
-	ChatName     string
+	NotifDir string
+	ChatJID  string
+	ChatName string
+	// ContactName is the one identity field a notification carries: the saved contact name when the
+	// sender is saved, otherwise the best human identifier (a formatted number or JID). It is set for
+	// both direct and group chats; in a group, ChatName names the group and this names the participant.
 	ContactName  string
 	ContactPhone string
 	Instance     string
 	ContactSaved bool
 	IsDirectChat bool
-	Sender       string
+	// NameSharedWithGroup marks a saved contact whose name a group also holds, so the reply keeps
+	// the chat JID rather than an ambiguous name that could resolve to the group.
+	NameSharedWithGroup bool
 }
 
 type MediaInfo struct {

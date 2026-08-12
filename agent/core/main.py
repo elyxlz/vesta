@@ -89,13 +89,17 @@ async def run_vesta(
     # Boot-time control-flow runs as boot turns: enqueued first (before the processor/input/monitor
     # tasks start) and processed in order before other work, so the agent converges and orients
     # first. Migrations may opt into interruptible batches; every other boot turn is non-interruptible.
-    for turn in collect_boot_turns(
+    boot_turns = collect_boot_turns(
         state=state,
         config=config,
         config_issues=config_issues or [],
         agent_message=restart_reason.agent_message,
         first_start=first_start,
-    ):
+    )
+    # Counted before the WS server binds, so GET /status never reports a boot complete that hasn't
+    # started. Only the non-interruptible turns count: once they are done the agent is preemptible.
+    state.boot_turns_pending = sum(1 for turn in boot_turns if not turn.interruptible)
+    for turn in boot_turns:
         await message_queue.put(turn)
 
     # Bind the HTTP/WS server on every boot, including first start. vestad reaches
@@ -176,8 +180,8 @@ def collect_boot_turns(
     proceeds to sync. When sync merges changes, its own restart naturally leaves the still-unmarked
     after-sync migrations for the next boot.
 
-    Daemons come up last, at the greeting's restart turn (it runs the restart skill's Daemons block),
-    so they never start against a Daemons block the sync or a migration is about to rewrite. The
+    Daemons come up last, at the greeting's restart turn (it runs the restart skill),
+    so they never start against a daemon list the sync or a migration is about to rewrite. The
     greeting is appended every boot, before it is known whether this boot restarts: a boot that
     settles (no-op sync, a migration batch that does not restart, a plain restart) ends on it and
     brings daemons up, while a boot that restarts mid-converge (sync merge, before-sync barrier)

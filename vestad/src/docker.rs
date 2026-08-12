@@ -297,6 +297,10 @@ pub enum AgentStatus {
     /// Reachable, but no provider is chosen yet (fresh agent, or signed out) — needs first sign-in,
     /// distinct from `NotAuthenticated` (a chosen provider whose credential is invalid/expired).
     Unprovisioned,
+    /// A planned stop/start cycle vestad is performing (a user restart, an agent self-restart
+    /// such as the nightly dream). Projected from the restart operation so clients render the
+    /// cycle as one deliberate action instead of stopped then starting.
+    Restarting,
     /// Container is being rebuilt (post-update reconcile, user rebuild, or a grant recreate).
     /// The snapshot takes minutes and the container is briefly removed, so without this state
     /// the agent would read as `Stopped`/gone and invite a manual restart mid-rebuild.
@@ -316,6 +320,7 @@ impl AgentStatus {
             AgentStatus::Starting => "starting",
             AgentStatus::NotAuthenticated => "not authenticated",
             AgentStatus::Unprovisioned => "unprovisioned",
+            AgentStatus::Restarting => "restarting",
             AgentStatus::Rebuilding => "rebuilding",
             AgentStatus::Stopped => "stopped",
             AgentStatus::Dead => "dead",
@@ -323,13 +328,11 @@ impl AgentStatus {
         }
     }
 
-    /// True while the container is up with its WS/HTTP server bound and serving. The sync tap
-    /// connects in every one of these states: the app-chat echo and the event stream are
-    /// credential-independent, so an unauthenticated or unprovisioned agent still streams events and
-    /// accepts relayed chat (the raw per-agent WS proxy this hub replaced served it regardless of
-    /// auth). The push projection rides the same tap, so it too observes these states, wider than
-    /// the old Alive-only listener, bounded by the same alert-worthiness gate.
-    /// Excludes `Starting` (port not yet bound) and every down/rebuilding state.
+    /// True while the container is up with its WS/HTTP server bound and serving, in every state
+    /// reaching it: the app-chat echo and the event stream are credential-independent, so an
+    /// unauthenticated or unprovisioned agent still streams events and accepts relayed chat (the
+    /// raw per-agent WS proxy this hub replaced served it regardless of auth). Excludes the
+    /// transitional running states, which `dialable` covers, and every down state.
     pub fn serves_ws(self) -> bool {
         matches!(
             self,
@@ -337,6 +340,23 @@ impl AgentStatus {
                 | AgentStatus::SettingUp
                 | AgentStatus::NotAuthenticated
                 | AgentStatus::Unprovisioned
+        )
+    }
+
+    /// Whether vestad should be dialing this agent's WS tap: every state with a running (or
+    /// imminently returning) container behind it. `Starting` is included deliberately, because
+    /// the tap connecting is the very edge that ends it.
+    pub fn dialable(self) -> bool {
+        self.serves_ws() || matches!(self, AgentStatus::Starting | AgentStatus::Restarting)
+    }
+
+    /// Whether this is a settled state rather than one the agent is moving through. The
+    /// lifecycle push advances only on stable observations, so transient boot, restart, and
+    /// rebuild states can never masquerade as agent news.
+    pub fn is_stable(self) -> bool {
+        !matches!(
+            self,
+            AgentStatus::Starting | AgentStatus::Restarting | AgentStatus::Rebuilding
         )
     }
 }
@@ -410,6 +430,10 @@ pub struct ListEntry {
     pub name: String,
     pub status: AgentStatus,
     pub ws_port: u16,
+    /// An `Alive` agent still working through its boot turns (migrations, sync, greeting): the
+    /// API serves and chat queues durably, but clients label it as still waking up.
+    #[serde(default)]
+    pub booting: bool,
     // Container start time; the web app watches it change to retire a "restart to apply" flag.
     // camelCase on the wire to match the web's AgentInfo; omitted when the agent has never started.
     #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
@@ -2194,6 +2218,17 @@ pub enum BuildPhase {
 pub enum AgentOperation {
     BackingUp,
     Restoring,
+    /// A planned stop/start cycle vestad performs (a user restart, an agent self-restart such
+    /// as the nightly dream). Internal only: it exists to mark the cycle as planned work for
+    /// the lifecycle push, and `on_wire` keeps it off the roster shipped clients parse.
+    Restarting,
+}
+
+impl AgentOperation {
+    /// Whether shipped clients know this operation; the roster projects only these.
+    pub fn on_wire(self) -> bool {
+        matches!(self, AgentOperation::BackingUp | AgentOperation::Restoring)
+    }
 }
 
 /// A cheap, clonable sink for `BuildPhase` updates. The create handler wires one
@@ -3132,17 +3167,21 @@ mod tests {
             AgentStatus::NotAuthenticated,
             AgentStatus::Unprovisioned,
         ] {
-            assert!(status.serves_ws(), "{} should be tappable", status.human_text());
+            assert!(status.serves_ws(), "{} should serve", status.human_text());
         }
         for status in [
             AgentStatus::Starting,
+            AgentStatus::Restarting,
             AgentStatus::Rebuilding,
             AgentStatus::Stopped,
             AgentStatus::Dead,
             AgentStatus::NotFound,
         ] {
-            assert!(!status.serves_ws(), "{} must not be tapped", status.human_text());
+            assert!(!status.serves_ws(), "{} must not serve", status.human_text());
         }
+        assert!(AgentStatus::Starting.dialable());
+        assert!(AgentStatus::Restarting.dialable());
+        assert!(!AgentStatus::Rebuilding.dialable());
     }
 
     #[test]

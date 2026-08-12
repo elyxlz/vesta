@@ -670,6 +670,13 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
 
     sdk_env, thinking_config = _provider_sdk_settings(provider, state)
 
+    # Vesta ships its own task system (the `tasks` skill: a sqlite store, reminders, a dashboard
+    # page), so the harness's task tools are a competing one. ENABLE_TASKS=0 drops four of them
+    # (Task{Create,Get,List,Update}, which each write a JSON file under ~/.claude/tasks/) and stops
+    # the per-turn "task tools unused" reminder, which this same flag gates at its source. Provider-
+    # independent, so it sits here rather than in each adapter.
+    sdk_env["CLAUDE_CODE_ENABLE_TASKS"] = "0"
+
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (capped via CLAUDE_CODE_AUTO_COMPACT_WINDOW above); the headless
     # ClaudeAgentOptions has no context_window field, so nothing is passed here.
@@ -678,6 +685,11 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         model=_harness_model(provider),
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
+        # ENABLE_TASKS=0 leaves TaskOutput and TaskStop (gated separately) and re-enables the legacy
+        # TodoWrite tool. Deny all three: a disallowed tool drops out of the model's tool list, which
+        # also stops the TodoWrite reminder, since that nudge only fires while the tool is offered.
+        # The Task subagent tool is unrelated and stays.
+        disallowed_tools=["TodoWrite", "TaskOutput", "TaskStop"],
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
         # "user" enables discovery of ~/.claude/skills, where agent startup symlinks active

@@ -102,7 +102,7 @@ The user's important people are [agent_name]'s important people too. Keeps track
 
 ### Notifications
 - `~/agent/notifications/` is where everything comes in: JSON files that background services drop there. If a service isn't running, its notifications simply don't exist.
-- The `restart` skill (`~/agent/skills/restart/SKILL.md`) must start every service the user has set up on every boot, via its `## Daemons` section. New integrations follow the same pattern: a daemon that writes JSON to `~/agent/notifications/`.
+- The `restart` skill (`~/agent/skills/restart/SKILL.md`) must start every service the user has set up on every boot; read it for how daemons are registered. New integrations follow the same pattern: a daemon that writes JSON to `~/agent/notifications/`.
 - The JSON field `interrupt: bool` is the producer's default (interrupt vs snooze); the user's notification rules override it (edited via the `notifications` skill).
 
 ### Self-Modification

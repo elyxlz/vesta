@@ -53,10 +53,13 @@ export function agentOrbState(
   status: AgentStatus,
   activityState: AgentActivityState,
   operation: AgentOperation | null = null,
+  booting = false,
 ): OrbVisualState {
   // A running operation outranks the container's own status: a backup pauses the container, so the
   // status alone would read as a plainly stopped agent that the user has to restart.
   if (operation !== null) return "busy"
+  // An alive agent still in its boot turns renders as the boot it is finishing, not as thinking.
+  if (booting && status === "alive") return "busy"
   switch (agentStatusKind(status)) {
     case "alive":
       return activityState === "thinking" ? "thinking" : "alive"
@@ -81,8 +84,11 @@ export function agentStatusLabel(
   status: AgentStatus,
   activityState: AgentActivityState,
   operation: AgentOperation | null = null,
+  booting = false,
 ): string {
   if (operation !== null) return agentOperationLabel(operation)
+  // The boot reads as one continuous "waking up...": container start through the last boot turn.
+  if (booting && status === "alive") return "waking up..."
   switch (status) {
     case "alive":
       return activityState === "thinking" ? "thinking" : "alive"

@@ -70,13 +70,13 @@ class ReminderSpec(BaseModel):
     fuzz_minutes: int | None = None
 
 
-# Overdue pending tasks (past due_date) always float to the top, ordered by most overdue first.
-# datetime() normalizes the ISO 'T'/offset form to SQLite's space-separated form so the
+# Overdue open tasks (not completed, past due_date) always float to the top, ordered by most overdue
+# first. datetime() normalizes the ISO 'T'/offset form to SQLite's space-separated form so the
 # comparison is chronological, not lexicographic. Non-overdue tasks keep priority/due/created order.
 _TASK_ORDER_BY = (
     " ORDER BY"
-    " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN 0 ELSE 1 END ASC,"
-    " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN datetime(due_date) END ASC,"
+    " CASE WHEN status != 'completed' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN 0 ELSE 1 END ASC,"
+    " CASE WHEN status != 'completed' AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') THEN datetime(due_date) END ASC,"
     " priority DESC, due_date ASC NULLS LAST, created_at DESC"
 )
 
@@ -317,7 +317,7 @@ def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False
 def add_task(
     config: Config,
     *,
-    title: str,
+    subject: str,
     due: DueSpec | None = None,
     priority: int | str = 2,
     initial_metadata: str | None = None,
@@ -328,11 +328,11 @@ def add_task(
 
     with closing(db.get_db(config.data_dir)) as conn:
         conn.execute(
-            "INSERT INTO tasks (id, title, priority, due_date) VALUES (?, ?, ?, ?)",
-            (task_id, title, priority, due_date),
+            "INSERT INTO tasks (id, subject, priority, due_date) VALUES (?, ?, ?, ?)",
+            (task_id, subject, priority, due_date),
         )
         if due_date:
-            db.create_auto_reminders(conn, task_id, title, due_date)
+            db.create_auto_reminders(conn, task_id, subject, due_date)
         conn.commit()
 
     if initial_metadata:
@@ -340,7 +340,7 @@ def add_task(
 
     return {
         "id": task_id,
-        "title": title,
+        "subject": subject,
         "status": "pending",
         "priority": priority,
         "due_date": due_date,
@@ -352,24 +352,25 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
     with closing(db.get_db(config.data_dir)) as conn:
         query = "SELECT * FROM tasks"
         if not show_completed:
-            query += " WHERE status != 'done'"
+            query += " WHERE status != 'completed'"
         query += _TASK_ORDER_BY
         cursor = conn.execute(query)
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
 
-def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status: str | None, new_due_date: str | None):
-    """Rebuild the auto reminders after a due-date or title change, preferring the values updated in
-    the same call. An auto reminder's message embeds the task title, so a title change has to
-    regenerate them for the armed reminders to carry the current title."""
+def _rebuild_due_reminders(conn, task_id: str, row, *, subject: str | None, status: str | None, new_due_date: str | None):
+    """Rebuild the auto reminders after a due-date or subject change, preferring the values updated in
+    the same call. An auto reminder's message embeds the task subject, so a subject change has to
+    regenerate them for the armed reminders to carry the current subject."""
     db.delete_auto_reminders(conn, task_id)
     if not new_due_date:
         return
-    reminder_title = title if title is not None else row["title"]
-    # Only create reminders if the task is (or will be) pending.
+    reminder_subject = subject if subject is not None else row["subject"]
+    # Only create reminders if the task is (or will be) open. in_progress is open like pending;
+    # only completed stops reminding.
     effective_status = status if status is not None else row["status"]
-    if effective_status == "pending":
-        db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
+    if effective_status != "completed":
+        db.create_auto_reminders(conn, task_id, reminder_subject, new_due_date)
 
 
 def _retitle_auto_reminder_messages(conn, task_id: str, new_title: str) -> None:
@@ -423,13 +424,13 @@ def update_task(
     *,
     task_id: str,
     status: str | None = None,
-    title: str | None = None,
+    subject: str | None = None,
     priority: int | str | None = None,
     due: DueSpec | None = None,
     backburner: bool | None = None,
 ) -> dict:
-    if status and status not in ("pending", "done"):
-        raise ValueError(f"Status must be pending or done, got {status}")
+    if status and status not in ("pending", "in_progress", "completed"):
+        raise ValueError(f"Status must be pending, in_progress, or completed, got {status}")
     if priority is not None:
         priority = normalize_priority(priority)
 
@@ -445,26 +446,26 @@ def update_task(
         if status is not None:
             updates.append("status = ?")
             params.append(status)
-            if status == "done":
+            was_completed = result["status"] == "completed"
+            if status == "completed":
                 updates.append("completed_at = ?")
                 params.append(_now_utc().isoformat())
                 # A finished task stops reminding entirely, so this clears owned reminders too, not
                 # just auto ones. A due-date change below rebuilds only the auto ones (delete_auto).
                 db.delete_task_reminders(conn, task_id)
-            elif status == "pending":
+            elif was_completed:
+                # Reopening from completed (to pending or in_progress): clear completion and, unless
+                # the due date is being changed below (that block rebuilds them), recreate the auto
+                # reminders the completed transition deleted. A pending<->in_progress toggle is not a
+                # reopen, so it never touches reminders and cannot duplicate them.
                 updates.append("completed_at = NULL")
-                # Recreate auto-reminders if task has a due date and is reopened.
-                # If due date is also being updated in this call, skip here;
-                # the due-date block below handles reminder recreation with the new value.
-                if not due_date_changed:
-                    old_due = result["due_date"]
-                    if old_due:
-                        db.create_auto_reminders(conn, task_id, result["title"], old_due)
+                if not due_date_changed and result["due_date"]:
+                    db.create_auto_reminders(conn, task_id, result["subject"], result["due_date"])
 
         new_backburner = _backburner_update(
             conn, result, backburner=backburner, due_date_changed=due_date_changed, new_due_date=new_due_date, updates=updates
         )
-        for field, value in [("title", title), ("priority", priority), ("backburner", new_backburner)]:
+        for field, value in [("subject", subject), ("priority", priority), ("backburner", new_backburner)]:
             if value is not None:
                 updates.append(f"{field} = ?")
                 params.append(value)
@@ -472,11 +473,11 @@ def update_task(
         if due_date_changed:
             updates.append("due_date = ?")
             params.append(new_due_date)
-            _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=new_due_date)
-        elif title is not None and title != result["title"] and status != "done":
-            # A title change invalidates the reminder TEXT and nothing else, so rewrite the text
+            _rebuild_due_reminders(conn, task_id, result, subject=subject, status=status, new_due_date=new_due_date)
+        elif subject is not None and subject != result["subject"] and status != "completed":
+            # A subject change invalidates the reminder TEXT and nothing else, so rewrite the text
             # and leave fire times, ids, snoozes and completed history untouched.
-            _retitle_auto_reminder_messages(conn, task_id, title)
+            _retitle_auto_reminder_messages(conn, task_id, subject)
 
         if updates:
             params.append(task_id)
@@ -517,7 +518,7 @@ def get_task(config: Config, *, task_id: str) -> dict:
 
 TASK_FIELDS = (
     "id",
-    "title",
+    "subject",
     "status",
     "priority",
     "due_date",
@@ -565,9 +566,9 @@ def delete_task(config: Config, *, task_id: str) -> dict:
 
 def search_tasks(config: Config, *, query: str, show_completed: bool = False) -> list[dict]:
     with closing(db.get_db(config.data_dir)) as conn:
-        sql = "SELECT * FROM tasks WHERE title LIKE ?"
+        sql = "SELECT * FROM tasks WHERE subject LIKE ?"
         if not show_completed:
-            sql += " AND status != 'done'"
+            sql += " AND status != 'completed'"
         sql += _TASK_ORDER_BY
         cursor = conn.execute(sql, (f"%{query}%",))
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
@@ -599,7 +600,9 @@ def build_digest(config: Config, *, now: datetime | None = None) -> str | None:
     """The daily digest message, or None when nothing needs attention."""
     now = now or _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        pending = conn.execute("SELECT id, title, priority, due_date, created_at, backburner FROM tasks WHERE status = 'pending'").fetchall()
+        pending = conn.execute(
+            "SELECT id, subject, priority, due_date, created_at, backburner FROM tasks WHERE status != 'completed'"
+        ).fetchall()
 
     overdue: list[tuple[dict, datetime]] = []
     stale: list[tuple[dict, datetime]] = []
@@ -622,12 +625,12 @@ def build_digest(config: Config, *, now: datetime | None = None) -> str | None:
     if overdue:
         overdue.sort(key=lambda pair: pair[1])
         lines.append(_OVERDUE_HEADER)
-        lines += [f'- {t["id"]} "{t["title"]}" ({PRIORITY_LABEL[t["priority"]]}, overdue {rel_delta(now - due)})' for t, due in overdue]
+        lines += [f'- {t["id"]} "{t["subject"]}" ({PRIORITY_LABEL[t["priority"]]}, overdue {rel_delta(now - due)})' for t, due in overdue]
     if stale:
         if overdue:
             lines.append("")
         lines.append(_STALE_HEADER)
-        lines += [f'- {t["id"]} "{t["title"]}" (created {rel_delta(now - created)} ago)' for t, created in stale]
+        lines += [f'- {t["id"]} "{t["subject"]}" (created {rel_delta(now - created)} ago)' for t, created in stale]
     return "\n".join(lines)
 
 

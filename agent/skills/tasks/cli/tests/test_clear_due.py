@@ -25,7 +25,7 @@ def test_clear_due_removes_date_and_auto_reminders(tmp_config: Config):
     config = tmp_config
     task = commands.add_task(
         config,
-        title="backburner item",
+        subject="backburner item",
         due=commands.DueSpec(due_in_days=30),
     )
     task_id = task["id"]
@@ -46,7 +46,7 @@ def test_clear_due_removes_date_and_auto_reminders(tmp_config: Config):
 def test_clear_due_does_not_need_a_timezone(tmp_config: Config):
     """`due_datetime` requires a timezone; clearing must not inherit that requirement."""
     config = tmp_config
-    task = commands.add_task(config, title="item", due=commands.DueSpec(due_in_hours=5))
+    task = commands.add_task(config, subject="item", due=commands.DueSpec(due_in_hours=5))
 
     updated = commands.update_task(config, task_id=task["id"], due=commands.DueSpec(clear=True))
 
@@ -56,7 +56,7 @@ def test_clear_due_does_not_need_a_timezone(tmp_config: Config):
 def test_clear_due_rejects_a_conflicting_due_offset(tmp_config: Config):
     """`clear` and a due-setting field together are contradictory: reject, do not silently pick one."""
     config = tmp_config
-    task = commands.add_task(config, title="item", due=commands.DueSpec(due_in_days=3))
+    task = commands.add_task(config, subject="item", due=commands.DueSpec(due_in_days=3))
 
     with pytest.raises(ValueError, match="clear"):
         commands.update_task(config, task_id=task["id"], due=commands.DueSpec(clear=True, due_in_days=10))
@@ -65,10 +65,10 @@ def test_clear_due_rejects_a_conflicting_due_offset(tmp_config: Config):
 def test_update_without_due_spec_leaves_the_date_alone(tmp_config: Config):
     """A plain edit must not be read as a clear: only an explicit request touches the due date."""
     config = tmp_config
-    task = commands.add_task(config, title="item", due=commands.DueSpec(due_in_days=3))
+    task = commands.add_task(config, subject="item", due=commands.DueSpec(due_in_days=3))
     before = task["due_date"]
 
-    updated = commands.update_task(config, task_id=task["id"], title="renamed")
+    updated = commands.update_task(config, task_id=task["id"], subject="renamed")
 
     assert updated["due_date"] == before
     assert _pending_auto_reminders(config, task["id"]) > 0

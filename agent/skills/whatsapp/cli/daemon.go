@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -259,22 +260,37 @@ func pidRecordFor(pid int) string {
 	return strconv.Itoa(pid)
 }
 
-// daemonBringupArgs picks the flags an implicit bringup starts the daemon with: the last run's
-// recorded flags, so a crashed --read-only or --no-notifications daemon comes back with the
-// control intact rather than write-capable, falling back to the instance flag alone when no run
-// was ever recorded. Every implicit bringup reads it, so no command path can drop the control.
-func daemonBringupArgs() []string {
-	return restartServeArgs(loadStateFromDisk(stateDataDir()))
+// controlFlags hold an instance back rather than describe it, so each one the last run carried is
+// replayed onto a start that omits it.
+var controlFlags = []string{"--read-only", "--no-notifications"}
+
+// startServeArgs is the flag set a start binds with: its own args, plus every control flag the last
+// recorded run carried and this start does not state itself. A start keeps the flags it was given
+// (so a new one takes effect), and a bare recovery start never revives a --read-only or
+// --no-notifications account without its control.
+func startServeArgs(passed []string) []string {
+	recorded := loadStateFromDisk(stateDataDir()).Args
+	args := slices.Clone(passed)
+	for _, control := range controlFlags {
+		if slices.Contains(recorded, control) && !slices.Contains(args, control) {
+			args = append(args, control)
+		}
+	}
+	return args
 }
 
-// ensureDaemon is the self-bootstrap every agent-facing command runs: a socket that answers is
-// all those commands need, whoever brought it up.
-func ensureDaemon() error {
+// daemonDownMessage is the one wording for a daemon that is not up, so the error a command fails
+// with and the verdict `whatsapp status` prints cannot drift apart.
+const daemonDownMessage = "whatsapp daemon is not running; start it with `whatsapp daemon start`"
+
+// requireDaemon asserts the daemon is answering and names the fix if it is not. No command starts
+// it: the restart skill brings it up at boot, or `whatsapp daemon start` does, so an account left
+// out of the restart daemons stays down until it is started on purpose.
+func requireDaemon() error {
 	if daemonAlive(getSocketPath()) {
 		return nil
 	}
-	_, err := startDaemonProcess(daemonBringupArgs())
-	return err
+	return errors.New(daemonDownMessage)
 }
 
 // startDaemonProcess launches `whatsapp serve` detached in its own session, records its pid,
@@ -364,7 +380,7 @@ func daemonStart(serveArgs []string) {
 		printJSON(map[string]string{"status": "already_running"})
 		return
 	}
-	broughtUp, err := startDaemonProcess(serveArgs)
+	broughtUp, err := startDaemonProcess(startServeArgs(serveArgs))
 	if err != nil {
 		failDaemon("%s", err.Error())
 	}

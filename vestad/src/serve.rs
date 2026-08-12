@@ -832,6 +832,10 @@ async fn restart_agent_handler(
     // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
     spawn_detached(async move {
         let _guard = agent_write_guard(&state, &name).await;
+        // A vestad-performed restart (often the agent restarting itself, e.g. after the nightly
+        // dream) is planned work: registering it keeps the stop/start cycle out of the lifecycle push.
+        let _operation =
+            agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &name, docker::AgentOperation::Restarting);
 
         // A restart implies the agent should be running — record it so boot-start agrees with intent.
         {
@@ -878,6 +882,10 @@ async fn destroy_agent_handler(
     backup::remove_agent_temp_artifacts(&state.docker, &name).await;
     crate::restic::remove_repo(&name);
     state.agent_status_cache.clear_bridge_ip(&name);
+    // Forget the destroyed agent's lifecycle-observation state, so an agent later created under
+    // the same name seeds fresh instead of diffing against its predecessor.
+    state.agent_status_cache.forget_agent(&name);
+    state.mobile_app.forget_agent(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -1801,6 +1809,21 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
+/// The port a (re)registration binds. A cached port is reused only when it sits in the safe band
+/// above the kernel's ephemeral range; a cached port at or below it can be handed out as a
+/// transient outbound source port and fail the caller's `bind()`, so it is dropped and a fresh
+/// safe port allocated. Every daemon re-registers on start, so a service still on a low port
+/// relocates itself the next time its daemon starts.
+// LEGACY(remove-when: no fleet service is registered on a port <= ephemeral_port_high): once no
+// agent carries a sub-ephemeral registration, the relocation arm never fires and this folds back
+// into "reuse cached, else allocate".
+fn port_for_registration(cached_port: Option<u16>, registry: &HashMap<String, HashMap<String, ServiceEntry>>, agent: &str) -> Option<u16> {
+    match cached_port {
+        Some(port) if port > ephemeral_port_high() => Some(port),
+        _ => allocate_service_port(registry, agent),
+    }
+}
+
 /// `public` is intrinsic to a registration, like the port: an absent field inherits
 /// the cached entry's value, so a re-register that only wants the port (whatsapp's
 /// `resolveVoiceBaseURL`, voice's own status/stop/restart) cannot silently revoke a
@@ -1891,10 +1914,8 @@ async fn register_service_handler(
         .get(&name)
         .and_then(|services| services.get(&service_name))
         .copied();
-    let port = match cached_entry.map(|entry| entry.port) {
-        Some(cached_port) => cached_port,
-        None => allocate_service_port(&settings.services, &name).ok_or_else(no_free_ports_err)?,
-    };
+    let port = port_for_registration(cached_entry.map(|entry| entry.port), &settings.services, &name)
+        .ok_or_else(no_free_ports_err)?;
     let public = resolve_public(body.public, cached_entry);
 
     let entry = ServiceEntry { port, public };
@@ -2083,27 +2104,6 @@ where
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Publishes an agent's in-flight operation on the roster for as long as it is held, clearing it on
-/// drop so an early `?` return cannot strand the agent looking busy forever.
-struct PublishedOperation {
-    cache: Arc<crate::agent_status::AgentStatusCache>,
-    name: String,
-}
-
-impl PublishedOperation {
-    fn new(state: &SharedState, name: &str, operation: crate::docker::AgentOperation) -> Self {
-        let normalized = crate::docker::normalize_name(name);
-        state.agent_status_cache.set_operation(&normalized, operation);
-        Self { cache: state.agent_status_cache.clone(), name: normalized }
-    }
-}
-
-impl Drop for PublishedOperation {
-    fn drop(&mut self) {
-        self.cache.clear_operation(&self.name);
-    }
-}
-
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -2115,7 +2115,7 @@ async fn create_backup_handler(
         let _guard = agent_write_guard(&state, &name).await;
         let _file_lock = backup::agent_file_lock(&name)?;
         let _operation =
-            PublishedOperation::new(&state, &name, crate::docker::AgentOperation::BackingUp);
+            agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &name, crate::docker::AgentOperation::BackingUp);
         let info =
             backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual, None).await?;
         tracing::info!(backup_id = %info.id, size = info.size, "backup created");
@@ -2162,7 +2162,7 @@ async fn restore_backup_handler(
         let _guard = agent_write_guard(&state, &path.name).await;
         let _file_lock = backup::agent_file_lock(&path.name)?;
         let _operation =
-            PublishedOperation::new(&state, &path.name, crate::docker::AgentOperation::Restoring);
+            agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &path.name, crate::docker::AgentOperation::Restoring);
         let user_mounts = {
             let settings = state.settings.read().await;
             settings.agent_mounts(&path.name)
@@ -2959,6 +2959,18 @@ const WINDOW_POLL: jiff::SignedDuration = jiff::SignedDuration::from_secs(15 * 6
 // maintenance decision, so a pass pending at startup targets the fleet's real windows instead of
 // resolving a still-empty cache to host-local.
 const STARTUP_SETTLE_SECS: u64 = 60;
+const STARTUP_SETTLE_ENV: &str = "VESTAD_MAINTENANCE_SETTLE_SECS";
+
+/// The boot settle before the first maintenance decision. `VESTAD_MAINTENANCE_SETTLE_SECS` shortens
+/// it for the maintenance-update test, exactly as `VESTAD_UPDATE_ANNOUNCE_GRACE_SECS` shortens the
+/// announce window; unset in every published build, so nothing branches in production.
+fn startup_settle() -> tokio::time::Duration {
+    let seconds = std::env::var(STARTUP_SETTLE_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(STARTUP_SETTLE_SECS);
+    tokio::time::Duration::from_secs(seconds)
+}
 
 /// The local timezone of every alive agent, falling back to host-local for any agent that hasn't
 /// reported one (pre-upstream-sync fleet). Drives which 4-5am window maintenance targets.
@@ -2975,12 +2987,12 @@ fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
 
 /// One maintenance cycle owns all scheduled disk and restart work: it fires in the fleet's
 /// best-coverage 4-5am agent-local window, at a poll where every agent is idle (or at the
-/// window's last poll), runs the restart-free snapshot pass, and applies a pending update
-/// as an add-on to that same pass.
+/// window's last poll), and either applies a pending update or runs the restart-free snapshot
+/// pass.
 fn spawn_maintenance_task(state: SharedState) {
     tokio::spawn(async move {
         // Settle first so the timezone cache is populated before the first window decision.
-        tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
+        tokio::time::sleep(startup_settle()).await;
         let mut last_pass_epoch: u64 = 0;
         loop {
             let now_epoch = crate::time_utils::now_epoch_secs();
@@ -3004,32 +3016,29 @@ fn spawn_maintenance_task(state: SharedState) {
     });
 }
 
-/// One fired maintenance cycle: the snapshot pass, or a pending update (which owns the pre-update
-/// snapshot pass itself) as its add-on. The update restarts this process on success, so control
-/// usually never returns from the update branch.
+/// One fired maintenance cycle: a pending update (which owns the pre-update snapshot pass itself),
+/// or the routine snapshot pass. The update restarts this process on success, so control usually
+/// never returns from the update branch.
 async fn run_maintenance(state: &SharedState) {
-    let update_pending = state
-        .update_info
-        .lock()
-        .await
-        .as_ref()
-        .is_some_and(|info| info.update_available);
     let auto_update = state.settings.read().await.auto_update;
-
-    if update_pending && auto_update && !state.dev_mode {
-        tracing::info!("maintenance: applying pending update");
-        // The same one entry point a manual update takes. A failed apply retries next cycle; the
-        // fresh pre-update snapshot set is reused (<24h).
+    // Resolve the release freshly here rather than reading the periodic poll's cache: that poll
+    // runs every CHECK_INTERVAL_SECS and can straddle a release published the same night, leaving
+    // the cache stale for the one daily moment this window reads it. start_update runs its own
+    // fresh check and is the single owner of the pending-release decision.
+    if auto_update && !state.dev_mode {
         match update::start_update(state.clone()).await {
             Ok(update::UpdateStart::Started { .. }) => {
                 state.operation.wait_until_settled().await;
+                return;
             }
             Ok(outcome) => tracing::info!(?outcome, "maintenance: no update to apply"),
-            Err(phase) => tracing::warn!(?phase, "maintenance: an update is already running"),
+            Err(phase) => {
+                tracing::warn!(?phase, "maintenance: an update is already running");
+                return;
+            }
         }
-    } else {
-        run_snapshot_pass(state, maintenance::PassKind::Routine).await;
     }
+    run_snapshot_pass(state, maintenance::PassKind::Routine).await;
 }
 
 /// Snapshot every agent the pass selects, restart-free and concurrently (bounded). After a
@@ -3258,6 +3267,7 @@ pub async fn run_server(cfg: ServerConfig) {
         rebuilding: state.rebuilding.clone(),
         mobile_app: state.mobile_app.clone(),
         sync_hub: state.sync_hub.clone(),
+        gateway_operation: state.operation.clone(),
     });
     let app = build_router(state.clone());
     spawn_maintenance_task(state.clone());
@@ -3365,8 +3375,9 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, resolve_public, spawn_pipeline_sse,
-        truncate_chars, update, valid_user_notification_kind, RegisterServiceBody,
+        allocate_service_port, ensure_not_rebuilding, ephemeral_port_high, port_for_registration,
+        resolve_public, spawn_pipeline_sse, truncate_chars, update, valid_user_notification_kind,
+        RegisterServiceBody, SERVICE_PORT_MAX, SERVICE_PORT_MIN,
     };
 
     #[test]
@@ -3698,32 +3709,37 @@ mod tests {
         );
     }
 
-    // vestad cannot probe bindability inside an agent's network namespace, since each agent has
-    // its own, so an existing registration is always reused: no liveness check, no bind probe.
-    // The caller's own bind() is the only
-    // real check, same as it is for every service. Replays register_service_handler's port
-    // decision, which is now this simple.
     #[test]
-    fn register_service_handler_reuses_a_cached_port_unconditionally() {
+    fn port_for_registration_keeps_a_safe_cached_port() {
+        // A port above the ephemeral range cannot be stolen as an outbound source port, so a
+        // re-registration reuses it unchanged (sticky, no churn on the common path).
+        let safe = SERVICE_PORT_MAX;
+        assert!(safe > ephemeral_port_high(), "test assumes a normal ephemeral range");
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        assert_eq!(port_for_registration(Some(safe), &empty, "agent"), Some(safe));
+    }
+
+    #[test]
+    fn port_for_registration_relocates_a_sub_ephemeral_cached_port() {
+        // A cached port the kernel can reuse as a transient outbound source port is dropped and a
+        // fresh safe one allocated, so the daemon's next re-register moves it out of harm's way.
+        let low = SERVICE_PORT_MIN;
+        assert!(low <= ephemeral_port_high(), "test assumes SERVICE_PORT_MIN is sub-ephemeral");
         let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
         registry.entry("agent".into()).or_default().insert(
-            "dashboard".into(),
-            ServiceEntry {
-                port: 55000,
-                public: false,
-            },
+            "tasks".into(),
+            ServiceEntry { port: low, public: false },
         );
+        let port = port_for_registration(Some(low), &registry, "agent").expect("allocate");
+        assert!(port > ephemeral_port_high(), "a sub-ephemeral cached port must relocate above the range");
+        assert_ne!(port, low);
+    }
 
-        let cached = registry
-            .get("agent")
-            .and_then(|services| services.get("dashboard"))
-            .map(|entry| entry.port);
-        let resolved = match cached {
-            Some(port) => port,
-            None => allocate_service_port(&registry, "agent").expect("a port should be free"),
-        };
-
-        assert_eq!(resolved, 55000, "an existing registration is always reused");
+    #[test]
+    fn port_for_registration_allocates_a_safe_port_when_uncached() {
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let port = port_for_registration(None, &empty, "agent").expect("allocate");
+        assert!(port > ephemeral_port_high(), "a first registration lands in the safe band");
     }
 
     // Reproduction of vesta#1323: the caller re-registering is often a resolver that never
@@ -3834,12 +3850,14 @@ mod tests {
                 name: "sample-agent".into(),
                 status: AgentStatus::Alive,
                 ws_port: 4200,
+                booting: false,
                 started_at: Some("2026-01-01T00:00:00Z".into()),
             },
             ListEntry {
                 name: "stopped-agent".into(),
                 status: AgentStatus::Stopped,
                 ws_port: 4201,
+                booting: false,
                 started_at: None,
             },
         ];

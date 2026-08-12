@@ -4,7 +4,7 @@ Routes:
   - WS   /ws                   bidirectional event bus
   - GET  /history              paginated event history (cursor optional), or full-text search with ?q=
   - GET  /usage                normalized, provider-agnostic plan usage
-  - GET  /status               operational readiness: {authed, setup_complete} (vestad polls this)
+  - GET  /status               operational readiness: {authed, setup_complete, boot_complete} (vestad polls this)
   - GET  /config               prefs + notification_rules (personality, timezone, seed_context, operational)
   - PUT  /config               update prefs and/or notification_rules (provider is set via /provider)
   - GET  /provider             active provider (configured fields) + derived {authed}
@@ -320,9 +320,9 @@ async def _provider_get_handler(request: web.Request) -> web.Response:
 
 async def _status_handler(request: web.Request) -> web.Response:
     """The agent's operational readiness: whether the active provider is authenticated, whether one is
-    configured at all (so vestad can tell unprovisioned from unauthenticated), and whether first-start
-    has finished. vestad polls this to gate Alive / SettingUp / NotAuthenticated / Unprovisioned (an
-    authenticated agent that hasn't finished first-start is not yet ready)."""
+    configured at all (so vestad can tell unprovisioned from unauthenticated), whether first-start
+    has finished, and whether this boot's non-interruptible boot turns are done. vestad polls this to
+    gate Alive / SettingUp / NotAuthenticated / Unprovisioned and to label a still-booting agent."""
     state: State = request.app["state"]
     status = state.provider_status
     return web.json_response(
@@ -330,6 +330,7 @@ async def _status_handler(request: web.Request) -> web.Response:
             "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
             "provider_configured": status is not None and status.kind != "none",
             "setup_complete": state.persisted.first_start_done,
+            "boot_complete": state.boot_turns_pending == 0,
         }
     )
 

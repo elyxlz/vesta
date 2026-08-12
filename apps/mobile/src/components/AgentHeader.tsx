@@ -23,6 +23,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const { colors, dark } = usePreferences();
   const status = agent?.status ?? "not_found";
   const operation = agent?.operation ?? null;
+  const booting = agent?.booting;
   const openSettings = () =>
     router.push({
       pathname: "/agent/[name]/settings",
@@ -52,6 +53,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           status={status}
           activityState={activityState}
           operation={operation}
+          booting={booting}
           color={colors.text}
           dark={dark}
           fallbackColor={colors.elevated}
@@ -78,6 +80,7 @@ export function AgentIsland({
   status,
   activityState,
   operation,
+  booting = false,
   color,
   dark,
   fallbackColor,
@@ -88,6 +91,7 @@ export function AgentIsland({
   status: AgentStatus;
   activityState: AgentActivityState;
   operation: AgentOperation | null;
+  booting?: boolean;
   color: string;
   dark: boolean;
   fallbackColor: string;
@@ -113,6 +117,7 @@ export function AgentIsland({
           status={status}
           activityState={activityState}
           operation={operation}
+          booting={booting}
           size={24}
         />
       </BootTransitionTarget>

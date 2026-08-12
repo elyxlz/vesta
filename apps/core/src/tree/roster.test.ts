@@ -105,6 +105,12 @@ describe("rostersEqual", () => {
       expected: false,
     },
     {
+      name: "changed booting is unequal",
+      a: rosterFromTree(tree({ aria: { info: agentInfo({ status: "alive", booting: true }) } })),
+      b: rosterFromTree(tree({ aria: { info: agentInfo({ status: "alive", booting: false }) } })),
+      expected: false,
+    },
+    {
       name: "changed service revision is unequal",
       a: rosterFromTree(
         tree({ aria: { info: agentInfo({ services: { web: { port: 1, rev: 1 } } }) } }),

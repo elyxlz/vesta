@@ -43,7 +43,7 @@ func TestSimpleStatusNotLinkedSurfacesReason(t *testing.T) {
 // recovery hint through validateConnectSource, so the hint can never hand the
 // agent a --source value connect rejects.
 func TestStatusHintSourcesAreAccepted(t *testing.T) {
-	next, ok := notLinkedStatus(t.TempDir(), "")["next"].(string)
+	next, ok := notLinkedStatus(t.TempDir())["next"].(string)
 	if !ok {
 		t.Fatal("not-linked status must carry a next hint")
 	}
@@ -96,11 +96,21 @@ func TestSimpleStatusReportsPendingPhonePairing(t *testing.T) {
 	}
 }
 
-func TestNotLinkedStatusFallsBackToStartError(t *testing.T) {
+// TestDaemonDownStatusSurfacesWhyItDied: a daemon that exited on a device conflict says so, so the
+// agent reads the recorded reason instead of restarting straight back into the same conflict.
+func TestDaemonDownStatusSurfacesWhyItDied(t *testing.T) {
 	dir := t.TempDir()
-	got := notLinkedStatus(dir, "daemon did not answer")
-	if got["reason"] != "daemon did not answer" {
-		t.Errorf("reason = %v, want the start error when no last-exit exists", got["reason"])
+	got := daemonDownStatus(dir)
+	if got["running"] != false || got["reason"] != daemonDownMessage {
+		t.Errorf("a daemon down with nothing recorded = %#v, want the plain not-running reason", got)
+	}
+	setExitForTest(dir, "stream_replaced", "another connection took over this device session")
+	got = daemonDownStatus(dir)
+	if got["reason"] != "another connection took over this device session" {
+		t.Errorf("reason = %v, want the recorded last-exit reason", got["reason"])
+	}
+	if got["next"] != "start the daemon: whatsapp daemon start" {
+		t.Errorf("next = %v, want the start hint", got["next"])
 	}
 }
 

@@ -163,4 +163,18 @@ describe("agentStatusLabel", () => {
     expect(label).not.toBe("")
     expect(label).not.toContain("_")
   })
+
+  it("renders an alive agent still in its boot turns as one continuous waking up", () => {
+    expect(agentStatusLabel("alive", "thinking", null, true)).toBe("waking up...")
+    expect(agentOrbState("alive", "thinking", null, true)).toBe("busy")
+  })
+
+  it("scopes booting to alive: other statuses keep their own words", () => {
+    expect(agentStatusLabel("not_authenticated", "idle", null, true)).toBe("needs you to sign in")
+    expect(agentStatusLabel("starting", "idle", null, true)).toBe("waking up...")
+  })
+
+  it("keeps an operation outranking the boot flag", () => {
+    expect(agentStatusLabel("alive", "idle", "backing_up", true)).toBe("backing up...")
+  })
 })
