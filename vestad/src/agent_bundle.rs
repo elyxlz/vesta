@@ -822,20 +822,97 @@ mod tests {
         );
     }
 
+    /// What a download may leave in `config_dir/tmp` once its caller is done with it: nothing.
+    fn assert_download_tmp_empty(config_dir: &Path) {
+        let leftovers: Vec<_> = std::fs::read_dir(config_dir.join("tmp"))
+            .expect("tmp dir exists")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        assert!(leftovers.is_empty(), "got: {leftovers:?}");
+    }
+
+    /// An http server on an ephemeral loopback port, serving `router` until it is dropped.
+    struct TestServer {
+        base: String,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    async fn spawn_test_server(router: axum::Router) -> TestServer {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let base = format!("http://{}", listener.local_addr().expect("listener address"));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router).await.ok();
+        });
+        TestServer { base, task }
+    }
+
+    /// A server that promises more body than it sends and then closes. The client reads the
+    /// response head and some bytes before the connection dies, which is what puts the download
+    /// past the point where it has created its file. No http framework will produce that, so it
+    /// is written straight onto the socket.
+    async fn spawn_truncating_server() -> TestServer {
+        use tokio::io::AsyncReadExt;
+
+        /// Enough for the request head reqwest sends; this server never reads a body.
+        const REQUEST_DRAIN_BYTES: usize = 1024;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let base = format!("http://{}", listener.local_addr().expect("listener address"));
+        let task = tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else { return };
+            // Draining the request matters: closing a socket that still holds unread bytes sends
+            // an RST, and the client would report that instead of the short body.
+            let mut request = [0u8; REQUEST_DRAIN_BYTES];
+            let Ok(_drained) = stream.read(&mut request).await else { return };
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\npartial bundle")
+                .await
+                .ok();
+        });
+        TestServer { base, task }
+    }
+
     #[tokio::test]
-    async fn a_failed_download_leaves_no_partial_file() {
+    async fn a_refused_download_leaves_no_partial_file() {
         // Port 1 on loopback refuses instantly, so this stays hermetic and fast.
         let dir = tempfile::TempDir::new().expect("tempdir");
         let err = download_bundle("http://127.0.0.1:1/apollo.tar.gz", dir.path())
             .await
             .expect_err("a refused connection must fail");
         assert!(err.to_string().contains("downloading bundle"), "got: {err}");
-        let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("tmp"))
-            .expect("tmp dir exists")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .collect();
-        assert!(leftovers.is_empty(), "got: {leftovers:?}");
+        assert_download_tmp_empty(dir.path());
+    }
+
+    #[tokio::test]
+    async fn a_download_of_a_missing_url_fails_instead_of_saving_the_error_page() {
+        // A router with no routes answers 404, what a wrong or expired link earns.
+        let server = spawn_test_server(axum::Router::new()).await;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let err = download_bundle(&format!("{}/apollo.tar.gz", server.base), dir.path())
+            .await
+            .expect_err("a 404 must fail");
+        assert!(err.to_string().contains("downloading bundle"), "got: {err}");
+        assert_download_tmp_empty(dir.path());
+    }
+
+    #[tokio::test]
+    async fn a_download_cut_short_removes_the_partial_file() {
+        // The failure lands on the body, so the download is already holding a file when it fails:
+        // the one path on which the partial file has to be removed.
+        let server = spawn_truncating_server().await;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let err = download_bundle(&format!("{}/apollo.tar.gz", server.base), dir.path())
+            .await
+            .expect_err("a cut-short download must fail");
+        assert!(err.to_string().contains("body"), "the failure must be the body, got: {err}");
+        assert_download_tmp_empty(dir.path());
     }
 
     #[test]
@@ -939,6 +1016,75 @@ mod tests {
         std::env::var(crate::docker::AGENT_IMAGE_ENV).unwrap_or_else(|_| crate::docker::vesta_image())
     }
 
+    /// Best-effort `docker <args>`, quiet: safe to call from a `Drop` inside the tokio runtime.
+    fn docker_cleanup(args: &[&str]) {
+        std::process::Command::new("docker")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok();
+    }
+
+    /// Every docker object a test creates, removed when it goes out of scope so a failed assertion
+    /// leaks nothing. Containers go first: docker refuses to remove an image one still references.
+    struct TestLitter {
+        containers: Vec<String>,
+        images: Vec<String>,
+    }
+
+    impl Drop for TestLitter {
+        fn drop(&mut self) {
+            for cname in &self.containers {
+                docker_cleanup(&["rm", "-f", cname]);
+            }
+            for image in &self.images {
+                docker_cleanup(&["rmi", "-f", image]);
+            }
+        }
+    }
+
+    /// A temp config dir set up the way vestad's own startup sets the real one up, which is what a
+    /// created agent container needs: the embedded agent code extracted and the upstream repo built.
+    struct TestAgentEnv {
+        dir: tempfile::TempDir,
+        config: crate::docker::AgentEnvConfig,
+        core_dir: PathBuf,
+    }
+
+    fn test_agent_env() -> TestAgentEnv {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let agents_dir = dir.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).expect("agents dir");
+        let code_dir = crate::agent_code::ensure_agent_code(dir.path()).expect("agent code");
+        crate::upstream::ensure_upstream(dir.path(), &code_dir).expect("upstream");
+        let config = crate::docker::AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir,
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        TestAgentEnv { dir, config, core_dir: code_dir.join("core") }
+    }
+
+    /// Create (never start) a real agent container. A capture test needs one: only a commit of an
+    /// agent carries that agent's own labels, the managed label included, onto the image.
+    async fn create_test_agent(docker: &Docker, env: &TestAgentEnv, name: &str) {
+        crate::docker::create_container(
+            docker,
+            &env.config,
+            crate::docker::ContainerSpec {
+                cname: &crate::docker::container_name(name),
+                image: &test_agent_image(),
+                port: crate::docker::allocate_port().expect("port"),
+                agent_name: name,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create agent container");
+    }
+
     /// Plants fake OAuth credentials and a scrubbable `config.json` into `cname` via `docker cp`,
     /// staged under `dir`. Shared by the scrub test and the export/import round-trip test.
     fn plant_credentials(cname: &str, dir: &Path) {
@@ -960,12 +1106,33 @@ mod tests {
         };
         // ~/.claude exists in the image (created by the Dockerfile), so the file cp lands directly.
         cp(&creds, "/root/.claude/.credentials.json");
-        // /root/agent/data may be absent in a never-booted container, and docker cp cannot mkdir
-        // -p, so stage the whole data dir and cp the directory.
+        // /root/agent/data is absent in a never-booted container and present in a booted one, and
+        // docker cp cannot mkdir -p, so stage the whole data dir and cp it into /root/agent: that
+        // creates the directory in the first case and merges into it in the second.
         let data_dir = dir.join("data");
         std::fs::create_dir_all(&data_dir).expect("mkdir data");
         std::fs::copy(&config_json, data_dir.join("config.json")).expect("stage config");
-        cp(&data_dir, "/root/agent/data");
+        cp(&data_dir, "/root/agent");
+    }
+
+    /// Waits until the agent inside `cname` is past the boot step that deletes the credentials of
+    /// a provider it is not signed in with, so a test can plant credentials a running agent keeps.
+    /// The event db is created one step later, and the agent reads its provider at boot alone.
+    async fn wait_for_agent_boot(cname: &str) {
+        const BOOT_POLL_MAX: u32 = 180;
+
+        for _ in 0..BOOT_POLL_MAX {
+            let probe = std::process::Command::new("docker")
+                .args(["exec", cname, "test", "-f", "/root/agent/data/events.db"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if probe.is_ok_and(|status| status.success()) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        panic!("the agent in {cname} never finished booting");
     }
 
     /// Runs the "no credentials, prefs retained" probe from the scrub test against `image`,
@@ -998,40 +1165,55 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires Docker + the local agent image"]
-    async fn scrub_image_removes_credentials_and_clears_provider() {
+    async fn scrub_removes_credentials_and_never_enumerates_as_an_agent() {
         let docker = test_docker();
-        let image = test_agent_image();
         let name = format!("scrubtest-{}", std::process::id());
-        let fixture_cname = format!("vesta-scrub-fixture-{name}");
-        let fixture_image = format!("vesta-scrub-fixture:{name}");
+        let env = test_agent_env();
+        let fixture_cname = crate::docker::container_name(&name);
+        let fixture_repo = "vesta-scrub-fixture";
+        let fixture_image = format!("{fixture_repo}:{name}");
+        let probe_image = format!("vesta-scrub-probe:{name}");
+        let scrub_cname = scrub_container_name(&name);
+        let verify_cname = format!("vesta-scrub-verify-{name}");
+        let _net = TestNetwork { name: crate::docker::agent_network_name(&name) };
+        let _litter = TestLitter {
+            containers: vec![fixture_cname.clone(), scrub_cname.clone(), verify_cname.clone()],
+            images: vec![fixture_image.clone(), probe_image.clone()],
+        };
 
-        // Build a fixture image with credentials planted: create (never start) a container from the
-        // agent image, docker cp the files in, commit.
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::docker::create_plain_container(&docker, &image, &fixture_cname).await.expect("create fixture");
-        plant_credentials(&fixture_cname, dir.path());
-        let commit_status = std::process::Command::new("docker")
-            .args(["commit", &fixture_cname, &fixture_image])
-            .status()
-            .expect("docker commit runs");
-        assert!(commit_status.success());
+        // The fixture is what an export scrubs: a commit of a real agent that has credentials on
+        // disk, so the image carries both the credentials and the agent's own labels.
+        create_test_agent(&docker, &env, &name).await;
+        let staging = tempfile::TempDir::new().expect("tempdir");
+        plant_credentials(&fixture_cname, staging.path());
+        crate::docker::commit_container_to_image(&docker, &fixture_cname, fixture_repo, &name)
+            .await
+            .expect("commit fixture");
 
-        // Scrub. core_dir: extract the embedded agent code into a temp config dir, as the CLI does.
-        let config_dir = tempfile::TempDir::new().expect("tempdir");
-        let code_dir = crate::agent_code::ensure_agent_code(config_dir.path()).expect("agent code");
-        let scrubbed = run_scrub_container(&docker, &name, &fixture_image, &code_dir.join("core"))
+        let scrubbed = run_scrub_container(&docker, &name, &fixture_image, &env.core_dir)
             .await
             .expect("scrub succeeds");
+        assert_eq!(scrubbed, scrub_cname);
 
-        // Verify inside the scrubbed image: both credential files gone, provider cleared, timezone kept.
-        let verify_cname = format!("vesta-scrub-verify-{name}");
-        assert_no_credentials(&docker, &scrubbed, &verify_cname).await;
+        // The scrub container inherits `vesta.managed=true` from the image it runs from, so the
+        // create has to override it: one left behind by a failed scrub would otherwise shadow the
+        // agent it was made from in the name-keyed roster.
+        let managed = crate::docker::list_managed_agents(&docker).await;
+        let listed: Vec<&str> = managed.iter().map(|found| found.cname.as_str()).collect();
+        assert!(listed.contains(&fixture_cname.as_str()), "the source agent must enumerate, got {listed:?}");
+        assert!(!listed.contains(&scrub_cname.as_str()), "a scrub container must never enumerate, got {listed:?}");
 
-        // Cleanup.
-        crate::docker::remove_container_force(&docker, &fixture_cname).await.ok();
-        for img in [&fixture_image, &scrubbed] {
-            crate::docker::remove_image(&docker, img).await.ok();
-        }
+        // The bundle carries the scrub container's own filesystem, so the probe runs on exactly
+        // that: export it and import it back as an image a verify container can run.
+        let fs_tar = env.dir.path().join("scrubbed.tar");
+        crate::docker::export_container_to_file(&scrub_cname, &fs_tar).await.expect("export scrub container");
+        let import_status = std::process::Command::new("docker")
+            .args(["import", &fs_tar.display().to_string(), &probe_image])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("docker import runs");
+        assert!(import_status.success());
+        assert_no_credentials(&docker, &probe_image, &verify_cname).await;
     }
 
     /// Removes a test agent network on drop, mirroring `docker.rs`'s own `TestNetwork`
@@ -1052,47 +1234,47 @@ mod tests {
         let docker = test_docker();
         let source_name = format!("exp-src-{}", std::process::id());
         let target_name = format!("exp-dst-{}", std::process::id());
-        let config_dir = tempfile::TempDir::new().expect("tempdir");
-        let agents_dir = config_dir.path().join("agents");
-        std::fs::create_dir_all(&agents_dir).expect("agents dir");
-        let code_dir = crate::agent_code::ensure_agent_code(config_dir.path()).expect("agent code");
-        crate::upstream::ensure_upstream(config_dir.path(), &code_dir).expect("upstream");
-        let env_config = crate::docker::AgentEnvConfig {
-            config_dir: config_dir.path().to_path_buf(),
-            agents_dir: agents_dir.clone(),
-            vestad_port: 1,
-            vestad_tunnel: None,
-        };
+        let env = test_agent_env();
+        let src_cname = crate::docker::container_name(&source_name);
+        let dst_cname = crate::docker::container_name(&target_name);
+        let verify_image = format!("vesta-export-verify:{target_name}");
+        let verify_cname = format!("vesta-export-verify-run-{target_name}");
         let _source_net = TestNetwork { name: crate::docker::agent_network_name(&source_name) };
         let _target_net = TestNetwork { name: crate::docker::agent_network_name(&target_name) };
+        let _litter = TestLitter {
+            containers: vec![
+                src_cname.clone(),
+                dst_cname.clone(),
+                scrub_container_name(&source_name),
+                verify_cname.clone(),
+            ],
+            images: vec![
+                format!("{EXPORT_IMAGE_REPO_PREFIX}-{source_name}:{SNAPSHOT_TAG}"),
+                format!("vesta-restore:{target_name}"),
+                verify_image.clone(),
+            ],
+        };
 
-        // Source agent: created (never started), credentials planted as in the scrub test.
-        let src_cname = crate::docker::container_name(&source_name);
-        let port = crate::docker::allocate_port().expect("port");
-        crate::docker::create_container(
-            &docker,
-            &env_config,
-            crate::docker::ContainerSpec {
-                cname: &src_cname,
-                image: &test_agent_image(),
-                port,
-                agent_name: &source_name,
-                user_mounts: &[],
-            },
-        )
-        .await
-        .expect("create source");
+        // Source agent: started first and given its credentials once it is up, so the export below
+        // captures a live agent that has an LLM provider signed in.
+        create_test_agent(&docker, &env, &source_name).await;
+        std::fs::write(crate::docker::constitution_host_path(&env.config.agents_dir, &source_name), "be kind")
+            .expect("constitution");
+        assert!(crate::docker::start_container(&docker, &src_cname).await, "the source agent starts");
+        wait_for_agent_boot(&src_cname).await;
         let creds_dir = tempfile::TempDir::new().expect("tempdir");
         plant_credentials(&src_cname, creds_dir.path());
-        std::fs::write(crate::docker::constitution_host_path(&agents_dir, &source_name), "be kind").expect("constitution");
+        let before = crate::docker::inspect_container(&docker, &src_cname, None).await;
+        assert_eq!(before.status, crate::docker::ContainerStatus::Running);
+        let started_at = before.started_at.expect("a started container reports StartedAt");
 
-        let bundle_path = config_dir.path().join("agent.tar.gz");
+        let bundle_path = env.dir.path().join("agent.tar.gz");
         export_agent(
             &docker,
             ExportRequest {
                 name: &source_name,
                 output: &bundle_path,
-                core_dir: &code_dir.join("core"),
+                core_dir: &env.core_dir,
                 constitution: "be kind".into(),
                 user_desired: crate::settings::UserDesired::Stopped,
                 mounts: vec![crate::mounts::HostMount {
@@ -1105,12 +1287,18 @@ mod tests {
         .await
         .expect("export");
 
+        // What capturing through a commit buys: the export never stopped the agent, and never
+        // restarted it either, so the session it was in the middle of is still the same one.
+        let after = crate::docker::inspect_container(&docker, &src_cname, None).await;
+        assert_eq!(after.status, crate::docker::ContainerStatus::Running);
+        assert_eq!(after.started_at.as_deref(), Some(started_at.as_str()), "the export must not restart the agent");
+
         let outcome = import_agent(
             &docker,
             ImportRequest {
                 input: &bundle_path,
                 name_override: Some(&target_name),
-                env_config: &env_config,
+                env_config: &env.config,
             },
         )
         .await
@@ -1122,40 +1310,101 @@ mod tests {
         assert_eq!(manifest.mounts.len(), 1);
 
         // Stopped stays stopped: the imported container exists but is not running.
-        let dst_cname = crate::docker::container_name(&target_name);
         assert_eq!(
             crate::docker::container_status(&docker, &dst_cname).await,
             crate::docker::ContainerStatus::Stopped
         );
         // Constitution landed on the new host side.
         let imported_constitution =
-            std::fs::read_to_string(crate::docker::constitution_host_path(&agents_dir, &target_name)).expect("read constitution");
+            std::fs::read_to_string(crate::docker::constitution_host_path(&env.config.agents_dir, &target_name))
+                .expect("read constitution");
         assert_eq!(imported_constitution, "be kind");
 
         // No credentials inside the imported container: commit it and reuse the scrub-test probe.
-        let target_verify_image = format!("vesta-export-verify:{target_name}");
-        let commit_status = std::process::Command::new("docker")
-            .args(["commit", &dst_cname, &target_verify_image])
-            .status()
-            .expect("docker commit runs");
-        assert!(commit_status.success());
-        let verify_cname = format!("vesta-export-verify-run-{target_name}");
-        assert_no_credentials(&docker, &target_verify_image, &verify_cname).await;
+        crate::docker::commit_container_to_image(&docker, &dst_cname, "vesta-export-verify", &target_name)
+            .await
+            .expect("commit the imported agent");
+        assert_no_credentials(&docker, &verify_image, &verify_cname).await;
+    }
 
-        // Cleanup: containers, the loaded scrubbed image (timestamp-tagged under the source
-        // name on load, so list by repo), the verify image, and the bundle. Networks clean up
-        // via TestNetwork's Drop.
-        crate::docker::remove_container_force(&docker, &src_cname).await.ok();
-        crate::docker::remove_container_force(&docker, &dst_cname).await.ok();
-        crate::docker::remove_image(&docker, &target_verify_image).await.ok();
-        let listed = std::process::Command::new("docker")
-            .args(["images", "-q", &format!("vesta-export-{source_name}")])
-            .output()
-            .expect("docker images runs");
-        for image_id in String::from_utf8_lossy(&listed.stdout).split_whitespace() {
-            crate::docker::remove_image(&docker, image_id).await.ok();
-        }
-        std::fs::remove_file(&bundle_path).ok();
+    /// A bundle whose image entry is a one-file filesystem tar: enough for `docker import` to
+    /// build a real image and for the import to create an agent from it, without the minutes a
+    /// full agent export costs. What the url leg adds is where the bytes come from, not what
+    /// they hold.
+    fn tiny_bundle(dir: &Path, agent_name: &str) -> PathBuf {
+        let fs_tar = dir.join("fs.tar");
+        let file = std::fs::File::create(&fs_tar).expect("create fs tar");
+        let mut builder = tar::Builder::new(file);
+        let content = b"hello";
+        let mut header = gnu_header(content.len() as u64);
+        builder.append_data(&mut header, "hello.txt", &content[..]).expect("append");
+        builder.into_inner().expect("finish fs tar");
+
+        let manifest = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION,
+            agent_name: agent_name.to_string(),
+            vestad_version: env!("CARGO_PKG_VERSION").to_string(),
+            created_at: "2026-08-07T00:00:00Z".into(),
+            user_desired: crate::settings::UserDesired::Stopped,
+            mounts: vec![],
+        };
+        let bundle = dir.join("served.tar.gz");
+        write_bundle(&bundle, &manifest, "be kind", &fs_tar).expect("write bundle");
+        bundle
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn a_bundle_imports_from_a_url_and_leaves_no_download_behind() {
+        let docker = test_docker();
+        let target_name = format!("exp-url-{}", std::process::id());
+        let env = test_agent_env();
+        let dst_cname = crate::docker::container_name(&target_name);
+        let _net = TestNetwork { name: crate::docker::agent_network_name(&target_name) };
+        let _litter = TestLitter {
+            containers: vec![dst_cname.clone()],
+            images: vec![format!("vesta-restore:{target_name}")],
+        };
+
+        let bundle_path = tiny_bundle(env.dir.path(), &target_name);
+        let bytes = std::fs::read(&bundle_path).expect("read bundle");
+        let router = axum::Router::new().route(
+            "/agent.tar.gz",
+            axum::routing::get(move || {
+                let bytes = bytes.clone();
+                async move { bytes }
+            }),
+        );
+        let server = spawn_test_server(router).await;
+
+        let downloaded = download_bundle(&format!("{}/agent.tar.gz", server.base), env.dir.path())
+            .await
+            .expect("download");
+        assert!(downloaded.starts_with(env.dir.path().join("tmp")), "got: {}", downloaded.display());
+
+        let outcome = import_agent(
+            &docker,
+            ImportRequest {
+                input: &downloaded,
+                name_override: None,
+                env_config: &env.config,
+            },
+        )
+        .await
+        .expect("import");
+        assert_eq!(outcome.name, target_name, "a bundle imported from a url still names itself");
+        assert_eq!(
+            crate::docker::container_status(&docker, &dst_cname).await,
+            crate::docker::ContainerStatus::Stopped
+        );
+        let imported_constitution =
+            std::fs::read_to_string(crate::docker::constitution_host_path(&env.config.agents_dir, &target_name))
+                .expect("read constitution");
+        assert_eq!(imported_constitution, "be kind");
+
+        // The download is the caller's temp file, removed once the import that read it is over.
+        std::fs::remove_file(&downloaded).expect("the import leaves the download in place");
+        assert_download_tmp_empty(env.dir.path());
     }
 
     #[tokio::test]
@@ -1164,27 +1413,19 @@ mod tests {
         let docker = test_docker();
         let image = test_agent_image();
         let target_name = format!("exp-legacy-{}", std::process::id());
-        let config_dir = tempfile::TempDir::new().expect("tempdir");
-        let agents_dir = config_dir.path().join("agents");
-        std::fs::create_dir_all(&agents_dir).expect("agents dir");
-        let code_dir = crate::agent_code::ensure_agent_code(config_dir.path()).expect("agent code");
-        crate::upstream::ensure_upstream(config_dir.path(), &code_dir).expect("upstream");
-        let env_config = crate::docker::AgentEnvConfig {
-            config_dir: config_dir.path().to_path_buf(),
-            agents_dir,
-            vestad_port: 1,
-            vestad_tunnel: None,
-        };
+        let env = test_agent_env();
+        let dst_cname = crate::docker::container_name(&target_name);
         let _target_net = TestNetwork { name: crate::docker::agent_network_name(&target_name) };
+        let _litter = TestLitter { containers: vec![dst_cname.clone()], images: vec![] };
 
         // A legacy export: a gzipped `docker save` tar with no manifest.
-        let tar_path = config_dir.path().join("legacy-image.tar");
+        let tar_path = env.dir.path().join("legacy-image.tar");
         let save_status = std::process::Command::new("docker")
             .args(["save", "-o", &tar_path.display().to_string(), &image])
             .status()
             .expect("docker save runs");
         assert!(save_status.success());
-        let legacy_path = config_dir.path().join("legacy.tar.gz");
+        let legacy_path = env.dir.path().join("legacy.tar.gz");
         let mut input = std::fs::File::open(&tar_path).expect("open tar");
         let output = std::fs::File::create(&legacy_path).expect("create gz");
         let mut encoder = flate2::write::GzEncoder::new(output, flate2::Compression::default());
@@ -1197,7 +1438,7 @@ mod tests {
             ImportRequest {
                 input: &legacy_path,
                 name_override: Some(&target_name),
-                env_config: &env_config,
+                env_config: &env.config,
             },
         )
         .await
@@ -1205,15 +1446,11 @@ mod tests {
         assert_eq!(outcome.name, target_name);
         assert!(outcome.manifest.is_none());
 
-        let dst_cname = crate::docker::container_name(&target_name);
+        // The image tag a legacy file carries is the pre-existing base agent image (docker
+        // save/load round-trips the tag unchanged), so nothing here removes an image.
         assert_eq!(
             crate::docker::container_status(&docker, &dst_cname).await,
             crate::docker::ContainerStatus::Running
         );
-
-        // Cleanup: container and bundle file. The image tag is the pre-existing base agent
-        // image (docker save/load round-trips the tag unchanged), so it is left alone.
-        crate::docker::remove_container_force(&docker, &dst_cname).await.ok();
-        std::fs::remove_file(&legacy_path).ok();
     }
 }
