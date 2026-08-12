@@ -128,6 +128,14 @@ export {
 } from "./agent-status/agent-status"
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
 
+export { buildBackupTimeline } from "./backups/backup-timeline"
+export type {
+  BackupKind,
+  BackupTimelinePoint,
+  BackupTimelineRow,
+  RestoreEligibility,
+} from "./backups/backup-timeline"
+
 export {
   CLAUDE_ALIASES,
   canonicalClaudeModel,
