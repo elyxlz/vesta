@@ -8,6 +8,8 @@ set -eu
 PIDFILE="$HOME/agent/data/daemons/dashboard.pid"
 PORTFILE="$HOME/agent/data/daemons/dashboard.port"
 LOG="$HOME/agent/logs/dashboard.log"
+# Where this start's own output begins in the log, so gave_up reads only what it appended.
+LOG_FROM=0
 USAGE="Usage: dashboard daemon <start|stop|restart|status>"
 READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-30}
 STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
@@ -41,6 +43,24 @@ await_gone() {
 # A start that gives up drops the records it claimed: a daemon nothing can reach, with records
 # that say it is up, reads as running and turns every later start into a no-op.
 give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
+
+# What a start that gave up reports. A port the daemon could not bind is not a daemon fault, and a
+# message naming the daemon sends the operator hunting one that is fine: a service registered
+# inside /proc/sys/net/ipv4/ip_local_port_range can have its port handed out as an ephemeral
+# source port for an unrelated outbound connection while the daemon is down, so the fix is a new
+# registration, not a restart. Only the bytes this start appended are read, so an older failure in
+# the same log cannot be reported as this one's.
+BIND_HELP="address already in use (another process holds it; re-register the service for a new port)"
+# The log does not exist before the first start writes to it, and the shell reports the failed
+# redirection itself, so the whole compound is what gets quietened.
+log_size() { { wc -c < "$LOG" || echo 0; } 2>/dev/null; }
+gave_up() {
+  if tail -c "+$((LOG_FROM + 1))" "$LOG" 2>/dev/null | head -c 4096 | grep -qiE 'address already in use|errno 98|eaddrinuse'; then
+    printf '%s could not bind port %s: %s; see %s' "dashboard" "$PORT" "$BIND_HELP" "$LOG"
+  else
+    printf '%s; see %s' "$1" "$LOG"
+  fi
+}
 
 # A start that gives up ends its child first: a daemon nothing can reach outlives the records.
 abandon() {
@@ -125,18 +145,19 @@ do_start() {
   [ -n "$PORT" ] || give_up "could not register dashboard with vestad"
   export PORT
   echo "$PORT" > "$PORTFILE"
+  LOG_FROM=$(log_size)
   setsid "$HOME/agent/skills/dashboard/scripts/serve" >> "$LOG" 2>&1 &
   pid=$!
   record_for "$pid" > "$PIDFILE"
   ready_by=$(deadline "$READY_BUDGET")
   until expired "$ready_by"; do
-    kill -0 "$pid" 2>/dev/null || abandon "$pid" "dashboard exited during startup; see $LOG"
+    kill -0 "$pid" 2>/dev/null || abandon "$pid" "$(gave_up "dashboard exited during startup")"
     if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
       echo '{"status":"started"}'; return 0
     fi
     sleep 0.5
   done
-  abandon "$pid" "dashboard never answered on port $PORT; see $LOG"
+  abandon "$pid" "$(gave_up "dashboard never answered on port $PORT")"
 }
 
 do_stop() {
