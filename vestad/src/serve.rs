@@ -3195,8 +3195,10 @@ pub async fn run_server(cfg: ServerConfig) {
     recover_interrupted_update(&state);
     // Every boot, not only after an interrupted update: a backup killed with its process (a crash,
     // a reboot mid-export) leaves the same throwaway container behind and nothing else collects it.
+    // A url import killed the same way leaves its partial download, on disk rather than in docker.
     let sweep_docker = docker.clone();
     tokio::spawn(async move { backup::sweep_backup_temp_artifacts(&sweep_docker).await });
+    crate::agent_bundle::sweep_import_downloads(&state.env_config.config_dir);
     // The device registry persists on a background flush task: every mutation (a /sync connect or a
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();

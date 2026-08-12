@@ -396,13 +396,16 @@ async fn download_to_file(url: &str, path: &Path) -> Result<(), DockerError> {
     Ok(())
 }
 
+const DOWNLOAD_PREFIX: &str = "import-download-";
+const DOWNLOAD_SUFFIX: &str = ".tar.gz";
+
 /// Fetch the bundle at `url` into a temp file under `config_dir`, and return that path for the
 /// import to read; the caller removes the file once it is done with it. Redirects are followed.
 /// Every failure removes the partial file, so a dead download leaves nothing behind.
 pub async fn download_bundle(url: &str, config_dir: &Path) -> Result<PathBuf, DockerError> {
     let tmp_dir = config_dir.join("tmp");
     std::fs::create_dir_all(&tmp_dir).map_err(|err| docker_failed("creating download directory", err))?;
-    let path = tmp_dir.join(format!("import-download-{}.tar.gz", std::process::id()));
+    let path = tmp_dir.join(format!("{DOWNLOAD_PREFIX}{}{DOWNLOAD_SUFFIX}", std::process::id()));
 
     eprintln!("downloading {url}...");
     match download_to_file(url, &path).await {
@@ -410,6 +413,22 @@ pub async fn download_bundle(url: &str, config_dir: &Path) -> Result<PathBuf, Do
         Err(err) => {
             std::fs::remove_file(&path).ok();
             Err(err)
+        }
+    }
+}
+
+/// Remove the partial downloads an interrupted import left under `config_dir/tmp`. `download_bundle`
+/// clears its own file on every failure it lives to see, so what survives is the process dying with
+/// it: a signal, a crash, a reboot mid-fetch. Creates nothing, so a config dir with no tmp is done.
+pub fn sweep_import_downloads(config_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(config_dir.join("tmp")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.starts_with(DOWNLOAD_PREFIX) && name.ends_with(DOWNLOAD_SUFFIX) {
+            std::fs::remove_file(entry.path()).ok();
         }
     }
 }
@@ -762,6 +781,29 @@ mod tests {
         for (bytes, expected) in [(512u64, "512.0 B"), (1_572_864, "1.5 MB"), (3_221_225_472, "3.0 GB")] {
             assert_eq!(human_size(bytes), expected);
         }
+    }
+
+    #[test]
+    fn the_download_sweep_takes_only_its_own_leftovers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let tmp = dir.path().join("tmp");
+        std::fs::create_dir_all(&tmp).expect("create tmp");
+        let leftover = tmp.join("import-download-4242.tar.gz");
+        let bystander = tmp.join("restic-cache.tar.gz");
+        std::fs::write(&leftover, b"partial").expect("write leftover");
+        std::fs::write(&bystander, b"not ours").expect("write bystander");
+
+        sweep_import_downloads(dir.path());
+
+        assert!(!leftover.exists(), "an interrupted download must not survive the next boot");
+        assert!(bystander.exists(), "the sweep must take only the files it names");
+    }
+
+    #[test]
+    fn the_download_sweep_is_a_no_op_without_a_tmp_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        sweep_import_downloads(dir.path());
+        assert!(!dir.path().join("tmp").exists(), "the sweep must never create the dir it looks in");
     }
 
     #[test]
