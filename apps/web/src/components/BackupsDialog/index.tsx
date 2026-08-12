@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   buildBackupTimeline,
+  formatSnapshotStamp,
   parseBackupKind,
   type BackupTimelinePoint,
   type BackupTimelineRow,
@@ -18,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { formatSnapshotSize, formatSnapshotStamp } from "./format";
+import { formatSnapshotSize } from "./format";
 
 // The gateway refuses a snapshot a newer vestad wrote, so the point says why before the user asks.
 const NEWER_REFUSAL = "made by a newer vestad; update the gateway first";

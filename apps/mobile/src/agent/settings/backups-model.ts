@@ -1,0 +1,84 @@
+import {
+  buildBackupTimeline,
+  formatSnapshotStamp,
+  parseBackupKind,
+  type BackupTimelinePoint,
+  type BackupTimelineRow,
+} from "@vesta/core";
+import type { BackupInfo } from "@/api/types";
+
+// The gateway refuses a snapshot a newer vestad wrote, so the point says why before the user taps.
+export const NEWER_REFUSAL =
+  "Made by a newer vestad. Update the gateway to restore this point.";
+
+// Everything a native confirm shows: the alert has no surrounding context, so the prompt carries
+// its own wording and how heavy the confirming button reads.
+export interface ConfirmPrompt {
+  title: string;
+  body: string;
+  action: string;
+  destructive: boolean;
+}
+
+// The wire's `backup_type` is a plain string; core owns the narrowing and the unknown fallback.
+function timelineRows(backups: BackupInfo[]): BackupTimelineRow[] {
+  return backups.map((backup) => ({
+    id: backup.id,
+    created_at: backup.created_at,
+    backup_type: parseBackupKind(backup.backup_type),
+    size: backup.size,
+    from_version: backup.from_version,
+    vestad_version: backup.vestad_version,
+  }));
+}
+
+// The roster carries no gateway version until the sync socket's first tree lands, which core reads
+// as the unknown it is and clears every point for restore.
+export function backupTimeline(
+  backups: BackupInfo[],
+  gatewayVersion: string | undefined,
+): BackupTimelinePoint[] {
+  return buildBackupTimeline(timelineRows(backups), gatewayVersion ?? null);
+}
+
+function pointLine(point: BackupTimelinePoint): string {
+  return `${point.label} · ${formatSnapshotStamp(point.createdAt)}`;
+}
+
+export function restorePrompt(
+  point: BackupTimelinePoint,
+  agentName: string,
+  gatewayVersion: string | undefined,
+): ConfirmPrompt {
+  const lines = [
+    pointLine(point),
+    `This saves a safety snapshot first, then returns ${agentName} to this point and restarts them.`,
+  ];
+  if (
+    point.eligibility === "older" &&
+    point.vestadVersion !== null &&
+    gatewayVersion !== undefined
+  ) {
+    lines.push(
+      `This snapshot comes from vestad ${point.vestadVersion}, and the gateway runs ${gatewayVersion}. The first boot after the restore runs migrations to converge the difference.`,
+    );
+  }
+  return {
+    title: "Restore this snapshot?",
+    body: lines.join("\n\n"),
+    action: "Restore",
+    destructive: false,
+  };
+}
+
+export function deletePrompt(point: BackupTimelinePoint): ConfirmPrompt {
+  return {
+    title: "Delete this snapshot?",
+    body: [
+      pointLine(point),
+      "This removes the snapshot for good. It cannot be undone.",
+    ].join("\n\n"),
+    action: "Delete",
+    destructive: true,
+  };
+}

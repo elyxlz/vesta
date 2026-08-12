@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest"
 
 import {
   buildBackupTimeline,
+  formatSnapshotStamp,
   parseBackupKind,
+  parseSnapshotStamp,
   type BackupKind,
   type BackupTimelineRow,
   type RestoreEligibility,
@@ -201,5 +203,45 @@ describe("timeline points", () => {
   it("reports a missing stamp as null rather than dropping the field", () => {
     const [point] = buildBackupTimeline([BASE], "0.1.2")
     expect(point?.vestadVersion).toBeNull()
+  })
+})
+
+// The stamp is restic's own compact form, so every surface showing a moment parses it here.
+describe("parseSnapshotStamp", () => {
+  it("reads the compact stamp as the UTC moment it names", () => {
+    const at = parseSnapshotStamp("20260529-040001")
+    expect(at?.getTime()).toBe(Date.UTC(2026, 4, 29, 4, 0, 1))
+  })
+
+  const rejected: [string, string][] = [
+    ["2026-01-01T00:00:00Z", "an iso timestamp"],
+    ["20260529040001", "no separator"],
+    ["2026052-040001", "a short date"],
+    ["20260529-040001Z", "a trailing zone"],
+    ["", "an empty string"],
+  ]
+
+  it.each(rejected)("returns null for %s (%s)", (stamp) => {
+    expect(parseSnapshotStamp(stamp)).toBeNull()
+  })
+
+  it("reads the stamp a timeline point carries", () => {
+    const [point] = buildBackupTimeline([BASE], "0.1.2")
+    expect(parseSnapshotStamp(point?.createdAt ?? "")?.getTime()).toBe(
+      Date.UTC(2026, 4, 29, 4, 0, 1),
+    )
+  })
+})
+
+describe("formatSnapshotStamp", () => {
+  it("humanizes a compact stamp into a date and a time", () => {
+    const shown = formatSnapshotStamp("20260529-040001")
+    expect(shown).not.toContain("20260529-040001")
+    expect(shown).toContain("2026")
+    expect(shown).toContain("·")
+  })
+
+  it("shows an unrecognized stamp as it came, rather than an invalid date", () => {
+    expect(formatSnapshotStamp("whenever")).toBe("whenever")
   })
 })

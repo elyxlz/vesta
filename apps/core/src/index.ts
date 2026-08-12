@@ -128,7 +128,12 @@ export {
 } from "./agent-status/agent-status"
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
 
-export { buildBackupTimeline, parseBackupKind } from "./backups/backup-timeline"
+export {
+  buildBackupTimeline,
+  formatSnapshotStamp,
+  parseBackupKind,
+  parseSnapshotStamp,
+} from "./backups/backup-timeline"
 export type {
   BackupKind,
   BackupTimelinePoint,
