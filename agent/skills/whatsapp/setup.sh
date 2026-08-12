@@ -30,8 +30,8 @@ whatsapp daemon start
 
 echo "setup complete, link an account with: whatsapp connect --source <vesta-cloud|doubletick|self-managed> (see SETUP.md)"
 echo
-echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
-echo "of ~/agent/skills/restart/SKILL.md, on its own line."
+echo "Remaining step, yours to do: so whatsapp survives restarts, read the restart"
+echo "skill and add this line to your restart daemons."
 echo "\`whatsapp daemon start\` brings the daemon up and waits until it answers, so"
 echo "inbound notifications flow before you send anything."
 echo '  whatsapp daemon start'

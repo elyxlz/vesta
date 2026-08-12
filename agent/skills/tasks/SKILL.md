@@ -82,7 +82,7 @@ the port registration with vestad; stop is the deliberate shutdown, so it does n
 `daemon_died` notification every other exit fires. Manage the daemon through these commands, never
 by launching `tasks serve` yourself.
 
-Add this line yourself, inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+So the daemon survives restarts, read the `restart` skill and add this line to your restart daemons:
 ```
 tasks daemon start
 ```

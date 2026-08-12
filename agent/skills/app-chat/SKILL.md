@@ -18,7 +18,7 @@ uv tool install --editable ~/agent/skills/app-chat/cli
 - Status reports whether the daemon is up and on which port, read from `~/agent/data/daemons/app-chat.pid` and `app-chat.port`
 
 Manage the daemon through these commands, not by launching `app-chat serve` yourself. Startup output lands in `~/agent/logs/app-chat.log`.
-**Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+**Restart**: So it survives restarts, read the `restart` skill and add this line to your restart daemons:
 ```
 app-chat daemon start
 ```

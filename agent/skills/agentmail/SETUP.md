@@ -71,8 +71,7 @@ Start owns the public registration and waits until the service answers; stop is 
 shutdown, so it does not fire the `daemon_died` notification every other exit fires. Manage it with
 `daemon start|stop|restart|status`, never by launching `agentmail serve` yourself.
 
-Add this line yourself, inside the fenced block in the `## Daemons` section of
-`~/agent/skills/restart/SKILL.md`:
+So it survives restarts, read the `restart` skill and add this line to your restart daemons:
 
 ```
 agentmail daemon start

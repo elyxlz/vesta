@@ -48,7 +48,7 @@ reaches it over this container's network, so a `127.0.0.1` bind is invisible to 
 with the port registered correctly. Register one when something outside the process needs to
 reach it: a web UI, an inbound webhook, an API the app calls.
 A background process that needs no inbound port is just a daemon: it does not register here,
-it only goes in the restart skill's `## Daemons` section.
+it only goes in your restart daemons, which the `restart` skill explains.
 
 Skills that run a service register it with vestad to get a port, then start it. The
 `register-service` helper does the curl and prints the port (idempotent: same port per name, so
@@ -175,9 +175,9 @@ tests hold to the behavior above: shell is `~/agent/skills/file-host/file-host`,
 `~/agent/skills/whatsapp/cli/daemon.go`. Read the one in the language you are writing in
 and follow it.
 
-Then add the startup line yourself, inside the fenced block in the `## Daemons` section of
-`~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart. It is the
-bare command, nothing around it, because start is idempotent:
+Then read the `restart` skill and add the startup line yourself to your restart daemons, so the
+daemon comes back after a container restart. It is the bare command, nothing around it, because
+start is idempotent:
 
 ```bash
 file-host daemon start
@@ -290,7 +290,7 @@ The browser sits at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/...`, so the prefix
 - **WebSockets work for a registered service.** vestad upgrades the connection and bridges it, pinging the client on a keepalive interval so an idle socket survives the tunnel. Only the raw agent port refuses to upgrade, because that carries the internal event bus; use `/sync` for that. A browser `WebSocket` cannot set headers, so carry a private service's key as `?token=<key>`.
 - **Bind `0.0.0.0`, not `127.0.0.1`.** The container has its own network and vestad proxies in from outside, so a loopback-only bind answers 502.
 - **Default to private** and hand the user a minted `/k/<key>/` link, the shape the signature pad uses. `public: true` is only for a page that must load with no credential at all (the QR-link-page shape), carries nothing sensitive, and is the rare exception, never the convenient default.
-- A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in the restart skill's Daemons block, so the link survives reboots.
+- A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in your restart daemons (the `restart` skill explains how), so the link survives reboots.
 
 ## Update vestad
 
