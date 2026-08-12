@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   buildBackupTimeline,
+  parseBackupKind,
   type BackupKind,
   type BackupTimelineRow,
   type RestoreEligibility,
@@ -77,7 +78,9 @@ describe("backup labels", () => {
       undefined,
       "Before update",
     ],
+    ["drops the version when from_version is empty", "pre_update", "", "Before update"],
     ["names a pre-restore snapshot as the safety net it is", "pre_restore", null, "Safety"],
+    ["falls back to a plain word for a kind it does not know", "unknown", null, "Backup"],
   ]
 
   it.each(cases)("%s", (_name, kind, fromVersion, label) => {
@@ -90,12 +93,39 @@ describe("backup labels", () => {
   })
 
   it("never leaves the raw wire enum in a label", () => {
-    const kinds: BackupKind[] = ["periodic", "manual", "pre_update", "pre_restore"]
+    const kinds: BackupKind[] = ["periodic", "manual", "pre_update", "pre_restore", "unknown"]
     const labels = buildBackupTimeline(
       kinds.map((kind) => ({ ...BASE, backup_type: kind })),
       "0.1.2",
     ).map((point) => point.label)
     for (const label of labels) expect(label).not.toContain("_")
+  })
+})
+
+// The wire carries `backup_type` as a plain string and may add a kind without a client bump, so
+// the parse belongs here rather than as an assertion in each app.
+describe("parseBackupKind", () => {
+  const cases: [string, BackupKind][] = [
+    ["periodic", "periodic"],
+    ["manual", "manual"],
+    ["pre_update", "pre_update"],
+    ["pre_restore", "pre_restore"],
+    ["pre-update", "unknown"],
+    ["quarterly", "unknown"],
+    ["", "unknown"],
+  ]
+
+  it.each(cases)("reads %s as %s", (wire, kind) => {
+    expect(parseBackupKind(wire)).toBe(kind)
+  })
+
+  it("still gives an unknown kind its version eligibility", () => {
+    const [point] = buildBackupTimeline(
+      [{ ...BASE, backup_type: parseBackupKind("quarterly"), vestad_version: "0.1.3" }],
+      "0.1.2",
+    )
+    expect(point?.kind).toBe("unknown")
+    expect(point?.eligibility).toBe("newer")
   })
 })
 
@@ -123,16 +153,21 @@ describe("restore eligibility", () => {
     expect(point?.eligibility).toBe(eligibility)
   })
 
+  // Shuffled, so a verdict that travelled with the wrong row through the sort shows up here.
   it("judges each snapshot against the same gateway", () => {
     const rows: BackupTimelineRow[] = [
+      { ...BASE, id: "behind", created_at: "20260101-040001", vestad_version: "0.1.1" },
       { ...BASE, id: "ahead", created_at: "20260301-040001", vestad_version: "0.1.3" },
       { ...BASE, id: "level", created_at: "20260201-040001", vestad_version: "0.1.2" },
-      { ...BASE, id: "behind", created_at: "20260101-040001", vestad_version: "0.1.1" },
     ]
-    expect(buildBackupTimeline(rows, "0.1.2").map((point) => point.eligibility)).toEqual([
-      "newer",
-      "ok",
-      "older",
+    const verdicts = buildBackupTimeline(rows, "0.1.2").map((point) => ({
+      id: point.id,
+      eligibility: point.eligibility,
+    }))
+    expect(verdicts).toEqual([
+      { id: "ahead", eligibility: "newer" },
+      { id: "level", eligibility: "ok" },
+      { id: "behind", eligibility: "older" },
     ])
   })
 })

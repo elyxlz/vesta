@@ -1,7 +1,23 @@
 import { compareReleaseVersions } from "../protocol/release-version"
 
-// What made a snapshot, as vestad tags it on the wire.
-export type BackupKind = "periodic" | "manual" | "pre_update" | "pre_restore"
+// What made a snapshot, as vestad tags it on the wire, plus the bucket a kind this client has no
+// copy for lands in. A new kind ships without a client bump, so `unknown` is the normal case for
+// an older app rather than a wire error.
+export type BackupKind = "periodic" | "manual" | "pre_update" | "pre_restore" | "unknown"
+
+// The one place `backup_type` stops being a plain string. Both apps read the raw wire value, and
+// this owns the narrowing so neither one asserts a kind it has not checked.
+export function parseBackupKind(value: string): BackupKind {
+  switch (value) {
+    case "periodic":
+    case "manual":
+    case "pre_update":
+    case "pre_restore":
+      return value
+    default:
+      return "unknown"
+  }
+}
 
 // A backup row from the gateway, narrowed to what a timeline reads. `created_at` is restic's
 // compact form (`20260529-040001`), `from_version` carries a `v` prefix and `vestad_version`
@@ -38,9 +54,13 @@ function backupLabel(kind: BackupKind, fromVersion: string | null): string {
     case "manual":
       return "Manual"
     case "pre_update":
-      return fromVersion === null ? "Before update" : `Before update ${fromVersion}`
+      return fromVersion === null || fromVersion === ""
+        ? "Before update"
+        : `Before update ${fromVersion}`
     case "pre_restore":
       return "Safety"
+    case "unknown":
+      return "Backup"
   }
 }
 
