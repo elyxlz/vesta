@@ -44,14 +44,6 @@ echo "$*" >> "$HOME/register-args"
 exec python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
 """
 
-# A registration handing back a port something else already holds. vestad allocates service ports
-# above the kernel's ephemeral range for exactly this reason, so what still reaches this state is a
-# registration made inside that range: the kernel hands the port out as an outbound source port
-# while the daemon is down, and the next start meets a port it cannot bind.
-HELD_REGISTER_SERVICE = """#!/bin/sh
-echo "$HELD_PORT"
-"""
-
 # Sends every readiness probe, flags and all, to a listener that accepts and then says nothing.
 # The daemon still comes up on its own port, so this is a daemon that is alive and unreachable.
 MUTE_CURL = """#!/bin/sh
@@ -471,28 +463,6 @@ def test_start_fails_closed_when_registration_fails(daemon):
     assert result.returncode != 0
     error = _error(result.stdout, result.stderr)
     assert isinstance(error, str) and error
-    assert not (home / "agent/data/daemons" / f"{spec.name}.pid").exists()
-
-
-def test_a_start_that_cannot_bind_reports_the_port_not_the_daemon(daemon):
-    """A start that gives up names the daemon, "never answered on port N" or "exited during
-    startup", and both send the operator hunting a daemon that is fine when the port was simply
-    already taken; the fix there is a new registration, not a restart. Nothing else can tell them
-    apart, because a daemon whose server runs on a thread keeps the process alive after the bind
-    fails and answers nothing, which is the "never answered" message exactly. So the log the
-    daemon wrote is what the start reports."""
-    spec, home, env = daemon
-    if not spec.serves_port:
-        pytest.skip("portless")
-    with socket.socket() as held:
-        # Bound and never listening: bind() is the only call that has to fail, and a refused
-        # readiness probe keeps a start that survives the failure off its whole budget.
-        held.bind(("0.0.0.0", 0))
-        (pl.Path(env["PATH"].split(":")[0]) / "register-service").write_text(HELD_REGISTER_SERVICE)
-        taken = {**env, "HELD_PORT": str(held.getsockname()[1]), "DAEMON_READY_TIMEOUT_SECS": UNREADY_TIMEOUT_SECS}
-        result = _verb(spec, taken, "start")
-    assert result.returncode != 0, f"a start onto a port it cannot bind reported success: {result.stdout!r}"
-    assert "address already in use" in _error(result.stdout, result.stderr)
     assert not (home / "agent/data/daemons" / f"{spec.name}.pid").exists()
 
 

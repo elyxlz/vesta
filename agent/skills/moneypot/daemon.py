@@ -132,39 +132,6 @@ def _ready(port: str) -> bool:
     return probe.returncode == 0
 
 
-# How much of what a start appended to the log is read back looking for a bind failure, and the
-# signatures that name one across the servers the skills run.
-BIND_TAIL_BYTES = 4096
-BIND_SIGNATURES = ("address already in use", "errno 98", "eaddrinuse")
-BIND_HELP = "address already in use (another process holds it; re-register the service for a new port)"
-
-
-def _bind_failed(log_from: int) -> bool:
-    """Whether the daemon this start spawned failed on the port rather than on itself.
-
-    Only the bytes this start appended are read, so an older failure in the same log cannot be
-    reported as this one's.
-    """
-    try:
-        with LOG.open("rb") as log:
-            log.seek(log_from)
-            appended = log.read(BIND_TAIL_BYTES).decode("utf-8", "replace").lower()
-    except OSError:
-        return False
-    return any(signature in appended for signature in BIND_SIGNATURES)
-
-
-def _gave_up(port: str, log_from: int, message: str) -> str:
-    """What a start that gave up reports. A port the daemon could not bind is not a daemon fault,
-    and a message naming the daemon sends the operator hunting one that is fine: a service
-    registered inside /proc/sys/net/ipv4/ip_local_port_range can have its port handed out as an
-    ephemeral source port for an unrelated outbound connection while the daemon is down, so the
-    fix is a new registration, not a restart."""
-    if _bind_failed(log_from):
-        return f"{NAME} could not bind port {port}: {BIND_HELP}; see {LOG}"
-    return f"{message}; see {LOG}"
-
-
 def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
     """A start that gives up takes its child and both records with it: a daemon nothing can reach,
     with records that say it is up, reads as running and turns every later start into a no-op."""
@@ -179,18 +146,18 @@ def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
     return _fail(message)
 
 
-def _await_ready(child: subprocess.Popen[bytes], port: str, log_from: int) -> int:
+def _await_ready(child: subprocess.Popen[bytes], port: str) -> int:
     """Holds the start open until the daemon it spawned answers on its port, which is what lets
     the caller's next line use the service."""
     deadline = time.monotonic() + READY_TIMEOUT_SECS
     while time.monotonic() < deadline:
         if child.poll() is not None:
-            return _abandon(child, _gave_up(port, log_from, f"{NAME} exited during startup"))
+            return _abandon(child, f"{NAME} exited during startup; see {LOG}")
         if _ready(port):
             print(json.dumps({"status": "started"}))
             return 0
         time.sleep(POLL_SECS)
-    return _abandon(child, _gave_up(port, log_from, f"{NAME} never answered on port {port}"))
+    return _abandon(child, f"{NAME} never answered on port {port}; see {LOG}")
 
 
 def _claim(pid: int) -> bool:
@@ -245,11 +212,10 @@ def _start() -> int:
         PIDFILE.unlink(missing_ok=True)
         return _fail(f"could not register {NAME} with vestad; not launching")
     PORTFILE.write_text(port)
-    log_from = LOG.stat().st_size if LOG.exists() else 0
     with LOG.open("ab") as log:
         child = subprocess.Popen(_serve_argv(port), start_new_session=True, stdout=log, stderr=log, env={**os.environ, "PYTHONUNBUFFERED": "1"})
     PIDFILE.write_text(_record(child.pid))
-    return _await_ready(child, port, log_from)
+    return _await_ready(child, port)
 
 
 def _await_gone(deadline: float) -> bool:
