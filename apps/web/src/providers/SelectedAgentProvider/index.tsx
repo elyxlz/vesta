@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   startAgent,
   stopAgent,
@@ -87,13 +87,15 @@ export function SelectedAgentProvider({
   );
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 
-  const refreshBackups = async () => {
+  // Stable per agent: the backups dialog re-reads the list every time it opens, and an identity
+  // that changed each render would make that a loop.
+  const refreshBackups = useCallback(async () => {
     try {
       setBackups(await listBackups(name));
     } catch {
       /* ignore */
     }
-  };
+  }, [name]);
 
   useEffect(() => {
     let ignore = false;

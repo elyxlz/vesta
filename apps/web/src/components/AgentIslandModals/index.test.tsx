@@ -1,12 +1,23 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { AgentIslandModals } from "./index";
 
-const handleBackup = vi.fn();
+const setBackupDialogOpen = vi.fn();
 
 vi.mock("@/providers/SelectedAgentProvider", () => ({
-  useSelectedAgent: () => ({ name: "bob" }),
+  useSelectedAgent: () => ({
+    name: "bob",
+    backups: [],
+    isBusy: false,
+    backup: vi.fn(),
+    refreshBackups: vi.fn(() => Promise.resolve()),
+    restore: vi.fn(),
+    removeBackup: vi.fn(),
+  }),
+}));
+
+vi.mock("@/providers/GatewayProvider", () => ({
+  useGateway: () => ({ gatewayVersion: "0.2.0" }),
 }));
 
 vi.mock("@/providers/ModalsProvider", () => ({
@@ -18,18 +29,16 @@ vi.mock("@/providers/ModalsProvider", () => ({
     setDeleteDialogOpen: vi.fn(),
     handleDelete: vi.fn(),
     backupDialogOpen: true,
-    setBackupDialogOpen: vi.fn(),
-    handleBackup,
+    setBackupDialogOpen,
   }),
 }));
 
-describe("AgentIslandModals backup confirm", () => {
+describe("AgentIslandModals", () => {
   afterEach(cleanup);
 
-  it("runs the backup only after the user confirms", async () => {
+  it("opens the backups timeline for the selected agent", async () => {
     render(<AgentIslandModals />);
-    expect(await screen.findByText("back up bob?")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "back up" }));
-    expect(handleBackup).toHaveBeenCalledOnce();
+    expect(await screen.findByText("backups for bob")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "back up now" })).toBeTruthy();
   });
 });
