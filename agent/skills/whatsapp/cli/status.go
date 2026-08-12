@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 )
 
-// runStatus is the agent's one WhatsApp health command. It ensures the
-// background daemon is up (idempotent, the agent never manages it), reads the
-// live connection, and prints a simple self-explanatory verdict:
+// runStatus is the agent's one WhatsApp health command. It requires the background
+// daemon to be running (it never starts one), reads the live connection, and prints
+// a simple self-explanatory verdict:
 //
+//	daemon down:{"running":false,"next":"start the daemon: whatsapp daemon start","reason":"..."}
 //	linked:    {"linked":true,"number":"+44...","connected":true}
 //	not linked:{"linked":false,"connected":false,"next":"run: whatsapp connect --source <vesta-cloud|doubletick|self-managed>","reason":"..."}
 func runStatus() {
@@ -16,8 +17,8 @@ func runStatus() {
 	if err != nil {
 		failJSON("%s", err.Error())
 	}
-	if err := ensureDaemon(); err != nil {
-		printJSON(notLinkedStatus(resolved, err.Error()))
+	if requireDaemon() != nil {
+		printJSON(daemonDownStatus(resolved))
 		return
 	}
 	output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", nil)
@@ -28,7 +29,7 @@ func runStatus() {
 			return
 		}
 	}
-	printJSON(notLinkedStatus(resolved, ""))
+	printJSON(notLinkedStatus(resolved))
 }
 
 // simpleStatus reduces a daemon-status response to the agent-facing verdict.
@@ -52,7 +53,7 @@ func simpleStatus(live map[string]any, dataDir string) map[string]any {
 				"next":       "wait for the user to scan the active QR page; do not run connect again",
 			}
 		}
-		return notLinkedStatus(dataDir, "")
+		return notLinkedStatus(dataDir)
 	}
 	connected, _ := live["connected"].(bool)
 	result := map[string]any{"linked": true, "connected": connected}
@@ -62,20 +63,31 @@ func simpleStatus(live map[string]any, dataDir string) map[string]any {
 	return result
 }
 
+// daemonDownStatus is the verdict when no daemon answers: the recorded exit reason, so a daemon
+// that died of a logout or a device conflict says so rather than reading as a plain stopped one,
+// and the one command that brings it back.
+func daemonDownStatus(dataDir string) map[string]any {
+	result := map[string]any{
+		"running": false,
+		"next":    "start the daemon: whatsapp daemon start",
+		"reason":  daemonDownMessage,
+	}
+	if reason := loadStateFromDisk(dataDir).ExitReason; reason != "" {
+		result["reason"] = reason
+	}
+	return result
+}
+
 // notLinkedStatus is the not-linked verdict, carrying the last logout/conflict
-// reason (or a daemon-start error) so the agent sees why it is not linked.
-func notLinkedStatus(dataDir, startErr string) map[string]any {
+// reason so the agent sees why it is not linked.
+func notLinkedStatus(dataDir string) map[string]any {
 	result := map[string]any{
 		"linked":    false,
 		"connected": false,
 		"next":      "run: whatsapp connect --source <vesta-cloud|doubletick|self-managed>",
 	}
-	// A live daemon-start error is the real, current failure, so it wins over the
-	// last-exit reason (which a successful connect clears anyway).
-	if startErr != "" {
-		result["reason"] = startErr
-	} else if exit := loadStateFromDisk(dataDir); exit.ExitReason != "" {
-		result["reason"] = exit.ExitReason
+	if reason := loadStateFromDisk(dataDir).ExitReason; reason != "" {
+		result["reason"] = reason
 	}
 	return result
 }

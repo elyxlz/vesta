@@ -5,15 +5,16 @@ description: Set up and operate WhatsApp accounts, messages, contacts, groups, a
 
 # WhatsApp (CLI: `whatsapp`)
 
-Every `whatsapp` command starts the daemon on demand, and the restart skill runs
-`whatsapp daemon start` at boot (so inbound notifications flow before you send
-anything), so let it manage itself. Your whole world is four verbs: **connect,
-status, send, messages** (plus profile and calls).
+The restart skill runs `whatsapp daemon start` at boot, so inbound notifications flow
+before you send anything. A command never starts the daemon for you, so a stopped
+account stays down until you start it on purpose. Your whole world is four verbs:
+**connect, status, send, messages** (plus profile and calls).
 
 ## The linking rule
 
 Always start with `whatsapp status`:
 
+- `{"running":false,...}`: the daemon is down; start it with `whatsapp daemon start`, unless you are deliberately holding this account offline.
 - `{"linked":true,...}`: use the existing link, do not pair again.
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
@@ -23,6 +24,19 @@ Always start with `whatsapp status`:
   person who matters, at the moment you most need it.
 
 Never recover by manually re-pairing or restarting the daemon.
+
+## Holding an account offline
+
+When the provider flags, suspends, or reviews a number, that account must make no
+connection attempt until they clear it:
+
+```bash
+whatsapp daemon stop --instance <name>
+```
+
+Then remove that account's `whatsapp daemon start` line from your restart daemons (the
+`restart` skill owns that list), so no boot brings it back. To return it once the provider
+clears it, add the line again and run `whatsapp daemon start --instance <name>`.
 
 ## Choose the setup method
 
