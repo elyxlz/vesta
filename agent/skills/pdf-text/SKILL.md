@@ -67,6 +67,16 @@ in a normal Type1 or TrueType font is usually fine.
 Cheap habit that costs nothing: if extracted text contains lone capital letters
 where a symbol belongs, that is the tell, and this is the check.
 
+## What it deliberately does not flag
+
+A **simple font that declares a standard encoding** (`/WinAnsiEncoding`,
+`/MacRomanEncoding`, `/StandardEncoding`, `/MacExpertEncoding`) needs no
+`/ToUnicode` at all: its code IS the character and every extractor resolves it.
+Flagging those turned the first real document tried into a page of ordinary
+Latin letters reported as fiction, which is the noise that gets a checker
+ignored. Only Type0 fonts and symbolic or custom encodings can actually lie, so
+only those are reported.
+
 ## Notes
 
 `--selftest` builds a synthetic two-font PDF in a temp dir, one clean font and

@@ -165,11 +165,25 @@ def font_table(objs):
         tou = re.search(rb"/ToUnicode\s+(\d+)\s+0\s+R", body)
         cmap = parse_cmap(stream_of(objs, int(tou.group(1))).decode("latin-1")) if tou else {}
         two_byte = b"/Identity-H" in body or b"/Type0" in body
+        # A SIMPLE font that declares a standard encoding needs no ToUnicode:
+        # its code IS the character, and every extractor resolves it correctly.
+        # Flagging those produced a page of ordinary Latin letters reported as
+        # fiction on the first real document tried, which is the noise that
+        # makes a checker get ignored. Only symbolic or custom encodings, and
+        # Type0 fonts, can actually lie.
+        enc = re.search(rb"/Encoding\s*/(\w+)", body)
+        standard_enc = bool(enc) and enc.group(1) in (
+            b"WinAnsiEncoding",
+            b"MacRomanEncoding",
+            b"StandardEncoding",
+            b"MacExpertEncoding",
+        )
         fonts[num] = {
             "name": base.group(1).decode(),
             "cmap": cmap,
             "has_tounicode": bool(tou),
             "two_byte": two_byte,
+            "safe_simple": (not two_byte) and standard_enc,
         }
     return fonts
 
@@ -238,7 +252,7 @@ def scan_page(objs, fonts, page_obj):
             else:
                 codes = from_hex(mm.group(3).decode(), wide)
             total += len(codes)
-            if info is None:
+            if info is None or info["safe_simple"]:
                 continue
             for c in codes:
                 if c in info["cmap"] or c == 0x00:
@@ -292,14 +306,15 @@ def report(path, pagespec):
         if cur is None or (not cur["cmap"] and f["cmap"]) or (not cur["has_tounicode"] and f["has_tounicode"]):
             by_name[f["name"]] = f
 
-    empty = {n: f for n, f in by_name.items() if not f["cmap"]}
+    empty = {n: f for n, f in by_name.items() if not f["cmap"] and not f["safe_simple"]}
     print(f"check-glyphs: {os.path.basename(path)}, {len(pages)} pages, {len(by_name)} fonts")
     for name in sorted(empty):
         f = empty[name]
         why = "ToUnicode present but EMPTY" if f["has_tounicode"] else "no ToUnicode at all"
         print(f"  font {name:38s} {why}")
     if not empty:
-        print("  every font carries a non-empty ToUnicode map")
+        print("  no font here can misreport: every one either carries a non-empty")
+        print("  ToUnicode map or is a simple font with a standard encoding")
 
     wanted = parse_pages(pagespec, len(pages))
     findings = []
