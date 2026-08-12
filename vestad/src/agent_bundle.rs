@@ -1115,6 +1115,16 @@ mod tests {
         cp(&data_dir, "/root/agent");
     }
 
+    /// Whether `path` is a file inside the running container `cname`.
+    fn container_has_file(cname: &str, path: &str) -> bool {
+        std::process::Command::new("docker")
+            .args(["exec", cname, "test", "-f", path])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
     /// Waits until the agent inside `cname` is past the boot step that deletes the credentials of
     /// a provider it is not signed in with, so a test can plant credentials a running agent keeps.
     /// The event db is created one step later, and the agent reads its provider at boot alone.
@@ -1122,12 +1132,7 @@ mod tests {
         const BOOT_POLL_MAX: u32 = 180;
 
         for _ in 0..BOOT_POLL_MAX {
-            let probe = std::process::Command::new("docker")
-                .args(["exec", cname, "test", "-f", "/root/agent/data/events.db"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            if probe.is_ok_and(|status| status.success()) {
+            if container_has_file(cname, "/root/agent/data/events.db") {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1263,7 +1268,16 @@ mod tests {
         assert!(crate::docker::start_container(&docker, &src_cname).await, "the source agent starts");
         wait_for_agent_boot(&src_cname).await;
         let creds_dir = tempfile::TempDir::new().expect("tempdir");
+        // The planted config names an OpenRouter model with no context length, which crashes a
+        // *booting* agent; a booted one never reads it again. So a crash inside the export window
+        // re-runs boot under on-failure:5 and shows up as the "must not restart" assertion below
+        // failing: read that as a poisoned fixture, not as an export that touched the agent.
         plant_credentials(&src_cname, creds_dir.path());
+        // Whatever the boot order turns out to be, the probe at the end of this test means nothing
+        // unless the credentials really are in the container the export is about to capture.
+        for planted in ["/root/.claude/.credentials.json", "/root/agent/data/config.json"] {
+            assert!(container_has_file(&src_cname, planted), "the plant must survive in the agent: {planted}");
+        }
         let before = crate::docker::inspect_container(&docker, &src_cname, None).await;
         assert_eq!(before.status, crate::docker::ContainerStatus::Running);
         let started_at = before.started_at.expect("a started container reports StartedAt");
@@ -1355,7 +1369,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires Docker"]
-    async fn a_bundle_imports_from_a_url_and_leaves_no_download_behind() {
+    async fn url_import_round_trips_and_leaves_the_download_as_the_callers_temp_file() {
         let docker = test_docker();
         let target_name = format!("exp-url-{}", std::process::id());
         let env = test_agent_env();
