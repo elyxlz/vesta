@@ -27,3 +27,33 @@ Three flags never appear on a line, because the command applies them itself: a p
 whatsapp daemon start --instance personal --read-only
 file-host daemon start
 ```
+
+## After restarting a MESSAGING daemon, go and look for what arrived while it was dead
+
+**Backfill is partial, so a restart is not the end of the recovery.** Verified case: a whatsapp
+daemon was found `"running": false` by a routine check, having died at some point earlier in the day.
+The user had sent **three voice notes** in that window. On restart the daemon produced a notification
+for **exactly one of the three**. The other two generated nothing: no notification, no error, and no
+gap in any record to show something was missing. They were found only by chance, in a
+`last_message_time` field printed by an unrelated command.
+
+A dead daemon plus inbound media is a message that disappears completely, because notifications are
+written only while the daemon lives and media never surfaces on its own afterwards. So whenever a
+messaging daemon comes back from `running: false`, query its message store directly instead of
+trusting backfill:
+
+```bash
+python3 - <<'PY'
+import sqlite3
+db = sqlite3.connect('/root/.whatsapp/messages.db')   # adjust per messaging skill
+q = """SELECT timestamp, chat_jid, is_from_me, media_type, substr(coalesce(content,''),1,120)
+       FROM messages WHERE timestamp > date('now','-1 day') ORDER BY timestamp"""
+for r in db.execute(q):
+    print(r)
+PY
+```
+
+Anything inbound you have not already acted on is a message the user believes they sent you. Media
+is the case that matters most: inbound attachments generally are not downloaded until something asks
+for them, retention windows on the provider side are measured in days rather than weeks, and a
+channel whose media was never fetched looks identical to a channel that was empty.
