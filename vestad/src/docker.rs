@@ -1652,9 +1652,10 @@ where
     Ok(loaded_image)
 }
 
-/// The one caller of `load_image_from_stream`, and legacy on the same condition: import a
-/// Docker image from a tar file (replaces `gunzip | docker load`), streaming rather than
-/// buffering it in memory.
+/// LEGACY(remove-when: 2027-08-01; plain-image files from the removed `vestad backup export` are
+/// by then over a year stale): the one caller of `load_image_from_stream`, and it goes when the
+/// legacy import that calls it goes. Imports a Docker image from a tar file (replaces
+/// `gunzip | docker load`), streaming rather than buffering it in memory.
 pub async fn load_image_from_file(
     docker: &Docker,
     input: &std::path::Path,

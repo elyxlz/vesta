@@ -1057,6 +1057,11 @@ fn main() {
         }
 
         Command::Uninstall => {
+            // No --yes to fall back on, so a stdin that cannot answer must fail loudly: scripting
+            // `vestad uninstall < /dev/null` once reported success having removed nothing.
+            if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                die("uninstall needs a terminal to confirm; run it interactively");
+            }
             if !confirm("This will stop vestad, remove its systemd service, config, and binary. Continue?") {
                 eprintln!("Aborted.");
                 std::process::exit(0);
