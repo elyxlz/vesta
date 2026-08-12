@@ -82,6 +82,29 @@ voice-keys set-eot --timeout-ms 10000
 - **"Finalize my turns faster"** → lower `--threshold` (e.g. 0.6)
 - **"Stop cutting me off"** → raise `--threshold` (e.g. 0.9) or raise `--timeout-ms`
 
+## Manual re-transcription (when auto-STT is wrong/incomplete)
+
+When the live whisper transcription comes back wrong-language, junk (`[Musica]`, `[BLANK_AUDIO]`), or **cuts off mid-thought** (incomplete), re-transcribe the source audio directly via Deepgram before acting on it. Never act on a transcription you suspect is truncated.
+
+**Step 1: get the audio.** For a WhatsApp voice note, download it by message ID (correct flags below; the message ID comes from the inbound notification):
+```bash
+whatsapp download-media -message-id <MSG_ID> -to '<chat_jid>' -download-path /tmp/vn.ogg
+```
+
+**Step 2: POST to Deepgram Nova-3.** The Deepgram key is **nested**, not top-level: it lives at `voice_config.json` → `stt` → `credentials` → `deepgram` → `api_key`. (Hunting this cost 2 calls on 10/08; the shallow path 401s, `['api_key']` is the fix.) Force `language=it`:
+```bash
+/usr/bin/python3 - <<'PY'
+import json,urllib.request
+key=json.load(open('/root/.voice/voice_config.json'))['stt']['credentials']['deepgram']['api_key']
+req=urllib.request.Request(
+    "https://api.deepgram.com/v1/listen?model=nova-3&language=it&smart_format=true",
+    data=open('/tmp/vn.ogg','rb').read(),
+    headers={"Authorization":f"Token {key}","Content-Type":"audio/ogg"})
+print(json.loads(urllib.request.urlopen(req,timeout=30).read())['results']['channels'][0]['alternatives'][0]['transcript'])
+PY
+```
+Clean up `/tmp/vn.ogg` after. User preference still holds: voice is input only, confirm receipt, don't send the transcription back unless asked.
+
 ## Providers
 
 ### Deepgram (STT, voice input)
