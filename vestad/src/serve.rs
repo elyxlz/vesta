@@ -3203,6 +3203,7 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
+    let reconcile_mobile_app = state.mobile_app.clone();
     tokio::spawn(async move {
         Box::pin(docker::reconcile_containers(
             &reconcile_docker,
@@ -3222,6 +3223,9 @@ pub async fn run_server(cfg: ServerConfig) {
             &reconcile_rebuilding,
         ))
         .await;
+        // Only now is a stable observation the agent's own news rather than the tail of the
+        // reconcile's planned stop/start work, which this boot must not push.
+        reconcile_mobile_app.mark_boot_settled();
     });
     // Each agent has its own bridge network, so its calls into vestad (register-service,
     // user-notification, health) cannot reach the loopback bind below; they dial `BOX_HOST`
@@ -3245,6 +3249,7 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
+    let shutdown_tx = state.shutdown_tx.clone();
     agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
         cache: state.agent_status_cache.clone(),
         docker,
@@ -3328,6 +3333,7 @@ pub async fn run_server(cfg: ServerConfig) {
         r = agent_handle => r.expect("agent-gateway https task panicked"),
         () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
+            shutdown_tx.send_replace(true);
             docker::stop_all_agents(&shutdown_docker).await;
         }
     }

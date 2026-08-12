@@ -122,6 +122,10 @@ pub struct AppState {
     /// The gateway's one operation slot (see operation.rs): what the gateway is doing to itself
     /// right now, and the lock that keeps an update and a restart from racing each other.
     pub(crate) operation: Arc<operation::OperationSlot>,
+    /// Flipped by serve's shutdown branch when SIGTERM/Ctrl-C arrives. The update's restart
+    /// phase reads it to tell a `systemctl restart` error caused by the restart killing this
+    /// process (the success path) from a restart that genuinely failed.
+    pub(crate) shutdown_tx: tokio::sync::watch::Sender<bool>,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
     /// Revocable, per-service credentials the agent proxy accepts for a private service.
@@ -196,6 +200,7 @@ impl AppState {
                 tunnel_url: Mutex::new(tunnel_url),
                 update_info: Mutex::new(None),
                 operation: Arc::new(operation::OperationSlot::new()),
+                shutdown_tx: tokio::sync::watch::channel(false).0,
                 http_client,
                 settings: RwLock::new(settings),
                 service_keys: RwLock::new(crate::service_keys::load_store()),

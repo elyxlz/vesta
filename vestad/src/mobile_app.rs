@@ -71,6 +71,12 @@ pub(crate) struct MobileApp {
     /// real change (died, stopped, signed out, recovered) pushes exactly once. An agent's
     /// first stable observation seeds silently, which is what keeps every boot quiet.
     stable_statuses: Arc<Mutex<HashMap<String, AgentStatus>>>,
+    /// Whether the boot reconcile has settled. The reconcile stops, starts, and restarts agents
+    /// as planned boot work (new agent code, desired-run state), and this map lives only in
+    /// memory, so observing before it settles would seed mid-cycle and report the cycle's tail
+    /// ("is available", "needs you to sign in") as agent news on every vestad restart. Lifecycle
+    /// observation begins when serve's reconcile task marks the boot settled.
+    boot_settled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -173,6 +179,7 @@ impl MobileApp {
                 registry,
                 event_tx,
                 stable_statuses: Arc::new(Mutex::new(HashMap::new())),
+                boot_settled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             },
             MobileAppWorker {
                 context: delivery_context,
@@ -207,6 +214,9 @@ impl MobileApp {
         operated: &HashSet<String>,
         gateway_operation_running: bool,
     ) {
+        if !self.boot_settled.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         let transitions: Vec<(String, AgentStatus, AgentStatus)> = {
             let mut stable = self
                 .stable_statuses
@@ -243,6 +253,12 @@ impl MobileApp {
                 }),
             );
         }
+    }
+
+    /// Begin lifecycle observation: the boot reconcile has finished its planned agent work, so
+    /// from here every stable observation is the agent's own news.
+    pub(crate) fn mark_boot_settled(&self) {
+        self.boot_settled.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Drop a destroyed agent's last stable status, so a later agent created under the same
@@ -680,6 +696,7 @@ mod tests {
             reqwest::Client::new(),
             Arc::new(crate::sync::Presence::new()),
         );
+        app.mark_boot_settled();
         (app, worker, directory)
     }
 
@@ -733,6 +750,32 @@ mod tests {
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
         assert!(drain_status_events(app, worker).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_boot_reconciles_own_agent_cycle_never_pushes() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (app, worker) = MobileApp::new(
+            registry(directory.path()),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
+        // The post-restart poll observes the shutdown-stopped agents before the boot reconcile
+        // brings them up (the 5am self-update incident). None of it is agent news.
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Stopped)]);
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
+        observe(&app, &[lifecycle_entry("athena", AgentStatus::Stopped)]);
+        observe(&app, &[lifecycle_entry("athena", AgentStatus::NotAuthenticated)]);
+        // Reconcile settles: the world as it stands seeds silently, and only a later real
+        // change pushes.
+        app.mark_boot_settled();
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
+        observe(&app, &[lifecycle_entry("athena", AgentStatus::NotAuthenticated)]);
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Dead)]);
+        assert_eq!(
+            drain_status_events(app, worker).await,
+            vec![("apollo".to_string(), "alive".to_string(), "dead".to_string())]
+        );
     }
 
     #[tokio::test]

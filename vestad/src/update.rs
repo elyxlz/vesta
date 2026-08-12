@@ -19,6 +19,7 @@ use crate::state::SharedState;
 // via POST /version/check.
 pub const CHECK_INTERVAL_SECS: u64 = 5 * 60 * 60;
 const FETCH_TIMEOUT_SECS: u64 = 10;
+const SELF_RESTART_DEATH_GRACE_SECS: u64 = 30;
 const ERROR_SNIPPET_MAX_LEN: usize = 300;
 const HTTP_STATUS_SENTINEL: &str = "\n__VESTA_HTTP_STATUS__:";
 const CACHE_FILE_NAME: &str = "update-check-cache.json";
@@ -587,11 +588,33 @@ async fn run_update(run: UpdateRun) {
         return run.finish();
     }
     run.advance(UpdatePhase::Restarting);
-    match tokio::task::spawn_blocking(crate::systemd::restart).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => run.fail(UpdateStage::Restarting, error),
-        Err(error) => run.fail(UpdateStage::Restarting, error.to_string()),
+    let error = match tokio::task::spawn_blocking(crate::systemd::restart).await {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(error) => error.to_string(),
+    };
+    if self_restart_is_dying(
+        run.state.shutdown_tx.subscribe(),
+        Duration::from_secs(SELF_RESTART_DEATH_GRACE_SECS),
+    )
+    .await
+    {
+        tracing::info!(target_version = %run.target, "restart is stopping this process; the next boot completes the update");
+        return;
     }
+    run.fail(UpdateStage::Restarting, error);
+}
+
+/// Whether this process is dying because the restart it asked systemd for is underway.
+/// `systemctl restart` on vestad's own unit SIGTERMs this process, which kills the systemctl
+/// child before it can report success, so an error exit is expected exactly when the restart is
+/// working. Failing on it would clear the `Restarting` ledger, erasing the signal the next boot
+/// needs to announce the update. The shutdown signal inside the grace window is the confirmation
+/// to die quietly and leave the ledger; surviving the window is the real failure.
+async fn self_restart_is_dying(mut shutdown: tokio::sync::watch::Receiver<bool>, grace: Duration) -> bool {
+    tokio::time::timeout(grace, shutdown.wait_for(|dying| *dying))
+        .await
+        .is_ok_and(|received| received.is_ok())
 }
 
 /// Snapshot each agent in turn, reporting progress and warnings as they happen so the update
@@ -1146,5 +1169,30 @@ mod tests {
         if let (Some(stable), Some(beta)) = (stable, beta) {
             assert_ne!(stable, beta);
         }
+    }
+
+    #[tokio::test]
+    async fn a_restart_error_while_shutting_down_is_the_update_succeeding() {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let verdict = tokio::spawn(self_restart_is_dying(shutdown_rx, Duration::from_secs(30)));
+        shutdown_tx.send_replace(true);
+        assert!(verdict.await.expect("adjudicator task"));
+    }
+
+    #[tokio::test]
+    async fn a_restart_error_with_no_shutdown_signal_is_a_real_failure() {
+        // The timeout itself is the behavior under test: no signal ever arrives, so a short
+        // real grace is deterministic.
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        assert!(!self_restart_is_dying(shutdown_rx, Duration::from_millis(50)).await);
+    }
+
+    #[tokio::test]
+    async fn a_shutdown_already_signaled_before_the_adjudicator_looks_still_counts() {
+        // The SIGTERM can land before spawn_blocking returns the systemctl error, so the flag
+        // must read as dying even when it flipped before anyone was waiting on it.
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        shutdown_tx.send_replace(true);
+        assert!(self_restart_is_dying(shutdown_rx, Duration::from_secs(30)).await);
     }
 }
