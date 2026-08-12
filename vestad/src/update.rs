@@ -97,6 +97,34 @@ pub(crate) fn version_comparable(version: &str) -> bool {
     !version.is_empty() && version.split('.').all(|part| part.parse::<u64>().is_ok())
 }
 
+/// What this vestad must do about state stamped with the version that wrote it: a restic snapshot
+/// or an export bundle. State from a newer vestad would run under older code, so it is refused;
+/// older state converges on the agent's next boot, so that one is the caller's call. An unstamped
+/// or incomparable version fails open. One owner of the decision; each caller owns its wording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum VersionGate {
+    Proceed,
+    ConfirmOlder { stamped: String, current: String },
+    RefuseNewer { stamped: String, current: String },
+}
+
+pub(crate) fn version_gate(stamped: Option<&str>, current: &str) -> VersionGate {
+    let Some(stamped) = stamped else {
+        return VersionGate::Proceed;
+    };
+    if !version_comparable(stamped) || !version_comparable(current) {
+        return VersionGate::Proceed;
+    }
+    let (stamped, current) = (stamped.to_string(), current.to_string());
+    if version_less_than(&current, &stamped) {
+        VersionGate::RefuseNewer { stamped, current }
+    } else if version_less_than(&stamped, &current) {
+        VersionGate::ConfirmOlder { stamped, current }
+    } else {
+        VersionGate::Proceed
+    }
+}
+
 // Persisted across restarts so the conditional request below keeps working
 // after vestad bounces. GitHub does not count a 304 response against the
 // unauthenticated rate limit, so a stored ETag makes steady-state polling free.
@@ -1043,6 +1071,29 @@ mod tests {
                 "swap_ok {swap_ok}, will_restart {will_restart}"
             );
         }
+    }
+
+    #[test]
+    fn version_gate_refuses_newer_confirms_older_passes_equal_and_unstamped() {
+        // Both consumers read this one decision: a restore refuses RefuseNewer, an import refuses
+        // it and confirms ConfirmOlder. An inverted comparison would flip both at once.
+        assert!(matches!(version_gate(Some("9.9.9"), "0.2.1"), VersionGate::RefuseNewer { .. }));
+        assert!(matches!(version_gate(Some("0.1.0"), "0.2.1"), VersionGate::ConfirmOlder { .. }));
+        assert!(matches!(version_gate(Some("0.2.1"), "0.2.1"), VersionGate::Proceed));
+        assert!(matches!(version_gate(None, "0.2.1"), VersionGate::Proceed));
+        // Unparseable fails open, matching the client-compat convention. A `v` prefix is one such
+        // shape: comparing it would drop the major component and read v0.1.0 as newer than 0.2.1.
+        assert!(matches!(version_gate(Some("dev"), "0.2.1"), VersionGate::Proceed));
+        assert!(matches!(version_gate(Some("v0.1.0"), "0.2.1"), VersionGate::Proceed));
+        assert!(matches!(version_gate(Some("0.1.0"), "dev"), VersionGate::Proceed));
+    }
+
+    #[test]
+    fn version_gate_carries_both_versions_for_the_caller_to_word() {
+        assert_eq!(
+            version_gate(Some("9.9.9"), "0.2.1"),
+            VersionGate::RefuseNewer { stamped: "9.9.9".into(), current: "0.2.1".into() }
+        );
     }
 
     #[test]

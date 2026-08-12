@@ -177,14 +177,14 @@ fn confirm(prompt: &str) -> bool {
 /// bundle: not a failure, so the caller still cleans up before it exits. The import creates a
 /// new agent, so nothing here is replaced, and the agent converges its state on its first boot.
 fn confirm_import_version(bundle_version: Option<&str>, yes: bool) -> Result<bool, String> {
-    match agent_bundle::import_version_gate(bundle_version, env!("CARGO_PKG_VERSION")) {
-        agent_bundle::ImportGate::Proceed => Ok(true),
-        agent_bundle::ImportGate::RefuseNewer { bundle, current } => Err(format!(
-            "this bundle was exported by vestad v{bundle}; this vestad is v{current} \
+    match update::version_gate(bundle_version, env!("CARGO_PKG_VERSION")) {
+        update::VersionGate::Proceed => Ok(true),
+        update::VersionGate::RefuseNewer { stamped, current } => Err(format!(
+            "this bundle was exported by vestad v{stamped}; this vestad is v{current} \
              and cannot import newer state; update vestad first"
         )),
-        agent_bundle::ImportGate::ConfirmOlder { bundle, current } => {
-            eprintln!("this bundle was exported by vestad v{bundle} and this vestad is v{current}.");
+        update::VersionGate::ConfirmOlder { stamped, current } => {
+            eprintln!("this bundle was exported by vestad v{stamped} and this vestad is v{current}.");
             eprintln!("the import creates a new agent, so no agent on this machine is replaced.");
             eprintln!("the new agent converges its state to v{current} on its first boot.");
             if yes {

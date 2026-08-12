@@ -172,6 +172,17 @@ pub async fn list_all_backups(docker: &Docker) -> Vec<BackupInfo> {
     all
 }
 
+/// The one version refusal a restore makes, reading the shared gate: state a newer vestad wrote
+/// would run under this older code. The older arm is the client's to confirm, so it proceeds.
+fn newer_state_refusal(backup_id: &str, stamped: Option<&str>, current: &str) -> Option<DockerError> {
+    match crate::update::version_gate(stamped, current) {
+        crate::update::VersionGate::RefuseNewer { stamped, current } => Some(DockerError::Failed(format!(
+            "backup {backup_id} was made by vestad v{stamped}; this vestad is v{current} and cannot restore newer state; update vestad first"
+        ))),
+        crate::update::VersionGate::Proceed | crate::update::VersionGate::ConfirmOlder { .. } => None,
+    }
+}
+
 /// Restore an agent from a backup snapshot. Refuses a snapshot written by a newer vestad before
 /// touching anything, then creates a pre-restore safety backup and replaces the container.
 pub async fn restore_backup(
@@ -195,15 +206,9 @@ pub async fn restore_backup(
         )));
     };
 
-    // State written by a newer vestad would run under this older code. Refuse while the agent is
-    // still untouched; updating vestad is what unblocks the restore.
-    let current = env!("CARGO_PKG_VERSION");
-    if let Some(made_by) = &info.vestad_version {
-        if crate::update::version_comparable(made_by) && crate::update::version_less_than(current, made_by) {
-            return Err(DockerError::Failed(format!(
-                "backup {backup_id} was made by vestad v{made_by}; this vestad is v{current} and cannot restore newer state; update vestad first"
-            )));
-        }
+    // Refuse while the agent is still untouched; updating vestad is what unblocks the restore.
+    if let Some(refusal) = newer_state_refusal(backup_id, info.vestad_version.as_deref(), env!("CARGO_PKG_VERSION")) {
+        return Err(refusal);
     }
 
     let status = container_status(docker, &cname).await;
@@ -403,8 +408,8 @@ mod tests {
         let restore_body = &src[restore_start..delete_start];
 
         let guard_pos = restore_body
-            .find("vestad_version")
-            .expect("restore_backup must compare the snapshot's vestad_version");
+            .find("newer_state_refusal")
+            .expect("restore_backup must consult the shared version gate");
         let stop_pos = restore_body
             .find("handoff_shutdown_reason")
             .expect("restore_backup hands off a shutdown reason before stopping the container");
@@ -416,6 +421,26 @@ mod tests {
             !restore_body.contains("from_version"),
             "from_version carries a `v` prefix that compares wrong; the guard reads vestad_version"
         );
+    }
+
+    #[test]
+    fn only_a_newer_stamp_refuses_a_restore() {
+        // Direction, not source position: an inverted comparison would lock every agent out of its
+        // own history while letting the one unrestorable snapshot through.
+        assert!(newer_state_refusal("b1", Some("9.9.9"), "0.2.1").is_some());
+        for stamped in [Some("0.1.0"), Some("0.2.1"), None, Some("dev"), Some("v9.9.9")] {
+            assert!(
+                newer_state_refusal("b1", stamped, "0.2.1").is_none(),
+                "restore must proceed for a stamp of {stamped:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_both_versions_and_the_snapshot() {
+        let refusal = newer_state_refusal("b1", Some("9.9.9"), "0.2.1").expect("newer state refuses");
+        let message = refusal.to_string();
+        assert!(message.contains("b1") && message.contains("9.9.9") && message.contains("0.2.1"), "{message}");
     }
 
     #[test]
