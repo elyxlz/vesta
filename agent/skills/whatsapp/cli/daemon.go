@@ -28,7 +28,7 @@ const (
 	DaemonClaimWait        = 3 * time.Second
 	daemonRecordPerms      = 0644
 	daemonDirPerms         = 0755
-	daemonUsage            = "usage: whatsapp daemon <start|stop|restart|status|hold|unhold> [--force] [--reason <text>] [serve flags]"
+	daemonUsage            = "usage: whatsapp daemon <start|stop|restart|status> [--force] [serve flags]"
 	whatsappLauncherInHome = "agent/skills/whatsapp/whatsapp"
 )
 
@@ -47,32 +47,6 @@ func daemonPidfile() string {
 
 func daemonLifecycleLog() string {
 	return filepath.Join(os.Getenv("HOME"), "agent", "logs", daemonName()+".log")
-}
-
-// holdFile is the operator's off switch for this instance. Every command brings the daemon up on
-// demand, so an account that must make no connection attempt at all (a number the provider has
-// flagged, suspended, or put under review) cannot be kept down by not starting it: one read-only
-// query is enough to spawn a serve that sits in the pairing state. The file lives beside the
-// instance's own data, so a named instance holds independently of the default one.
-func holdFile() string {
-	return filepath.Join(stateDataDir(), "hold")
-}
-
-// heldReason reports the hold and whatever note was set with it, so a refusal can say why the
-// hold exists rather than only that something refused.
-func heldReason() (string, bool) {
-	body, err := os.ReadFile(holdFile())
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(body)), true
-}
-
-func holdError(reason string) error {
-	if reason == "" {
-		return fmt.Errorf("whatsapp is on hold, so nothing starts the daemon; release it with `whatsapp daemon unhold` (%s)", holdFile())
-	}
-	return fmt.Errorf("whatsapp is on hold (%s), so nothing starts the daemon; release it with `whatsapp daemon unhold`", reason)
 }
 
 // whatsappLauncher is the skill's own launcher: a box's HOME is the checkout, and the
@@ -169,10 +143,6 @@ func runDaemon() {
 		daemonRestart()
 	case "status":
 		daemonStatus()
-	case "hold":
-		daemonHold()
-	case "unhold":
-		daemonUnhold()
 	default:
 		// A verb that does not exist is the caller's typo, not a daemon failure, so it answers
 		// with usage rather than the error envelope a caller retries on.
@@ -315,11 +285,6 @@ func ensureDaemon() error {
 // rival did not, and says so rather than taking credit for the daemon now running.
 func startDaemonProcess(serveArgs []string) (broughtUp bool, err error) {
 	sockPath := getSocketPath()
-	// The single choke point every bringup goes through (implicit, `daemon start`, `daemon
-	// restart`), so the hold cannot be routed around by picking a different verb.
-	if reason, held := heldReason(); held {
-		return false, holdError(reason)
-	}
 	if _, alive := livePid(); alive {
 		return false, nil
 	}
@@ -410,54 +375,6 @@ func daemonStart(serveArgs []string) {
 	printJSON(map[string]string{"status": status})
 }
 
-// daemonHold records the hold before stopping, never after: the file is what keeps the daemon
-// down, and a stop that runs first leaves a window in which any command brings it straight back.
-// A stop this refuses (the sync window, without --force) therefore still leaves the hold standing,
-// and says so, rather than dropping the hold because the daemon happened to be busy.
-func daemonHold() {
-	reason := extractFlag("reason")
-	if err := writeHold(reason); err != nil {
-		failDaemon("%s", err.Error())
-	}
-	result := map[string]string{"status": "held", "hold_file": holdFile()}
-	if reason != "" {
-		result["reason"] = reason
-	}
-	stopped, err := stopDaemon()
-	if err != nil {
-		result["daemon"] = "still running: " + err.Error()
-	} else {
-		result["daemon"] = stopped
-	}
-	printJSON(result)
-}
-
-// daemonUnhold releases the hold and starts nothing: whether the account should reconnect at all
-// is the operator's next decision, not a side effect of clearing the flag.
-func daemonUnhold() {
-	if err := clearHold(); err != nil {
-		failDaemon("%s", err.Error())
-	}
-	printJSON(map[string]string{"status": "released"})
-}
-
-func writeHold(reason string) error {
-	if err := os.MkdirAll(filepath.Dir(holdFile()), daemonDirPerms); err != nil {
-		return fmt.Errorf("could not create the hold directory: %v", err)
-	}
-	if err := os.WriteFile(holdFile(), []byte(reason+"\n"), daemonRecordPerms); err != nil {
-		return fmt.Errorf("could not write %s: %v", holdFile(), err)
-	}
-	return nil
-}
-
-func clearHold() error {
-	if err := os.Remove(holdFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("could not remove %s: %v", holdFile(), err)
-	}
-	return nil
-}
-
 // stopDaemon does the stop work and returns the resulting status ("already_stopped"
 // or "stopped") or an error. It prints NOTHING, so callers compose it without
 // emitting stray JSON: the stop verb prints one object, restart stays silent and
@@ -535,13 +452,6 @@ func daemonStatus() {
 		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
 		"pair_attempts_last_day":   len(attemptsWithin(st.PairAttempts, now, PairDayWindow)),
 		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
-	}
-	// Reported unconditionally, so "is this account being kept down on purpose?" is answered by
-	// the one verb that never starts anything.
-	result["held"] = false
-	if reason, held := heldReason(); held {
-		result["held"] = true
-		result["hold_reason"] = reason
 	}
 	if output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", nil); connected && exitCode == 0 {
 		var connState any

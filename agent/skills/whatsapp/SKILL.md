@@ -26,23 +26,19 @@ Never recover by manually re-pairing or restarting the daemon.
 
 ## Holding an account offline
 
-When a number must make no connection attempt at all (the provider flagged it,
-suspended it, or put it under review), not starting the daemon does not keep it
-down: every command brings it up on demand, including read-only ones like
-`list-contacts`, and commenting the start line out of the restart skill only
-covers boot. Set the hold instead, and it refuses every bringup path:
+When the provider flags, suspends, or reviews a number, it must make no connection
+attempt until they clear it. Keep it down through the restart daemons list, which is
+the one place that decides what runs:
 
 ```bash
-whatsapp daemon hold --reason 'under provider review'   # stops it, keeps it down
-whatsapp daemon status                                  # "held": true, and starts nothing
-whatsapp daemon unhold                                  # releases; starts nothing by itself
+whatsapp daemon stop --instance <name>   # bring the running account down now
 ```
 
-The hold is per instance, so a flagged account does not take a healthy one down
-with it. `daemon status` is the one verb that reports without starting anything,
-so it answers "is this being kept down on purpose?" while the hold is in force.
-A stop refused by the post-link sync window still leaves the hold standing, so
-the daemon comes down at the first moment it safely can.
+Then remove that account's `whatsapp daemon start` line from your restart daemons
+(the `restart` skill owns that list). Boot and the liveness check start only what
+that list holds, so the account stays down across restarts. Do not run other whatsapp
+commands against it in the meantime: each one starts the daemon on demand. To bring
+it back once the provider clears it, add the line again and run `whatsapp daemon start`.
 
 ## Choose the setup method
 
