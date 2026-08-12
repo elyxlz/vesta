@@ -102,8 +102,20 @@ so it survives every restart. Never point two instances at the same account/devi
 ## Operational notes
 
 - For five minutes after a successful link, history sync locks daemon
-  stop/restart. A brief websocket EOF or `can't send presence without PushName
-  set` is normal in this window; do not bounce the daemon.
+  stop/restart. A brief websocket EOF is normal in this window; do not bounce the
+  daemon.
+- `can't send presence without PushName set` is only transient inside that window.
+  **Past it, the same line means the push name was never set and presence is
+  permanently broken**, so the account never shows online or typing and never sends
+  read receipts: the people it talks to see their messages stay undelivered-looking
+  forever. Nothing else reports it, and the only symptom is that warning repeating,
+  so it reads as known noise and gets dismissed. Seen on one box as 223 of them
+  across twelve days.
+  Fix it with `whatsapp set-profile-name "<name>"`, which sets the local push name
+  presence actually requires. The account-wide leg needs app-state keys a fresh
+  headless number usually lacks and is skipped with a warning; that skip is fine and
+  is not the failure. Confirm from the log that the call did **not** warn
+  `broadcasting presence failed`.
 - Use a dedicated account for the assistant. Linking a personal account grants it
   access to that account's chats.
 
