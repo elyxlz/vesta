@@ -3865,22 +3865,25 @@ mod tests {
         ];
         let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
 
+        // `created_at` is restic's compact stamp, the shape the clients sort and format. The two
+        // optional version fields appear both ways: stamped on the kinds that carry them and absent
+        // on a pre-stamp snapshot, so the fixture pins the omitted shape too.
         let backups: Vec<serde_json::Value> = [
-            BackupType::Manual,
-            BackupType::Periodic,
-            BackupType::PreUpdate,
-            BackupType::PreRestore,
+            (BackupType::Manual, None, None),
+            (BackupType::Periodic, None, Some("0.1.0")),
+            (BackupType::PreUpdate, Some("v0.1.0"), Some("0.1.0")),
+            (BackupType::PreRestore, None, Some("0.1.0")),
         ]
         .into_iter()
-        .map(|backup_type| {
+        .map(|(backup_type, from_version, vestad_version)| {
             serde_json::to_value(BackupInfo {
                 id: "1a2b3c4d".into(),
                 agent_name: "sample-agent".into(),
                 backup_type,
-                created_at: "2026-01-01T00:00:00Z".into(),
+                created_at: "20260101-000000".into(),
                 size: 1234567890,
-                from_version: None,
-                vestad_version: None,
+                from_version: from_version.map(str::to_string),
+                vestad_version: vestad_version.map(str::to_string),
             })
             .expect("serialize BackupInfo")
         })
