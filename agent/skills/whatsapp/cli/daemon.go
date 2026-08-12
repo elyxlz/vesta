@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -259,22 +260,35 @@ func pidRecordFor(pid int) string {
 	return strconv.Itoa(pid)
 }
 
-// daemonBringupArgs picks the flags an implicit bringup starts the daemon with: the last run's
-// recorded flags, so a crashed --read-only or --no-notifications daemon comes back with the
-// control intact rather than write-capable, falling back to the instance flag alone when no run
-// was ever recorded. Every implicit bringup reads it, so no command path can drop the control.
+// daemonBringupArgs is the flag set a start with no control flag of its own binds with: the last
+// run's recorded flags, so a --read-only or --no-notifications account is never revived
+// write-capable, falling back to the instance flag alone when no run was ever recorded.
 func daemonBringupArgs() []string {
 	return restartServeArgs(loadStateFromDisk(stateDataDir()))
 }
 
-// ensureDaemon is the self-bootstrap every agent-facing command runs: a socket that answers is
-// all those commands need, whoever brought it up.
-func ensureDaemon() error {
+// startServeArgs is the flag set a start binds with: its own when it carries a control flag
+// (--read-only / --no-notifications), otherwise the recorded flags, so a bare recovery start that
+// omits the control never brings a read-only account back write-capable.
+func startServeArgs(passed []string) []string {
+	if hasControlFlag(passed) {
+		return passed
+	}
+	return daemonBringupArgs()
+}
+
+func hasControlFlag(args []string) bool {
+	return slices.Contains(args, "--read-only") || slices.Contains(args, "--no-notifications")
+}
+
+// requireDaemon asserts the daemon is answering and names the fix if it is not. No command starts
+// it: the restart skill brings it up at boot, or `whatsapp daemon start` does, so an account left
+// out of the restart daemons stays down until it is started on purpose.
+func requireDaemon() error {
 	if daemonAlive(getSocketPath()) {
 		return nil
 	}
-	_, err := startDaemonProcess(daemonBringupArgs())
-	return err
+	return fmt.Errorf("whatsapp daemon is not running; start it with `whatsapp daemon start`")
 }
 
 // startDaemonProcess launches `whatsapp serve` detached in its own session, records its pid,
@@ -364,7 +378,7 @@ func daemonStart(serveArgs []string) {
 		printJSON(map[string]string{"status": "already_running"})
 		return
 	}
-	broughtUp, err := startDaemonProcess(serveArgs)
+	broughtUp, err := startDaemonProcess(startServeArgs(serveArgs))
 	if err != nil {
 		failDaemon("%s", err.Error())
 	}

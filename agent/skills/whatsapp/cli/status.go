@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 )
 
-// runStatus is the agent's one WhatsApp health command. It ensures the
-// background daemon is up (idempotent, the agent never manages it), reads the
-// live connection, and prints a simple self-explanatory verdict:
+// runStatus is the agent's one WhatsApp health command. It requires the background
+// daemon to be running (it never starts one), reads the live connection, and prints
+// a simple self-explanatory verdict:
 //
+//	daemon down:{"running":false,"next":"start the daemon: whatsapp daemon start"}
 //	linked:    {"linked":true,"number":"+44...","connected":true}
 //	not linked:{"linked":false,"connected":false,"next":"run: whatsapp connect --source <vesta-cloud|doubletick|self-managed>","reason":"..."}
 func runStatus() {
@@ -16,8 +17,12 @@ func runStatus() {
 	if err != nil {
 		failJSON("%s", err.Error())
 	}
-	if err := ensureDaemon(); err != nil {
-		printJSON(notLinkedStatus(resolved, err.Error()))
+	if err := requireDaemon(); err != nil {
+		printJSON(map[string]any{
+			"running": false,
+			"next":    "start the daemon: whatsapp daemon start",
+			"reason":  err.Error(),
+		})
 		return
 	}
 	output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", nil)

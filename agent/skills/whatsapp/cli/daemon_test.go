@@ -627,11 +627,10 @@ func TestRestartWithoutARecordedRunFallsBackToInstanceArgs(t *testing.T) {
 	})
 }
 
-// TestDaemonBringupReplaysRecordedFlagsAfterCrash: a plain command after a --read-only daemon
-// crashed brings the daemon back read-only from the recorded flags in state.json, not
-// write-capable, even though the command's own args carry no --read-only. Every implicit bringup
-// (whatsapp status, connect, provision, the one-shot path) reads daemonBringupArgs, so this pins
-// the flags all of them start with.
+// TestDaemonBringupReplaysRecordedFlagsAfterCrash: after a --read-only daemon crashed, a bare
+// `daemon start` that carries no --read-only of its own brings it back read-only from the recorded
+// flags in state.json, not write-capable. startServeArgs reads daemonBringupArgs for a start with
+// no control flag, so this pins the flags a recovery start binds with.
 func TestDaemonBringupReplaysRecordedFlagsAfterCrash(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -665,6 +664,34 @@ func TestDaemonBringupFallsBackToInstanceArgsWithoutARecording(t *testing.T) {
 	serveArgs := daemonBringupArgs()
 	if !reflect.DeepEqual(serveArgs, []string{"--instance", "personal"}) {
 		t.Fatalf("without a recording the bringup falls back to instance args only, got %v", serveArgs)
+	}
+}
+
+// TestStartServeArgsKeepsAnExplicitControlFlag: a start that states --read-only itself binds with
+// exactly its own args, so the read-only setup line is never overridden by a recorded run.
+func TestStartServeArgsKeepsAnExplicitControlFlag(t *testing.T) {
+	passed := []string{"--instance", "personal", "--read-only"}
+	if got := startServeArgs(passed); !reflect.DeepEqual(got, passed) {
+		t.Fatalf("a start carrying --read-only must use its own args, got %v", got)
+	}
+}
+
+// TestStartServeArgsReplaysControlOnAFlaglessStart: a recovery `daemon start` that omits
+// --read-only still comes back read-only from the recorded flags, so no start revives a read-only
+// account write-capable.
+func TestStartServeArgsReplaysControlOnAFlaglessStart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	withArgs(t, "--instance", "personal")
+	dataDir := stateDataDir()
+	if err := os.MkdirAll(dataDir, daemonDirPerms); err != nil {
+		t.Fatal(err)
+	}
+	newStateStore(dataDir).update(func(s *daemonState) {
+		s.Args, s.PID, s.StartedAt = []string{"--instance", "personal", "--read-only"}, 4242, time.Now().UTC()
+	})
+	if got := startServeArgs([]string{"--instance", "personal"}); !slices.Contains(got, "--read-only") {
+		t.Fatalf("a flagless recovery start must replay --read-only, got %v", got)
 	}
 }
 

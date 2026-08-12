@@ -5,10 +5,10 @@ description: Set up and operate WhatsApp accounts, messages, contacts, groups, a
 
 # WhatsApp (CLI: `whatsapp`)
 
-Every `whatsapp` command starts the daemon on demand, and the restart skill runs
-`whatsapp daemon start` at boot (so inbound notifications flow before you send
-anything), so let it manage itself. Your whole world is four verbs: **connect,
-status, send, messages** (plus profile and calls).
+The restart skill runs `whatsapp daemon start` at boot, so inbound notifications flow
+before you send anything. A command never starts the daemon for you, so a stopped
+account stays down until you start it on purpose. Your whole world is four verbs:
+**connect, status, send, messages** (plus profile and calls).
 
 ## The linking rule
 
@@ -35,10 +35,10 @@ whatsapp daemon stop --instance <name>   # bring the running account down now
 ```
 
 Then remove that account's `whatsapp daemon start` line from your restart daemons
-(the `restart` skill owns that list). Boot and the liveness check start only what
-that list holds, so the account stays down across restarts. Do not run other whatsapp
-commands against it in the meantime: each one starts the daemon on demand. To bring
-it back once the provider clears it, add the line again and run `whatsapp daemon start`.
+(the `restart` skill owns that list). No command starts the daemon on its own, so with
+the line gone nothing brings the account back: not boot, not the liveness check, not a
+routine query. To bring it back once the provider clears it, add the line again and run
+`whatsapp daemon start`.
 
 ## Choose the setup method
 
