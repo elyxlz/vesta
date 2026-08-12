@@ -14,6 +14,7 @@ account stays down until you start it on purpose. Your whole world is four verbs
 
 Always start with `whatsapp status`:
 
+- `{"running":false,...}`: the daemon is down; start it with `whatsapp daemon start`, unless you are deliberately holding this account offline.
 - `{"linked":true,...}`: use the existing link, do not pair again.
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
