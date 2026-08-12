@@ -54,11 +54,8 @@ export function restorePrompt(
     pointLine(point),
     `This saves a safety snapshot first, then returns ${agentName} to this point and restarts them.`,
   ];
-  if (
-    point.eligibility === "older" &&
-    point.vestadVersion !== null &&
-    gatewayVersion !== undefined
-  ) {
+  // "older" is decided by comparing these two versions, so reaching it means both are known.
+  if (point.eligibility === "older") {
     lines.push(
       `This snapshot comes from vestad ${point.vestadVersion}, and the gateway runs ${gatewayVersion}. The first boot after the restore runs migrations to converge the difference.`,
     );

@@ -86,14 +86,18 @@ export function SelectedAgentProvider({
     "restart failed",
   );
   const [backups, setBackups] = useState<BackupInfo[]>([]);
+  // An empty list and a list that never arrived look identical, so the dialog would report a
+  // failed read as "no snapshots yet" and invite the user to trust it.
+  const [backupsFailed, setBackupsFailed] = useState(false);
 
   // Stable per agent: the backups dialog re-reads the list every time it opens, and an identity
   // that changed each render would make that a loop.
   const refreshBackups = useCallback(async () => {
     try {
       setBackups(await listBackups(name));
+      setBackupsFailed(false);
     } catch {
-      /* ignore */
+      setBackupsFailed(true);
     }
   }, [name]);
 
@@ -101,10 +105,12 @@ export function SelectedAgentProvider({
     let ignore = false;
     listBackups(name)
       .then((fetched) => {
-        if (!ignore) setBackups(fetched);
+        if (ignore) return;
+        setBackups(fetched);
+        setBackupsFailed(false);
       })
       .catch(() => {
-        /* ignore */
+        if (!ignore) setBackupsFailed(true);
       });
     return () => {
       ignore = true;
@@ -174,6 +180,7 @@ export function SelectedAgentProvider({
     restart,
     backup: () => void backup(),
     backups,
+    backupsFailed,
     refreshBackups,
     restore,
     removeBackup,

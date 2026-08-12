@@ -11,13 +11,18 @@ const refreshBackups = vi.fn(() => Promise.resolve());
 const onOpenChange = vi.fn();
 
 // What the mocked providers report; each test sets what it needs before rendering.
-const selected = { backups: [] as BackupInfo[], isBusy: false };
+const selected = {
+  backups: [] as BackupInfo[],
+  backupsFailed: false,
+  isBusy: false,
+};
 const gateway = { gatewayVersion: "0.2.0" };
 
 vi.mock("@/providers/SelectedAgentProvider", () => ({
   useSelectedAgent: () => ({
     name: "bob",
     backups: selected.backups,
+    backupsFailed: selected.backupsFailed,
     isBusy: selected.isBusy,
     backup,
     refreshBackups,
@@ -73,6 +78,7 @@ function pointAt(index: number): HTMLElement {
 function resetProviders() {
   vi.clearAllMocks();
   selected.backups = [OLDER_MANUAL, NEWER_PRE_UPDATE, NIGHTLY];
+  selected.backupsFailed = false;
   selected.isBusy = false;
   gateway.gatewayVersion = "0.2.0";
 }
@@ -205,5 +211,26 @@ describe("BackupsDialog with no snapshots", () => {
     renderDialog();
     expect(screen.getByText("no snapshots yet.")).toBeTruthy();
     expect(screen.queryAllByRole("listitem").length).toBe(0);
+  });
+
+  it("says the read failed rather than claiming the agent has no history", () => {
+    selected.backupsFailed = true;
+    renderDialog();
+    expect(screen.getByText("couldn't load snapshots.")).toBeTruthy();
+    expect(screen.queryByText("no snapshots yet.")).toBeNull();
+  });
+});
+
+describe("BackupsDialog when a refresh fails over a loaded list", () => {
+  beforeEach(() => {
+    resetProviders();
+    selected.backupsFailed = true;
+  });
+  afterEach(cleanup);
+
+  it("keeps showing the snapshots it already has", () => {
+    renderDialog();
+    expect(screen.getAllByRole("listitem").length).toBe(3);
+    expect(screen.queryByText("couldn't load snapshots.")).toBeNull();
   });
 });

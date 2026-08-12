@@ -153,6 +153,7 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
   const {
     name,
     backups,
+    backupsFailed,
     isBusy,
     backup,
     refreshBackups,
@@ -207,7 +208,11 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
         </DialogDescription>
       </DialogHeader>
       {points.length === 0 ? (
-        <p className="text-sm text-muted-foreground">no snapshots yet.</p>
+        // A read that failed and an agent with no history both leave the timeline empty, so the
+        // read's outcome picks the words; reopening the dialog retries.
+        <p className="text-sm text-muted-foreground">
+          {backupsFailed ? "couldn't load snapshots." : "no snapshots yet."}
+        </p>
       ) : (
         <ul className="grid max-h-[45vh] min-w-0 gap-4 overflow-y-auto">
           {points.map((point) => (
