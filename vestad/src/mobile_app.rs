@@ -538,6 +538,18 @@ async fn deliver_agent_event(context: DeliveryContext, event: QueuedAgentEvent) 
         .iter()
         .map(|device| message_for(device, &event.agent, &event.event_type, &event.event))
         .collect();
+    // The journal record that this push left the gateway: every push funnels through here, and
+    // failures alone are not a trace (the 5am incident was diagnosed blind because delivered
+    // pushes logged nothing).
+    if !messages.is_empty() {
+        tracing::info!(
+            agent = %event.agent,
+            event_type = %event.event_type,
+            state = event.event["state"].as_str().unwrap_or(""),
+            devices = messages.len(),
+            "delivering mobile push"
+        );
+    }
     // Own each batch before it enters the spawned delivery worker. Borrowing
     // `messages.chunks()` through the buffered async stream makes the worker
     // future non-`'static`, which `tokio::spawn` correctly rejects.
