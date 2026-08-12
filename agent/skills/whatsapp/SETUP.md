@@ -105,12 +105,13 @@ so it survives every restart. Never point two instances at the same account/devi
   stop/restart. A brief websocket EOF is normal in this window; do not bounce the
   daemon.
 - `can't send presence without PushName set` is only transient inside that window.
-  **Past it, the same line means the push name was never set and presence is
-  permanently broken**, so the account never shows online or typing and never sends
-  read receipts: the people it talks to see their messages stay undelivered-looking
-  forever. Nothing else reports it, and the only symptom is that warning repeating,
-  so it reads as known noise and gets dismissed. Seen on one box as 223 of them
-  across twelve days.
+  **Past it, the same line means the push name was never set, so the account never
+  shows online.** That is the whole effect. Read receipts and typing both survive it:
+  `SendChatPresence` has no push-name check, and a presence failure is deliberately
+  kept from suppressing the read receipt (`events.go`, pinned by
+  `TestReadReceiptSurvivesPresenceFailure`). Nothing else reports the problem and the
+  only symptom is that one warning repeating, so it reads as known noise and gets
+  dismissed indefinitely.
   Fix it with `whatsapp set-profile-name "<name>"`, which sets the local push name
   presence actually requires. The account-wide leg needs app-state keys a fresh
   headless number usually lacks and is skipped with a warning; that skip is fine and
