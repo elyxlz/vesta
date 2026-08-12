@@ -1809,6 +1809,21 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
+/// The port a (re)registration binds. A cached port is reused only when it sits in the safe band
+/// above the kernel's ephemeral range; a cached port at or below it can be handed out as a
+/// transient outbound source port and fail the caller's `bind()`, so it is dropped and a fresh
+/// safe port allocated. Every daemon re-registers on start, so a service still on a low port
+/// relocates itself the next time its daemon starts.
+// LEGACY(remove-when: no fleet service is registered on a port <= ephemeral_port_high): once no
+// agent carries a sub-ephemeral registration, the relocation arm never fires and this folds back
+// into "reuse cached, else allocate".
+fn port_for_registration(cached_port: Option<u16>, registry: &HashMap<String, HashMap<String, ServiceEntry>>, agent: &str) -> Option<u16> {
+    match cached_port {
+        Some(port) if port > ephemeral_port_high() => Some(port),
+        _ => allocate_service_port(registry, agent),
+    }
+}
+
 /// `public` is intrinsic to a registration, like the port: an absent field inherits
 /// the cached entry's value, so a re-register that only wants the port (whatsapp's
 /// `resolveVoiceBaseURL`, voice's own status/stop/restart) cannot silently revoke a
@@ -1899,10 +1914,8 @@ async fn register_service_handler(
         .get(&name)
         .and_then(|services| services.get(&service_name))
         .copied();
-    let port = match cached_entry.map(|entry| entry.port) {
-        Some(cached_port) => cached_port,
-        None => allocate_service_port(&settings.services, &name).ok_or_else(no_free_ports_err)?,
-    };
+    let port = port_for_registration(cached_entry.map(|entry| entry.port), &settings.services, &name)
+        .ok_or_else(no_free_ports_err)?;
     let public = resolve_public(body.public, cached_entry);
 
     let entry = ServiceEntry { port, public };
@@ -3362,8 +3375,9 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, resolve_public, spawn_pipeline_sse,
-        truncate_chars, update, valid_user_notification_kind, RegisterServiceBody,
+        allocate_service_port, ensure_not_rebuilding, ephemeral_port_high, port_for_registration,
+        resolve_public, spawn_pipeline_sse, truncate_chars, update, valid_user_notification_kind,
+        RegisterServiceBody, SERVICE_PORT_MAX, SERVICE_PORT_MIN,
     };
 
     #[test]
@@ -3695,32 +3709,37 @@ mod tests {
         );
     }
 
-    // vestad cannot probe bindability inside an agent's network namespace, since each agent has
-    // its own, so an existing registration is always reused: no liveness check, no bind probe.
-    // The caller's own bind() is the only
-    // real check, same as it is for every service. Replays register_service_handler's port
-    // decision, which is now this simple.
     #[test]
-    fn register_service_handler_reuses_a_cached_port_unconditionally() {
+    fn port_for_registration_keeps_a_safe_cached_port() {
+        // A port above the ephemeral range cannot be stolen as an outbound source port, so a
+        // re-registration reuses it unchanged (sticky, no churn on the common path).
+        let safe = SERVICE_PORT_MAX;
+        assert!(safe > ephemeral_port_high(), "test assumes a normal ephemeral range");
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        assert_eq!(port_for_registration(Some(safe), &empty, "agent"), Some(safe));
+    }
+
+    #[test]
+    fn port_for_registration_relocates_a_sub_ephemeral_cached_port() {
+        // A cached port the kernel can reuse as a transient outbound source port is dropped and a
+        // fresh safe one allocated, so the daemon's next re-register moves it out of harm's way.
+        let low = SERVICE_PORT_MIN;
+        assert!(low <= ephemeral_port_high(), "test assumes SERVICE_PORT_MIN is sub-ephemeral");
         let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
         registry.entry("agent".into()).or_default().insert(
-            "dashboard".into(),
-            ServiceEntry {
-                port: 55000,
-                public: false,
-            },
+            "tasks".into(),
+            ServiceEntry { port: low, public: false },
         );
+        let port = port_for_registration(Some(low), &registry, "agent").expect("allocate");
+        assert!(port > ephemeral_port_high(), "a sub-ephemeral cached port must relocate above the range");
+        assert_ne!(port, low);
+    }
 
-        let cached = registry
-            .get("agent")
-            .and_then(|services| services.get("dashboard"))
-            .map(|entry| entry.port);
-        let resolved = match cached {
-            Some(port) => port,
-            None => allocate_service_port(&registry, "agent").expect("a port should be free"),
-        };
-
-        assert_eq!(resolved, 55000, "an existing registration is always reused");
+    #[test]
+    fn port_for_registration_allocates_a_safe_port_when_uncached() {
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let port = port_for_registration(None, &empty, "agent").expect("allocate");
+        assert!(port > ephemeral_port_high(), "a first registration lands in the safe band");
     }
 
     // Reproduction of vesta#1323: the caller re-registering is often a resolver that never
