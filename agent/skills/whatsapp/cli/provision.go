@@ -30,7 +30,7 @@ func runProvision(source, opener, directURL, directKey string) {
 	}
 	output, exitCode, connected := trySocketCommand(getSocketPath(), "provision", args)
 	if !connected {
-		failJSON("daemon not answering after start; check 'whatsapp daemon status'")
+		failJSON("daemon not answering; check 'whatsapp daemon status'")
 	}
 	emitAndExit(output, exitCode)
 }

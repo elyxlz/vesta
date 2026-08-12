@@ -11,8 +11,8 @@ the agent image.
 1. Run `~/agent/skills/whatsapp/setup.sh`. It links the launcher onto `PATH`,
    warms the build cache, downloads the transcription model, and starts the
    daemon. Safe to re-run.
-2. So inbound notifications survive a container restart, read the `restart` skill
-   and add `whatsapp daemon start` to your restart daemons.
+2. Add `whatsapp daemon start` to your restart daemons, so inbound notifications
+   survive a container restart. The `restart` skill owns that list.
 
 ## Select one account method
 
@@ -45,7 +45,7 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
 
 `whatsapp status` is the primary diagnostic:
 
-- `{"running":false,...}`: the daemon is down; start it with `whatsapp daemon start`. It is never started for you.
+- `{"running":false,...}`: the daemon is down; start it with `whatsapp daemon start`.
 - `{"linked":true,"connected":true,...}`: healthy.
 - `{"linked":true,"connected":false,...}`: let the daemon reconnect; use the
   returned `next` only if it cannot.
@@ -55,8 +55,8 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
   approval first (see the [linking rule](SKILL.md#the-linking-rule)).
 
 `whatsapp daemon status` adds pairing-attempt and sync-lock detail;
-`~/agent/logs/whatsapp.log` has daemon output. No command starts the daemon for you;
-use `whatsapp daemon start` to bring up a stopped one, and never run `whatsapp serve` by hand.
+`~/agent/logs/whatsapp.log` has daemon output. No command starts the daemon for you.
+Use `whatsapp daemon start` to bring up a stopped one. Never run `whatsapp serve` by hand.
 
 A headless (Vesta Cloud or Double Tick) `whatsapp connect` returns a terminal
 status. Handle each:
@@ -93,11 +93,11 @@ whatsapp connect --source self-managed --instance personal
 ```
 
 `--read-only` blocks sending, receipts, and presence; `--no-notifications` silences
-notifications. `whatsapp connect` requires a running daemon and never starts one, so it links
-through the daemon you started and leaves the flag in force: the instance is never write-capable.
-A later bare `whatsapp daemon start` replays the recorded flags, so it comes back read-only too.
-Keep the flag on that instance's `whatsapp daemon start` line in your restart daemons so it
-survives every restart. Never point two instances at the same account/device store.
+notifications. `whatsapp connect` requires a running daemon, so it links through the daemon you
+started and the flag stays in force. A later `whatsapp daemon start` that omits the flag replays it
+from the recorded run, so the instance comes back read-only. Keep the flag on that instance's
+`whatsapp daemon start` line in your restart daemons so it survives every restart. Never point two
+instances at the same account/device store.
 
 ## Operational notes
 

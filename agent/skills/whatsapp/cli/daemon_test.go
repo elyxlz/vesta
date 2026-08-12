@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -627,71 +626,56 @@ func TestRestartWithoutARecordedRunFallsBackToInstanceArgs(t *testing.T) {
 	})
 }
 
-// TestDaemonBringupReplaysRecordedFlagsAfterCrash: after a --read-only daemon crashed, a bare
-// `daemon start` that carries no --read-only of its own brings it back read-only from the recorded
-// flags in state.json, not write-capable. startServeArgs reads daemonBringupArgs for a start with
-// no control flag, so this pins the flags a recovery start binds with.
-func TestDaemonBringupReplaysRecordedFlagsAfterCrash(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	// The next command targets the same instance but carries no --read-only of its own.
-	withArgs(t, "--instance", "personal")
-	dataDir := stateDataDir()
-	if err := os.MkdirAll(dataDir, daemonDirPerms); err != nil {
-		t.Fatal(err)
+// recordRunForTest writes the flags a serve run left in state.json, the record a start replays a
+// missing control flag from. No args means no run was ever recorded.
+func recordRunForTest(t *testing.T, dataDir string, args []string) {
+	t.Helper()
+	if len(args) == 0 {
+		return
 	}
-	// A read-only daemon ran, recorded its flags, then crashed. state.json persists.
-	newStateStore(dataDir).update(func(s *daemonState) {
-		s.Args, s.PID, s.StartedAt = []string{"--instance", "personal", "--read-only"}, 4242, time.Now().UTC()
-	})
-
-	serveArgs := daemonBringupArgs()
-	if !slices.Contains(serveArgs, "--read-only") {
-		t.Fatalf("bringup must replay the recorded --read-only flag, got %v", serveArgs)
-	}
-	if !slices.Contains(serveArgs, "personal") {
-		t.Fatalf("bringup must keep the recorded instance, got %v", serveArgs)
-	}
-}
-
-// TestDaemonBringupFallsBackToInstanceArgsWithoutARecording pins the first-ever bringup:
-// with no recorded run it falls back to the instance flag alone (the linkServeArgs shape),
-// so a cold start still works and carries no stray --read-only.
-func TestDaemonBringupFallsBackToInstanceArgsWithoutARecording(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	withArgs(t, "--instance", "personal")
-	serveArgs := daemonBringupArgs()
-	if !reflect.DeepEqual(serveArgs, []string{"--instance", "personal"}) {
-		t.Fatalf("without a recording the bringup falls back to instance args only, got %v", serveArgs)
-	}
-}
-
-// TestStartServeArgsKeepsAnExplicitControlFlag: a start that states --read-only itself binds with
-// exactly its own args, so the read-only setup line is never overridden by a recorded run.
-func TestStartServeArgsKeepsAnExplicitControlFlag(t *testing.T) {
-	passed := []string{"--instance", "personal", "--read-only"}
-	if got := startServeArgs(passed); !reflect.DeepEqual(got, passed) {
-		t.Fatalf("a start carrying --read-only must use its own args, got %v", got)
-	}
-}
-
-// TestStartServeArgsReplaysControlOnAFlaglessStart: a recovery `daemon start` that omits
-// --read-only still comes back read-only from the recorded flags, so no start revives a read-only
-// account write-capable.
-func TestStartServeArgsReplaysControlOnAFlaglessStart(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	withArgs(t, "--instance", "personal")
-	dataDir := stateDataDir()
 	if err := os.MkdirAll(dataDir, daemonDirPerms); err != nil {
 		t.Fatal(err)
 	}
 	newStateStore(dataDir).update(func(s *daemonState) {
-		s.Args, s.PID, s.StartedAt = []string{"--instance", "personal", "--read-only"}, 4242, time.Now().UTC()
+		s.Args, s.PID, s.StartedAt = args, 4242, time.Now().UTC()
 	})
-	if got := startServeArgs([]string{"--instance", "personal"}); !slices.Contains(got, "--read-only") {
-		t.Fatalf("a flagless recovery start must replay --read-only, got %v", got)
+}
+
+// TestStartServeArgs pins the flag set a `daemon start` binds with: every flag it was given, plus
+// each control flag the last recorded run carried and this start left out. So a recovery start
+// after a crash never revives a --read-only account write-capable, and a flag newly added to the
+// start line still takes effect.
+func TestStartServeArgs(t *testing.T) {
+	readOnlyRun := []string{"--instance", "personal", "--read-only"}
+	cases := []struct {
+		name     string
+		recorded []string
+		passed   []string
+		want     []string
+	}{{
+		name:     "a recovery start replays the control it left out",
+		recorded: readOnlyRun,
+		passed:   []string{"--instance", "personal"},
+		want:     []string{"--instance", "personal", "--read-only"},
+	}, {
+		name:   "the first ever start carries no stray control",
+		passed: []string{"--instance", "personal"},
+		want:   []string{"--instance", "personal"},
+	}, {
+		name:     "a start keeps its own flags and gains only the missing control",
+		recorded: readOnlyRun,
+		passed:   []string{"--instance", "personal", "--skip-senders", "+390000000000", "--no-notifications"},
+		want:     []string{"--instance", "personal", "--skip-senders", "+390000000000", "--no-notifications", "--read-only"},
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			withArgs(t, "--instance", "personal")
+			recordRunForTest(t, stateDataDir(), tc.recorded)
+			if got := startServeArgs(tc.passed); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("startServeArgs(%v) = %v, want %v", tc.passed, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -27,19 +27,16 @@ Never recover by manually re-pairing or restarting the daemon.
 
 ## Holding an account offline
 
-When the provider flags, suspends, or reviews a number, it must make no connection
-attempt until they clear it. Keep it down through the restart daemons list, which is
-the one place that decides what runs:
+When the provider flags, suspends, or reviews a number, that account must make no
+connection attempt until they clear it:
 
 ```bash
-whatsapp daemon stop --instance <name>   # bring the running account down now
+whatsapp daemon stop --instance <name>
 ```
 
-Then remove that account's `whatsapp daemon start` line from your restart daemons
-(the `restart` skill owns that list). No command starts the daemon on its own, so with
-the line gone nothing brings the account back: not boot, not the liveness check, not a
-routine query. To bring it back once the provider clears it, add the line again and run
-`whatsapp daemon start`.
+Then remove that account's `whatsapp daemon start` line from your restart daemons (the
+`restart` skill owns that list), so no boot brings it back. To return it once the provider
+clears it, add the line again and run `whatsapp daemon start --instance <name>`.
 
 ## Choose the setup method
 

@@ -354,8 +354,6 @@ func stripGlobalFlags(args []string) []string {
 
 func runOneShot(command string) {
 	sockPath := getSocketPath()
-	// The daemon is started on purpose (the restart skill at boot, or `whatsapp daemon start`),
-	// never implicitly by a command, so an account left out of the restart daemons stays down.
 	if err := requireDaemon(); err != nil {
 		failJSON("%s", err.Error())
 	}
