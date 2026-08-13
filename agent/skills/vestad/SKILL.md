@@ -17,10 +17,10 @@ Every call authenticates with the agent's own token:
 from `/run/vestad-env`, already exported into the environment. The API is
 `https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
 
-This skill's helpers are commands: `register-service`, `service-key`, `user-notification`, and
-`vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
+This skill's helpers are commands: `register-service`, `deregister-service`, `service-key`,
+`user-notification`, and `vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
 `PATH` under its filename, so a full path like
-`~/agent/skills/vestad/scripts/register-service` runs exactly the same script. These four helpers
+`~/agent/skills/vestad/scripts/register-service` runs exactly the same script. These helpers
 are the only commands startup links; every other skill puts its own command on PATH from its own
 setup: `uv tool install --editable <skill>/cli` for a `cli/` project, or
 `ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>` for a single launcher.
@@ -65,6 +65,18 @@ PORT=$(register-service file-host --public)
 The dashboard is private, and the app reaches it with a minted service key, so pass `--public`
 only for something that must load with no credential at all, like a QR link a stranger's phone
 opens or a webhook an external service posts to.
+
+**A registration outlives the process that created it, so remove one that is no longer serving.**
+Stopping a daemon frees the port but leaves vestad still advertising the name, and for a `--public`
+service that means a public route pointing at nothing. Anything that registers a service for the
+duration of a SESSION (a handover, a one-off share link) must remove it when the session ends:
+
+```bash
+deregister-service browser
+```
+
+Idempotent, and a name that is not registered counts as success, so it is safe on every teardown
+path including one that runs twice.
 
 ## Every skill command: the output contract
 
