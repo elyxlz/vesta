@@ -142,6 +142,8 @@ Replace rather than append: it's a snapshot, not a log. The rolling fields refre
 
 MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate. Don't let it overflow.
 
+**When the file is near the cap, run `~/agent/skills/dream/scripts/memory-budget` instead of eyeballing it.** The size alone tells you the file is too big, never which part got bigger, so curation degenerates into rereading the whole thing looking for fat. This prints the growth since the last commit that touched MEMORY.md, **the lines added in that window longest first** (those are the trim candidates, and git already knows which they are), and a per-section breakdown so the cutting goes where the mass is. It exits non-zero above a soft budget (default 92% of the cap), so it can gate the work rather than just inform it: `memory-budget && <add the line>`. If a fix for "the file is too full" keeps resurfacing every night, the trim was never the missing piece.
+
 **Review what curation removed.** After curating, diff MEMORY.md against the last dream checkpoint: `git log -n1 --format=%H --grep '^dream: nightly checkpoint'`, then `git diff <sha> -- agent/MEMORY.md`. Every removed line needs an answer: graduated into a skill file (say where in tonight's summary), expired, or wrongly dropped, so restore it. `### User State` and the Self `**State**:` line are rewritten nightly by design; skip them. No prior checkpoint, no review. Old versions stay recoverable via `git show <sha>:agent/MEMORY.md`.
 
 **Cut:**
