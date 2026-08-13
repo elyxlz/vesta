@@ -600,8 +600,32 @@ _COMPACT_FORMATTERS = {
 }
 
 
+def _warn_if_capped(args, result) -> None:
+    """Say so when a result exactly fills `--limit`, because a truncated list and a complete
+    one are byte-for-byte indistinguishable.
+
+    `--limit` is a hard cap, not a page size. A caller who lists a date window and gets back
+    exactly `limit` items has seen an arbitrary newest-first slice of that window, and nothing
+    in the output says so, so the natural reading is "this is everything in the window". That
+    becomes a false negative the moment anyone concludes something from what is ABSENT: no
+    booking, no reply, no invoice.
+
+    Goes to STDERR, so `--json` output stays machine-parseable and a caller piping to a parser
+    still sees the warning on their terminal.
+    """
+    limit = vars(args).get("limit")
+    if isinstance(result, list) and isinstance(limit, int) and limit > 0 and len(result) >= limit:
+        print(
+            f"NOTE: returned exactly --limit ({limit}) items, so this is very likely TRUNCATED "
+            f"and more exist. Raise --limit or narrow the window before concluding anything "
+            f"from what is missing here.",
+            file=sys.stderr,
+        )
+
+
 def _print_result(args, result) -> None:
     """Route a command result to the compact formatter or a JSON variant."""
+    _warn_if_capped(args, result)
     attrs = vars(args)
     want_json = "json" in attrs and attrs["json"]
     want_pretty = "json_pretty" in attrs and attrs["json_pretty"]

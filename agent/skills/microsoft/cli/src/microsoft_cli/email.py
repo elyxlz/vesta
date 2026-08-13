@@ -4,6 +4,7 @@ import base64
 import dataclasses
 import html
 import pathlib as pl
+import sys
 from datetime import UTC, datetime
 from typing import Any
 
@@ -101,17 +102,33 @@ def _filter_mailbox_messages(
     page_limit = None if query else limit
     results: list[dict[str, Any]] = []
     scanned = 0
+    hit_scan_cap = False
     for email in graph.paginate_cfg(config, client, endpoint, account_id, params=params, limit=page_limit):
         scanned += 1
         if query and not _email_matches_query(email, query):
             if scanned >= MAX_FILTER_SCAN:
+                hit_scan_cap = True
                 break
             continue
         _scrub_email_snapshot(email)
         graph.localize_datetime_fields(email)
         results.append(email)
-        if len(results) >= limit or scanned >= MAX_FILTER_SCAN:
+        if len(results) >= limit:
             break
+        if scanned >= MAX_FILTER_SCAN:
+            hit_scan_cap = True
+            break
+    # Giving up after MAX_FILTER_SCAN produces a SHORT result that looks like a complete one.
+    # It is the more dangerous of the two truncations, because the count is under `limit`, so
+    # nothing about the output suggests the window was not fully read. A caller asking "did
+    # they ever reply?" over a busy window gets a confident false negative.
+    if hit_scan_cap:
+        print(
+            f"NOTE: stopped after scanning {scanned} messages (MAX_FILTER_SCAN), so this "
+            f"result is TRUNCATED and the window was not fully read. Narrow --since/--until "
+            f"before concluding anything from what is missing here.",
+            file=sys.stderr,
+        )
     return results
 
 
