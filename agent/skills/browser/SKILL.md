@@ -217,7 +217,8 @@ order, most-preferred first:
    locked tenants) rather than fingerprint, hand your headed browser to the user to sign in once;
    the session persists in the shared profile and you resume automating. One command does it:
    `browser handover start --url "<sign-in URL>"` registers the public route itself and returns a
-   ready-to-send `user_url` (send the user that link, not `web_port`). See
+   ready-to-send `user_url` (send the user that link, not `web_port`). `handover stop` tears down the
+   processes AND the public registration, so the route never outlives the session; confirm both. See
    [interaction-skills/handover.md](interaction-skills/handover.md).
 3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*
    logged-in Chrome, drive it over a tunnel with `browser connect`. See

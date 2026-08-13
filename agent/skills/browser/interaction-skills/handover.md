@@ -16,7 +16,21 @@ browser handover stop
 
 `handover start` launches headed Camoufox on the shared profile under an X server (Xvfb +
 openbox), then bridges it out with `x11vnc` + `websockify` serving a branded noVNC page. `handover
-stop` tears the whole thing down; `status` reports what is up.
+stop` tears the whole thing down, including the public vestad registration; `status` reports what is
+up.
+
+**The registration is part of the teardown, not tidiness.** `start` registers a PUBLIC route, and a
+route that outlives its session advertises a public path at a port nothing is listening on, which the
+next handover then inherits without having created it. A handover is by definition an authenticated
+session on something the user cares about (bank, airline, email), so the route must die with it.
+
+**`stopped: true` is a claim about the teardown, so confirm it the same way you would any other**:
+the registry no longer lists `browser`, nothing is listening on the port, and `pgrep -x camoufox`
+returns 0. If a session was killed without `stop` ever running, remove the leftover by hand:
+
+```bash
+~/agent/skills/vestad/scripts/deregister-service browser
+```
 
 On a box, `start` registers a public vestad service itself and returns the ready-to-send
 `user_url` (`$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html`); vestad proxies the
