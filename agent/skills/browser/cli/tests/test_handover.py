@@ -402,7 +402,7 @@ def test_stop_deregisters_the_public_service(monkeypatch, tmp_path):
     killed = _record_kills(monkeypatch)
     called = tmp_path / "called"
     script = tmp_path / "deregister-service"
-    script.write_text(f"#!/bin/sh\necho \"$1\" >> {called}\n")
+    script.write_text(f'#!/bin/sh\necho "$1" >> {called}\n')
     script.chmod(0o755)
     monkeypatch.setattr(handover, "DEREGISTER_SERVICE", script)
     assert handover.stop() == {"stopped": True}
