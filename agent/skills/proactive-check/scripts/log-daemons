@@ -1,0 +1,137 @@
+#!/bin/bash
+# Record one line per daemon per tick, and report which ones came back since the last tick.
+#
+# WHY THIS EXISTS. The proactive-check preflight already asks every daemon whether it is running,
+# every tick, and throws the answer away. So a daemon that dies and is restarted between two ticks
+# leaves nothing at all: the tick before says up, the tick after says up, and the death is invisible.
+# A silent death is not hypothetical. Verified case: a dashboard daemon was found `"running": false`
+# an hour after a clean container start, and its log held only framework banners, no timestamps, no
+# error and no exit record, so nothing remained to say when it died, why, or whether it had happened
+# before.
+#
+# This script keeps the trail. It diagnoses nothing. One restart is an anecdote; what makes it a
+# fault is the same daemon appearing week after week, and that is only visible against history.
+#
+# THE SIGNAL IS A CHANGE OF IDENTITY between consecutive ticks: the daemon a tick ago is not the
+# daemon now, so it died and something restarted it whether or not anyone saw it down. The window
+# between the two ticks is the bracket the death happened inside, which is the closest thing to a
+# timestamp a silent exit leaves.
+#
+# Identity is read from TWO witnesses, because a pid alone answers "does some process hold this
+# number", never "is this the same process". A pid recycled inside one container lifetime otherwise
+# makes a death invisible to the one trail that exists to see it. Uptime is the second witness: a
+# process that never restarted can only ever have MORE uptime than it had last tick, so a value that
+# fell is a different process wearing an old number.
+#
+# Names come from whatever the restart skill actually lists, so this cannot drift out of step with
+# the daemons the box runs.
+set -uo pipefail
+
+# The three paths are overridable ONLY so the failure branches can be exercised on a copy. A check
+# nobody has ever watched fail is not a check, and on a healthy box the happy path is the only path
+# this ever takes.
+TSV="${DAEMON_TREND_TSV:-$HOME/agent/data/daemon-trend.tsv}"
+DAEMON_DIR="${DAEMON_PID_DIR:-$HOME/agent/data/daemons}"
+NOW_ISO=$(date -Iseconds)
+NOW_EPOCH=$(date +%s)
+
+# `daemons.sh` is the current source of truth, one `<skill> daemon start` per line. Older boxes keep
+# the same lines in the restart SKILL.md instead, so fall back to it rather than reporting no
+# daemons: an empty sweep on a box full of running daemons is the worst possible output here.
+if [ -n "${DAEMON_SOURCE:-}" ]; then
+  sources=("$DAEMON_SOURCE")
+else
+  sources=("$HOME/agent/skills/restart/daemons.sh" "$HOME/agent/skills/restart/SKILL.md")
+fi
+
+names=""
+used=""
+for src in "${sources[@]}"; do
+  [ -f "$src" ] || continue
+  names=$(sed -n 's/^\([a-z][a-z0-9-]*\) daemon start.*/\1/p' "$src")
+  if [ -n "$names" ]; then used="$src"; break; fi
+done
+
+if [ -z "$names" ]; then
+  echo "log-daemons: FAILED to read any daemon name from ${sources[*]}" >&2
+  echo "log-daemons: not writing a line, because an empty sweep would record a false all-clear" >&2
+  exit 2
+fi
+
+[ -f "$TSV" ] || printf 'ts\tname\tpid\tuptime_s\tstate\n' > "$TSV"
+
+changed=()
+for n in $names; do
+  rec="$DAEMON_DIR/$n.pid"
+  # The record is `<pid> <starttime>`; every reader takes the pid from the first field, because
+  # handing the whole record to kill fails on a perfectly healthy daemon.
+  pid=$(cut -d' ' -f1 "$rec" 2>/dev/null)
+  # A record can name a pid that is gone: that is a daemon that died without cleaning up, and it
+  # must read as DOWN, never as the pid it used to be.
+  if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
+    up=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
+    state=up
+  else
+    pid="-"; up="-"; state=DOWN
+  fi
+
+  # The last line this script wrote for this daemon, before this tick's line goes in.
+  prev=$(awk -F'\t' -v n="$n" '$2 == n { ts = $1; pid = $3; up = $4; state = $5 } END { if (ts != "") print ts "\t" pid "\t" up "\t" state }' "$TSV")
+  prev_ts=$(printf '%s' "$prev" | cut -f1)
+  prev_pid=$(printf '%s' "$prev" | cut -f2)
+  prev_up=$(printf '%s' "$prev" | cut -f3)
+  prev_state=$(printf '%s' "$prev" | cut -f4)
+
+  printf '%s\t%s\t%s\t%s\t%s\n' "$NOW_ISO" "$n" "$pid" "$up" "$state" >> "$TSV"
+
+  restarted=""
+  if [ -n "$prev_pid" ] && [ "$prev_pid" != "-" ] && [ "$pid" != "-" ] && [ "$prev_pid" != "$pid" ]; then
+    restarted="pid $prev_pid -> $pid"
+  elif [ "$state" = up ] && [ "$prev_state" = up ] &&
+       [ -n "${prev_up:-}" ] && [ "$prev_up" != "-" ] && [ "$up" != "-" ] &&
+       [ "$up" -lt "$prev_up" ] 2>/dev/null; then
+    restarted="same pid $pid but uptime fell ${prev_up}s to ${up}s, so the pid was recycled"
+  fi
+
+  if [ -n "$restarted" ]; then
+    changed+=("$n: $restarted, so it died between $prev_ts and $NOW_ISO")
+  elif [ "$state" = DOWN ]; then
+    if [ -n "$prev_ts" ]; then
+      changed+=("$n: DOWN right now (was $prev_state at $prev_ts)")
+    else
+      changed+=("$n: DOWN right now (first tick that has ever recorded it)")
+    fi
+  fi
+done
+
+if [ ${#changed[@]} -eq 0 ]; then
+  echo "log-daemons: no daemon restarted since the last tick ($used)"
+else
+  echo "log-daemons: ${#changed[@]} daemon(s) changed since the last tick:"
+  printf '  %s\n' "${changed[@]}"
+fi
+
+# The recent trail, so a repeating death is read as a pattern instead of being met fresh each time.
+echo
+echo "restarts recorded in the last 7 days (a daemon that keeps appearing here is a real fault):"
+cutoff=$(( NOW_EPOCH - 7 * 86400 ))
+awk -F'\t' -v cutoff="$cutoff" '
+  NR == 1 { next }
+  {
+    cmd = "date -d \"" $1 "\" +%s 2>/dev/null"
+    cmd | getline epoch
+    close(cmd)
+    if (epoch < cutoff) next
+    if ($2 in lastpid && lastpid[$2] != "-" && $3 != "-" && lastpid[$2] != $3) count[$2]++
+    else if ($2 in lastup && lastup[$2] != "-" && $4 != "-" && lastup[$2] + 0 > $4 + 0) count[$2]++
+    if ($5 == "DOWN") down[$2]++
+    lastpid[$2] = $3
+    lastup[$2] = $4
+    seen[$2] = 1
+  }
+  END {
+    any = 0
+    for (n in seen) if (count[n] || down[n]) { printf "  %-12s %d restart(s), %d tick(s) found down\n", n, count[n], down[n]; any = 1 }
+    if (!any) print "  none, every daemon has held its identity all week"
+  }
+' "$TSV"
