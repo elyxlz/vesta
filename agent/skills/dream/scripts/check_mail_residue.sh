@@ -135,7 +135,22 @@ scan() {
 
 # Positive control. It exercises every marker, because a control that only proved the JSON path
 # would have passed happily on the version that could not see a tab-separated dump.
+#
+# Sweep control files left behind by a run that died before its trap fired. Removal needs BOTH
+# proofs, a dead owner AND the synthetic marker inside, because a file this script cannot prove
+# it wrote is exactly the kind of thing it exists to show you. Anything else is left and reported.
+for stale in "$HOME"/agent/.mail-residue-control.*.json; do
+  [ -e "$stale" ] || continue
+  spid=${stale##*.mail-residue-control.}; spid=${spid%.json}
+  case "$spid" in ''|*[!0-9]*) continue ;; esac
+  kill -0 "$spid" 2>/dev/null && continue
+  grep -q '"bodyPreview":"synthetic"' "$stale" 2>/dev/null || continue
+  rm -f "$stale"
+  echo "check_mail_residue: removed a control file left by dead run $spid." >&2
+done
+
 CTRL="$HOME/agent/.mail-residue-control.$$.json"
+trap 'rm -f "$CTRL"' EXIT INT TERM
 CTRL_DOMAIN="control-probe.invalid"
 [ -n "$DOMAIN_RE" ] && CTRL_DOMAIN="$(printf '%s' "${DOMAINS[0]}" | sed 's/\\//g')"
 {
@@ -160,7 +175,11 @@ if [ "$ctrl_lines" -lt 3 ]; then
   exit 2
 fi
 
-FOUND="$(printf '%s\n' "$RAW" | grep -v "$cb" | grep -v '^$')"
+# Drop EVERY control file, not just this run's. Filtering only "$cb" meant a control planted by a
+# CONCURRENT run of this same script was indistinguishable from real mailbox residue, so the alarm
+# that exists to prevent a false "the mail is gone" claim cried wolf at its own litter. This scan is
+# slow enough (minutes) to outlive a tool timeout, which is how two runs come to overlap at all.
+FOUND="$(printf '%s\n' "$RAW" | grep -vE '\.mail-residue-control\.[0-9]+\.json' | grep -v '^$')"
 
 dump_hits=$(printf '%s\n' "$FOUND" | awk -F'\t' '$1=="DUMP"' | grep -c .)
 addr_real=$(printf '%s\n' "$FOUND" | awk -F'\t' '$1=="ADDR" && $2>=3' | grep -c .)
