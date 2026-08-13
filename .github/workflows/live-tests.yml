@@ -52,6 +52,7 @@ on:
 permissions:
   contents: read
   packages: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -76,6 +77,7 @@ jobs:
         env:
           CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
           REQUIRE_CREDENTIALS: ${{ github.event_name == 'workflow_dispatch' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$CLAUDE_CREDENTIALS" ]; then
             if [ "$REQUIRE_CREDENTIALS" = "true" ]; then
@@ -93,6 +95,13 @@ jobs:
           if [ "$ok" != "ok" ]; then
             echo "::error::CLAUDE_CREDENTIALS is malformed or missing a refreshToken"
             exit 1
+          fi
+          # The secret only stays valid while the refresh-credentials cron keeps rotating it, so a
+          # failing refresher is the first thing to check when this suite dies on auth errors.
+          refresher=$(gh run list --workflow=refresh-credentials.yml --limit 1 \
+            --json conclusion --jq '.[0].conclusion // "never run"' 2>/dev/null || echo "unreadable")
+          if [ "$refresher" != "success" ]; then
+            echo "::warning::Refresh Claude Credentials last run: ${refresher}. CLAUDE_CREDENTIALS is likely stale, so auth failures below are expected: fix that workflow first (usually an expired GH_PAT), re-run it, then re-run this suite."
           fi
           mkdir -p ~/.claude
           printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
