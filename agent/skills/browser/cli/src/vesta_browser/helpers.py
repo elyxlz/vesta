@@ -127,9 +127,9 @@ def js(expression: str, target_id: str | None = None):
     synchronous, or drive it through `browser bidi` directly.
     """
     wrapped = (
-        "(() => { const v = (" + expression + "); return (v && typeof v.then === 'function')"
-        " ? v.then(x => JSON.stringify(x === undefined ? null : x))"
-        " : JSON.stringify(v === undefined ? null : v); })()"
+        "(() => { const s = x => JSON.stringify(x === undefined ? null : x);"
+        " const v = (" + expression + "); return (v && typeof v.then === 'function')"
+        " ? v.then(s) : s(v); })()"
     )
     return _eval_value(wrapped, context=target_id)
 
