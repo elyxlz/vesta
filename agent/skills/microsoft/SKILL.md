@@ -35,6 +35,25 @@ The refusal happens in the CLI before any Graph or OWA-REST call, so it covers b
 
 ## Personalization
 
+## REPLYING TO A MESSAGE THE ACCOUNT ITSELF SENT: use `--reply-all`, or it goes to you
+
+Graph's `createReply` addresses the SENDER of the message being replied to. So replying into a
+thread whose latest message is one you sent addresses it straight back to your own account, and
+the third party never receives it.
+
+Nothing in the output contradicts that. The command succeeds, the pending queue drains, the
+message appears in Sent Items, and `recipients` reads `"thread recipients"` rather than an
+address. Verified by building both drafts and reading their `toRecipients`:
+
+| replying to your own sent message | goes to |
+|---|---|
+| `email reply` | **your own account** |
+| `email reply --reply-all` | the original recipient |
+
+So: `--reply-all` when the latest message in the thread is yours, or `email send --to <addr>` with
+an explicit `RE:` subject to keep the thread. **Verify an outbound by its RECIPIENT, read back off
+Sent Items, never by the fact that it reached Sent Items at all.** Those are different claims.
+
 ## Threaded reply DRAFT (leave unsent for the user to send)
 
 `email reply` ALWAYS sends and `email draft --reply-to` overwrites the quoted history. To leave a
