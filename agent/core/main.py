@@ -224,7 +224,7 @@ def _consume_restart_reason(
         return lifecycle.FIRST_START
     stored = state.persisted.last_restart_reason
     if pending is not None and not lifecycle.is_crash(stored):
-        # An external actor (vestad backup/mounts/manual restart) handed in a reason for this boot.
+        # An external actor (vestad export/import/mounts/manual restart) handed in a reason for this boot.
         # It overrides the clean-restart placeholder the prior run persisted on its way down, but
         # never a recorded crash: the crash detail is the more important story to surface.
         reason = pending

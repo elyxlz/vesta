@@ -3195,8 +3195,10 @@ pub async fn run_server(cfg: ServerConfig) {
     recover_interrupted_update(&state);
     // Every boot, not only after an interrupted update: a backup killed with its process (a crash,
     // a reboot mid-export) leaves the same throwaway container behind and nothing else collects it.
+    // A url import killed the same way leaves its partial download, on disk rather than in docker.
     let sweep_docker = docker.clone();
     tokio::spawn(async move { backup::sweep_backup_temp_artifacts(&sweep_docker).await });
+    crate::agent_bundle::sweep_import_downloads(&state.env_config.config_dir);
     // The device registry persists on a background flush task: every mutation (a /sync connect or a
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();
@@ -3863,21 +3865,25 @@ mod tests {
         ];
         let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
 
+        // `created_at` is restic's compact stamp, the shape the clients sort and format. The two
+        // optional version fields appear both ways: stamped on the kinds that carry them and absent
+        // on a pre-stamp snapshot, so the fixture pins the omitted shape too.
         let backups: Vec<serde_json::Value> = [
-            BackupType::Manual,
-            BackupType::Periodic,
-            BackupType::PreUpdate,
-            BackupType::PreRestore,
+            (BackupType::Manual, None, None),
+            (BackupType::Periodic, None, Some("0.1.0")),
+            (BackupType::PreUpdate, Some("v0.1.0"), Some("0.1.0")),
+            (BackupType::PreRestore, None, Some("0.1.0")),
         ]
         .into_iter()
-        .map(|backup_type| {
+        .map(|(backup_type, from_version, vestad_version)| {
             serde_json::to_value(BackupInfo {
                 id: "1a2b3c4d".into(),
                 agent_name: "sample-agent".into(),
                 backup_type,
-                created_at: "2026-01-01T00:00:00Z".into(),
+                created_at: "20260101-000000".into(),
                 size: 1234567890,
-                from_version: None,
+                from_version: from_version.map(str::to_string),
+                vestad_version: vestad_version.map(str::to_string),
             })
             .expect("serialize BackupInfo")
         })

@@ -1,5 +1,6 @@
 import { Alert, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { formatSnapshotStamp, type BackupTimelinePoint } from "@vesta/core";
 import {
   createBackup,
   deleteBackup,
@@ -8,7 +9,6 @@ import {
   restoreBackup,
   setAgentBackupSettings,
 } from "@/api/endpoints";
-import type { BackupInfo } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
 import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
@@ -17,7 +17,16 @@ import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { ErrorState, LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
+import { radii } from "@/theme/layout";
+import {
+  backupTimeline,
+  deletePrompt,
+  NEWER_REFUSAL,
+  restorePrompt,
+  type ConfirmPrompt,
+} from "./backups-model";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -27,29 +36,62 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function BackupCard({
-  backup,
+function confirm(prompt: ConfirmPrompt, run: () => void) {
+  Alert.alert(prompt.title, prompt.body, [
+    { text: "Cancel", style: "cancel" },
+    {
+      text: prompt.action,
+      style: prompt.destructive ? "destructive" : "default",
+      onPress: run,
+    },
+  ]);
+}
+
+function TimelinePoint({
+  point,
   busy,
   restore,
   remove,
 }: {
-  backup: BackupInfo;
+  point: BackupTimelinePoint;
   busy: boolean;
   restore: () => void;
   remove: () => void;
 }) {
   const { colors } = usePreferences();
+  const refused = point.eligibility === "newer";
   return (
     <Card>
-      <Text style={[styles.backupTitle, { color: colors.text }]}>
-        {new Date(backup.created_at).toLocaleString()}
+      <Text style={[styles.pointTitle, { color: colors.text }]}>
+        {formatSnapshotStamp(point.createdAt)}
       </Text>
-      <Text style={[styles.backupMeta, { color: colors.secondaryText }]}>
-        {backup.backup_type} · {formatBytes(backup.size)}
-      </Text>
+      <View style={styles.meta}>
+        <View
+          style={[
+            styles.badge,
+            { backgroundColor: colors.elevated, borderColor: colors.border },
+          ]}
+        >
+          <Text style={[styles.badgeLabel, { color: colors.secondaryText }]}>
+            {point.label}
+          </Text>
+        </View>
+        <Text style={[styles.pointMeta, { color: colors.secondaryText }]}>
+          {formatBytes(point.size)}
+        </Text>
+      </View>
+      {refused ? (
+        <Text style={[styles.refusal, { color: colors.secondaryText }]}>
+          {NEWER_REFUSAL}
+        </Text>
+      ) : null}
       <View style={styles.actions}>
         <View style={styles.action}>
-          <Button variant="secondary" disabled={busy} onPress={restore}>
+          <Button
+            variant="secondary"
+            disabled={busy || refused}
+            onPress={restore}
+          >
             Restore
           </Button>
         </View>
@@ -66,7 +108,8 @@ function BackupCard({
 export function BackupsSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
-  const { name } = useAgent();
+  const { name, agent } = useAgent();
+  const { gatewayVersion } = useRoster();
   const { showError } = useToast();
   const { colors } = usePreferences();
   const backups = useQuery({
@@ -117,6 +160,11 @@ export function BackupsSection() {
     );
   }
 
+  // The gateway runs one operation per agent, so a restore or an update started elsewhere
+  // disables these actions until it settles.
+  const busy = action.isPending || (agent?.operation ?? null) !== null;
+  const points = backupTimeline(backups.data, gatewayVersion);
+
   return (
     <>
       <FormSection
@@ -136,12 +184,13 @@ export function BackupsSection() {
       >
         <FormRow
           label="Available backups"
-          value={String(backups.data.length)}
+          value={String(points.length)}
           icon="archive-outline"
         />
       </FormSection>
       <Button
         loading={action.isPending}
+        disabled={busy}
         icon="cloud-upload-outline"
         onPress={() =>
           Alert.alert(
@@ -159,45 +208,24 @@ export function BackupsSection() {
       >
         Back up now
       </Button>
-      {[...backups.data]
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))
-        .map((backup) => (
-          <BackupCard
-            key={backup.id}
-            backup={backup}
-            busy={action.isPending}
-            restore={() =>
-              Alert.alert(
-                "Restore this backup?",
-                "Current agent state will be replaced.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Restore",
-                    onPress: () =>
-                      action.mutate({ type: "restore", id: backup.id }),
-                  },
-                ],
-              )
-            }
-            remove={() =>
-              Alert.alert(
-                "Delete this backup?",
-                "This snapshot cannot be recovered.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: () =>
-                      action.mutate({ type: "delete", id: backup.id }),
-                  },
-                ],
-              )
-            }
-          />
-        ))}
-      {backups.data.length === 0 ? (
+      {points.map((point) => (
+        <TimelinePoint
+          key={point.id}
+          point={point}
+          busy={busy}
+          restore={() =>
+            confirm(restorePrompt(point, name, gatewayVersion), () =>
+              action.mutate({ type: "restore", id: point.id }),
+            )
+          }
+          remove={() =>
+            confirm(deletePrompt(point), () =>
+              action.mutate({ type: "delete", id: point.id }),
+            )
+          }
+        />
+      ))}
+      {points.length === 0 ? (
         <Text style={[styles.empty, { color: colors.secondaryText }]}>
           No backups yet.
         </Text>
@@ -207,8 +235,18 @@ export function BackupsSection() {
 }
 
 const styles = StyleSheet.create({
-  backupTitle: { fontSize: 16, fontWeight: "700" },
-  backupMeta: { fontSize: 13 },
+  pointTitle: { fontSize: 16, fontWeight: "700" },
+  pointMeta: { fontSize: 13 },
+  meta: { flexDirection: "row", alignItems: "center", gap: 8 },
+  badge: {
+    borderRadius: radii.pill,
+    borderCurve: "continuous",
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  badgeLabel: { fontSize: 12, fontWeight: "600" },
+  refusal: { fontSize: 13 },
   actions: { flexDirection: "row", gap: 8 },
   action: { flex: 1 },
   empty: { textAlign: "center", paddingVertical: 30 },

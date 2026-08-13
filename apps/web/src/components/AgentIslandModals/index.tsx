@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { BackupsDialog } from "@/components/BackupsDialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ProviderPicker } from "@/components/ProviderPicker";
 import { setProvider } from "@/api/agents";
@@ -32,7 +33,6 @@ export function AgentIslandModals() {
     handleDelete,
     backupDialogOpen,
     setBackupDialogOpen,
-    handleBackup,
   } = useModals();
 
   const [submitting, setSubmitting] = useState(false);
@@ -119,27 +119,10 @@ export function AgentIslandModals() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={backupDialogOpen} onOpenChange={setBackupDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>back up {name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              this captures a snapshot of {name} now. {name} pauses briefly
-              while it runs.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                handleBackup();
-              }}
-            >
-              back up
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <BackupsDialog
+        open={backupDialogOpen}
+        onOpenChange={setBackupDialogOpen}
+      />
     </>
   );
 }

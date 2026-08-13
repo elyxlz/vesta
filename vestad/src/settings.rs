@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const DEFAULT_EVERY_N_DAYS: u8 = 3;
+pub(crate) const DEFAULT_EVERY_N_DAYS: u8 = 1;
 
 #[derive(Serialize, Copy, Clone, PartialEq)]
 pub(crate) struct ServiceEntry {
@@ -148,6 +148,20 @@ pub(crate) fn default_retention() -> crate::types::RetentionPolicy {
     }
 }
 
+/// LEGACY(remove-when: 2027-08-01; every install has booted a 0.2.x vestad by then): rewrite the
+/// backup defaults that older releases froze into settings.json, which `save_settings` rewrites
+/// whole on every boot. No client can write these three fields, so the exact old triple is a
+/// serialized default and never a choice; any deviation is a human's and leaves all three alone.
+fn converge_frozen_backup_defaults(backup: &mut BackupGlobalSettings) {
+    const FROZEN_OLD_DEFAULTS: (u8, usize, usize) = (3, 2, 2);
+    let stored = (backup.every_n_days, backup.retention.periodic, backup.retention.pre_update_versions);
+    if stored != FROZEN_OLD_DEFAULTS {
+        return;
+    }
+    backup.every_n_days = DEFAULT_EVERY_N_DAYS;
+    backup.retention = default_retention();
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct AgentBackupOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -164,8 +178,9 @@ pub(crate) fn load_settings() -> Settings {
     let path = settings_file();
 
     if let Ok(data) = std::fs::read_to_string(&path) {
-        match serde_json::from_str(&data) {
-            Ok(settings) => {
+        match serde_json::from_str::<Settings>(&data) {
+            Ok(mut settings) => {
+                converge_frozen_backup_defaults(&mut settings.backup);
                 // Re-write to persist any new fields added with defaults
                 save_settings(&settings);
                 return settings;
@@ -283,19 +298,61 @@ mod tests {
         .expect("legacy settings.json must deserialize");
         assert_eq!(s.channel, "beta");
         assert!(!s.backup.enabled);
-        assert_eq!(s.backup.every_n_days, 3);
-        assert_eq!(s.backup.retention.periodic, 2);
-        assert_eq!(s.backup.retention.pre_update_versions, 2);
+        assert_eq!(s.backup.every_n_days, 1);
+        assert_eq!(s.backup.retention.periodic, 1);
+        assert_eq!(s.backup.retention.pre_update_versions, 5);
         assert!(s.services.contains_key("okami"));
+    }
+
+    // --- the old defaults froze into every existing settings.json (save_settings writes the whole
+    // struct back on every boot), and no client can write these fields, so the exact old triple is
+    // a serialized default that must converge; anything else is a human's edit ---
+
+    fn backup_settings(json: &str) -> BackupGlobalSettings {
+        let mut backup: BackupGlobalSettings = serde_json::from_str(json).expect("valid backup settings");
+        converge_frozen_backup_defaults(&mut backup);
+        backup
+    }
+
+    #[test]
+    fn frozen_old_backup_defaults_converge_to_the_new_ones() {
+        let b = backup_settings(r#"{"every_n_days": 3, "retention": {"periodic": 2, "pre_update_versions": 2}}"#);
+        assert_eq!(b.every_n_days, DEFAULT_EVERY_N_DAYS);
+        assert_eq!(b.retention.periodic, crate::backup::DEFAULT_RETENTION_PERIODIC);
+        assert_eq!(b.retention.pre_update_versions, crate::backup::DEFAULT_RETENTION_PRE_UPDATE_VERSIONS);
+    }
+
+    #[test]
+    fn a_chosen_cadence_survives_convergence() {
+        let b = backup_settings(r#"{"every_n_days": 7, "retention": {"periodic": 2, "pre_update_versions": 2}}"#);
+        assert_eq!(b.every_n_days, 7);
+        assert_eq!(b.retention.periodic, 2);
+        assert_eq!(b.retention.pre_update_versions, 2);
+    }
+
+    #[test]
+    fn a_chosen_retention_survives_convergence() {
+        let b = backup_settings(r#"{"every_n_days": 3, "retention": {"periodic": 2, "pre_update_versions": 3}}"#);
+        assert_eq!(b.every_n_days, 3);
+        assert_eq!(b.retention.periodic, 2);
+        assert_eq!(b.retention.pre_update_versions, 3);
+    }
+
+    #[test]
+    fn a_settings_file_already_on_the_new_defaults_is_untouched() {
+        let b = backup_settings(r#"{"every_n_days": 1, "retention": {"periodic": 1, "pre_update_versions": 5}}"#);
+        assert_eq!(b.every_n_days, 1);
+        assert_eq!(b.retention.periodic, 1);
+        assert_eq!(b.retention.pre_update_versions, 5);
     }
 
     #[test]
     fn backup_defaults() {
         let b = BackupGlobalSettings::default();
         assert!(b.enabled);
-        assert_eq!(b.every_n_days, 3);
-        assert_eq!(b.retention.periodic, 2);
-        assert_eq!(b.retention.pre_update_versions, 2);
+        assert_eq!(b.every_n_days, 1);
+        assert_eq!(b.retention.periodic, 1);
+        assert_eq!(b.retention.pre_update_versions, 5);
     }
 
     // --- expose_lan defaults off: a settings.json predating the field must keep the

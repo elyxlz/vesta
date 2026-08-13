@@ -10,8 +10,8 @@ use crate::docker::{
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
-pub const DEFAULT_RETENTION_PERIODIC: usize = 2;
-pub const DEFAULT_RETENTION_PRE_UPDATE_VERSIONS: usize = 2;
+pub const DEFAULT_RETENTION_PERIODIC: usize = 1;
+pub const DEFAULT_RETENTION_PRE_UPDATE_VERSIONS: usize = 5;
 const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
 pub const BACKUP_STOP_TIMEOUT_SECS: i32 = 30;
@@ -19,7 +19,7 @@ pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
 
 /// Acquire an exclusive file lock for the given agent. The lock is held for the
 /// lifetime of the returned Flock. Used to coordinate between the vestad API and
-/// the `vestad backup export/import` CLI which bypasses the server.
+/// the `vestad export`/`vestad import` CLI which bypasses the server.
 pub fn agent_file_lock(name: &str) -> Result<nix::fcntl::Flock<File>, DockerError> {
     let lock_dir = crate::paths::config_dir_or_relative().join("locks");
     std::fs::create_dir_all(&lock_dir)
@@ -106,9 +106,9 @@ pub async fn sweep_backup_temp_artifacts(docker: &Docker) {
     }
 }
 
-/// Create a backup of the given agent without ever stopping it. A running container is captured
-/// via `docker commit` (Docker pauses it for the seconds the commit takes), then the committed
-/// image is exported through a temp container into restic; a stopped container exports directly.
+/// Create a backup of the given agent without ever stopping it. The container is captured via
+/// `docker commit` (Docker pauses a running one for the seconds the commit takes; a stopped one
+/// commits instantly), then the committed image is exported through a temp container into restic.
 pub async fn create_backup(
     docker: &Docker,
     name: &str,
@@ -117,26 +117,21 @@ pub async fn create_backup(
 ) -> Result<BackupInfo, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = guard_alive(container_status(docker, &cname).await, name)?;
+    guard_alive(container_status(docker, &cname).await, name)?;
     check_disk_space(docker, name, &cname).await?;
 
-    let result = if cs == ContainerStatus::Running {
-        // One shared name for the throwaway image repo and export container.
-        let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
-        let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
-        // A leftover temp container/image from a crashed run must not fail this one.
-        remove_temp_artifacts(docker, &temp_cname, &image).await;
-        tracing::info!(agent = %name, backup_type = %backup_type, "committing running container for backup");
-        crate::docker::commit_container_to_image(docker, &cname, &temp_cname, TEMP_IMAGE_TAG).await?;
-        let snap = match crate::docker::create_plain_container(docker, &image, &temp_cname).await {
-            Ok(()) => crate::restic::snapshot(name, &backup_type, from_version, &temp_cname).await,
-            Err(e) => Err(e),
-        };
-        remove_temp_artifacts(docker, &temp_cname, &image).await;
-        snap
-    } else {
-        crate::restic::snapshot(name, &backup_type, from_version, &cname).await
+    // One shared name for the throwaway image repo and export container.
+    let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
+    let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
+    // A leftover temp container/image from a crashed run must not fail this one.
+    remove_temp_artifacts(docker, &temp_cname, &image).await;
+    tracing::info!(agent = %name, backup_type = %backup_type, "committing container for backup");
+    crate::docker::commit_container_to_image(docker, &cname, &temp_cname, TEMP_IMAGE_TAG).await?;
+    let result = match crate::docker::create_plain_container(docker, &image, &temp_cname).await {
+        Ok(()) => crate::restic::snapshot(name, &backup_type, from_version, &temp_cname).await,
+        Err(e) => Err(e),
     };
+    remove_temp_artifacts(docker, &temp_cname, &image).await;
 
     match &result {
         Ok(info) => {
@@ -177,8 +172,19 @@ pub async fn list_all_backups(docker: &Docker) -> Vec<BackupInfo> {
     all
 }
 
-/// Restore an agent from a backup snapshot.
-/// Creates a pre-restore safety backup first, then replaces the container.
+/// The one version refusal a restore makes, reading the shared gate: state a newer vestad wrote
+/// would run under this older code. The older arm is the client's to confirm, so it proceeds.
+fn newer_state_refusal(backup_id: &str, stamped: Option<&str>, current: &str) -> Option<DockerError> {
+    match crate::update::version_gate(stamped, current) {
+        crate::update::VersionGate::RefuseNewer { stamped, current } => Some(DockerError::Failed(format!(
+            "backup {backup_id} was made by vestad v{stamped}; this vestad is v{current} and cannot restore newer state; update vestad first"
+        ))),
+        crate::update::VersionGate::Proceed | crate::update::VersionGate::ConfirmOlder { .. } => None,
+    }
+}
+
+/// Restore an agent from a backup snapshot. Refuses a snapshot written by a newer vestad before
+/// touching anything, then creates a pre-restore safety backup and replaces the container.
 pub async fn restore_backup(
     docker: &Docker,
     name: &str,
@@ -194,10 +200,15 @@ pub async fn restore_backup(
     // container is already gone, e.g. a prior restore that died after removal, can
     // still restore instead of being locked out by the failure it's recovering from.
     let backups = list_backups(&env_config.agents_dir, name).await?;
-    if !backups.iter().any(|b| b.id == backup_id) {
+    let Some(info) = backups.iter().find(|b| b.id == backup_id) else {
         return Err(DockerError::NotFound(format!(
             "backup '{backup_id}' not found"
         )));
+    };
+
+    // Refuse while the agent is still untouched; updating vestad is what unblocks the restore.
+    if let Some(refusal) = newer_state_refusal(backup_id, info.vestad_version.as_deref(), env!("CARGO_PKG_VERSION")) {
+        return Err(refusal);
     }
 
     let status = container_status(docker, &cname).await;
@@ -283,19 +294,21 @@ pub async fn delete_backup(
 }
 
 /// Determine which auto-backups should be deleted based on the retention policy.
-/// Returns the IDs of backups to delete.
+/// Returns the IDs of backups to delete. `retention.periodic` sizes one rolling
+/// family, periodic and pre-restore points counted together, so the newest capture
+/// of either kind is the rollback point. Manual snapshots never age out.
 pub fn compute_backups_to_delete(
     backups: &[BackupInfo],
     retention: &RetentionPolicy,
 ) -> Vec<String> {
     let mut to_delete = Vec::new();
 
-    let mut periodic: Vec<&BackupInfo> = backups
+    let mut family: Vec<&BackupInfo> = backups
         .iter()
-        .filter(|b| b.backup_type == BackupType::Periodic)
+        .filter(|b| matches!(b.backup_type, BackupType::Periodic | BackupType::PreRestore))
         .collect();
-    periodic.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    to_delete.extend(periodic.into_iter().skip(retention.periodic).map(|b| b.id.clone()));
+    family.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    to_delete.extend(family.into_iter().skip(retention.periodic).map(|b| b.id.clone()));
 
     // Pre-update snapshots are retained as whole version sets: the newest
     // `pre_update_versions` distinct from-versions survive, older versions go.
@@ -382,6 +395,55 @@ mod tests {
     }
 
     #[test]
+    fn restore_backup_refuses_a_newer_snapshot_before_touching_the_container() {
+        // State written by a newer vestad would run under older code, so the refusal must land
+        // before the stop plus safety-backup block rather than after the agent is already down.
+        let src = include_str!("backup.rs");
+        let restore_start = src
+            .find("pub async fn restore_backup")
+            .expect("restore_backup present");
+        let delete_start = src
+            .find("pub async fn delete_backup")
+            .expect("delete_backup present");
+        let restore_body = &src[restore_start..delete_start];
+
+        let guard_pos = restore_body
+            .find("newer_state_refusal")
+            .expect("restore_backup must consult the shared version gate");
+        let stop_pos = restore_body
+            .find("handoff_shutdown_reason")
+            .expect("restore_backup hands off a shutdown reason before stopping the container");
+        assert!(
+            guard_pos < stop_pos,
+            "the newer-version refusal must precede every destructive step"
+        );
+        assert!(
+            !restore_body.contains("from_version"),
+            "from_version carries a `v` prefix that compares wrong; the guard reads vestad_version"
+        );
+    }
+
+    #[test]
+    fn only_a_newer_stamp_refuses_a_restore() {
+        // Direction, not source position: an inverted comparison would lock every agent out of its
+        // own history while letting the one unrestorable snapshot through.
+        assert!(newer_state_refusal("b1", Some("9.9.9"), "0.2.1").is_some());
+        for stamped in [Some("0.1.0"), Some("0.2.1"), None, Some("dev"), Some("v9.9.9")] {
+            assert!(
+                newer_state_refusal("b1", stamped, "0.2.1").is_none(),
+                "restore must proceed for a stamp of {stamped:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_both_versions_and_the_snapshot() {
+        let refusal = newer_state_refusal("b1", Some("9.9.9"), "0.2.1").expect("newer state refuses");
+        let message = refusal.to_string();
+        assert!(message.contains("b1") && message.contains("9.9.9") && message.contains("0.2.1"), "{message}");
+    }
+
+    #[test]
     fn create_backup_never_stops_or_starts_containers() {
         // Backups are restart-free by design: a running container is captured via
         // docker commit (pause), never stopped. Only restore may stop a container.
@@ -409,7 +471,10 @@ mod tests {
 
     // ── Retention policy tests ────────────────────────────────────
 
-    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy { periodic: 2, pre_update_versions: 2 };
+    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
+        periodic: DEFAULT_RETENTION_PERIODIC,
+        pre_update_versions: DEFAULT_RETENTION_PRE_UPDATE_VERSIONS,
+    };
 
     fn make_backup(agent: &str, bt: BackupType, ts: &str) -> BackupInfo {
         BackupInfo {
@@ -419,6 +484,7 @@ mod tests {
             created_at: ts.to_string(),
             size: 1000,
             from_version: None,
+            vestad_version: None,
         }
     }
 
@@ -434,31 +500,52 @@ mod tests {
             make_backup("a", BackupType::Periodic, "20260407-120000"),
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete, vec![backups[0].id.clone()]);
+        assert_eq!(to_delete, vec![backups[1].id.clone(), backups[0].id.clone()]);
+    }
+
+    #[test]
+    fn rolling_family_keeps_only_newest_across_periodic_and_pre_restore() {
+        // The one rolling slot spans both kinds: a pre-restore point newer than every
+        // periodic takes the slot, and both periodics age out behind it.
+        let backups = vec![
+            make_backup("a", BackupType::Periodic, "20260409-040000"),
+            make_backup("a", BackupType::Periodic, "20260410-040000"),
+            make_backup("a", BackupType::PreRestore, "20260411-220000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
+        assert_eq!(to_delete, vec![backups[1].id.clone(), backups[0].id.clone()]);
     }
 
     #[test]
     fn retention_keeps_newest_distinct_pre_update_versions() {
+        // A repeat snapshot of a kept version rides in that version's set, so it never
+        // takes a retained slot of its own.
+        const KEEP_TWO_VERSIONS: RetentionPolicy = RetentionPolicy { periodic: 1, pre_update_versions: 2 };
         let backups = vec![
             make_pre_update("a", "v0.1.180", "20260401-120000"),
             make_pre_update("a", "v0.1.181", "20260404-120000"),
             make_pre_update("a", "v0.1.182", "20260407-120000"),
-            // A second snapshot of a kept version stays (same set).
             make_pre_update("a", "v0.1.182", "20260407-130000"),
         ];
+        let to_delete = compute_backups_to_delete(&backups, &KEEP_TWO_VERSIONS);
+        assert_eq!(to_delete, vec![backups[0].id.clone()]);
+    }
+
+    #[test]
+    fn pre_update_keeps_five_version_sets_prunes_the_sixth() {
+        let backups: Vec<BackupInfo> = (1..=6)
+            .map(|n| make_pre_update("a", &format!("v0.1.{n}"), &format!("2026080{n}-040000")))
+            .collect();
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete, vec![backups[0].id.clone()]);
     }
 
     #[test]
-    fn retention_ignores_manual_and_pre_restore() {
+    fn retention_ignores_manual() {
         let backups = vec![
             make_backup("a", BackupType::Manual, "20260401-120000"),
             make_backup("a", BackupType::Manual, "20260402-120000"),
             make_backup("a", BackupType::Manual, "20260403-120000"),
-            make_backup("a", BackupType::PreRestore, "20260401-120000"),
-            make_backup("a", BackupType::PreRestore, "20260402-120000"),
-            make_backup("a", BackupType::PreRestore, "20260403-120000"),
         ];
         assert!(compute_backups_to_delete(&backups, &DEFAULT_RETENTION).is_empty());
     }

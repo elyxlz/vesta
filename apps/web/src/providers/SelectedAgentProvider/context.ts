@@ -27,6 +27,8 @@ export interface SelectedAgentContextValue {
   restart: () => Promise<void>;
   backup: () => void;
   backups: BackupInfo[];
+  // The last read failed. An empty list alone cannot say whether the agent has no snapshots.
+  backupsFailed: boolean;
   refreshBackups: () => Promise<void>;
   restore: (backupId: string) => void;
   removeBackup: (backupId: string) => void;

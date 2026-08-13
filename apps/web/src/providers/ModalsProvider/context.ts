@@ -15,7 +15,6 @@ export interface ModalsContextValue {
 
   backupDialogOpen: boolean;
   setBackupDialogOpen: (open: boolean) => void;
-  handleBackup: () => void;
 }
 
 export const ModalsContext = createContext<ModalsContextValue | null>(null);

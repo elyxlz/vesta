@@ -210,6 +210,10 @@ export interface BackupInfo {
   backup_type: string;
   created_at: string;
   size: number;
+  /// The version an update left, on a pre-update snapshot alone; carries a `v` prefix.
+  from_version?: string | null;
+  /// The vestad version that captured the snapshot; absent on pre-stamp snapshots.
+  vestad_version?: string | null;
 }
 
 export async function createBackup(name: string): Promise<BackupInfo> {

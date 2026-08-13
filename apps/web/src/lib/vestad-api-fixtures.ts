@@ -42,30 +42,34 @@ export const vestadApiFixtures = {
     {
       "agent_name": "sample-agent",
       "backup_type": "manual",
-      "created_at": "2026-01-01T00:00:00Z",
+      "created_at": "20260101-000000",
       "id": "1a2b3c4d",
       "size": 1234567890
     },
     {
       "agent_name": "sample-agent",
       "backup_type": "periodic",
-      "created_at": "2026-01-01T00:00:00Z",
+      "created_at": "20260101-000000",
       "id": "1a2b3c4d",
-      "size": 1234567890
+      "size": 1234567890,
+      "vestad_version": "0.1.0"
     },
     {
       "agent_name": "sample-agent",
       "backup_type": "pre_update",
-      "created_at": "2026-01-01T00:00:00Z",
+      "created_at": "20260101-000000",
+      "from_version": "v0.1.0",
       "id": "1a2b3c4d",
-      "size": 1234567890
+      "size": 1234567890,
+      "vestad_version": "0.1.0"
     },
     {
       "agent_name": "sample-agent",
       "backup_type": "pre_restore",
-      "created_at": "2026-01-01T00:00:00Z",
+      "created_at": "20260101-000000",
       "id": "1a2b3c4d",
-      "size": 1234567890
+      "size": 1234567890,
+      "vestad_version": "0.1.0"
     }
   ],
   "start_all": {

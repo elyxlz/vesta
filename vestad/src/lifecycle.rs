@@ -54,10 +54,6 @@ pub static START_ALL: LifecycleReason =
     LifecycleReason::borrowed("manual: start-all requested", "You were started manually.");
 pub static DESTROY: LifecycleReason = LifecycleReason::shutdown_only("manual: delete requested");
 
-pub static BACKUP_EXPORT: LifecycleReason = LifecycleReason::borrowed(
-    "backup: export",
-    "The system briefly paused you while it exported a backup. No action is required.",
-);
 pub static BACKUP_IMPORT: LifecycleReason = LifecycleReason::borrowed(
     "backup: import",
     "You were restored from an exported backup.",
@@ -140,7 +136,7 @@ mod tests {
 
     /// Every reason vestad can hand over. Shutdown-only ones carry no agent copy: the shutdown
     /// inbox writes the log reason alone, so a sentence there would reach nobody.
-    const BOOT_FACING: [&LifecycleReason; 15] = [
+    const BOOT_FACING: [&LifecycleReason; 14] = [
         &DEFAULT_RESTART,
         &PROVIDER_CONFIGURED,
         &PROVIDER_SIGNED_OUT,
@@ -148,7 +144,6 @@ mod tests {
         &PROVIDER_CONTEXT,
         &MANUAL_START,
         &START_ALL,
-        &BACKUP_EXPORT,
         &BACKUP_IMPORT,
         &RESTORE_BOOT,
         &RESTORE_ABORTED,
@@ -224,13 +219,10 @@ mod tests {
     #[test]
     fn boot_inbox_json_uses_the_agent_contract_field_names() {
         assert_eq!(
-            serde_json::to_value(&BACKUP_EXPORT).unwrap(),
+            serde_json::to_value(&BACKUP_IMPORT).unwrap(),
             serde_json::json!({
-                "log_reason": "backup: export",
-                "agent_message": concat!(
-                    "The system briefly paused you while it exported a backup. ",
-                    "No action is required."
-                ),
+                "log_reason": "backup: import",
+                "agent_message": "You were restored from an exported backup.",
             }),
         );
     }
