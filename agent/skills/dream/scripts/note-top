@@ -82,16 +82,14 @@ case $block in
     ;;
 esac
 
-# Hand-typed clock times in the heading: warn if one is in the FUTURE.
-# Added 2026-08-12, after five forward drifts in a single day (01:40 at 01:38, 11:07 at
-# 10:58, 15:35 at 15:29, 17:35 at 17:31, 17:50 at 17:34). ALWAYS forward, never back.
-# a separate staging check caught every one, so the system worked, but it catches them a whole step
-# later, after the file is already written and usually after I have moved on. The deeper
-# point: @@NOW@@ already existed to make this impossible, and I bypassed it five times by
-# typing the digits myself, because typing them is the natural motion. So the fix is not
-# another feature, it is making the bypass audible at the moment it happens.
-# A warning, not a refusal: a heading may legitimately quote a future hour ("apertura alle
-# 21:00"), and a control that blocks good work gets worked around, which is worse.
+# Hand-typed clock times in the heading: warn if one is in the FUTURE. Added 2026-08-12 after
+# five forward drifts in one day (01:40 at 01:38, 11:07 at 10:58, 15:35 at 15:29, 17:35 at
+# 17:31, 17:50 at 17:34). ALWAYS forward, never back. A separate staging check caught every
+# one, so the system worked, but a whole step later, once the file was already written. The
+# deeper point: @@NOW@@ existed to make this impossible and I bypassed it five times by typing
+# the digits, because typing them is the natural motion, so the fix is not another feature, it
+# is making the bypass audible as it happens. A warning and not a refusal: a heading may quote
+# a future hour legitimately, and a control that blocks good work just gets worked around.
 first_line=${block%%$'\n'*}
 htime=$(printf '%s' "$first_line" | grep -oE '\b([01][0-9]|2[0-3]):[0-5][0-9]\b' | head -1)
 if [ -n "$htime" ]; then
