@@ -5,6 +5,7 @@
 //! subscription policy, persistence, payload rendering, queueing, and Expo delivery.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -71,6 +72,12 @@ pub(crate) struct MobileApp {
     /// real change (died, stopped, signed out, recovered) pushes exactly once. An agent's
     /// first stable observation seeds silently, which is what keeps every boot quiet.
     stable_statuses: Arc<Mutex<HashMap<String, AgentStatus>>>,
+    /// Whether lifecycle observation is live. It runs between the two ends of vestad's own agent
+    /// work: the boot reconcile stops, starts, and restarts agents as planned work (new agent
+    /// code, desired-run state) and the shutdown stops every one of them, and the map above lives
+    /// only in memory, so observing across either would report vestad's own cycle ("is available",
+    /// "needs you to sign in", "stopped") as agent news on every restart.
+    observing: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -173,6 +180,7 @@ impl MobileApp {
                 registry,
                 event_tx,
                 stable_statuses: Arc::new(Mutex::new(HashMap::new())),
+                observing: Arc::new(AtomicBool::new(false)),
             },
             MobileAppWorker {
                 context: delivery_context,
@@ -207,6 +215,9 @@ impl MobileApp {
         operated: &HashSet<String>,
         gateway_operation_running: bool,
     ) {
+        if !self.observing.load(Ordering::Relaxed) {
+            return;
+        }
         let transitions: Vec<(String, AgentStatus, AgentStatus)> = {
             let mut stable = self
                 .stable_statuses
@@ -243,6 +254,14 @@ impl MobileApp {
                 }),
             );
         }
+    }
+
+    pub(crate) fn begin_observing(&self) {
+        self.observing.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn stop_observing(&self) {
+        self.observing.store(false, Ordering::Relaxed);
     }
 
     /// Drop a destroyed agent's last stable status, so a later agent created under the same
@@ -522,6 +541,17 @@ async fn deliver_agent_event(context: DeliveryContext, event: QueuedAgentEvent) 
         .iter()
         .map(|device| message_for(device, &event.agent, &event.event_type, &event.event))
         .collect();
+    // Every push funnels through here, so this line is the journal's only record that one left the
+    // gateway; logging failures alone leaves a spurious push untraceable.
+    if !messages.is_empty() {
+        tracing::info!(
+            agent = %event.agent,
+            event_type = %event.event_type,
+            state = text_field(&event.event, "state").unwrap_or(""),
+            devices = messages.len(),
+            "delivering mobile push"
+        );
+    }
     // Own each batch before it enters the spawned delivery worker. Borrowing
     // `messages.chunks()` through the buffered async stream makes the worker
     // future non-`'static`, which `tokio::spawn` correctly rejects.
@@ -680,6 +710,7 @@ mod tests {
             reqwest::Client::new(),
             Arc::new(crate::sync::Presence::new()),
         );
+        app.begin_observing();
         (app, worker, directory)
     }
 
@@ -732,6 +763,42 @@ mod tests {
         // A boot: agents come up through starting, then land alive. Nothing is news.
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
         observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
+        assert!(drain_status_events(app, worker).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_boot_reconciles_own_agent_cycle_never_pushes() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (app, worker) = MobileApp::new(
+            registry(directory.path()),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
+        // The post-restart poll observes the shutdown-stopped agents before the boot reconcile
+        // brings them up (the 5am self-update incident). None of it is agent news.
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Stopped)]);
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
+        observe(&app, &[lifecycle_entry("athena", AgentStatus::Stopped)]);
+        observe(&app, &[lifecycle_entry("athena", AgentStatus::NotAuthenticated)]);
+        // Reconcile settles: the world as it stands seeds silently, and only a later real
+        // change pushes.
+        app.begin_observing();
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
+        observe(&app, &[lifecycle_entry("athena", AgentStatus::NotAuthenticated)]);
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Dead)]);
+        assert_eq!(
+            drain_status_events(app, worker).await,
+            vec![("apollo".to_string(), "alive".to_string(), "dead".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_shutdown_that_stops_every_agent_never_pushes() {
+        let (app, worker, _dir) = lifecycle_app();
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
+        // vestad stops every agent on its way out, and the poll keeps running while it does.
+        app.stop_observing();
+        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Stopped)]);
         assert!(drain_status_events(app, worker).await.is_empty());
     }
 

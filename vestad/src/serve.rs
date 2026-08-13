@@ -527,10 +527,8 @@ async fn restart_gateway_handler(
     // Delay so the HTTP response can flush before systemctl kills this process.
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
-        let error = match tokio::task::spawn_blocking(systemd::restart).await {
-            Ok(Ok(())) => return,
-            Ok(Err(error)) => error,
-            Err(error) => error.to_string(),
+        let Some(error) = update::restart_self(state.shutdown_tx.subscribe()).await else {
+            return;
         };
         tracing::error!(%error, "gateway restart failed");
         // No new process is coming to empty the slot, so this one must, or every client would sit
@@ -3218,6 +3216,7 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
+    let reconcile_mobile_app = state.mobile_app.clone();
     tokio::spawn(async move {
         Box::pin(docker::reconcile_containers(
             &reconcile_docker,
@@ -3237,6 +3236,8 @@ pub async fn run_server(cfg: ServerConfig) {
             &reconcile_rebuilding,
         ))
         .await;
+        // Only now is a stable observation the agent's own news, not the tail of the reconcile.
+        reconcile_mobile_app.begin_observing();
     });
     // Each agent has its own bridge network, so its calls into vestad (register-service,
     // user-notification, health) cannot reach the loopback bind below; they dial `BOX_HOST`
@@ -3260,6 +3261,7 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
+    let shutdown_state = state.clone();
     agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
         cache: state.agent_status_cache.clone(),
         docker,
@@ -3343,6 +3345,9 @@ pub async fn run_server(cfg: ServerConfig) {
         r = agent_handle => r.expect("agent-gateway https task panicked"),
         () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
+            shutdown_state.shutdown_tx.send_replace(true);
+            // The stops below are vestad's own work, exactly as the boot reconcile's starts are.
+            shutdown_state.mobile_app.stop_observing();
             docker::stop_all_agents(&shutdown_docker).await;
         }
     }
