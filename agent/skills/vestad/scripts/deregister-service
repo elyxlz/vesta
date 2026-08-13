@@ -2,9 +2,9 @@
 # Remove a service registration from vestad. The counterpart to register-service.
 #
 # A registration outlives the process that created it: stopping a daemon frees the port
-# but leaves vestad still advertising the name, and for a service registered --public that
-# means a public route pointing at nothing. Anything that registers a service for the
-# duration of a session must remove it when the session ends.
+# but leaves vestad still advertising the name, and for one registered as publicly
+# reachable that means an ungated route pointing at nothing. Anything that registers a
+# service for the duration of a session must remove it when the session ends.
 #
 # Idempotent: removing a name that is not registered succeeds, so this is safe on every
 # teardown path including one that runs twice.
