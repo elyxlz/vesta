@@ -72,9 +72,7 @@ def _filter_run(capsys, monkeypatch, *, yielded, query, limit):
     monkeypatch.setattr(email_mod.graph, "paginate_cfg", lambda *a, **k: iter(yielded))
     monkeypatch.setattr(email_mod, "_scrub_email_snapshot", lambda e: None)
     monkeypatch.setattr(email_mod.graph, "localize_datetime_fields", lambda e: None)
-    out = email_mod._filter_mailbox_messages(
-        None, None, "acct", "endpoint", since="2026-08-01", until=None, query=query, limit=limit
-    )
+    out = email_mod._filter_mailbox_messages(None, None, "acct", "endpoint", since="2026-08-01", until=None, query=query, limit=limit)
     return out, capsys.readouterr().err
 
 
@@ -83,8 +81,7 @@ def test_scan_cap_warns_even_though_the_result_is_short(capsys, monkeypatch):
     window went unread. A caller asking 'did they ever reply' gets a confident false negative."""
     from microsoft_cli import email as email_mod
 
-    haystack = [{"subject": "nothing relevant", "bodyPreview": "", "from": {}}
-                for _ in range(email_mod.MAX_FILTER_SCAN + 50)]
+    haystack = [{"subject": "nothing relevant", "bodyPreview": "", "from": {}} for _ in range(email_mod.MAX_FILTER_SCAN + 50)]
     out, err = _filter_run(capsys, monkeypatch, yielded=haystack, query="needle", limit=400)
     assert out == []
     assert "TRUNCATED" in err
