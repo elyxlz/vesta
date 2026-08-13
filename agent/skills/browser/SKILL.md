@@ -253,6 +253,41 @@ Occasional topics live in their own files so this one stays lean:
 - **Bot detection / blocked**: `browser screenshot` to see the page. Camoufox is already
   stealthy, so a block is usually account-trust, geo/IP, or a CAPTCHA, so try handover.
 - **Stale refs**: take a fresh `browser snapshot` after navigation or major DOM change.
+- **`browser stop` takes NO arguments**, and "stop the session by name" is not a thing. Sessions are
+  selected by `BROWSER_SESSION` and nothing else, so the correct form is
+  `BROWSER_SESSION=<name> browser stop`. Give a subagent that env-var form verbatim rather than the
+  words "close your session", which invite a flag that does not exist and, when it fails, invite
+  `stop-all` as the next guess.
+- **A leftover session RECORD is not a leaking browser.** With dead records present, `browser prune`
+  (dry run by default) reported 0 reclaimable bytes and `ps` showed zero browser processes, so
+  `browser sessions` listing dead entries is stale metadata, not something to chase.
+- **`browser stop-all` is a global fix, and a subagent will reach for it.** One that hit
+  `Camoufox is already running, but is not responding` on launch ran `stop-all` and killed four
+  sessions belonging to other work. Tell any browser-using subagent up front: run in your own
+  `BROWSER_SESSION=<name>`, close only that session, never `stop-all` when other work could be
+  running. If launch fails, prefer a fresh named session over killing the shared daemon.
+- **`daemon did not come up within 30s` under fan-out is CONTENTION, not a broken install.** Seen
+  with four research subagents launched at once: three drove the browser fine and the fourth could
+  not get its BiDi handshake through. The failing agent should fall back to plain HTTP (curl with a
+  normal browser User-Agent) or WebFetch; when fanning out, stagger the browser-using agents or tell
+  them the fallback is expected, so they do not burn turns fighting it. Suspect a real fault only
+  when this happens at low concurrency.
+- **New-tab helpers hang** (`browsingContext.create`/`activate` time out, or `browser open` / argless
+  `js()` fail): the session's existing tab context is usually fine, it is the open-a-new-context path
+  that wedges. Do not open a new tab. Drive the existing context: `goto` the URL on it and pass that
+  context id explicitly to `js`/snapshot calls (get it from `browser bidi "browsingContext.getTree"`
+  or `page_info`). If the whole session is wedged, relaunch once and reuse the default context.
+- **A consent banner can swallow your clicks while every command reports success.** A CMP overlay
+  (OneTrust and friends render one, e.g. `div.onetrust-pc-dark-filter`) can absorb clicks on a form
+  or configurator: the controls stay on their defaults, no error appears, and the value you read
+  back is the DEFAULT one, which is a wrong number that looks exactly like a right one. Dismiss the
+  banner first, then verify the control actually changed (read the checked input) before trusting
+  anything the page renders.
+- **A block on one route does not characterise the host.** A WAF can answer per route: on one site a
+  `GET` of an HTML page returned 200 with a JS challenge page (`<title>Waiting</title>`) while a
+  `POST` to its internal JSON API returned 403 with a block page. So "curl gets 403 here" and "curl
+  gets 200 here" can both be true of the same host, and a single probe is not a verdict on whether
+  the browser is needed.
 
 ## Auth-gated / heavy-JS pages
 
