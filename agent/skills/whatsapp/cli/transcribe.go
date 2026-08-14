@@ -1,18 +1,28 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 	wav "github.com/go-audio/wav"
 )
+
+// voiceSttTimeout bounds the `voice-keys transcribe` shellout so a hung provider
+// call never wedges the whatsapp daemon's message path.
+const voiceSttTimeout = 30 * time.Second
 
 var (
 	whisperModel     whisper.Model
@@ -164,6 +174,73 @@ func readWAVSamples(path string) ([]float32, error) {
 	return samples, nil
 }
 
+// whisperOutputJunk reports whether whisper's output is a silence tag rather than
+// a real transcription. whisper.cpp emits bracketed tags ("[Musica]",
+// "[BLANK_AUDIO]", "[Musik]", "[tk]") for near-silent or low-content clips
+// instead of returning an error, and those would otherwise reach the agent as if
+// they were the transcript. Treat empty/whitespace or a result made only of
+// "[...]" tags (a multi-segment silent clip joins several) as silence. (arxiv
+// 2501.11378 documents the hallucination mode.)
+var tagOnlyRe = regexp.MustCompile(`^(\s*\[[^\[\]]+\]\s*)+$`)
+
+func whisperOutputJunk(text string) bool {
+	t := strings.TrimSpace(text)
+	return t == "" || tagOnlyRe.MatchString(t)
+}
+
+// transcribeViaVoiceStt shells the voice skill's provider-agnostic transcriber.
+// A clean exit (STT configured+enabled and the provider answered) yields the
+// transcript; any failure (unconfigured, disabled, provider error, command
+// absent, timeout) returns an error so the caller falls back to whisper.
+func transcribeViaVoiceStt(audioPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), voiceSttTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "voice-keys", "transcribe", audioPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if runErr := cmd.Run(); runErr != nil {
+		return "", parseVoiceSttError(stderr.Bytes(), runErr, ctx.Err() == context.DeadlineExceeded)
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// parseVoiceSttError turns a failed `voice-keys transcribe` run into one clear
+// error: the structured {error} the command prints on stderr, a timeout, a
+// missing command, or a bare exit failure.
+func parseVoiceSttError(stderr []byte, runErr error, timedOut bool) error {
+	if timedOut {
+		return fmt.Errorf("voice STT timed out")
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(stderr), &resp) == nil && resp.Error != "" {
+		return fmt.Errorf("voice STT: %s", resp.Error)
+	}
+	if errors.Is(runErr, exec.ErrNotFound) {
+		return fmt.Errorf("voice-keys not on PATH")
+	}
+	return fmt.Errorf("voice STT failed: %w", runErr)
+}
+
+// transcriptDecision keeps voice STT primary and whisper the fallback. A clean
+// STT answer (voiceErr == nil) always wins, even an empty one (genuine silence).
+// Otherwise whisper is used: its error propagates, and a junk (silence-tag)
+// whisper result is dropped to empty rather than delivered as the transcript.
+func transcriptDecision(voiceText string, voiceErr error, whisperText string, whisperErr error) (string, error) {
+	if voiceErr == nil {
+		return voiceText, nil
+	}
+	if whisperErr != nil {
+		return "", whisperErr
+	}
+	if whisperOutputJunk(whisperText) {
+		return "", nil
+	}
+	return whisperText, nil
+}
+
 // Convenience wrapper used by handleMessage. Returns the transcription text and any error.
 func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) (string, error) {
 	// Download audio to temp file
@@ -176,14 +253,28 @@ func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) (st
 		return "", fmt.Errorf("failed to download audio: %w", err)
 	}
 
-	text, err := transcribeAudioBuiltIn(path)
+	// Primary: the user's configured STT provider, owned by the voice skill.
+	voiceText, voiceErr := transcribeViaVoiceStt(path)
+	if voiceErr == nil {
+		if voiceText != "" {
+			wac.logger.Infof("Transcribed audio %s via voice STT: %s", messageID, voiceText)
+		}
+		return voiceText, nil
+	}
+	wac.logger.Infof("Voice STT unavailable for %s (%v); falling back to whisper", messageID, voiceErr)
+
+	// Fallback: local whisper.cpp.
+	whisperText, whisperErr := transcribeAudioBuiltIn(path)
+	text, err := transcriptDecision(voiceText, voiceErr, whisperText, whisperErr)
 	if err != nil {
-		wac.logger.Warnf("Transcription failed: %v", err)
+		wac.logger.Warnf("Transcription failed for %s: %v", messageID, err)
 		return "", err
 	}
-
-	if text != "" {
-		wac.logger.Infof("Transcribed audio %s: %s", messageID, text)
+	switch {
+	case text != "":
+		wac.logger.Infof("Transcribed audio %s via whisper: %s", messageID, text)
+	case whisperOutputJunk(whisperText):
+		wac.logger.Infof("Whisper produced tag-only/silence %q for %s; treating as no speech", whisperText, messageID)
 	}
 	return text, nil
 }

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import pathlib as pl
 import typing as tp
 from urllib.parse import urlencode
 
@@ -19,6 +20,10 @@ MODEL = "flux-general-en"
 MODEL_MULTI = "nova-3"
 ENCODING = "linear16"
 SAMPLE_RATE = 16000
+
+# Prerecorded (one-shot file) transcription, used by `voice-keys transcribe`.
+PRERECORDED_MODEL = "nova-3"
+PRERECORDED_TIMEOUT_SECS = 30
 
 
 class DeepgramStt:
@@ -117,6 +122,23 @@ class DeepgramStt:
         finally:
             await session.close()
 
+    async def transcribe_file(self, audio_path: pl.Path, creds: dict[str, str], stt_domain: dict) -> str:
+        api_key = creds.get("api_key")
+        if not api_key:
+            raise ValueError("missing deepgram api_key")
+        url = f"{DEEPGRAM_API}/v1/listen?{urlencode(_prerecorded_params(stt_domain))}"
+        headers = {"Authorization": f"Token {api_key}", "Content-Type": "audio/*"}
+        audio = await asyncio.to_thread(audio_path.read_bytes)
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(url, data=audio, headers=headers, timeout=aiohttp.ClientTimeout(total=PRERECORDED_TIMEOUT_SECS)) as resp,
+        ):
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"deepgram returned {resp.status}: {body}")
+            data = await resp.json()
+        return _prerecorded_transcript(data)
+
     async def _cached_project_id(self, api_key: str) -> str | None:
         if (cached := self._project_id_cache.get(api_key)) is not None:
             return cached
@@ -205,6 +227,35 @@ def _listen_url(stt_domain: dict, multi_language: bool) -> str:
         params.append((keyterm_param, term))
     # Build the URL only after keyterms are appended, otherwise they are dropped.
     return f"{DEEPGRAM_WS}{listen_path}?{urlencode(params)}"
+
+
+def _prerecorded_language(stt_domain: dict) -> str | None:
+    """The prerecorded language param: "multi" for multi-language, an explicit code, or None."""
+    if stt_domain.get("multi_language"):
+        return "multi"
+    language = stt_domain.get("language")
+    if isinstance(language, str) and language and language != "auto":
+        return language
+    return None
+
+
+def _prerecorded_params(stt_domain: dict) -> list[tuple[str, str]]:
+    params = [("model", PRERECORDED_MODEL), ("smart_format", "true")]
+    language = _prerecorded_language(stt_domain)
+    if language:
+        params.append(("language", language))
+    return params
+
+
+def _prerecorded_transcript(body: dict) -> str:
+    results = body.get("results") or {}
+    channels = results.get("channels") or []
+    if not channels:
+        return ""
+    alternatives = channels[0].get("alternatives") or []
+    if not alternatives:
+        return ""
+    return (alternatives[0].get("transcript") or "").strip()
 
 
 async def _browser_to_deepgram(browser_ws: web.WebSocketResponse, dg_ws: aiohttp.ClientWebSocketResponse) -> None:

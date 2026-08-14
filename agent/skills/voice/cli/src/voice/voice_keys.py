@@ -3,6 +3,7 @@
 
 Commands:
   status
+  transcribe <path>
   validate --provider {deepgram|elevenlabs} --key <k>
   set-key  --domain {stt|tts} --provider <p> --key <k>
   clear    --domain {stt|tts}
@@ -61,6 +62,34 @@ def _print(config: vc.VoiceConfig) -> None:
 
 def cmd_status(_args: argparse.Namespace) -> int:
     _print(vc.load(_data_dir()))
+    return 0
+
+
+async def _transcribe(path: str) -> str:
+    """Run the configured STT provider over one audio file. Raises on any config or provider fault."""
+    entry = vc.load(_data_dir())["stt"]
+    name = vc.provider_name(entry)
+    if not entry or name is None:
+        raise RuntimeError("STT not configured")
+    if not vc.is_enabled(entry):
+        raise RuntimeError("STT disabled")
+    provider = providers.get_stt(name)
+    if provider is None:
+        raise RuntimeError(f"unknown STT provider: {name}")
+    creds = vc.provider_creds(entry, name)
+    if not creds:
+        raise RuntimeError(f"no credentials for STT provider: {name}")
+    return await provider.transcribe_file(pl.Path(path), creds, dict(entry))
+
+
+def cmd_transcribe(args: argparse.Namespace) -> int:
+    """One-shot transcription: transcript to stdout, a JSON error to stderr, so a caller can fall back."""
+    try:
+        transcript = asyncio.run(_transcribe(args.path))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+    print(transcript)
     return 0
 
 
@@ -186,6 +215,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd")
 
     sub.add_parser("status").set_defaults(func=cmd_status)
+
+    p_transcribe = sub.add_parser("transcribe", help="Transcribe one audio file with the configured STT provider")
+    p_transcribe.add_argument("path")
+    p_transcribe.set_defaults(func=cmd_transcribe)
 
     p_validate = sub.add_parser("validate")
     p_validate.add_argument("--provider", required=True)

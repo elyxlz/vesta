@@ -60,6 +60,25 @@ def mutate(data_dir: pl.Path, updater: tp.Callable[[VoiceConfig], VoiceConfig]) 
     return new
 
 
+def provider_name(entry: Domain | None) -> str | None:
+    """The domain's configured provider name, or None when unset."""
+    if not entry or "provider" not in entry:
+        return None
+    name = entry["provider"]
+    return name if isinstance(name, str) and name else None
+
+
+def provider_creds(entry: Domain, provider: str) -> dict[str, str]:
+    """The credentials stored for one provider under a domain, or an empty dict."""
+    creds = _credentials(entry)
+    value = creds[provider] if provider in creds else {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def is_enabled(entry: Domain | None) -> bool:
+    return bool(entry and "enabled" in entry and entry["enabled"])
+
+
 def _credentials(entry: Domain) -> dict[str, dict[str, str]]:
     creds = entry["credentials"] if "credentials" in entry else {}
     return dict(creds) if isinstance(creds, dict) else {}
