@@ -206,6 +206,19 @@ def _looks_like_word_slug(token: str) -> bool:
     return len(segs) >= 2 and all(len(s) < 16 for s in segs)
 
 
+def _is_whatsapp_media(text: str, start: int, end: int) -> bool:
+    """WhatsApp encrypted-media CDN URLs (`.../<mediakey>_n.enc?ccb=11-4&oh=...`) trip the token/url
+    patterns every single night: the media key is a long high-entropy run and the `oh=`/`oe=` params
+    look like signed values, so 12-19 of them bury the real matches. They carry NO secret (the
+    decryption key is not in the URL; the media is WhatsApp's own ephemeral CDN blob). The `.enc?ccb=`
+    literal is unique to WhatsApp media, so a hit whose span sits right beside it is one of these.
+    Needs BOTH halves of the media signature, so a real secret that merely sits near a stray marker
+    still lists: the media key is PRECEDED by the `/t62.` CDN path segment and FOLLOWED immediately by
+    `.enc?ccb=`. A pasted `sk-`/`token=` secret has neither the path before it nor the marker right
+    after it, so it survives; only a run wedged inside a genuine WhatsApp media URL is skipped."""
+    return "/t62." in text[max(0, start - 200) : start] and ".enc?ccb=" in text[end : end + 45]
+
+
 def mask(match: re.Match[str]) -> str:
     """Replace a real hit with the placeholder; leave an already-scrubbed span untouched so the
     scan and scrub are both idempotent (a re-run never re-flags or mangles `password=[REDACTED]`)."""
@@ -314,8 +327,12 @@ def _mask_context(window: str) -> str:
 def _hit_spans(text: str) -> list[tuple[int, int]]:
     """Every real hit's span in one string: the combined REGEX (already-redacted spans and news-slug
     false positives filtered out) plus the payment-card pass."""
-    spans = [m.span() for m in REGEX.finditer(text) if REDACTED not in m.group(0) and not _looks_like_word_slug(m.group(0))]
-    spans += [m.span() for m in CARD_CANDIDATE.finditer(text) if _is_card(m.group(0))]
+    spans = [
+        m.span()
+        for m in REGEX.finditer(text)
+        if REDACTED not in m.group(0) and not _looks_like_word_slug(m.group(0)) and not _is_whatsapp_media(text, m.start(), m.end())
+    ]
+    spans += [m.span() for m in CARD_CANDIDATE.finditer(text) if _is_card(m.group(0)) and not _is_whatsapp_media(text, m.start(), m.end())]
     return spans
 
 
