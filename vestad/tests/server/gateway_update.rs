@@ -286,6 +286,13 @@ async fn collect_until_phase(
         if operation.is_null() {
             continue;
         }
+        // A retried update watches a socket whose projection still carries the prior attempt's
+        // terminal `failed`. That residual precedes the fresh walk, so drop it while nothing else
+        // has been seen: a terminal state never opens a forward walk, and counting it would read as
+        // the update going backwards. A walk deliberately ending on `failed` keeps it.
+        if seen.is_empty() && operation["phase"].as_str() == Some("failed") && phase != "failed" {
+            continue;
+        }
         let reached = operation["phase"].as_str() == Some(phase);
         seen.push(operation);
         if reached {
