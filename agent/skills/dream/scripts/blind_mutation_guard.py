@@ -1,27 +1,68 @@
 #!/usr/bin/env python3
 """PreToolUse gate: refuse a state-changing command whose target id was scraped positionally.
 
-THE SHAPE, in one line:
+WHY THIS EXISTS (built 11 Aug 2026).
 
-    tool delete $(tool list | grep <thing> | awk '{print $2}')
+On 10 Aug I ran this, to delete a reminder that had become obsolete:
 
-`awk` with no `-F` splits on runs of whitespace, so the field numbers only line up while every
-column is a single word. A human-readable table breaks that promise routinely: a column reading
-`in 5h` is two fields, everything after it shifts by one, and `$2` hands back the duration instead
-of the id. The delete then names a row that does not exist.
+    tasks remind delete $(tasks remind list --task X | grep -i "TICKETING WATCH" | awk '{print $2}')
 
-Which is the reason this is a guard and not a rule. A mutation that silently does nothing is
-indistinguishable from one that worked: the command exits 0, an `&& echo "done"` chained after it
-prints on that exit status, and the reassurance is manufactured by the very thing that failed. If
-the same command line ends with another call whose output IS checked, the check reads as coverage
-for the whole chain. Nothing surfaces until the state that should have changed acts on its own.
+`tasks remind list` prints TAB separated columns, and its first column reads `in 5h`, which contains
+a space. With awk's DEFAULT whitespace splitting that is two fields, so `$2` was `5h` and `$3` was
+the id. **The command deleted a reminder called "5h", which does not exist. It exited 0.**
+
+Two reminders survived that way. One fired needlessly hours later. The other would have told me to
+chase a GBP 96.40 refund that had already landed.
+
+I never noticed, because the same command line ended with a `tasks remind` CREATE whose
+`"status": "scheduled"` I did check. **I verified the output of the last command in the chain, not
+the effect of the first.** I had even written `&& echo "chase cancelled"` after it, which fires on
+exit status, so a no-op printed my own reassurance back at me. I built a false confirmation and
+believed it.
+
+THE CLASS, which is why this is code and not another rule. A mutation that silently does nothing is
+indistinguishable from one that worked. That exact shape has now bitten four times in three days:
+
+  * 8 Aug: three throwaway checks that returned "nothing found" because the check itself was broken
+    (a `hasattr` on the wrong symbol, a fixture with the wrong key, a `grep -c` counting my own tool
+    calls). Answered with `control.py`, which covers CHECKS.
+  * 9 Aug: `runs_tgsend()` returned False on `cd /root && ENV=x python3 tgsend.py`, so the longform
+    meter never ran and the message went out anyway. The guard agreeing and the guard never
+    executing looked identical.
+  * 10 Aug: this. Two zombie reminders.
+  * 10 Aug: a mailbox sweep that returned zero hits because `--limit 200` truncated the window four
+    days short of the dates being asked about.
+
+`control.py` answered the half about checks. The half about ACTIONS had nothing, and rules have not
+held: "verify the delete" is exactly the discipline that fails at 1am on the fourth command of a
+chain.
 
 WHAT IT FLAGS, deliberately narrow so it stays trustworthy:
 
     a mutating verb  +  an argument from a command substitution  +  positional scraping inside it
 
 All three must be present. Positional scraping means `awk` with no `-F` (default whitespace
-splitting) or a bare `cut -f`/`cut -c` over piped human output. If any leg is missing, it allows.
+splitting) or a bare `cut -f`/`cut -c` on piped human output. If any leg is missing, it allows.
+
+THE THREE WAYS ROUND IT, all closed on 12 Aug 2026. The first version understood exactly one
+spelling of "argument from a command substitution", `$( )`, so the identical defect walked straight
+through three others. Each was verified ALLOWED before the fix and BLOCKED after:
+
+  * **backticks.** `tasks remind delete \\`... | awk '{print $2}'\\`` is the same command.
+  * **xargs.** `... | awk '{print $2}' | xargs tasks remind delete` has no substitution at all,
+    so the "no subs, skip" fast path allowed every one of them.
+  * **a variable in between.** `id=$(... | awk '{print $2}'); tasks remind delete $id` splits into
+    two segments, and neither one on its own has all three legs. This is the form I am most likely
+    to actually type, because it is the tidy one.
+
+AND THE HEREDOC STRIPPING WAS A REAL FAIL-OPEN, though not for the reason it was written down as.
+The carried note said a mistyped terminator lets the stripper eat a live command. Bash disagrees:
+asked directly, it treats those lines as heredoc BODY and never runs them, so the guard agreeing
+with bash was correct. The real hole is `<<-`, which lets the terminator be TAB-INDENTED while the
+old regex anchored it at column 0. Bash ends the heredoc there; the regex scanned on and swallowed
+the live mutation two lines later. Demonstrated by running both and comparing, not by reading the
+regex. Heredocs are now scanned line by line the way bash does it, and an opener with NO terminator
+is left alone rather than stripped to the end of the string.
 
 WHAT IT DOES NOT FLAG:
 
@@ -30,10 +71,9 @@ WHAT IT DOES NOT FLAG:
   - Reads. `grep`, `list`, `status`, `get`, `show` change nothing, so a wrong id is visible and free.
   - A literal id typed out. That is the safest form there is.
 
-FAIL-OPEN: an unreadable payload, an unexpected shape, a missing field, or any exception allows the
-call. A guard against silent no-ops must never itself become one that silently blocks work.
-
-Usage: wired as a PreToolUse hook on `Bash` (see the dream SKILL.md); `--self-test` runs its cases.
+FAIL-OPEN, exactly as in the sibling guards: an unreadable payload, an unexpected shape, a missing
+field, or any exception allows the call. A guard against silent no-ops must never itself become one
+that silently blocks work.
 """
 
 import json
@@ -49,29 +89,81 @@ MUTATORS = re.compile(
 
 # awk with NO -F: default whitespace splitting, which is the actual bug.
 AWK_DEFAULT_FIELD = re.compile(r"\bawk\s+(?!-F)(?:[^|)]*?)'\s*\{\s*print\s+\$\d+", re.IGNORECASE)
-# A bare cut on a pipe. `-f` without `-d` is TAB, which is right; `-c` is byte offsets and `-d' '`
-# over tabular output is the same guess about where the columns are.
+# bare cut on a pipe: -f without an explicit -d is TAB, which is right, but -c is byte offsets
+# and -d' ' on tabular output is the same class of guess.
 CUT_POSITIONAL = re.compile(r"\bcut\s+(-c|-d['\"]? ['\"]?\s*-f)", re.IGNORECASE)
 
 JSON_FLAG = re.compile(r"--json\b|--json-pretty\b|-o\s*json\b", re.IGNORECASE)
 
-# A heredoc body is TEXT being written, not a command being run. Recording one of these mistakes in
-# a note, or in this file's own cases, is not making it, and a guard that cannot tell those apart
-# makes its own lessons unrecordable.
-HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\n.*?^\1\b", re.DOTALL | re.MULTILINE)
+
+# A heredoc body is TEXT being written, not a command being run. Documenting the 10 Aug bug in a
+# ledger row, or in this file's own test cases, must not trip the guard against committing it.
+# Found the honest way: this guard blocked its own ledger entry within a minute of being wired, and
+# then blocked the patch that fixes it. That is a real false-positive class, and no self-test of
+# invented cases would have surfaced it.
+HEREDOC_OPEN = re.compile(r"<<(-?)\s*(['\"]?)(\w+)\2")
 
 
 def strip_heredocs(cmd: str) -> str:
-    return HEREDOC.sub(" ", cmd)
+    """Remove heredoc BODIES the way bash actually delimits them, line by line.
+
+    Replaces a regex that anchored the terminator at column 0 and therefore disagreed with bash in
+    the one direction that matters. Three rules, each of which the regex got wrong:
+
+      * `<<-` accepts a TAB-INDENTED terminator. This is the fail-open: bash closed the heredoc at
+        the indented terminator and ran what followed, while the regex kept scanning and swallowed
+        a live mutation.
+      * A terminator line must BE the delimiter, not merely start with it. `EOFF` does not close
+        `EOF`, which is why an apparently-live command between a typo and the next terminator is
+        really heredoc body. Confirmed by running it under bash and watching the command not fire.
+      * An opener with no terminator anywhere is left ALONE rather than stripped to end-of-string.
+        Bash calls that a syntax error, so the safe reading is "this is not a heredoc I understand",
+        and the safe direction for a guard is to keep looking at the text rather than discard it.
+
+    A purely numeric delimiter is ignored outright, so `$((1 << 2))` is arithmetic, not an opener.
+    """
+    lines = cmd.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        # EVERY `<<` on the line is a candidate, in order, not just the first. Found the honest way:
+        # the first version took `HEREDOC_OPEN.search(...)`, and the very command written to verify
+        # the fix was `echo "... (<<- tab terminator)"; python3 - <<'PY'`. The decoy `<<- tab` inside
+        # the echo won, resolved to nothing, and the whole real heredoc body was then read as
+        # commands, so the guard blocked its own test run. A line may carry a `<<` that is prose.
+        chosen = None
+        for m in HEREDOC_OPEN.finditer(line):
+            if m.group(3).isdigit():
+                continue
+            dash, delim = m.group(1), m.group(3)
+            for j in range(i + 1, len(lines)):
+                candidate = lines[j].lstrip("\t") if dash else lines[j]
+                if candidate.rstrip() == delim:
+                    chosen = (m, j)
+                    break
+            if chosen:
+                break
+        if chosen is None:
+            out.append(line)
+            i += 1
+            continue
+        m, end = chosen
+        out.append(line[: m.start()])
+        i = end + 1
+    return "\n".join(out)
 
 
 def substitutions(cmd: str) -> list[str]:
-    """Return the bodies of $( ... ) substitutions, handling one level of nesting."""
+    """Return the bodies of command substitutions: `$( ... )` AND backticks.
+
+    Backticks were the cheapest way round the first version of this guard, and they are the same
+    command with older syntax.
+    """
     out, i = [], 0
     while True:
         start = cmd.find("$(", i)
         if start < 0:
-            return out
+            break
         depth, j = 1, start + 2
         while j < len(cmd) and depth:
             if cmd[j] == "(":
@@ -81,56 +173,106 @@ def substitutions(cmd: str) -> list[str]:
             j += 1
         out.append(cmd[start + 2 : j - 1])
         i = j
+    parts = cmd.split("`")
+    if len(parts) > 2:
+        out.extend(parts[k] for k in range(1, len(parts), 2))
+    return out
 
 
-def verdict(cmd: str) -> str | None:
-    """Return the offending substitution, or None to allow.
+def scrapes_positionally(text: str) -> bool:
+    """True if `text` pulls a field out of human tabular output by position."""
+    if JSON_FLAG.search(text):
+        return False
+    return bool(AWK_DEFAULT_FIELD.search(text) or CUT_POSITIONAL.search(text))
 
-    The scraped value must plausibly FEED the mutation, so both have to live in the same command
-    segment. `before=$(df -h / | tail -1 | awk '{print $4}'); rm -rf /tmp/build` carries a scrape
-    and a mutator that have nothing to do with each other: the substitution measures disk for a
-    progress line. Matching a mutator anywhere on the line flags that whole class.
+
+# `... | xargs tasks remind delete` reaches the same end as a substitution with none of the syntax,
+# so the "no substitutions, nothing to check" fast path let every one of them through.
+XARGS_TAIL = re.compile(r"\|\s*xargs\b(.*)$", re.IGNORECASE | re.DOTALL)
+
+# `id=$(...)` / ``id=`...` `` : the tidy two-statement form, which is the one I actually type.
+ASSIGN_FROM_SUB = re.compile(r"(?:^|[;&|]|\s)(\w+)=(?=\$\(|`)")
+
+# A mutating verb inside a QUOTED LITERAL is display text, not a command. Found within the hour of
+# widening this guard, by the guard blocking me: `printf 'stop rc=%s %s\n' "$rc" "$(... | cut -c1-100)"`
+# was denied because the word "stop" sits in a printf FORMAT STRING and the substitution truncates
+# output for display. Neither half is a mutation. The 14,239-command replay had not caught this
+# because it measured commands I had ALREADY written, and I had spent the same session adopting a
+# new habit, `| tr -d '\n' | cut -c1-N` for compact status lines, that the history barely contains.
+# A false-positive rate measured against the past does not bound the rate against how you write now.
+QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
+
+
+def command_text(seg: str) -> str:
+    """The part of a segment that can actually name a command: quoted literals removed.
+
+    Deliberately NOT applied to substitution bodies, only to the text outside them, so
+    `tasks remind delete "$id"` still reads as a mutation while `printf 'stop ...'` does not.
+    """
+    return QUOTED.sub(" ", seg)
+
+
+def verdict(cmd: str) -> str | None:  # noqa: PLR0912
+    """Return a reason to block, or None to allow.
+
+    The branch and return counts exceed ruff's defaults on purpose. Each branch is one
+    distinct spelling of the same defect, found by replaying real command history, and each
+    early return names WHICH spelling matched so the denial message can say so. Collapsing
+    them to satisfy a counter would trade a specific, actionable refusal for a generic one,
+    which is the opposite of what a guard is for.
+
+    The scraped value must plausibly FEED the mutation, so both must live in the SAME command
+    segment. Replaying 12,709 real historical commands showed why: `before=$(df -h / | tail -1 |
+    awk '{print $4}'); rm -rf /tmp/pytest-of-root` has a scrape and a mutator, and they have
+    nothing to do with each other. The substitution measures disk for a progress message. Matching
+    "mutator anywhere in the line" flagged a whole class of these.
     """
     cmd = strip_heredocs(cmd)
-    for seg in re.split(r";|&&|\|\||\n", cmd):
+    segments = re.split(r";|&&|\|\||\n", cmd)
+
+    # Variables that were filled from a positional scrape. Tracked across segments, because the
+    # tidy `id=$(...)` / `mutate $id` form puts the scrape and the mutation in different ones and
+    # neither half alone has all three legs.
+    tainted: dict[str, str] = {}
+
+    for seg in segments:
         subs = substitutions(seg)
-        if not subs:
-            continue
-        outside = seg
-        for s in subs:
-            outside = outside.replace(s, " ")
-        if not MUTATORS.search(outside):
-            continue
-        for s in subs:
-            if JSON_FLAG.search(s):
-                continue
-            if AWK_DEFAULT_FIELD.search(s) or CUT_POSITIONAL.search(s):
-                return s.strip()
+
+        # 1. The original shape: mutator OUTSIDE, scrape INSIDE the substitution.
+        if subs:
+            outside = seg
+            for s in subs:
+                outside = outside.replace(s, " ")
+            if MUTATORS.search(command_text(outside)):
+                for s in subs:
+                    if scrapes_positionally(s):
+                        return s.strip()
+
+            # 2. The scrape lands in a variable here; the mutation comes later.
+            for name in ASSIGN_FROM_SUB.findall(seg):
+                for s in subs:
+                    if scrapes_positionally(s):
+                        tainted[name] = s.strip()
+
+        # 3. A tainted variable being spent on a mutation, in this or any later segment.
+        if tainted and MUTATORS.search(command_text(seg)):
+            for name, src in tainted.items():
+                if re.search(r"\$\{?" + re.escape(name) + r"\}?\b", seg):
+                    return src
+
+        # 4. `... | awk '{print $2}' | xargs <mutator>`: no substitution anywhere, same defect.
+        m = XARGS_TAIL.search(seg)
+        if m and MUTATORS.search(command_text(m.group(1))):
+            upstream = seg[: m.start()]
+            if scrapes_positionally(upstream):
+                return upstream.strip()
+
     return None
 
 
-REASON = (
-    "blind mutation: this changes state using an id scraped positionally from a human-readable "
-    "table, and if the scrape is wrong the command will do NOTHING and still exit 0.\n\n"
-    "  the substitution: {sub}\n\n"
-    "`awk` with no -F splits on whitespace, so a column whose value contains a space (a duration "
-    "like `in 5h`, a two-word status, a name) shifts every field after it and $2 stops being the "
-    "id. The delete then names a row that does not exist and reports success.\n\n"
-    "do one of these instead:\n"
-    "  1. use the tool's --json output and parse it\n"
-    "  2. pass -F'\\t' to awk so the field boundaries are explicit\n"
-    "  3. paste the id literally\n"
-    "and then RE-QUERY to confirm the thing is actually gone. Checking the command's own exit "
-    "status proves nothing here: a no-op exits 0."
-)
-
 CASES = [
     # (must_block, label, command)
-    (
-        True,
-        "id scraped out of a tab-separated listing",
-        """tasks remind delete $(tasks remind list --task X | grep -i "WATCH" | awk '{print $2}')""",
-    ),
+    (True, "the actual 10 Aug bug", """tasks remind delete $(tasks remind list --task X | grep -i "WATCH" | awk '{print $2}')"""),
     (True, "same shape via cut -c", """tasks done $(tasks list | grep foo | cut -c10-18)"""),
     (
         True,
@@ -140,13 +282,20 @@ CASES = [
     (False, "FIX 1: --json", """tasks remind delete $(tasks remind list --json | python3 -c "import sys,json;print(1)")"""),
     (False, "FIX 2: explicit tab separator", """tasks remind delete $(tasks remind list | grep W | awk -F'\t' '{print $2}')"""),
     (False, "FIX 3: literal id", """tasks remind delete a9fa757e"""),
-    (False, "read-only scrape changes nothing", """tasks remind list | grep -i sail | awk '{print $2}'"""),
+    (False, "read-only scrape changes nothing", """tasks remind list | grep -i olbia | awk '{print $2}'"""),
     (False, "no substitution at all", """rm /tmp/scratch.txt"""),
     (False, "mutating word only INSIDE the substitution", """echo $(tasks list | awk '{print $2}')"""),
+    # Found LIVE, not invented: this guard blocked its own ledger row, because the row documents
+    # the bad command. Then it blocked the patch fixing that. Writing about a mistake is not making
+    # it, and a guard that cannot tell those apart makes its own lessons unrecordable.
     (
         False,
         "the bad command quoted inside a heredoc is text, not execution",
-        ("cat >> ~/agent/data/notes.md <<'ENTRY'\ntasks remind delete $(tasks remind list | grep W | awk '{print $2}') deleted nothing\nENTRY"),
+        (
+            "cat >> /root/agent/dreamer/ledger.md <<'ENTRY'\n"
+            "tasks remind delete $(tasks remind list | grep W | awk '{print $2}') deleted nothing\n"
+            "ENTRY"
+        ),
     ),
     (
         True,
@@ -155,6 +304,74 @@ CASES = [
             "cat > /tmp/x <<'EOF'\nharmless text\nEOF\n"
             """tasks remind delete $(tasks remind list | grep W | awk '{print $2}')"""
         ),
+    ),
+    # ---- the four ways round the first version, closed 12 Aug. Each was verified ALLOWED before
+    # the fix. The negative twin under each one is what stops the new rule being a blunt instrument.
+    (True, "GAP 1: backticks instead of $( )", """tasks remind delete `tasks remind list --task X | grep WATCH | awk '{print $2}'`"""),
+    (False, "  twin: backticks on a READ change nothing", """echo `tasks remind list | awk '{print $2}'`"""),
+    (
+        True,
+        "GAP 2: xargs, no substitution anywhere",
+        """tasks remind list --task X | grep WATCH | awk '{print $2}' | xargs tasks remind delete""",
+    ),
+    (False, "  twin: xargs with NO positional scrape is the normal safe idiom", """find /tmp -name '*.log' -mtime +7 | xargs rm -f"""),
+    (False, "  twin: xargs fed from --json output", """tasks list --json | jq -r '.[].id' | xargs -n1 tasks done"""),
+    (
+        True,
+        "GAP 3: the scrape parks in a variable, the mutation spends it",
+        """id=$(tasks remind list --task X | grep WATCH | awk '{print $2}'); tasks remind delete $id""",
+    ),
+    (
+        True,
+        "GAP 3b: same, separated by a newline and braced",
+        "rid=$(tasks remind list | grep WATCH | awk '{print $2}')\ntasks remind delete ${rid}",
+    ),
+    (
+        False,
+        "  twin: a scraped variable the mutation never touches (12,709-command replay case)",
+        """before=$(df -h / | tail -1 | awk '{print $4}'); rm -rf /tmp/pytest-of-root""",
+    ),
+    (
+        False,
+        "  twin: variable scraped with an explicit separator",
+        """id=$(tasks remind list | grep W | awk -F'\t' '{print $2}'); tasks remind delete $id""",
+    ),
+    # GAP 4 was carried as "a mistyped terminator lets the stripper eat a live command". Bash says
+    # otherwise: those lines are heredoc BODY and never run. The real hole is `<<-`, whose
+    # terminator may be TAB-INDENTED while the old regex demanded column 0, so bash ended the
+    # heredoc and ran the mutation while the guard was still swallowing text.
+    (
+        True,
+        "GAP 4: <<- with a tab-indented terminator, mutation after it is LIVE",
+        (
+            "cat > /tmp/a <<-'EOF'\n\talpha\n\tEOF\n"
+            """tasks remind delete $(tasks remind list | awk '{print $2}')"""
+        ),
+    ),
+    (
+        False,
+        "  twin: a mistyped terminator really IS body, bash never runs it",
+        "cat > /tmp/a <<'EOF'\nalpha\nEOFF\ntasks remind delete $(tasks remind list | awk '{print $2}')\nEOF",
+    ),
+    (False, "  twin: arithmetic shift is not a heredoc opener", """test $((1 << 2)) -eq 4 && rm -f /tmp/scratch"""),
+    # FOUND BY THE GUARD BLOCKING ME, 12 Aug 05:12, about an hour after the rules above shipped.
+    # The mutating word lives in a printf FORMAT STRING and the substitution truncates output for
+    # display. Neither half is a mutation, and the 14,239-command replay had missed the whole class
+    # because I adopted the `| tr -d '\n' | cut -c1-N` status-line habit in the same session.
+    (
+        False,
+        "  twin: a mutating word inside a printf format string is display text",
+        """out=$(whatsapp daemon stop 2>&1); printf 'stop rc=%s %s\\n' "$rc" "$(printf '%s' "$out" | tr -d '\\n' | cut -c1-100)\"""",
+    ),
+    (
+        False,
+        "  twin: 'delete' quoted in an echo, with a truncating substitution alongside",
+        """echo "nothing to delete here"; echo "$(ls -l /tmp | cut -c1-40)\"""",
+    ),
+    (
+        True,
+        "  and the real thing still blocks when the verb is UNQUOTED",
+        """tasks remind delete "$(tasks remind list | grep W | awk '{print $2}')\"""",
     ),
 ]
 
@@ -176,30 +393,55 @@ def self_test() -> int:
     return 1 if fails else 0
 
 
-def offending_substitution(payload: object) -> str | None:
-    """The substitution to refuse in one hook payload, or None to allow. Every shape that is not a
-    Bash call carrying a command string reads as nothing to refuse, which is the fail-open half."""
-    if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
-        return None
-    tool_input = payload.get("tool_input")
-    cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
-    return verdict(cmd) if isinstance(cmd, str) and cmd else None
-
-
-def main() -> int:
+def main() -> int:  # noqa: PLR0911
     if "--self-test" in sys.argv:
         return self_test()
     try:
-        bad = offending_substitution(json.load(sys.stdin))
+        payload = json.load(sys.stdin)
     except Exception:
         return 0
-    # The STRUCTURED decision, not a bare exit 2. Both block in practice, but `verify_hooks.py`
-    # reads `hookSpecificOutput.permissionDecision` from stdout, so a stderr-only guard reports as
-    # having no parseable verdict at all and can never be shown to still have teeth.
-    if bad:
-        decision = {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": REASON.format(sub=bad[:160])}
-        print(json.dumps({"hookSpecificOutput": decision}))
-    return 0
+    try:
+        if payload.get("tool_name") != "Bash":
+            return 0
+        cmd = payload.get("tool_input", {}).get("command", "")
+        if not isinstance(cmd, str) or not cmd:
+            return 0
+        bad = verdict(cmd)
+        if not bad:
+            return 0
+        # Emit the STRUCTURED decision its siblings use, not a bare exit 2. Both block in practice,
+        # but `verify_hooks.py` reads `hookSpecificOutput.permissionDecision` from stdout, so a
+        # stderr-only guard is unverifiable by my own nightly checker: it reported this one BROKEN,
+        # "no parseable hook decision at all", minutes after it had demonstrably blocked four real
+        # commands. A guard my instruments cannot read is a guard I cannot trust later.
+        reason = (
+            "blind mutation: this changes state using an id scraped positionally from a human "
+            "table, and if the scrape is wrong the command will do NOTHING and still exit 0.\n\n"
+            f"  the substitution: {bad[:160]}\n\n"
+            "on 10 Aug this exact shape deleted a reminder called '5h', because `tasks remind list` "
+            "prints tab-separated columns whose first field is 'in 5h' and awk's default splitting "
+            "made $2 the duration, not the id. two reminders survived and one fired hours later.\n\n"
+            "do one of these instead:\n"
+            "  1. use the tool's --json output and parse it (tasks/tasks remind both support it)\n"
+            "  2. pass -F'\\t' to awk so the field boundaries are explicit\n"
+            "  3. paste the id literally\n"
+            "and then RE-QUERY to confirm the thing is actually gone. checking the command's own "
+            "exit status proves nothing here: a no-op exits 0."
+        )
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }
+            )
+        )
+        return 0
+    except Exception:
+        return 0
 
 
 if __name__ == "__main__":
