@@ -115,26 +115,22 @@ Both take `--self-test`, which runs their cases in both directions and is the fi
 
 ### Wiring
 
-**A guard nobody wires does nothing.** Nothing imports these; the runtime runs them, so a guard sitting in the scripts directory is inert. Add each to `~/.claude/settings.json` under `hooks.PreToolUse`, with a `matcher` naming the tools it inspects:
+**A guard nobody wires does nothing.** Nothing imports these; the runtime runs them, so a guard sitting in the scripts directory is inert. Declare it in this skill's `hooks.json` and boot wires it into `~/.claude/settings.json` for you:
 
 ```json
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [{ "type": "command", "command": "python3 /root/agent/skills/dream/scripts/tmp_ref_guard.py" }]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "python3 /root/agent/skills/dream/scripts/blind_mutation_guard.py" }]
-      }
-    ]
-  }
+  "PreToolUse": [
+    { "matcher": "Write|Edit", "script": "scripts/tmp_ref_guard.py" },
+    { "matcher": "Bash", "script": "scripts/blind_mutation_guard.py" }
+  ]
 }
 ```
 
-The matcher takes a tool name, a `|` alternation, or an MCP tool id (`mcp__vesta__mark_dreamer_complete`), so a guard can gate an agent-only action as well as a shell command. Startup writes this file only when it is absent and never rewrites an existing one, so the wiring survives upgrades: a guard that stops firing is a wiring or a script problem, never an upgrade that reverted it.
+The path is relative to the skill, because a skill cannot know where it is installed and a hardcoded one is how a hook becomes a no-op on someone else's box. A declared script that is not on disk is skipped with a warning rather than wired to nothing.
+
+This replaces a paragraph that asked you to hand-edit `settings.json`. Startup creates that file only when it is ABSENT and never rewrites an existing one, so on every box that already had one, a guard shipped by an upgrade stayed inert while the skill read as installed. The merge is add-only and keyed by command: your own entries are never touched, and re-running it changes nothing.
+
+The matcher takes a tool name, a `|` alternation, or an MCP tool id (`mcp__vesta__mark_dreamer_complete`), so a guard can gate an agent-only action as well as a shell command.
 
 A guard answers on stdout with `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}` and exits 0. Allow is silence. The reason string is the entire teaching moment, so it names the shape, why the failure is invisible, and the correct forms.
 

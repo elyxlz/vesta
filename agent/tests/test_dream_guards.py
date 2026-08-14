@@ -176,3 +176,22 @@ def test_verify_hooks_separates_a_missing_settings_file_from_a_box_with_no_hooks
     empty = run_verify_hooks(tmp_path)
     assert empty.returncode == 0
     assert "no hooks wired" in empty.stdout
+
+
+@pytest.mark.parametrize(
+    ("label", "command"),
+    [
+        ("ps aux columns are space-padded and kill fails loudly", "kill $(ps aux | grep -i vesta | awk '{print $2}')"),
+        ("the docker twin", "docker stop $(docker ps | grep vesta | awk '{print $1}')"),
+    ],
+)
+def test_blind_mutation_guard_allows_another_tool_s_whitespace_safe_table(tmp_path, label, command):
+    """Found in review: both of these were DENIED until 14 Aug 2026, and neither should be.
+
+    The guard exists for a mutation that silently no-ops at exit 0 because a field boundary moved.
+    `ps` and `docker ps` pad their columns and keep free text out of the fields before the id, and
+    a wrong pid or container id fails loudly, so neither leg is present. The scrape source is now
+    matched against the agent's own table-printing CLIs, a closed set, rather than every command.
+    """
+    code, out = run_hook(BLIND_MUTATION_GUARD, {"tool_name": "Bash", "tool_input": {"command": command}}, tmp_path)
+    assert (code, out.strip()) == (0, ""), label
