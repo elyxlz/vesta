@@ -70,13 +70,19 @@ WHAT IT DOES NOT FLAG:
   - `awk -F'\\t'` or `awk -F,`. An explicit separator means the field boundaries were thought about.
   - Reads. `grep`, `list`, `status`, `get`, `show` change nothing, so a wrong id is visible and free.
   - A literal id typed out. That is the safest form there is.
+  - **Anyone else's table.** `kill $(ps aux | grep x | awk '{print $2}')` and its docker twin were
+    denied until 14 Aug and should not have been: those columns are space-padded with no free text
+    before the id, and a wrong pid fails loudly. The scrape source must be one of the agent's own
+    table-printing CLIs, which is the closed set where a missed id no-ops at exit 0.
 
 FAIL-OPEN, exactly as in the sibling guards: an unreadable payload, an unexpected shape, a missing
 field, or any exception allows the call. A guard against silent no-ops must never itself become one
 that silently blocks work.
 """
 
+import contextlib
 import json
+import pathlib
 import re
 import sys
 
@@ -179,9 +185,55 @@ def substitutions(cmd: str) -> list[str]:
     return out
 
 
+# WHOSE TABLE WAS SCRAPED, added 14 Aug 2026 to close a real false positive found in review:
+# `kill $(ps aux | grep -i vesta | awk '{print $2}')` and the docker twin were both DENIED, and
+# both are fine. `ps` and `docker ps` space-pad their columns and their early fields never contain
+# spaces, so default splitting is the documented idiom, and a wrong pid fails LOUDLY. Neither leg
+# of the failure this file exists for is present. So the source is now checked, as a WHITELIST,
+# for the reason `queue_gate` was inverted the same night: "tools whose whitespace columns are
+# safe" is open-ended, while "tools that print MY OWN tab-separated tables" is closed and sits on
+# disk. The floor is hardcoded so CI and a bare checkout behave like a live box.
+CLI_FLOOR = [
+    "tasks",
+    "microsoft",
+    "whatsapp",
+    "telegram",
+    "spotify",
+    "tricount",
+    "finance",
+    "onedrive",
+    "keeper",
+    "browser",
+    "discord",
+    "slack",
+    "zoom",
+    "email-client",
+    "google",
+    "shop",
+    "torrents",
+    "home-assistant",
+    "philips-hue",
+    "samsung-tv",
+    "vestad",
+]
+SKILL_DIRS = ("~/agent/skills", "~/agent/core/skills")
+
+
+def agent_clis() -> set[str]:
+    """Every CLI that prints this agent's own human tables: the floor plus what is installed."""
+    names = set(CLI_FLOOR)
+    for directory in SKILL_DIRS:
+        with contextlib.suppress(OSError):
+            names.update(p.name for p in pathlib.Path(directory).expanduser().iterdir() if not p.name.startswith("."))
+    return names
+
+
+AGENT_CLI = re.compile(r"(?:^|[|;&(]|\s)(" + "|".join(sorted(map(re.escape, agent_clis()), key=len, reverse=True)) + r")\b")
+
+
 def scrapes_positionally(text: str) -> bool:
-    """True if `text` pulls a field out of human tabular output by position."""
-    if JSON_FLAG.search(text):
+    """True if `text` pulls a field out of one of MY OWN human tables by position."""
+    if JSON_FLAG.search(text) or not AGENT_CLI.search(text):
         return False
     return bool(AWK_DEFAULT_FIELD.search(text) or CUT_POSITIONAL.search(text))
 
@@ -212,14 +264,53 @@ def command_text(seg: str) -> str:
     return QUOTED.sub(" ", seg)
 
 
-def verdict(cmd: str) -> str | None:  # noqa: PLR0912
-    """Return a reason to block, or None to allow.
+def scrape_feeding_mutation(seg: str, subs: list[str]) -> str | None:
+    """Shape 1: the mutator sits OUTSIDE the substitution, the positional scrape INSIDE it."""
+    outside = seg
+    for s in subs:
+        outside = outside.replace(s, " ")
+    if not MUTATORS.search(command_text(outside)):
+        return None
+    for s in subs:
+        if scrapes_positionally(s):
+            return s.strip()
+    return None
 
-    The branch and return counts exceed ruff's defaults on purpose. Each branch is one
-    distinct spelling of the same defect, found by replaying real command history, and each
-    early return names WHICH spelling matched so the denial message can say so. Collapsing
-    them to satisfy a counter would trade a specific, actionable refusal for a generic one,
-    which is the opposite of what a guard is for.
+
+def record_tainted(seg: str, subs: list[str], tainted: dict[str, str]) -> None:
+    """Shape 2: the scrape lands in a variable here and the mutation comes in a later segment."""
+    for name in ASSIGN_FROM_SUB.findall(seg):
+        for s in subs:
+            if scrapes_positionally(s):
+                tainted[name] = s.strip()
+
+
+def tainted_spent_here(seg: str, tainted: dict[str, str]) -> str | None:
+    """Shape 3: a variable filled from a scrape is now being spent on a mutation."""
+    if not tainted or not MUTATORS.search(command_text(seg)):
+        return None
+    for name, src in tainted.items():
+        if re.search(r"\$\{?" + re.escape(name) + r"\}?\b", seg):
+            return src
+    return None
+
+
+def scrape_piped_to_mutation(seg: str) -> str | None:
+    """Shape 4: `... | awk '{print $2}' | xargs <mutator>`, no substitution anywhere."""
+    m = XARGS_TAIL.search(seg)
+    if not m or not MUTATORS.search(command_text(m.group(1))):
+        return None
+    upstream = seg[: m.start()]
+    return upstream.strip() if scrapes_positionally(upstream) else None
+
+
+def verdict(cmd: str) -> str | None:
+    """Return the offending substitution (a reason to block), or None to allow.
+
+    The four shapes live in four named functions rather than four branches here. They are four
+    distinct SPELLINGS of one defect, each found by replaying real command history, and each is
+    worth naming: a denial that can say which spelling matched is actionable where a generic one
+    is not. That is also why this reads as a dispatch loop instead of a nest of conditionals.
 
     The scraped value must plausibly FEED the mutation, so both must live in the SAME command
     segment. Replaying 12,709 real historical commands showed why: `before=$(df -h / | tail -1 |
@@ -228,44 +319,23 @@ def verdict(cmd: str) -> str | None:  # noqa: PLR0912
     "mutator anywhere in the line" flagged a whole class of these.
     """
     cmd = strip_heredocs(cmd)
-    segments = re.split(r";|&&|\|\||\n", cmd)
 
     # Variables that were filled from a positional scrape. Tracked across segments, because the
     # tidy `id=$(...)` / `mutate $id` form puts the scrape and the mutation in different ones and
     # neither half alone has all three legs.
     tainted: dict[str, str] = {}
 
-    for seg in segments:
+    for seg in re.split(r";|&&|\|\||\n", cmd):
         subs = substitutions(seg)
-
-        # 1. The original shape: mutator OUTSIDE, scrape INSIDE the substitution.
         if subs:
-            outside = seg
-            for s in subs:
-                outside = outside.replace(s, " ")
-            if MUTATORS.search(command_text(outside)):
-                for s in subs:
-                    if scrapes_positionally(s):
-                        return s.strip()
+            hit = scrape_feeding_mutation(seg, subs)
+            if hit:
+                return hit
+            record_tainted(seg, subs, tainted)
 
-            # 2. The scrape lands in a variable here; the mutation comes later.
-            for name in ASSIGN_FROM_SUB.findall(seg):
-                for s in subs:
-                    if scrapes_positionally(s):
-                        tainted[name] = s.strip()
-
-        # 3. A tainted variable being spent on a mutation, in this or any later segment.
-        if tainted and MUTATORS.search(command_text(seg)):
-            for name, src in tainted.items():
-                if re.search(r"\$\{?" + re.escape(name) + r"\}?\b", seg):
-                    return src
-
-        # 4. `... | awk '{print $2}' | xargs <mutator>`: no substitution anywhere, same defect.
-        m = XARGS_TAIL.search(seg)
-        if m and MUTATORS.search(command_text(m.group(1))):
-            upstream = seg[: m.start()]
-            if scrapes_positionally(upstream):
-                return upstream.strip()
+        hit = tainted_spent_here(seg, tainted) or scrape_piped_to_mutation(seg)
+        if hit:
+            return hit
 
     return None
 
@@ -373,6 +443,15 @@ CASES = [
         "  and the real thing still blocks when the verb is UNQUOTED",
         """tasks remind delete "$(tasks remind list | grep W | awk '{print $2}')\"""",
     ),
+    # FOUND IN REVIEW, 11 Aug, and both of these were denied until 14 Aug. `ps` and `docker ps`
+    # space-pad their columns and their early fields never contain spaces, so default splitting is
+    # the documented idiom; a wrong pid or container id also fails LOUDLY. Neither leg of the
+    # failure this guard exists for is present, so both must be allowed.
+    (False, "REVIEW: ps aux columns are whitespace-safe, kill fails loudly", """kill $(ps aux | grep -i vesta | awk '{print $2}')"""),
+    (False, "  twin: docker ps, same idiom", """docker stop $(docker ps | grep vesta | awk '{print $1}')"""),
+    # The control in the other direction, and the reason the fix is a whitelist rather than a
+    # carve-out: the identical pipeline shape over one of MY tables must still block.
+    (True, "  control: the same shape over my own table still blocks", """tasks done $(tasks list | grep vesta | awk '{print $2}')"""),
 ]
 
 
@@ -393,55 +472,64 @@ def self_test() -> int:
     return 1 if fails else 0
 
 
-def main() -> int:  # noqa: PLR0911
+# Emitted as the STRUCTURED decision its siblings use, not a bare exit 2. Both block in practice,
+# but `verify_hooks.py` reads `hookSpecificOutput.permissionDecision` from stdout, so a stderr-only
+# guard is unverifiable by my own nightly checker: it reported this one BROKEN, "no parseable hook
+# decision at all", minutes after it had demonstrably blocked four real commands. A guard my
+# instruments cannot read is a guard I cannot trust later.
+DENIAL = (
+    "blind mutation: this changes state using an id scraped positionally from a human "
+    "table, and if the scrape is wrong the command will do NOTHING and still exit 0.\n\n"
+    "  the substitution: {bad}\n\n"
+    "on 10 Aug this exact shape deleted a reminder called '5h', because `tasks remind list` "
+    "prints tab-separated columns whose first field is 'in 5h' and awk's default splitting "
+    "made $2 the duration, not the id. two reminders survived and one fired hours later.\n\n"
+    "do one of these instead:\n"
+    "  1. use the tool's --json output and parse it (tasks/tasks remind both support it)\n"
+    "  2. pass -F'\\t' to awk so the field boundaries are explicit\n"
+    "  3. paste the id literally\n"
+    "and then RE-QUERY to confirm the thing is actually gone. checking the command's own "
+    "exit status proves nothing here: a no-op exits 0."
+)
+
+
+def offending_substitution(payload: object) -> str | None:
+    """The substitution worth denying in this hook payload, or None if there is nothing to deny."""
+    if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
+        return None
+    tool_input = payload.get("tool_input")
+    cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(cmd, str) or not cmd:
+        return None
+    return verdict(cmd)
+
+
+def deny_if_blind(payload: object) -> None:
+    """Print the structured denial, or nothing at all if this payload is fine."""
+    bad = offending_substitution(payload)
+    if not bad:
+        return
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": DENIAL.format(bad=bad[:160]),
+                }
+            }
+        )
+    )
+
+
+def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    try:
-        payload = json.load(sys.stdin)
-    except Exception:
-        return 0
-    try:
-        if payload.get("tool_name") != "Bash":
-            return 0
-        cmd = payload.get("tool_input", {}).get("command", "")
-        if not isinstance(cmd, str) or not cmd:
-            return 0
-        bad = verdict(cmd)
-        if not bad:
-            return 0
-        # Emit the STRUCTURED decision its siblings use, not a bare exit 2. Both block in practice,
-        # but `verify_hooks.py` reads `hookSpecificOutput.permissionDecision` from stdout, so a
-        # stderr-only guard is unverifiable by my own nightly checker: it reported this one BROKEN,
-        # "no parseable hook decision at all", minutes after it had demonstrably blocked four real
-        # commands. A guard my instruments cannot read is a guard I cannot trust later.
-        reason = (
-            "blind mutation: this changes state using an id scraped positionally from a human "
-            "table, and if the scrape is wrong the command will do NOTHING and still exit 0.\n\n"
-            f"  the substitution: {bad[:160]}\n\n"
-            "on 10 Aug this exact shape deleted a reminder called '5h', because `tasks remind list` "
-            "prints tab-separated columns whose first field is 'in 5h' and awk's default splitting "
-            "made $2 the duration, not the id. two reminders survived and one fired hours later.\n\n"
-            "do one of these instead:\n"
-            "  1. use the tool's --json output and parse it (tasks/tasks remind both support it)\n"
-            "  2. pass -F'\\t' to awk so the field boundaries are explicit\n"
-            "  3. paste the id literally\n"
-            "and then RE-QUERY to confirm the thing is actually gone. checking the command's own "
-            "exit status proves nothing here: a no-op exits 0."
-        )
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": reason,
-                    }
-                }
-            )
-        )
-        return 0
-    except Exception:
-        return 0
+    # One fail-open suppression around the whole path, which is the documented intent: a guard that
+    # can crash the tool call it guards is worse than the mistake it prevents.
+    with contextlib.suppress(Exception):
+        deny_if_blind(json.load(sys.stdin))
+    return 0
 
 
 if __name__ == "__main__":
