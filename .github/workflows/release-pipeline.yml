@@ -12,6 +12,9 @@ permissions:
   # ci.yml (called below) requests pull-requests: read; a reusable workflow
   # cannot request more than its caller grants, so grant it here too.
   pull-requests: read
+  # live-tests.yml (called below) requests actions: read for its credentials
+  # preflight, same reusable-workflow rule: grant it here too.
+  actions: read
 
 concurrency:
   group: release-pipeline-${{ github.event.release.tag_name }}
