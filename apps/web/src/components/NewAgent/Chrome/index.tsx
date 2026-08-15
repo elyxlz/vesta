@@ -67,7 +67,7 @@ export function Chrome({
             layout
             key="action"
             {...float}
-            className="w-[320px] max-w-full px-4"
+            className={cn("max-w-full px-4", widthClass)}
           >
             <Button
               className={cn("h-12 w-full", glassAction)}
