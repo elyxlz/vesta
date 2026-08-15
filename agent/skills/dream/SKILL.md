@@ -226,6 +226,25 @@ Retire a Rules or Mistakes & Corrections line only when it has graduated (the fi
 
 If it won't matter in two weeks, delete it.
 
+### Writing dated blocks into your own files: `scripts/note-top`
+
+Anything paged out of MEMORY.md lands in a file you will re-read later under time pressure, so the
+block that answers the question has to be the one you hit first, and its timestamp has to be true.
+Both fail in the same way, and not from forgetting: **the natural motion is `cat >> file`, and the
+natural motion appends**, so the newest block sinks to the bottom while a stale one keeps greeting
+every future reader. Use `note-top <file>` (block on stdin) instead. It inserts under the title,
+respects a pinned `## CURRENT ANSWER` block by inserting below it, and `--append` covers a file that
+is genuinely chronological.
+
+It also fills in a literal `@@NOW@@` in your block from the clock, which matters more than tidiness:
+the timestamp is what decides which of two contradicting blocks wins, so a block dated forward beats
+a later, truer one, and re-reading never catches it because 14:40 looks exactly as reasonable as
+14:39. Hand-typing the digits is the bypass, so the script warns when the first line carries a clock
+time in the future rather than silently accepting it. A backticked `` `@@NOW@@` `` is being talked
+about, not used, and is left alone.
+
+Exit codes: 0 inserted, 1 usage or missing target, 2 empty input (nothing written).
+
 ## Workspace Cleanup
 
 Keep the container's filesystem organized and disk usage under control.
