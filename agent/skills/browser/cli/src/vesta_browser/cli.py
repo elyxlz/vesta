@@ -160,12 +160,21 @@ def cmd_connect(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_stop(_args: argparse.Namespace) -> int:
-    admin.shutdown()
+def cmd_stop(args: argparse.Namespace) -> int:
+    admin.shutdown(args.session)
     return 0
 
 
-def cmd_stop_all(_args: argparse.Namespace) -> int:
+def cmd_stop_all(args: argparse.Namespace) -> int:
+    own = admin._session_name()
+    others = [s["name"] for s in admin.list_sessions() if s["name"] != own and (s["browser_alive"] or s["daemon_alive"])]
+    if others and not args.force:
+        print(
+            f"stop-all refused: other live session(s) exist ({', '.join(sorted(others))}), likely other work in flight. "
+            "Stop your own with `browser stop <session>`, or pass --force to stop everything.",
+            file=sys.stderr,
+        )
+        return 1
     admin.stop_all()
     return 0
 
@@ -273,7 +282,15 @@ def cmd_click(args: argparse.Namespace) -> int:
             return 2
         occluder = helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
         if occluder:
-            print(f"# {args.ref} is covered by <{occluder}>, which took the click instead. See interaction-skills/clicking.md")
+            helpers.wait(0.2)
+            _print_feedback()
+            print(
+                f"{args.ref} is covered by <{occluder}>, which took the click instead. "
+                "Dismiss the overlay, take a fresh snapshot, then click again; verify the control changed before trusting the page. "
+                "See interaction-skills/clicking.md",
+                file=sys.stderr,
+            )
+            return 1
     helpers.wait(0.2)
     _print_feedback()
     return 0
@@ -463,8 +480,12 @@ def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentPars
 
     sub.add_parser("doctor", help="Report Camoufox install + session health.").set_defaults(func=cmd_doctor)
 
-    sub.add_parser("stop", help="Stop this session.").set_defaults(func=cmd_stop)
-    sub.add_parser("stop-all", help="Stop all sessions.").set_defaults(func=cmd_stop_all)
+    stp = sub.add_parser("stop", help="Stop this session, or the named one.")
+    stp.add_argument("session", nargs="?", default=None, help="Session name; defaults to $BROWSER_SESSION.")
+    stp.set_defaults(func=cmd_stop)
+    sap = sub.add_parser("stop-all", help="Stop all sessions; refuses when other sessions are live unless --force.")
+    sap.add_argument("--force", action="store_true", help="Stop other sessions' browsers too.")
+    sap.set_defaults(func=cmd_stop_all)
     sub.add_parser("sessions", help="List active sessions.").set_defaults(func=cmd_sessions)
     p_prune = sub.add_parser("prune", help="Report ephemeral profiles left by crashed sessions; --yes to delete them.")
     p_prune.add_argument("--yes", action="store_true", help="Actually delete (default is a dry-run report).")

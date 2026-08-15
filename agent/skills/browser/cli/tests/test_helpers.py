@@ -407,3 +407,54 @@ def test_occluder_probe_asks_about_the_resolved_point(monkeypatch):
     helpers._occluder_at("e5", 33, 44)
     assert "elementFromPoint(33, 44)" in seen[0]
     assert '"e5"' in seen[0]
+
+
+# ── js() against a Zone-patched Promise ────────────────────────
+
+
+def _zone_aware_bidi(monkeypatch):
+    """Fake a page whose global Promise is Zone.js's ZoneAwarePromise.
+
+    BiDi's `awaitPromise` only recognises a native promise, so anything routed through
+    `Promise.resolve(...)` comes back as a serialised ZoneAwarePromise (a list of internal fields)
+    rather than the awaited value. A synchronous expression is unaffected.
+    """
+    seen: list[str] = []
+
+    def fake(method, **params):
+        expression = params["expression"]
+        seen.append(expression)
+        if "Promise.resolve(" in expression:
+            return {
+                "type": "success",
+                "result": {
+                    "type": "object",
+                    "value": [
+                        ["__zone_symbol__state", {"type": "null"}],
+                        ["__zone_symbol__value", {"type": "array", "value": []}],
+                    ],
+                },
+            }
+        return {"type": "success", "result": {"type": "string", "value": '"complete"'}}
+
+    monkeypatch.setattr(helpers, "bidi", fake)
+    return seen
+
+
+def test_js_does_not_route_sync_expressions_through_promise_resolve(monkeypatch):
+    seen = _zone_aware_bidi(monkeypatch)
+    helpers.js("document.readyState")
+    assert "Promise.resolve(" not in seen[0]
+
+
+def test_js_returns_value_on_zone_patched_page(monkeypatch):
+    """The regression: this raised TypeError (json.loads of a list) on a Zone-patched page."""
+    _zone_aware_bidi(monkeypatch)
+    assert helpers.js("document.readyState") == "complete"
+
+
+def test_js_still_handles_a_thenable(monkeypatch):
+    seen = _zone_aware_bidi(monkeypatch)
+    helpers.js("fetch('/x')")
+    # the emitted wrapper must still branch on `.then` so a real promise is awaited
+    assert "typeof v.then === 'function'" in seen[0]

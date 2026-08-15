@@ -478,3 +478,144 @@ def test_live_owner_is_detected_from_the_real_launch_argv(tmp_path):
         proc.wait(timeout=HANG_GUARD_S)
 
     assert not launcher._profile_has_live_owner(mine)
+
+
+# ── Dead-record reaping ────────────────────────────────────────
+
+
+def _record_root_setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(admin, "SESSION_ROOT", tmp_path)
+    monkeypatch.setattr(admin, "SESSION_FILE_PREFIX", f"{tmp_path}/vesta-browser-")
+    monkeypatch.setattr(admin, "socket_path", lambda name=None: str(tmp_path / f"vesta-browser-{name}.sock"))
+    monkeypatch.setattr(admin, "pid_path", lambda name=None: str(tmp_path / f"vesta-browser-{name}.pid"))
+    monkeypatch.setattr(admin, "log_path", lambda name=None: str(tmp_path / f"vesta-browser-{name}.log"))
+
+
+def test_list_sessions_reaps_a_fully_dead_record(tmp_path, monkeypatch):
+    """A record whose browser and daemon are both dead describes nothing running: it is
+    removed, not listed, so stale metadata never reads as a leaking browser."""
+    _record_root_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(admin, "daemon_alive", lambda name=None: False)
+    dead = tmp_path / "vesta-browser-crashed.browser-pid"
+    dead.write_text(str(2**31 - 1))
+    (tmp_path / "vesta-browser-crashed.bidi-ws").write_text("ws://127.0.0.1:1/session")
+    live = tmp_path / "vesta-browser-working.browser-pid"
+    live.write_text(str(os.getpid()))
+
+    sessions = admin.list_sessions()
+
+    assert [s["name"] for s in sessions] == ["working"]
+    assert not dead.exists(), "the dead record is reaped"
+    assert not (tmp_path / "vesta-browser-crashed.bidi-ws").exists(), "its endpoint goes with it"
+    assert live.exists(), "a live session keeps its record"
+
+
+def test_list_sessions_keeps_a_dead_browser_under_a_live_daemon(tmp_path, monkeypatch):
+    _record_root_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(admin, "daemon_alive", lambda name=None: True)
+    record = tmp_path / "vesta-browser-half.browser-pid"
+    record.write_text(str(2**31 - 1))
+
+    sessions = admin.list_sessions()
+
+    assert [s["name"] for s in sessions] == ["half"]
+    assert sessions[0]["browser_alive"] is False
+    assert record.exists()
+
+
+# ── Startup under contention ───────────────────────────────────
+
+
+class _LingeringProc:
+    """A daemon spawn that never becomes ready and never exits on its own."""
+
+    pid = 4242
+
+    def poll(self):
+        return None
+
+
+def _startup_setup(tmp_path, monkeypatch, *, other_sessions):
+    _record_root_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(admin, "daemon_healthy", lambda name=None: False)
+    monkeypatch.setattr(admin, "daemon_alive", lambda name=None: False)
+    monkeypatch.setattr(admin, "list_sessions", lambda: other_sessions)
+    monkeypatch.setattr(admin.subprocess, "Popen", lambda *a, **kw: _LingeringProc())
+    monkeypatch.setenv("VESTA_BROWSER_BIDI_WS", "ws://127.0.0.1:1/session")
+
+
+def test_ensure_daemon_timeout_fails_closed(tmp_path, monkeypatch):
+    """A daemon that misses its deadline is killed and its records removed, so a
+    half-started one never lingers to confuse the next attempt."""
+    _startup_setup(tmp_path, monkeypatch, other_sessions=[])
+    killed = []
+    monkeypatch.setattr(admin, "_terminate_pid", killed.append)
+    (tmp_path / "vesta-browser-solo.sock").write_text("")
+    (tmp_path / "vesta-browser-solo.pid").write_text("4242")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        admin.ensure_daemon(wait_s=0.05, name="solo")
+
+    assert killed == [4242]
+    assert not (tmp_path / "vesta-browser-solo.sock").exists()
+    assert not (tmp_path / "vesta-browser-solo.pid").exists()
+    assert "contend" not in str(excinfo.value), "no contention hint when starting alone"
+
+
+def test_ensure_daemon_timeout_leaves_a_concurrent_winners_records(tmp_path, monkeypatch):
+    """Same-session contention: another spawn won the socket and recorded ITS pid. The loser's
+    fail-closed cleanup must leave those records, or a daemon still coming up gets orphaned."""
+    _startup_setup(tmp_path, monkeypatch, other_sessions=[])
+    monkeypatch.setattr(admin, "_terminate_pid", lambda pid: None)
+    (tmp_path / "vesta-browser-solo.sock").write_text("")
+    (tmp_path / "vesta-browser-solo.pid").write_text("9999")  # the winner's pid, not our spawn's 4242
+
+    with pytest.raises(RuntimeError):
+        admin.ensure_daemon(wait_s=0.05, name="solo")
+
+    assert (tmp_path / "vesta-browser-solo.sock").exists(), "winner's socket was deleted"
+    assert (tmp_path / "vesta-browser-solo.pid").read_text() == "9999", "winner's pid record was deleted"
+
+
+def test_ensure_daemon_timeout_names_contention_and_extends_the_budget(tmp_path, monkeypatch):
+    """Under fan-out the handshake competes for CPU: the wait scales up and the error
+    names the competing sessions plus the http_get fallback."""
+    _startup_setup(
+        tmp_path,
+        monkeypatch,
+        other_sessions=[{"name": "research-2", "browser_alive": True, "daemon_alive": False}],
+    )
+    monkeypatch.setattr(admin, "_terminate_pid", lambda pid: None)
+
+    start = time.monotonic()
+    with pytest.raises(RuntimeError) as excinfo:
+        admin.ensure_daemon(wait_s=0.05, name="research-1")
+
+    message = str(excinfo.value)
+    assert "research-2" in message
+    assert "http_get" in message
+    assert time.monotonic() - start >= 0.05 * admin.CONTENDED_STARTUP_MULTIPLIER
+
+
+def test_ensure_daemon_accepts_a_concurrent_spawns_daemon(tmp_path, monkeypatch):
+    """Two commands racing to start the same session: ours exits with "already running"
+    while the winner's daemon answers. Healthy is healthy, whoever started it."""
+    _startup_setup(tmp_path, monkeypatch, other_sessions=[])
+    # Answer False for the entry check and the wait loop, True only for the post-loop
+    # recheck, so the pass is proven to come from that recheck.
+    healthy_answers = iter([False, False, True])
+    monkeypatch.setattr(admin, "daemon_healthy", lambda name=None: next(healthy_answers, True))
+
+    class _LostRaceProc:
+        pid = 4242
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(admin.subprocess, "Popen", lambda *a, **kw: _LostRaceProc())
+    killed = []
+    monkeypatch.setattr(admin, "_terminate_pid", killed.append)
+
+    admin.ensure_daemon(wait_s=0.05, name="raced")
+
+    assert killed == [], "the winner's daemon must not be killed"

@@ -36,8 +36,9 @@ BROWSER_SESSION=agent-2 browser open "https://b.com"
 ```
 
 Each session's state lives under `/tmp/vesta-browser-<name>.*` (socket, pid, bidi-ws, log).
-`browser stop` cleans its own; `browser stop-all` stops every session in the container, so never
-run it while sibling agents may be browsing: stop your own named session instead. Memory warning:
+`browser stop [session]` cleans one session; `browser stop-all` stops every session in the
+container, refusing while other sessions are live unless you pass `--force`, so stop your own
+named session and reserve `--force` for a cleanup you truly mean. Memory warning:
 each Camoufox uses several hundred MB, so 3+ concurrently on a small host can OOM. Prefer
 sequential for wide-scrape tasks.
 
