@@ -173,8 +173,8 @@ function ClaudeModelPicker({
     "flex cursor-pointer items-center justify-center rounded-2xl [corner-shape:squircle] p-3 text-center text-sm font-medium";
   return (
     <div className="flex w-full flex-col gap-3">
-      {/* Opus, Sonnet, and a third tile that expands the full live list. */}
-      <div className="grid grid-cols-3 gap-2">
+      {/* Opus and Sonnet fill the row; a compact tile expands the live list. */}
+      <div className="flex gap-2">
         {CLAUDE_ALIASES.map((a) => (
           <button
             key={a.slug}
@@ -182,6 +182,7 @@ function ClaudeModelPicker({
             onClick={() => onSelect(a.slug)}
             className={cn(
               tileBase,
+              "flex-1",
               glassFrost,
               glassHover,
               model === a.slug && glassSelected,
@@ -197,7 +198,7 @@ function ClaudeModelPicker({
           onClick={() => setExpanded((v) => !v)}
           className={cn(
             tileBase,
-            "text-muted-foreground",
+            "shrink-0 text-muted-foreground",
             glassFrost,
             glassHover,
           )}
