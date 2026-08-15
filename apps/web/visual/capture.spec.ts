@@ -26,6 +26,8 @@ for (const scenario of SCENARIOS) {
     await page.goto("/new");
     await scenario.drive(page);
     await scenario.settle(page);
+    // Park the pointer so no card renders its hover state in the shot.
+    await page.mouse.move(0, 0);
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.screenshot({
       path: path.join(OUT_DIR, `${scenario.id}--${testInfo.project.name}.png`),
