@@ -256,7 +256,7 @@ Before returning the final rewrite, scan it for `—` and `–`. Any hit means t
 ### 26. Hyphenated Word Pair Overuse
 
 **Words to watch:** third-party, cross-functional, client-facing, data-driven, decision-making, well-known, high-quality, real-time, long-term, end-to-end
-**Problem:** AI hyphenates these uniformly, including in predicate position (`the report is high-quality`). Humans hyphenate inconsistently — typically only when the compound is attributive (`a high-quality report`) and often dropping the hyphen otherwise (`the report is high quality`). Keep attributive-position hyphens; drop them when the compound follows the noun.
+**Problem:** AI hyphenates these uniformly, including in predicate position (`the report is high-quality`). Humans hyphenate inconsistently: typically only when the compound is attributive (`a high-quality report`), often dropping the hyphen otherwise (`the report is high quality`). Keep attributive-position hyphens; drop them when the compound follows the noun.
 **Before:**
 > The cross-functional team delivered a high-quality, data-driven report. The team is cross-functional, the report is high-quality, and the methodology is data-driven.
 **After:**
@@ -334,7 +334,7 @@ Before returning the final rewrite, scan it for `—` and `–`. Any hit means t
 A clean human writer can hit several of the patterns above without any AI involvement. Before rewriting, sanity-check that you are not gutting legitimate prose. The following are *not* reliable indicators on their own:
 
 - **Perfect grammar and consistent style.** Many writers are professionals or have been edited. Polish does not equal AI.
-- **Mixed casual and formal registers.** This often signals a person in a technical field, a young writer, or someone with neurodivergent prose habits — not a chatbot.
+- **Mixed casual and formal registers.** This often signals a person in a technical field, a young writer, or someone with neurodivergent prose habits, not a chatbot.
 - **"Bland" or "robotic" prose.** AI prose has *specific* tells. Generic dryness without those tells is just dry writing.
 - **Formal or academic vocabulary.** AI overuses *specific* fancy words (see §7), not all fancy words. Don't flatten "ostensibly" or "constituent" just because they sound brainy.
 - **Letter-style opening or closing on a comment.** Salutations and sign-offs predate ChatGPT by centuries.
@@ -351,7 +351,7 @@ When in doubt, look for **clusters** of tells, not isolated ones. A single em da
 
 ### Signs of human writing (preserve these)
 
-When you see these, lean toward leaving the prose alone — they are evidence of a real person writing, and over-editing will destroy what makes the piece sound human:
+When you see these, lean toward leaving the prose alone: they are evidence of a real person writing, and over-editing will destroy what makes the piece sound human:
 
 - **Specific, unusual, hard-to-fabricate detail.** A real address. A weird quote. The phrase "the lawyer who used to work upstairs from my dentist." LLMs round off specifics; humans hoard them.
 - **Mixed feelings and unresolved tension.** "I think this is mostly good, but it bothers me, and I can't fully explain why." LLMs default to clean takes.

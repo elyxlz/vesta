@@ -12,13 +12,13 @@ You are given N texts of the same genre, written for the same purpose. One of th
 
 Differences in:
 
-. **Voice and rhythm**: sentence length distribution, paragraph cadence, transitions.
-. **Argument architecture**: how the thesis is set up, how counterarguments are handled, whether the conclusion earns its claims.
-. **Citation density and integration**: do citations sit awkwardly or feel native? Same family of sources across the set?
-. **Vocabulary tier**: is the diction notably different from the rest of the corpus? Idiom slips? Calque from a non-English literary register? AI tells like overuse of "Furthermore", "Moreover", balanced "not X, but Y" constructions, three-item lists everywhere?
-. **Topical choices**: same theory, same case study, same examples? Or does one text reach for unusual references?
-. **Specificity**: do empirical details ring true and verifiable, or are they generic and hand-wavy in a way that suggests the writer didn't engage with sources?
-. **Markers of LLM origin**: hedging, false confidence, contradictions across paragraphs, metaphors that almost-but-don't-quite fit, overly clean structure with no irregularity, no genuine voice or stake.
+- **Voice and rhythm**: sentence length distribution, paragraph cadence, transitions.
+- **Argument architecture**: how the thesis is set up, how counterarguments are handled, whether the conclusion earns its claims.
+- **Citation density and integration**: do citations sit awkwardly or feel native? Same family of sources across the set?
+- **Vocabulary tier**: is the diction notably different from the rest of the corpus? Idiom slips? Calque from a non-English literary register? AI tells like overuse of "Furthermore", "Moreover", balanced "not X, but Y" constructions, three-item lists everywhere?
+- **Topical choices**: same theory, same case study, same examples? Or does one text reach for unusual references?
+- **Specificity**: do empirical details ring true and verifiable, or are they generic and hand-wavy in a way that suggests the writer didn't engage with sources?
+- **Markers of LLM origin**: hedging, false confidence, contradictions across paragraphs, metaphors that almost-but-don't-quite fit, overly clean structure with no irregularity, no genuine voice or stake.
 
 ## Output
 
@@ -49,6 +49,6 @@ Strict JSON, no prose outside it:
 
 ## Calibration
 
-. `guess_confidence` is your subjective probability that you've correctly identified the AI-assisted text. 0.5 means you're at chance.
-. If you genuinely cannot tell, return `guess_index: null, guess_confidence: 0.0`. That's a strong pass.
-. Be honest. Don't pad the reasoning. If the text you flag is similar to the others except for one specific tell, just list that tell.
+- `guess_confidence` is your subjective probability that you've correctly identified the AI-assisted text. 0.5 means you're at chance.
+- If you genuinely cannot tell, return `guess_index: null, guess_confidence: 0.0`. That's a strong pass.
+- Be honest. Don't pad the reasoning. If the text you flag is similar to the others except for one specific tell, just list that tell.
