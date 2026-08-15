@@ -20,7 +20,7 @@ export function ModelStep({
   allowCustom = true,
   submitLabel = "continue",
   logo,
-  onCancel,
+  onBack,
 }: {
   initialModel: string;
   onModelChange?: (model: string) => void;
@@ -34,7 +34,7 @@ export function ModelStep({
   allowCustom?: boolean;
   submitLabel?: string;
   logo?: ReactNode;
-  onCancel?: () => void;
+  onBack?: () => void;
 }) {
   const isFixed = models !== undefined;
   const isClaude = claudeLiveModels !== undefined;
@@ -108,7 +108,7 @@ export function ModelStep({
       onSubmit={() => {
         if (canContinue) onSubmit(model.trim());
       }}
-      onCancel={onCancel}
+      onBack={onBack}
     >
       <FieldGroup className="w-full gap-3">
         <Field>

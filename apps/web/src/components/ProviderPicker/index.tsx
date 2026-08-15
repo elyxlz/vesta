@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { ChevronLeftIcon } from "lucide-react";
 import { claudeProvider, openaiProvider, openrouterProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
 
@@ -142,13 +141,13 @@ function ProviderAuthStep({
   authStart,
   startError,
   onCredentialsReady,
-  onCancel,
+  onBack,
 }: {
   provider: ProviderMode | null;
   authStart: AuthStartResult | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
-  onCancel: () => void;
+  onBack: () => void;
 }) {
   if (provider === "claude") {
     return (
@@ -156,7 +155,7 @@ function ProviderAuthStep({
         authStart={authStart}
         startError={startError}
         onCredentialsReady={onCredentialsReady}
-        onCancel={onCancel}
+        onBack={onBack}
       />
     );
   }
@@ -166,7 +165,7 @@ function ProviderAuthStep({
         authStart={authStart as openaiProvider.OAuthStartResult | null}
         startError={startError}
         onCredentialsReady={onCredentialsReady}
-        onCancel={onCancel}
+        onBack={onBack}
       />
     );
   }
@@ -319,8 +318,8 @@ export function ProviderPicker({
     setAuthStartError(null);
   };
 
-  // Cancel abandons the chosen provider and returns to the choice screen,
-  // distinct from the back-chevron which steps back one screen at a time.
+  // Abandon the chosen provider and return to the choice screen. Auth and key
+  // back out here; model and context step back one screen without resetting.
   const cancelToChoice = () => {
     resetAuth();
     setCredentials(null);
@@ -330,41 +329,24 @@ export function ProviderPicker({
     setStep("choice");
   };
 
-  const back = (() => {
-    if (step === "choice") return onBack;
-    // The model step's previous screen depends on how the provider started.
-    if (step === "model")
-      return () =>
-        setStep(providerUsesOAuth(provider, manifest) ? "auth" : "key");
-    if (step === "context") return () => setStep("model");
-    // auth and key both return to the choice screen.
-    return cancelToChoice;
-  })();
+  // The model step's previous screen depends on how the provider started.
+  const backFromModel = () =>
+    setStep(providerUsesOAuth(provider, manifest) ? "auth" : "key");
 
   return (
     <div
       className={cn(
-        "relative flex w-[380px] max-w-full flex-col items-start gap-4 px-4",
+        "flex w-[380px] max-w-full flex-col items-start gap-4 px-4",
         className,
       )}
     >
-      {back && (
-        <button
-          type="button"
-          onClick={back}
-          className="absolute top-0 left-0 -ml-1 flex size-6 items-center justify-center rounded-full text-muted-foreground transition hover:bg-input/60 hover:text-foreground"
-          aria-label="back"
-        >
-          <ChevronLeftIcon className="size-4" />
-        </button>
-      )}
-
       <div className="w-full">
         {step === "choice" && (
           <ChoiceStep
             onPick={handleChoice}
             manifest={manifest}
             variant={choiceVariant}
+            onBack={onBack}
           />
         )}
         {step === "auth" && (
@@ -373,7 +355,7 @@ export function ProviderPicker({
             authStart={authStart}
             startError={authStartError}
             onCredentialsReady={handleCredentialsReady}
-            onCancel={cancelToChoice}
+            onBack={cancelToChoice}
           />
         )}
         {step === "key" && (
@@ -381,7 +363,7 @@ export function ProviderPicker({
             initialKey={key}
             onNext={handleKeyNext}
             logo={stepLogo}
-            onCancel={cancelToChoice}
+            onBack={cancelToChoice}
             title={keyCopy.title}
             subtitle={keyCopy.subtitle}
             placeholder={keyCopy.placeholder}
@@ -410,7 +392,7 @@ export function ProviderPicker({
             }
             allowCustom={provider === "openrouter"}
             logo={stepLogo}
-            onCancel={cancelToChoice}
+            onBack={backFromModel}
           />
         )}
         {step === "context" &&
@@ -436,7 +418,7 @@ export function ProviderPicker({
                 initial={initial}
                 onSubmit={handleContextSubmit}
                 logo={stepLogo}
-                onCancel={cancelToChoice}
+                onBack={() => setStep("model")}
               />
             );
           })()}

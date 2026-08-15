@@ -10,12 +10,12 @@ export function OpenAIAuthStep({
   authStart,
   startError,
   onCredentialsReady,
-  onCancel,
+  onBack,
 }: {
   authStart: openaiProvider.OAuthStartResult | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
-  onCancel: () => void;
+  onBack: () => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -56,7 +56,7 @@ export function OpenAIAuthStep({
       submitLabel={submitting ? "checking sign-in..." : "continue"}
       submitDisabled={submitting}
       onSubmit={() => void submit()}
-      onCancel={onCancel}
+      onBack={onBack}
       error={error || undefined}
       oauthLink={
         <a

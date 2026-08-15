@@ -1,4 +1,5 @@
 import type { Manifest } from "@/api/manifest";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { StepHeading } from "@/components/StepHeading";
 import { glassHover, glassSurface } from "@/components/NewAgent/glass";
@@ -9,14 +10,30 @@ import type { ProviderMode } from "../types";
 // step: a wide centered grid of glass squircle tiles.
 export type ChoiceVariant = "compact" | "grid";
 
+function BackLink({ onBack }: { onBack?: () => void }) {
+  if (!onBack) return null;
+  return (
+    <Button
+      type="button"
+      variant="link"
+      onClick={onBack}
+      className="h-auto self-center px-0 py-0 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+    >
+      back
+    </Button>
+  );
+}
+
 export function ChoiceStep({
   onPick,
   manifest,
   variant = "compact",
+  onBack,
 }: {
   onPick: (mode: ProviderMode) => void;
   manifest: Manifest;
   variant?: ChoiceVariant;
+  onBack?: () => void;
 }) {
   // Ordering and display names are catalog data; only logos + taglines are local presentation.
   const ordered = PROVIDERS.filter(({ id }) => manifest.providers[id]).sort(
@@ -54,6 +71,7 @@ export function ChoiceStep({
             </button>
           ))}
         </div>
+        <BackLink onBack={onBack} />
       </div>
     );
   }
@@ -85,6 +103,7 @@ export function ChoiceStep({
           </button>
         ))}
       </div>
+      <BackLink onBack={onBack} />
     </div>
   );
 }

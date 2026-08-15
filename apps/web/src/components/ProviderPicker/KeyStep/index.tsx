@@ -7,7 +7,7 @@ export function KeyStep({
   initialKey,
   onNext,
   logo,
-  onCancel,
+  onBack,
   title,
   subtitle,
   placeholder,
@@ -16,7 +16,7 @@ export function KeyStep({
   initialKey: string;
   onNext: (key: string) => void;
   logo?: ReactNode;
-  onCancel?: () => void;
+  onBack?: () => void;
   title: string;
   subtitle: string;
   placeholder?: string;
@@ -52,7 +52,7 @@ export function KeyStep({
       onSubmit={() => {
         void submit();
       }}
-      onCancel={onCancel}
+      onBack={onBack}
       error={error}
     >
       <Input

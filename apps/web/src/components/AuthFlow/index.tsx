@@ -9,7 +9,7 @@ import { errorMessage } from "@/lib/utils";
 interface AuthFlowProps {
   authUrl: string;
   onSubmitCode: (code: string) => Promise<void>;
-  onCancel?: () => void;
+  onBack?: () => void;
   onComplete?: () => void;
 }
 
@@ -18,7 +18,7 @@ type AuthState = "waiting" | "submitting" | "error";
 export function AuthFlow({
   authUrl,
   onSubmitCode,
-  onCancel,
+  onBack,
   onComplete,
 }: AuthFlowProps) {
   const [authState, setAuthState] = useState<AuthState>("waiting");
@@ -94,7 +94,7 @@ export function AuthFlow({
       onSubmit={() => {
         void submit();
       }}
-      onCancel={onCancel}
+      onBack={onBack}
       error={error || undefined}
     >
       <Input
