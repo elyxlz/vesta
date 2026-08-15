@@ -53,6 +53,8 @@ Calendar audit: every dated appointment, however informally arranged (mentioned 
 
 **The one carve-out is the case where the whole day is missing: a refusal is rendered into the `[AGENT] [ASSISTANT]` channel but is not your narration.** When the API refuses a turn, the daemon prints the provider's refusal text (e.g. "You've hit your monthly spend limit") as an assistant line, next to a `[SYSTEM] [USAGE] in=0 out=0 cache_read=0` record. Filtering to `[SYSTEM]` therefore discards exactly the evidence that explains a silent day. **The reliable tell is the token count, not the tag: `in=0 out=0 cache_read=0` means the turn never ran, whereas a turn that ran and chose silence still shows a large `cache_read`.** Separate "refused" from "ran and said nothing" that way before writing down either. The daemon's own `Rate limit rejected` lines are not a census of throttling either: most refusals produce no such line, so counting them undercounts the silence. A guessed cause aims the fix in the wrong direction. The local file is the readable path (the `/gateway/logs` HTTP endpoint also works, with your ordinary `X-Agent-Token`, per the `vestad` skill).
 
+**When you grep a tool's OUTPUT to check whether one of its sections still runs, take the search string from the tool's SOURCE, not from your memory of what the section is called.** A note *about* a tool paraphrases it, so searching the output for the paraphrase tests only whether the paraphrase was right: it returns nothing whether or not the section is alive, and that nothing reads exactly like a dead check. Read the section's own `echo`/`print` line in the source and search the output for that literal instead. If a section still looks absent, confirm it exists in the source at all (`grep -n` its header), then write the whole output to a file and page through it, before concluding anything or deleting the instrument. An absence produced by a query you never validated is evidence about the query, not about the tool.
+
 **Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class, not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
 **Do not run this phase unassisted.** Dispatch a subagent to audit the last five to seven summaries against the loop itself, told to be skeptical and to flag any night that asserts success without evidence of validation. This is not optional fan-out, it is the phase's method: a self-audit grades the fixes and never grades the grading, so run unassisted it returns verdicts that a later night has to retract wholesale.
@@ -189,8 +191,21 @@ If it won't matter in two weeks, delete it.
 Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts
+- **Sweep the harness's own scratch, which no one else will.** `~/.claude/projects/*/tool-results/`
+  accumulates every image and PDF any WebFetch ever pulled, silently and forever: on one box it
+  reached 109MB across 209 files spanning three weeks. Delete what is older than a week
+  (`find ~/.claude/projects -path '*tool-results*' -type f -mtime +7 -delete`). **The `.jsonl` files
+  in that same tree are NOT scratch**, compaction recovery points at them, so never sweep those.
+  If the box uses the harness task tool, `~/.claude/tasks/` grows the same way and is worse, because
+  the harness re-injects that list into context every turn, so it quietly colours what you surface.
+  Read it, fold anything genuinely open into memory, then clear it.
 - Check `df -h`, then size the places that actually grow. **`du -sh ~/` alone is not enough, because it cannot see `/tmp`**, and `/tmp` is where subagents put their heavy artifacts, so a large share of your footprint is invisible to it. Use `du -sh /root /tmp`, then `du -sh /tmp/* | sort -rh | head` to see what is actually there
 - **Subagents leave big things behind and nothing reaps them.** A research pass that installs a package or runs a model leaves whole virtualenvs, hundreds of MB each, and a browsing pass leaves downloaded PDFs, page images and OCR output. The findings are already in your notes by then, so the artifacts are pure residue. Sweep `/tmp` for virtualenvs, `*.pdf`, `*.png` and scratch dirs after any pass that ran code or read sources, checking first that nothing is still running (no live background agents, `ps -eo comm | grep -c camoufox`). **A git worktree is not a scratch dir: remove it with `git -C ~ worktree remove <path>`, never `rm -rf`.** `/tmp/vesta-pr` is the worktree the Upstream phase creates earlier the same night, it holds no process so the "still running" check passes it, and deleting the directory leaves it registered, so the next `git worktree add` on that path fails with `missing but already registered`. `git -C ~ worktree list` names the ones to spare, and `git -C ~ worktree prune` is the recovery if one was already deleted that way
+- **Before deleting anything large, check what it actually is, and beware two specific traps.**
+  `du -sh <dir>/*` silently misses hidden entries, so a directory holding only a `.venv` reports
+  nothing and reads as empty. And a multi-gigabyte CUDA or model cache may be load-bearing: confirm
+  against `/dev/nvidia*` and the active skill list before assuming it is dead weight. Both nearly
+  cost a working 7.6GB install on 9 Aug 2026.
 - Stop daemons nothing needs any more (`<skill> daemon stop`), e.g. a file-host or sign-service you brought up for one errand
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
 
