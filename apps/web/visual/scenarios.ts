@@ -107,12 +107,13 @@ export const SCENARIOS: Scenario[] = [
       await fillName(page, AGENT);
       await submitName(page);
       await crossProvider(page);
-      await page.getByRole("button", { name: /night owl/ }).click();
+      await page.getByRole("button", { name: /chill/ }).click();
     },
     settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: /night owl/ }),
-      ).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByRole("button", { name: /chill/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
     },
   },
   {

@@ -18,7 +18,7 @@ export function PersonalityStep({
         {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton
             key={i}
-            className="h-40 w-full rounded-3xl [corner-shape:squircle]"
+            className="h-40 w-full rounded-[3rem] [corner-shape:squircle]"
           />
         ))}
       </div>
@@ -37,7 +37,7 @@ export function PersonalityStep({
             }}
             aria-pressed={isSelected}
             className={cn(
-              "flex h-full cursor-pointer flex-col items-center gap-2 p-6 text-center",
+              "flex h-full cursor-pointer flex-col items-center justify-center gap-1 p-6 text-center",
               glassSurface,
               glassHover,
               isSelected && glassSelected,

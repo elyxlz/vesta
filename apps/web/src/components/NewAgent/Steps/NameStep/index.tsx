@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import { useGateway } from "@/providers/GatewayProvider";
-import { glassSurface } from "../../glass";
+import { glassPill } from "../../glass";
 import { normalizeName } from "./normalize-name";
 
 export function NameStep({
@@ -46,7 +46,7 @@ export function NameStep({
             }}
             onKeyDown={handleKeyDown}
             autoFocus
-            className={cn("h-14 px-6 text-center", glassSurface)}
+            className={cn("h-14 px-6 text-center", glassPill)}
           />
           {normalized !== trimmed && (
             <FieldDescription className="text-center">
