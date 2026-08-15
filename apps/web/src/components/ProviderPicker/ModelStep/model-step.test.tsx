@@ -33,7 +33,7 @@ describe("ModelStep claude two-tier", () => {
         ]}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /^more$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /more models/i }));
     expect(screen.getByText("Claude Opus 5")).toBeTruthy();
   });
 });

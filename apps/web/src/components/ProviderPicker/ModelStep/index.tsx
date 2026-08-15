@@ -193,10 +193,11 @@ function ClaudeModelPicker({
         <button
           type="button"
           aria-expanded={expanded}
+          aria-label={expanded ? "fewer models" : "more models"}
           onClick={() => setExpanded((v) => !v)}
           className={cn(
             tileBase,
-            "gap-1 text-muted-foreground",
+            "text-muted-foreground",
             glassFrost,
             glassHover,
           )}
@@ -206,7 +207,6 @@ function ClaudeModelPicker({
           ) : (
             <ChevronDownIcon className="size-4" />
           )}
-          {expanded ? "fewer" : "more"}
         </button>
       </div>
       {expanded && (

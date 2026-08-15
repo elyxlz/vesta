@@ -155,7 +155,7 @@ export const SCENARIOS: Scenario[] = [
       await page.getByText("Claude", { exact: true }).click();
       await page.getByPlaceholder("paste code here").fill("visual-code");
       await page.getByRole("button", { name: "continue" }).click();
-      await page.getByRole("button", { name: "more" }).click();
+      await page.getByRole("button", { name: "more models" }).click();
     },
     settle: async (page) => {
       await expect(
@@ -175,7 +175,9 @@ export const SCENARIOS: Scenario[] = [
       await page.getByRole("button", { name: "continue" }).click();
     },
     settle: async (page) => {
-      await expect(page.getByRole("button", { name: "more" })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "more models" }),
+      ).toBeVisible();
       await expect(page.getByText("Claude Opus 5")).toBeHidden();
     },
   },
