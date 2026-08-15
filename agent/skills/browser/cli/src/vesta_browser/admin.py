@@ -213,6 +213,19 @@ def stop_browser(name: str | None = None) -> None:
     _session_file(session, "mode").unlink(missing_ok=True)
 
 
+def _discard_own_spawn(session: str, pid: int) -> None:
+    """Kill a spawn that never became healthy and clear the records IT wrote.
+
+    Only our own spawn's records are removed: under same-session contention another spawn can win
+    the socket and record its own pid while still coming up, so ripping those files out would
+    orphan a live daemon.
+    """
+    _terminate_pid(pid)
+    if _read_pid(Path(pid_path(session))) == pid:
+        for p in (socket_path(session), pid_path(session)):
+            Path(p).unlink(missing_ok=True)
+
+
 def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     """Spawn the daemon if not already healthy. Self-heals stale daemons."""
     session = _session_name(name)
@@ -269,11 +282,9 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     # "already running". Healthy is healthy, whoever started it.
     if daemon_healthy(session):
         return
-    # Fail closed: a daemon that missed its deadline is killed and its records removed, so a
+    # Fail closed: a spawn that missed its deadline is killed and its records removed, so a
     # half-started one never lingers to confuse the next attempt.
-    _terminate_pid(proc.pid)
-    for p in (socket_path(session), pid_path(session)):
-        Path(p).unlink(missing_ok=True)
+    _discard_own_spawn(session, proc.pid)
     tail = ""
     with contextlib.suppress(FileNotFoundError, IndexError):
         tail = Path(log_path(session)).read_text().splitlines()[-1]

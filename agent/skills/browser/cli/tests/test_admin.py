@@ -562,6 +562,21 @@ def test_ensure_daemon_timeout_fails_closed(tmp_path, monkeypatch):
     assert "contend" not in str(excinfo.value), "no contention hint when starting alone"
 
 
+def test_ensure_daemon_timeout_leaves_a_concurrent_winners_records(tmp_path, monkeypatch):
+    """Same-session contention: another spawn won the socket and recorded ITS pid. The loser's
+    fail-closed cleanup must leave those records, or a daemon still coming up gets orphaned."""
+    _startup_setup(tmp_path, monkeypatch, other_sessions=[])
+    monkeypatch.setattr(admin, "_terminate_pid", lambda pid: None)
+    (tmp_path / "vesta-browser-solo.sock").write_text("")
+    (tmp_path / "vesta-browser-solo.pid").write_text("9999")  # the winner's pid, not our spawn's 4242
+
+    with pytest.raises(RuntimeError):
+        admin.ensure_daemon(wait_s=0.05, name="solo")
+
+    assert (tmp_path / "vesta-browser-solo.sock").exists(), "winner's socket was deleted"
+    assert (tmp_path / "vesta-browser-solo.pid").read_text() == "9999", "winner's pid record was deleted"
+
+
 def test_ensure_daemon_timeout_names_contention_and_extends_the_budget(tmp_path, monkeypatch):
     """Under fan-out the handshake competes for CPU: the wait scales up and the error
     names the competing sessions plus the http_get fallback."""
