@@ -49,6 +49,17 @@ updates:
       - dependency-name: "eslint-config-expo"
         update-types: ["version-update:semver-major"]
 
+  # Keeps whatsmeow (and the rest of the whatsapp CLI's Go deps) current through
+  # a reviewed PR gated by CI, never a runtime @latest float: the launcher pins
+  # whatsmeow deliberately because a mid-session bump can log the device out.
+  - package-ecosystem: gomod
+    directory: /agent/skills/whatsapp/cli
+    schedule:
+      interval: daily
+    groups:
+      whatsapp-deps:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
