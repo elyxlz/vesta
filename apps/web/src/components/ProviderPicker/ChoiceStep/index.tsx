@@ -56,7 +56,7 @@ export function ChoiceStep({
               type="button"
               onClick={() => onPick(id)}
               className={cn(
-                "flex cursor-pointer flex-col items-center justify-center gap-2 p-6 text-center sm:aspect-square",
+                "flex cursor-pointer flex-row items-center justify-center gap-3 p-4 text-center sm:aspect-square sm:flex-col sm:gap-2 sm:p-6",
                 glassSurface,
                 glassHover,
               )}
