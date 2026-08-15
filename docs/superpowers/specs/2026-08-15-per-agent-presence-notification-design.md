@@ -96,11 +96,14 @@ that agent is already `pending` schedules nothing new.
 
 - When `record()` yields `Some(agent)`, spawn `settle_and_notify(state, agent)`.
   After `PRESENCE_NOTIFY_DELAY`, if `confirm_return(agent)` yields a
-  `ClientKind` and that agent is tapped with `presence_notifications` enabled,
-  drop a `user-presence` notification into **that one agent**.
-- Delete `presence_notification_agents()` in `agent_status.rs` (the fan-out
-  helper). No fan-out remains. Keep `presence_notifications_enabled(agent)` and
-  check it for the single agent at settle time.
+  `ClientKind` and `presence_notification_target(agent)` holds (the agent serves
+  its tap now and its `presence_notifications` toggle is enabled), drop a
+  `user-presence` notification into **that one agent**.
+- Replace the fan-out helper `presence_notification_agents()` with the
+  single-agent `presence_notification_target(agent)`
+  (`serves_ws && presence_notifications_enabled`). Gating on the live tap is what
+  keeps a mid-restart opt-out (whose toggle reads as the enabled default) from
+  being notified against its preference.
 - `drop_presence_notification(docker, agent, client)` is unchanged in shape; it
   still carries `ClientKind` for the surface label.
 - Notification copy becomes agent-specific:

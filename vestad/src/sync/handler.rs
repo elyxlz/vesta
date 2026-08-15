@@ -131,7 +131,7 @@ async fn settle_and_notify(state: SharedState, agent: String) {
     let Some(client) = state.presence.confirm_return(&agent, tokio::time::Instant::now()) else {
         return;
     };
-    if !state.agent_status_cache.presence_notifications_enabled(&agent) {
+    if !state.agent_status_cache.presence_notification_target(&agent) {
         return;
     }
     // Best-effort: a stopped agent or write failure logs itself, never fatal.

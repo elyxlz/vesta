@@ -405,6 +405,14 @@ impl AgentStatusCache {
         self.presence_notifications_rx.borrow().get(agent).copied().unwrap_or(true)
     }
 
+    /// Whether a presence notification should reach `agent`: it serves its WS tap now (so vestad
+    /// holds its real preference) and that preference is enabled. An agent whose tap is down reads
+    /// as enabled by default, so gating on the live tap is what keeps a mid-restart opt-out honored.
+    pub fn presence_notification_target(&self, agent: &str) -> bool {
+        let serving = self.agents_rx.borrow().iter().any(|entry| entry.name == agent && entry.status.serves_ws());
+        serving && self.presence_notifications_enabled(agent)
+    }
+
     pub fn subscribe_services(
         &self,
     ) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
@@ -1055,6 +1063,33 @@ mod tests {
             m.insert("scout".into(), false);
         });
         assert!(!cache.presence_notifications_enabled("scout"));
+    }
+
+    #[test]
+    fn presence_notification_target_requires_a_serving_enabled_agent() {
+        let cache = AgentStatusCache::new();
+        cache.agents_tx.send_modify(|agents| {
+            agents.extend([
+                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, started_at: None },
+                ListEntry { name: "quiet".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, started_at: None },
+                ListEntry { name: "asleep".into(), status: docker::AgentStatus::Stopped, ws_port: 3, booting: false, started_at: None },
+                // Mid-restart: its tap is down, so its preference reads as the enabled default.
+                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 4, booting: false, started_at: None },
+            ]);
+        });
+        cache.presence_notifications_tx.send_modify(|preferences| {
+            preferences.insert("quiet".into(), false);
+        });
+
+        assert!(cache.presence_notification_target("scout"));
+        // Opted out: enabled is false even though it serves.
+        assert!(!cache.presence_notification_target("quiet"));
+        // Stopped: cannot receive it.
+        assert!(!cache.presence_notification_target("asleep"));
+        // Mid-restart: tap down, so a true opt-out could not be read; do not notify.
+        assert!(!cache.presence_notification_target("booting"));
+        // Unknown agent: not serving.
+        assert!(!cache.presence_notification_target("ghost"));
     }
 
     use crate::sync::SyncHub;
