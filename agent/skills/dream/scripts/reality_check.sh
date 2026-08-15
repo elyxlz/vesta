@@ -118,6 +118,25 @@ else
     bad "notifications dir is not writable: every producer is silently mute"
 fi
 
+# Did the dream itself lapse? Keyed on the summary file, never on a checkpoint commit message: a
+# summary is written on every run however that run's commit was worded, so its mtime is the honest
+# signal while a grep for exact wording silently misses a run that used other words. 30h, not 24h,
+# because a normal cadence is exactly 24h and a run an hour late would false-RED at that bound;
+# a fully missed night shows up as ~48h, so 30h catches it with margin.
+DREAM_LAPSE_HOURS=30
+dreamdir="$HOME/agent/dreamer"
+newest=$(ls -t "$dreamdir"/*.md 2>/dev/null | head -1)
+if [ -z "$newest" ]; then
+    ok "no dreamer summaries yet, so there is no cadence to have broken"
+else
+    age_h=$(( ( $(date +%s) - $(date -r "$newest" +%s) ) / 3600 ))
+    if [ "$age_h" -ge "$DREAM_LAPSE_HOURS" ]; then
+        bad "last dreamer summary is ${age_h}h old (>= ${DREAM_LAPSE_HOURS}h): a night was missed, and nothing else would have told me"
+    else
+        ok "last dreamer summary ${age_h}h old, cadence intact"
+    fi
+fi
+
 # Append-only history. A single run can only say "how many REDs right now", which is the same
 # one-night horizon that let this probe silently stop being run for three nights in Aug 2026
 # without anyone noticing. Recording every run means the SERIES is checkable and, more importantly,
