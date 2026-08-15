@@ -148,22 +148,6 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     ...defaults,
-    id: "provider-model-custom",
-    drive: async (page) => {
-      await fillName(page, AGENT);
-      await submitName(page);
-      await page.getByText("OpenRouter", { exact: true }).click();
-      await page.getByPlaceholder("sk-or-v1-...").fill("sk-or-v1-visual");
-      await page.getByRole("button", { name: "next" }).click();
-      await page.getByText("use a custom slug →").click();
-    },
-    settle: async (page) => {
-      await expect(page.getByPlaceholder("provider/model")).toBeVisible();
-      await expect(page.getByText("← back to top models")).toBeVisible();
-    },
-  },
-  {
-    ...defaults,
     id: "provider-model-claude",
     drive: async (page) => {
       await fillName(page, AGENT);

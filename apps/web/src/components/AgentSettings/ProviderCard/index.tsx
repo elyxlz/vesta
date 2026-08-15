@@ -281,7 +281,6 @@ function ModelDialog({
   manifest: Manifest | undefined;
   onSubmit: (model: string) => void;
 }) {
-  const isOpenRouter = provider.kind === "openrouter";
   const isClaude = provider.kind === "claude";
   const configuredKind = provider.kind === "none" ? null : provider.kind;
   const fixedModels = providerModelOptions(
@@ -313,7 +312,6 @@ function ModelDialog({
               initialModel={provider.model ?? ""}
               models={fixedModels}
               claudeLiveModels={isClaude ? claudeLiveModels : undefined}
-              allowCustom={isOpenRouter}
               submitLabel="switch model"
               onSubmit={onSubmit}
             />

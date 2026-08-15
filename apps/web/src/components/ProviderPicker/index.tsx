@@ -394,7 +394,6 @@ export function ProviderPicker({
             claudeLiveModels={
               provider === "claude" ? claudeLiveModels : undefined
             }
-            allowCustom={provider === "openrouter"}
             logo={stepLogo}
             onBack={backFromModel}
           />

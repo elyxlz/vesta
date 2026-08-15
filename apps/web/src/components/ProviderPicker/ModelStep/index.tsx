@@ -24,7 +24,6 @@ export function ModelStep({
   onSubmit,
   models,
   claudeLiveModels,
-  allowCustom = true,
   submitLabel = "continue",
   logo,
   onBack,
@@ -33,12 +32,11 @@ export function ModelStep({
   onModelChange?: (model: string) => void;
   onSubmit: (model: string) => void;
   /// Fixed model list (e.g. Z.AI's). When provided, the step shows just these
-  /// and skips the OpenRouter fetch, search, and custom-slug.
+  /// and skips the OpenRouter fetch and search.
   models?: OpenRouterModelOption[];
   /// Claude's two-tier picker: the alias buttons plus this expandable live-slug
   /// list (null while loading). Takes over the render when not undefined.
   claudeLiveModels?: OpenRouterModelOption[] | null;
-  allowCustom?: boolean;
   submitLabel?: string;
   logo?: ReactNode;
   onBack?: () => void;
@@ -53,7 +51,6 @@ export function ModelStep({
   const [topModels, setTopModels] = useState<OpenRouterModelOption[] | null>(
     models ?? null,
   );
-  const [customMode, setCustomMode] = useState(false);
 
   // Mirrors the model state so the one-shot fetch below can read the value
   // current at resolve time without depending on it.
@@ -132,23 +129,6 @@ export function ModelStep({
               onSelect={setModel}
               loading={false}
             />
-          ) : customMode ? (
-            <>
-              <Input
-                id="or-model-custom"
-                placeholder="provider/model"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                autoFocus
-              />
-              <button
-                type="button"
-                className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
-                onClick={() => setCustomMode(false)}
-              >
-                ← back to top models
-              </button>
-            </>
           ) : (
             <>
               <div className="relative w-full">
@@ -167,15 +147,6 @@ export function ModelStep({
                 onSelect={setModel}
                 loading={topModels === null}
               />
-              {allowCustom && (
-                <button
-                  type="button"
-                  className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
-                  onClick={() => setCustomMode(true)}
-                >
-                  use a custom slug →
-                </button>
-              )}
             </>
           )}
         </Field>
