@@ -519,10 +519,10 @@ class TestRemindList:
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         assert all(i["task_id"] == task["id"] for i in items)
 
-    def test_list_has_auto_generated_field(self, shared_env):
+    def test_list_carries_no_auto_generated_field(self, shared_env):
         home, _, _ = shared_env
         items = parse(tasks_cli(home, "remind", "list", "--json"))
-        assert all("auto_generated" in i for i in items)
+        assert all("auto_generated" not in i for i in items)
 
 
 class TestRemindDelete:
@@ -589,62 +589,22 @@ class TestCascadeDeletion:
 # === Auto-generated reminders ===
 
 
-class TestAutoReminders:
-    def test_due_date_creates_auto_reminders(self, shared_env):
+class TestComputedCheckpoints:
+    def test_due_date_creates_no_reminder_rows(self, shared_env):
+        """Checkpoints are computed by the daemon from the due date; a dated create must leave the
+        reminder store untouched."""
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
         task = parse(tasks_cli(home, "create", "auto reminder task", "--due-datetime", future, "--timezone", "UTC"))
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
-        auto = [i for i in items if i["auto_generated"]]
-        # Should have reminders for 1 week, 1 day, 1 hour, 15 min before
-        assert len(auto) >= 3  # at least 1 week, 1 day, 1 hour (15 min depends on timing)
+        assert items == []
 
-    def test_auto_reminders_skipped_if_past(self, shared_env):
-        home, _, _ = shared_env
-        # Due in 30 minutes: only the 15-min pre-due reminder plus the at-due decision fire remain
-        future = (datetime.now(UTC) + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "create", "soon task", "--due-datetime", future, "--timezone", "UTC"))
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
-        auto = [i for i in items if i["auto_generated"]]
-        assert len(auto) == 2
-        messages = sorted(i["message"] for i in auto)
-        assert "is due now" in messages[0]
-        assert "15 minutes" in messages[1]
-
-    def test_at_due_reminder_carries_decision_menu(self, shared_env):
-        home, _, _ = shared_env
-        future = (datetime.now(UTC) + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "create", "decision task", "--due-datetime", future, "--timezone", "UTC"))
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
-        at_due = [i for i in items if i["schedule"] == "auto: at due"]
-        assert len(at_due) == 1
-        message = at_due[0]["message"]
-        assert f"tasks done {task['id']}" in message
-        assert f"tasks postpone {task['id']}" in message
-        assert f"tasks delete {task['id']}" in message
-
-    def test_done_status_cleans_auto_reminders(self, shared_env):
-        home, _, _ = shared_env
-        future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
-        task = parse(tasks_cli(home, "create", "done cleanup", "--due-datetime", future, "--timezone", "UTC"))
-        # Verify auto reminders exist
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
-        assert any(i["auto_generated"] for i in items)
-        # Mark done
-        tasks_cli(home, "update", task["id"], "--status", "completed")
-        # Auto reminders should be gone
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
-        auto = [i for i in items if i["auto_generated"]]
-        assert len(auto) == 0
-
-    def test_cascade_deletes_auto_reminders(self, shared_env):
+    def test_cascade_deletes_linked_reminders(self, shared_env):
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
         task = parse(tasks_cli(home, "create", "cascade auto", "--due-datetime", future, "--timezone", "UTC"))
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
-        assert len(items) >= 1
+        parse(tasks_cli(home, "remind", "hand-written", "--task", task["id"], "--in-hours", "1"))
         tasks_cli(home, "delete", task["id"])
-        # All reminders for this task should be gone
         all_items = parse(tasks_cli(home, "remind", "list", "--json"))
         assert not any(i["task_id"] == task["id"] for i in all_items)
 

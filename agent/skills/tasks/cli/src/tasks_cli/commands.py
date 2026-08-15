@@ -3,7 +3,7 @@ import logging
 import random
 import uuid
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, Literal, TypedDict
@@ -55,6 +55,20 @@ class DueSpec(BaseModel):
     clear: bool = False
 
 
+class SnoozeSpec(BaseModel):
+    """When a snoozed reminder should fire: from now (--in-*), from its own fire time (--by-*),
+    or at a named moment (--at + --tz). One form per call."""
+
+    in_minutes: int | None = None
+    in_hours: int | None = None
+    in_days: int | None = None
+    by_minutes: int | None = None
+    by_hours: int | None = None
+    by_days: int | None = None
+    at: str | None = None
+    tz: str | None = None
+
+
 class ReminderSpec(BaseModel):
     """A reminder to schedule: the message plus one-shot, recurring, or cron timing."""
 
@@ -97,11 +111,11 @@ MISSED_GRACE = timedelta(seconds=30)
 FUZZ_VALIDATION_FIRES = 26
 
 
-def _relative_offset(minutes: int | None, hours: int | None, days: int | None) -> timedelta | None:
-    """Validated offset from --in-*/--due-in-* flags; None when no flag was given."""
+def _relative_offset(minutes: int | None, hours: int | None, days: int | None, *, prefix: str = "in") -> timedelta | None:
+    """Validated offset from --in-*/--by-*/--due-in-* flags; None when no flag was given."""
     for name, val in [("minutes", minutes), ("hours", hours), ("days", days)]:
         if val is not None and val <= 0:
-            raise ValueError(f"in_{name} must be positive")
+            raise ValueError(f"{prefix}_{name} must be positive")
     offset = timedelta(minutes=minutes or 0, hours=hours or 0, days=days or 0)
     return offset if offset.total_seconds() > 0 else None
 
@@ -204,11 +218,21 @@ def _normalize_cron_expr(expr: str) -> str:
     return " ".join(fields)
 
 
-def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
+def _parse_local_dt(datetime_str: str, timezone_str: str, *, allow_bare_time: bool = False) -> datetime:
     try:
         local_tz = ZoneInfo(timezone_str)
     except (ZoneInfoNotFoundError, KeyError):
         raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from None
+
+    if allow_bare_time:
+        # A schedule that only uses the wall-clock time ("daily at 21:30") should not force the
+        # caller to invent a date, so a bare time anchors to today in the target timezone.
+        try:
+            bare = time.fromisoformat(datetime_str)
+        except ValueError:
+            pass
+        else:
+            return datetime.combine(datetime.now(local_tz).date(), bare, tzinfo=local_tz)
 
     parsed = datetime.fromisoformat(datetime_str)
     if parsed.tzinfo is not None:
@@ -302,6 +326,8 @@ def _require_task_row(conn, task_id: str):
 
 def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False) -> dict:
     task = dict(row)
+    # Checkpoint bookkeeping, not task state: the ladder engine's marker means nothing to a reader.
+    task.pop("checkpoint_fired_through", None)
     task_id = task["id"]
     task["metadata_path"] = str(_get_metadata_path(data_dir, task_id))
     if include_content:
@@ -331,8 +357,6 @@ def add_task(
             "INSERT INTO tasks (id, subject, priority, due_date) VALUES (?, ?, ?, ?)",
             (task_id, subject, priority, due_date),
         )
-        if due_date:
-            db.create_auto_reminders(conn, task_id, subject, due_date)
         conn.commit()
 
     if initial_metadata:
@@ -358,56 +382,16 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
 
-def _rebuild_due_reminders(conn, task_id: str, row, *, subject: str | None, status: str | None, new_due_date: str | None):
-    """Rebuild the auto reminders after a due-date or subject change, preferring the values updated in
-    the same call. An auto reminder's message embeds the task subject, so a subject change has to
-    regenerate them for the armed reminders to carry the current subject."""
-    db.delete_auto_reminders(conn, task_id)
-    if not new_due_date:
-        return
-    reminder_subject = subject if subject is not None else row["subject"]
-    # Only create reminders if the task is (or will be) open. in_progress is open like pending;
-    # only completed stops reminding.
-    effective_status = status if status is not None else row["status"]
-    if effective_status != "completed":
-        db.create_auto_reminders(conn, task_id, reminder_subject, new_due_date)
-
-
-def _retitle_auto_reminder_messages(conn, task_id: str, new_title: str) -> None:
-    """Point every armed auto reminder at the new title without touching its schedule.
-
-    Bodies are regenerated from the same db.py templates that produced them, rather than
-    string-replacing the old title inside the stored message, because a title containing partial or
-    punctuation-heavy text would corrupt the message. A row whose label names no rung has nothing to
-    regenerate from and keeps its body. Completed rows are history and are left alone.
-    """
-    rows = conn.execute(
-        "SELECT id, message, schedule_type FROM reminders WHERE task_id = ? AND auto_generated = 1 AND completed = 0",
-        (task_id,),
-    ).fetchall()
-    for row in rows:
-        label = db.lead_time_label(row["schedule_type"])
-        if label is not None:
-            message = db.LEAD_TIME_MESSAGE.format(label=label, title=new_title)
-        elif row["schedule_type"] == db.AT_DUE_SCHEDULE:
-            message = db.DUE_NOW_MESSAGE.format(title=new_title, task_id=task_id)
-        else:
-            continue
-        if message != row["message"]:
-            conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, row["id"]))
-
-
-def _backburner_update(
-    conn, row, *, backburner: bool | None, due_date_changed: bool, new_due_date: str | None, updates: list[str]
-) -> int | None:
+def _backburner_update(row, *, backburner: bool | None, due_date_changed: bool, new_due_date: str | None, updates: list[str]) -> int | None:
     """The new value for the `backburner` column, or None to leave it alone.
 
-    Parked and deadlined cannot coexist, because the reminder ladder would keep firing on a task the
-    digest has been told to stop nagging about, which is the contradiction the flag exists to
+    Parked and deadlined cannot coexist, because the checkpoint ladder would keep firing on a task
+    the digest has been told to stop nagging about, which is the contradiction the flag exists to
     remove. The date is the side that wins: a real due date clears the flag whether it arrives
-    alongside --backburner or on its own later, and parking a dated task drops the date and its
-    ladder. Clearing a due date does NOT park the task; that would silence the digest as an
-    invisible side effect of an unrelated command.
+    alongside --backburner or on its own later, and parking a dated task drops the date, which is
+    all it takes to silence the ladder since checkpoints derive from the date. Clearing a due date
+    does NOT park the task; that would silence the digest as an invisible side effect of an
+    unrelated command.
     """
     if new_due_date:
         return 0
@@ -415,7 +399,6 @@ def _backburner_update(
         return None
     if backburner and not due_date_changed and row["due_date"]:
         updates.append("due_date = NULL")
-        db.delete_auto_reminders(conn, row["id"])
     return int(backburner)
 
 
@@ -450,20 +433,16 @@ def update_task(
             if status == "completed":
                 updates.append("completed_at = ?")
                 params.append(_now_utc().isoformat())
-                # A finished task stops reminding entirely, so this clears owned reminders too, not
-                # just auto ones. A due-date change below rebuilds only the auto ones (delete_auto).
+                # A finished task stops reminding entirely: its linked reminders are cleared here,
+                # and its checkpoints stop on their own because the ladder only reads open tasks.
                 db.delete_task_reminders(conn, task_id)
             elif was_completed:
-                # Reopening from completed (to pending or in_progress): clear completion and, unless
-                # the due date is being changed below (that block rebuilds them), recreate the auto
-                # reminders the completed transition deleted. A pending<->in_progress toggle is not a
-                # reopen, so it never touches reminders and cannot duplicate them.
+                # Reopening from completed (to pending or in_progress). The ladder resumes on its
+                # own; a pending<->in_progress toggle is not a reopen and changes nothing here.
                 updates.append("completed_at = NULL")
-                if not due_date_changed and result["due_date"]:
-                    db.create_auto_reminders(conn, task_id, result["subject"], result["due_date"])
 
         new_backburner = _backburner_update(
-            conn, result, backburner=backburner, due_date_changed=due_date_changed, new_due_date=new_due_date, updates=updates
+            result, backburner=backburner, due_date_changed=due_date_changed, new_due_date=new_due_date, updates=updates
         )
         for field, value in [("subject", subject), ("priority", priority), ("backburner", new_backburner)]:
             if value is not None:
@@ -473,11 +452,6 @@ def update_task(
         if due_date_changed:
             updates.append("due_date = ?")
             params.append(new_due_date)
-            _rebuild_due_reminders(conn, task_id, result, subject=subject, status=status, new_due_date=new_due_date)
-        elif subject is not None and subject != result["subject"] and status != "completed":
-            # A subject change invalidates the reminder TEXT and nothing else, so rewrite the text
-            # and leave fire times, ids, snoozes and completed history untouched.
-            _retitle_auto_reminder_messages(conn, task_id, subject)
 
         if updates:
             params.append(task_id)
@@ -654,6 +628,82 @@ def maybe_send_digest(config: Config, notif_dir: Path, *, now: datetime | None =
 
 
 # ---------------------------------------------------------------------------
+# Due-date checkpoints (computed, never stored)
+# ---------------------------------------------------------------------------
+
+DUE_NOW_MESSAGE = (
+    'Task "{subject}" ({task_id}) is due now. Decide immediately: do it and run `tasks done {task_id}`, '
+    "or postpone it (`tasks postpone {task_id} --in-days N`), or tell the user you are dropping it and run "
+    "`tasks delete {task_id}`. Never leave a task sitting overdue."
+)
+
+LEAD_TIME_MESSAGE = "Task due in {label}: {subject}"
+
+# Fixed lead times before the due date, ascending; past 1 week the leads double from 2 weeks up.
+# Anchor-free by design: any two computations of a task's ladder agree, so no rung list is stored.
+_CHECKPOINT_TAIL = [
+    ("15 minutes", timedelta(minutes=15)),
+    ("1 hour", timedelta(hours=1)),
+    ("1 day", timedelta(days=1)),
+    ("1 week", timedelta(weeks=1)),
+]
+_CHECKPOINT_DOUBLING_START = timedelta(weeks=2)
+
+
+def _humanize_lead(delta: timedelta) -> str:
+    days = round(delta.total_seconds() / 86400)
+    if days >= 60:
+        return f"about {round(days / 30)} months"
+    return f"about {round(days / 7)} weeks"
+
+
+def checkpoint_times(due_dt: datetime, created_dt: datetime) -> list[tuple[str | None, datetime]]:
+    """Every checkpoint for a due date as (label, fire time), ascending by fire time.
+
+    A None label is the at-due decision fire. Rungs at or before the task's creation are dropped:
+    they could never have fired, so they must not read as missed."""
+    rungs = [(label, due_dt - delta) for label, delta in _CHECKPOINT_TAIL]
+    lead = _CHECKPOINT_DOUBLING_START
+    while due_dt - lead > created_dt:
+        rungs.append((_humanize_lead(lead), due_dt - lead))
+        lead *= 2
+    rungs.append((None, due_dt))
+    return sorted(((label, t) for label, t in rungs if t > created_dt), key=lambda rung: rung[1])
+
+
+def fire_due_checkpoints(config: Config, notif_dir: Path, *, now: datetime | None = None) -> int:
+    """Fire the newest eligible checkpoint of every open, dated task; runs each serve tick.
+
+    checkpoint_fired_through is the single piece of state: rungs at or before it are covered.
+    Only the newest uncovered rung fires, so downtime collapses to one catch-up notification per
+    task instead of a backlog, and a postpone re-arms the ladder by itself because the new due
+    date moves every rung past the marker. Returns the number of notifications written."""
+    now = now or _now_utc()
+    fired = 0
+    with closing(db.get_db(config.data_dir)) as conn:
+        rows = conn.execute(
+            "SELECT id, subject, due_date, created_at, checkpoint_fired_through FROM tasks WHERE due_date IS NOT NULL AND status != 'completed'"
+        ).fetchall()
+        for row in rows:
+            due_dt = db.parse_datetime(row["due_date"])
+            created_dt = db.parse_datetime(row["created_at"])
+            floor = db.parse_datetime(row["checkpoint_fired_through"]) if row["checkpoint_fired_through"] else created_dt
+            eligible = [(label, t) for label, t in checkpoint_times(due_dt, created_dt) if floor < t <= now]
+            if not eligible:
+                continue
+            label, _ = eligible[-1]
+            if label is None:
+                message = DUE_NOW_MESSAGE.format(subject=row["subject"], task_id=row["id"])
+            else:
+                message = LEAD_TIME_MESSAGE.format(label=label, subject=row["subject"])
+            write_notification(notif_dir, "reminder", message=message, task_id=row["id"])
+            conn.execute("UPDATE tasks SET checkpoint_fired_through = ? WHERE id = ?", (now.isoformat(), row["id"]))
+            fired += 1
+        conn.commit()
+    return fired
+
+
+# ---------------------------------------------------------------------------
 # Reminder job callback
 # ---------------------------------------------------------------------------
 
@@ -665,7 +715,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
     if notif_dir:
         task_id = None
         with closing(db.get_db(data_dir)) as conn:
-            cursor = conn.execute("SELECT task_id, message, trigger_data, auto_generated FROM reminders WHERE id = ?", (reminder_id,))
+            cursor = conn.execute("SELECT task_id, message, trigger_data FROM reminders WHERE id = ?", (reminder_id,))
             row = cursor.fetchone()
             if row:
                 task_id = row["task_id"]
@@ -686,7 +736,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                     reminder_id,
                     message,
                     task_id=task_id,
-                    snooze_hint=trigger_type == "date" and not row["auto_generated"],
+                    snooze_hint=trigger_type == "date",
                 )
 
                 if trigger_type == "date":
@@ -743,7 +793,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
                         row["message"],
                         task_id=row["task_id"],
                         extra={"missed": True},
-                        snooze_hint=not row["auto_generated"],
+                        snooze_hint=True,
                     )
                 conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
                 return True
@@ -795,9 +845,7 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
     Past-due one-time reminders fire missed notifications immediately."""
     now = _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute(
-            "SELECT id, task_id, message, trigger_data, auto_generated FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL"
-        )
+        cursor = conn.execute("SELECT id, task_id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL")
         for row in cursor:
             _restore_row(scheduler, row, now, notif_dir, conn, config)
         conn.commit()
@@ -809,7 +857,7 @@ def restore_jobs_by_ids(config: Config, scheduler: BackgroundScheduler, ids: set
     placeholders = ",".join("?" for _ in ids)
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute(
-            f"SELECT id, task_id, message, trigger_data, auto_generated FROM reminders"
+            f"SELECT id, task_id, message, trigger_data FROM reminders"
             f" WHERE completed = 0 AND trigger_data IS NOT NULL AND id IN ({placeholders})",
             list(ids),
         )
@@ -837,7 +885,7 @@ def _recurring_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, Trigg
     # Build the cron expression from the user's wall-clock time and store the IANA tz alongside it,
     # so APScheduler recomputes the correct UTC instant on every fire and the reminder holds its
     # wall-clock time across DST transitions instead of drifting by the offset.
-    local_dt = _parse_local_dt(spec.scheduled_datetime, spec.tz)
+    local_dt = _parse_local_dt(spec.scheduled_datetime, spec.tz, allow_bare_time=spec.recurring == "daily")
     h, m = local_dt.hour, local_dt.minute
 
     if spec.recurring == "daily":
@@ -914,8 +962,8 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
 
         conn.execute(
             """INSERT OR REPLACE INTO reminders
-               (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
-               VALUES (?, ?, ?, ?, ?, 0, ?, 0)""",
+               (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data)
+               VALUES (?, ?, ?, ?, ?, 0, ?)""",
             (
                 reminder_id,
                 spec.task_id,
@@ -1003,7 +1051,6 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int | None
                 "schedule": row["schedule_type"],
                 "next_run": _next_run_for_row(row),
                 "created_at": row["created_at"],
-                "auto_generated": bool(row["auto_generated"]),
                 "status": "completed" if row["completed"] else "pending",
             }
             for row in cursor
@@ -1021,17 +1068,11 @@ def remind_delete(config: Config, *, reminder_id: str) -> dict:
     return {"status": "deleted", "id": reminder_id}
 
 
-def remind_snooze(
-    config: Config,
-    *,
-    reminder_id: str,
-    in_minutes: int | None = None,
-    in_hours: int | None = None,
-    in_days: int | None = None,
-    at: str | None = None,
-    tz: str | None = None,
-) -> dict:
-    """Reschedule a one-shot reminder for later; works on already-fired reminders too."""
+def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict:
+    """Reschedule a one-shot reminder for later; works on already-fired reminders too.
+
+    The result echoes previous_run and next_run so a misread of the from-now vs from-fire-time
+    difference is visible the moment it happens."""
     with closing(db.get_db(config.data_dir)) as conn:
         row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
         if not row:
@@ -1040,15 +1081,23 @@ def remind_snooze(
         if "type" in trigger_data and trigger_data["type"] != "date":
             raise ValueError("Recurring reminders fire again on their own; snooze only works on one-shot reminders (delete if unwanted)")
 
-        if at is not None:
-            if not tz:
+        in_offset = _relative_offset(spec.in_minutes, spec.in_hours, spec.in_days)
+        by_offset = _relative_offset(spec.by_minutes, spec.by_hours, spec.by_days, prefix="by")
+        given = [form for form in (spec.at, in_offset, by_offset) if form is not None]
+        if len(given) > 1:
+            raise ValueError("Pick one way to say when: --in-* (from now), --by-* (from the fire time), or --at + --tz")
+        if spec.at is not None:
+            if not spec.tz:
                 raise ValueError("tz is required when at is provided")
-            run_time = _to_utc_dt(at, tz)
+            run_time = _to_utc_dt(spec.at, spec.tz)
+        elif in_offset is not None:
+            run_time = _now_utc() + in_offset
+        elif by_offset is not None:
+            if not row["scheduled_time"]:
+                raise ValueError("This reminder has no fire time to shift from; use --in-* or --at + --tz")
+            run_time = db.parse_datetime(row["scheduled_time"]) + by_offset
         else:
-            offset = _relative_offset(in_minutes, in_hours, in_days)
-            if offset is None:
-                raise ValueError("Say when: tasks remind snooze <id> --in-hours N (or --in-minutes/--in-days, or --at + --tz)")
-            run_time = _now_utc() + offset
+            raise ValueError("Say when: tasks remind snooze <id> --in-hours N (from now), --by-hours N (from the fire time), or --at + --tz")
 
         run_time = run_time.replace(microsecond=0)
         new_data = {"type": "date", "run_date": run_time.isoformat()}
@@ -1064,6 +1113,7 @@ def remind_snooze(
         "id": reminder_id,
         "message": row["message"],
         "schedule": new_schedule,
+        "previous_run": row["scheduled_time"],
         "next_run": run_time.isoformat(),
         "status": "snoozed",
     }
@@ -1075,27 +1125,13 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         reminder = cursor.fetchone()
         if not reminder:
             raise ValueError(f"Reminder '{reminder_id}' not found. Use 'tasks remind list' to see active reminders.")
-        # Clearing auto_generated is the point of the write, not a side effect. The flag means
-        # "this row is machine-owned and may be regenerated", and delete_auto_reminders (called by
-        # postpone and by any due-date change) deletes exactly the flagged rows. Leaving it set
-        # means hand-written text survives until the next postpone and is then silently destroyed.
-        schedule_type = reminder["schedule_type"]
-        if reminder["auto_generated"] and (schedule_type or "").startswith("auto: "):
-            # The old label described how the row was generated ("auto: 1 day before due"). Once
-            # the row is agent-owned that is no longer true, and leaving it makes `remind list`
-            # call a hand-written reminder auto while its marker says otherwise. Auto reminders
-            # are always one-off dates, so relabel to the same form a manual one-off carries.
-            schedule_type = f"once at {reminder['scheduled_time']}"
-        conn.execute(
-            "UPDATE reminders SET message = ?, auto_generated = 0, schedule_type = ? WHERE id = ?",
-            (message, schedule_type, reminder_id),
-        )
+        conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
         conn.commit()
 
     return {
         "id": reminder_id,
         "message": message,
-        "schedule": schedule_type,
+        "schedule": reminder["schedule_type"],
         "next_run": _next_run_for_row(reminder),
         "status": "updated",
     }
