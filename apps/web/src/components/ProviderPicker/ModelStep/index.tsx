@@ -6,6 +6,12 @@ import { openrouterProvider } from "@/api";
 
 type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { formatTokens } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import {
+  glassFrost,
+  glassHover,
+  glassSelected,
+} from "@/components/NewAgent/glass";
 import { ProviderIcon } from "../ProviderIcon";
 import { ProviderStep } from "../ProviderStep";
 import { fuzzyMatch } from "../fuzzy";
@@ -199,11 +205,12 @@ function ClaudeModelPicker({
             key={a.slug}
             type="button"
             onClick={() => onSelect(a.slug)}
-            className={`rounded-xl border p-3 text-center text-sm font-medium transition-all cursor-pointer ${
-              model === a.slug
-                ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
-                : "border-border bg-input/30 hover:bg-input/60"
-            }`}
+            className={cn(
+              "cursor-pointer rounded-2xl [corner-shape:squircle] p-3 text-center text-sm font-medium",
+              glassFrost,
+              glassHover,
+              model === a.slug && glassSelected,
+            )}
           >
             {a.label}
           </button>
@@ -285,11 +292,12 @@ function ModelCard({
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-        active
-          ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
-          : "border-border bg-input/30 hover:bg-input/60 hover:border-border/80"
-      }`}
+      className={cn(
+        "flex cursor-pointer items-center gap-2.5 rounded-2xl [corner-shape:squircle] p-2 text-left",
+        glassFrost,
+        glassHover,
+        active && glassSelected,
+      )}
     >
       <ProviderIcon name={model.author} />
       <div className="flex min-w-0 flex-col">
