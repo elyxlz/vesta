@@ -86,9 +86,11 @@ CODE_EXT='\.(py|go|rs|ts|tsx|js|jsx|java|rb|c|h|cpp|sh)$'
 
 PRUNE_NAMES=(.git node_modules .venv __pycache__ .cache .npm .cargo go target dist build)
 
-# Outside ROOTS, so genuinely not looked at. Skill stores are supposed to hold mail; this script is
-# about copies the agent made elsewhere. Anything under $HOME/agent is scanned even if it is a
-# store, so it is deliberately not listed here.
+# Outside ROOTS for the marker checks: skill stores are supposed to hold mail, so dump markers
+# there prove nothing. But when a domain is named, the stores are scanned FOR THAT DOMAIN, because
+# `email get` auto-saves every fetched body under them and a disconnected account's mail sitting in
+# a store cache is exactly the residue this script exists to find. Anything under $HOME/agent is
+# scanned in full even if it is a store, so it is deliberately not listed here.
 SANCTIONED=("$HOME/.microsoft" "$HOME/.whatsapp" "$HOME/.email-client" "$HOME/.google")
 
 build_find() {
@@ -116,21 +118,37 @@ scan() {
       # Source files are skipped for EVERY marker, not just the JSON one. A script that documents
       # these markers, or carries example addresses in a test fixture, is the tool and not the data;
       # the first version gated only the dump check and duly reported itself as residue.
+      # Every grep runs with -a: a binary export (a NUL anywhere in the file) otherwise makes GNU
+      # grep print "binary file matches" to stderr and NOTHING to stdout, so the dump is invisible.
       if ! [[ "$f" =~ $CODE_EXT ]]; then
         if [ -n "$DOMAIN_RE" ]; then
-          addrs=$(grep -oiE "[A-Za-z0-9._%+-]+@($DOMAIN_RE)" "$f" 2>/dev/null | sort -u | wc -l)
+          addrs=$(grep -aoiE "[A-Za-z0-9._%+-]+@($DOMAIN_RE)" "$f" 2>/dev/null | sort -u | wc -l)
           [ "${addrs:-0}" -gt 0 ] && printf '%s\t%s\t%s\n' "${cls:-ADDR}" "$addrs" "$f"
         fi
 
-        dumps=$(grep -cE "\"($DUMP_MARKERS)\"" "$f" 2>/dev/null) || dumps=0
+        dumps=$(grep -acE "\"($DUMP_MARKERS)\"" "$f" 2>/dev/null) || dumps=0
         [ "${dumps:-0}" -gt 0 ] && printf '%s\t%s\t%s\n' "${cls:-DUMP}" "$dumps" "$f"
-        ids=$(grep -coE "$PROVIDER_ID" "$f" 2>/dev/null) || ids=0
+        ids=$(grep -acoE "$PROVIDER_ID" "$f" 2>/dev/null) || ids=0
         [ "${ids:-0}" -gt 0 ] && printf '%s\t%s\t%s\n' "${cls:-DUMP}" "$ids" "$f"
-        anyaddr=$(grep -oiE "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}" "$f" 2>/dev/null | sort -u | wc -l)
+        anyaddr=$(grep -aoiE "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}" "$f" 2>/dev/null | sort -u | wc -l)
         [ "${anyaddr:-0}" -ge "$ADDR_DENSITY" ] && printf '%s\t%s\t%s\n' "${cls:-DUMP}" "$anyaddr" "$f"
       fi
     done < <(build_find "$root")
   done
+
+  # The store pass: only when a domain was named, and only the domain check. Dump markers in a mail
+  # store prove nothing (holding mail is its job), but a disconnected domain's addresses in a store
+  # cache are working copies of the mailbox the user asked to be rid of. No prose threshold here:
+  # files in a store are machine-written mail, so one distinct address is already a hit.
+  if [ -n "$DOMAIN_RE" ]; then
+    for root in "${SANCTIONED[@]}"; do
+      [ -e "$root" ] || continue
+      while IFS= read -r -d '' f; do
+        addrs=$(grep -aoiE "[A-Za-z0-9._%+-]+@($DOMAIN_RE)" "$f" 2>/dev/null | sort -u | wc -l)
+        [ "${addrs:-0}" -gt 0 ] && printf 'STORE\t%s\t%s\n' "$addrs" "$f"
+      done < <(build_find "$root")
+    done
+  fi
 }
 
 # Positive control. It exercises every marker, because a control that only proved the JSON path
@@ -184,6 +202,7 @@ FOUND="$(printf '%s\n' "$RAW" | grep -vE '\.mail-residue-control\.[0-9]+\.json' 
 dump_hits=$(printf '%s\n' "$FOUND" | awk -F'\t' '$1=="DUMP"' | grep -c .)
 addr_real=$(printf '%s\n' "$FOUND" | awk -F'\t' '$1=="ADDR" && $2>=3' | grep -c .)
 addr_prose=$(printf '%s\n' "$FOUND" | awk -F'\t' '$1=="ADDR" && $2<3' | grep -c .)
+store_hits=$(printf '%s\n' "$FOUND" | awk -F'\t' '$1=="STORE"' | grep -c .)
 inherent=$(printf '%s\n' "$FOUND" | awk -F'\t' '$1=="INHERENT"' | grep -c .)
 
 report_inherent() {
@@ -197,12 +216,16 @@ report_inherent() {
   printf '%s\n' "$FOUND" | awk -F'\t' '$1=="INHERENT"{printf "    %s (%s)\n", $3, $2}' | head -12
 }
 
-if [ "$dump_hits" -eq 0 ] && [ "$addr_real" -eq 0 ]; then
+if [ "$dump_hits" -eq 0 ] && [ "$addr_real" -eq 0 ] && [ "$store_hits" -eq 0 ]; then
   if [ "$QUIET" -eq 0 ]; then
     echo "check_mail_residue: control PASSED, no removable dumps outside the sanctioned stores."
     printf '  scanned: %s\n' "${ROOTS[*]}"
     printf '  pruned : %s\n' "${PRUNE_NAMES[*]}"
-    printf '  NOT scanned (skill stores, content there is expected): %s\n' "${SANCTIONED[*]}"
+    if [ -n "$DOMAIN_RE" ]; then
+      printf '  store caches scanned for the named domain(s) only: %s\n' "${SANCTIONED[*]}"
+    else
+      printf '  NOT scanned (skill stores, content there is expected): %s\n' "${SANCTIONED[*]}"
+    fi
     echo "  Git history and any completed backups are NOT scanned either: deleting a file today"
     echo "  does not remove it from a commit or from a backup already taken."
     if [ "$addr_prose" -gt 0 ]; then
@@ -214,9 +237,10 @@ if [ "$dump_hits" -eq 0 ] && [ "$addr_real" -eq 0 ]; then
   exit 0
 fi
 
-echo "check_mail_residue: RESIDUE FOUND, in files the agent wrote."
+echo "check_mail_residue: RESIDUE FOUND."
 printf '%s\n' "$FOUND" | awk -F'\t' '$1=="DUMP" {printf "  DUMP  %5s marker(s)  %s\n", $2, $3}'
 printf '%s\n' "$FOUND" | awk -F'\t' '$1=="ADDR" && $2>=3 {printf "  ADDR  %5s distinct address(es)  %s\n", $2, $3}'
+printf '%s\n' "$FOUND" | awk -F'\t' '$1=="STORE" {printf "  STORE %5s distinct address(es)  %s\n", $2, $3}'
 report_inherent
 echo "  Read each file before deleting it: know what it is, then correct anyone told otherwise."
 exit 1
