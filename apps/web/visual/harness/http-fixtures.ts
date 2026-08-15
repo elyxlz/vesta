@@ -171,6 +171,12 @@ export const OAUTH_START = {
   session_id: "visual-oauth-session",
 };
 
+export const OPENAI_OAUTH_START = {
+  auth_url: "https://chatgpt.com/device?visual-fixture",
+  user_code: "WDJB-MJHT",
+  session_id: "visual-openai-session",
+};
+
 export const OAUTH_CREDENTIALS = {
   credentials: JSON.stringify({ claudeAiOauth: { subscriptionType: "max" } }),
 };
@@ -208,6 +214,9 @@ export async function installGatewayMocks(
   });
   await page.route("**/providers/claude/oauth/start", (route) =>
     route.fulfill({ json: OAUTH_START }),
+  );
+  await page.route("**/providers/openai/oauth/start", (route) =>
+    route.fulfill({ json: OPENAI_OAUTH_START }),
   );
   await page.route("**/providers/claude/oauth/complete", (route) =>
     route.fulfill({ json: OAUTH_CREDENTIALS }),

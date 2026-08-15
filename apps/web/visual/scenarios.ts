@@ -118,6 +118,33 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     ...defaults,
+    id: "provider-oauth-openai",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("ChatGPT", { exact: true }).click();
+    },
+    settle: async (page) => {
+      await expect(page.getByText("sign in to ChatGPT")).toBeVisible();
+      await expect(page.getByText("WDJB-MJHT")).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
+    id: "provider-key-kimi",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("Kimi Code", { exact: true }).click();
+    },
+    settle: async (page) => {
+      await expect(
+        page.getByPlaceholder("Kimi Code subscription key"),
+      ).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
     id: "provider-model",
     drive: async (page) => {
       await fillName(page, AGENT);
