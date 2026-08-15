@@ -2,7 +2,11 @@ import type { Manifest } from "@/api/manifest";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { StepHeading } from "@/components/StepHeading";
-import { glassHover, glassSurface } from "@/components/NewAgent/glass";
+import {
+  glassFrost,
+  glassHover,
+  glassSurface,
+} from "@/components/NewAgent/glass";
 import { PROVIDERS } from "../providers";
 import type { ProviderMode } from "../types";
 
@@ -86,7 +90,11 @@ export function ChoiceStep({
             key={id}
             type="button"
             onClick={() => onPick(id)}
-            className="flex flex-1 cursor-pointer flex-col items-start gap-2 rounded-2xl border border-border bg-input/30 p-4 text-left transition-all hover:border-border/80 hover:bg-input/60"
+            className={cn(
+              "flex flex-1 cursor-pointer flex-col items-start gap-2 rounded-2xl [corner-shape:squircle] p-4 text-left",
+              glassFrost,
+              glassHover,
+            )}
           >
             <Logo className="size-6" />
             <div className="flex flex-col gap-0.5">
