@@ -48,7 +48,7 @@ export function ProviderStep({
       {children}
       {/* Actions are one semantic group: a small gap between submit/error/back,
           while the form's gap-5 keeps a big gap between heading, content, actions. */}
-      <div className="flex w-full flex-col items-center gap-2">
+      <div className="flex w-[320px] max-w-full flex-col items-center gap-2">
         <Button type="submit" className="w-full" disabled={submitDisabled}>
           {submitLabel}
         </Button>
