@@ -4,10 +4,11 @@
 # one OK/RED line per probe and exits 1 if anything is RED. Probes read only fleet-generic state
 # (daemon records, logs, disk, the events DB, the notifications dir), so a RED is real on any box.
 
-# Disk-probe knobs: RED once this agent's own files could plausibly fill a disk, or once the host is
-# close enough to full that writes start failing; note the host's percentage as context in between,
-# and bound the du walk so a pathological tree or a stuck filesystem can never hang the dream that
-# runs this probe.
+# Disk-probe knobs: the agent's own footprint is RED only when the filesystem is also under real
+# pressure (or the pressure reading failed, which cannot prove it absent); the host nearing full is
+# RED on its own, since writes start failing across the box. Note the host's percentage as context
+# in between, and bound the du walk so a pathological tree or a stuck filesystem can never hang the
+# dream that runs this probe.
 OWN_USAGE_RED_MB=20000
 HOST_DISK_NOTE_PERCENT=90
 HOST_DISK_RED_PERCENT=97
@@ -53,10 +54,12 @@ mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
 if [ "$du_status" -eq 124 ]; then
     bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
     mine_str="an unmeasured share"
-elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ] && [ "${usage:-0}" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; then
-    bad "disk at ${usage}% and this agent holds ${mine}MB of it: clean up tonight (workspace cleanup)"
+elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ] && { [ -z "${usage:-}" ] || [ "$usage" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; }; then
+    # An empty usage means df failed, so pressure is unknown, and unknown must not read as absent:
+    # a probe that fails open on its own instrument breaking is the silent failure it exists to catch.
+    bad "disk at ${usage:-unknown}% and this agent holds ${mine}MB of it: clean up tonight (workspace cleanup)"
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
-    ok "this agent holds ${mine}MB, but the disk is only at ${usage:-unknown}%: size without pressure, nothing to clear"
+    ok "this agent holds ${mine}MB, but the disk is only at ${usage}%: size without pressure, nothing to clear"
 fi
 # On a du timeout the footprint is unknown, so the host lines must not quote a figure of 0MB that
 # would read as "none of this is mine".
@@ -87,8 +90,11 @@ for log in "$HOME"/agent/logs/*.log; do
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
     window=$(tail -n 2000 "$log")
     # A healthy summary line such as "45 matching, 0 new, 0 error(s)" carries the word without
-    # reporting a failure, so drop lines whose error or warning count is zero before counting.
-    signal=$(printf '%s\n' "$window" | grep -ivE '(^|[^0-9])0 (error|warning)s?\(?s?\)?|no errors')
+    # reporting a failure, so drop zero-count lines before counting. Only lines whose sole count is
+    # zero: "0 warnings, 47 errors" and "worker 0 error: connection refused" are real signal, so a
+    # line naming a nonzero count, or using the bare singular, is kept.
+    signal=$(printf '%s\n' "$window" | awk '{ low = tolower($0) }
+        !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)')
     # Logs whose lines carry no leading ISO date can't be aged; count them whole and say so, rather
     # than silently reporting zero for a component that is genuinely storming.
     # Accept an optional leading '[': several daemons bracket their timestamps, and anchoring on a
@@ -96,7 +102,11 @@ for log in "$HOME"/agent/logs/*.log; do
     # that recovers long ago keeps reporting RED with no way to age the old lines out.
     dated=$(printf '%s\n' "$window" | grep -cE '^\[?[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
     if [ "${dated:-0}" -gt 0 ]; then
-        errors=$(printf '%s\n' "$signal" | grep -E "^\[?($rc_today|$rc_yest)" | grep -icE 'error|traceback' || true)
+        # An undated line inherits the recency of the dated line above it: a traceback's body has
+        # no timestamp of its own, and requiring the date on every line hid whole live storms.
+        errors=$(printf '%s\n' "$signal" | awk -v today="$rc_today" -v yest="$rc_yest" '
+            /^\[?[0-9]{4}-[0-9]{2}-[0-9]{2}/ { recent = ($0 ~ "^\\[?"today) || ($0 ~ "^\\[?"yest) }
+            recent' | grep -icE 'error|traceback' || true)
         span="in the last 2 days"
     else
         errors=$(printf '%s\n' "$signal" | grep -icE 'error|traceback' || true)
@@ -187,11 +197,14 @@ fi
 # a GAP in it is itself the finding: the gauge cannot quietly lapse without leaving a hole.
 rc_hist="$HOME/agent/data/reality-history.tsv"
 mkdir -p "$(dirname "$rc_hist")" 2>/dev/null
+# Read the previous run's timestamp BEFORE appending this one: read after, the line always shows
+# "now" and the gap the series exists to expose can never appear in the output.
+prev_run=$(tail -n 1 "$rc_hist" 2>/dev/null | cut -f1)
 printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$red" >> "$rc_hist"
 
 prior=$(tail -n 6 "$rc_hist" 2>/dev/null | awk '{printf "%s ", $2}')
 [ -n "$prior" ] && printf 'flagged-probe count over recent runs (oldest first): %s\n' "$prior"
-printf 'last run recorded: %s\n' "$(tail -n 1 "$rc_hist" | cut -f1)"
+[ -n "$prev_run" ] && printf 'previous run recorded: %s\n' "$prev_run"
 
 if [ "$red" -gt 0 ]; then
     printf '%s RED: fix each tonight or write the reason off in the summary.\n' "$red"
