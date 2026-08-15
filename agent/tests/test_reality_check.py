@@ -106,7 +106,7 @@ def test_this_agent_filling_the_disk_goes_red(tmp_path):
     assert "25000MB" in run.stdout
 
 
-def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
+def test_a_busy_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
     """A RED the agent cannot clear teaches it to carry REDs, which is the one thing the probe
     forbids. The host figure still gets reported, as context rather than as a fault."""
     home = _healthy_home(tmp_path)
@@ -120,6 +120,49 @@ def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
     assert "300MB" in run.stdout
     # Pins the context branch itself: dropping to the plain OK line would also pass the figures.
     assert "not yours to clear" in run.stdout
+
+
+def test_a_host_disk_at_the_ceiling_goes_red(tmp_path):
+    """Above the context band the host figure is the agent's problem too, because writes start
+    failing everywhere; the probe exists to catch exactly that, so a full host cannot read green."""
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 100)
+    _fake_own_usage(home, 300)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "100%" in run.stdout
+    # Pins the escalation, since the own-usage RED would also fire on a returncode check alone.
+    assert "tell the user tonight" in run.stdout
+
+
+def test_a_full_host_disk_reports_even_when_this_agent_is_also_over(tmp_path):
+    """The two facts are independent, so a large own footprint must not swallow the host reading:
+    the night both are true is the night the host figure matters most."""
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 99)
+    _fake_own_usage(home, 25_000)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED this agent is using 25000MB" in run.stdout
+    assert "RED host disk at 99%" in run.stdout
+
+
+def test_a_du_timeout_does_not_report_the_host_share_as_zero(tmp_path):
+    # With no measurement, "0MB of it this agent's" is a figure the probe does not have and reads as
+    # a claim that none of the disk is the agent's.
+    home = _healthy_home(tmp_path)
+    fake_timeout = home / "bin" / "timeout"
+    fake_timeout.write_text("#!/bin/sh\nexit 124\n")
+    fake_timeout.chmod(0o755)
+
+    run = _run(home)
+
+    assert "an unmeasured share" in run.stdout
+    assert "0MB" not in run.stdout
 
 
 def test_a_du_walk_that_never_finishes_goes_red(tmp_path):
