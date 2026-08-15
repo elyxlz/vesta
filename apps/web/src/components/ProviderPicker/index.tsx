@@ -333,10 +333,14 @@ export function ProviderPicker({
   const backFromModel = () =>
     setStep(providerUsesOAuth(provider, manifest) ? "auth" : "key");
 
+  // The grid choice step is as wide as the onboarding vibe grid; every other
+  // step keeps the compact column.
+  const gridChoice = step === "choice" && choiceVariant === "grid";
   return (
     <div
       className={cn(
-        "flex w-[380px] max-w-full flex-col items-start gap-4 px-4",
+        "flex max-w-full flex-col items-start gap-4 px-4",
+        gridChoice ? "w-[672px]" : "w-[380px]",
         className,
       )}
     >
