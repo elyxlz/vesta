@@ -225,23 +225,15 @@ def _remind_list_cmd(config: Config, argv: list[str]) -> None:
     _add_format_flags(p)
     args = p.parse_args(argv)
     # JSON is consumed by scripts asking absence questions ("is anything scheduled for X?"), so a
-    # silent page size would make a truncated list read as "no". Only an explicit --limit caps
-    # JSON output; the human table keeps its page size but says when it held rows back. The
-    # footer goes to stderr so a stdout pipe (grep, head) can never eat the notice with the rows.
-    if args.limit is not None:
-        limit = args.limit
-    elif args.json or args.json_pretty:
-        limit = None
-    else:
-        limit = REMIND_LIST_PAGE_SIZE
-    paged = limit is not None and args.limit is None
-    reminders = commands.remind_list(config, task_id=args.task_id, limit=None if paged else limit, show_completed=args.show_completed)
-    total = len(reminders)
-    if paged and total > limit:
-        reminders = reminders[:limit]
-    _print_list(args, reminders, fmt.format_reminder_list)
-    if paged and total > limit:
-        print(f"... showing {limit} of {total}. Use --limit <n> or --json to see them all.", file=sys.stderr)
+    # silent page size would make a truncated list read as "no": JSON and an explicit --limit get
+    # exactly what they asked for. The table fetches everything and pages here, so it can say how
+    # many rows it held back, on stderr so a stdout pipe (grep, head) can never eat the notice.
+    paged = args.limit is None and not (args.json or args.json_pretty)
+    reminders = commands.remind_list(config, task_id=args.task_id, limit=args.limit, show_completed=args.show_completed)
+    held_back = len(reminders) - REMIND_LIST_PAGE_SIZE if paged else 0
+    _print_list(args, reminders[:REMIND_LIST_PAGE_SIZE] if paged else reminders, fmt.format_reminder_list)
+    if held_back > 0:
+        print(f"... showing {REMIND_LIST_PAGE_SIZE} of {len(reminders)}. Use --limit <n> or --json to see them all.", file=sys.stderr)
 
 
 def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:

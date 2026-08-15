@@ -973,38 +973,28 @@ def _next_run_for_row(row) -> str | None:
 def remind_list(config: Config, *, task_id: str | None = None, limit: int | None = 50, show_completed: bool = False) -> list[dict]:
     # limit=None means every row: SQLite reads LIMIT -1 as unlimited.
     limit_param = -1 if limit is None else limit
-    # Recurring reminders sort first so the LIMIT only ever trims one-shots, and the one-shot tail
-    # sorts by fire time (scheduled_time ASC) so the LIMIT drops the furthest-out rows, never the
-    # soonest, keeping "what fires next" visible at any limit. Recurring rows keep created_at
-    # ordering: a plain cron row's scheduled_time records its last advance, not its next fire, so
-    # it is not a sound sort key for them. Fired one-shots sort after pending ones, newest fired
-    # first, so under --show-completed a backlog of old fired rows can never page out the live
-    # rows or the just-fired one being recovered.
+    # Three rank groups, so a cut (this LIMIT, or the table page in cli.py) only ever trims the
+    # tail: recurring rows first by created_at (a plain cron row's scheduled_time records its last
+    # advance, not its next fire, so it is not a sound sort key for them), then pending one-shots
+    # by fire time so the cut drops the furthest-out rows and "what fires next" stays visible,
+    # then fired one-shots newest first, so under --show-completed a backlog of old fired rows can
+    # never page out the live rows or the just-fired one being recovered.
     recurring_types = ", ".join(f"'{t}'" for t in RECURRING_TRIGGER_TYPES)
     is_recurring = f"json_extract(trigger_data, '$.type') IN ({recurring_types})"
+    rank = f"CASE WHEN {is_recurring} THEN 0 WHEN completed THEN 2 ELSE 1 END"
     order_clause = (
-        f"ORDER BY {is_recurring} DESC, "
-        f"CASE WHEN {is_recurring} THEN created_at END DESC, "
-        "completed ASC, "
-        f"CASE WHEN {is_recurring} OR completed THEN NULL ELSE scheduled_time END ASC, "
-        "CASE WHEN completed THEN scheduled_time END DESC "
+        f"ORDER BY {rank}, "
+        f"CASE WHEN {is_recurring} THEN created_at WHEN completed THEN scheduled_time END DESC, "
+        f"CASE WHEN {is_recurring} OR completed THEN NULL ELSE scheduled_time END ASC "
         "LIMIT ?"
     )
+    # completed rows are hidden by default; --show-completed drops that filter so a reminder that
+    # has already fired (e.g. a self-chaining one re-reading its own body) is still retrievable.
+    filters = ([] if show_completed else ["completed = 0"]) + ([] if task_id is None else ["task_id = ?"])
+    where = f"WHERE {' AND '.join(filters)} " if filters else ""
+    params = ([] if task_id is None else [task_id]) + [limit_param]
     with closing(db.get_db(config.data_dir)) as conn:
-        # completed rows are hidden by default; --show-completed drops that filter so a reminder that
-        # has already fired (e.g. a self-chaining one re-reading its own body) is still retrievable.
-        done_filter = "" if show_completed else "completed = 0 AND "
-        if task_id is not None:
-            cursor = conn.execute(
-                f"SELECT * FROM reminders WHERE {done_filter}task_id = ? {order_clause}",
-                (task_id, limit_param),
-            )
-        else:
-            done_where = "" if show_completed else "WHERE completed = 0"
-            cursor = conn.execute(
-                f"SELECT * FROM reminders {done_where} {order_clause}",
-                (limit_param,),
-            )
+        cursor = conn.execute(f"SELECT * FROM reminders {where}{order_clause}", params)
         return [
             {
                 "id": row["id"],

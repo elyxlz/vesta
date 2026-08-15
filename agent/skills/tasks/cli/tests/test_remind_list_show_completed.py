@@ -7,23 +7,14 @@ fired copy retrievable, mirroring `tasks list --show-completed` on the task side
 
 import json
 import sys
-from pathlib import Path
+from contextlib import closing
 
-import pytest
 from tasks_cli import cli, commands, db
 from tasks_cli.config import Config
 
 
-@pytest.fixture
-def tmp_config(tmp_path: Path) -> Config:
-    cfg = Config(data_dir=tmp_path / "tasks", log_dir=tmp_path / "tasks" / "logs")
-    cfg.data_dir.mkdir(parents=True, exist_ok=True)
-    db.init_db(cfg.data_dir)
-    return cfg
-
-
 def _mark_completed(cfg: Config, reminder_id: str) -> None:
-    with db.get_db(cfg.data_dir) as conn:
+    with closing(db.get_db(cfg.data_dir)) as conn:
         conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
         conn.commit()
 

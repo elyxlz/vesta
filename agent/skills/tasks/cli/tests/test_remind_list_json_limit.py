@@ -52,9 +52,8 @@ def test_json_honors_an_explicit_limit(tmp_config: Config, monkeypatch, capsys):
 
 def test_table_output_keeps_its_page_size(tmp_config: Config, monkeypatch, capsys):
     _seed_reminders(tmp_config, REMINDER_COUNT)
-    out, err = _run_remind_list(monkeypatch, capsys, tmp_config)
+    out, _ = _run_remind_list(monkeypatch, capsys, tmp_config)
     assert len(out.strip().splitlines()) == cli.REMIND_LIST_PAGE_SIZE
-    assert err.strip().startswith("...")
 
 
 def test_footer_rides_stderr_so_a_stdout_pipe_cannot_eat_it(tmp_config: Config, monkeypatch, capsys):
