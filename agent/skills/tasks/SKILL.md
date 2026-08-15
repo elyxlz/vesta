@@ -57,10 +57,11 @@ tasks remind delete <id>
 
 ### When a reminder needs more than a sentence: staged files
 
-A reminder whose job carries real material (a draft, a verified list, a decision and its reasons) should keep that material in a file and name the file in its message. The reminder is the trigger; the file is the answer. For a reminder tied to a task (`--task`), that file is the task's own `metadata_path` file, never a second file beside it; only a standalone reminder names a file of its own. The split works, and it rots in four specific ways, each with a cheap fix.
+A reminder whose job carries real material (a draft, a verified list, a decision and its reasons) should keep that material in a file and name the file in its message. The reminder is the trigger; the file is the answer. For a reminder tied to a task (`--task`), that file is the task's own `metadata_path` file, never a second file beside it; only a standalone reminder names a file of its own. The split works, and it rots in specific ways, each with a cheap fix.
 
 - **The file wins.** When the reminder text and its file disagree, believe the file. That rule lives here, so the message does not have to carry it: the message was written once, the file is the thing you keep editing.
-- **Newest answer at the TOP, with its date.** The common failure is appending a new finding below an instruction it invalidates: when the reminder fires you open the file and the first thing you read is the superseded plan. Open every staged file with a dated current-answer block, and edit the old decision rather than burying it. If a superseded block is worth keeping as a trail, mark it superseded in place.
+- **Write the file as dated blocks, newest at the TOP.** Each block opens with a heading like `## 2026-08-15 14:00: <what changed>`. Insert a new block directly under the title, never at the end: the natural motion is to append, and appending sinks the newest answer below a stale plan that then greets every future read. Edit a superseded decision in place, or mark it superseded where it stands.
+- **Take the block's timestamp from the clock, never from your head.** Run `date` and paste its output into the heading. The timestamp is what decides which of two contradicting blocks wins, and a hand-typed time can land in the future, where it beats a later, truer block while looking exactly as reasonable on re-read.
 - **Never duplicate schedule data between the two.** Ids, dates and times copied from `tasks remind list` into a file (or from a file into a reminder message) go stale the first time you edit one of them, and a confident wrong date is worse than no date. Keep the schedule in the reminder and let the file hold judgement and content.
 - **No relative dates in a staged file.** "Tomorrow", "this week" and "after the trip" are true when written and false the next morning, and nothing flags them. Write absolute dates, the same rule that applies to long-term memory.
 
@@ -79,20 +80,6 @@ Same care when the reminder is one you will act on rather than send: a fired rem
 
 DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/logs/daemon.log`; startup log
 `~/agent/logs/tasks.log`; pid and port records `~/agent/data/daemons/tasks.pid` and `tasks.port`.
-
-The store sits outside the tracked `agent/` tree, so the reasoning accumulated in metadata files has
-no history and a bad overwrite is unrecoverable. Tracking the store itself would churn, since it is
-rewritten many times a day. Export it instead:
-
-```bash
-tasks snapshot ~/agent/tasks-snapshot
-```
-
-Writes `tasks.json` (durable columns only, sorted by id) plus a copy of each metadata file, pruning
-metadata for tasks that no longer exist. Reminders are excluded: the auto ladder is regenerated on
-every due-date change and carries no reasoning. The output is deterministic, so a run that changes
-nothing produces no diff, which is what makes it safe to commit on a schedule. It reads the store
-directly and needs no daemon, so it still works when the daemon is the thing that broke.
 
 ## Setup
 
