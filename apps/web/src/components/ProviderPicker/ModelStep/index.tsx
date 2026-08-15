@@ -216,6 +216,7 @@ function ClaudeModelPicker({
           selected={model}
           onSelect={onSelect}
           loading={liveModels === null}
+          showIcon={false}
         />
       )}
     </div>
@@ -227,11 +228,13 @@ function ModelCardList({
   selected,
   onSelect,
   loading,
+  showIcon = true,
 }: {
   models: OpenRouterModelOption[];
   selected: string;
   onSelect: (slug: string) => void;
   loading: boolean;
+  showIcon?: boolean;
 }) {
   const fade = useScrollFade<HTMLDivElement>();
   const { update } = fade;
@@ -266,6 +269,7 @@ function ModelCardList({
           key={m.slug}
           model={m}
           active={m.slug === selected}
+          showIcon={showIcon}
           onClick={() => onSelect(m.slug)}
         />
       ))}
@@ -276,10 +280,12 @@ function ModelCardList({
 function ModelCard({
   model,
   active,
+  showIcon,
   onClick,
 }: {
   model: OpenRouterModelOption;
   active: boolean;
+  showIcon: boolean;
   onClick: () => void;
 }) {
   const price = formatPrice(
@@ -306,7 +312,7 @@ function ModelCard({
         active && glassSelected,
       )}
     >
-      <ProviderIcon name={model.author} className="size-7" />
+      {showIcon && <ProviderIcon name={model.author} className="size-7" />}
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{model.label}</span>
         {detail && (
