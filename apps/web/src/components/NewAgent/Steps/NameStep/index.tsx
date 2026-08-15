@@ -9,16 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useGateway } from "@/providers/GatewayProvider";
 import { glassSurface } from "../../glass";
-
-export function normalizeName(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+import { normalizeName } from "./normalize-name";
 
 export function NameStep({
   value,

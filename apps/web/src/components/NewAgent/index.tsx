@@ -16,7 +16,8 @@ import {
   clearOnboarding,
 } from "@/lib/onboarding-progress";
 import { useOnboarding } from "@/stores/use-onboarding";
-import { NameStep, normalizeName } from "./Steps/NameStep";
+import { NameStep } from "./Steps/NameStep";
+import { normalizeName } from "./Steps/NameStep/normalize-name";
 import { ProviderPicker } from "@/components/ProviderPicker";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
