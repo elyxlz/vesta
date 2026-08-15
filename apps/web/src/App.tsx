@@ -41,7 +41,7 @@ function AppContent() {
         >
           <RouterProvider router={router} />
           <WhatsNewDialog />
-          <Toaster />
+          <Toaster position="top-right" richColors />
         </motion.div>
       )}
     </AnimatePresence>
