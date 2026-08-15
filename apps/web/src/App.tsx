@@ -48,6 +48,7 @@ function AppContent() {
             position="top-right"
             richColors
             offset={{ top: navbarHeight + 8 }}
+            mobileOffset={{ top: navbarHeight + 8 }}
           />
         </motion.div>
       )}
