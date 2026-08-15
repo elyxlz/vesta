@@ -79,3 +79,24 @@ tsconfig is solution-style, so that compiles zero files and always passes.
 When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `dashboard daemon status` reports `running` and a port that answers, or reload the app. If the builder exercised pages backed by a live store (tasks, anything wired to a skill), also confirm that store is unchanged; a browser pass that clicked a control can silently write real user data. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
 
 **A live-data page cannot be verified by loading the port directly.** `apiFetch` awaits `_authReady`, which resolves only when the host app posts a `vesta-auth` message carrying the token and base URL. Browse to `http://127.0.0.1:<port>/` outside the app and that message never arrives, so the await never settles, no request is ever issued, and the page sits in its loading skeleton forever with no error and no toast. That is correct behaviour, not a defect, so do not file it as one. A direct load verifies the shell, layout and static pages only; judge a page backed by a skill or API by reloading it in the app instead.
+
+## Does this box have a dashboard USER? (check before building anything)
+
+The dashboard renders only inside the vesta app: nothing else supplies the `vesta-auth` message, and it registers `public=false`, so there is no URL to open elsewhere. App usage is therefore the whole question of whether a widget will ever be seen, and it is measurable rather than assumable. Run this before building anything, including anything the dreamer's dashboard phase suggests:
+
+```bash
+python3 - <<'PY'
+import sqlite3, os, json
+c = sqlite3.connect(os.path.expanduser("~/.app-chat/app-chat.db"))
+last = None
+for ts, data in c.execute("select ts,data from events order by ts"):
+    d = json.loads(data)
+    if d.get("type") == "user":
+        last = (ts, d.get("text", "")[:60])
+print("last inbound app message:", last)
+PY
+```
+
+If that timestamp is months old, the user moved to another channel and never came back, and every widget built since would have rendered to an empty room.
+
+Two traps sit behind this. **The vite log cannot answer it**: `~/agent/logs/dashboard.log` holds startup banners only and never records a request, so zero access lines there is a missing log, not a missing visitor. And **the dreamer asks for a dashboard pass every night**, which is a standing invitation to invent a widget in order to have something to report; when the last inbound app message is old, the honest output of that phase is one sentence saying so. Registering the service public to manufacture a viewer is not a fix either: exposing the user's data is an outward act and theirs to green-light.
