@@ -7,6 +7,7 @@ import { openrouterProvider } from "@/api";
 type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { formatTokens } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useScrollFade } from "@/hooks/use-scroll-fade";
 import {
   glassFrost,
   glassHover,
@@ -231,6 +232,14 @@ function ModelCardList({
   onSelect: (slug: string) => void;
   loading: boolean;
 }) {
+  const fade = useScrollFade<HTMLDivElement>();
+  const { update } = fade;
+  // The box height is fixed, so a resize observer never fires; recompute the
+  // fade when the list contents change (search filter, catalog load).
+  useEffect(() => {
+    update();
+  }, [models, update]);
+
   if (loading) {
     return (
       <div className="flex h-[260px] items-center justify-center text-xs text-muted-foreground">
@@ -246,7 +255,11 @@ function ModelCardList({
     );
   }
   return (
-    <div className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto pr-1 -mr-1">
+    <div
+      ref={fade.ref}
+      style={fade.style}
+      className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto pr-1 -mr-1"
+    >
       {models.map((m) => (
         <ModelCard
           key={m.slug}
@@ -273,27 +286,33 @@ function ModelCard({
     model.output_price,
     model.cache_read_price,
   );
+  // Author is carried by the icon, not repeated as text; the detail line shows
+  // only context + price, and is dropped when neither is known.
+  const detail = [
+    model.context_length ? `${formatTokens(model.context_length)} ctx` : null,
+    price,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-2xl [corner-shape:squircle] p-2 text-left",
+        "flex cursor-pointer items-center gap-2.5 rounded-2xl [corner-shape:squircle] px-2.5 py-1.5 text-left",
         glassFrost,
         glassHover,
         active && glassSelected,
       )}
     >
-      <ProviderIcon name={model.author} />
+      <ProviderIcon name={model.author} className="size-7" />
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{model.label}</span>
-        <span className="truncate text-[11px] text-muted-foreground">
-          {model.author}
-          {model.context_length
-            ? ` · ${formatTokens(model.context_length)} ctx`
-            : ""}
-          {price ? ` · ${price}` : ""}
-        </span>
+        {detail && (
+          <span className="truncate text-[11px] text-muted-foreground">
+            {detail}
+          </span>
+        )}
       </div>
     </button>
   );

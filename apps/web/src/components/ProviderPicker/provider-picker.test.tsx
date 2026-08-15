@@ -120,7 +120,7 @@ describe("ProviderPicker defaults-only onboarding", () => {
     expect(screen.getByRole("button", { name: /^Sonnet$/ })).toBeTruthy();
 
     // Expanding "more models" reveals the prefetched live slug, once the fetch resolves.
-    fireEvent.click(screen.getByRole("button", { name: /more models/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^more$/i }));
     expect(await screen.findByText("Claude Opus 5")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
