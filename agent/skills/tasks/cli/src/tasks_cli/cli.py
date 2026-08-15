@@ -227,14 +227,27 @@ def _remind_list_cmd(config: Config, argv: list[str]) -> None:
     # JSON is consumed by scripts asking absence questions ("is anything scheduled for X?"), so a
     # silent page size would make a truncated list read as "no". Only an explicit --limit caps
     # JSON output; the human table keeps its page size.
+    #
+    # The same absence question gets asked of the human table, by eye or by grep, and there a silent
+    # page size reads as "no" just as badly. So the table says when it held rows back, naming the
+    # total and the two ways to see it. Documenting the page size in --help is not enough: the
+    # reader who needs to know is the one already looking at a table that appears complete.
     if args.limit is not None:
         limit = args.limit
     elif args.json or args.json_pretty:
         limit = None
     else:
         limit = REMIND_LIST_PAGE_SIZE
-    reminders = commands.remind_list(config, task_id=args.task_id, limit=limit, show_completed=args.show_completed)
+    paged = limit is not None and args.limit is None
+    reminders = commands.remind_list(
+        config, task_id=args.task_id, limit=None if paged else limit, show_completed=args.show_completed
+    )
+    total = len(reminders)
+    if paged and total > limit:
+        reminders = reminders[:limit]
     _print_list(args, reminders, fmt.format_reminder_list)
+    if paged and total > limit:
+        print(f"... showing {limit} of {total}. Use --limit <n> or --json to see them all.")
 
 
 def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:
