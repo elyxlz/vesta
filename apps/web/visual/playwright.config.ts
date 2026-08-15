@@ -11,6 +11,8 @@ export default defineConfig<VisualOptions>({
   outputDir: "../.visual/web/artifacts",
   timeout: 60000,
   fullyParallel: true,
+  // 12-core host; 8 keeps headroom. Override with --workers on a loaded box.
+  workers: 8,
   webServer: {
     command: "npm run dev",
     cwd: "..",
