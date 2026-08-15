@@ -171,6 +171,16 @@ export const OAUTH_START = {
   session_id: "visual-oauth-session",
 };
 
+export const OAUTH_CREDENTIALS = {
+  credentials: JSON.stringify({ claudeAiOauth: { subscriptionType: "max" } }),
+};
+
+export const CLAUDE_MODELS = [
+  { slug: "claude-opus-5", label: "Claude Opus 5", author: "Anthropic" },
+  { slug: "claude-sonnet-5", label: "Claude Sonnet 5", author: "Anthropic" },
+  { slug: "claude-haiku-4-5", label: "Claude Haiku 4.5", author: "Anthropic" },
+];
+
 export interface GatewayMockOptions {
   agentStatus: AgentStatus;
   createResponse: { status: number; body: { error: string } } | null;
@@ -188,6 +198,12 @@ export async function installGatewayMocks(
   await page.route("**/manifest", (route) => route.fulfill({ json: MANIFEST }));
   await page.route("**/providers/claude/oauth/start", (route) =>
     route.fulfill({ json: OAUTH_START }),
+  );
+  await page.route("**/providers/claude/oauth/complete", (route) =>
+    route.fulfill({ json: OAUTH_CREDENTIALS }),
+  );
+  await page.route("**/providers/claude/models", (route) =>
+    route.fulfill({ json: CLAUDE_MODELS }),
   );
   await page.route("**/providers/openrouter/validate-key", (route) =>
     route.fulfill({ json: {} }),

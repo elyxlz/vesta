@@ -120,6 +120,24 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     ...defaults,
+    id: "provider-model-claude",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("Claude", { exact: true }).click();
+      await page.getByPlaceholder("paste code here").fill("visual-code");
+      await page.getByRole("button", { name: "continue" }).click();
+      await page.getByText("more models →").click();
+    },
+    settle: async (page) => {
+      await expect(
+        page.getByRole("button", { name: "Opus", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Claude Opus 5")).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
     id: "personality-default",
     drive: async (page) => {
       await fillName(page, AGENT);

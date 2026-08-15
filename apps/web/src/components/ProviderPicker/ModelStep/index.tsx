@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
@@ -144,12 +145,16 @@ export function ModelStep({
             </>
           ) : (
             <>
-              <Input
-                id="or-model-search"
-                placeholder="search models..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
+              <div className="relative w-full">
+                <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="or-model-search"
+                  placeholder="search models..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
               <ModelCardList
                 models={filtered}
                 selected={model}
