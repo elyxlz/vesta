@@ -7,7 +7,6 @@ function renderChrome(overrides: Partial<Parameters<typeof Chrome>[0]> = {}) {
     <Chrome
       heading={{ title: "new agent", description: "give them a name." }}
       action={{ kind: "submit-name", label: "continue", disabled: false }}
-      error={null}
       bodyKey="name"
       widthClass="w-[260px]"
       actionWidthClass="w-[260px]"
@@ -49,10 +48,5 @@ describe("Chrome", () => {
     renderChrome({ heading: null, action: null });
     expect(screen.queryByText("new agent")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
-  });
-
-  it("shows the error line", () => {
-    renderChrome({ error: "name already taken" });
-    expect(screen.getByText("name already taken")).toBeTruthy();
   });
 });

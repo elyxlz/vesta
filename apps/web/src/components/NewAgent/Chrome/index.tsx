@@ -13,7 +13,6 @@ import type { ChromeAction, ChromeActionKind, ChromeHeading } from "../chrome";
 export function Chrome({
   heading,
   action,
-  error,
   bodyKey,
   widthClass,
   actionWidthClass,
@@ -22,7 +21,6 @@ export function Chrome({
 }: {
   heading: ChromeHeading | null;
   action: ChromeAction | null;
-  error: string | null;
   bodyKey: string;
   widthClass: string;
   actionWidthClass: string;
@@ -87,19 +85,6 @@ export function Chrome({
               </AnimatePresence>
             </Button>
           </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {error && (
-          <motion.p
-            {...quickFade}
-            role="status"
-            aria-live="polite"
-            className="max-w-[560px] px-4 text-center text-xs text-destructive"
-          >
-            {error}
-          </motion.p>
         )}
       </AnimatePresence>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { createAgent } from "@/api";
 import {
   setProvider,
@@ -47,6 +48,12 @@ export function NewAgent() {
     null,
   );
   const [createError, setCreateError] = useState<string | null>(null);
+  // One reporter for every step error: the state drives the failed UI (dimmed
+  // orb, retry, step routing) and the message itself surfaces as a toast.
+  const reportError = (message: string) => {
+    setCreateError(message);
+    toast.error(message);
+  };
   // Drafts the shell's single button commits: the name field's raw text and
   // the tile selection. personality stays committed only on continue, so the
   // resume-skip logic in nextStep keeps its meaning.
@@ -93,7 +100,7 @@ export function NewAgent() {
             // unchanged must not read the next 409 as "already created".
             attemptRef.current = 0;
             if (!isCancelled()) {
-              setCreateError(errorMessage(e, "creation failed"));
+              reportError(errorMessage(e, "creation failed"));
               setStep("name");
             }
             return;
@@ -118,7 +125,7 @@ export function NewAgent() {
           if (isCredentialRejection(e)) {
             if (!isCancelled()) {
               setProviderResult(null);
-              setCreateError(errorMessage(e, "provider setup failed"));
+              reportError(errorMessage(e, "provider setup failed"));
               setStep("provider");
             }
             return;
@@ -136,7 +143,7 @@ export function NewAgent() {
       } catch (e) {
         // Transient failure: stay here with everything collected intact; the
         // retry button clears the error, which re-enters this pipeline.
-        if (!isCancelled()) setCreateError(errorMessage(e, "creation failed"));
+        if (!isCancelled()) reportError(errorMessage(e, "creation failed"));
       }
     };
     void run();
@@ -251,7 +258,6 @@ export function NewAgent() {
             <Chrome
               heading={chrome.heading}
               action={chrome.action}
-              error={createError}
               bodyKey={contentKey ?? "name"}
               widthClass={chrome.widthClass}
               actionWidthClass={chrome.actionWidthClass}

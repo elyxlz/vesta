@@ -9,6 +9,7 @@ import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
 import { PresenceReporter } from "@/providers/PresenceReporter";
 import { InsetFrame } from "@/components/InsetFrame";
+import { Toaster } from "@/components/ui/sonner";
 import { WhatsNewDialog } from "@/components/WhatsNew";
 import { router } from "@/router";
 import { useIsMobile } from "./hooks/use-mobile";
@@ -40,6 +41,7 @@ function AppContent() {
         >
           <RouterProvider router={router} />
           <WhatsNewDialog />
+          <Toaster />
         </motion.div>
       )}
     </AnimatePresence>

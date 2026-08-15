@@ -23,10 +23,24 @@ export default defineConfig<VisualOptions>({
     baseURL: "http://localhost:1430",
     contextOptions: { reducedMotion: "reduce" },
   },
+  // colorScheme mirrors the seeded app theme so surfaces that follow the OS
+  // scheme (the sonner toaster) render in the same theme as the page.
   projects: [
-    { name: "dark-desktop", use: { viewport: DESKTOP, theme: "dark" } },
-    { name: "light-desktop", use: { viewport: DESKTOP, theme: "light" } },
-    { name: "dark-narrow", use: { viewport: NARROW, theme: "dark" } },
-    { name: "light-narrow", use: { viewport: NARROW, theme: "light" } },
+    {
+      name: "dark-desktop",
+      use: { viewport: DESKTOP, theme: "dark", colorScheme: "dark" },
+    },
+    {
+      name: "light-desktop",
+      use: { viewport: DESKTOP, theme: "light", colorScheme: "light" },
+    },
+    {
+      name: "dark-narrow",
+      use: { viewport: NARROW, theme: "dark", colorScheme: "dark" },
+    },
+    {
+      name: "light-narrow",
+      use: { viewport: NARROW, theme: "light", colorScheme: "light" },
+    },
   ],
 });
