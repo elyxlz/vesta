@@ -56,6 +56,24 @@ export const MANIFEST: Manifest = {
       default_model: null,
       context: CONTEXT,
     },
+    kimi: {
+      display: "Kimi Code",
+      order: 4,
+      auth_kind: "subscription_key",
+      models: ["kimi-k2"],
+      model_names: { "kimi-k2": "Kimi K2" },
+      default_model: "kimi-k2",
+      context: CONTEXT,
+    },
+    openai: {
+      display: "ChatGPT",
+      order: 5,
+      auth_kind: "device_oauth",
+      models: ["gpt-5.2-codex"],
+      model_names: { "gpt-5.2-codex": "GPT 5.2 Codex" },
+      default_model: "gpt-5.2-codex",
+      context: CONTEXT,
+    },
   },
   personalities: [
     {
