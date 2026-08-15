@@ -970,7 +970,7 @@ def _next_run_for_row(row) -> str | None:
     return row["scheduled_time"]
 
 
-def remind_list(config: Config, *, task_id: str | None = None, limit: int | None = 50) -> list[dict]:
+def remind_list(config: Config, *, task_id: str | None = None, limit: int | None = 50, show_completed: bool = False) -> list[dict]:
     # limit=None means every row: SQLite reads LIMIT -1 as unlimited.
     limit_param = -1 if limit is None else limit
     # Recurring reminders sort first so the LIMIT only ever trims one-shots, and the one-shot tail
@@ -987,14 +987,18 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int | None
         "LIMIT ?"
     )
     with closing(db.get_db(config.data_dir)) as conn:
+        # completed rows are hidden by default; --show-completed drops that filter so a reminder that
+        # has already fired (e.g. a self-chaining one re-reading its own body) is still retrievable.
+        done_filter = "" if show_completed else "completed = 0 AND "
         if task_id is not None:
             cursor = conn.execute(
-                f"SELECT * FROM reminders WHERE completed = 0 AND task_id = ? {order_clause}",
+                f"SELECT * FROM reminders WHERE {done_filter}task_id = ? {order_clause}",
                 (task_id, limit_param),
             )
         else:
+            done_where = "" if show_completed else "WHERE completed = 0"
             cursor = conn.execute(
-                f"SELECT * FROM reminders WHERE completed = 0 {order_clause}",
+                f"SELECT * FROM reminders {done_where} {order_clause}",
                 (limit_param,),
             )
         return [
@@ -1006,7 +1010,7 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int | None
                 "next_run": _next_run_for_row(row),
                 "created_at": row["created_at"],
                 "auto_generated": bool(row["auto_generated"]),
-                "status": "pending",
+                "status": "completed" if row["completed"] else "pending",
             }
             for row in cursor
         ]
