@@ -977,13 +977,17 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int | None
     # sorts by fire time (scheduled_time ASC) so the LIMIT drops the furthest-out rows, never the
     # soonest, keeping "what fires next" visible at any limit. Recurring rows keep created_at
     # ordering: a plain cron row's scheduled_time records its last advance, not its next fire, so
-    # it is not a sound sort key for them.
+    # it is not a sound sort key for them. Fired one-shots sort after pending ones, newest fired
+    # first, so under --show-completed a backlog of old fired rows can never page out the live
+    # rows or the just-fired one being recovered.
     recurring_types = ", ".join(f"'{t}'" for t in RECURRING_TRIGGER_TYPES)
     is_recurring = f"json_extract(trigger_data, '$.type') IN ({recurring_types})"
     order_clause = (
         f"ORDER BY {is_recurring} DESC, "
         f"CASE WHEN {is_recurring} THEN created_at END DESC, "
-        f"CASE WHEN {is_recurring} THEN NULL ELSE scheduled_time END ASC "
+        "completed ASC, "
+        f"CASE WHEN {is_recurring} OR completed THEN NULL ELSE scheduled_time END ASC, "
+        "CASE WHEN completed THEN scheduled_time END DESC "
         "LIMIT ?"
     )
     with closing(db.get_db(config.data_dir)) as conn:
@@ -1018,7 +1022,7 @@ def remind_list(config: Config, *, task_id: str | None = None, limit: int | None
 
 def remind_delete(config: Config, *, reminder_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT 1 FROM reminders WHERE id = ? AND completed = 0", (reminder_id,))
+        cursor = conn.execute("SELECT 1 FROM reminders WHERE id = ?", (reminder_id,))
         if not cursor.fetchone():
             raise ValueError(f"Reminder '{reminder_id}' not found")
         conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
@@ -1077,7 +1081,7 @@ def remind_snooze(
 
 def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM reminders WHERE id = ? AND completed = 0", (reminder_id,))
+        cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
         reminder = cursor.fetchone()
         if not reminder:
             raise ValueError(f"Reminder '{reminder_id}' not found. Use 'tasks remind list' to see active reminders.")

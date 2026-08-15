@@ -76,10 +76,11 @@ def format_reminder_list(reminders: list[dict[str, Any]], now: datetime | None =
     for r in reminders:
         auto = " *" if _pick(r, "auto_generated", False) else ""
         suffix = f"\ttask={r['task_id']}" if _pick(r, "task_id", None) else ""
+        fired = "[fired] " if _pick(r, "status", None) == "completed" else ""
         rows.append(
             f"{rel_time(_pick(r, 'next_run', None), now)}\t"
             f"{_pick(r, 'id')}\t"
             f"{_trunc(_pick(r, 'schedule', None), 40)}\t"
-            f"{_trunc(_pick(r, 'message'), 80)}{auto}{suffix}"
+            f"{fired}{_trunc(_pick(r, 'message'), 80)}{auto}{suffix}"
         )
     return "\n".join(rows)
