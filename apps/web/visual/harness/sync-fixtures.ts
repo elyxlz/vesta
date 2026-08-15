@@ -50,6 +50,23 @@ export function startingAgent(buildPhase: BuildPhase): AgentInfo {
   };
 }
 
+// A settled agent for routes (e.g. settings) that read an existing agent from
+// the roster rather than the create pipeline.
+export function aliveAgentNode(): AgentNode {
+  return {
+    info: {
+      status: "alive",
+      activityState: "idle",
+      buildPhase: null,
+      operation: null,
+      booting: false,
+      startedAt: "2026-01-01T00:00:00Z",
+      services: {},
+    },
+    notifications: { pending: [] },
+  };
+}
+
 export function agentDelta(
   name: string,
   info: AgentInfo,
@@ -60,11 +77,12 @@ export function agentDelta(
 export async function installSyncSocket(
   page: Page,
   deltas: Delta[],
+  agents: Record<string, AgentNode> = {},
 ): Promise<void> {
   await page.routeWebSocket(/\/sync/, (ws) => {
     ws.onMessage(() => undefined);
     ws.send(JSON.stringify(HELLO));
-    ws.send(JSON.stringify(snapshotFrame(baseTree())));
+    ws.send(JSON.stringify(snapshotFrame(baseTree(agents))));
     for (const delta of deltas) ws.send(JSON.stringify(delta));
   });
 }

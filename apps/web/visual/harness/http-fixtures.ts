@@ -43,9 +43,13 @@ export const MANIFEST: Manifest = {
       display: "Z.AI",
       order: 2,
       auth_kind: "subscription_key",
-      models: ["glm-4.7"],
-      model_names: { "glm-4.7": "GLM 4.7" },
-      default_model: "glm-4.7",
+      models: ["glm-5.2", "glm-5-turbo", "glm-4.7"],
+      model_names: {
+        "glm-5.2": "GLM 5.2",
+        "glm-5-turbo": "GLM 5 Turbo",
+        "glm-4.7": "GLM 4.7",
+      },
+      default_model: "glm-5.2",
       context: CONTEXT,
     },
     openrouter: {
@@ -60,18 +64,26 @@ export const MANIFEST: Manifest = {
       display: "Kimi Code",
       order: 4,
       auth_kind: "subscription_key",
-      models: ["kimi-k2"],
-      model_names: { "kimi-k2": "Kimi K2" },
-      default_model: "kimi-k2",
+      models: ["kimi-for-coding", "kimi-for-coding-highspeed", "k3"],
+      model_names: {
+        "kimi-for-coding": "Coding",
+        "kimi-for-coding-highspeed": "Coding Highspeed",
+        k3: "K3",
+      },
+      default_model: "kimi-for-coding",
       context: CONTEXT,
     },
     openai: {
       display: "ChatGPT",
       order: 5,
       auth_kind: "device_oauth",
-      models: ["gpt-5.2-codex"],
-      model_names: { "gpt-5.2-codex": "GPT 5.2 Codex" },
-      default_model: "gpt-5.2-codex",
+      models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+      model_names: {
+        "gpt-5.6-sol": "GPT 5.6 Sol",
+        "gpt-5.6-terra": "GPT 5.6 Terra",
+        "gpt-5.6-luna": "GPT 5.6 Luna",
+      },
+      default_model: "gpt-5.6-sol",
       context: CONTEXT,
     },
   },
@@ -190,10 +202,21 @@ export const CLAUDE_MODELS = [
 // An endpoint the scenario wants to leave pending, to capture a loading state.
 export type HangEndpoint = "openrouter-models";
 
+// The GET /provider shape the settings card reads (a subset of the wire type).
+export interface ProviderInfoFixture {
+  kind: "zai" | "kimi" | "openai";
+  model: string | null;
+  resolved_model: string | null;
+  max_context_tokens: number | null;
+  authed: boolean;
+  plan: string | null;
+}
+
 export interface GatewayMockOptions {
   agentStatus: AgentStatus;
   createResponse: { status: number; body: { error: string } } | null;
   hang?: HangEndpoint;
+  provider?: ProviderInfoFixture;
 }
 
 // Later-registered routes win in Playwright, so the hermetic catch-all for the
@@ -237,4 +260,14 @@ export async function installGatewayMocks(
     }
     return route.fulfill({ json: {} });
   });
+  // The settings provider card reads GET /provider; other methods (PATCH on a
+  // model change) fall through to the catch-all.
+  const provider = opts.provider;
+  if (provider) {
+    await page.route("**/agents/*/provider", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: provider })
+        : route.fulfill({ json: {} }),
+    );
+  }
 }

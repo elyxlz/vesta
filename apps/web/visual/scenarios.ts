@@ -1,7 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 import type { AgentStatus, Delta } from "@vesta/core";
 import { agentDelta, startingAgent } from "./harness/sync-fixtures";
-import { AGENT, type HangEndpoint } from "./harness/http-fixtures";
+import {
+  AGENT,
+  type HangEndpoint,
+  type ProviderInfoFixture,
+} from "./harness/http-fixtures";
 
 export interface Scenario {
   id: string;
@@ -9,8 +13,43 @@ export interface Scenario {
   createResponse: { status: number; body: { error: string } } | null;
   deltas: Delta[];
   hang?: HangEndpoint;
+  // A route other than /new, plus the roster agent and provider it reads (the
+  // settings change-model dialog needs an existing, provisioned agent).
+  route?: string;
+  agentName?: string;
+  provider?: ProviderInfoFixture;
   drive: (page: Page) => Promise<void>;
   settle: (page: Page) => Promise<void>;
+}
+
+// A settled agent whose provider is one of the fixed-catalog kinds, used to
+// capture the settings change-model dialog those providers show.
+function settingsModelScenario(
+  id: string,
+  kind: ProviderInfoFixture["kind"],
+  model: string,
+  visibleLabel: string,
+): Scenario {
+  return {
+    ...defaults,
+    id,
+    route: "/agent/luna/settings",
+    agentName: "luna",
+    provider: {
+      kind,
+      model,
+      resolved_model: model,
+      max_context_tokens: 131072,
+      authed: true,
+      plan: null,
+    },
+    drive: async (page) => {
+      await page.getByRole("button", { name: "change model" }).click();
+    },
+    settle: async (page) => {
+      await expect(page.getByText(visibleLabel)).toBeVisible();
+    },
+  };
 }
 
 async function fillName(page: Page, name: string): Promise<void> {
@@ -208,6 +247,19 @@ export const SCENARIOS: Scenario[] = [
       await expect(page.getByText("Claude Opus 5")).toBeHidden();
     },
   },
+  settingsModelScenario("provider-model-zai", "zai", "glm-5.2", "GLM 5 Turbo"),
+  settingsModelScenario(
+    "provider-model-kimi",
+    "kimi",
+    "kimi-for-coding",
+    "Coding Highspeed",
+  ),
+  settingsModelScenario(
+    "provider-model-openai",
+    "openai",
+    "gpt-5.6-sol",
+    "GPT 5.6 Terra",
+  ),
   {
     ...defaults,
     id: "personality-default",
