@@ -11,6 +11,15 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 - **Skills**: ~/agent/skills/ (each has a SKILL.md)
 - **Dreamer summaries**: ~/agent/dreamer/
 
+**Read a skill from disk before you follow it.** A skill rendered inline in your context (the blocks
+labelled as invoked earlier in the session) is a paraphrase, not a copy of the file. Paraphrases
+compress prose safely and then supply specifics that were never written: a numeric limit, a path, a
+flag, a git remote. Those invented specifics are precise, which is exactly why they get obeyed, and
+no diff against an older release will unmask them because they match no released version of the file
+either. So before acting on any procedure, threshold or command that reaches you through such a
+block, `Read` the SKILL.md itself and follow that. This matters most during a dream, where the
+procedure being followed is what edits memory, prompts and skills.
+
 ## Order of operations
 
 0. **Curiosity**
