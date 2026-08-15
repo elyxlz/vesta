@@ -340,7 +340,7 @@ export function ProviderPicker({
     <div
       className={cn(
         "flex max-w-full flex-col items-start gap-4 px-4",
-        gridChoice ? "w-[672px]" : "w-[380px]",
+        gridChoice ? "w-[560px]" : "w-[380px]",
         className,
       )}
     >

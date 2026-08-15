@@ -44,19 +44,19 @@ export function ChoiceStep({
 
   if (variant === "grid") {
     return (
-      <div className="flex w-[672px] max-w-full flex-col items-center gap-5">
+      <div className="flex w-[560px] max-w-full flex-col items-center gap-5">
         <StepHeading
           title="how should it run?"
           description="choose how to power your agent."
         />
         <div className="grid w-full grid-cols-1 gap-5 px-4 sm:grid-cols-2 lg:grid-cols-3">
-          {ordered.map(({ id, tagline, Logo }) => (
+          {ordered.map(({ id, Logo }) => (
             <button
               key={id}
               type="button"
               onClick={() => onPick(id)}
               className={cn(
-                "flex cursor-pointer flex-col items-center justify-center gap-1 p-6 text-center sm:aspect-square",
+                "flex cursor-pointer flex-col items-center justify-center gap-2 p-6 text-center sm:aspect-square",
                 glassSurface,
                 glassHover,
               )}
@@ -64,9 +64,6 @@ export function ChoiceStep({
               <Logo className="size-7" />
               <span className="text-sm font-semibold">
                 {manifest.providers[id]?.display ?? id}
-              </span>
-              <span className="text-[11px] leading-snug text-muted-foreground">
-                {tagline}
               </span>
             </button>
           ))}
