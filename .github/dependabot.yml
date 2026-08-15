@@ -55,7 +55,7 @@ updates:
   - package-ecosystem: gomod
     directory: /agent/skills/whatsapp/cli
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       whatsapp-deps:
         patterns: ["*"]
