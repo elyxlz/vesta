@@ -209,7 +209,7 @@ export const SCENARIOS: Scenario[] = [
       await page.getByRole("button", { name: "next" }).click();
     },
     settle: async (page) => {
-      await expect(page.getByText("loading models...")).toBeVisible();
+      await expect(page.locator('[data-slot="skeleton"]').first()).toBeVisible();
     },
   },
   {

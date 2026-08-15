@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
 
@@ -245,11 +246,7 @@ function ModelCardList({
   }, [models, update]);
 
   if (loading) {
-    return (
-      <div className="flex h-[260px] items-center justify-center text-xs text-muted-foreground">
-        loading models...
-      </div>
-    );
+    return <ModelListSkeleton showIcon={showIcon} />;
   }
   if (models.length === 0) {
     return (
@@ -272,6 +269,38 @@ function ModelCardList({
           showIcon={showIcon}
           onClick={() => onSelect(m.slug)}
         />
+      ))}
+    </div>
+  );
+}
+
+// Card-shaped placeholders that fill the list area while the catalog loads, so
+// the load reads as model cards resolving in place rather than a text spinner.
+const SKELETON_ROWS = [
+  { label: "w-2/5", detail: "w-3/5" },
+  { label: "w-1/2", detail: "w-2/5" },
+  { label: "w-1/3", detail: "w-1/2" },
+  { label: "w-2/5", detail: "w-1/3" },
+  { label: "w-1/2", detail: "w-3/5" },
+];
+
+function ModelListSkeleton({ showIcon }: { showIcon: boolean }) {
+  return (
+    <div className="flex max-h-[260px] flex-col gap-1.5 overflow-hidden">
+      {SKELETON_ROWS.map((row, i) => (
+        <div
+          key={i}
+          className={cn(
+            "flex items-center gap-2.5 rounded-2xl [corner-shape:squircle] px-2.5 py-1.5",
+            glassFrost,
+          )}
+        >
+          {showIcon && <Skeleton className="size-7 shrink-0 rounded-full" />}
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className={cn("h-3.5 rounded-md", row.label)} />
+            <Skeleton className={cn("h-2.5 rounded-md", row.detail)} />
+          </div>
+        </div>
       ))}
     </div>
   );
