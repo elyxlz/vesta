@@ -11,6 +11,12 @@
 OWN_USAGE_RED_MB=20000
 HOST_DISK_NOTE_PERCENT=90
 HOST_DISK_RED_PERCENT=97
+# Own-usage alone is a size, not a problem: an agent whose job is a document corpus can sit on tens
+# of GB forever on a disk that is two thirds empty, and then this probe is RED every single night
+# with nothing to clear. A permanent RED is worse than no probe, because it teaches you to skim the
+# one output that exists to stop you skimming. So own usage only turns RED when the filesystem is
+# ALSO under real pressure; below that it prints as context.
+HOST_DISK_PRESSURE_PERCENT=85
 DU_TIMEOUT_SECS=120
 
 red=0
@@ -47,8 +53,10 @@ mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
 if [ "$du_status" -eq 124 ]; then
     bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
     mine_str="an unmeasured share"
+elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ] && [ "${usage:-0}" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; then
+    bad "disk at ${usage}% and this agent holds ${mine}MB of it: clean up tonight (workspace cleanup)"
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
-    bad "this agent is using ${mine}MB across \$HOME and /tmp: clean up tonight (workspace cleanup)"
+    ok "this agent holds ${mine}MB, but the disk is only at ${usage:-unknown}%: size without pressure, nothing to clear"
 fi
 # On a du timeout the footprint is unknown, so the host lines must not quote a figure of 0MB that
 # would read as "none of this is mine".
