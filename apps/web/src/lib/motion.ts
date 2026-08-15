@@ -26,16 +26,18 @@ export const floatSpring: Transition = {
   damping: 28,
 };
 
-// Step-body enter/exit: floaty slide + blur. Reduced motion keeps plain fades.
+// Reduced motion means no animation at all: elements appear and leave
+// instantly rather than fading, per prefers-reduced-motion.
+export const instant = {
+  initial: { opacity: 1 },
+  animate: { opacity: 1 },
+  exit: { opacity: 1 },
+  transition: { duration: 0 },
+};
+
+// Step-body enter/exit: floaty slide + blur.
 export function floatTransition(reduced: boolean) {
-  if (reduced) {
-    return {
-      initial: { opacity: 0 },
-      animate: { opacity: 1 },
-      exit: { opacity: 0 },
-      transition: { duration: 0.2 },
-    };
-  }
+  if (reduced) return instant;
   return {
     initial: { opacity: 0, y: 12, scale: 0.98, filter: "blur(4px)" },
     animate: { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" },

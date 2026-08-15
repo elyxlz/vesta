@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
-import { fade, floatTransition, textSwap } from "@/lib/motion";
+import { fade, floatTransition, instant, textSwap } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { glassAction } from "../glass";
 import type { ChromeAction, ChromeActionKind, ChromeHeading } from "../chrome";
@@ -31,7 +31,8 @@ export function Chrome({
 }) {
   const reduced = useReducedMotion() ?? false;
   const float = floatTransition(reduced);
-  const headingSwap = reduced ? fade : textSwap;
+  const headingSwap = reduced ? instant : textSwap;
+  const quickFade = reduced ? instant : fade;
   return (
     <div className="flex w-full flex-col items-center gap-4">
       <AnimatePresence mode="wait">
@@ -80,7 +81,7 @@ export function Chrome({
               }}
             >
               <AnimatePresence mode="wait" initial={false}>
-                <motion.span key={action.label} {...fade}>
+                <motion.span key={action.label} {...quickFade}>
                   {action.label}
                 </motion.span>
               </AnimatePresence>
@@ -92,7 +93,7 @@ export function Chrome({
       <AnimatePresence>
         {error && (
           <motion.p
-            {...fade}
+            {...quickFade}
             role="status"
             aria-live="polite"
             className="max-w-[560px] px-4 text-center text-xs text-destructive"
