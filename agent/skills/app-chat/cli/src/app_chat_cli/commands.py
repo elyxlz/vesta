@@ -9,6 +9,7 @@ import sqlite3
 import sys
 
 from app_chat_cli.bubblelint import bubble_lint_reason
+from app_chat_cli.burstlint import burst_lint_reason
 from app_chat_cli.store import Store, store_path
 
 
@@ -27,6 +28,13 @@ def cmd_send(args: argparse.Namespace) -> None:
 
     if not getattr(args, "longform", False):
         reason = bubble_lint_reason(message)
+        if reason:
+            _fail({"error": reason})
+
+    # Volume, not shape. --longform is deliberately NOT a bypass here: a burst of
+    # well-formed bubbles is the exact failure this catches.
+    if not getattr(args, "burst", False):
+        reason = burst_lint_reason()
         if reason:
             _fail({"error": reason})
 
