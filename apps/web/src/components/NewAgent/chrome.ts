@@ -18,6 +18,8 @@ export interface StepChrome {
   heading: ChromeHeading | null;
   action: ChromeAction | null;
   widthClass: string;
+  // The action button keeps the compact width even under the wide vibe grid.
+  actionWidthClass: string;
 }
 
 const NARROW = "w-[320px]";
@@ -44,10 +46,16 @@ export function stepChrome({
       },
       action: { kind: "submit-name", label: "continue", disabled: !nameValid },
       widthClass: NARROW,
+      actionWidthClass: NARROW,
     };
   }
   if (step === "provider") {
-    return { heading: null, action: null, widthClass: "" };
+    return {
+      heading: null,
+      action: null,
+      widthClass: "",
+      actionWidthClass: "",
+    };
   }
   if (step === "personality") {
     return {
@@ -58,6 +66,7 @@ export function stepChrome({
       },
       action: { kind: "submit-vibe", label: "continue", disabled: !vibeReady },
       widthClass: WIDE,
+      actionWidthClass: NARROW,
     };
   }
   if (step === "done") {
@@ -65,6 +74,7 @@ export function stepChrome({
       heading: null,
       action: { kind: "open-chat", label: "say hi", disabled: false },
       widthClass: NARROW,
+      actionWidthClass: NARROW,
     };
   }
   return {
@@ -73,5 +83,6 @@ export function stepChrome({
       ? { kind: "retry", label: "try again", disabled: false }
       : null,
     widthClass: NARROW,
+    actionWidthClass: NARROW,
   };
 }

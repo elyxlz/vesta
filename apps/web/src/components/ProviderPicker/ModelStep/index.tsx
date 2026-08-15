@@ -218,7 +218,7 @@ function ClaudeModelPicker({
       </div>
       <button
         type="button"
-        className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
+        className="self-center text-[11px] text-muted-foreground hover:text-foreground transition"
         onClick={() => setExpanded((v) => !v)}
       >
         {expanded ? "← fewer models" : "more models →"}

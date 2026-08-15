@@ -267,6 +267,7 @@ export function NewAgent() {
               action={chrome.action}
               bodyKey={contentKey ?? "name"}
               widthClass={chrome.widthClass}
+              actionWidthClass={chrome.actionWidthClass}
               onAction={handleAction}
             >
               {content}

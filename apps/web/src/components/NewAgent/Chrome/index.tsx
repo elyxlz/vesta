@@ -15,6 +15,7 @@ export function Chrome({
   action,
   bodyKey,
   widthClass,
+  actionWidthClass,
   onAction,
   children,
 }: {
@@ -22,6 +23,7 @@ export function Chrome({
   action: ChromeAction | null;
   bodyKey: string;
   widthClass: string;
+  actionWidthClass: string;
   onAction: (kind: ChromeActionKind) => void;
   children: ReactNode;
 }) {
@@ -67,7 +69,7 @@ export function Chrome({
             layout
             key="action"
             {...float}
-            className={cn("max-w-full px-4", widthClass)}
+            className={cn("max-w-full px-4", actionWidthClass)}
           >
             <Button
               className={cn("h-12 w-full", glassAction)}

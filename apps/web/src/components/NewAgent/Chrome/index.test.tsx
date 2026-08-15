@@ -9,6 +9,7 @@ function renderChrome(overrides: Partial<Parameters<typeof Chrome>[0]> = {}) {
       action={{ kind: "submit-name", label: "continue", disabled: false }}
       bodyKey="name"
       widthClass="w-[320px]"
+      actionWidthClass="w-[320px]"
       onAction={() => undefined}
       {...overrides}
     >
