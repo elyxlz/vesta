@@ -21,7 +21,6 @@ import json
 import sqlite3
 
 import pytest
-
 from app_chat_cli.burstlint import (
     BURST_GAP_MINUTES,
     BURST_MAX,
@@ -29,7 +28,7 @@ from app_chat_cli.burstlint import (
     burst_lint_reason,
 )
 
-NOW = dt.datetime(2026, 1, 2, 18, 0, tzinfo=dt.timezone.utc)
+NOW = dt.datetime(2026, 1, 2, 18, 0, tzinfo=dt.UTC)
 
 
 def rows(*specs: tuple[int, str]) -> list[tuple[str, str]]:
@@ -70,9 +69,7 @@ def test_consecutive_sends_are_counted():
     assert burst((1, "chat"), (2, "chat"), (3, "chat")) == 3
 
 
-@pytest.mark.parametrize(
-    "specs,expected", [(UNDER, BURST_MAX - 1), (AT, BURST_MAX)]
-)
+@pytest.mark.parametrize("specs,expected", [(UNDER, BURST_MAX - 1), (AT, BURST_MAX)])
 def test_counts_are_exact_at_the_threshold(specs, expected):
     assert burst(*specs) == expected
 
@@ -148,8 +145,7 @@ def test_a_reply_resets_the_count(tmp_path):
     db = tmp_path / "answered.db"
     write_db(
         db,
-        [(1, "chat"), (2, "chat"), (3, "user")]
-        + [(i, "chat") for i in range(4, 4 + BURST_MAX)],
+        [(1, "chat"), (2, "chat"), (3, "user")] + [(i, "chat") for i in range(4, 4 + BURST_MAX)],
     )
     assert burst_lint_reason(db, now=NOW) == ""
 
@@ -157,7 +153,7 @@ def test_a_reply_resets_the_count(tmp_path):
 def test_a_full_burst_after_a_reply_still_blocks(tmp_path):
     """A reply raises the ceiling; it does not remove it."""
     db = tmp_path / "after_reply.db"
-    write_db(db, AT + [(BURST_MAX + 1, "user")])
+    write_db(db, [*AT, (BURST_MAX + 1, "user")])
     assert burst_lint_reason(db, now=NOW)
 
 

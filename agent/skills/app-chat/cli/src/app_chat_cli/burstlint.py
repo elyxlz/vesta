@@ -52,7 +52,7 @@ def _parse_ts(raw: object) -> dt.datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        parsed = parsed.replace(tzinfo=dt.UTC)
     return parsed
 
 
@@ -85,9 +85,7 @@ def burst_length(rows: list[tuple[str, str]], now: dt.datetime | None = None) ->
     return count
 
 
-def _load_rows(
-    db_path: pl.Path, now: dt.datetime | None = None, limit: int = 200
-) -> list[tuple[str, str]]:
+def _load_rows(db_path: pl.Path, now: dt.datetime | None = None, limit: int = 200) -> list[tuple[str, str]]:
     """The newest ``limit`` events at or before ``now``.
 
     The ``ts <= now`` bound is load-bearing: without it the walk starts from the
@@ -99,9 +97,7 @@ def _load_rows(
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         if now is None:
-            raw = conn.execute(
-                "SELECT ts, data FROM events ORDER BY ts DESC LIMIT ?", (limit,)
-            ).fetchall()
+            raw = conn.execute("SELECT ts, data FROM events ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
         else:
             raw = conn.execute(
                 "SELECT ts, data FROM events WHERE ts <= ? ORDER BY ts DESC LIMIT ?",
@@ -124,7 +120,7 @@ def burst_lint_reason(db_path: pl.Path | None = None, now: dt.datetime | None = 
     """Return a non-empty explanation when this send would extend an over-long
     burst, or "" if it passes (including on any error: the guard fails open)."""
     path = db_path or (pl.Path.home() / ".app-chat" / "app-chat.db")
-    moment = now or dt.datetime.now(dt.timezone.utc)
+    moment = now or dt.datetime.now(dt.UTC)
     try:
         if not path.exists():
             return ""
