@@ -68,6 +68,7 @@ function stubController(replica: ReturnType<typeof createReplica>): Controller {
     getSyncState: () => "open",
     subscribeSyncState: () => () => undefined,
     reportPresence: () => undefined,
+    reportViewing: () => undefined,
     getAnyFocused: () => false,
     subscribeAnyFocused: () => () => undefined,
     close: () => undefined,

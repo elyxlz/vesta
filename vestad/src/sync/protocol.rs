@@ -211,7 +211,9 @@ pub(crate) enum ClientFrame {
 /// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
 /// web visibility/window focus or mobile foreground state. `client` identifies the surface that
 /// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
-/// reconnect never looks like the user returning.
+/// reconnect never looks like the user returning. `viewing` is the agent whose page is open on this
+/// client, or `None` on the roster, a non-agent screen, or a blurred window: it drives the per-agent
+/// presence notification, independently of `focused`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientContext {
@@ -220,6 +222,8 @@ pub(crate) struct ClientContext {
     pub client: ClientKind,
     #[serde(default)]
     pub resync: bool,
+    #[serde(default)]
+    pub viewing: Option<String>,
     /// The client-minted installation id identifying the device across reconnects. Absent from
     /// older clients, which are simply not tracked in the device registry.
     #[serde(default)]
@@ -509,6 +513,21 @@ mod tests {
                 focused: false,
                 client: ClientKind::Unknown,
                 resync: true,
+                ..Default::default()
+            })
+        );
+        // `viewing` carries the open agent's name; absent it defaults to None (additive-safe).
+        let viewing: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"web","viewing":"scout"}"#,
+        )
+        .expect("parse client_context viewing");
+        assert_eq!(
+            viewing,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Web,
+                resync: false,
+                viewing: Some("scout".into()),
                 ..Default::default()
             })
         );

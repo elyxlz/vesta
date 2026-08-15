@@ -1042,7 +1042,7 @@ fn presence_notification_payload(
         "source": "vestad",
         "type": "user-presence",
         "interrupt": false,
-        "message": format!("the user just opened {client} and is here now."),
+        "message": format!("the user just opened your page on {client} and is here now."),
     }))
 }
 
@@ -3527,7 +3527,7 @@ mod tests {
         assert_eq!(payload["interrupt"], false);
         assert_eq!(
             payload["message"],
-            "the user just opened Vesta Web App and is here now."
+            "the user just opened your page on Vesta Web App and is here now."
         );
     }
 

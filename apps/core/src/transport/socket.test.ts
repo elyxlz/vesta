@@ -201,6 +201,25 @@ describe("createSyncSocket", () => {
         focused: true,
         client: "web",
         resync: false,
+        viewing: null,
+      }),
+    )
+  })
+
+  it("sends the open agent on reportViewing, alongside cached focus", async () => {
+    const h = harness()
+    const socket = await start(h)
+    h.sockets[0]?.onopen?.()
+    socket.reportPresence(true)
+    socket.reportViewing("scout")
+    // The viewing report carries the cached focus too, so vestad sees both in one context frame.
+    expect(h.sockets[0]?.sent).toContainEqual(
+      JSON.stringify({
+        type: "client_context",
+        focused: true,
+        client: "web",
+        resync: false,
+        viewing: "scout",
       }),
     )
   })
@@ -214,7 +233,13 @@ describe("createSyncSocket", () => {
     expect(h.sockets[0]?.sent).toEqual([])
     h.sockets[0]?.onopen?.()
     expect(h.sockets[0]?.sent).toEqual([
-      JSON.stringify({ type: "client_context", focused: true, client: "web", resync: false }),
+      JSON.stringify({
+        type: "client_context",
+        focused: true,
+        client: "web",
+        resync: false,
+        viewing: null,
+      }),
     ])
   })
 
@@ -248,7 +273,13 @@ describe("createSyncSocket", () => {
     h.sockets[1]?.onopen?.()
     // The reconnect replay carries resync:true so it isn't mistaken for a fresh focus.
     expect(h.sockets[1]?.sent).toContainEqual(
-      JSON.stringify({ type: "client_context", focused: true, client: "web", resync: true }),
+      JSON.stringify({
+        type: "client_context",
+        focused: true,
+        client: "web",
+        resync: true,
+        viewing: null,
+      }),
     )
   })
 
