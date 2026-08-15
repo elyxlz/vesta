@@ -1,13 +1,14 @@
 import { expect, type Page } from "@playwright/test";
 import type { AgentStatus, Delta } from "@vesta/core";
 import { agentDelta, startingAgent } from "./harness/sync-fixtures";
-import { AGENT } from "./harness/http-fixtures";
+import { AGENT, type HangEndpoint } from "./harness/http-fixtures";
 
 export interface Scenario {
   id: string;
   agentStatus: AgentStatus;
   createResponse: { status: number; body: { error: string } } | null;
   deltas: Delta[];
+  hang?: HangEndpoint;
   drive: (page: Page) => Promise<void>;
   settle: (page: Page) => Promise<void>;
 }
@@ -50,6 +51,18 @@ export const SCENARIOS: Scenario[] = [
       await expect(
         page.getByRole("button", { name: "continue" }),
       ).toBeDisabled();
+    },
+  },
+  {
+    ...defaults,
+    id: "name-valid",
+    drive: async (page) => {
+      await fillName(page, "luna");
+    },
+    settle: async (page) => {
+      await expect(
+        page.getByRole("button", { name: "continue" }),
+      ).toBeEnabled();
     },
   },
   {
@@ -120,6 +133,37 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     ...defaults,
+    id: "provider-model-loading",
+    hang: "openrouter-models",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("OpenRouter", { exact: true }).click();
+      await page.getByPlaceholder("sk-or-v1-...").fill("sk-or-v1-visual");
+      await page.getByRole("button", { name: "next" }).click();
+    },
+    settle: async (page) => {
+      await expect(page.getByText("loading models...")).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
+    id: "provider-model-custom",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("OpenRouter", { exact: true }).click();
+      await page.getByPlaceholder("sk-or-v1-...").fill("sk-or-v1-visual");
+      await page.getByRole("button", { name: "next" }).click();
+      await page.getByText("use a custom slug →").click();
+    },
+    settle: async (page) => {
+      await expect(page.getByPlaceholder("provider/model")).toBeVisible();
+      await expect(page.getByText("← back to top models")).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
     id: "provider-model-claude",
     drive: async (page) => {
       await fillName(page, AGENT);
@@ -134,6 +178,21 @@ export const SCENARIOS: Scenario[] = [
         page.getByRole("button", { name: "Opus", exact: true }),
       ).toBeVisible();
       await expect(page.getByText("Claude Opus 5")).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
+    id: "provider-model-claude-collapsed",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("Claude", { exact: true }).click();
+      await page.getByPlaceholder("paste code here").fill("visual-code");
+      await page.getByRole("button", { name: "continue" }).click();
+    },
+    settle: async (page) => {
+      await expect(page.getByText("more models →")).toBeVisible();
+      await expect(page.getByText("Claude Opus 5")).toBeHidden();
     },
   },
   {

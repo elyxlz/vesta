@@ -181,9 +181,13 @@ export const CLAUDE_MODELS = [
   { slug: "claude-haiku-4-5", label: "Claude Haiku 4.5", author: "Anthropic" },
 ];
 
+// An endpoint the scenario wants to leave pending, to capture a loading state.
+export type HangEndpoint = "openrouter-models";
+
 export interface GatewayMockOptions {
   agentStatus: AgentStatus;
   createResponse: { status: number; body: { error: string } } | null;
+  hang?: HangEndpoint;
 }
 
 // Later-registered routes win in Playwright, so the hermetic catch-all for the
@@ -196,6 +200,12 @@ export async function installGatewayMocks(
     route.fulfill({ json: {} }),
   );
   await page.route("**/manifest", (route) => route.fulfill({ json: MANIFEST }));
+  // A hung route is left pending (never fulfilled), so the consumer stays in
+  // its loading state for the shot.
+  await page.route("**/providers/openrouter/models/top", (route) => {
+    if (opts.hang === "openrouter-models") return;
+    return route.fulfill({ json: OPENROUTER_MODELS });
+  });
   await page.route("**/providers/claude/oauth/start", (route) =>
     route.fulfill({ json: OAUTH_START }),
   );
@@ -207,9 +217,6 @@ export async function installGatewayMocks(
   );
   await page.route("**/providers/openrouter/validate-key", (route) =>
     route.fulfill({ json: {} }),
-  );
-  await page.route("**/providers/openrouter/models/top", (route) =>
-    route.fulfill({ json: OPENROUTER_MODELS }),
   );
   await page.route(`**/agents/${AGENT}`, (route) =>
     route.fulfill({ json: { status: opts.agentStatus } }),

@@ -22,6 +22,7 @@ for (const scenario of SCENARIOS) {
     await installGatewayMocks(page, {
       agentStatus: scenario.agentStatus,
       createResponse: scenario.createResponse,
+      hang: scenario.hang,
     });
     await page.goto("/new");
     await scenario.drive(page);
