@@ -20,7 +20,7 @@ export interface ReauthFrame {
 }
 
 // `resync` is true when the socket replays its cached context on reconnect (not a fresh user focus),
-// so vestad never fires the return-to-focus notification on a mere reconnect or a gateway restart.
+// so vestad never fires the presence notification on a mere reconnect or a gateway restart.
 export interface ClientContextFrame {
   type: "client_context"
   focused: boolean
@@ -30,6 +30,9 @@ export interface ClientContextFrame {
   // build that does not report them is simply untracked in the device registry.
   deviceId?: string
   descriptor?: string
+  // The agent whose page is open on this client, or null on the roster / a non-agent screen / a
+  // blurred window. Drives the per-agent presence notification, independently of `focused`.
+  viewing?: string | null
 }
 
 export type ClientKind = "web" | "mobile" | "desktop"
@@ -44,9 +47,10 @@ export function clientContextFrame(
   focused: boolean,
   client: ClientKind,
   resync: boolean,
+  viewing: string | null,
   device?: { id: string; descriptor: string },
 ): ClientContextFrame {
-  const frame: ClientContextFrame = { type: "client_context", focused, client, resync }
+  const frame: ClientContextFrame = { type: "client_context", focused, client, resync, viewing }
   if (device !== undefined) {
     frame.deviceId = device.id
     frame.descriptor = device.descriptor

@@ -5679,7 +5679,7 @@ mod tests {
         assert_eq!(payload["interrupt"], false);
         assert_eq!(
             payload["message"],
-            "the user just opened Vesta Mobile App and is here now."
+            "the user just opened your page on Vesta Mobile App and is here now."
         );
     }
 
