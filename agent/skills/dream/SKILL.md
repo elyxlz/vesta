@@ -97,6 +97,8 @@ Phrase every rule as WHEN <recognizable moment> -> DO <concrete check or action>
 
 If the fix is a behavior that must fire on a schedule (a nudge, a check, a re-poke), it does not belong in MEMORY.md as a rule, it belongs as an explicit instruction in the proactive-check skill or as a scheduled reminder. Escalate by recurrence: first time, a memory rule or skill note is fine; if the same failure repeats, move it to a runtime trigger that fires on its own. Don't answer a repeat failure with the same kind of fix that already failed.
 
+**Removing a check is a legitimate fix, and it is not finished until you name what now covers the job the removed thing was doing.** Record it in the same pass, as one of two answers: another instrument whose coverage comes from a source outside your own model, or an explicit "nothing, and that is correct, it was measuring noise". Both are legitimate; leaving it unstated is not. Watch this hardest when the removal is the right call, because a correct removal books cleanly as a win and the gap it opens is invisible in the same summary that celebrates it. What must never fill that gap is a sentence telling a future you to read carefully and judge: a step that depends on future compliance is the weakest instrument available, and on the page it is indistinguishable from having solved the problem.
+
 You can change anything. If a fix requires code, write the code, if a fix requires doing research online, research online.
 
 ### 4. Validate each fix
