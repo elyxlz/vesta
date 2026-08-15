@@ -243,14 +243,16 @@ export function NewAgent() {
   // grid) instead of clipping. m-auto centers the child when it fits and pins it
   // to the top when it overflows, which justify-center can't (it clips the top in
   // a scroll container). Top padding clears the absolute navbar; bottom padding
-  // clears the mobile home indicator. The mask dissolves scrolled content
-  // before it slides under the transparent navbar.
-  const navbarMask = `linear-gradient(to bottom, transparent ${String(navbarHeight)}px, black ${String(navbarHeight + 28)}px)`;
+  // clears the mobile home indicator. The top mask dissolves scrolled content
+  // over a long run before it slides under the transparent navbar; mask-t
+  // positions run bottom-to-top, hence the 100% arithmetic.
   return (
     <div className="flex h-full flex-col">
       <div
-        className="flex-1 overflow-y-auto overscroll-contain"
-        style={{ maskImage: navbarMask, WebkitMaskImage: navbarMask }}
+        className="flex-1 overflow-y-auto overscroll-contain mask-t-from-[calc(100%-var(--navbar-h)-72px)] mask-t-to-[calc(100%-var(--navbar-h))]"
+        style={
+          { "--navbar-h": `${String(navbarHeight)}px` } as React.CSSProperties
+        }
       >
         <div
           className="flex min-h-full w-full flex-col"
