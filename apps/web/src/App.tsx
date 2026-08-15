@@ -47,8 +47,8 @@ function AppContent() {
           <Toaster
             position="top-right"
             richColors
-            offset={{ top: navbarHeight + 8 }}
-            mobileOffset={{ top: navbarHeight + 8 }}
+            offset={{ top: navbarHeight + 20 }}
+            mobileOffset={{ top: navbarHeight + 20 }}
           />
         </motion.div>
       )}
