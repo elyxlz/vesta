@@ -153,6 +153,23 @@ func TestPairAttemptsOutsideWindowIgnored(t *testing.T) {
 	}
 }
 
+// TestPairBudgetNotice proves the advisory counts the just-recorded attempt
+// toward both hard caps and cites the daily and weekly limits, so a minted code
+// reports the budget it just spent.
+func TestPairBudgetNotice(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	// One attempt this hour, plus an older one still inside the 7-day window but
+	// outside the 24h window, so day and week counts differ.
+	attempts := []time.Time{now, now.Add(-2 * PairDayWindow)}
+	notice := pairBudgetNotice(attempts, now)
+	if !strings.Contains(notice, "1 of 3 in the last 24h") {
+		t.Errorf("notice must report the daily count (want 1 of 3), got: %q", notice)
+	}
+	if !strings.Contains(notice, "2 of 6 in 7d") {
+		t.Errorf("notice must report the weekly count (want 2 of 6), got: %q", notice)
+	}
+}
+
 func TestSyncWindow(t *testing.T) {
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 	if rem := syncWindowRemaining(time.Time{}, now); rem != 0 {

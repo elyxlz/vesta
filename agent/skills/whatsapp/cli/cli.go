@@ -1365,6 +1365,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 		"phone":        phone,
 		"confirm":      fmt.Sprintf("Code generated for %s. CONFIRM this is exactly the number being linked: a typo'd number produces a code that silently never matches.", phone),
 		"instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number",
+		"pair_budget":  pairBudgetNotice(wac.state.snapshot().PairAttempts, time.Now()),
 	}, nil
 }
 
