@@ -10,6 +10,7 @@ function renderChrome(overrides: Partial<Parameters<typeof Chrome>[0]> = {}) {
       error={null}
       bodyKey="name"
       widthClass="w-[260px]"
+      actionWidthClass="w-[260px]"
       onAction={() => undefined}
       {...overrides}
     >

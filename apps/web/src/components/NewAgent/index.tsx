@@ -17,7 +17,6 @@ import {
 } from "@/lib/onboarding-progress";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
-import { normalizeName } from "./Steps/NameStep/normalize-name";
 import { ProviderPicker } from "@/components/ProviderPicker";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
@@ -155,11 +154,14 @@ export function NewAgent() {
     return "creating";
   };
 
+  // The name is used verbatim (no normalization); the field already forbids
+  // whitespace, so a non-empty draft is the whole rule. The gateway is the one
+  // that validates it, and a rejection returns to this step with the error.
+  const name = nameDraft.trim();
   const submitName = () => {
-    const normalized = normalizeName(nameDraft);
-    if (!normalized) return;
-    if (normalized !== agentName) attemptRef.current = 0;
-    setAgentName(normalized);
+    if (!name) return;
+    if (name !== agentName) attemptRef.current = 0;
+    setAgentName(name);
     setCreateError(null);
     setStep(nextStep(providerResult, personality));
   };
@@ -182,6 +184,7 @@ export function NewAgent() {
       return (
         <ProviderPicker
           defaultsOnly
+          choiceVariant="grid"
           onDone={(result) => {
             // The picker handles OAuth/key + defaults internally and hands
             // back a complete result; forward it verbatim to setProvider.
@@ -224,7 +227,7 @@ export function NewAgent() {
 
   const chrome = stepChrome({
     step: step ?? "name",
-    nameValid: normalizeName(nameDraft) !== "",
+    nameValid: name !== "",
     vibeReady: manifest !== undefined && selectedVibe !== "",
     failed: createError !== null,
   });
@@ -251,6 +254,7 @@ export function NewAgent() {
               error={createError}
               bodyKey={contentKey ?? "name"}
               widthClass={chrome.widthClass}
+              actionWidthClass={chrome.actionWidthClass}
               onAction={handleAction}
             >
               {content}

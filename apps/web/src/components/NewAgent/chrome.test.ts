@@ -16,6 +16,7 @@ describe("stepChrome", () => {
       disabled: true,
     });
     expect(chrome.widthClass).toBe("w-[260px]");
+    expect(chrome.actionWidthClass).toBe("w-[260px]");
   });
 
   it("enables the name action once the name is valid", () => {
@@ -53,6 +54,7 @@ describe("stepChrome", () => {
       disabled: true,
     });
     expect(chrome.widthClass).toBe("w-[672px]");
+    expect(chrome.actionWidthClass).toBe("w-[320px]");
   });
 
   it("shows no action while creating and a retry after a failure", () => {

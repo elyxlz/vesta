@@ -7,6 +7,7 @@ const NARROW = { width: 420, height: 900 };
 export default defineConfig<VisualOptions>({
   testDir: ".",
   testMatch: "capture.spec.ts",
+  globalSetup: "./global-setup.ts",
   outputDir: "../.visual/web/artifacts",
   timeout: 60000,
   fullyParallel: true,

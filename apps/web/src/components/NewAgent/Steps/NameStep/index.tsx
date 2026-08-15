@@ -1,15 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-  FieldDescription,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import { useGateway } from "@/providers/GatewayProvider";
 import { glassPill } from "../../glass";
-import { normalizeName } from "./normalize-name";
 
 export function NameStep({
   value,
@@ -22,8 +16,6 @@ export function NameStep({
 }) {
   const navigate = useNavigate();
   const { agents } = useGateway();
-  const trimmed = value.trim();
-  const normalized = normalizeName(value);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") onSubmit();
@@ -41,20 +33,14 @@ export function NameStep({
             id="agent-name"
             placeholder="name your agent"
             value={value}
+            // One word only: whitespace is dropped as it is typed or pasted.
             onChange={(e) => {
-              onChange(e.target.value);
+              onChange(e.target.value.replace(/\s+/g, ""));
             }}
             onKeyDown={handleKeyDown}
             autoFocus
             className={cn("h-14 px-6 text-center", glassPill)}
           />
-          {normalized !== trimmed && (
-            <FieldDescription className="text-center">
-              {normalized
-                ? `will be called "${normalized}"`
-                : "needs at least one letter or number"}
-            </FieldDescription>
-          )}
         </Field>
       </FieldGroup>
     </div>

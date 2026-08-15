@@ -54,16 +54,6 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     ...defaults,
-    id: "name-hint",
-    drive: async (page) => {
-      await fillName(page, "My Agent!");
-    },
-    settle: async (page) => {
-      await expect(page.getByText('will be called "my-agent"')).toBeVisible();
-    },
-  },
-  {
-    ...defaults,
     id: "name-rejected",
     // The create POST fires only after the whole flow is collected, so the
     // driver walks to creating and the 409 bounces back to the name step.

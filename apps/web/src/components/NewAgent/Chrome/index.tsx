@@ -16,6 +16,7 @@ export function Chrome({
   error,
   bodyKey,
   widthClass,
+  actionWidthClass,
   onAction,
   children,
 }: {
@@ -24,6 +25,7 @@ export function Chrome({
   error: string | null;
   bodyKey: string;
   widthClass: string;
+  actionWidthClass: string;
   onAction: (kind: ChromeActionKind) => void;
   children: ReactNode;
 }) {
@@ -31,7 +33,7 @@ export function Chrome({
   const float = floatTransition(reduced);
   const headingSwap = reduced ? fade : textSwap;
   return (
-    <div className="flex w-full flex-col items-center gap-6">
+    <div className="flex w-full flex-col items-center gap-5">
       <AnimatePresence mode="wait">
         {heading && (
           <motion.div
@@ -68,7 +70,7 @@ export function Chrome({
             layout
             key="action"
             {...float}
-            className={cn("max-w-full px-4", widthClass)}
+            className={cn("max-w-full px-4", actionWidthClass)}
           >
             <Button
               className={cn("h-12 w-full", glassAction)}

@@ -5,7 +5,7 @@ import type { ProviderResult } from "@/api/agents";
 
 type AuthStartResult =
   claudeProvider.OAuthStartResult | openaiProvider.OAuthStartResult;
-import { ChoiceStep } from "./ChoiceStep";
+import { ChoiceStep, type ChoiceVariant } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
@@ -178,6 +178,7 @@ export function ProviderPicker({
   onBack,
   className,
   defaultsOnly,
+  choiceVariant,
 }: {
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
@@ -186,6 +187,9 @@ export function ProviderPicker({
   // providers still require a model choice. Onboarding uses this mode; both values stay
   // editable afterward in AgentSettings' full picker.
   defaultsOnly?: boolean;
+  // The provider chooser's layout: "grid" is the onboarding glass-tile look,
+  // undefined keeps the compact settings look.
+  choiceVariant?: ChoiceVariant;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   // The chosen provider drives the shared model/context steps (which list to
@@ -357,7 +361,11 @@ export function ProviderPicker({
 
       <div className="w-full">
         {step === "choice" && (
-          <ChoiceStep onPick={handleChoice} manifest={manifest} />
+          <ChoiceStep
+            onPick={handleChoice}
+            manifest={manifest}
+            variant={choiceVariant}
+          />
         )}
         {step === "auth" && (
           <ProviderAuthStep
