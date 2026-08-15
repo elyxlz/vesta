@@ -43,7 +43,7 @@ export function PersonalityStep({
               isSelected && glassSelected,
             )}
           >
-            <span className="text-3xl leading-none" aria-hidden>
+            <span className="text-2xl leading-none" aria-hidden>
               {p.emoji}
             </span>
             <span className="text-sm font-semibold">{p.title}</span>
