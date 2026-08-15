@@ -1,13 +1,16 @@
-// One frosted fill shared by every onboarding surface; shape splits by size.
-// Small controls (input, buttons) are pills; large surfaces (tiles) keep
-// corner-shape squircles, which Chromium renders and other engines round.
-export const glassFrost =
-  "border border-border/50 bg-input/30 backdrop-blur-xl " +
-  "shadow-[inset_0_1px_0_0_rgb(255_255_255/0.06),0_8px_32px_rgb(0_0_0/0.08)]";
+// One frosted fill shared by every onboarding surface. glassFrost carries only
+// the inner top highlight, so cards stacked tightly (model rows) don't pool
+// each other's drop shadow. Large or isolated surfaces add the ambient lift.
+const fill = "border border-border/50 bg-input/30 backdrop-blur-xl";
+const inset = "inset_0_1px_0_0_rgb(255_255_255/0.06)";
 
-export const glassSurface = `rounded-[3rem] [corner-shape:squircle] ${glassFrost}`;
+export const glassFrost = `${fill} shadow-[${inset}]`;
 
-export const glassPill = `rounded-full ${glassFrost}`;
+const glassRaised = `${fill} shadow-[${inset},0_8px_32px_rgb(0_0_0/0.08)]`;
+
+export const glassSurface = `rounded-[3rem] [corner-shape:squircle] ${glassRaised}`;
+
+export const glassPill = `rounded-full ${glassRaised}`;
 
 export const glassHover =
   "transition-all hover:-translate-y-0.5 hover:border-border/80 hover:bg-input/50 hover:shadow-lg";
