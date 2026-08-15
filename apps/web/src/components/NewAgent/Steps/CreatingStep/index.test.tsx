@@ -27,12 +27,7 @@ function agentRow(name: string, buildPhase: AgentRow["buildPhase"]): AgentRow {
 function renderCreating(agentName: string) {
   return render(
     <MemoryRouter>
-      <CreatingStep
-        agentName={agentName}
-        done={false}
-        error={null}
-        onRetry={() => undefined}
-      />
+      <CreatingStep agentName={agentName} done={false} failed={false} />
     </MemoryRouter>,
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useNavigate } from "react-router-dom";
 import { createAgent } from "@/api";
 import {
   setProvider,
@@ -7,20 +7,22 @@ import {
   waitUntilAlive,
   type ProviderResult,
 } from "@/api/agents";
-import { stepTransition } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
+import { useManifest } from "@/hooks/use-manifest";
 import {
   loadOnboarding,
   saveOnboarding,
   clearOnboarding,
 } from "@/lib/onboarding-progress";
 import { useOnboarding } from "@/stores/use-onboarding";
-import { NameStep } from "./Steps/NameStep";
+import { NameStep, normalizeName } from "./Steps/NameStep";
 import { ProviderPicker } from "@/components/ProviderPicker";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
 import { classifyCreateFailure, isCredentialRejection } from "./create-flow";
+import { Chrome } from "./Chrome";
+import { stepChrome, type ChromeActionKind } from "./chrome";
 
 // Generous timeout — first-time setup pulls + builds the agent image.
 const START_TIMEOUT_MS = 10 * 60 * 1000;
@@ -29,6 +31,8 @@ export function NewAgent() {
   const step = useOnboarding((s) => s.step);
   const setStep = useOnboarding((s) => s.setStep);
   const navbarHeight = useLayout((s) => s.navbarHeight);
+  const navigate = useNavigate();
+  const manifest = useManifest();
   // Refreshing mid-onboarding restores the name and personality (never the credentials, which
   // stay in memory only); a resumed run re-collects the provider and skips whatever it already has.
   const [agentName, setAgentName] = useState(
@@ -43,6 +47,15 @@ export function NewAgent() {
     null,
   );
   const [createError, setCreateError] = useState<string | null>(null);
+  // Drafts the shell's single button commits: the name field's raw text and
+  // the tile selection. personality stays committed only on continue, so the
+  // resume-skip logic in nextStep keeps its meaning.
+  const [nameDraft, setNameDraft] = useState(
+    () => loadOnboarding()?.agentName ?? "",
+  );
+  const [vibeDraft, setVibeDraft] = useState<string | null>(null);
+  const selectedVibe =
+    vibeDraft ?? personality ?? manifest?.default_personality ?? "";
   // Pipeline runs for the current name; a retry treats createAgent's 409 as phase 1 already done
   // (the failed attempt made the container). A resumed refresh is such a retry, since the container
   // may already exist, so seed the count when the name was restored.
@@ -141,36 +154,50 @@ export function NewAgent() {
     return "creating";
   };
 
+  const submitName = () => {
+    const normalized = normalizeName(nameDraft);
+    if (!normalized) return;
+    if (normalized !== agentName) attemptRef.current = 0;
+    setAgentName(normalized);
+    setCreateError(null);
+    setStep(nextStep(providerResult, personality));
+  };
+
+  const handleAction = (kind: ChromeActionKind) => {
+    if (kind === "submit-name") {
+      submitName();
+    } else if (kind === "submit-vibe") {
+      setPersonality(selectedVibe);
+      setStep("creating");
+    } else if (kind === "open-chat") {
+      void navigate(`/agent/${agentName}/chat`);
+    } else {
+      setCreateError(null);
+    }
+  };
+
   const content = (() => {
     if (step === "provider")
       return (
-        <div className="flex flex-col items-center gap-3">
-          <ProviderPicker
-            defaultsOnly
-            onDone={(result) => {
-              // The picker handles OAuth/key + defaults internally and hands
-              // back a complete result; forward it verbatim to setProvider.
-              // Model/context stay editable later in AgentSettings.
-              setProviderResult(result);
-              setCreateError(null);
-              setStep(nextStep(result, personality));
-            }}
-            onBack={() => setStep("name")}
-          />
-          {createError && (
-            <p className="text-xs text-destructive text-center px-4">
-              {createError}
-            </p>
-          )}
-        </div>
+        <ProviderPicker
+          defaultsOnly
+          onDone={(result) => {
+            // The picker handles OAuth/key + defaults internally and hands
+            // back a complete result; forward it verbatim to setProvider.
+            // Model/context stay editable later in AgentSettings.
+            setProviderResult(result);
+            setCreateError(null);
+            setStep(nextStep(result, personality));
+          }}
+          onBack={() => setStep("name")}
+        />
       );
     if (step === "personality")
       return (
         <PersonalityStep
-          onPicked={(name) => {
-            setPersonality(name);
-            setStep("creating");
-          }}
+          personalities={manifest?.personalities ?? null}
+          selected={selectedVibe}
+          onPick={setVibeDraft}
         />
       );
     if (step === "creating" || step === "done")
@@ -178,20 +205,14 @@ export function NewAgent() {
         <CreatingStep
           agentName={agentName}
           done={step === "done"}
-          error={createError}
-          onRetry={() => setCreateError(null)}
+          failed={createError !== null}
         />
       );
     return (
       <NameStep
-        initialName={agentName}
-        initialError={createError}
-        onNamed={(name) => {
-          if (name !== agentName) attemptRef.current = 0;
-          setAgentName(name);
-          setCreateError(null);
-          setStep(nextStep(providerResult, personality));
-        }}
+        value={nameDraft}
+        onChange={setNameDraft}
+        onSubmit={submitName}
       />
     );
   })();
@@ -199,6 +220,13 @@ export function NewAgent() {
   // "creating" and "done" share one mounted screen so the orb is continuous:
   // the same Orb lerps busy -> alive instead of remounting cold.
   const contentKey = step === "done" ? "creating" : step;
+
+  const chrome = stepChrome({
+    step: step ?? "name",
+    nameValid: normalizeName(nameDraft) !== "",
+    vibeReady: manifest !== undefined && selectedVibe !== "",
+    failed: createError !== null,
+  });
 
   // The step scrolls when it can't fit (a short screen + the tall personality
   // grid) instead of clipping. m-auto centers the child when it fits and pins it
@@ -216,11 +244,16 @@ export function NewAgent() {
           }}
         >
           <div className="m-auto flex w-full justify-center">
-            <AnimatePresence mode="wait">
-              <motion.div key={contentKey} {...stepTransition}>
-                {content}
-              </motion.div>
-            </AnimatePresence>
+            <Chrome
+              heading={chrome.heading}
+              action={chrome.action}
+              error={createError}
+              bodyKey={contentKey ?? "name"}
+              widthClass={chrome.widthClass}
+              onAction={handleAction}
+            >
+              {content}
+            </Chrome>
           </div>
         </div>
       </div>
