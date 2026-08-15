@@ -1,0 +1,6 @@
+{
+  "PreToolUse": [
+    { "matcher": "Write|Edit", "script": "scripts/tmp_ref_guard.py" },
+    { "matcher": "Bash", "script": "scripts/blind_mutation_guard.py" }
+  ]
+}

@@ -1,5 +1,6 @@
 """Prepare Claude Code's user-scoped runtime files before the first SDK session."""
 
+import json
 import os
 import pathlib as pl
 import shutil
@@ -121,6 +122,96 @@ def _clear_daemon_records(daemons_dir: pl.Path) -> None:
             record.unlink(missing_ok=True)
 
 
+HOOKS_DECLARATION = "hooks.json"
+
+
+def _declared_hooks(skill_dir: pl.Path) -> dict[str, list[tuple[str, str]]]:
+    """Read one skill's `hooks.json` as {event: [(matcher, absolute command)]}.
+
+    The declaration names a script RELATIVE to its own skill, because a skill cannot know where it
+    will be installed and a hardcoded path is the classic way a hook becomes a no-op on another
+    box. A declared script that is not on disk is dropped with a warning for the same reason: a
+    hook whose command does not exist fails silently and reads exactly like a guard that agreed.
+    """
+    declaration = skill_dir / HOOKS_DECLARATION
+    if not declaration.is_file():
+        return {}
+    try:
+        raw = json.loads(declaration.read_text())
+    except (OSError, ValueError) as exc:
+        logger.warning(f"ignoring {declaration}: {exc}")
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning(f"ignoring {declaration}: expected an object of event -> entries")
+        return {}
+
+    declared: dict[str, list[tuple[str, str]]] = {}
+    for event, entries in raw.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            script, matcher = entry.get("script"), entry.get("matcher")
+            if not isinstance(script, str) or not isinstance(matcher, str):
+                continue
+            target = skill_dir / script
+            if not target.is_file():
+                logger.warning(f"{declaration} names {script}, which is not on disk: not wiring it")
+                continue
+            declared.setdefault(event, []).append((matcher, f"python3 {target}"))
+    return declared
+
+
+def _merge_skill_hooks(settings_path: pl.Path, skill_dirs: list[pl.Path]) -> None:
+    """Wire every active skill's declared hooks into settings.json, additively and idempotently.
+
+    Before this, a skill that shipped a PreToolUse guard also shipped a paragraph telling each
+    agent to hand-edit `~/.claude/settings.json`, and the writer above only creates that file when
+    it is ABSENT, so on every existing box the guard stayed inert while the skill read as installed.
+    That is the same silent-no-op shape the guards themselves exist to catch, one layer up.
+
+    Merging is add-only and keyed by command, so a hand-written entry is never touched, a user who
+    deliberately deletes a hook gets it back on the next boot (the declaration is the source of
+    truth), and running this twice changes nothing the second time.
+    """
+    try:
+        settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+    except (OSError, ValueError) as exc:
+        logger.warning(f"leaving {settings_path} alone: {exc}")
+        return
+    if not isinstance(settings, dict):
+        return
+
+    hooks = settings.get("hooks")
+    hooks = hooks if isinstance(hooks, dict) else {}
+    added = 0
+    for skill_dir in skill_dirs:
+        for event, entries in _declared_hooks(skill_dir).items():
+            bucket = hooks.get(event)
+            bucket = bucket if isinstance(bucket, list) else []
+            wired = {
+                hook.get("command")
+                for group in bucket
+                if isinstance(group, dict)
+                for hook in (group.get("hooks") if isinstance(group.get("hooks"), list) else [])
+                if isinstance(hook, dict)
+            }
+            for matcher, command in entries:
+                if command in wired:
+                    continue
+                bucket.append({"matcher": matcher, "hooks": [{"type": "command", "command": command}]})
+                wired.add(command)
+                added += 1
+            hooks[event] = bucket
+
+    if not added:
+        return
+    settings["hooks"] = hooks
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    logger.client(f"wired {added} skill-declared hook(s) into {settings_path}")
+
+
 def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
     """Seed active skills, rebuild their symlinks, link the vestad helpers, clear stale daemon records, and ensure Claude's default settings.
 
@@ -147,3 +238,6 @@ def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
     settings = claude_dir / "settings.json"
     if not settings.exists():
         settings.write_text('{"permissions":{"allow":[]}}\n')
+    _merge_skill_hooks(
+        settings, [config.agent_dir / "skills" / name for name in active] + [config.agent_dir / "core/skills" / name for name in active]
+    )
