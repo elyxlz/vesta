@@ -1,0 +1,33 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import { test } from "./test-options";
+import { SCENARIOS } from "./scenarios";
+import { installSyncSocket } from "./harness/sync-fixtures";
+import { installGatewayMocks } from "./harness/http-fixtures";
+import { seedStorage } from "./harness/storage";
+
+const OUT_DIR = path.resolve(import.meta.dirname, "../.visual/web");
+
+test.beforeAll(() => {
+  mkdirSync(OUT_DIR, { recursive: true });
+});
+
+for (const scenario of SCENARIOS) {
+  test(scenario.id, async ({ page, theme }, testInfo) => {
+    await seedStorage(page, theme);
+    await installSyncSocket(page, scenario.deltas);
+    await installGatewayMocks(page, {
+      agentStatus: scenario.agentStatus,
+      createResponse: scenario.createResponse,
+    });
+    await page.goto("/new");
+    await scenario.drive(page);
+    await scenario.settle(page);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await page.screenshot({
+      path: path.join(OUT_DIR, `${scenario.id}--${testInfo.project.name}.png`),
+      animations: "disabled",
+      caret: "hide",
+    });
+  });
+}
