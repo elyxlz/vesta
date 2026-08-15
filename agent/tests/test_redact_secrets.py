@@ -940,6 +940,57 @@ def test_scan_reports_a_clean_channel_store_as_scanned_and_green(tmp_path, event
     assert coverage and "scanned" in coverage[0]
 
 
+def _seed_lid_identity_columns(path: pl.Path, content: str) -> None:
+    """The same LID in every identity column of a whatsapp-shaped store, suffix stripped exactly as
+    the real stores hold it, plus one message body the caller controls."""
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO chats VALUES (?, ?)", (WHATSAPP_LID, WHATSAPP_LID))
+    conn.execute("INSERT INTO messages VALUES ('m2', ?, ?, ?, '2026-01-02')", (WHATSAPP_LID, WHATSAPP_LID, content))
+    conn.execute("INSERT INTO messages_fts(rowid, content, chat_name, sender) VALUES (2, ?, ?, ?)", (content, WHATSAPP_LID, WHATSAPP_LID))
+    conn.commit()
+    conn.close()
+
+
+def test_scan_does_not_read_a_suffix_stripped_lid_in_an_identity_column_as_a_card(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A LID kept without its `@lid` suffix passes the IIN gate and Luhn, so the suffix guard cannot
+    fire and every identity column holding it reports as a payment card."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, "see you at dinner tonight")
+    _seed_lid_identity_columns(path, "on my way")
+    assert redact.find_matches(WHATSAPP_LID) != []  # guard: bare, it IS flagged
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "No secrets found." in out
+
+
+def test_scan_still_flags_a_secret_in_a_content_column_of_an_identity_bearing_row(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """Skipping identity columns must not blind the row they belong to."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, "see you at dinner tonight")
+    _seed_lid_identity_columns(path, f"here is my aws key {SECRET}")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "whatsapp:messages:2|" in out
+    assert SECRET not in out
+
+
+def test_scrub_leaves_the_identity_columns_the_history_is_keyed_by_intact(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, "see you at dinner tonight")
+    _seed_lid_identity_columns(path, f"here is my aws key {SECRET}")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", "whatsapp:messages:2"])
+
+    assert redact.main() == 0
+
+    conn = sqlite3.connect(path)
+    chat_jid, sender, content = conn.execute("SELECT chat_jid, sender, content FROM messages WHERE id = 'm2'").fetchone()
+    conn.close()
+    assert (chat_jid, sender) == (WHATSAPP_LID, WHATSAPP_LID)
+    assert SECRET not in content and "[REDACTED]" in content
+
+
 def test_scan_lists_an_absent_store_so_the_scope_is_visible(tmp_path, event_bus, db_conn, monkeypatch, capsys):
     monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
 
