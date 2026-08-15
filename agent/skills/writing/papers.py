@@ -1,4 +1,4 @@
-"""Paper search + PDF fetch helpers for essay-iter.
+"""Paper search + PDF fetch helpers for the writing skill's academic tier.
 
 Backend: **OpenAlex** (https://api.openalex.org). Fully open, no key
 required, ~250M works indexed, generous rate limits (~10 req/sec public,
@@ -9,13 +9,13 @@ Fallback for full-text PDFs: **Anna's Archive** (https://annas-archive.org)
 mirror of LibGen + Sci-Hub. DOI lookup at `/scidb/<doi>/`. Used only when
 OpenAlex's `open_access.oa_url` is missing.
 
-Use cases inside essay-iter:
-  * Phase 1 (background reading): search OpenAlex + walk references and
-    citations to assemble the corpus.
-  * Phase 2 (citation feasibility): for each named source in the outline,
-    verify it exists via OpenAlex DOI/title lookup; pull abstract for
-    CoVe-style independent verification.
-  * Phase 3 (citation reviewer): when an abstract is not enough to verify
+Use cases inside the academic tier:
+  * Approach session (background reading): search OpenAlex + walk references
+    and citations to assemble the corpus.
+  * Outline check (citation feasibility): for each named source in the
+    outline, verify it exists via OpenAlex DOI/title lookup; pull abstract
+    for CoVe-style independent verification.
+  * Citation reviewer: when an abstract is not enough to verify
     a draft claim, fetch the full PDF (open-access first, Anna's Archive
     second), read the cited section directly. Catches citation inversion.
 

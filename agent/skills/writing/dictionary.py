@@ -45,7 +45,7 @@ Register = Literal["academic", "casual", "formal"]
 
 DATAMUSE_BASE = "https://api.datamuse.com"
 DEFAULT_TIMEOUT = (4.0, 8.0)
-USER_AGENT = "vesta-essay-iter/1.0"
+USER_AGENT = "vesta-writing/1.0"
 
 # Default banned-vocabulary list (the AI-detector tells we already track in
 # SKILL.md). Extend per essay if needed.
