@@ -33,7 +33,7 @@ export function Chrome({
   const float = floatTransition(reduced);
   const headingSwap = reduced ? fade : textSwap;
   return (
-    <div className="flex w-full flex-col items-center gap-5">
+    <div className="flex w-full flex-col items-center gap-4">
       <AnimatePresence mode="wait">
         {heading && (
           <motion.div
