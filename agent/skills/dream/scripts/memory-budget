@@ -1,36 +1,20 @@
 #!/usr/bin/env bash
 # memory-budget [--soft N] [<git-ref>]
 #
-# Answers the question the nightly trim never answers: WHAT GREW, and where does the mass sit?
+# Says WHAT grew in MEMORY.md and WHERE the mass sits: the size against the cap, the delta since
+# the last commit that touched the file (or the given ref), the lines added in that window longest
+# first (those are the trim candidates, and git already knows which they are), and a per-section
+# breakdown so the cutting goes where the mass is.
 #
-# Why this exists. On one box MEMORY.md sat at 97-99% of its cap for five consecutive nights. Every
-# dream trimmed it, every following day put the characters back: measured growth was roughly 400 to
-# 700 chars/day against a dream that cut about 2000, so the file was a sawtooth riding the ceiling,
-# one busy day away from overflow. Five nights of "consolidate harder" is a rule that demonstrably
-# does not hold. The dream skill asks every agent to curate MEMORY.md and hands it a single number
-# to do it with, which says the file is too big but not which part got bigger. So: a tool.
+# Exit 0 under the soft budget (default 92% of the cap), 1 over it or over the hard cap, 2 on a
+# usage or environment error. The nonzero exit is the point: gate additions on it with
+# `memory-budget && <add the line>`, so the budget sits on the same chain as the work.
 #
-# It does three things a size number cannot:
-#   1. Names the DELTA since the last commit that touched the file, i.e. today's growth, so an
-#      addition has to be justified the same night it is made instead of discovered a week later.
-#   2. Prints the lines ADDED in that window, longest first. Curation used to mean rereading 48000
-#      characters looking for fat. The lines that arrived today ARE the fat, and git already knows
-#      which they are.
-#   3. Breaks the file down by section, so the trim goes where the mass is, not where attention is.
-#
-# The soft budget has teeth on purpose: exit 1 above it. A tool that only informs gets read and
-# ignored; the failure has to sit on the same chain as the work (`memory-budget && ...`). Default
-# soft budget is 92% of the real cap, leaving genuine headroom rather than the one-bad-day margin
-# that 96% buys.
-#
-# Neither the cap NOR the current size is computed here. Both are parsed out of the output of the
-# dream skill's memory_size.sh, which owns them. A second copy of a constant is a constant that
-# drifts, and so is a second way of measuring: if this script counted the file itself it would
-# eventually disagree with the number the rest of the skill prints, and two disagreeing sizes are
-# worse than one imperfect one. The delta below therefore counts with `LC_ALL=C.UTF-8 wc -m`, the
-# same unit memory_size.sh uses, so headline and growth are always in the same currency.
-#
-# Exit 0 under the soft budget, 1 over it (or over the hard cap), 2 on a usage/environment error.
+# Neither the cap nor the current size is computed here. Both are parsed out of the output of the
+# dream skill's memory_size.sh, which owns them: a second copy of a constant drifts, and a second
+# way of measuring eventually disagrees with the number the rest of the skill prints. The delta
+# below counts with `LC_ALL=C.UTF-8 wc -m`, the same unit, so headline and growth are always in
+# the same currency.
 
 set -uo pipefail
 
@@ -113,14 +97,18 @@ else
 fi
 
 # --- where the mass sits -----------------------------------------------------
-# Per top-level section. Curation should go where the characters are, and they are never spread
-# evenly: two sections have consistently held two thirds of the file.
+# Per top-level section. Percentages divide by awk's own whole-file sum, not the headline char
+# count: awk's length() is bytes under mawk and the C locale, so dividing by a character total
+# makes the column sum past 100% on non-Latin text. One measurer per table keeps it honest.
 echo
 echo "by section:"
-awk -v total="$chars" '
-  /^## /{ if (s != "") printf "  %6d  %2d%%  %s\n", c, c*100/total, s; s=$0; c=0 }
-  { c += length($0) + 1 }
-  END { if (s != "") printf "  %6d  %2d%%  %s\n", c, c*100/total, s }
+LC_ALL=C.UTF-8 awk '
+  /^## /{ if (s != "") { sec[++i] = s; cnt[i] = c } s=$0; c=0 }
+  { c += length($0) + 1; t += length($0) + 1 }
+  END {
+    if (s != "") { sec[++i] = s; cnt[i] = c }
+    for (j = 1; j <= i; j++) printf "  %6d  %2d%%  %s\n", cnt[j], cnt[j]*100/t, sec[j]
+  }
 ' "$f"
 
 echo
