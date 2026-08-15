@@ -267,7 +267,9 @@ def test_the_documented_checkpoint_lookup_finds_a_differently_worded_commit(tmp_
     tree while reporting success."""
     skill = SCRIPT.parents[1] / "SKILL.md"
     line = next(ln for ln in skill.read_text().splitlines() if "--grep" in ln and "checkpoint" in ln)
-    pattern = re.search(r"--grep '([^']+)'", line).group(1)
+    match = re.search(r"--grep '([^']+)'", line)
+    assert match is not None, "the skill no longer documents the checkpoint lookup as a --grep"
+    pattern = match.group(1)
 
     repo = tmp_path / "repo"
     repo.mkdir()
