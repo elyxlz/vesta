@@ -37,12 +37,12 @@ exact call that stalled, while terminating early leaves you with "it hung" and s
 a block that is not there. Once you have seen it on a box, reach for **`browser navigate <url>`**,
 which skips tab creation and returns at once.
 
-**When a button does nothing, read the click's own output first.** `browser click <ref>` reports
-what was topmost at the point it clicked when that is not your element (`# e14 is covered by
-<div.modal-wrap>, which took the click instead.`). That line means an invisible overlay ate it, and
-every retry, every coordinate fallback and every theory about validation is wasted until it is
-dismissed. A modal can be absent from `innerText` and still sit over an enabled button. See
-[interaction-skills/clicking.md](interaction-skills/clicking.md).
+**When a button does nothing, check the click's exit code first.** `browser click <ref>` exits
+non-zero and names what was topmost at the point it clicked when that is not your element, on
+stderr (`e14 is covered by <div.modal-wrap>, which took the click instead.`). That means an
+invisible overlay ate it, and every retry, every coordinate fallback and every theory about
+validation is wasted until it is dismissed. A modal can be absent from `innerText` and still sit
+over an enabled button. See [interaction-skills/clicking.md](interaction-skills/clicking.md).
 
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
 
