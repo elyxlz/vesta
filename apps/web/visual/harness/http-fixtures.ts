@@ -129,6 +129,48 @@ export const MANIFEST: Manifest = {
   ],
 };
 
+// Small DTO duplicated from the src OpenRouter module, like Manifest above.
+interface OpenRouterModelOption {
+  slug: string;
+  label: string;
+  author: string;
+  context_length?: number;
+  input_price?: number | null;
+  output_price?: number | null;
+}
+
+export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
+  {
+    slug: "anthropic/claude-sonnet-5",
+    label: "Claude Sonnet 5",
+    author: "Anthropic",
+    context_length: 200000,
+    input_price: 3,
+    output_price: 15,
+  },
+  {
+    slug: "openai/gpt-5.2",
+    label: "GPT 5.2",
+    author: "OpenAI",
+    context_length: 200000,
+    input_price: 2.5,
+    output_price: 10,
+  },
+  {
+    slug: "moonshotai/kimi-k2",
+    label: "Kimi K2",
+    author: "MoonshotAI",
+    context_length: 131072,
+    input_price: 0.6,
+    output_price: 2.5,
+  },
+];
+
+export const OAUTH_START = {
+  auth_url: "https://claude.ai/oauth/authorize?visual-fixture",
+  session_id: "visual-oauth-session",
+};
+
 export interface GatewayMockOptions {
   agentStatus: AgentStatus;
   createResponse: { status: number; body: { error: string } } | null;
@@ -144,6 +186,15 @@ export async function installGatewayMocks(
     route.fulfill({ json: {} }),
   );
   await page.route("**/manifest", (route) => route.fulfill({ json: MANIFEST }));
+  await page.route("**/providers/claude/oauth/start", (route) =>
+    route.fulfill({ json: OAUTH_START }),
+  );
+  await page.route("**/providers/openrouter/validate-key", (route) =>
+    route.fulfill({ json: {} }),
+  );
+  await page.route("**/providers/openrouter/models/top", (route) =>
+    route.fulfill({ json: OPENROUTER_MODELS }),
+  );
   await page.route(`**/agents/${AGENT}`, (route) =>
     route.fulfill({ json: { status: opts.agentStatus } }),
   );

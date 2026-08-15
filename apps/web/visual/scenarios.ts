@@ -92,6 +92,50 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     ...defaults,
+    id: "provider-oauth",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("Claude", { exact: true }).click();
+    },
+    settle: async (page) => {
+      await expect(page.getByText("sign in to claude")).toBeVisible();
+      await expect(page.getByPlaceholder("paste code here")).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
+    id: "provider-model",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await page.getByText("OpenRouter", { exact: true }).click();
+      await page.getByPlaceholder("sk-or-v1-...").fill("sk-or-v1-visual");
+      await page.getByRole("button", { name: "next" }).click();
+    },
+    settle: async (page) => {
+      await expect(page.getByText("pick a model")).toBeVisible();
+      await expect(page.getByText("Claude Sonnet 5")).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
+    id: "personality-default",
+    drive: async (page) => {
+      await fillName(page, AGENT);
+      await submitName(page);
+      await crossProvider(page);
+      await expect(page.getByText("pick a vibe")).toBeVisible();
+    },
+    settle: async (page) => {
+      await expect(page.getByRole("button", { name: /dry/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    },
+  },
+  {
+    ...defaults,
     id: "personality-selected",
     drive: async (page) => {
       await fillName(page, AGENT);
@@ -115,6 +159,15 @@ export const SCENARIOS: Scenario[] = [
       await expect(
         page.getByText("downloading the agent image..."),
       ).toBeVisible();
+    },
+  },
+  {
+    ...defaults,
+    id: "creating-starting",
+    deltas: [agentDelta(AGENT, startingAgent("starting"))],
+    drive: toCreating,
+    settle: async (page) => {
+      await expect(page.getByText("starting up...")).toBeVisible();
     },
   },
   {
