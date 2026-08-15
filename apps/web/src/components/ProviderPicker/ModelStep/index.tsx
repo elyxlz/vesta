@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { SearchIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
@@ -168,16 +168,19 @@ function ClaudeModelPicker({
   onSelect: (slug: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const tileBase =
+    "flex cursor-pointer items-center justify-center rounded-2xl [corner-shape:squircle] p-3 text-center text-sm font-medium";
   return (
     <div className="flex w-full flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2">
+      {/* Opus, Sonnet, and a third tile that expands the full live list. */}
+      <div className="grid grid-cols-3 gap-2">
         {CLAUDE_ALIASES.map((a) => (
           <button
             key={a.slug}
             type="button"
             onClick={() => onSelect(a.slug)}
             className={cn(
-              "cursor-pointer rounded-2xl [corner-shape:squircle] p-3 text-center text-sm font-medium",
+              tileBase,
               glassFrost,
               glassHover,
               model === a.slug && glassSelected,
@@ -186,14 +189,25 @@ function ClaudeModelPicker({
             {a.label}
           </button>
         ))}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className={cn(
+            tileBase,
+            "gap-1 text-muted-foreground",
+            glassFrost,
+            glassHover,
+          )}
+        >
+          {expanded ? (
+            <ChevronUpIcon className="size-4" />
+          ) : (
+            <ChevronDownIcon className="size-4" />
+          )}
+          {expanded ? "fewer" : "more"}
+        </button>
       </div>
-      <button
-        type="button"
-        className="self-center text-[11px] text-muted-foreground hover:text-foreground transition"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        {expanded ? "← fewer models" : "more models →"}
-      </button>
       {expanded && (
         <ModelCardList
           models={liveModels ?? []}
