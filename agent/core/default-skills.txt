@@ -14,6 +14,7 @@ onboard
 personality
 proactive-check
 recall
+reminders
 restart
 vestad
 skills-registry

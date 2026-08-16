@@ -87,7 +87,8 @@ def _migrate_metadata_to_files(data_dir: Path, conn: sqlite3.Connection):
 def _migrate_v1_to_v2(conn: sqlite3.Connection, data_dir: Path):
     """v1 -> v2: Create reminders table, drop notified_thresholds, import old reminders."""
 
-    # Create reminders table
+    # LEGACY(remove-when: all fleet agents past the release that shipped the reminders skill): dormant
+    # reminders table + its migrations, read once by the reminders skill's import then never again.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS reminders (
             id TEXT PRIMARY KEY,

@@ -33,16 +33,6 @@ def rel_delta(delta: timedelta) -> str:
     return f"{round(seconds / 604800)}w"
 
 
-def rel_time(iso: str | None, now: datetime) -> str:
-    """An instant relative to now: 'in 3h', '2d ago', '-' when unset."""
-    if not iso:
-        return "-"
-    instant = parse_datetime(iso)
-    if instant >= now:
-        return f"in {rel_delta(instant - now)}"
-    return f"{rel_delta(now - instant)} ago"
-
-
 def _due_col(iso: str | None, now: datetime) -> str:
     if not iso:
         return "-"
@@ -65,21 +55,3 @@ def format_task_list(tasks: list[dict[str, Any]], now: datetime | None = None) -
         f"{'[parked] ' if _pick(t, 'backburner', False) else ''}{_trunc(_pick(t, 'subject'), 80)}"
         for t in tasks
     )
-
-
-def format_reminder_list(reminders: list[dict[str, Any]], now: datetime | None = None) -> str:
-    """One line per reminder: next_run  id  schedule  message (task=<id> if linked)."""
-    if not reminders:
-        return "(no reminders)"
-    now = now or datetime.now(UTC)
-    rows = []
-    for r in reminders:
-        suffix = f"\ttask={r['task_id']}" if _pick(r, "task_id", None) else ""
-        fired = "[fired] " if _pick(r, "status", None) == "completed" else ""
-        rows.append(
-            f"{rel_time(_pick(r, 'next_run', None), now)}\t"
-            f"{_pick(r, 'id')}\t"
-            f"{_trunc(_pick(r, 'schedule', None), 40)}\t"
-            f"{fired}{_trunc(_pick(r, 'message'), 80)}{suffix}"
-        )
-    return "\n".join(rows)

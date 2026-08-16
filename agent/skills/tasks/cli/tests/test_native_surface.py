@@ -1,6 +1,5 @@
-"""The native-task-tool surface: closing with `completed`, the `in_progress` open status, and that
-adding it never strands a task's reminders. CLI-level spellings (`create`, `--subject`) live in
-test_e2e.py alongside the other subprocess tests."""
+"""The native-task-tool surface: closing with `completed` and the `in_progress` open status.
+CLI-level spellings (`create`, `--subject`) live in test_e2e.py alongside the other subprocess tests."""
 
 import sqlite3
 from contextlib import closing

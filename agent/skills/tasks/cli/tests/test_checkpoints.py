@@ -160,15 +160,6 @@ def test_reopening_resumes_the_ladder(tmp_config: Config, tmp_path: Path):
     assert commands.fire_due_checkpoints(tmp_config, notif_dir, now=datetime.now(UTC) + timedelta(hours=1, minutes=1)) == 1
 
 
-def test_done_clears_linked_reminders(tmp_config: Config):
-    task = _add_task_due_in(tmp_config, "with reminder", timedelta(days=2))
-    commands.remind_set(tmp_config, commands.ReminderSpec(message="hand-written checkpoint", in_hours=1, task_id=task["id"]))
-
-    commands.update_task(tmp_config, task_id=task["id"], status="completed")
-
-    assert commands.remind_list(tmp_config, task_id=task["id"], show_completed=True) == []
-
-
 # ---------------------------------------------------------------------------
 # v7 -> v8 migration
 # ---------------------------------------------------------------------------

@@ -1,16 +1,14 @@
-"""Unit tests for recurring reminder scheduling: preset + cron triggers, DST safety, and migration."""
+"""Unit tests for recurring reminder scheduling: preset + cron triggers and DST safety."""
 
 import json
-import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-from tasks_cli import commands, db
-from tasks_cli.config import Config
+from reminders_cli import commands, db
+from reminders_cli.config import Config
 
 
 def _trigger_data(config: Config, reminder_id: str) -> dict:
@@ -198,100 +196,12 @@ def test_cron_invalid_expression_rejected(tmp_config: Config):
 
 
 def test_cron_reminder_restores_into_scheduler(tmp_config: Config):
-    from tasks_cli.scheduler import create_scheduler
+    from reminders_cli.scheduler import create_scheduler
 
     result = commands.remind_set(tmp_config, commands.ReminderSpec(message="weekday standup", cron="0 9 * * 1-5", tz="America/New_York"))
     scheduler = create_scheduler()
     commands.restore_all_jobs(tmp_config, scheduler, notif_dir=None)
     assert {job.id for job in scheduler.get_jobs()} == {result["id"]}
-
-
-# ---------------------------------------------------------------------------
-# Migration v2 -> v3: legacy UTC-baked cron rows become {expr, tz:"UTC"}
-# ---------------------------------------------------------------------------
-
-
-def _make_v2_db(data_dir: Path) -> sqlite3.Connection:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(data_dir / "tasks.db")
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-    conn.execute(
-        "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT, priority INTEGER, "
-        "due_date TEXT, created_at TEXT, completed_at TEXT)"
-    )
-    conn.execute(
-        "CREATE TABLE reminders (id TEXT PRIMARY KEY, task_id TEXT, message TEXT NOT NULL, schedule_type TEXT, "
-        "scheduled_time TEXT, completed INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP, "
-        "trigger_data TEXT, auto_generated INTEGER DEFAULT 0)"
-    )
-    return conn
-
-
-def _read_trigger(data_dir: Path, rid: str) -> dict:
-    with closing(db.get_db(data_dir)) as conn:
-        return json.loads(conn.execute("SELECT trigger_data FROM reminders WHERE id = ?", (rid,)).fetchone()["trigger_data"])
-
-
-def test_migration_v2_to_v3_rewrites_legacy_cron(tmp_path: Path):
-    data_dir = tmp_path / "tasks"
-    conn = _make_v2_db(data_dir)
-    legacy = [
-        ("daily1", {"type": "cron", "hour": 9, "minute": 0}),
-        ("weekly1", {"type": "cron", "day_of_week": "fri", "hour": 17, "minute": 0}),
-        ("monthly1", {"type": "cron", "day": 15, "hour": 9, "minute": 0}),
-        ("interval1", {"type": "interval", "hours": 1}),
-        ("date1", {"type": "date", "run_date": "2026-01-01T00:00:00+00:00"}),
-    ]
-    for rid, data in legacy:
-        conn.execute("INSERT INTO reminders (id, message, trigger_data) VALUES (?, ?, ?)", (rid, rid, json.dumps(data)))
-    conn.commit()
-    conn.close()
-
-    db.init_db(data_dir)
-
-    assert _read_trigger(data_dir, "daily1") == {"type": "cron", "expr": "0 9 * * *", "tz": "UTC"}
-    assert _read_trigger(data_dir, "weekly1") == {"type": "cron", "expr": "0 17 * * fri", "tz": "UTC"}
-    assert _read_trigger(data_dir, "monthly1") == {"type": "cron", "expr": "0 9 15 * *", "tz": "UTC"}
-    assert _read_trigger(data_dir, "interval1") == {"type": "interval", "hours": 1}  # non-cron untouched
-    assert _read_trigger(data_dir, "date1") == {"type": "date", "run_date": "2026-01-01T00:00:00+00:00"}
-    with closing(db.get_db(data_dir)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db.SCHEMA_VERSION
-
-
-def test_migration_preserves_firing_instant(tmp_path: Path):
-    """A migrated legacy cron reminder must fire at the exact same UTC instant it did before."""
-    data_dir = tmp_path / "tasks"
-    conn = _make_v2_db(data_dir)
-    conn.execute(
-        "INSERT INTO reminders (id, message, trigger_data) VALUES (?, ?, ?)",
-        ("daily1", "standup", json.dumps({"type": "cron", "hour": 9, "minute": 30})),
-    )
-    conn.commit()
-    conn.close()
-
-    db.init_db(data_dir)
-    data = _read_trigger(data_dir, "daily1")
-    trigger = CronTrigger.from_crontab(data["expr"], timezone=ZoneInfo(data["tz"]))
-    nxt = trigger.get_next_fire_time(None, datetime(2026, 6, 1, 0, 0, tzinfo=UTC)).astimezone(UTC)
-    assert (nxt.hour, nxt.minute) == (9, 30)
-
-
-def test_migration_is_idempotent(tmp_path: Path):
-    data_dir = tmp_path / "tasks"
-    conn = _make_v2_db(data_dir)
-    conn.execute(
-        "INSERT INTO reminders (id, message, trigger_data) VALUES (?, ?, ?)",
-        ("daily1", "standup", json.dumps({"type": "cron", "hour": 9, "minute": 0})),
-    )
-    conn.commit()
-    conn.close()
-
-    db.init_db(data_dir)
-    first = _read_trigger(data_dir, "daily1")
-    db.init_db(data_dir)  # second run must not touch already-migrated rows
-    assert _read_trigger(data_dir, "daily1") == first == {"type": "cron", "expr": "0 9 * * *", "tz": "UTC"}
 
 
 # ---------------------------------------------------------------------------

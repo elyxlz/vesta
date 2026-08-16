@@ -1,0 +1,78 @@
+---
+name: reminders
+description: Time-based nudges and alarms; remind the user or yourself to do something at a set time or on a repeating schedule (one-shot, daily/weekly/monthly/cron). Not for tracked to-dos, which are the tasks skill. Requires daemon.
+---
+
+# Reminders (CLI: remind)
+
+A reminder is a standalone nudge that fires at a time or on a schedule: "take meds at 08:00", "stand-up every weekday at 09:30". The daemon holds the schedule and writes a notification when a reminder fires. The message is an instruction to act on when it arrives.
+
+The message is the first argument to `remind`; there is no create/add/set subcommand.
+
+```bash
+remind "Call mom" --in-minutes 30
+remind "Take meds" --at "2026-12-01T08:00:00" --tz "Europe/London"
+remind "Stand-up" --recurring daily --at "09:30" --tz "America/New_York"   # daily takes a bare time
+remind "Contraceptive" --recurring daily --at "23:00" --tz "Europe/Rome"
+remind "Evening check-in" --recurring daily --at "21:30" --tz "Europe/Rome" --fuzz-minutes 75
+remind "Weekdays 9am" --cron "0 9 * * 1-5" --tz "America/New_York"
+remind list [--show-completed]              # --show-completed reveals fired one-shots too
+remind snooze <id> --in-hours 4             # fire 4h from NOW; works on already-fired ones too
+remind snooze <id> --at "2026-12-01T17:00:00" --tz "Europe/London"   # move it to a specific time
+remind update <id> --message "..."
+remind delete <id>
+```
+
+- One-shot: `--in-minutes/--in-hours/--in-days` (relative) or `--at` + `--tz` (absolute, both required). Always use the user's IANA timezone from MEMORY.md, never UTC.
+- Recurring: `--recurring hourly|daily|weekly|monthly|yearly` (all but hourly need `--at` + `--tz`; daily accepts a bare time like `--at "21:30"`, the others take their weekday or day from the date), or `--cron "min hour dom month dow"` + `--tz` for anything else (standard cron: 0/7 = Sunday, ranges/lists/steps/names supported). Both keep their wall-clock time across DST.
+- `--fuzz-minutes N` (recurring/cron only): each fire lands at a varying point within N minutes either side of the nominal time, so a routine feels natural instead of firing at 09:30:00 sharp every day. Translate vague times yourself: "late evening" is roughly `--at "21:30:00" --fuzz-minutes 75`. Use fuzz for human-facing rhythms, never for a hard deadline; it must fit within half the gap between fires.
+- A recurring reminder's message is an instruction: when it fires, act on it. Recurring reminders double as scheduled automations.
+- Snooze says when two ways, one per call: `--in-*` counts from now, `--at` + `--tz` names the moment. The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
+- `list` prints a compact table (`--show-completed` includes fired one-shots); the table shows the first 50, and `--json`/`--json-pretty` list all unless `--limit` is given.
+
+## When a reminder needs more than a sentence: staged files
+
+A reminder whose job carries real material (a draft, a verified list, a decision and its reasons) should keep that material in a file and name the file in its message. The reminder is the trigger; the file is the answer. A reminder always names its OWN file. The split works, and it rots in specific ways, each with a cheap fix.
+
+- **The file wins.** When the reminder text and its file disagree, believe the file. That rule lives here, so the message does not have to carry it: the message was written once, the file is the thing you keep editing.
+- **Write the file as dated blocks, newest at the TOP.** Each block opens with a heading like `## 2026-08-15 14:00: <what changed>`. Insert a new block directly under the title, never at the end: the natural motion is to append, and appending sinks the newest answer below a stale plan that then greets every future read. Edit a superseded decision in place, or mark it superseded where it stands.
+- **Take the block's timestamp from the clock, never from your head.** Run `date` and paste its output into the heading. The timestamp decides which of two contradicting blocks wins, and a hand-typed time can land in the future, where it beats a later, truer block while looking exactly as reasonable on re-read.
+- **Never duplicate schedule data between the two.** Ids, dates and times copied from `remind list` into a file (or from a file into a reminder message) go stale the first time you edit one of them, and a confident wrong date is worse than no date. Keep the schedule in the reminder and let the file hold judgement and content.
+- **No relative dates in a staged file.** "Tomorrow", "this week" and "after the trip" are true when written and false the next morning, and nothing flags them. Write absolute dates, the same rule that applies to long-term memory.
+
+Same care when the reminder is one you will act on rather than send: a fired reminder is read in a hurry, which is when a stale top-of-file instruction does its damage.
+
+To nudge yourself about a task, set a reminder whose message names the task and its metadata file, and delete the reminder with `remind delete <id>` when you close the task.
+
+## What the daemon does on its own
+
+- **Missed one-shots**: a reminder that should have fired while the daemon was down is sent on restart marked `missed`; missed recurring fires are skipped.
+- A fired one-shot is marked completed and drops off `remind list`; `--show-completed` brings it back so a self-chaining reminder can re-read its own body.
+
+## Data
+
+DB `~/.reminders/reminders.db`; logs `~/.reminders/logs/daemon.log`; startup log `~/agent/logs/remind.log`;
+pid and port records `~/agent/data/daemons/remind.pid` and `remind.port`.
+
+## Setup
+
+```bash
+uv tool install --editable ~/agent/skills/reminders/cli
+```
+
+## Background Daemon
+
+The daemon schedules every reminder and writes the notification when one fires.
+
+`remind daemon start|stop|status`. Start is idempotent (a live daemon is a no-op) and owns the port
+registration with vestad; stop is the deliberate shutdown, so it does not fire the `daemon_died`
+notification every other exit fires. Manage the daemon through these commands, never by launching
+`remind serve` yourself.
+
+So the daemon survives restarts, read the `restart` skill and add this line to your restart daemons:
+```
+remind daemon start
+```
+
+### Reminder Patterns
+[User's common reminder types and preferences]

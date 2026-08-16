@@ -1,19 +1,20 @@
 [project]
-name = "tasks"
+name = "reminders"
 version = "0.1.0"
-description = "Task management CLI with priority tracking and due dates"
+description = "Reminders CLI: time-based nudges on one-shot, recurring, and cron schedules"
 readme = {text = "", content-type = "text/plain"}
 authors = [
     { name = "elyxlz" }
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "apscheduler>=3.10.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
 ]
 
 [project.scripts]
-tasks = "tasks_cli.cli:main"
+remind = "reminders_cli.cli:main"
 
 [dependency-groups]
 dev = [
@@ -21,7 +22,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tasks_cli"]
+packages = ["src/reminders_cli"]
 
 [build-system]
 requires = ["hatchling"]

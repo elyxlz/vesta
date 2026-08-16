@@ -1,6 +1,3 @@
-@source "./components/ui";
-@source "./lib";
-@source "./hooks";
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -65,15 +62,13 @@ html[data-platform="android"] {
     cursor: pointer;
   }
   html {
-    background: transparent;
-    @apply box-border flex h-dvh flex-col font-sans overscroll-none;
+    @apply box-border flex h-dvh flex-col bg-background font-sans overscroll-none;
   }
   .vibrancy {
     background: transparent;
   }
   body {
-    background: transparent;
-    @apply flex min-h-0 flex-1 flex-col text-foreground overscroll-none;
+    @apply flex min-h-0 flex-1 flex-col bg-background text-foreground overscroll-none;
   }
   .vibrancy body {
     background: transparent;

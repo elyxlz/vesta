@@ -1,16 +1,16 @@
-"""`tasks remind list` hides completed reminders by default and reveals them with --show-completed.
+"""`remind list` hides completed reminders by default and reveals them with --show-completed.
 
 A one-shot reminder that has fired is marked completed and drops off the default list, so a
 self-chaining reminder cannot re-read its own body once it has fired. --show-completed makes the
-fired copy retrievable, mirroring `tasks list --show-completed` on the task side.
+fired copy retrievable.
 """
 
 import json
 import sys
 from contextlib import closing
 
-from tasks_cli import cli, commands, db
-from tasks_cli.config import Config
+from reminders_cli import cli, commands, db
+from reminders_cli.config import Config
 
 
 def _mark_completed(cfg: Config, reminder_id: str) -> None:
@@ -22,7 +22,7 @@ def _mark_completed(cfg: Config, reminder_id: str) -> None:
 def _run(monkeypatch, capsys, cfg: Config, *argv: str) -> str:
     monkeypatch.setattr(cli, "Config", lambda: cfg)
     monkeypatch.setattr(cli.daemon, "live_pid", lambda: 1)
-    monkeypatch.setattr(sys, "argv", ["tasks", "remind", "list", *argv])
+    monkeypatch.setattr(sys, "argv", ["remind", "list", *argv])
     cli.main()
     return capsys.readouterr().out
 
@@ -83,15 +83,3 @@ def test_a_revealed_fired_row_can_be_deleted(tmp_config: Config, monkeypatch, ca
     assert commands.remind_delete(tmp_config, reminder_id=done["id"])["status"] == "deleted"
     listed = json.loads(_run(monkeypatch, capsys, tmp_config, "--json", "--show-completed"))
     assert listed == []
-
-
-def test_show_completed_respects_task_filter(tmp_config: Config, monkeypatch, capsys):
-    task = commands.add_task(tmp_config, subject="T")
-    linked = commands.remind_set(tmp_config, commands.ReminderSpec(message="linked-fired", in_minutes=10, task_id=task["id"]))
-    other = commands.remind_set(tmp_config, commands.ReminderSpec(message="loose-fired", in_minutes=10))
-    _mark_completed(tmp_config, linked["id"])
-    _mark_completed(tmp_config, other["id"])
-
-    listed = json.loads(_run(monkeypatch, capsys, tmp_config, "--json", "--show-completed", "--task", task["id"]))
-    messages = [r["message"] for r in listed]
-    assert messages == ["linked-fired"]

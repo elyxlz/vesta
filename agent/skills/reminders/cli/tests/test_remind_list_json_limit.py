@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 
 import pytest
-from tasks_cli import cli, commands, db
-from tasks_cli.config import Config
+from reminders_cli import cli, commands, db
+from reminders_cli.config import Config
 
 
 @pytest.fixture
 def tmp_config(tmp_path: Path) -> Config:
-    cfg = Config(data_dir=tmp_path / "tasks", log_dir=tmp_path / "tasks" / "logs")
+    cfg = Config(data_dir=tmp_path / "reminders", log_dir=tmp_path / "reminders" / "logs")
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     db.init_db(cfg.data_dir)
     return cfg
@@ -31,7 +31,7 @@ def _seed_reminders(cfg: Config, count: int) -> None:
 def _run_remind_list(monkeypatch, capsys, cfg: Config, *argv: str) -> tuple[str, str]:
     monkeypatch.setattr(cli, "Config", lambda: cfg)
     monkeypatch.setattr(cli.daemon, "live_pid", lambda: 1)
-    monkeypatch.setattr(sys, "argv", ["tasks", "remind", "list", *argv])
+    monkeypatch.setattr(sys, "argv", ["remind", "list", *argv])
     cli.main()
     captured = capsys.readouterr()
     return captured.out, captured.err
