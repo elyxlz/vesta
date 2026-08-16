@@ -29,6 +29,10 @@
       "env": {
         "VESTA_APP_VARIANT": "production"
       }
+    },
+    "android-internal": {
+      "extends": "production",
+      "distribution": "internal"
     }
   },
   "submit": {
