@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ActivityIndicator, Linking, StyleSheet } from "react-native";
+import { Linking, StyleSheet } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
@@ -401,7 +402,7 @@ export default function SettingsScreen() {
             trailing={
               gatewaySettings.isPending &&
               gatewaySettings.variables?.channel ? (
-                <ActivityIndicator size="small" />
+                <LoadingSpinner size="small" />
               ) : undefined
             }
             onPress={

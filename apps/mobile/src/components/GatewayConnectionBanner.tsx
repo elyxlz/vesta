@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Ionicons } from "@expo/vector-icons";
 import {
   GlassView,
@@ -55,7 +56,7 @@ export function GatewayConnectionBanner({ visible }: { visible: boolean }) {
           Gateway disconnected
         </Text>
       </View>
-      <ActivityIndicator size="small" color={colors.text} />
+      <LoadingSpinner size="small" color={colors.text} />
     </>
   );
 

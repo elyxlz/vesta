@@ -1,4 +1,5 @@
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
@@ -82,7 +83,7 @@ export function PrivacySheet() {
           accessibilityRole="progressbar"
           style={styles.progress}
         >
-          <ActivityIndicator color={colors.interactive} />
+          <LoadingSpinner color={colors.interactive} />
         </View>
       )}
     </AuthSheet>

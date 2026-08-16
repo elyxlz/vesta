@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Animated,
   Easing,
@@ -20,6 +19,7 @@ import {
   type LayoutChangeEvent,
   type ListRenderItem,
 } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { useQuery } from "@tanstack/react-query";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import Reanimated, {
@@ -1187,7 +1187,7 @@ export default function ChatPage() {
         ListFooterComponent={
           socket.loadingMore ? (
             <View style={styles.loadingMore}>
-              <ActivityIndicator color={colors.interactive} />
+              <LoadingSpinner color={colors.interactive} />
             </View>
           ) : null
         }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Ionicons } from "@expo/vector-icons";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
@@ -166,7 +167,7 @@ function RecentGatewaysContent() {
           style={styles.connectionState}
         >
           {connectionAttempt.status === "connecting" ? (
-            <ActivityIndicator size="large" color={colors.interactive} />
+            <LoadingSpinner size="large" color={colors.interactive} />
           ) : (
             <View
               style={[
@@ -222,7 +223,7 @@ function RecentGatewaysContent() {
           exiting={FadeOut.duration(CONTENT_TRANSITION_MS)}
         >
           {recentGateways === null ? (
-            <ActivityIndicator
+            <LoadingSpinner
               style={styles.loading}
               color={colors.interactive}
             />
