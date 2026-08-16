@@ -2,7 +2,13 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, statSync, watch as watchPath } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  statSync,
+  watch as watchPath,
+} from "node:fs";
 import { createServer } from "node:http";
 import {
   access,
@@ -1221,6 +1227,32 @@ export function galleryHtml(catalog) {
         `<a class="report" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`,
     )
     .join("\n      ");
+  const scanPlatforms = catalog.platforms
+    ? catalog.platforms.map((platform) => ({
+        key: platform.label.toLowerCase(),
+        label: platform.label,
+        generatedAt: platform.generatedAt ?? catalog.generatedAt,
+      }))
+    : [
+        {
+          key: defaultPlatform,
+          label: defaultPlatform === "android" ? "Android" : "iOS",
+          generatedAt: catalog.generatedAt,
+        },
+      ];
+  const scanRows = scanPlatforms
+    .map(
+      (platform) => `
+    <div class="scan-row" data-platform="${platform.key}">
+      <span class="scan-platform">${escapeHtml(platform.label)}</span>
+      <span class="scan-last" data-generated-at="${escapeHtml(
+        platform.generatedAt,
+      )}">last scan</span>
+      <span class="scan-progress" hidden></span>
+      <button class="scan-button" type="button">Scan</button>
+    </div>`,
+    )
+    .join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -1288,6 +1320,39 @@ export function galleryHtml(catalog) {
       font-size: 10px;
     }
     .report:hover { color: var(--text); border-color: #555563; }
+    .scan-bar {
+      display: flex;
+      max-width: 1680px;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0 auto;
+      padding: 0 24px 10px;
+    }
+    .scan-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 8px 6px 14px;
+      background: #111116cc;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .scan-platform { color: var(--text); font-weight: 700; }
+    .scan-progress { color: var(--accent); font-weight: 700; }
+    .scan-row[data-state="failed"] .scan-last { color: #ee6673; }
+    .scan-button {
+      border: 1px solid #625799;
+      border-radius: 999px;
+      padding: 4px 13px;
+      background: #241f38;
+      color: var(--text);
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .scan-button:hover:not(:disabled) { border-color: var(--accent); }
+    .scan-button:disabled { opacity: .55; cursor: default; }
     main {
       max-width: 1680px;
       margin: 0 auto;
@@ -1543,6 +1608,8 @@ export function galleryHtml(catalog) {
       ${reportLinks}
     </div>
   </header>
+  <section class="scan-bar" aria-label="Capture runs">${scanRows}
+  </section>
   <main>${sections}</main>
   <dialog id="lightbox">
     <button aria-label="Close">×</button>
@@ -1587,8 +1654,50 @@ export function galleryHtml(catalog) {
     }
     const generatedAt = window.__VISUAL_CATALOG__.generatedAt;
     const publishedMs = Date.parse(generatedAt);
+    function formatScanTime(iso) {
+      const ms = Date.parse(iso ?? "");
+      if (Number.isNaN(ms)) return "never";
+      return new Date(ms).toLocaleString();
+    }
+    document.querySelectorAll(".scan-row").forEach((row) => {
+      const last = row.querySelector(".scan-last");
+      last.textContent = "last scan " + formatScanTime(last.dataset.generatedAt);
+      const button = row.querySelector(".scan-button");
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await fetch("capture/" + row.dataset.platform, { method: "POST" });
+        } catch {
+          button.disabled = false;
+        }
+      });
+    });
+    function updateScanRows(runs, freshCounts) {
+      document.querySelectorAll(".scan-row").forEach((row) => {
+        const platform = row.dataset.platform;
+        const run = (runs ?? {})[platform];
+        const running = Boolean(run && run.running);
+        const button = row.querySelector(".scan-button");
+        const progress = row.querySelector(".scan-progress");
+        button.disabled = running;
+        button.textContent = running ? "Scanning" : "Scan";
+        const total = document.querySelectorAll(
+          '.shot[data-live-platform="' + platform + '"][data-expected="true"]',
+        ).length;
+        const fresh = freshCounts[platform] ?? 0;
+        progress.hidden = !running && fresh === 0;
+        progress.textContent = fresh + "/" + total;
+        const failed = Boolean(run && !running && run.exitCode);
+        row.dataset.state = failed ? "failed" : "ok";
+        if (failed) {
+          row.querySelector(".scan-last").textContent =
+            "last scan failed, see capture-" + platform + ".log";
+        }
+      });
+    }
     function applyLive(live) {
       let active = false;
+      const freshCounts = { ios: 0, android: 0 };
       for (const platform of ["ios", "android"]) {
         for (const entry of Object.values(live[platform] ?? {})) {
           if (entry.mtime > publishedMs) active = true;
@@ -1599,6 +1708,7 @@ export function galleryHtml(catalog) {
         const platformEntries = live[shot.dataset.livePlatform] ?? {};
         const entry = platformEntries[shot.dataset.screenshot];
         const fresh = Boolean(entry && entry.mtime > publishedMs);
+        if (fresh) freshCounts[shot.dataset.livePlatform] += 1;
         shot.classList.toggle("pending", active && !fresh);
         shot.classList.toggle("fresh", fresh);
         if (!fresh) return;
@@ -1619,6 +1729,7 @@ export function galleryHtml(catalog) {
           button.dataset.image = src;
         }
       });
+      return freshCounts;
     }
     window.setInterval(async () => {
       if (document.visibilityState === "hidden") return;
@@ -1631,7 +1742,10 @@ export function galleryHtml(catalog) {
             fetch("live.json", { cache: "no-store" }),
           ]);
         if (statusResponse.ok) showCaptureStatus(await statusResponse.json());
-        if (liveResponse.ok) applyLive(await liveResponse.json());
+        if (liveResponse.ok) {
+          const live = await liveResponse.json();
+          updateScanRows(live.runs, applyLive(live));
+        }
         const stamps = [];
         for (const response of [iosResponse, androidResponse]) {
           if (response.ok) stamps.push((await response.json()).generatedAt);
@@ -1712,12 +1826,14 @@ export function unifiedCatalog(iosCatalog, androidCatalog) {
       {
         label: "iOS",
         device: iosCatalog.device,
+        generatedAt: iosCatalog.generatedAt,
         reportAvailable: iosCatalog.reportAvailable === true,
         reportHref: "maestro/report.html",
       },
       {
         label: "Android",
         device: androidCatalog.device,
+        generatedAt: androidCatalog.generatedAt,
         reportAvailable: androidCatalog.reportAvailable === true,
         reportHref: "android/maestro/report.html",
       },
@@ -1958,6 +2074,42 @@ export async function serveCatalog(port, shouldOpen) {
   if (!(await exists(path.join(baseDirectory, "index.html")))) {
     throw new Error("No visual catalog exists yet. Run the capture command first.");
   }
+  const idleRun = { running: false, startedAt: null, finishedAt: null, exitCode: null };
+  const captureRuns = { ios: { ...idleRun }, android: { ...idleRun } };
+  const captureScripts = {
+    ios: fileURLToPath(import.meta.url),
+    android: path.join(mobileRoot, "scripts/visual-catalog-android.mjs"),
+  };
+  const startCaptureRun = (platform) => {
+    if (captureRuns[platform].running) return false;
+    const logFile = openSync(
+      path.join(visualDirectory, `capture-${platform}.log`),
+      "w",
+    );
+    const child = spawn(
+      process.execPath,
+      [captureScripts[platform], "capture", "--no-serve", "--no-open"],
+      { cwd: mobileRoot, env: process.env, stdio: ["ignore", logFile, logFile] },
+    );
+    closeSync(logFile);
+    captureRuns[platform] = {
+      running: true,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      exitCode: null,
+    };
+    const finish = (exitCode) => {
+      captureRuns[platform] = {
+        ...captureRuns[platform],
+        running: false,
+        finishedAt: new Date().toISOString(),
+        exitCode,
+      };
+    };
+    child.on("error", () => finish(1));
+    child.on("exit", (code) => finish(code ?? 1));
+    return true;
+  };
   const server = createServer(async (request, response) => {
     const pathname = decodeURIComponent(
       new URL(request.url ?? "/", "http://localhost").pathname,
@@ -1975,7 +2127,23 @@ export async function serveCatalog(port, shouldOpen) {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      response.end(`${JSON.stringify(await liveCaptureEntries())}\n`);
+      response.end(
+        `${JSON.stringify({ ...(await liveCaptureEntries()), runs: captureRuns })}\n`,
+      );
+      return;
+    }
+    if (pathname === "/capture/ios" || pathname === "/capture/android") {
+      const platform = pathname.split("/")[2];
+      if (request.method !== "POST") {
+        response.writeHead(405).end("POST required");
+        return;
+      }
+      const started = startCaptureRun(platform);
+      response.writeHead(started ? 202 : 409, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      response.end(`${JSON.stringify({ started, run: captureRuns[platform] })}\n`);
       return;
     }
     if (pathname === "/" || pathname === "/index.html") {

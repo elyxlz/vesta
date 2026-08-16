@@ -363,6 +363,21 @@ describe("unifiedCatalog", () => {
     expect(html).toContain('data-expected="false"');
     expect(html).toContain('fetch("live.json"');
   });
+
+  it("renders a scan row per platform with its last-scan stamp and trigger", () => {
+    const merged = galleryHtml(unifiedCatalog(iosCatalog, androidCatalog));
+    expect(merged).toContain('class="scan-row" data-platform="ios"');
+    expect(merged).toContain('class="scan-row" data-platform="android"');
+    expect(merged).toContain(`data-generated-at="${iosCatalog.generatedAt}"`);
+    expect(merged).toContain(
+      `data-generated-at="${androidCatalog.generatedAt}"`,
+    );
+    expect(merged).toContain('"capture/" + row.dataset.platform');
+
+    const single = galleryHtml({ ...iosCatalog, scenarios: [] });
+    expect(single).toContain('class="scan-row" data-platform="ios"');
+    expect(single).not.toContain('class="scan-row" data-platform="android"');
+  });
 });
 
 describe("liveCaptureEntries", () => {
