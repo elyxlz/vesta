@@ -1,0 +1,40 @@
+#!/bin/sh
+# Runs the dashboard server and leaves a dated record of its start AND its exit.
+#
+# WHY: the dashboard died silently on three consecutive nights (13, 14, 15 Aug 2026) and each
+# retrospective concluded the cause was "unknowable with current logging". That was literally true.
+# `dashboard.log` captured the child's stdout and stderr, but vite writes only an undated startup
+# banner, so the log was a stack of identical banners with no way to tell one launch from another,
+# no time for any of them, and no record that the process had ended at all. Nothing waits on the
+# child (`setsid ... &`, then the launching shell returns), so an exit code went nowhere.
+#
+# This wrapper does not stop the crash. It makes the next one legible: a dated line on the way in,
+# and a dated line with the exit code on the way out. A process killed with SIGKILL writes nothing
+# itself, so the only way to know it went is to have something outside it notice.
+#
+# `exec` is deliberately NOT used for the server, because the point is to outlive it and record how
+# it went. The cost is one extra shell process between the daemon's pid record and vite. The daemon
+# signals the recorded pid on stop, and this shell forwards TERM/INT to the child so that path still
+# terminates the server rather than orphaning it.
+
+LOG="${LOG:-$HOME/agent/logs/dashboard.log}"
+stamp() { date -Is 2>/dev/null || date; }
+
+echo "[$(stamp)] dashboard: starting (wrapper pid $$, PORT=${PORT:-unset})" >> "$LOG"
+
+"$HOME/agent/skills/dashboard/scripts/serve" &
+child=$!
+
+# Forward a stop to the server, then let the wait below record how it ended.
+trap 'kill -TERM "$child" 2>/dev/null' TERM INT
+
+wait "$child"
+code=$?
+# 128+N is the shell's encoding of "killed by signal N", and it is the case that matters here:
+# a silent death with no stderr is almost always a signal rather than a clean non-zero exit.
+if [ "$code" -gt 128 ]; then
+    echo "[$(stamp)] dashboard: EXITED killed by signal $((code - 128)) (raw $code) after serving on port ${PORT:-unknown}" >> "$LOG"
+else
+    echo "[$(stamp)] dashboard: EXITED code=$code after serving on port ${PORT:-unknown}" >> "$LOG"
+fi
+exit "$code"

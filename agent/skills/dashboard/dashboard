@@ -125,7 +125,7 @@ do_start() {
   [ -n "$PORT" ] || give_up "could not register dashboard with vestad"
   export PORT
   echo "$PORT" > "$PORTFILE"
-  setsid "$HOME/agent/skills/dashboard/scripts/serve" >> "$LOG" 2>&1 &
+  setsid "$HOME/agent/skills/dashboard/scripts/serve-logged" >> "$LOG" 2>&1 &
   pid=$!
   record_for "$pid" > "$PIDFILE"
   ready_by=$(deadline "$READY_BUDGET")
