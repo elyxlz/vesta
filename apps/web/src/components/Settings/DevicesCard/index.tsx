@@ -1,9 +1,18 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Monitor, Smartphone, Globe, HelpCircle, Circle } from "lucide-react";
 import type { DeviceInfo, DeviceKind } from "@vesta/core";
+import { fetchGatewaySettings, updateGatewaySettings } from "@/api/gateway";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+} from "@/components/ui/field";
 import { MenuSection } from "@/components/ui/menu-section";
+import { Switch } from "@/components/ui/switch";
 import { useGateway } from "@/providers/GatewayProvider";
+import { contextLine } from "./context-line";
 
 function kindIcon(kind: DeviceKind): ReactNode {
   const className = "size-4 shrink-0 text-muted-foreground";
@@ -25,6 +34,64 @@ function lastSeenLabel(lastSeen: string): string {
   return `last seen ${String(days)}d ago`;
 }
 
+// The gateway's user-context switch: whether devices' zone and position are stored and reported to
+// the agents. Read once on mount; the PUT answers with the settings, which is what the switch shows.
+function UserContextToggle() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGatewaySettings()
+      .then((settings) => {
+        if (!cancelled) setEnabled(settings.user_context);
+      })
+      .catch(() => {
+        /* the switch stays hidden when the fetch fails */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (enabled === null) return null;
+
+  const onChange = async (checked: boolean) => {
+    setSaving(true);
+    try {
+      const settings = await updateGatewaySettings({ user_context: checked });
+      setEnabled(settings.user_context);
+    } catch (err) {
+      console.warn("[settings] failed to set user context:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Field
+      orientation="horizontal"
+      className="mt-3 items-center justify-between"
+    >
+      <FieldContent>
+        <FieldLabel className="text-sm">share device context</FieldLabel>
+        <FieldDescription>
+          tell your agents each device&apos;s timezone and, when a phone shares
+          it, its location, so they follow your travel; switching off stops the
+          reports and forgets what was stored
+        </FieldDescription>
+      </FieldContent>
+      <Switch
+        checked={enabled}
+        disabled={saving}
+        onCheckedChange={(checked) => {
+          void onChange(checked);
+        }}
+      />
+    </Field>
+  );
+}
+
 function DeviceRow({ device }: { device: DeviceInfo }) {
   return (
     <div className="flex min-w-0 items-center gap-3 text-sm leading-none">
@@ -33,9 +100,9 @@ function DeviceRow({ device }: { device: DeviceInfo }) {
         <span className="min-w-0 truncate font-medium text-foreground">
           {device.descriptor ?? "Unnamed device"}
         </span>
-        {device.location !== null && (
+        {contextLine(device) !== null && (
           <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {device.location}
+            {contextLine(device)}
           </span>
         )}
       </div>
@@ -65,6 +132,7 @@ export function DevicesCard() {
               <DeviceRow key={device.id} device={device} />
             ))}
           </div>
+          <UserContextToggle />
         </MenuSection>
       </CardContent>
     </Card>

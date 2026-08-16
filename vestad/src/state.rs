@@ -137,6 +137,8 @@ pub struct AppState {
     /// Per-connection client presence fed by the `/sync` socket. Read by the mobile push path to
     /// suppress a push while any client is focused, and fanned to sessions for return-to-focus.
     pub(crate) presence: Arc<crate::sync::Presence>,
+    /// Which agents have been told which device zone or place, so each change is delivered once.
+    pub(crate) user_context: crate::user_context::UserContext,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     /// The client-protocol aggregator's fan-out state: the per-agent pending-notifications
@@ -207,6 +209,7 @@ impl AppState {
                 mobile_app,
                 device_registry,
                 presence,
+                user_context: crate::user_context::UserContext::default(),
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
                 sync_hub: Arc::new(crate::sync::SyncHub::new()),

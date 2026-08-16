@@ -47,3 +47,16 @@ async def test_restart_carries_a_reason(args, expected):
         assert await vestad_client.request_restart(*args)
 
     request.assert_awaited_once_with("restart", reason=expected)
+
+
+@pytest.mark.anyio
+async def test_fetch_user_devices_is_none_without_identity_or_vestad(monkeypatch):
+    for var in ("BOX_HOST", "VESTAD_PORT", "AGENT_NAME", "AGENT_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    assert await vestad_client.fetch_user_devices() is None
+    monkeypatch.setenv("BOX_HOST", "127.0.0.1")
+    monkeypatch.setenv("VESTAD_PORT", str(_closed_port()))
+    monkeypatch.setenv("AGENT_NAME", "scout")
+    monkeypatch.setenv("AGENT_TOKEN", "tok")
+    # vestad is not listening: None, never an exception, so the tool reports it instead of crashing.
+    assert await vestad_client.fetch_user_devices() is None

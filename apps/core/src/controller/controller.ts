@@ -5,6 +5,7 @@ import type { Replica } from "../replica/store"
 import type { SyncSocketDeps, SyncState } from "../transport/socket"
 import type { HttpClient, HttpDeps } from "../transport/http"
 import type { Delta } from "../protocol/deltas"
+import type { DeviceContext } from "../protocol/frames"
 
 export interface ControllerDeps {
   sync: SyncSocketDeps
@@ -22,6 +23,7 @@ export interface Controller {
   subscribeSyncState: (listener: () => void) => () => void
   reportPresence: (focused: boolean) => void
   reportViewing: (agent: string | null) => void
+  reportDeviceContext: (context: DeviceContext) => void
   getAnyFocused: () => boolean
   subscribeAnyFocused: (listener: () => void) => () => void
   close: () => void
@@ -90,6 +92,9 @@ export function createController(deps: ControllerDeps): Controller {
     },
     reportViewing: (agent) => {
       socket.reportViewing(agent)
+    },
+    reportDeviceContext: (context) => {
+      socket.reportDeviceContext(context)
     },
     getAnyFocused: () => anyFocused,
     subscribeAnyFocused: (listener) => {

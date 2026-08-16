@@ -30,8 +30,20 @@
           "kind": "desktop",
           "lastSeen": "2026-01-01T00:00:00Z",
           "location": "London, United Kingdom",
+          "position": {
+            "accuracyM": 50.0,
+            "latitude": 51.5074,
+            "longitude": -0.1278,
+            "place": {
+              "city": "London",
+              "country": "United Kingdom",
+              "region": "England"
+            }
+          },
+          "positionAt": "2026-01-01T00:00:00Z",
           "present": true,
-          "pushEnabled": false
+          "pushEnabled": false,
+          "timezone": "Europe/London"
         }
       ],
       "type": "devices"
@@ -134,8 +146,20 @@
           "kind": "desktop",
           "lastSeen": "2026-01-01T00:00:00Z",
           "location": "London, United Kingdom",
+          "position": {
+            "accuracyM": 50.0,
+            "latitude": 51.5074,
+            "longitude": -0.1278,
+            "place": {
+              "city": "London",
+              "country": "United Kingdom",
+              "region": "England"
+            }
+          },
+          "positionAt": "2026-01-01T00:00:00Z",
           "present": true,
-          "pushEnabled": false
+          "pushEnabled": false,
+          "timezone": "Europe/London"
         }
       ],
       "gateway": {

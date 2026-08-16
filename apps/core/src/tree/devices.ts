@@ -1,4 +1,4 @@
-import type { DeviceInfo, Tree } from "../protocol/tree"
+import type { DeviceInfo, DevicePosition, Tree } from "../protocol/tree"
 
 export function selectDevices(tree: Tree | null): DeviceInfo[] {
   return tree?.devices ?? []
@@ -17,7 +17,23 @@ export function devicesEqual(a: DeviceInfo[], b: DeviceInfo[]): boolean {
       other.descriptor === device.descriptor &&
       other.present === device.present &&
       other.lastSeen === device.lastSeen &&
-      other.pushEnabled === device.pushEnabled
+      other.pushEnabled === device.pushEnabled &&
+      other.location === device.location &&
+      other.timezone === device.timezone &&
+      other.positionAt === device.positionAt &&
+      positionEqual(other.position, device.position)
     )
   })
+}
+
+function positionEqual(a: DevicePosition | null, b: DevicePosition | null): boolean {
+  if (a === null || b === null) return a === b
+  return (
+    a.latitude === b.latitude &&
+    a.longitude === b.longitude &&
+    a.accuracyM === b.accuracyM &&
+    a.place?.city === b.place?.city &&
+    a.place?.region === b.place?.region &&
+    a.place?.country === b.place?.country
+  )
 }

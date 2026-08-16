@@ -56,6 +56,9 @@ export interface GatewayAutoBackup {
 
 export interface GatewaySettings {
   auto_update: boolean;
+  // Whether the gateway stores what devices report about themselves (timezone, position) and
+  // tells the agents when it changes.
+  user_context: boolean;
   channel: ReleaseChannel;
   auto_backup: GatewayAutoBackup;
 }
@@ -66,4 +69,16 @@ export async function fetchGatewayInfo(): Promise<GatewayInfo> {
 
 export async function fetchGatewaySettings(): Promise<GatewaySettings> {
   return apiJson<GatewaySettings>("/gateway/settings");
+}
+
+export async function updateGatewaySettings(
+  patch: Partial<
+    Pick<GatewaySettings, "auto_update" | "user_context" | "channel">
+  >,
+): Promise<GatewaySettings> {
+  return apiJson<GatewaySettings>("/gateway/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
 }

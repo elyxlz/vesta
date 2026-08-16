@@ -7,6 +7,7 @@ import {
   checkForGatewayUpdate,
   triggerGatewayRestart,
   triggerGatewayUpdate,
+  type DeviceInfo,
   type ReleaseChannel,
 } from "@vesta/core";
 import {
@@ -24,6 +25,10 @@ import { OptionPicker } from "@/components/option-picker";
 import type { OptionPickerOption } from "@/components/option-picker.types";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
+import {
+  locationUndecided,
+  requestLocationSharing,
+} from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
   usePreferences,
@@ -70,6 +75,19 @@ function lastSeenLabel(lastSeen: string): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
+// The device's reported place and zone, falling back to the gateway's IP-derived location.
+function deviceContextLine(device: DeviceInfo): string | undefined {
+  const place = device.position?.place;
+  const placeLabel =
+    place && (place.city ?? place.region)
+      ? [place.city ?? place.region, place.country].filter(Boolean).join(", ")
+      : device.location;
+  const parts = [placeLabel, device.timezone].filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -111,7 +129,9 @@ export default function SettingsScreen() {
   });
   const gatewaySettings = useMutation({
     mutationFn: (
-      patch: Partial<Pick<GatewaySettings, "auto_update" | "channel">>,
+      patch: Partial<
+        Pick<GatewaySettings, "auto_update" | "user_context" | "channel">
+      >,
     ) => updateGatewaySettings(session.api, patch),
     onMutate: async (patch) => {
       await queryClient.cancelQueries({ queryKey: gatewayQueryKey });
@@ -178,6 +198,36 @@ export default function SettingsScreen() {
       showError(error, "App Lock is unavailable");
     } finally {
       setPrivacySaving(false);
+    }
+  };
+
+  const changeShareLocation = async (enabled: boolean) => {
+    try {
+      if (enabled && !(await requestLocationSharing())) {
+        showError(
+          new Error("Allow location for Vesta in system settings to share it."),
+          "Location is not allowed",
+        );
+        return;
+      }
+      await preferences.update({ shareLocation: enabled });
+    } catch (error) {
+      showError(error, "Location sharing is unavailable");
+    }
+  };
+
+  // The gateway-wide switch, plus this phone's part: a phone that has never been asked about
+  // location is asked now and starts sharing when it agrees; a phone that already answered keeps
+  // its answer (its Privacy toggle is the place to change it).
+  const changeUserContext = async (enabled: boolean) => {
+    gatewaySettings.mutate({ user_context: enabled });
+    if (!enabled || preferences.shareLocation) return;
+    try {
+      if ((await locationUndecided()) && (await requestLocationSharing())) {
+        await preferences.update({ shareLocation: true });
+      }
+    } catch (error) {
+      showError(error, "Location sharing is unavailable");
     }
   };
 
@@ -300,6 +350,12 @@ export default function SettingsScreen() {
               !privacy.hydrated || privacySaving || privacy.appLockEnabled
             }
             onValueChange={(value) => void changeAppSwitcherPrivacy(value)}
+          />
+          <SwitchRow
+            label="Share device location"
+            detail="Tell your agents where this phone is, place and coordinates, so plans and reminders follow your travel. Allow location always to keep sharing while the app is closed. Your timezone is always shared."
+            value={preferences.shareLocation}
+            onValueChange={(value) => void changeShareLocation(value)}
           />
         </FormSection>
 
@@ -432,6 +488,7 @@ export default function SettingsScreen() {
               <FormRow
                 key={device.id}
                 label={device.descriptor ?? "Unnamed device"}
+                detail={deviceContextLine(device)}
                 value={
                   device.present
                     ? "present now"
@@ -439,6 +496,13 @@ export default function SettingsScreen() {
                 }
               />
             ))}
+            <SwitchRow
+              label="Share device context"
+              detail="Tell your agents each device's timezone and, when a phone shares it, its location, so they follow your travel. Off stops the reports and forgets what was stored."
+              value={gateway.data?.settings.user_context ?? false}
+              disabled={gatewayControlsDisabled}
+              onValueChange={(value) => void changeUserContext(value)}
+            />
           </FormSection>
         ) : null}
 

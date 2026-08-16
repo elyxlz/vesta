@@ -1,4 +1,5 @@
 import { clientContextFrame, encodeFrame, reauthFrame } from "../protocol/frames"
+import type { DeviceContext } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
 import { clientAheadOfGateway, clientBelowMinimum } from "../protocol/release-version"
 import type { ClientFrame, ClientKind, HelloFrame } from "../protocol/frames"
@@ -50,6 +51,9 @@ export interface SyncSocket {
   reauth: (token: string) => void
   reportPresence: (focused: boolean) => void
   reportViewing: (agent: string | null) => void
+  // What this device reports about itself (zone, position). Cached like focus and viewing, so the
+  // reconnect replay carries the latest report; the caller decides when to read the device.
+  reportDeviceContext: (context: DeviceContext) => void
   close: () => void
 }
 
@@ -64,6 +68,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   let lastFocused: boolean | null = null
   // The agent whose page is open on this client, null when on the roster / blurred / no report yet.
   let lastViewing: string | null = null
+  let lastContext: DeviceContext | undefined
   // Whether the gateway already has the latest reported context (focus + viewing). False while a
   // report is still undelivered, so its replay goes out as the fresh context it is, not a resync.
   let contextSynced = false
@@ -93,7 +98,14 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   // The current focus + viewing context as one frame. `lastFocused ?? false` covers a client that
   // reported a viewed page before any presence frame; in practice presence is reported on mount.
   const contextFrame = (resync: boolean): ClientFrame =>
-    clientContextFrame(lastFocused ?? false, deps.clientKind, resync, lastViewing, deps.device)
+    clientContextFrame(
+      lastFocused ?? false,
+      deps.clientKind,
+      resync,
+      lastViewing,
+      deps.device,
+      lastContext,
+    )
 
   const scheduleReconnect = (): void => {
     callbacks.onStateChange("reconnecting")
@@ -205,6 +217,12 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       // Skip repeated route reports; the cached value still drives reconnect replay.
       if (lastViewing === agent) return
       lastViewing = agent
+      contextSynced = emit(contextFrame(false))
+    },
+    reportDeviceContext: (context) => {
+      // Skip a report identical to the last; the cached value still drives reconnect replay.
+      if (JSON.stringify(context) === JSON.stringify(lastContext)) return
+      lastContext = context
       contextSynced = emit(contextFrame(false))
     },
     close: () => {

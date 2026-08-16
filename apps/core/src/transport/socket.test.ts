@@ -224,6 +224,45 @@ describe("createSyncSocket", () => {
     )
   })
 
+  it("sends the device context alongside cached focus, and replays it on reconnect", async () => {
+    const h = harness()
+    const socket = await start(h)
+    h.sockets[0]?.onopen?.()
+    socket.reportPresence(true)
+    const position = { latitude: 35.6762, longitude: 139.6503, accuracyM: 50, place: null }
+    socket.reportDeviceContext({ timezone: "Asia/Tokyo", position })
+    expect(h.sockets[0]?.sent).toContainEqual(
+      JSON.stringify({
+        type: "client_context",
+        focused: true,
+        client: "web",
+        resync: false,
+        viewing: null,
+        timezone: "Asia/Tokyo",
+        position,
+      }),
+    )
+    // An identical report is skipped; a changed one goes out.
+    socket.reportDeviceContext({ timezone: "Asia/Tokyo", position })
+    expect(h.sockets[0]?.sent).toHaveLength(2)
+    socket.reportDeviceContext({ timezone: "Europe/Paris" })
+    expect(h.sockets[0]?.sent).toHaveLength(3)
+    // The reconnect replay carries the latest context as a resync.
+    h.sockets[0]?.onclose?.()
+    await h.advanceTimers()
+    h.sockets[1]?.onopen?.()
+    expect(h.sockets[1]?.sent).toContainEqual(
+      JSON.stringify({
+        type: "client_context",
+        focused: true,
+        client: "web",
+        resync: true,
+        viewing: null,
+        timezone: "Europe/Paris",
+      }),
+    )
+  })
+
   it("sends a report issued while connecting as a fresh focus once open", async () => {
     const h = harness()
     const socket = await start(h)

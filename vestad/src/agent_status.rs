@@ -413,6 +413,19 @@ impl AgentStatusCache {
         serving && self.presence_notifications_enabled(agent)
     }
 
+    /// The agents serving their WS tap now, each with the IANA zone its connect snapshot reported.
+    /// An agent whose tap is down is absent: vestad holds no current zone for it, and a device fact
+    /// delivered against a stale one would be wrong.
+    pub fn serving_timezones(&self) -> crate::user_context::AgentZones {
+        let zones = self.timezones_rx.borrow();
+        self.agents_rx
+            .borrow()
+            .iter()
+            .filter(|entry| entry.status.serves_ws())
+            .filter_map(|entry| zones.get(&entry.name).map(|zone| (entry.name.clone(), zone.clone())))
+            .collect()
+    }
+
     pub fn subscribe_services(
         &self,
     ) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
@@ -1090,6 +1103,26 @@ mod tests {
         assert!(!cache.presence_notification_target("booting"));
         // Unknown agent: not serving.
         assert!(!cache.presence_notification_target("ghost"));
+    }
+
+    #[test]
+    fn serving_timezones_covers_only_agents_serving_their_tap_with_a_reported_zone() {
+        let cache = AgentStatusCache::new();
+        cache.agents_tx.send_modify(|agents| {
+            agents.extend([
+                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, started_at: None },
+                ListEntry { name: "mute".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, started_at: None },
+                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 3, booting: false, started_at: None },
+            ]);
+        });
+        cache.timezones_tx.send_modify(|zones| {
+            zones.insert("scout".into(), "Europe/London".into());
+            zones.insert("booting".into(), "Asia/Tokyo".into());
+        });
+        let zones = cache.serving_timezones();
+        assert_eq!(zones.get("scout").map(String::as_str), Some("Europe/London"));
+        assert!(!zones.contains_key("mute"), "serving but no zone reported yet");
+        assert!(!zones.contains_key("booting"), "zone held from before, tap down now");
     }
 
     use crate::sync::SyncHub;

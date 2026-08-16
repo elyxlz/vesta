@@ -1,4 +1,4 @@
-import type { Tree } from "./tree"
+import type { DevicePosition, Tree } from "./tree"
 
 // The served compatibility window: the gateway's own release `version` and the oldest client
 // release it still accepts (`minSupported`, wire `min_supported`). A client compares its own
@@ -19,9 +19,19 @@ export interface ReauthFrame {
   token: string
 }
 
+// The device's reported context, carried on the `client_context` frame and as the body of
+// `PUT /devices/{id}/context`. An absent field leaves the stored value alone; a `null` position
+// retracts it (location sharing off).
+export interface DeviceContext {
+  // The IANA timezone (every client).
+  timezone?: string
+  // The position (mobile, with the user's opt-in).
+  position?: DevicePosition | null
+}
+
 // `resync` is true when the socket replays its cached context on reconnect (not a fresh user focus),
 // so vestad never fires the presence notification on a mere reconnect or a gateway restart.
-export interface ClientContextFrame {
+export interface ClientContextFrame extends DeviceContext {
   type: "client_context"
   focused: boolean
   client: ClientKind
@@ -49,13 +59,14 @@ export function clientContextFrame(
   resync: boolean,
   viewing: string | null,
   device?: { id: string; descriptor: string },
+  context?: DeviceContext,
 ): ClientContextFrame {
   const frame: ClientContextFrame = { type: "client_context", focused, client, resync, viewing }
   if (device !== undefined) {
     frame.deviceId = device.id
     frame.descriptor = device.descriptor
   }
-  return frame
+  return { ...frame, ...context }
 }
 
 export function encodeFrame(frame: ClientFrame): string {

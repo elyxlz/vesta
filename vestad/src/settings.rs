@@ -45,6 +45,10 @@ pub(crate) struct Settings {
     /// the active channel. On by default; opt out at runtime via PUT /settings/auto-update.
     #[serde(default = "default_true")]
     pub(crate) auto_update: bool,
+    /// Store what the user's devices report about themselves (timezone, position) and tell the
+    /// agents when it changes. On by default; off ignores every report and forgets what was stored.
+    #[serde(default = "default_true")]
+    pub(crate) user_context: bool,
     /// Bind the HTTPS API to the LAN (0.0.0.0) instead of loopback only. A binding
     /// preference like the port file — it lives here, not in the static systemd
     /// unit, and the daemon reads it at startup. Set via `vestad serve --expose-lan`.
@@ -63,6 +67,7 @@ impl Default for Settings {
             agents: HashMap::new(),
             channel: default_channel(),
             auto_update: true,
+            user_context: true,
             expose_lan: false,
         }
     }
@@ -272,6 +277,14 @@ mod tests {
         // A settings.json written before auto_update existed has no such key.
         let s: Settings = serde_json::from_str("{}").expect("empty object is valid Settings");
         assert!(s.auto_update);
+    }
+
+    #[test]
+    fn settings_missing_user_context_field_deserializes_true() {
+        let s: Settings = serde_json::from_str("{}").expect("parse");
+        assert!(s.user_context);
+        let off: Settings = serde_json::from_str(r#"{"user_context": false}"#).expect("parse");
+        assert!(!off.user_context);
     }
 
     #[test]

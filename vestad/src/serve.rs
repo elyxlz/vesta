@@ -41,7 +41,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services",
+    "services", "devices",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 
@@ -1000,7 +1000,7 @@ fn rename_notification_payload(
 
 /// Write a vestad-authored notification JSON into an agent's notification intake. Best-effort: the
 /// caller decides whether a failure is fatal. Returns the file name written.
-async fn drop_notification(
+pub(crate) async fn drop_notification(
     docker: &bollard::Docker,
     agent: &str,
     file_name: &str,
@@ -2206,6 +2206,7 @@ async fn delete_backup_handler(
 fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Value {
     serde_json::json!({
         "auto_update": settings.auto_update,
+        "user_context": settings.user_context,
         "channel": channel,
         "auto_backup": {
             "enabled": settings.backup.enabled,
@@ -2284,6 +2285,7 @@ fn validate_retention(
 #[derive(Deserialize)]
 struct UpdateSettingsBody {
     auto_update: Option<bool>,
+    user_context: Option<bool>,
     channel: Option<String>,
     auto_backup: Option<SetBackupSettingsBody>,
 }
@@ -2323,6 +2325,15 @@ async fn put_gateway_settings_handler(
         if let Some(auto_update) = body.auto_update {
             settings.auto_update = auto_update;
             tracing::info!(auto_update, "auto-update setting updated");
+        }
+        if let Some(user_context) = body.user_context {
+            settings.user_context = user_context;
+            tracing::info!(user_context, "user context setting updated");
+            if !user_context {
+                // Off forgets, not just stops: a stale zone or place must not linger in the roster or
+                // in what the agents can read.
+                state.device_registry.clear_context();
+            }
         }
         if let Some(channel) = parsed_channel {
             settings.channel = channel.as_str().to_string();
@@ -2742,6 +2753,10 @@ pub fn build_router(state: SharedState) -> Router {
             put(mobile_app::register_device_handler).delete(mobile_app::delete_device_handler),
         )
         .route(
+            "/devices/{device_id}/context",
+            put(crate::user_context::report_context_handler),
+        )
+        .route(
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
         )
@@ -2800,6 +2815,7 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route("/agents/{name}/user-notification", post(user_notification_handler))
+        .route("/agents/{name}/devices", get(crate::user_context::agent_devices_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -4087,6 +4103,7 @@ mod gateway_settings_tests {
         let settings = Settings::default();
         let value = gateway_settings_json(&settings, "beta");
         assert_eq!(value["auto_update"], serde_json::json!(true));
+        assert_eq!(value["user_context"], serde_json::json!(true));
         assert_eq!(value["channel"], serde_json::json!("beta"));
         assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
         assert_eq!(

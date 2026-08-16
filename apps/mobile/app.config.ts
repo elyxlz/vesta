@@ -111,6 +111,23 @@ const config: ExpoConfig = {
       },
     ],
     ...notificationPlugins,
+    "expo-localization",
+    [
+      "expo-location",
+      {
+        locationWhenInUsePermission:
+          "Share where this phone is with your Vesta agents, so plans and reminders follow your travel.",
+        locationAlwaysAndWhenInUsePermission:
+          "Share where this phone is with your Vesta agents, also while the app is closed, so plans and reminders follow your travel.",
+        locationAlwaysPermission:
+          "Share where this phone is with your Vesta agents while the app is closed, so plans and reminders follow your travel.",
+        // Reading a fix from the closed-app poll needs the always-on grant on both platforms; the iOS
+        // location background mode is not needed, since the poll runs under the processing mode.
+        isIosBackgroundLocationEnabled: false,
+        isAndroidBackgroundLocationEnabled: true,
+      },
+    ],
+    "expo-background-task",
     [
       "expo-splash-screen",
       {

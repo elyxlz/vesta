@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectionConfig } from "@/api/types";
-import { changesGateway, connectionKeyOf } from "./session-model";
+import {
+  changesGateway,
+  connectionKeyOf,
+  rotatedStoredConnection,
+} from "./session-model";
 
 const connection: ConnectionConfig = {
   url: "https://gateway.example",
@@ -58,5 +62,29 @@ describe("connectionKeyOf (controller rebuild key)", () => {
 
   it("is null without a connection", () => {
     expect(connectionKeyOf(null)).toBeNull();
+  });
+});
+
+describe("rotatedStoredConnection", () => {
+  const rotated = {
+    ...connection,
+    accessToken: "next-access",
+    refreshToken: "next-refresh",
+  };
+
+  it("adopts the same gateway's stored tokens when they rotated underneath the app", () => {
+    expect(rotatedStoredConnection(connection, rotated)).toEqual(rotated);
+  });
+
+  it("adopts nothing when the tokens match, across a sign-out, or across a gateway switch", () => {
+    expect(rotatedStoredConnection(connection, connection)).toBeNull();
+    expect(rotatedStoredConnection(null, rotated)).toBeNull();
+    expect(rotatedStoredConnection(connection, null)).toBeNull();
+    expect(
+      rotatedStoredConnection(connection, {
+        ...rotated,
+        url: "https://other-gateway.example",
+      }),
+    ).toBeNull();
   });
 });

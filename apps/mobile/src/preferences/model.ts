@@ -1,5 +1,8 @@
 export type ThemePreference = "system" | "light" | "dark";
 
+// The AsyncStorage key the preferences persist under; read headless by the background report too.
+export const PREFERENCES_KEY = "vesta.preferences.v1";
+
 export interface PreferencesState {
   theme: ThemePreference;
   naturalChatPacingDefault: boolean;
@@ -10,6 +13,9 @@ export interface PreferencesState {
   pushChatReplies: boolean;
   pushStatusChanges: boolean;
   notificationPreviews: boolean;
+  // Report the phone's position (and the place the OS geocodes for it) to the gateway, so the
+  // agents learn where the user is. Off until the user opts in.
+  shareLocation: boolean;
 }
 
 export const initialPreferences: PreferencesState = {
@@ -22,6 +28,7 @@ export const initialPreferences: PreferencesState = {
   pushChatReplies: true,
   pushStatusChanges: true,
   notificationPreviews: false,
+  shareLocation: false,
 };
 
 function isThemePreference(value: unknown): value is ThemePreference {
@@ -88,6 +95,8 @@ export function readStoredPreferences(value: string | null): PreferencesState {
         typeof parsed.notificationPreviews === "boolean"
           ? parsed.notificationPreviews
           : false,
+      shareLocation:
+        typeof parsed.shareLocation === "boolean" ? parsed.shareLocation : false,
     };
   } catch {
     return initialPreferences;
