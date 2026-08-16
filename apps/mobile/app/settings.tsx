@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Alert, Linking, StyleSheet } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import {
   checkForGatewayUpdate,
@@ -21,6 +20,10 @@ import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
+import {
+  locationUndecided,
+  requestLocationSharing,
+} from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
   usePreferences,
@@ -205,21 +208,29 @@ export default function SettingsScreen() {
 
   const changeShareLocation = async (enabled: boolean) => {
     try {
-      if (enabled) {
-        const foreground = await Location.requestForegroundPermissionsAsync();
-        if (!foreground.granted) {
-          showError(
-            new Error("Allow location for Vesta in system settings to share it."),
-            "Location is not allowed",
-          );
-          return;
-        }
-        // The always-on grant is what lets the closed-app poll read a fix; the OS asks in its own
-        // way (iOS a second prompt, Android a settings screen). Declined, sharing still works while
-        // the app is open, so the switch turns on either way.
-        await Location.requestBackgroundPermissionsAsync();
+      if (enabled && !(await requestLocationSharing())) {
+        showError(
+          new Error("Allow location for Vesta in system settings to share it."),
+          "Location is not allowed",
+        );
+        return;
       }
       await preferences.update({ shareLocation: enabled });
+    } catch (error) {
+      showError(error, "Location sharing is unavailable");
+    }
+  };
+
+  // The gateway-wide switch, plus this phone's part: a phone that has never been asked about
+  // location is asked now and starts sharing when it agrees; a phone that already answered keeps
+  // its answer (its Privacy toggle is the place to change it).
+  const changeUserContext = async (enabled: boolean) => {
+    gatewaySettings.mutate({ user_context: enabled });
+    if (!enabled || preferences.shareLocation) return;
+    try {
+      if ((await locationUndecided()) && (await requestLocationSharing())) {
+        await preferences.update({ shareLocation: true });
+      }
     } catch (error) {
       showError(error, "Location sharing is unavailable");
     }
@@ -439,9 +450,7 @@ export default function SettingsScreen() {
             detail="Tell your agents each device's timezone and, when a phone shares it, its location, so they follow your travel. Off stops the reports and forgets what was stored."
             value={gateway.data?.settings.user_context ?? false}
             disabled={gatewayControlsDisabled}
-            onValueChange={(user_context) =>
-              gatewaySettings.mutate({ user_context })
-            }
+            onValueChange={(value) => void changeUserContext(value)}
           />
         </FormSection>
       ) : null}
