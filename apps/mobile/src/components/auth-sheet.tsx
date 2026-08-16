@@ -1,8 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { Animated, KeyboardAvoidingView, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useBottomInset } from "@/components/layout/use-bottom-inset";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+
+const IS_ANDROID = process.env.EXPO_OS === "android";
+const BASE_BOTTOM_PADDING = 24;
 
 type AuthSheetMode = "plain" | "keyboard" | "scroll";
 
@@ -22,10 +27,16 @@ export function AuthSheet({
   gap,
 }: AuthSheetProps) {
   const { colors } = usePreferences();
+  const bottomPadding = useBottomInset(BASE_BOTTOM_PADDING);
   const [scrollY] = useState(() => new Animated.Value(0));
   const topPadding = hasGrabber ? 36 : 28;
+  // iOS floats a native grabber above the sheet; Android renders none, so
+  // the Material drag handle renders in content there.
+  const grabberChrome =
+    hasGrabber && IS_ANDROID ? <SheetChrome grabber /> : null;
   const contentStyle = [
     styles.content,
+    { paddingBottom: bottomPadding },
     title ? null : { paddingTop: topPadding },
     gap === undefined ? null : { gap },
   ];
@@ -49,8 +60,9 @@ export function AuthSheet({
         )}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
-        stickyHeaderIndices={title ? [0] : undefined}
+        stickyHeaderIndices={title ? [grabberChrome ? 1 : 0] : undefined}
       >
+        {grabberChrome}
         {header}
         {children}
       </Animated.ScrollView>
@@ -77,8 +89,18 @@ export function AuthSheet({
         behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
         style={{ backgroundColor: colors.card }}
       >
+        {grabberChrome}
         {content}
       </KeyboardAvoidingView>
+    );
+  }
+
+  if (grabberChrome) {
+    return (
+      <View style={{ backgroundColor: colors.card }}>
+        {grabberChrome}
+        {content}
+      </View>
     );
   }
 
@@ -145,7 +167,6 @@ function AuthSheetHeader({
 const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 24,
-    paddingBottom: 24,
   },
   stickyHeader: { marginHorizontal: -24 },
   scrollHeaderSurface: {

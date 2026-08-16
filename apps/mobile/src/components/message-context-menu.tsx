@@ -16,6 +16,7 @@ export interface MessageMenuAction {
   id: string;
   title: string;
   systemImage?: Extract<ExpoMenuAction["image"], string>;
+  androidImage?: Exclude<ExpoMenuAction["image"], string>;
   destructive?: boolean;
   disabled?: boolean;
 }
@@ -93,7 +94,7 @@ export function MessageContextMenu({
       actions={actions.map((action) => ({
         id: action.id,
         title: action.title,
-        image: action.systemImage,
+        image: action.androidImage ?? action.systemImage,
         attributes: {
           destructive: action.destructive,
           disabled: action.disabled,

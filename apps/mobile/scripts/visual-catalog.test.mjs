@@ -1,4 +1,6 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -9,7 +11,11 @@ import {
   createInactivityWatchdog,
   createMaestroFailureParser,
   galleryHtml,
+  liveCaptureEntries,
+  loadManifest,
+  scenarioOnPlatform,
   shouldIgnoreWatchPath,
+  unifiedCatalog,
   watchChangePath,
 } from "./visual-catalog.mjs";
 
@@ -171,6 +177,25 @@ describe("galleryHtml", () => {
     expect(html).not.toContain("dynamic-island");
   });
 
+  it("labels an uncaptured scenario with its platform note", () => {
+    const html = galleryHtml({
+      ...catalog,
+      scenarios: [
+        {
+          captured: false,
+          description: "Provider settings",
+          group: "Agent settings",
+          image: "",
+          missingLabel: "iOS only",
+          title: "Provider and model",
+        },
+      ],
+    });
+
+    expect(html).toContain(">iOS only</span>");
+    expect(html).not.toContain("Screenshot missing");
+  });
+
   it("groups screenshots into manifest-ordered sections without search", () => {
     const html = galleryHtml({
       ...catalog,
@@ -206,6 +231,243 @@ describe("galleryHtml", () => {
     );
     expect(html).not.toContain('type="search"');
     expect(html).not.toContain('querySelector("#filter")');
+  });
+});
+
+describe("unifiedCatalog", () => {
+  const iosCatalog = {
+    generatedAt: "2026-08-06T21:00:00.000Z",
+    reportAvailable: true,
+    device: { name: "2 × iPhone 17", runtime: "iOS 26.4" },
+    git: { revision: "abc123", dirty: false },
+    scenarios: [
+      {
+        id: "connect",
+        captured: true,
+        description: "Connection actions",
+        group: "Onboarding",
+        image: "screenshots/1/connect.png",
+        size: { width: 603, height: 1311 },
+        title: "Connect",
+      },
+    ],
+  };
+  const androidCatalog = {
+    generatedAt: "2026-08-16T15:00:00.000Z",
+    platform: "android",
+    reportAvailable: true,
+    device: { name: "vesta-visual (Android emulator)", runtime: "Android 16" },
+    git: { revision: "def456", dirty: false },
+    scenarios: [
+      {
+        id: "connect",
+        captured: true,
+        description: "Connection actions",
+        group: "Onboarding",
+        image: "screenshots/2/connect.png",
+        size: { width: 540, height: 1200 },
+        title: "Connect",
+      },
+      {
+        id: "privacy-locked",
+        captured: true,
+        description: "Privacy lock",
+        group: "Privacy",
+        image: "screenshots/2/privacy-locked.png",
+        size: { width: 540, height: 1200 },
+        title: "Privacy locked",
+      },
+    ],
+  };
+
+  it("passes a single catalog through unchanged", () => {
+    expect(unifiedCatalog(iosCatalog, null)).toBe(iosCatalog);
+    expect(unifiedCatalog(null, androidCatalog)).toBe(androidCatalog);
+    expect(unifiedCatalog(null, null)).toBeNull();
+  });
+
+  it("pairs both platform captures per scenario and prefixes Android images", () => {
+    const merged = unifiedCatalog(iosCatalog, androidCatalog);
+
+    const connect = merged.scenarios[0];
+    expect(connect.captures.map((capture) => capture.platform)).toEqual([
+      "iOS",
+      "Android",
+    ]);
+    expect(connect.captures[0].image).toBe("screenshots/1/connect.png");
+    expect(connect.captures[1].image).toBe("android/screenshots/2/connect.png");
+    expect(merged.generatedAt).toBe(androidCatalog.generatedAt);
+    expect(merged.git.revision).toBe("def456");
+  });
+
+  it("marks a scenario one platform has not captured yet", () => {
+    const merged = unifiedCatalog(iosCatalog, androidCatalog);
+
+    const privacy = merged.scenarios[1];
+    expect(privacy.id).toBe("privacy-locked");
+    expect(privacy.captures[0]).toMatchObject({
+      platform: "iOS",
+      captured: false,
+      missingLabel: "Not captured yet",
+    });
+    expect(privacy.captures[1].captured).toBe(true);
+  });
+
+  it("renders side-by-side shots with platform tags and both reports", () => {
+    const html = galleryHtml(unifiedCatalog(iosCatalog, androidCatalog));
+
+    expect(html).toContain('data-platforms="2"');
+    expect(html).toContain(">iOS</span>");
+    expect(html).toContain(">Android</span>");
+    expect(html).toContain('src="android/screenshots/2/connect.png"');
+    expect(html).toContain('href="maestro/report.html"');
+    expect(html).toContain('href="android/maestro/report.html"');
+    expect(html).toContain("iOS · 2 × iPhone 17 · iOS 26.4");
+    expect(html).toContain("Android · vesta-visual (Android emulator) · Android 16");
+  });
+
+  it("annotates each shot for the live-capture poll", () => {
+    const iosOnly = {
+      ...androidCatalog,
+      scenarios: [
+        androidCatalog.scenarios[0],
+        {
+          id: "provider",
+          screenshot: "provider.png",
+          captured: false,
+          expected: false,
+          description: "Provider settings",
+          group: "Agent settings",
+          image: "",
+          missingLabel: "iOS only",
+          title: "Provider",
+        },
+      ],
+    };
+    const html = galleryHtml(
+      unifiedCatalog(
+        {
+          ...iosCatalog,
+          scenarios: iosCatalog.scenarios.map((scenario) => ({
+            ...scenario,
+            screenshot: "connect.png",
+          })),
+        },
+        iosOnly,
+      ),
+    );
+
+    expect(html).toContain('data-screenshot="connect.png"');
+    expect(html).toContain('data-live-platform="ios"');
+    expect(html).toContain('data-live-platform="android"');
+    expect(html).toContain('data-expected="false"');
+    expect(html).toContain('fetch("live.json"');
+    expect(html).toContain('data-scenario-id="connect"');
+    expect(html).toContain('data-title="Connect"');
+    expect(html).toContain('class="copy-ref"');
+    expect(html).toContain("visual-ref: ");
+  });
+
+  it("emits an inline script that parses", () => {
+    const html = galleryHtml(unifiedCatalog(iosCatalog, androidCatalog));
+    const open = "<scr" + "ipt>";
+    const start = html.lastIndexOf(open) + open.length;
+    const end = html.lastIndexOf("</scr" + "ipt>");
+    const body = html.slice(start, end);
+    expect(body.length).toBeGreaterThan(0);
+    expect(() => new Function(body)).not.toThrow();
+  });
+
+  it("renders a scan row per platform with its last-scan stamp and trigger", () => {
+    const merged = galleryHtml(unifiedCatalog(iosCatalog, androidCatalog));
+    expect(merged).toContain('class="scan-row" data-platform="ios"');
+    expect(merged).toContain('class="scan-row" data-platform="android"');
+    expect(merged).toContain(`data-generated-at="${iosCatalog.generatedAt}"`);
+    expect(merged).toContain(
+      `data-generated-at="${androidCatalog.generatedAt}"`,
+    );
+    expect(merged).toContain('"capture/" + row.dataset.platform');
+
+    const single = galleryHtml({ ...iosCatalog, scenarios: [] });
+    expect(single).toContain('class="scan-row" data-platform="ios"');
+    expect(single).not.toContain('class="scan-row" data-platform="android"');
+  });
+});
+
+describe("liveCaptureEntries", () => {
+  it("indexes flat and maestro capture files by newest per platform", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-live-"));
+    const flat = path.join(base, "watch/screenshots");
+    const maestro = path.join(base, "android/maestro/flow-1/takeScreenshot");
+    await mkdir(flat, { recursive: true });
+    await mkdir(maestro, { recursive: true });
+    await writeFile(path.join(flat, "connect.png"), "ios-shot");
+    await writeFile(path.join(flat, "notes.txt"), "ignored");
+    await writeFile(path.join(maestro, "connect.png"), "android-shot");
+
+    const entries = await liveCaptureEntries(
+      [
+        { platform: "ios", directory: flat },
+        { platform: "ios", directory: path.join(base, "missing") },
+        {
+          platform: "android",
+          directory: path.join(base, "android/maestro"),
+          maestro: true,
+        },
+      ],
+      base,
+    );
+
+    expect(entries.ios["connect.png"].src).toBe("watch/screenshots/connect.png");
+    expect(entries.ios["connect.png"].mtime).toBeGreaterThan(0);
+    expect(entries.ios["notes.txt"]).toBeUndefined();
+    expect(entries.android["connect.png"].src).toBe(
+      "android/maestro/flow-1/takeScreenshot/connect.png",
+    );
+  });
+
+  it("contains a root that fails mid-scan instead of throwing", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-live-"));
+    const flat = path.join(base, "shots");
+    await mkdir(flat, { recursive: true });
+    await writeFile(path.join(flat, "connect.png"), "shot");
+    const notADirectory = path.join(base, "not-a-directory");
+    await writeFile(notADirectory, "capture is rewriting this");
+
+    const entries = await liveCaptureEntries(
+      [
+        { platform: "android", directory: notADirectory, maestro: true },
+        { platform: "ios", directory: flat },
+      ],
+      base,
+    );
+
+    expect(entries.ios["connect.png"].src).toBe("shots/connect.png");
+    expect(entries.android).toEqual({});
+  });
+});
+
+describe("loadManifest", () => {
+  it("keeps every scenario on iOS and filters iOS-only scenarios on Android", async () => {
+    const iosManifest = await loadManifest("ios");
+    expect(iosManifest.scenarios).toHaveLength(iosManifest.allScenarios.length);
+
+    const androidManifest = await loadManifest("android");
+    const excluded = androidManifest.allScenarios
+      .filter((scenario) => !scenarioOnPlatform(scenario, "android"))
+      .map((scenario) => scenario.id);
+    expect(excluded).toEqual([
+      "agent-provider",
+      "agent-voice",
+      "agent-notification-rules",
+      "agent-host-access",
+      "agent-backups",
+      "agent-files",
+      "agent-file-editor",
+    ]);
+    expect(androidManifest.scenarios).toHaveLength(
+      androidManifest.allScenarios.length - excluded.length,
+    );
   });
 });
 

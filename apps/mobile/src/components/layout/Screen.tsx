@@ -7,6 +7,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { useBottomInset } from "@/components/layout/use-bottom-inset";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { spacing } from "@/theme/layout";
 
@@ -28,6 +29,10 @@ export function Screen({
   transparent = false,
 }: ScreenProps) {
   const { colors } = usePreferences();
+  const flattened = StyleSheet.flatten([styles.content, contentStyle]);
+  const bottomPadding = useBottomInset(
+    typeof flattened.paddingBottom === "number" ? flattened.paddingBottom : 0,
+  );
   const backgroundColor = transparent ? "transparent" : colors.background;
   if (!scroll) {
     return (
@@ -39,7 +44,11 @@ export function Screen({
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor }]}
-      contentContainerStyle={[styles.content, contentStyle]}
+      contentContainerStyle={[
+        styles.content,
+        contentStyle,
+        { paddingBottom: bottomPadding },
+      ]}
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"

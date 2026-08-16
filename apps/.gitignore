@@ -9,5 +9,6 @@ desktop/dist-electron/
 mobile/.expo/
 mobile/ios/
 mobile/android/
+mobile/modules/*/android/build/
 mobile/coverage/
 mobile/.visual/

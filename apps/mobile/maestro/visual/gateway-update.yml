@@ -84,6 +84,13 @@ tags:
     env:
       SCREENSHOT: settings-gateway-update-available.png
 
+- scrollUntilVisible:
+    element:
+      text: "^Update gateway,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
 - tapOn:
     text: "^Update gateway,.*"
 - extendedWaitUntil:

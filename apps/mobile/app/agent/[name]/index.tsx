@@ -25,6 +25,7 @@ import {
   AgentPagerTabs,
   type AgentPagerTab,
 } from "@/components/AgentPagerTabs";
+import { HeaderFade } from "@/components/header-fade";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
@@ -275,6 +276,7 @@ function AgentPages() {
           </View>
         ))}
       </AnimatedPagerView>
+      <HeaderFade />
       <AgentPagerTabs
         activePage={activePage}
         bottom={insets.bottom + TAB_BOTTOM_MARGIN}

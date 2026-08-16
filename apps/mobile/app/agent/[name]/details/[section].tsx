@@ -23,6 +23,18 @@ const titles: Record<string, string> = {
   backups: "Backups",
 };
 
+// Agent settings on Android carry only the simple critical controls, so a
+// deep link into a hidden section lands on the fallback, never a broken page.
+const SHOWS_ADVANCED_SECTIONS = process.env.EXPO_OS === "ios";
+const advancedSections = new Set([
+  "provider",
+  "voice",
+  "notifications",
+  "files",
+  "host-access",
+  "backups",
+]);
+
 function AgentDetailContent() {
   const parameters = useLocalSearchParams<{ section?: string }>();
   const { colors } = usePreferences();
@@ -30,6 +42,13 @@ function AgentDetailContent() {
     typeof parameters.section === "string" ? parameters.section : "general";
   const title = titles[section] ?? "Settings";
   const content = (() => {
+    if (!SHOWS_ADVANCED_SECTIONS && advancedSections.has(section)) {
+      return (
+        <Text style={[styles.unknown, { color: colors.secondaryText }]}>
+          This settings section is not available on Android yet.
+        </Text>
+      );
+    }
     if (section === "general") return <GeneralSection />;
     if (section === "provider") return <ProviderSection />;
     if (section === "voice") return <VoiceSection />;

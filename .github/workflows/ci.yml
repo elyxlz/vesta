@@ -67,7 +67,7 @@ jobs:
         id: flags
         env:
           BUILD_MAC_UNIVERSAL: "false" # false = Apple Silicon (arm64) only; true = universal (arm64 + Intel)
-          BUILD_ANDROID: "false" # false = skip the Android compile; true = build it
+          BUILD_ANDROID: "true" # false = skip the Android compile; true = build it
         run: |
           echo "mac_universal=${BUILD_MAC_UNIVERSAL}" >> "$GITHUB_OUTPUT"
           matrix='[{"label":"iOS simulator","platform":"ios","os":"macos-latest"}]'

@@ -40,6 +40,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerBackButtonDisplayMode: "minimal",
+          headerTitleAlign: "center",
           headerLeft: IS_IOS
             ? undefined
             : () => (
@@ -175,6 +176,7 @@ function AgentBackHeaderButton({
 
 const styles = StyleSheet.create({
   titlePill: {
+    alignSelf: "center",
     maxWidth: 220,
     borderRadius: radii.pill,
     borderCurve: "continuous",

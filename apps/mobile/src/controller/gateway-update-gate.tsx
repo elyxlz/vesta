@@ -75,6 +75,7 @@ export function GatewayUpdateGate({
   return (
     <BlockingSheetGateView
       blocked={gatewayUpdateBlocked}
+      presented={gatewayUpdateRouteActive}
       estimatedSheetHeight={ESTIMATED_GATEWAY_UPDATE_SHEET_HEIGHT}
     >
       {children}

@@ -107,6 +107,7 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
   return (
     <BlockingSheetGateView
       blocked={blocked}
+      presented={privacyRouteActive}
       estimatedSheetHeight={ESTIMATED_PRIVACY_SHEET_HEIGHT}
     >
       {children}

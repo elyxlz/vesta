@@ -1,4 +1,5 @@
-import { Alert, StyleSheet } from "react-native";
+import { useState } from "react";
+import { StyleSheet } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
@@ -12,12 +13,18 @@ import { useAgent } from "@/agent/AgentProvider";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormSection, SwitchRow } from "@/components/ui/Form";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
+
+// Android keeps the simple critical controls and hides the complex
+// sections (provider sign-in, voice, rules, files, host access, restores).
+const SHOWS_ADVANCED_SECTIONS = process.env.EXPO_OS === "ios";
 
 function AgentSettingsContent() {
   const router = useRouter();
@@ -26,6 +33,7 @@ function AgentSettingsContent() {
   const { name, agent, activityState } = useAgent();
   const preferences = usePreferences();
   const { showError } = useToast();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const action = useMutation({
     mutationFn: async (
       operation: "start" | "stop" | "restart" | "backup" | "delete",
@@ -70,14 +78,16 @@ function AgentSettingsContent() {
       <FormSection
         title="Agent"
         actions={
-          <>
-            <Button pill variant="card" onPress={() => open("provider")}>
-              Provider and model
-            </Button>
-            <Button pill variant="card" onPress={() => open("voice")}>
-              Voice
-            </Button>
-          </>
+          SHOWS_ADVANCED_SECTIONS ? (
+            <>
+              <Button pill variant="card" onPress={() => open("provider")}>
+                Provider and model
+              </Button>
+              <Button pill variant="card" onPress={() => open("voice")}>
+                Voice
+              </Button>
+            </>
+          ) : undefined
         }
       >
         <SwitchRow
@@ -93,7 +103,33 @@ function AgentSettingsContent() {
       <FormSection
         title="Attention"
         actions={
-          <>
+          SHOWS_ADVANCED_SECTIONS ? (
+            <>
+              <ButtonGroup>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => openPage("notifications")}
+                >
+                  Notifications
+                </Button>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => open("notifications")}
+                >
+                  Notification rules
+                </Button>
+              </ButtonGroup>
+              <Button pill variant="card" onPress={() => openPage("logs")}>
+                Logs
+              </Button>
+              <Button pill variant="card" onPress={() => open("files")}>
+                Files
+              </Button>
+              <Button pill variant="card" onPress={() => open("host-access")}>
+                Host access
+              </Button>
+            </>
+          ) : (
             <ButtonGroup>
               <Button
                 variant="cardGrouped"
@@ -101,41 +137,41 @@ function AgentSettingsContent() {
               >
                 Notifications
               </Button>
-              <Button
-                variant="cardGrouped"
-                onPress={() => open("notifications")}
-              >
-                Notification rules
+              <Button variant="cardGrouped" onPress={() => openPage("logs")}>
+                Logs
               </Button>
             </ButtonGroup>
-            <Button pill variant="card" onPress={() => openPage("logs")}>
-              Logs
-            </Button>
-            <Button pill variant="card" onPress={() => open("files")}>
-              Files
-            </Button>
-            <Button pill variant="card" onPress={() => open("host-access")}>
-              Host access
-            </Button>
-          </>
+          )
         }
       />
       <FormSection
         title="Backups"
         actions={
-          <ButtonGroup>
-            <Button variant="cardGrouped" onPress={() => open("backups")}>
-              Manage backups
-            </Button>
+          SHOWS_ADVANCED_SECTIONS ? (
+            <ButtonGroup>
+              <Button variant="cardGrouped" onPress={() => open("backups")}>
+                Manage backups
+              </Button>
+              <Button
+                variant="cardGrouped"
+                disabled={action.isPending}
+                loading={action.isPending && action.variables === "backup"}
+                onPress={() => action.mutate("backup")}
+              >
+                Back up now
+              </Button>
+            </ButtonGroup>
+          ) : (
             <Button
-              variant="cardGrouped"
+              pill
+              variant="card"
               disabled={action.isPending}
               loading={action.isPending && action.variables === "backup"}
               onPress={() => action.mutate("backup")}
             >
               Back up now
             </Button>
-          </ButtonGroup>
+          )
         }
       />
       <FormSection
@@ -175,23 +211,24 @@ function AgentSettingsContent() {
             disabled={action.isPending}
             loading={action.isPending && action.variables === "delete"}
             onPress={() => {
-              Alert.alert(
-                `Delete ${name}?`,
-                "This permanently deletes the agent and their local state.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: () => action.mutate("delete"),
-                  },
-                ],
-              );
+              setConfirmingDelete(true);
             }}
           >
             Delete agent
           </Button>
         }
+      />
+      <ConfirmDialog
+        visible={confirmingDelete}
+        title={`Delete ${name}?`}
+        message="This permanently deletes the agent and their local state."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          action.mutate("delete");
+        }}
+        onDismiss={() => setConfirmingDelete(false)}
       />
     </Screen>
   );
@@ -201,6 +238,7 @@ export default function AgentSettingsScreen() {
   return (
     <>
       <NativeSheetCloseButton accessibilityLabel="Close agent settings" />
+      <SheetChrome title="Settings" closeLabel="Close agent settings" />
       <AgentSettingsContent />
     </>
   );

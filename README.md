@@ -56,6 +56,11 @@ Windows installs the desktop app:
 irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- --version=0.1.112
 ```
 
+### Mobile app
+
+- **Android**: install [the latest APK](https://github.com/elyxlz/vesta/releases/latest/download/vesta-android.apk) directly (your browser asks once to allow the install). Each release attaches a fresh build.
+- **iOS**: delivered through TestFlight internal testing for now.
+
 ## Setup
 
 ### 1. Server (Linux)
@@ -81,4 +86,4 @@ Copy the connect link from the server output, then reach your agent one of three
 
 - **Web app**: open the gateway URL from the server output in a browser (vestad serves the app at `/app`).
 - **Desktop app**: paste the connect link on the onboarding screen (macOS, Windows, Linux).
-- **Mobile app**: paste the connect link to connect to the same gateway.
+- **Mobile app** (iOS and Android): paste the connect link to connect to the same gateway.

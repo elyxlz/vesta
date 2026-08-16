@@ -27,49 +27,53 @@ tags:
     env:
       SCREENSHOT: whats-new-error.png
 
-- stopApp
-- openLink:
-    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: "Natural chat pacing"
-    timeout: 30000
-- tapOn:
-    text: "^Provider and model,.*"
-- extendedWaitUntil:
-    visible: ".*claude-sonnet-4-5.*"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "Five-hour session"
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: agent-provider
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: agent-provider.png
-
-- stopApp
-- openLink:
-    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: "Natural chat pacing"
-    timeout: 30000
-- tapOn:
-    text: "^Voice,.*"
-- extendedWaitUntil:
-    visible: "Deepgram Nova-3"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "ElevenLabs"
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: agent-voice
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: agent-voice.png
+# iOS only: Android agent settings hide the provider and voice sections by design.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - stopApp
+      - openLink:
+          link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+      - extendedWaitUntil:
+          visible: "Natural chat pacing"
+          timeout: 30000
+      - tapOn:
+          text: "^Provider and model,.*"
+      - extendedWaitUntil:
+          visible: ".*claude-sonnet-4-5.*"
+          timeout: 10000
+      - extendedWaitUntil:
+          visible: "Five-hour session"
+          timeout: 10000
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - takeScreenshot: agent-provider
+      - runScript:
+          file: capture-screenshot.js
+          env:
+            SCREENSHOT: agent-provider.png
+      - stopApp
+      - openLink:
+          link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+      - extendedWaitUntil:
+          visible: "Natural chat pacing"
+          timeout: 30000
+      - tapOn:
+          text: "^Voice,.*"
+      - extendedWaitUntil:
+          visible: "Deepgram Nova-3"
+          timeout: 10000
+      - extendedWaitUntil:
+          visible: "ElevenLabs"
+          timeout: 10000
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - takeScreenshot: agent-voice
+      - runScript:
+          file: capture-screenshot.js
+          env:
+            SCREENSHOT: agent-voice.png
 
 - stopApp
 - openLink:
