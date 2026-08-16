@@ -1,12 +1,13 @@
-//! Which agents to tell about the user's device context, and once. A device reporting a timezone
-//! that differs from an agent's own zone earns that agent one `user-timezone` notification per
-//! zone per device, reset when the agent's own zone changes (it acted, or moved on its own). A
-//! device whose macro place differs from the last place an agent was told for that device, or
-//! that moved far enough with no place to compare, earns one `user-location` notification. The
-//! registry stores the facts; this module only decides who hears about a change. Pure decisions
-//! over an in-memory told-state keyed by (agent, device), so a vestad restart re-tells at most once.
+//! Which agents to tell about the user's device context, and once per change. An agent hears about
+//! a device zone that is neither its own zone nor the last zone it was told, and about a device
+//! position whose macro place differs from the last place it was told (or that moved far enough
+//! with no place to compare). One memory per agent, nothing per device: two devices arriving in the
+//! same zone are one fact, and the agent's own zone is read live on every report, so it decides
+//! what to do and is nudged again only when something changes. The registry stores the facts; this
+//! module only decides who hears about a change, over in-memory state, so a vestad restart re-tells
+//! at most once.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use axum::extract::{Path, State};
@@ -22,11 +23,10 @@ const LOCATION_NOTIFY_MIN_KM: f64 = 25.0;
 
 const EARTH_RADIUS_KM: f64 = 6371.0;
 
+/// What one agent was last told: the device zone, and the place (or point) of the last position.
 #[derive(Debug, Default)]
 struct Told {
-    /// The agent's own zone the `zones` set was accumulated under; a different current zone resets it.
-    agent_zone: Option<String>,
-    zones: HashSet<String>,
+    zone: Option<String>,
     place: Option<String>,
     point: Option<(f64, f64)>,
 }
@@ -38,48 +38,43 @@ pub(crate) struct TimezoneChange {
     pub agent_zone: String,
 }
 
-/// Told-state per (agent, device): what each agent last heard about each device.
 #[derive(Debug, Default)]
 pub(crate) struct UserContext {
-    told: Mutex<HashMap<(String, String), Told>>,
+    told: Mutex<HashMap<String, Told>>,
 }
 
 /// The serving agents, each with its own IANA zone, in name order.
 pub(crate) type AgentZones = BTreeMap<String, String>;
 
 impl UserContext {
-    /// The agents to tell that device `device_id` reports `device_zone`. An agent already on that
-    /// zone, or already told it for that device since its own zone last changed, is skipped; the
-    /// ones returned are marked told.
-    pub(crate) fn timezone_changes(&self, device_id: &str, device_zone: &str, agent_zones: &AgentZones) -> Vec<TimezoneChange> {
+    /// The agents to tell that a device reports `device_zone`: those whose own zone is not it and who
+    /// were not last told it. The ones returned are marked told.
+    pub(crate) fn timezone_changes(&self, device_zone: &str, agent_zones: &AgentZones) -> Vec<TimezoneChange> {
         let mut told = self.told.lock().expect("user context mutex");
         agent_zones
             .iter()
             .filter_map(|(agent, agent_zone)| {
-                let entry = told.entry((agent.clone(), device_id.to_string())).or_default();
-                if entry.agent_zone.as_deref() != Some(agent_zone.as_str()) {
-                    entry.agent_zone = Some(agent_zone.clone());
-                    entry.zones.clear();
-                }
-                if agent_zone == device_zone || !entry.zones.insert(device_zone.to_string()) {
+                let entry = told.entry(agent.clone()).or_default();
+                if agent_zone == device_zone || entry.zone.as_deref() == Some(device_zone) {
                     return None;
                 }
+                entry.zone = Some(device_zone.to_string());
                 Some(TimezoneChange { agent: agent.clone(), agent_zone: agent_zone.clone() })
             })
             .collect()
     }
 
-    /// The agents to tell that device `device_id` is at `position`: the macro place differs from
-    /// the last one told for that device, or, when either side has no place, the point moved at
-    /// least `LOCATION_NOTIFY_MIN_KM` from the last told point. The ones returned are marked told.
-    pub(crate) fn location_changes(&self, device_id: &str, position: &DevicePosition, agent_zones: &AgentZones) -> Vec<String> {
+    /// The agents to tell that a device is at `position`: the macro place differs from the last one
+    /// told, or, when either side has no place, the point moved at least `LOCATION_NOTIFY_MIN_KM`
+    /// from the last told point. The ones returned are marked told.
+    pub(crate) fn location_changes(&self, position: &DevicePosition, agent_zones: &AgentZones) -> Vec<String> {
         let mut told = self.told.lock().expect("user context mutex");
         let place = position.place.as_ref().and_then(DevicePlace::macro_label);
         let point = (position.latitude, position.longitude);
         agent_zones
             .keys()
             .filter(|agent| {
-                let entry = told.entry(((*agent).clone(), device_id.to_string())).or_default();
+                let entry = told.entry((*agent).clone()).or_default();
                 let moved = match (&place, &entry.place, entry.point) {
                     (Some(now), Some(before), _) => now != before,
                     (_, _, Some(before)) => distance_km(point, before) >= LOCATION_NOTIFY_MIN_KM,
@@ -122,14 +117,14 @@ pub(crate) async fn report_device_context(state: &SharedState, device_id: &str, 
     // Serving agents with a reported zone: the ones vestad holds a current picture of.
     let agent_zones = state.agent_status_cache.serving_timezones();
     if let Some(zone) = context.timezone.filter(|_| presence == UserPresence::AtDevice) {
-        for change in state.user_context.timezone_changes(device_id, &zone, &agent_zones) {
+        for change in state.user_context.timezone_changes(&zone, &agent_zones) {
             let payload = timezone_notification_payload(&timestamp, &device, &zone, &change.agent_zone);
             deliver(state, &change.agent, "user-timezone", &payload).await;
         }
     }
     if let Some(PositionReport::At(position)) = context.position {
         let payload = location_notification_payload(&timestamp, &device, &position);
-        for agent in state.user_context.location_changes(device_id, &position, &agent_zones) {
+        for agent in state.user_context.location_changes(&position, &agent_zones) {
             deliver(state, &agent, "user-location", &payload).await;
         }
     }
@@ -242,59 +237,51 @@ mod tests {
     }
 
     #[test]
-    fn a_differing_zone_is_told_once_per_agent() {
+    fn a_differing_zone_is_told_once_whichever_device_reports_it() {
         let context = UserContext::default();
         let fleet = zones(&[("scout", "Europe/London"), ("quiet", "Asia/Tokyo")]);
-        let first = context.timezone_changes("phone", "Asia/Tokyo", &fleet);
+        let first = context.timezone_changes("Asia/Tokyo", &fleet);
         assert_eq!(first, vec![TimezoneChange { agent: "scout".into(), agent_zone: "Europe/London".into() }]);
-        assert!(context.timezone_changes("phone", "Asia/Tokyo", &fleet).is_empty(), "already told");
+        // A second device landing in the same zone is the same fact.
+        assert!(context.timezone_changes("Asia/Tokyo", &fleet).is_empty(), "already told");
     }
 
     #[test]
-    fn a_second_zone_is_told_and_the_first_stays_told() {
+    fn each_move_is_told_once_and_home_is_silent_while_the_agent_stays() {
         let context = UserContext::default();
         let fleet = zones(&[("scout", "Europe/London")]);
-        assert_eq!(context.timezone_changes("phone", "Asia/Tokyo", &fleet).len(), 1);
-        assert_eq!(context.timezone_changes("phone", "America/New_York", &fleet).len(), 1);
-        assert!(context.timezone_changes("phone", "Asia/Tokyo", &fleet).is_empty());
+        assert_eq!(context.timezone_changes("Asia/Tokyo", &fleet).len(), 1);
+        assert_eq!(context.timezone_changes("America/New_York", &fleet).len(), 1, "a real move");
+        assert_eq!(context.timezone_changes("Asia/Tokyo", &fleet).len(), 1, "and back is a real move too");
+        assert!(context.timezone_changes("Europe/London", &fleet).is_empty(), "home equals the agent's zone");
     }
 
     #[test]
-    fn the_agent_changing_its_own_zone_resets_what_it_was_told() {
+    fn the_agents_own_zone_is_read_live_so_no_reset_is_needed() {
         let context = UserContext::default();
-        assert_eq!(context.timezone_changes("phone", "Asia/Tokyo", &zones(&[("scout", "Europe/London")])).len(), 1);
-        // The agent moved to Tokyo: a device back in London is news again.
-        assert_eq!(context.timezone_changes("phone", "Europe/London", &zones(&[("scout", "Asia/Tokyo")])).len(), 1);
-        // And a device in Tokyo is where the agent already is.
-        assert!(context.timezone_changes("phone", "Asia/Tokyo", &zones(&[("scout", "Asia/Tokyo")])).is_empty());
+        assert_eq!(context.timezone_changes("Asia/Tokyo", &zones(&[("scout", "Europe/London")])).len(), 1);
+        // The agent moved to Tokyo: a device in Tokyo is where it already is.
+        assert!(context.timezone_changes("Asia/Tokyo", &zones(&[("scout", "Asia/Tokyo")])).is_empty());
+        // And a device back in London is news.
+        assert_eq!(context.timezone_changes("Europe/London", &zones(&[("scout", "Asia/Tokyo")])).len(), 1);
     }
 
     #[test]
     fn a_first_position_is_told_then_only_a_new_place() {
         let context = UserContext::default();
         let fleet = zones(&[("scout", "Europe/London")]);
-        assert_eq!(context.location_changes("phone", &at(51.5, -0.12, Some("London")), &fleet), ["scout"]);
-        assert!(context.location_changes("phone", &at(51.51, -0.13, Some("London")), &fleet).is_empty(), "same city");
-        assert_eq!(context.location_changes("phone", &at(35.68, 139.65, Some("Tokyo")), &fleet), ["scout"]);
-    }
-
-    #[test]
-    fn two_devices_in_different_places_are_each_told_once() {
-        let context = UserContext::default();
-        let fleet = zones(&[("scout", "Europe/London")]);
-        assert_eq!(context.location_changes("phone", &at(35.68, 139.65, Some("Tokyo")), &fleet), ["scout"]);
-        assert_eq!(context.location_changes("tablet", &at(51.5, -0.12, Some("London")), &fleet), ["scout"]);
-        assert!(context.location_changes("phone", &at(35.68, 139.65, Some("Tokyo")), &fleet).is_empty(), "the phone did not move");
-        assert!(context.location_changes("tablet", &at(51.5, -0.12, Some("London")), &fleet).is_empty(), "nor the tablet");
+        assert_eq!(context.location_changes(&at(51.5, -0.12, Some("London")), &fleet), ["scout"]);
+        assert!(context.location_changes(&at(51.51, -0.13, Some("London")), &fleet).is_empty(), "same city");
+        assert_eq!(context.location_changes(&at(35.68, 139.65, Some("Tokyo")), &fleet), ["scout"]);
     }
 
     #[test]
     fn without_a_place_distance_decides() {
         let context = UserContext::default();
         let fleet = zones(&[("scout", "Europe/London")]);
-        assert_eq!(context.location_changes("phone", &at(51.5, -0.12, None), &fleet), ["scout"]);
-        assert!(context.location_changes("phone", &at(51.6, -0.12, None), &fleet).is_empty(), "11 km is a walk");
-        assert_eq!(context.location_changes("phone", &at(52.0, -0.12, None), &fleet), ["scout"], "56 km is a trip");
+        assert_eq!(context.location_changes(&at(51.5, -0.12, None), &fleet), ["scout"]);
+        assert!(context.location_changes(&at(51.6, -0.12, None), &fleet).is_empty(), "11 km is a walk");
+        assert_eq!(context.location_changes(&at(52.0, -0.12, None), &fleet), ["scout"], "56 km is a trip");
     }
 
     #[test]
