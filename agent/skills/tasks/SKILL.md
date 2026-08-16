@@ -11,7 +11,8 @@ One CLI, one daemon, one SQLite DB. A task is something that needs doing, option
 
 ```bash
 tasks create "Submit report" --priority high --in-hours 4
-tasks create "Meeting prep" --at "2026-12-01T10:00:00" --tz "Europe/London"
+tasks create "Meeting prep" --at "2026-12-01T10:00:00"
+tasks create "Call Tokyo office" --at "2026-12-02T09:00:00" --tz "Asia/Tokyo"
 tasks list                        # pending tasks, overdue first
 tasks done <id>                   # mark completed
 tasks postpone <id> --in-days 2   # new due date, measured from now
@@ -23,9 +24,9 @@ tasks delete <id>                 # soft delete: keep the task, stop it firing, 
 tasks list --show-deleted         # include deleted tasks, marked [deleted]
 ```
 
-- Due date: `--in-minutes/--in-hours/--in-days` (relative) or `--at` + `--tz` (absolute, both required), the same time flags every command in this skill takes. `--priority` low/normal/high. `--initial-metadata "..."` attaches notes.
+- Due date: `--in-minutes/--in-hours/--in-days` (relative) or `--at` (absolute), the same time flags every command in this skill takes. `--at` times are read in your own timezone; pass `--tz` only to name a moment in another zone. A due date is a fixed instant, echoed with your local offset: a later timezone change does not move it. `--priority` low/normal/high. `--initial-metadata "..."` attaches notes.
 - Keep the subject under ~100 characters: it is the one field `tasks list`, the digest, and the app show, so a paragraph there is unreadable everywhere. Detail and running state go in metadata (`--initial-metadata` on create, or edit the task's `metadata_path` file). A longer subject still saves, with a warning.
-- `postpone` also takes `--in-minutes/--in-hours` or `--at` + `--tz`, and works on a task with no due date (gives it one).
+- `postpone` also takes `--in-minutes/--in-hours` or `--at`, and works on a task with no due date (gives it one).
 - `update --clear-due` removes a due date; every other due flag can only move one. The pre-due checkpoints are computed from `due_date`, so clearing the date is the one way to silence them. Reach for it when a date was set by mistake or by a bulk `postpone` over a backlog.
 - `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, subject, status, priority, due_date, created_at, completed_at, deleted_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
 - `list`/`search` print compact tables (`--show-completed` to include completed, `--show-deleted` to include deleted); add `--json` or `--json-pretty` for JSON.

@@ -3,6 +3,7 @@
 import json
 import sys
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from tasks_cli import cli, commands, db
 from tasks_cli.config import Config
@@ -26,6 +27,13 @@ def test_create_accepts_at_and_tz(tmp_config: Config, monkeypatch, capsys):
     out, _ = _run_cli(monkeypatch, capsys, tmp_config, "create", "meet", "--at", "2027-01-01T10:00:00", "--tz", "UTC")
     task = json.loads(out)
     assert db.parse_datetime(task["due_date"]) == datetime(2027, 1, 1, 10, tzinfo=UTC)
+
+
+def test_create_accepts_at_without_tz(tmp_config: Config, monkeypatch, capsys):
+    monkeypatch.setenv("TZ", "Europe/London")
+    out, _ = _run_cli(monkeypatch, capsys, tmp_config, "create", "meet", "--at", "2027-07-01T10:00:00")
+    task = json.loads(out)
+    assert db.parse_datetime(task["due_date"]) == datetime(2027, 7, 1, 10, tzinfo=ZoneInfo("Europe/London"))
 
 
 def test_create_accepts_in_hours(tmp_config: Config, monkeypatch, capsys):

@@ -49,12 +49,12 @@ def _require_daemon():
 
 
 def _add_due_args(parser: argparse.ArgumentParser) -> None:
-    """The shared due-date flags: an absolute datetime + timezone, or a relative offset.
+    """The shared due-date flags: an absolute datetime, or a relative offset.
 
     Each flag answers to the same spelling `create`, `update`, and `postpone` use (--at, --tz,
     --in-*), so one time vocabulary works across every command; the --due-* forms are aliases."""
-    parser.add_argument("--at", "--due-datetime", dest="due_datetime", default=None)
-    parser.add_argument("--tz", "--timezone", dest="timezone", default=None)
+    parser.add_argument("--at", "--due-datetime", dest="due_datetime", default=None, help="Absolute due datetime, e.g. 2026-12-01T10:00:00")
+    parser.add_argument("--tz", "--timezone", dest="timezone", default=None, help="IANA timezone; omit to use the agent's own timezone")
     parser.add_argument("--in-minutes", "--due-in-minutes", dest="due_in_minutes", type=int, default=None)
     parser.add_argument("--in-hours", "--due-in-hours", dest="due_in_hours", type=int, default=None)
     parser.add_argument("--in-days", "--due-in-days", dest="due_in_days", type=int, default=None)
@@ -132,8 +132,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_postpone.add_argument("--in-minutes", type=int, default=None)
     p_postpone.add_argument("--in-hours", type=int, default=None)
     p_postpone.add_argument("--in-days", type=int, default=None)
-    p_postpone.add_argument("--at", default=None)
-    p_postpone.add_argument("--tz", default=None)
+    p_postpone.add_argument("--at", default=None, help="Absolute due datetime, e.g. 2026-12-01T10:00:00")
+    p_postpone.add_argument("--tz", default=None, help="IANA timezone; omit to use the agent's own timezone")
 
     # delete
     p_delete = sub.add_parser("delete", help="Delete a task")

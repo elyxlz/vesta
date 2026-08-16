@@ -1,3 +1,4 @@
+import os
 import uuid
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -18,10 +19,11 @@ from .scheduler import write_notification
 
 
 class DueSpec(BaseModel):
-    """A task due date: an absolute datetime + timezone, or a relative due-in offset.
+    """A task due date: an absolute datetime, or a relative due-in offset.
 
-    The due-setting fields only move the date. `clear` is the one that unsets it, and cannot be
-    combined with a due-setting field.
+    An absolute datetime is read in `timezone` when one is named, else in the agent's own zone
+    (the TZ env var), and stored as a UTC instant either way. The due-setting fields only move
+    the date. `clear` is the one that unsets it, and cannot be combined with a due-setting field.
     """
 
     due_datetime: str | None = None
@@ -54,6 +56,35 @@ def _relative_offset(minutes: int | None, hours: int | None, days: int | None) -
             raise ValueError(f"in_{name} must be positive")
     offset = timedelta(minutes=minutes or 0, hours=hours or 0, days=days or 0)
     return offset if offset.total_seconds() > 0 else None
+
+
+def _local_tz_name() -> str:
+    return os.environ["TZ"] if "TZ" in os.environ else "UTC"
+
+
+def _resolve_tz_name(timezone_str: str | None) -> str:
+    """The zone that reads a wall-clock due datetime: an explicit timezone wins, else the agent's own."""
+    if timezone_str is not None:
+        return timezone_str
+    name = _local_tz_name()
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, KeyError):
+        raise ValueError(f"The agent's TZ value '{name}' is not a valid IANA timezone. Fix the timezone config or pass --tz.") from None
+    return name
+
+
+def _display_due_date(stored: str | None) -> str | None:
+    """A stored UTC due date rendered with the agent's local offset; storage stays UTC.
+
+    A broken TZ value falls back to UTC here so reads keep working; writes surface the error."""
+    if stored is None:
+        return None
+    try:
+        local_tz = ZoneInfo(_local_tz_name())
+    except (ZoneInfoNotFoundError, KeyError):
+        local_tz = ZoneInfo("UTC")
+    return db.parse_datetime(stored).astimezone(local_tz).isoformat()
 
 
 def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
@@ -108,9 +139,7 @@ def _compute_due_date(due: DueSpec | None) -> str | None:
             raise ValueError("clear removes the due date, so it cannot be combined with a due date or offset")
         return None
     if due.due_datetime is not None:
-        if due.timezone is None:
-            raise ValueError("timezone is required when due_datetime is provided")
-        return _to_utc(due.due_datetime, due.timezone)
+        return _to_utc(due.due_datetime, _resolve_tz_name(due.timezone))
 
     offset = _relative_offset(due.due_in_minutes, due.due_in_hours, due.due_in_days)
     if offset is not None:
@@ -153,6 +182,7 @@ def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False
     # Checkpoint bookkeeping, not task state: the ladder engine's marker means nothing to a reader.
     # deleted_at stays: a reader must see whether a task is deleted and when.
     task.pop("checkpoint_fired_through", None)
+    task["due_date"] = _display_due_date(task["due_date"])
     task_id = task["id"]
     task["metadata_path"] = str(_get_metadata_path(data_dir, task_id))
     if include_content:
@@ -192,7 +222,7 @@ def add_task(
         "subject": subject,
         "status": "pending",
         "priority": priority,
-        "due_date": due_date,
+        "due_date": _display_due_date(due_date),
         "metadata_path": str(_get_metadata_path(config.data_dir, task_id)),
     }
 
@@ -305,7 +335,7 @@ def postpone_task(
     """Set a new due date measured from now (or an absolute one).
     Also gives a due date to a task that never had one."""
     if due_datetime is None and not (in_minutes or in_hours or in_days):
-        raise ValueError("Say when: tasks postpone <id> --in-days N (or --in-minutes/--in-hours, or --at + --tz)")
+        raise ValueError("Say when: tasks postpone <id> --in-days N (or --in-minutes/--in-hours, or --at)")
     return update_task(
         config,
         task_id=task_id,
@@ -348,7 +378,7 @@ def get_task_fields(config: Config, *, task_id: str, fields: list[str]) -> dict:
         with closing(db.get_db(config.data_dir)) as conn:
             row = _require_task_row(conn, task_id)
             for f in want_db:
-                out[f] = row[f]
+                out[f] = _display_due_date(row[f]) if f == "due_date" else row[f]
             if "metadata_path" in fields:
                 out["metadata_path"] = str(_get_metadata_path(config.data_dir, task_id))
 

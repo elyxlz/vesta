@@ -21,7 +21,8 @@ def _free_port() -> int:
 
 
 def _env(home: Path) -> dict[str, str]:
-    return {**os.environ, "HOME": str(home)}
+    # TZ is pinned so a host timezone never changes how a tz-less --at is read or echoed.
+    return {**os.environ, "HOME": str(home), "TZ": "UTC"}
 
 
 def tasks_cli(home: Path, *args: str, timeout: float = 10) -> subprocess.CompletedProcess:
@@ -174,11 +175,10 @@ class TestAddTask:
         r = tasks_cli(home, "create")
         assert r.returncode != 0
 
-    def test_add_requires_tz_with_datetime(self, shared_env):
+    def test_add_accepts_datetime_without_tz(self, shared_env):
         home, _, _ = shared_env
-        r = tasks_cli(home, "create", "test", "--due-datetime", "2025-06-15T10:00:00")
-        assert r.returncode != 0
-        assert "timezone" in parse(r)["error"].lower()
+        data = parse(tasks_cli(home, "create", "test", "--due-datetime", "2030-06-15T10:00:00"))
+        assert data["due_date"] == "2030-06-15T10:00:00+00:00"
 
     def test_add_invalid_timezone(self, shared_env):
         home, _, _ = shared_env

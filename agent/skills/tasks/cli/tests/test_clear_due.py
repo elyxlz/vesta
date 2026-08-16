@@ -31,7 +31,7 @@ def test_clear_due_removes_the_date(tmp_config: Config):
 
 
 def test_clear_due_does_not_need_a_timezone(tmp_config: Config):
-    """`due_datetime` requires a timezone; clearing must not inherit that requirement."""
+    """Clearing takes no time flags at all: no datetime, no timezone."""
     config = tmp_config
     task = commands.add_task(config, subject="item", due=commands.DueSpec(due_in_hours=5))
 
