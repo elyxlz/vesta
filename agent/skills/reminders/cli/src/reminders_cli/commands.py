@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import random
 import uuid
 from contextlib import closing
@@ -31,7 +32,7 @@ class TriggerData(TypedDict, total=False):
     type: str
     run_date: str  # "date": one-shot ISO-8601 UTC instant
     expr: str  # "cron": normalized 5-field cron expression (day-of-week as an APScheduler name list)
-    tz: str  # "cron": IANA timezone the expression is interpreted in (DST-aware)
+    tz: str  # "cron": pinned IANA timezone (DST-aware); absent = the schedule follows the agent's own zone
     hours: int  # "interval": fixed hour spacing
     fuzz_minutes: int  # "cron": each fire shifts by a deterministic sample in [-fuzz, +fuzz]
 
@@ -40,8 +41,8 @@ RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more t
 
 
 class SnoozeSpec(BaseModel):
-    """When a snoozed reminder should fire: from now (--in-*) or at a named moment (--at + --tz).
-    One form per call."""
+    """When a snoozed reminder should fire: from now (--in-*) or at a named moment (--at,
+    in the agent's own timezone unless --tz names one). One form per call."""
 
     in_minutes: int | None = None
     in_hours: int | None = None
@@ -68,6 +69,37 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+def _local_tz_name() -> str:
+    """The agent's own IANA timezone: boot applies the config store's timezone as the TZ env var."""
+    return os.environ["TZ"] if "TZ" in os.environ else "UTC"
+
+
+def _zone(tz_name: str | None) -> ZoneInfo:
+    """Resolve an explicit IANA name; None means the agent's own zone."""
+    if tz_name is not None:
+        try:
+            return ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, KeyError):
+            raise ValueError(f"Invalid timezone: '{tz_name}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from None
+    local_name = _local_tz_name()
+    try:
+        return ZoneInfo(local_name)
+    except (ZoneInfoNotFoundError, KeyError):
+        raise ValueError(f"The agent's TZ value '{local_name}' is not an IANA timezone. Fix the timezone config or pass --tz.") from None
+
+
+def _echo_local(value: str | datetime | None) -> str | None:
+    """Instants echoed in command results render in the agent's local zone; storage stays UTC."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = db.parse_datetime(value)
+        except ValueError:
+            return value  # a malformed stored value is echoed as-is rather than hiding the row
+    return value.astimezone().isoformat()
+
+
 # A one-shot job whose DB run_date moved further than this into the future was snoozed after the
 # job was armed; the fire is stale and the job sync re-arms it at the new time.
 STALE_FIRE_SLACK = timedelta(seconds=60)
@@ -90,7 +122,10 @@ def _relative_offset(minutes: int | None, hours: int | None, days: int | None) -
 
 
 def _cron_trigger_from_data(trigger_data: TriggerData) -> CronTrigger:
-    return CronTrigger.from_crontab(trigger_data["expr"], timezone=ZoneInfo(trigger_data["tz"]))
+    # No stored tz means the schedule follows the agent's zone, resolved at build time: the daemon
+    # re-arms every trigger at startup, so a timezone change plus restart moves every unpinned schedule.
+    tz_name = trigger_data["tz"] if "tz" in trigger_data else None
+    return CronTrigger.from_crontab(trigger_data["expr"], timezone=_zone(tz_name))
 
 
 def _validate_fuzz(fuzz_minutes: int, trigger: CronTrigger):
@@ -187,11 +222,8 @@ def _normalize_cron_expr(expr: str) -> str:
     return " ".join(fields)
 
 
-def _parse_local_dt(datetime_str: str, timezone_str: str, *, allow_bare_time: bool = False) -> datetime:
-    try:
-        local_tz = ZoneInfo(timezone_str)
-    except (ZoneInfoNotFoundError, KeyError):
-        raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from None
+def _parse_local_dt(datetime_str: str, timezone_str: str | None, *, allow_bare_time: bool = False) -> datetime:
+    local_tz = _zone(timezone_str)
 
     if allow_bare_time:
         # A schedule that only uses the wall-clock time ("daily at 21:30") should not force the
@@ -209,7 +241,7 @@ def _parse_local_dt(datetime_str: str, timezone_str: str, *, allow_bare_time: bo
     return parsed.replace(tzinfo=local_tz)
 
 
-def _to_utc_dt(datetime_str: str, timezone_str: str) -> datetime:
+def _to_utc_dt(datetime_str: str, timezone_str: str | None) -> datetime:
     return _parse_local_dt(datetime_str, timezone_str).astimezone(UTC)
 
 
@@ -391,31 +423,34 @@ def _apply_fuzz(
 
 
 def _recurring_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, TriggerData, datetime | None]:
-    if not spec.scheduled_datetime or not spec.tz:
-        raise ValueError(f"scheduled_datetime and tz are required for {spec.recurring} reminders")
-    # Build the cron expression from the user's wall-clock time and store the IANA tz alongside it,
-    # so APScheduler recomputes the correct UTC instant on every fire and the reminder holds its
-    # wall-clock time across DST transitions instead of drifting by the offset.
+    if not spec.scheduled_datetime:
+        raise ValueError(f"scheduled_datetime is required for {spec.recurring} reminders")
+    # Build the cron expression from the wall-clock time so APScheduler recomputes the correct UTC
+    # instant on every fire and the reminder holds its wall-clock time across DST transitions.
+    # An explicit tz is stored alongside (pinned, named in the label); without one the schedule
+    # follows the agent's zone, resolved when the trigger is built.
     local_dt = _parse_local_dt(spec.scheduled_datetime, spec.tz, allow_bare_time=spec.recurring == "daily")
     h, m = local_dt.hour, local_dt.minute
+    zone_label = f" {spec.tz}" if spec.tz else ""
 
     if spec.recurring == "daily":
         expr = f"{m} {h} * * *"
-        schedule_info = f"daily at {h:02d}:{m:02d} {spec.tz}"
+        schedule_info = f"daily at {h:02d}:{m:02d}{zone_label}"
     elif spec.recurring == "weekly":
         dow = local_dt.strftime("%a").lower()
         expr = f"{m} {h} * * {dow}"
-        schedule_info = f"weekly on {dow} at {h:02d}:{m:02d} {spec.tz}"
+        schedule_info = f"weekly on {dow} at {h:02d}:{m:02d}{zone_label}"
     elif spec.recurring == "monthly":
         expr = f"{m} {h} {local_dt.day} * *"
-        schedule_info = f"monthly on day {local_dt.day} at {h:02d}:{m:02d} {spec.tz}"
+        schedule_info = f"monthly on day {local_dt.day} at {h:02d}:{m:02d}{zone_label}"
     else:  # yearly
         expr = f"{m} {h} {local_dt.day} {local_dt.month} *"
-        schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d} {spec.tz}"
+        schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d}{zone_label}"
 
-    expr = _normalize_cron_expr(expr)
-    trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(spec.tz))
-    trigger_data: TriggerData = {"type": "cron", "expr": expr, "tz": spec.tz}
+    trigger_data: TriggerData = {"type": "cron", "expr": _normalize_cron_expr(expr)}
+    if spec.tz:
+        trigger_data["tz"] = spec.tz
+    trigger = _cron_trigger_from_data(trigger_data)
     next_run = trigger.get_next_fire_time(None, _now_utc())
     if spec.fuzz_minutes is not None:
         schedule_info, next_run = _apply_fuzz(reminder_id, trigger_data, trigger, schedule_info, spec.fuzz_minutes)
@@ -430,12 +465,11 @@ def _build_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, TriggerDa
     if spec.cron is not None:
         if spec.recurring or spec.scheduled_datetime or spec.in_minutes or spec.in_hours or spec.in_days:
             raise ValueError("--cron cannot be combined with --recurring, --at, or --in-* options")
-        if not spec.tz:
-            raise ValueError("tz is required when cron is provided")
-        expr = _normalize_cron_expr(spec.cron)
-        trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(spec.tz))
-        schedule_info = f"cron: {spec.cron} ({spec.tz})"
-        trigger_data: TriggerData = {"type": "cron", "expr": expr, "tz": spec.tz}
+        trigger_data: TriggerData = {"type": "cron", "expr": _normalize_cron_expr(spec.cron)}
+        if spec.tz:
+            trigger_data["tz"] = spec.tz
+        trigger = _cron_trigger_from_data(trigger_data)
+        schedule_info = f"cron: {spec.cron} ({spec.tz})" if spec.tz else f"cron: {spec.cron}"
         next_run = trigger.get_next_fire_time(None, _now_utc())
         if spec.fuzz_minutes is not None:
             schedule_info, next_run = _apply_fuzz(reminder_id, trigger_data, trigger, schedule_info, spec.fuzz_minutes)
@@ -448,8 +482,8 @@ def _build_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, TriggerDa
         return _recurring_trigger(reminder_id, spec)
 
     if spec.scheduled_datetime:
-        if not spec.tz:
-            raise ValueError("tz is required when scheduled_datetime is provided")
+        # A one-shot is an instant: resolved in the agent's zone (or the given tz) at creation
+        # time, stored as UTC, and unaffected by later timezone changes.
         utc_dt = _to_utc_dt(spec.scheduled_datetime, spec.tz)
         return f"once at {utc_dt.isoformat()}", {"type": "date", "run_date": utc_dt.isoformat()}, utc_dt
 
@@ -486,7 +520,7 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
         "id": reminder_id,
         "message": spec.message,
         "schedule": schedule_info,
-        "next_run": next_run.isoformat() if next_run else None,
+        "next_run": _echo_local(next_run),
         "created_at": created_at,
         "status": "scheduled",
     }
@@ -510,16 +544,16 @@ def _next_run_for_row(row) -> str | None:
             if trigger_type == "cron" and "fuzz_minutes" not in trigger_data:
                 next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
                 if next_fire is not None:
-                    return next_fire.isoformat()
+                    return _echo_local(next_fire)
             if trigger_type == "interval":
                 now = _now_utc()
                 stored = db.parse_datetime(row["scheduled_time"]) if row["scheduled_time"] else None
                 if stored is None or stored < now:
                     hours = trigger_data["hours"] if "hours" in trigger_data else 1
-                    return (now + timedelta(hours=hours)).isoformat()
+                    return _echo_local(now + timedelta(hours=hours))
         except (ValueError, KeyError):
             pass  # malformed trigger_data: fall back to the stored column rather than hiding the row
-    return row["scheduled_time"]
+    return _echo_local(row["scheduled_time"])
 
 
 def remind_list(config: Config, *, limit: int | None = 50, show_completed: bool = False, show_deleted: bool = False) -> list[dict]:
@@ -609,15 +643,13 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
         in_offset = _relative_offset(spec.in_minutes, spec.in_hours, spec.in_days)
         given = [form for form in (spec.at, in_offset) if form is not None]
         if len(given) > 1:
-            raise ValueError("Pick one way to say when: --in-* (from now) or --at + --tz")
+            raise ValueError("Pick one way to say when: --in-* (from now) or --at <iso> [--tz <tz>]")
         if spec.at is not None:
-            if not spec.tz:
-                raise ValueError("tz is required when at is provided")
             run_time = _to_utc_dt(spec.at, spec.tz)
         elif in_offset is not None:
             run_time = _now_utc() + in_offset
         else:
-            raise ValueError("Say when: remind snooze <id> --in-hours N (from now) or --at + --tz")
+            raise ValueError("Say when: remind snooze <id> --in-hours N (from now) or --at <iso> [--tz <tz>]")
 
         run_time = run_time.replace(microsecond=0)
         new_data = {"type": "date", "run_date": run_time.isoformat()}
@@ -633,8 +665,8 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
         "id": reminder_id,
         "message": row["message"],
         "schedule": new_schedule,
-        "previous_run": row["scheduled_time"],
-        "next_run": run_time.isoformat(),
+        "previous_run": _echo_local(row["scheduled_time"]),
+        "next_run": _echo_local(run_time),
         "status": "snoozed",
     }
 

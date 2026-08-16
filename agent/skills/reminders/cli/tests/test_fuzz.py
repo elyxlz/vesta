@@ -17,7 +17,8 @@ def test_fuzz_stored_and_next_run_within_window(tmp_config: Config):
     assert result["schedule"] == "daily at 21:30 UTC, fuzz 45m"
 
     # A 45m fuzz around 21:30 stays inside the same date, so the nominal is next_run's own 21:30.
-    next_run = db.parse_datetime(result["next_run"])
+    # next_run echoes with the local offset, so compare in the pinned UTC zone.
+    next_run = db.parse_datetime(result["next_run"]).astimezone(UTC)
     nominal = next_run.replace(hour=21, minute=30, second=0, microsecond=0)
     assert abs((next_run - nominal).total_seconds()) <= 45 * 60
 

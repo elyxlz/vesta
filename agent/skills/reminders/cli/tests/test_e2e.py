@@ -21,7 +21,8 @@ def _free_port() -> int:
 
 
 def _env(home: Path) -> dict[str, str]:
-    return {**os.environ, "HOME": str(home)}
+    # TZ is pinned so unpinned (no --tz) commands resolve the same zone on every machine.
+    return {**os.environ, "HOME": str(home), "TZ": "UTC"}
 
 
 def remind_cli(home: Path, *args: str, timeout: float = 10) -> subprocess.CompletedProcess:
@@ -173,26 +174,31 @@ class TestRemindSetRecurring:
 
     def test_daily(self, shared_env):
         home, _, _ = shared_env
-        data = parse(remind_cli(home, "create", "standup", "--recurring", "daily", "--at", "2024-12-02T10:30:00", "--tz", "UTC"))
+        data = parse(remind_cli(home, "create", "standup", "--recurring", "daily", "--at", "2024-12-02T10:30:00"))
         assert "daily" in data["schedule"]
         assert "10:30" in data["schedule"]
 
     def test_weekly(self, shared_env):
         home, _, _ = shared_env
-        data = parse(remind_cli(home, "create", "review", "--recurring", "weekly", "--at", "2024-12-06T17:00:00", "--tz", "UTC"))
+        data = parse(remind_cli(home, "create", "review", "--recurring", "weekly", "--at", "2024-12-06T17:00:00"))
         assert "weekly" in data["schedule"]
         assert "fri" in data["schedule"]
 
     def test_monthly(self, shared_env):
         home, _, _ = shared_env
-        data = parse(remind_cli(home, "create", "bills", "--recurring", "monthly", "--at", "2024-12-15T09:00:00", "--tz", "UTC"))
+        data = parse(remind_cli(home, "create", "bills", "--recurring", "monthly", "--at", "2024-12-15T09:00:00"))
         assert "monthly" in data["schedule"]
         assert "day 15" in data["schedule"]
 
     def test_cron(self, shared_env):
         home, _, _ = shared_env
-        data = parse(remind_cli(home, "create", "weekdays 9am", "--cron", "0 9 * * 1-5", "--tz", "UTC"))
-        assert data["schedule"] == "cron: 0 9 * * 1-5 (UTC)"
+        data = parse(remind_cli(home, "create", "weekdays 9am", "--cron", "0 9 * * 1-5"))
+        assert data["schedule"] == "cron: 0 9 * * 1-5"
+
+    def test_cron_with_tz_names_the_pinned_zone(self, shared_env):
+        home, _, _ = shared_env
+        data = parse(remind_cli(home, "create", "market open", "--cron", "30 9 * * 1-5", "--tz", "America/New_York"))
+        assert data["schedule"] == "cron: 30 9 * * 1-5 (America/New_York)"
 
     def test_daily_requires_datetime(self, shared_env):
         home, _, _ = shared_env

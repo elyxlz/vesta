@@ -182,10 +182,10 @@ def _snooze_cmd(config: Config, argv: list[str]) -> dict:
     p.add_argument("--in-minutes", type=int, default=None, help="Fire N minutes from now")
     p.add_argument("--in-hours", type=int, default=None, help="Fire N hours from now")
     p.add_argument("--in-days", type=int, default=None, help="Fire N days from now")
-    p.add_argument("--at", default=None, help="Fire at this datetime (requires --tz)")
-    p.add_argument("--tz", default=None, help="IANA timezone for --at")
+    p.add_argument("--at", default=None, help="Fire at this datetime (ISO-8601, in the agent's own timezone unless --tz names one)")
+    p.add_argument("--tz", default=None, help="IANA timezone for --at; omit to use the agent's own timezone")
     args = p.parse_args(argv)
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders snooze <id> --in-hours N (or --at <iso> --tz <tz>)")
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders snooze <id> --in-hours N (or --at <iso> [--tz <tz>])")
     spec = commands.SnoozeSpec(
         in_minutes=args.in_minutes,
         in_hours=args.in_hours,
@@ -201,7 +201,8 @@ def _create_cmd(config: Config, argv: list[str]) -> dict:
     p.add_argument("message_pos", nargs="?", default=None, metavar="message")
     p.add_argument("--message", default=None)
     p.add_argument("--at", default=None, dest="scheduled_datetime")
-    p.add_argument("--tz", default=None)
+    tz_help = "IANA timezone; omit to use the agent's own timezone, pass one only to pin the schedule to that zone"
+    p.add_argument("--tz", default=None, help=tz_help)
     p.add_argument("--in-minutes", type=int, default=None)
     p.add_argument("--in-hours", type=int, default=None)
     p.add_argument("--in-days", type=int, default=None)
@@ -230,33 +231,34 @@ def _print_help():
     print("""usage: reminders create <message> [options]
        reminders list [--limit N] [--show-completed] [--show-deleted]
        reminders get <id> [--field <name>]
-       reminders snooze <id> --in-hours N | --at <iso> --tz <tz>
+       reminders snooze <id> --in-hours N | --at <iso> [--tz <tz>]
        reminders delete <id>
        reminders update <id> --message <msg>
 
 Create a reminder:
   reminders create "call mom" --in-minutes 30
-  reminders create "event" --at <datetime> --tz <tz>
-  reminders create "standup" --recurring daily --at 09:30 --tz <tz>
-  reminders create "wind down" --recurring daily --at 21:30 --tz <tz> --fuzz-minutes 75
-  reminders create "weekdays 9am" --cron "0 9 * * 1-5" --tz <tz>
+  reminders create "event" --at <datetime>
+  reminders create "standup" --recurring daily --at 09:30
+  reminders create "wind down" --recurring daily --at 21:30 --fuzz-minutes 75
+  reminders create "weekdays 9am" --cron "0 9 * * 1-5"
+  reminders create "market open" --recurring daily --at 09:30 --tz America/New_York   # --tz pins the zone
 
 create options:
   --message MSG         Message (alternative to positional)
   --at DATETIME         Scheduled datetime (ISO-8601; a bare HH:MM works with --recurring daily)
-  --tz TZ               Timezone (IANA name)
+  --tz TZ               IANA timezone; omit to use the agent's own timezone, pass one only to pin the schedule to that zone
   --in-minutes N        Fire in N minutes
   --in-hours N          Fire in N hours
   --in-days N           Fire in N days
   --recurring TYPE      hourly|daily|weekly|monthly|yearly
-  --cron EXPR           Standard 5-field cron "min hour dom month dow" (requires --tz)
+  --cron EXPR           Standard 5-field cron "min hour dom month dow"
   --fuzz-minutes N      Recurring/cron only: each fire lands within +/-N minutes of the nominal time
 
 subcommands:
   create                Set a reminder
   list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
   get                   One reminder by id, deleted ones included (--field prints just that value)
-  snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at + --tz
+  snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at <iso> [--tz <tz>]
   delete                Soft-delete a reminder: it never fires again and drops off list (see it with list --show-deleted)
   update                Update a reminder message""")
 

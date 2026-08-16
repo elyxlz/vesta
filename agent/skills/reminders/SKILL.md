@@ -11,25 +11,29 @@ A reminder is a standalone nudge that fires at a time or on a schedule: "take me
 
 ```bash
 reminders create "Call mom" --in-minutes 30
-reminders create "Take meds" --at "2026-12-01T08:00:00" --tz "Europe/London"
-reminders create "Stand-up" --recurring daily --at "09:30" --tz "America/New_York"   # daily takes a bare time
-reminders create "Contraceptive" --recurring daily --at "23:00" --tz "Europe/Rome"
-reminders create "Evening check-in" --recurring daily --at "21:30" --tz "Europe/Rome" --fuzz-minutes 75
-reminders create "Weekdays 9am" --cron "0 9 * * 1-5" --tz "America/New_York"
+reminders create "Take meds" --at "2026-12-01T08:00:00"
+reminders create "Stand-up" --recurring daily --at "09:30"   # daily takes a bare time
+reminders create "Contraceptive" --recurring daily --at "23:00"
+reminders create "Evening check-in" --recurring daily --at "21:30" --fuzz-minutes 75
+reminders create "Weekdays 9am" --cron "0 9 * * 1-5"
+reminders create "Market open" --recurring daily --at "09:30" --tz "America/New_York"   # --tz pins the schedule to that zone
 reminders list [--show-completed] [--show-deleted]   # reveal fired one-shots, or deleted ones marked [deleted]
 reminders get <id>                             # one reminder as JSON; resolves deleted ones too
 reminders get <id> --field next_run            # just that value (repeat --field for several, tab-separated)
 reminders snooze <id> --in-hours 4             # fire 4h from NOW; works on already-fired ones too
-reminders snooze <id> --at "2026-12-01T17:00:00" --tz "Europe/London"   # move it to a specific time
+reminders snooze <id> --at "2026-12-01T17:00:00"   # move it to a specific time
 reminders update <id> --message "..."
 reminders delete <id>
 ```
 
-- One-shot: `--in-minutes/--in-hours/--in-days` (relative) or `--at` + `--tz` (absolute, both required). Always use the user's IANA timezone from MEMORY.md, never UTC.
-- Recurring: `--recurring hourly|daily|weekly|monthly|yearly` (all but hourly need `--at` + `--tz`; daily accepts a bare time like `--at "21:30"`, the others take their weekday or day from the date), or `--cron "min hour dom month dow"` + `--tz` for anything else (standard cron: 0/7 = Sunday, ranges/lists/steps/names supported). Both keep their wall-clock time across DST.
+- Times are in the agent's own timezone. Pass `--tz` (an IANA name) only to pin a schedule to a different zone, such as a market or a flight.
+- One-shot: `--in-minutes/--in-hours/--in-days` (relative) or `--at` (absolute; add `--tz` for a different zone). A one-shot is a fixed instant: a later timezone change does not move it.
+- Recurring: `--recurring hourly|daily|weekly|monthly|yearly` (all but hourly need `--at`; daily accepts a bare time like `--at "21:30"`, the others take their weekday or day from the date), or `--cron "min hour dom month dow"` for anything else (standard cron: 0/7 = Sunday, ranges/lists/steps/names supported). Both keep their wall-clock time across DST. An unpinned recurring reminder follows the agent's timezone: a timezone change applies to it after the next restart. A `--tz`-pinned one stays in its zone, and `reminders list` names the zone on exactly those rows.
 - `--fuzz-minutes N` (recurring/cron only): each fire lands at a varying point within N minutes either side of the nominal time, so a routine feels natural instead of firing at 09:30:00 sharp every day. Translate vague times yourself: "late evening" is roughly `--at "21:30:00" --fuzz-minutes 75`. Use fuzz for human-facing rhythms, never for a hard deadline; it must fit within half the gap between fires.
 - A recurring reminder's message is an instruction: when it fires, act on it. Recurring reminders double as scheduled automations.
-- Snooze says when two ways, one per call: `--in-*` counts from now, `--at` + `--tz` names the moment. The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
+- Snooze moves one-shot reminders only, fired ones included; a recurring reminder fires again on its own, and the CLI rejects snoozing it. Snooze says when two ways, one per call: `--in-*` counts from now, `--at` names the moment (add `--tz` for a different zone). The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
+- `update` changes the message only. To reschedule: move a one-shot with snooze; a recurring reminder's schedule changes only by delete plus recreate, which changes the id, so fix everything that referenced the old one.
+- `get <id> --field <name>` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, message, schedule, next_run, created_at, status, deleted_at.
 - `delete` is a soft delete: the reminder is kept, it never fires again, and it drops off `reminders list`. There is no undelete. `reminders list --show-deleted` brings it back, marked `[deleted]`, so a past id still resolves.
 - `list` prints a compact table (`--show-completed` includes fired one-shots, `--show-deleted` includes deleted ones marked `[deleted]`); the table shows the first 50, and `--json`/`--json-pretty` list all unless `--limit` is given.
 
@@ -67,7 +71,7 @@ uv tool install --editable ~/agent/skills/reminders/cli
 
 The daemon schedules every reminder and writes the notification when one fires.
 
-`reminders daemon start|stop|status`. Start is idempotent (a live daemon is a no-op) and owns the port
+`reminders daemon start|stop|restart|status`. Start is idempotent (a live daemon is a no-op) and owns the port
 registration with vestad; stop is the deliberate shutdown, so it does not fire the `daemon_died`
 notification every other exit fires. Manage the daemon through these commands, never by launching
 `reminders serve` yourself.
