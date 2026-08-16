@@ -32,7 +32,10 @@
     },
     "android-internal": {
       "extends": "production",
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleRelease -PreactNativeArchitectures=arm64-v8a"
+      }
     }
   },
   "submit": {
