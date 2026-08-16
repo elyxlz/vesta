@@ -168,11 +168,11 @@ function EnabledPushCoordinator() {
         response.notification.request.content.data,
         response.notification.request.identifier,
       );
-      if (!next) {
-        await Notifications.clearLastNotificationResponseAsync();
-        return;
-      }
       try {
+        if (!next) {
+          await Notifications.clearLastNotificationResponseAsync();
+          return;
+        }
         await AsyncStorage.setItem(
           PENDING_NOTIFICATION_KEY,
           JSON.stringify(next),
@@ -181,7 +181,7 @@ function EnabledPushCoordinator() {
         await Notifications.clearLastNotificationResponseAsync();
       } catch (cause: unknown) {
         console.warn("Could not preserve notification navigation:", cause);
-        if (active) setPending(next);
+        if (active && next) setPending(next);
       }
     };
     const subscription = Notifications.addNotificationResponseReceivedListener(
@@ -189,19 +189,27 @@ function EnabledPushCoordinator() {
         void capture(response);
       },
     );
-    void AsyncStorage.getItem(PENDING_NOTIFICATION_KEY).then((stored) => {
-      const restored = readPendingNotification(stored);
-      if (active && restored) setPending((current) => current ?? restored);
-    });
-    void Notifications.getLastNotificationResponseAsync().then((response) =>
-      capture(response),
-    );
+    void AsyncStorage.getItem(PENDING_NOTIFICATION_KEY)
+      .then((stored) => {
+        const restored = readPendingNotification(stored);
+        if (active && restored) setPending((current) => current ?? restored);
+      })
+      .catch((cause: unknown) => {
+        console.warn("Could not restore notification navigation:", cause);
+      });
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => capture(response))
+      .catch((cause: unknown) => {
+        console.warn("Could not read the launch notification:", cause);
+      });
     return () => {
       active = false;
       subscription.remove();
     };
   }, []);
 
+  const sessionStatus = session.status;
+  const sessionGatewayUrl = session.connection?.url ?? null;
   useEffect(() => {
     if (privacyBlocked || !pending) return;
     const routeReady = !["/connect", "/connect-link", "/scan"].includes(
@@ -209,12 +217,12 @@ function EnabledPushCoordinator() {
     );
     const decision = notificationNavigationDecision({
       pending,
-      sessionStatus: session.status,
+      sessionStatus,
       reachable,
       agentsReady,
       agentNames: agents.map((agent) => agent.name),
       routeReady,
-      currentGateway: session.connection?.url ?? null,
+      currentGateway: sessionGatewayUrl,
     });
     if (decision === "wait") return;
     if (processingNotification.current === pending.identifier) return;
@@ -242,7 +250,8 @@ function EnabledPushCoordinator() {
     pending,
     privacyBlocked,
     router,
-    session,
+    sessionStatus,
+    sessionGatewayUrl,
     reachable,
     agentsReady,
     agents,

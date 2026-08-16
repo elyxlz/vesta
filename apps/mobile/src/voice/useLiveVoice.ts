@@ -334,13 +334,15 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
   useEffect(() => {
     if (!enabled || !latestText) return;
     let active = true;
-    void prepareSpeech(api, name, latestText).then(async (identifier) => {
-      if (!active) return;
-      const url = await ttsStreamUrl(api, name, identifier);
-      if (!active || !url) return;
-      player.replace(url);
-      player.play();
-    });
+    void prepareSpeech(api, name, latestText)
+      .then(async (identifier) => {
+        if (!active) return;
+        const url = await ttsStreamUrl(api, name, identifier);
+        if (!active || !url) return;
+        player.replace(url);
+        player.play();
+      })
+      .catch(() => undefined);
     return () => {
       active = false;
     };
