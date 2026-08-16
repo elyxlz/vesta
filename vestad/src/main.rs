@@ -40,6 +40,7 @@ mod tunnel;
 mod types;
 mod update;
 mod upstream;
+mod user_context;
 mod vendored_bin;
 mod vesta_cloud;
 

@@ -97,6 +97,25 @@ export type DeviceKind = "web" | "mobile" | "desktop" | "unknown"
 // connection, or when it last did. The push token is never on the wire; `pushEnabled` is the only
 // push signal. `descriptor` is null until a device connects and names itself. `location` is a coarse
 // "City, Country" the gateway resolves from the connection, null until resolved.
+// The macro place a device reverse geocoded for its position, with the OS geocoder. Any part may
+// be null (a fix at sea has no city).
+export interface DevicePlace {
+  city: string | null
+  region: string | null
+  country: string | null
+}
+
+// A device-reported position: one shape on the client_context frame, the device context report,
+// and the roster.
+export interface DevicePosition {
+  latitude: number
+  longitude: number
+  accuracyM: number | null
+  place: DevicePlace | null
+}
+
+// `timezone` and `position` are what the device itself reported (its IANA zone; on mobile with the
+// user's opt-in, its position), `positionAt` the instant of the position report; null until reported.
 export interface DeviceInfo {
   id: string
   kind: DeviceKind
@@ -105,6 +124,9 @@ export interface DeviceInfo {
   lastSeen: string
   pushEnabled: boolean
   location: string | null
+  timezone: string | null
+  position: DevicePosition | null
+  positionAt: string | null
 }
 
 export interface Tree {

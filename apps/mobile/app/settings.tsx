@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ActivityIndicator, Alert, Linking, StyleSheet } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import {
   checkForGatewayUpdate,
@@ -186,6 +187,20 @@ export default function SettingsScreen() {
     }
   };
 
+  const changeShareLocation = async (enabled: boolean) => {
+    if (enabled) {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) {
+        showError(
+          new Error("Allow location for Vesta in system settings to share it."),
+          "Location is not allowed",
+        );
+        return;
+      }
+    }
+    await preferences.update({ shareLocation: enabled });
+  };
+
   const changeAppSwitcherPrivacy = async (enabled: boolean) => {
     setPrivacySaving(true);
     try {
@@ -260,6 +275,12 @@ export default function SettingsScreen() {
             !privacy.hydrated || privacySaving || privacy.appLockEnabled
           }
           onValueChange={(value) => void changeAppSwitcherPrivacy(value)}
+        />
+        <SwitchRow
+          label="Share device location"
+          detail="Tell your agents where this phone is, place and coordinates, also while the app is closed, so plans and reminders follow your travel. Your timezone is always shared."
+          value={preferences.shareLocation}
+          onValueChange={(value) => void changeShareLocation(value)}
         />
       </FormSection>
 

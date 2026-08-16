@@ -41,7 +41,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services",
+    "services", "devices",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 
@@ -1000,7 +1000,7 @@ fn rename_notification_payload(
 
 /// Write a vestad-authored notification JSON into an agent's notification intake. Best-effort: the
 /// caller decides whether a failure is fatal. Returns the file name written.
-async fn drop_notification(
+pub(crate) async fn drop_notification(
     docker: &bollard::Docker,
     agent: &str,
     file_name: &str,
@@ -2742,6 +2742,10 @@ pub fn build_router(state: SharedState) -> Router {
             put(mobile_app::register_device_handler).delete(mobile_app::delete_device_handler),
         )
         .route(
+            "/devices/{device_id}/context",
+            put(crate::user_context::report_context_handler),
+        )
+        .route(
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
         )
@@ -2800,6 +2804,7 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route("/agents/{name}/user-notification", post(user_notification_handler))
+        .route("/agents/{name}/devices", get(crate::user_context::agent_devices_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),

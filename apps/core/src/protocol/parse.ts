@@ -1,7 +1,15 @@
 import type { Delta } from "./deltas"
 import type { NotificationEvent } from "./events"
 import type { HelloFrame, SnapshotFrame } from "./frames"
-import type { AgentInfo, DeviceInfo, DeviceKind, GatewayInfo, Tree } from "./tree"
+import type {
+  AgentInfo,
+  DeviceInfo,
+  DeviceKind,
+  DevicePlace,
+  DevicePosition,
+  GatewayInfo,
+  Tree,
+} from "./tree"
 
 export type ParsedFrame =
   | { kind: "hello"; frame: HelloFrame }
@@ -153,5 +161,53 @@ function parseDevice(value: unknown): DeviceInfo | null {
   if (descriptor === null && device.descriptor !== null) return null
   const location = device.location == null ? null : str(device.location)
   if (location === null && device.location != null) return null
-  return { id, kind: kind as DeviceKind, descriptor, present, lastSeen, pushEnabled, location }
+  const timezone = device.timezone == null ? null : str(device.timezone)
+  if (timezone === null && device.timezone != null) return null
+  const position = device.position == null ? null : parsePosition(device.position)
+  if (position === null && device.position != null) return null
+  const positionAt = device.positionAt == null ? null : str(device.positionAt)
+  if (positionAt === null && device.positionAt != null) return null
+  return {
+    id,
+    kind: kind as DeviceKind,
+    descriptor,
+    present,
+    lastSeen,
+    pushEnabled,
+    location,
+    timezone,
+    position,
+    positionAt,
+  }
+}
+
+function num(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+// A place part: absent or null is null; anything but a string is `undefined` (malformed).
+function nullableStr(value: unknown): string | null | undefined {
+  if (value == null) return null
+  return str(value) ?? undefined
+}
+
+export function parsePosition(value: unknown): DevicePosition | null {
+  const position = record(value)
+  if (position === null) return null
+  const latitude = num(position.latitude)
+  const longitude = num(position.longitude)
+  if (latitude === null || longitude === null) return null
+  const accuracyM = position.accuracyM == null ? null : num(position.accuracyM)
+  if (accuracyM === null && position.accuracyM != null) return null
+  let place: DevicePlace | null = null
+  if (position.place != null) {
+    const raw = record(position.place)
+    if (raw === null) return null
+    const city = nullableStr(raw.city)
+    const region = nullableStr(raw.region)
+    const country = nullableStr(raw.country)
+    if (city === undefined || region === undefined || country === undefined) return null
+    place = { city, region, country }
+  }
+  return { latitude, longitude, accuracyM, place }
 }

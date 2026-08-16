@@ -1,4 +1,4 @@
-import type { Tree } from "./tree"
+import type { DevicePosition, Tree } from "./tree"
 
 // The served compatibility window: the gateway's own release `version` and the oldest client
 // release it still accepts (`minSupported`, wire `min_supported`). A client compares its own
@@ -33,6 +33,16 @@ export interface ClientContextFrame {
   // The agent whose page is open on this client, or null on the roster / a non-agent screen / a
   // blurred window. Drives the per-agent presence notification, independently of `focused`.
   viewing?: string | null
+  // What the device reports about itself: its IANA timezone (every client) and its position (mobile,
+  // with the user's opt-in). vestad stores both per device and tells the agents about a change.
+  timezone?: string
+  position?: DevicePosition
+}
+
+// The device's reported context, the same shape the `PUT /devices/{id}/context` body takes.
+export interface DeviceContext {
+  timezone?: string
+  position?: DevicePosition
 }
 
 export type ClientKind = "web" | "mobile" | "desktop"
@@ -49,12 +59,15 @@ export function clientContextFrame(
   resync: boolean,
   viewing: string | null,
   device?: { id: string; descriptor: string },
+  context?: DeviceContext,
 ): ClientContextFrame {
   const frame: ClientContextFrame = { type: "client_context", focused, client, resync, viewing }
   if (device !== undefined) {
     frame.deviceId = device.id
     frame.descriptor = device.descriptor
   }
+  if (context?.timezone !== undefined) frame.timezone = context.timezone
+  if (context?.position !== undefined) frame.position = context.position
   return frame
 }
 

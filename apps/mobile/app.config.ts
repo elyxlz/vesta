@@ -105,6 +105,17 @@ const config: ExpoConfig = {
       },
     ],
     ...notificationPlugins,
+    "expo-localization",
+    [
+      "expo-location",
+      {
+        locationWhenInUsePermission:
+          "Share where this phone is with your Vesta agents, so plans and reminders follow your travel.",
+        isIosBackgroundLocationEnabled: false,
+        isAndroidBackgroundLocationEnabled: false,
+      },
+    ],
+    "expo-background-task",
     [
       "expo-splash-screen",
       {

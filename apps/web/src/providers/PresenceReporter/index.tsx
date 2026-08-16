@@ -28,6 +28,14 @@ export function PresenceReporter() {
   }, [controller, focused]);
 
   useEffect(() => {
+    if (!controller || !focused) return;
+    // Read on each focus edge, so a device that changed zone reports it as soon as the user is back.
+    controller.reportDeviceContext({
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+  }, [controller, focused]);
+
+  useEffect(() => {
     if (!controller) return;
     // Report the open agent only while focused; a blurred window is viewing no one.
     controller.reportViewing(focused ? agent : null);

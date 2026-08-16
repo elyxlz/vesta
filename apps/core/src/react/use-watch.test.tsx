@@ -28,6 +28,7 @@ function fakeController(initial: SyncState = "connecting"): {
     },
     reportPresence: () => undefined,
     reportViewing: () => undefined,
+    reportDeviceContext: () => undefined,
     getAnyFocused: () => false,
     subscribeAnyFocused: () => () => undefined,
     close: () => undefined,

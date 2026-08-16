@@ -120,6 +120,7 @@ function makeController() {
     subscribeSyncState: () => () => undefined,
     reportPresence: () => undefined,
     reportViewing: () => undefined,
+    reportDeviceContext: () => undefined,
     getAnyFocused: () => false,
     subscribeAnyFocused: () => () => undefined,
     close: () => undefined,

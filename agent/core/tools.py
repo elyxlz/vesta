@@ -1,6 +1,7 @@
-"""MCP tool server exposed to the Claude SDK: restart and completion-mark tools."""
+"""MCP tool server exposed to the Claude SDK: restart, completion-mark, compaction, and user-context tools."""
 
 import datetime as dt
+import json
 import typing as tp
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
@@ -153,8 +154,28 @@ def _compaction_tools(state: vm.State) -> list[tp.Any]:
     return [compact_context]
 
 
+def _user_context_tools() -> list[tp.Any]:
+    @tool(
+        "user_devices",
+        "Where the user is, from their own devices: every phone, browser, and desktop app they have opened, "
+        "with the IANA timezone each one reports and, for a phone that shares its location, its position "
+        "(latitude, longitude, accuracy in metres) plus the place the phone geocoded (city, region, country) "
+        "and when it reported it. Use it to check the user's current timezone or whereabouts before "
+        "scheduling something time-bound, and after a `user-timezone` or `user-location` notification. "
+        "The freshest report (`positionAt`, `lastSeen`) is the best guess; `present` marks a device connected now.",
+        {},
+    )
+    async def user_devices(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        devices = await vestad_client.fetch_user_devices()
+        if devices is None:
+            return {"content": [{"type": "text", "text": "error: vestad did not answer; the device list is unavailable right now"}]}
+        return {"content": [{"type": "text", "text": json.dumps(devices, indent=2)}]}
+
+    return [user_devices]
+
+
 def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
-    return [*_lifecycle_tools(state), *_mark_tools(state, config), *_compaction_tools(state)]
+    return [*_lifecycle_tools(state), *_mark_tools(state, config), *_compaction_tools(state), *_user_context_tools()]
 
 
 def build_vesta_tools_server(state: vm.State, config: cfg.VestaConfig) -> tp.Any:

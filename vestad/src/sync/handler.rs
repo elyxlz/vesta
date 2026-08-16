@@ -12,7 +12,7 @@ use tokio::sync::broadcast;
 
 use crate::docker::{AgentOperation, AgentStatus, BuildPhase, ListEntry};
 use crate::settings::ServiceEntry;
-use crate::device_registry::{DeviceInfo, DeviceRegistry};
+use crate::device_registry::{DeviceContext, DeviceInfo, DeviceRegistry};
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 use crate::time_utils::now_epoch_secs;
 use crate::types::ClientKind;
@@ -272,8 +272,17 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                             let newly = device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
                             if newly {
                                 if let Some(ip) = client_ip {
-                                    resolve_location(&state, device_id, ip);
+                                    resolve_location(&state, device_id.clone(), ip);
                                 }
+                            }
+                            let context = DeviceContext { timezone: ctx.timezone.clone(), position: ctx.position.clone() };
+                            if !context.is_empty() {
+                                // The user is at a focused device; an unfocused replay only stores.
+                                let counts = ctx.focused;
+                                let state = state.clone();
+                                tokio::spawn(async move {
+                                    crate::user_context::report_device_context(&state, &device_id, context, counts).await;
+                                });
                             }
                         }
                         if let Some(agent) = state.presence.record(conn, ctx, tokio::time::Instant::now()) {

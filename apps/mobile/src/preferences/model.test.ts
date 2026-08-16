@@ -13,6 +13,16 @@ describe("preference persistence", () => {
     expect(initialPreferences.naturalChatPacingByAgent).toEqual({});
     expect(initialPreferences.showNotificationsPage).toBe(false);
     expect(initialPreferences.showLogsPage).toBe(false);
+    expect(initialPreferences.shareLocation).toBe(false);
+  });
+
+  it("restores the location opt-in and defaults it off", () => {
+    expect(readStoredPreferences(JSON.stringify({ shareLocation: true }))).toMatchObject({
+      shareLocation: true,
+    });
+    expect(readStoredPreferences(JSON.stringify({ theme: "dark" }))).toMatchObject({
+      shareLocation: false,
+    });
   });
 
   it("restores optional agent pages", () => {
