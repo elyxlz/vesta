@@ -17,6 +17,8 @@ import type { GatewayInfo, GatewaySettings } from "@/api/types";
 import { Screen } from "@/components/layout/Screen";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
+import { OptionPicker } from "@/components/option-picker";
+import type { OptionPickerOption } from "@/components/option-picker.types";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
@@ -33,6 +35,16 @@ const appearanceValueIcons = {
   light: "sunny-outline",
   dark: "moon-outline",
 } as const;
+const themeOptions: readonly OptionPickerOption<ThemePreference>[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+const channelOptions: readonly OptionPickerOption<ReleaseChannel>[] = [
+  { value: "stable", label: "Stable" },
+  { value: "beta", label: "Beta" },
+];
+type ActivePicker = "theme" | "channel" | null;
 type GatewayQueryData = {
   info: GatewayInfo;
   settings: GatewaySettings;
@@ -64,6 +76,7 @@ export default function SettingsScreen() {
   const { showError } = useToast();
   const gatewayQueryKey = ["gateway", session.connection?.url] as const;
   const [privacySaving, setPrivacySaving] = useState(false);
+  const [activePicker, setActivePicker] = useState<ActivePicker>(null);
   const gateway = useQuery({
     queryKey: gatewayQueryKey,
     queryFn: async () => {
@@ -163,16 +176,9 @@ export default function SettingsScreen() {
     );
   };
 
-  const chooseTheme = () => {
-    const select = (theme: ThemePreference) => {
-      void preferences.update({ theme });
-    };
-    Alert.alert("Appearance", undefined, [
-      { text: "System", onPress: () => select("system") },
-      { text: "Light", onPress: () => select("light") },
-      { text: "Dark", onPress: () => select("dark") },
-      { text: "Cancel", style: "cancel" },
-    ]);
+  const selectTheme = (theme: ThemePreference) => {
+    setActivePicker(null);
+    void preferences.update({ theme });
   };
 
   const changeAppLock = async (enabled: boolean) => {
@@ -197,22 +203,11 @@ export default function SettingsScreen() {
     }
   };
 
-  const chooseReleaseChannel = () => {
-    if (gatewayControlsDisabled) return;
-    const select = (channel: ReleaseChannel) => {
-      if (channel !== gateway.data?.settings.channel) {
-        gatewaySettings.mutate({ channel });
-      }
-    };
-    Alert.alert(
-      "Release channel",
-      "Beta receives prereleases first. Switching to Stable never downgrades the current gateway.",
-      [
-        { text: "Stable", onPress: () => select("stable") },
-        { text: "Beta", onPress: () => select("beta") },
-        { text: "Cancel", style: "cancel" },
-      ],
-    );
+  const selectReleaseChannel = (channel: ReleaseChannel) => {
+    setActivePicker(null);
+    if (channel !== gateway.data?.settings.channel) {
+      gatewaySettings.mutate({ channel });
+    }
   };
 
   return (
@@ -220,6 +215,23 @@ export default function SettingsScreen() {
       <NativeSheetCloseButton
         accessibilityLabel="Close settings"
         visibleFromDetentIndex={1}
+      />
+      <OptionPicker
+        visible={activePicker === "theme"}
+        title="Appearance"
+        options={themeOptions}
+        selectedValue={preferences.theme}
+        onSelect={selectTheme}
+        onDismiss={() => setActivePicker(null)}
+      />
+      <OptionPicker
+        visible={activePicker === "channel"}
+        title="Release channel"
+        message="Beta receives prereleases first. Switching to Stable never downgrades the current gateway."
+        options={channelOptions}
+        selectedValue={gateway.data?.settings.channel}
+        onSelect={selectReleaseChannel}
+        onDismiss={() => setActivePicker(null)}
       />
       <FormSection
         title="Experience"
@@ -231,7 +243,7 @@ export default function SettingsScreen() {
             accessibilityLabel={`Appearance, ${resolvedAppearance}${
               preferences.theme === "system" ? " from system setting" : ""
             }`}
-            onPress={chooseTheme}
+            onPress={() => setActivePicker("theme")}
           >
             Appearance
           </Button>
@@ -362,7 +374,11 @@ export default function SettingsScreen() {
               <ActivityIndicator size="small" />
             ) : undefined
           }
-          onPress={gatewayControlsDisabled ? undefined : chooseReleaseChannel}
+          onPress={
+            gatewayControlsDisabled
+              ? undefined
+              : () => setActivePicker("channel")
+          }
         />
         <SwitchRow
           label="Automatic updates"
