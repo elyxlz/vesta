@@ -81,12 +81,12 @@ def _create_app(config: Config, notif_dir: Path) -> FastAPI:
     # -- Tasks --
 
     @app.get("/tasks")
-    def list_tasks(show_completed: bool = False):
-        return commands.list_tasks(config, show_completed=show_completed)
+    def list_tasks(show_completed: bool = False, show_deleted: bool = False):
+        return commands.list_tasks(config, show_completed=show_completed, show_deleted=show_deleted)
 
     @app.get("/tasks/search")
-    def search_tasks(q: str = Query(), show_completed: bool = False):
-        return commands.search_tasks(config, query=q, show_completed=show_completed)
+    def search_tasks(q: str = Query(), show_completed: bool = False, show_deleted: bool = False):
+        return commands.search_tasks(config, query=q, show_completed=show_completed, show_deleted=show_deleted)
 
     @app.post("/tasks", status_code=201)
     def add_task(body: AddTaskBody):

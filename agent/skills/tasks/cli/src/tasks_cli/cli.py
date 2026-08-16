@@ -89,6 +89,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # list
     p_list = sub.add_parser("list", help="List tasks")
     p_list.add_argument("--show-completed", action="store_true")
+    p_list.add_argument("--show-deleted", action="store_true", help="Include soft-deleted tasks, marked [deleted]")
     _add_format_flags(p_list)
 
     # get
@@ -143,6 +144,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("query_pos", nargs="?", default=None, metavar="query")
     p_search.add_argument("--query", default=None)
     p_search.add_argument("--show-completed", action="store_true")
+    p_search.add_argument("--show-deleted", action="store_true", help="Include soft-deleted tasks, marked [deleted]")
     _add_format_flags(p_search)
 
     return parser
@@ -198,7 +200,7 @@ def _handle_task(args, config: Config):
         print(json.dumps(result, indent=2))
         return
     if args.command == "list":
-        _print_list(args, commands.list_tasks(config, show_completed=args.show_completed), fmt.format_task_list)
+        _print_list(args, commands.list_tasks(config, show_completed=args.show_completed, show_deleted=args.show_deleted), fmt.format_task_list)
         return
     if args.command == "get":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks get <id> or tasks get --id <id>")
@@ -248,7 +250,11 @@ def _handle_task(args, config: Config):
         result = commands.delete_task(config, task_id=task_id)
     elif args.command == "search":
         query = _require_arg(args.query_pos or args.query, "query", 'tasks search "query" or tasks search --query "query"')
-        _print_list(args, commands.search_tasks(config, query=query, show_completed=args.show_completed), fmt.format_task_list)
+        _print_list(
+            args,
+            commands.search_tasks(config, query=query, show_completed=args.show_completed, show_deleted=args.show_deleted),
+            fmt.format_task_list,
+        )
         return
     else:
         return

@@ -224,9 +224,12 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
 
     if notif_dir:
         with closing(db.get_db(data_dir)) as conn:
-            cursor = conn.execute("SELECT message, trigger_data FROM reminders WHERE id = ?", (reminder_id,))
+            cursor = conn.execute("SELECT message, trigger_data, deleted_at FROM reminders WHERE id = ?", (reminder_id,))
             row = cursor.fetchone()
             if row:
+                if row["deleted_at"] is not None:
+                    logger.info("Reminder %s is deleted; skipping fire", reminder_id)
+                    return
                 message = row["message"] or message
                 trigger_data = json.loads(row["trigger_data"]) if row["trigger_data"] else {}
                 trigger_type = trigger_data["type"] if "type" in trigger_data else None
@@ -351,7 +354,9 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
     Past-due one-time reminders fire missed notifications immediately."""
     now = _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL")
+        cursor = conn.execute(
+            "SELECT id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL AND deleted_at IS NULL"
+        )
         for row in cursor:
             _restore_row(scheduler, row, now, notif_dir, conn, config)
         conn.commit()
@@ -363,7 +368,8 @@ def restore_jobs_by_ids(config: Config, scheduler: BackgroundScheduler, ids: set
     placeholders = ",".join("?" for _ in ids)
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute(
-            f"SELECT id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL AND id IN ({placeholders})",
+            "SELECT id, message, trigger_data FROM reminders "
+            f"WHERE completed = 0 AND trigger_data IS NOT NULL AND deleted_at IS NULL AND id IN ({placeholders})",
             list(ids),
         )
         for row in cursor:
@@ -516,7 +522,7 @@ def _next_run_for_row(row) -> str | None:
     return row["scheduled_time"]
 
 
-def remind_list(config: Config, *, limit: int | None = 50, show_completed: bool = False) -> list[dict]:
+def remind_list(config: Config, *, limit: int | None = 50, show_completed: bool = False, show_deleted: bool = False) -> list[dict]:
     # limit=None means every row: SQLite reads LIMIT -1 as unlimited.
     limit_param = -1 if limit is None else limit
     # Three rank groups, so a cut (this LIMIT, or the table page in cli.py) only ever trims the
@@ -534,9 +540,15 @@ def remind_list(config: Config, *, limit: int | None = 50, show_completed: bool 
         f"CASE WHEN {is_recurring} OR completed THEN NULL ELSE scheduled_time END ASC "
         "LIMIT ?"
     )
-    # completed rows are hidden by default; --show-completed drops that filter so a reminder that
-    # has already fired (e.g. a self-chaining one re-reading its own body) is still retrievable.
-    where = "" if show_completed else "WHERE completed = 0 "
+    # Two orthogonal filters, each dropped by its own flag: completed rows are hidden by default so a
+    # fired one-shot (e.g. a self-chaining one re-reading its own body) stays out of the way until
+    # --show-completed asks for it; soft-deleted rows are hidden until --show-deleted asks for them.
+    conditions = []
+    if not show_completed:
+        conditions.append("completed = 0")
+    if not show_deleted:
+        conditions.append("deleted_at IS NULL")
+    where = f"WHERE {' AND '.join(conditions)} " if conditions else ""
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute(f"SELECT * FROM reminders {where}{order_clause}", [limit_param])
         return [
@@ -547,20 +559,25 @@ def remind_list(config: Config, *, limit: int | None = 50, show_completed: bool 
                 "next_run": _next_run_for_row(row),
                 "created_at": row["created_at"],
                 "status": "completed" if row["completed"] else "pending",
+                "deleted_at": row["deleted_at"],
             }
             for row in cursor
         ]
 
 
 def remind_delete(config: Config, *, reminder_id: str) -> dict:
+    # A soft delete: the row stays, marked with the delete instant, so the id keeps resolving for
+    # anything that referenced it. The job sync drops its live job on the next tick, and the fire
+    # callback is a no-op meanwhile, so a deleted reminder never fires again.
+    deleted_at = _now_utc().isoformat()
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute("SELECT 1 FROM reminders WHERE id = ?", (reminder_id,))
         if not cursor.fetchone():
             raise ValueError(f"Reminder '{reminder_id}' not found")
-        conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+        conn.execute("UPDATE reminders SET deleted_at = ? WHERE id = ?", (deleted_at, reminder_id))
         conn.commit()
 
-    return {"status": "deleted", "id": reminder_id}
+    return {"status": "deleted", "id": reminder_id, "deleted_at": deleted_at}
 
 
 def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict:

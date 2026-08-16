@@ -29,8 +29,8 @@ def _create_app(config: Config) -> FastAPI:
         raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/reminders")
-    def list_reminders(limit: int = 50):
-        return commands.remind_list(config, limit=limit)
+    def list_reminders(limit: int = 50, show_deleted: bool = False):
+        return commands.remind_list(config, limit=limit, show_deleted=show_deleted)
 
     @app.post("/reminders", status_code=201)
     def set_reminder(body: commands.ReminderSpec):

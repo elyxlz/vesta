@@ -44,11 +44,11 @@ def format_reminder_list(reminders: list[dict[str, Any]], now: datetime | None =
     now = now or datetime.now(UTC)
     rows = []
     for r in reminders:
-        fired = "[fired] " if _pick(r, "status", None) == "completed" else ""
+        marker = "[deleted] " if _pick(r, "deleted_at", None) else "[fired] " if _pick(r, "status", None) == "completed" else ""
         rows.append(
             f"{rel_time(_pick(r, 'next_run', None), now)}\t"
             f"{_pick(r, 'id')}\t"
             f"{_trunc(_pick(r, 'schedule', None), 40)}\t"
-            f"{fired}{_trunc(_pick(r, 'message'), 80)}"
+            f"{marker}{_trunc(_pick(r, 'message'), 80)}"
         )
     return "\n".join(rows)

@@ -330,21 +330,41 @@ class TestDeleteTask:
         added = parse(tasks_cli(home, "create", "delete me"))
         data = parse(tasks_cli(home, "delete", added["id"]))
         assert data["status"] == "deleted"
+        assert data["deleted_at"]
 
-    def test_delete_removes_from_list(self, shared_env):
+    def test_delete_hides_from_default_list(self, shared_env):
         home, _, _ = shared_env
         added = parse(tasks_cli(home, "create", "delete me 2"))
         tasks_cli(home, "delete", added["id"])
         items = parse(tasks_cli(home, "list", "--json"))
         assert not any(i["id"] == added["id"] for i in items)
 
-    def test_delete_removes_metadata_file(self, shared_env):
+    def test_deleted_task_shows_with_flag_marked(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "create", "delete me 3"))
+        tasks_cli(home, "delete", added["id"])
+        items = parse(tasks_cli(home, "list", "--show-deleted", "--json"))
+        deleted = next(i for i in items if i["id"] == added["id"])
+        assert deleted["deleted_at"]
+        table = tasks_cli(home, "list", "--show-deleted").stdout
+        assert "[deleted]" in table
+
+    def test_delete_keeps_metadata_file(self, shared_env):
         home, _, _ = shared_env
         added = parse(tasks_cli(home, "create", "with meta", "--initial-metadata", "notes"))
         meta_path = Path(added["metadata_path"])
         assert meta_path.exists()
         tasks_cli(home, "delete", added["id"])
-        assert not meta_path.exists()
+        assert meta_path.exists()
+        assert meta_path.read_text() == "notes"
+
+    def test_get_still_finds_deleted_task(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "create", "gone but gettable"))
+        tasks_cli(home, "delete", added["id"])
+        got = parse(tasks_cli(home, "get", added["id"]))
+        assert got["id"] == added["id"]
+        assert got["deleted_at"]
 
     def test_delete_via_flag(self, shared_env):
         home, _, _ = shared_env
@@ -397,6 +417,18 @@ class TestSearchTasks:
         home, _, _ = shared_env
         items = parse(tasks_cli(home, "search", "searchdone_abc", "--show-completed", "--json"))
         assert any("searchdone_abc" in i["subject"] for i in items)
+
+    def test_search_excludes_deleted(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "create", "searchdeleted_abc"))
+        tasks_cli(home, "delete", added["id"])
+        items = parse(tasks_cli(home, "search", "searchdeleted_abc", "--json"))
+        assert not any(i["id"] == added["id"] for i in items)
+
+    def test_search_show_deleted(self, shared_env):
+        home, _, _ = shared_env
+        items = parse(tasks_cli(home, "search", "searchdeleted_abc", "--show-deleted", "--json"))
+        assert any("searchdeleted_abc" in i["subject"] for i in items)
 
 
 class TestCompletedFiltering:

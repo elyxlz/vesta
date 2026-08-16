@@ -16,7 +16,7 @@ reminders create "Stand-up" --recurring daily --at "09:30" --tz "America/New_Yor
 reminders create "Contraceptive" --recurring daily --at "23:00" --tz "Europe/Rome"
 reminders create "Evening check-in" --recurring daily --at "21:30" --tz "Europe/Rome" --fuzz-minutes 75
 reminders create "Weekdays 9am" --cron "0 9 * * 1-5" --tz "America/New_York"
-reminders list [--show-completed]              # --show-completed reveals fired one-shots too
+reminders list [--show-completed] [--show-deleted]   # reveal fired one-shots, or deleted ones marked [deleted]
 reminders snooze <id> --in-hours 4             # fire 4h from NOW; works on already-fired ones too
 reminders snooze <id> --at "2026-12-01T17:00:00" --tz "Europe/London"   # move it to a specific time
 reminders update <id> --message "..."
@@ -28,7 +28,8 @@ reminders delete <id>
 - `--fuzz-minutes N` (recurring/cron only): each fire lands at a varying point within N minutes either side of the nominal time, so a routine feels natural instead of firing at 09:30:00 sharp every day. Translate vague times yourself: "late evening" is roughly `--at "21:30:00" --fuzz-minutes 75`. Use fuzz for human-facing rhythms, never for a hard deadline; it must fit within half the gap between fires.
 - A recurring reminder's message is an instruction: when it fires, act on it. Recurring reminders double as scheduled automations.
 - Snooze says when two ways, one per call: `--in-*` counts from now, `--at` + `--tz` names the moment. The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
-- `list` prints a compact table (`--show-completed` includes fired one-shots); the table shows the first 50, and `--json`/`--json-pretty` list all unless `--limit` is given.
+- `delete` is a soft delete: the reminder is kept, it never fires again, and it drops off `reminders list`. There is no undelete. `reminders list --show-deleted` brings it back, marked `[deleted]`, so a past id still resolves.
+- `list` prints a compact table (`--show-completed` includes fired one-shots, `--show-deleted` includes deleted ones marked `[deleted]`); the table shows the first 50, and `--json`/`--json-pretty` list all unless `--limit` is given.
 
 ## When a reminder needs more than a sentence: staged files
 

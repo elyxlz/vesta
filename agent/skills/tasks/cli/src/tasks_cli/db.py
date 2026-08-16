@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Head schema version. Bump this in the same commit as a new _migrate_vN_to_vN+1, and assert against
 # it in tests rather than hard-coding an integer, so adding a migration cannot break unrelated tests.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class Task(TypedDict, total=False):
@@ -27,6 +27,7 @@ class Task(TypedDict, total=False):
     metadata_content: str | None
     created_at: str
     completed_at: str | None
+    deleted_at: str | None
 
 
 class Reminder(TypedDict, total=False):
@@ -399,6 +400,16 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection):
     logger.info("Migrated schema v6 -> v7")
 
 
+def _migrate_v8_to_v9(conn: sqlite3.Connection):
+    """v8 -> v9: add the nullable `deleted_at` column that carries a soft delete.
+
+    NULL means the task is live. A `tasks delete` stamps it with the delete time, which keeps the
+    row and its metadata file, stops its checkpoints and its place in the digest, and hides it from
+    the default list. There is no undelete, so the column only ever goes from NULL to a timestamp."""
+    conn.execute("ALTER TABLE tasks ADD COLUMN deleted_at TEXT")
+    logger.info("Migrated schema v8 -> v9")
+
+
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else None
@@ -478,6 +489,11 @@ def init_db(data_dir: Path):
             _migrate_v7_to_v8(conn)
             conn.execute("UPDATE schema_version SET version = 8")
             version = 8
+
+        if version < 9:
+            _migrate_v8_to_v9(conn)
+            conn.execute("UPDATE schema_version SET version = 9")
+            version = 9
 
         conn.commit()
 

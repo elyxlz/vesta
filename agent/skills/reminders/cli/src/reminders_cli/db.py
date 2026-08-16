@@ -28,6 +28,7 @@ class Reminder(TypedDict, total=False):
     completed: int
     created_at: str
     trigger_data: str | None
+    deleted_at: str | None
 
 
 def get_db(data_dir: Path) -> sqlite3.Connection:
@@ -107,7 +108,8 @@ def init_db(data_dir: Path):
                 scheduled_time TEXT,
                 completed INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                trigger_data TEXT
+                trigger_data TEXT,
+                deleted_at TEXT
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed)")

@@ -141,10 +141,6 @@ def _write_metadata(data_dir: Path, task_id: str, content: str):
     _get_metadata_path(data_dir, task_id).write_text(content)
 
 
-def _delete_metadata(data_dir: Path, task_id: str):
-    _get_metadata_path(data_dir, task_id).unlink(missing_ok=True)
-
-
 def _require_task_row(conn, task_id: str):
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
@@ -155,6 +151,7 @@ def _require_task_row(conn, task_id: str):
 def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False) -> dict:
     task = dict(row)
     # Checkpoint bookkeeping, not task state: the ladder engine's marker means nothing to a reader.
+    # deleted_at stays: a reader must see whether a task is deleted and when.
     task.pop("checkpoint_fired_through", None)
     task_id = task["id"]
     task["metadata_path"] = str(_get_metadata_path(data_dir, task_id))
@@ -200,11 +197,16 @@ def add_task(
     }
 
 
-def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
+def list_tasks(config: Config, *, show_completed: bool = False, show_deleted: bool = False) -> list[dict]:
     with closing(db.get_db(config.data_dir)) as conn:
-        query = "SELECT * FROM tasks"
+        clauses = []
         if not show_completed:
-            query += " WHERE status != 'completed'"
+            clauses.append("status != 'completed'")
+        if not show_deleted:
+            clauses.append("deleted_at IS NULL")
+        query = "SELECT * FROM tasks"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += _TASK_ORDER_BY
         cursor = conn.execute(query)
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
@@ -326,6 +328,7 @@ TASK_FIELDS = (
     "backburner",
     "created_at",
     "completed_at",
+    "deleted_at",
     "metadata_path",
     "metadata",
 )
@@ -356,20 +359,25 @@ def get_task_fields(config: Config, *, task_id: str, fields: list[str]) -> dict:
 
 
 def delete_task(config: Config, *, task_id: str) -> dict:
+    """Soft delete: stamp deleted_at, keeping the row and its metadata file so history survives.
+
+    The stamped task stops firing checkpoints, drops out of the digest, and is hidden from the
+    default list and search. There is no undelete, so re-deleting only refreshes the stamp."""
+    deleted_at = _now_utc().isoformat()
     with closing(db.get_db(config.data_dir)) as conn:
         _require_task_row(conn, task_id)
-        # FK CASCADE handles linked reminders automatically
-        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.execute("UPDATE tasks SET deleted_at = ? WHERE id = ?", (deleted_at, task_id))
         conn.commit()
-    _delete_metadata(config.data_dir, task_id)
-    return {"status": "deleted", "task_id": task_id}
+    return {"id": task_id, "status": "deleted", "deleted_at": deleted_at}
 
 
-def search_tasks(config: Config, *, query: str, show_completed: bool = False) -> list[dict]:
+def search_tasks(config: Config, *, query: str, show_completed: bool = False, show_deleted: bool = False) -> list[dict]:
     with closing(db.get_db(config.data_dir)) as conn:
         sql = "SELECT * FROM tasks WHERE subject LIKE ?"
         if not show_completed:
             sql += " AND status != 'completed'"
+        if not show_deleted:
+            sql += " AND deleted_at IS NULL"
         sql += _TASK_ORDER_BY
         cursor = conn.execute(sql, (f"%{query}%",))
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
@@ -402,7 +410,7 @@ def build_digest(config: Config, *, now: datetime | None = None) -> str | None:
     now = now or _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
         pending = conn.execute(
-            "SELECT id, subject, priority, due_date, created_at, backburner FROM tasks WHERE status != 'completed'"
+            "SELECT id, subject, priority, due_date, created_at, backburner FROM tasks WHERE status != 'completed' AND deleted_at IS NULL"
         ).fetchall()
 
     overdue: list[tuple[dict, datetime]] = []
@@ -509,7 +517,8 @@ def fire_due_checkpoints(config: Config, notif_dir: Path, *, now: datetime | Non
     fired = 0
     with closing(db.get_db(config.data_dir)) as conn:
         rows = conn.execute(
-            "SELECT id, subject, due_date, created_at, checkpoint_fired_through FROM tasks WHERE due_date IS NOT NULL AND status != 'completed'"
+            "SELECT id, subject, due_date, created_at, checkpoint_fired_through FROM tasks"
+            " WHERE due_date IS NOT NULL AND status != 'completed' AND deleted_at IS NULL"
         ).fetchall()
         for row in rows:
             due_dt = db.parse_datetime(row["due_date"])

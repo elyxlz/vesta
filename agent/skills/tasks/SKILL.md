@@ -19,15 +19,17 @@ tasks search "report"
 tasks get <id>
 tasks update <id> --subject "..." --priority low --status pending
 tasks update <id> --clear-due     # remove the due date (silences its checkpoints)
-tasks delete <id>                 # remove the task
+tasks delete <id>                 # soft delete: keep the task, stop it firing, hide it from list
+tasks list --show-deleted         # include deleted tasks, marked [deleted]
 ```
 
 - Due date: `--in-minutes/--in-hours/--in-days` (relative) or `--at` + `--tz` (absolute, both required), the same time flags every command in this skill takes. `--priority` low/normal/high. `--initial-metadata "..."` attaches notes.
 - Keep the subject under ~100 characters: it is the one field `tasks list`, the digest, and the app show, so a paragraph there is unreadable everywhere. Detail and running state go in metadata (`--initial-metadata` on create, or edit the task's `metadata_path` file). A longer subject still saves, with a warning.
 - `postpone` also takes `--in-minutes/--in-hours` or `--at` + `--tz`, and works on a task with no due date (gives it one).
 - `update --clear-due` removes a due date; every other due flag can only move one. The pre-due checkpoints are computed from `due_date`, so clearing the date is the one way to silence them. Reach for it when a date was set by mistake or by a bulk `postpone` over a backlog.
-- `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, subject, status, priority, due_date, created_at, completed_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
-- `list`/`search` print compact tables (`--show-completed` to include completed); add `--json` or `--json-pretty` for JSON.
+- `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, subject, status, priority, due_date, created_at, completed_at, deleted_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
+- `list`/`search` print compact tables (`--show-completed` to include completed, `--show-deleted` to include deleted); add `--json` or `--json-pretty` for JSON.
+- `tasks delete <id>` is a soft delete: it keeps the task and its metadata, stamps `deleted_at`, and stops the task firing checkpoints and appearing in the digest. The task drops out of `tasks list` by default; `tasks list --show-deleted` shows it marked `[deleted]`, and `tasks get <id>` still returns it. There is no undelete, so delete a task only when the user knows you are dropping it.
 - A task's status is `pending`, `in_progress`, or `completed`. `tasks done <id>` and `tasks update <id> --status completed` both close it. `tasks update <id> --status in_progress` marks a task started: it stays open, so it still shows in `tasks list` and still fires its due-date checkpoints.
 - To nudge yourself about a task (for example one blocked on someone else), set a reminder with the `reminders` skill (`reminders create "..."`) whose message names the task and its metadata file. The task carries the state; the reminder is only the nudge.
 
@@ -37,7 +39,7 @@ tasks delete <id>                 # remove the task
 - **A decision fire at the due time.** When it arrives you must pick one, immediately: do the task and `tasks done <id>`, or `tasks postpone <id> --in-days N`, or tell the user you are dropping it and `tasks delete <id>`. Marking a task done without doing it is never an option.
 - **Daily digest** (`type=task_digest`): one notification per day listing every overdue task and every task pending 2+ weeks with no due date, with the same three choices. It returns every day until the list is empty; work it down, don't acknowledge it.
 - **Parking a deliberately undated task**: `tasks update <id> --backburner` (undo with `--no-backburner`). Use it when the undated state is a decision you can defend, because someone else drives the task or it is a genuine someday. It defers the nag, never the task: a parked task stays pending and still appears in `tasks list` marked `[parked]`, it just stops being listed as stale. Parked and deadlined cannot coexist, so parking a dated task drops its due date, and giving a parked task a real due date unparks it. **A task you are simply avoiding should be dropped or dated, not parked, and never invent a deadline to buy silence.**
-- Completing or deleting a task silences its checkpoints (like clearing the date).
+- Completing or deleting a task silences its checkpoints (like clearing the date). A deleted task also drops out of the digest.
 
 ## Data
 

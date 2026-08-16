@@ -37,7 +37,9 @@ def _require_daemon():
 def _sync_jobs(config: Config, scheduler, notif_dir: Path):
     """Sync scheduler jobs with DB state: remove stale, add new, re-add moved one-shots (snooze)."""
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT id, scheduled_time, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL")
+        cursor = conn.execute(
+            "SELECT id, scheduled_time, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL AND deleted_at IS NULL"
+        )
         rows = {row["id"]: (row["scheduled_time"], row["trigger_data"]) for row in cursor}
 
     jobs = {job.id: job for job in scheduler.get_jobs()}
@@ -114,6 +116,7 @@ def _list_cmd(config: Config, argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog="reminders list")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--show-completed", action="store_true")
+    p.add_argument("--show-deleted", action="store_true")
     _add_format_flags(p)
     args = p.parse_args(argv)
     # JSON is consumed by scripts asking absence questions ("is anything scheduled for X?"), so a
@@ -121,7 +124,7 @@ def _list_cmd(config: Config, argv: list[str]) -> None:
     # exactly what they asked for. The table fetches everything and pages here, so it can say how
     # many rows it held back, on stderr so a stdout pipe (grep, head) can never eat the notice.
     paged = args.limit is None and not (args.json or args.json_pretty)
-    reminders = commands.remind_list(config, limit=args.limit, show_completed=args.show_completed)
+    reminders = commands.remind_list(config, limit=args.limit, show_completed=args.show_completed, show_deleted=args.show_deleted)
     held_back = len(reminders) - REMIND_LIST_PAGE_SIZE if paged else 0
     _print_list(args, reminders[:REMIND_LIST_PAGE_SIZE] if paged else reminders, fmt.format_reminder_list)
     if held_back > 0:
@@ -200,7 +203,7 @@ def _create_cmd(config: Config, argv: list[str]) -> dict:
 
 def _print_help():
     print("""usage: reminders create <message> [options]
-       reminders list [--limit N] [--show-completed]
+       reminders list [--limit N] [--show-completed] [--show-deleted]
        reminders snooze <id> --in-hours N | --at <iso> --tz <tz>
        reminders delete <id>
        reminders update <id> --message <msg>
@@ -227,7 +230,7 @@ subcommands:
   create                Set a reminder
   list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
   snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at + --tz
-  delete                Delete a reminder
+  delete                Soft-delete a reminder: it never fires again and drops off list (see it with list --show-deleted)
   update                Update a reminder message""")
 
 
