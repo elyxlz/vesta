@@ -6,7 +6,9 @@ Simulators, captures every registered state, and serves the results in a local
 browser gallery.
 
 The system is intended for fast visual QA while building screens. It is local
-only today; no GitHub Actions workflow is included yet.
+only today; no GitHub Actions workflow is included yet. The catalog captures
+iOS only; Android compiles in CI (`./check.sh mobile-android`) but has no
+visual catalog.
 
 ## Quick start
 

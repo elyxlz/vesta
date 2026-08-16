@@ -81,4 +81,4 @@ Copy the connect link from the server output, then reach your agent one of three
 
 - **Web app**: open the gateway URL from the server output in a browser (vestad serves the app at `/app`).
 - **Desktop app**: paste the connect link on the onboarding screen (macOS, Windows, Linux).
-- **Mobile app**: paste the connect link to connect to the same gateway.
+- **Mobile app** (iOS and Android): paste the connect link to connect to the same gateway.
