@@ -232,7 +232,20 @@ def _remind_list_cmd(config: Config, argv: list[str]) -> None:
         limit = None
     else:
         limit = REMIND_LIST_PAGE_SIZE
-    _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=limit), fmt.format_reminder_list)
+    # The table asks absence questions too, so it must say when it was cut: a capped page that ends
+    # silently is indistinguishable from a complete one. Ask for one more row than will be shown,
+    # because coming back with it PROVES truncation, where a full-looking page only suggests it.
+    rows = commands.remind_list(config, task_id=args.task_id, limit=None if limit is None else limit + 1)
+    if limit is not None and len(rows) > limit:
+        rows = rows[:limit]
+        # The note is prose, so it goes only to the human table: printed above JSON it breaks every
+        # parser downstream, which is the failure this whole change exists to prevent.
+        if not (args.json or args.json_pretty):
+            print(
+                f"NOTE: showing {limit} of more; this list IS truncated, so it cannot answer "
+                "whether something exists. Raise --limit, or use --json which is never capped."
+            )
+    _print_list(args, rows, fmt.format_reminder_list)
 
 
 def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:

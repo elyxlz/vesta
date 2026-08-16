@@ -50,5 +50,33 @@ def test_json_honors_an_explicit_limit(tmp_config: Config, monkeypatch, capsys):
 
 def test_table_output_keeps_its_page_size(tmp_config: Config, monkeypatch, capsys):
     _seed_reminders(tmp_config, REMINDER_COUNT)
-    table = _run_remind_list(monkeypatch, capsys, tmp_config).strip()
-    assert len(table.splitlines()) == cli.REMIND_LIST_PAGE_SIZE
+    lines = _run_remind_list(monkeypatch, capsys, tmp_config).strip().splitlines()
+    assert lines[0].startswith("NOTE:")
+    assert len(lines[1:]) == cli.REMIND_LIST_PAGE_SIZE
+
+
+def test_a_cut_table_says_so(tmp_config: Config, monkeypatch, capsys):
+    """A capped page that ends silently is indistinguishable from a complete one, and gets read as
+    the whole list. The table answers absence questions as often as the JSON does."""
+    _seed_reminders(tmp_config, REMINDER_COUNT)
+    out = _run_remind_list(monkeypatch, capsys, tmp_config, "--limit", "10")
+    assert "truncated" in out.splitlines()[0]
+    assert len(out.strip().splitlines()[1:]) == 10
+
+
+def test_an_exact_fit_says_nothing(tmp_config: Config, monkeypatch, capsys):
+    """The note has to be earned. Asking for one row more than is shown is what separates a page
+    that was cut from a page that merely filled, so a full-but-complete list stays quiet."""
+    _seed_reminders(tmp_config, cli.REMIND_LIST_PAGE_SIZE)
+    lines = _run_remind_list(monkeypatch, capsys, tmp_config).strip().splitlines()
+    assert not any(line.startswith("NOTE:") for line in lines)
+    assert len(lines) == cli.REMIND_LIST_PAGE_SIZE
+
+
+@pytest.mark.parametrize("json_flag", ["--json", "--json-pretty"])
+def test_json_never_carries_the_note(tmp_config: Config, monkeypatch, capsys, json_flag: str):
+    """The note is a human-table affordance; JSON is parsed, so a prose line would break it."""
+    _seed_reminders(tmp_config, REMINDER_COUNT)
+    out = _run_remind_list(monkeypatch, capsys, tmp_config, json_flag, "--limit", "10")
+    assert "NOTE:" not in out
+    assert len(json.loads(out)) == 10
