@@ -18,11 +18,11 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  androidVisualDirectory,
   assertHarnessBoundary,
   atomicWriteFile,
   exists,
   filesBelow,
-  galleryHtml,
   gitMetadata,
   loadManifest,
   nativeInputFingerprint,
@@ -30,11 +30,11 @@ import {
   run,
   scenarioOnPlatform,
   serveCatalog,
+  writeUnifiedIndex,
 } from "./visual-catalog.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDirectory, "..");
-const androidVisualDirectory = path.join(mobileRoot, ".visual/android");
 const screenshotsDirectory = path.join(androidVisualDirectory, "screenshots");
 const captureScreenshotsDirectory = path.join(
   androidVisualDirectory,
@@ -70,8 +70,8 @@ function usage() {
   npm run visual:android:serve -- [options]
 
 Commands:
-  capture       Build, capture, generate, and serve the catalog (default)
-  serve         Serve the most recently generated Android catalog
+  capture       Build, capture, and refresh the unified catalog (default)
+  serve         Serve the unified iOS + Android catalog
 
 Options:
   --avd <name>        Emulator AVD to boot or reuse (default: ${DEFAULT_AVD_NAME})
@@ -729,13 +729,12 @@ async function publishGallery(manifest, device, reportAvailable) {
     scenarios: catalogScenarios(manifest.allScenarios, release, sizes),
   };
   await atomicWriteFile(
-    path.join(androidVisualDirectory, "index.html"),
-    galleryHtml(catalog),
-  );
-  await atomicWriteFile(
     path.join(androidVisualDirectory, "catalog.json"),
     `${JSON.stringify(catalog, null, 2)}\n`,
   );
+  // The gallery is one unified page at .visual/index.html for both platforms.
+  await rm(path.join(androidVisualDirectory, "index.html"), { force: true });
+  await writeUnifiedIndex({ android: catalog });
   try {
     await cleanupScreenshotReleases(release);
   } catch (error) {
@@ -784,14 +783,14 @@ async function capture(options) {
   }
 
   if (options.serve) {
-    await serveCatalog(options.port, options.open, androidVisualDirectory);
+    await serveCatalog(options.port, options.open);
   }
 }
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.command === "serve") {
-    await serveCatalog(options.port, options.open, androidVisualDirectory);
+    await serveCatalog(options.port, options.open);
     return;
   }
   await capture(options);

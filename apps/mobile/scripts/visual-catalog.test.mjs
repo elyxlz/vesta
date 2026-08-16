@@ -12,6 +12,7 @@ import {
   loadManifest,
   scenarioOnPlatform,
   shouldIgnoreWatchPath,
+  unifiedCatalog,
   watchChangePath,
 } from "./visual-catalog.mjs";
 
@@ -227,6 +228,99 @@ describe("galleryHtml", () => {
     );
     expect(html).not.toContain('type="search"');
     expect(html).not.toContain('querySelector("#filter")');
+  });
+});
+
+describe("unifiedCatalog", () => {
+  const iosCatalog = {
+    generatedAt: "2026-08-06T21:00:00.000Z",
+    reportAvailable: true,
+    device: { name: "2 × iPhone 17", runtime: "iOS 26.4" },
+    git: { revision: "abc123", dirty: false },
+    scenarios: [
+      {
+        id: "connect",
+        captured: true,
+        description: "Connection actions",
+        group: "Onboarding",
+        image: "screenshots/1/connect.png",
+        size: { width: 603, height: 1311 },
+        title: "Connect",
+      },
+    ],
+  };
+  const androidCatalog = {
+    generatedAt: "2026-08-16T15:00:00.000Z",
+    platform: "android",
+    reportAvailable: true,
+    device: { name: "vesta-visual (Android emulator)", runtime: "Android 16" },
+    git: { revision: "def456", dirty: false },
+    scenarios: [
+      {
+        id: "connect",
+        captured: true,
+        description: "Connection actions",
+        group: "Onboarding",
+        image: "screenshots/2/connect.png",
+        size: { width: 540, height: 1200 },
+        title: "Connect",
+      },
+      {
+        id: "privacy-locked",
+        captured: true,
+        description: "Privacy lock",
+        group: "Privacy",
+        image: "screenshots/2/privacy-locked.png",
+        size: { width: 540, height: 1200 },
+        title: "Privacy locked",
+      },
+    ],
+  };
+
+  it("passes a single catalog through unchanged", () => {
+    expect(unifiedCatalog(iosCatalog, null)).toBe(iosCatalog);
+    expect(unifiedCatalog(null, androidCatalog)).toBe(androidCatalog);
+    expect(unifiedCatalog(null, null)).toBeNull();
+  });
+
+  it("pairs both platform captures per scenario and prefixes Android images", () => {
+    const merged = unifiedCatalog(iosCatalog, androidCatalog);
+
+    const connect = merged.scenarios[0];
+    expect(connect.captures.map((capture) => capture.platform)).toEqual([
+      "iOS",
+      "Android",
+    ]);
+    expect(connect.captures[0].image).toBe("screenshots/1/connect.png");
+    expect(connect.captures[1].image).toBe("android/screenshots/2/connect.png");
+    expect(merged.generatedAt).toBe(androidCatalog.generatedAt);
+    expect(merged.git.revision).toBe("def456");
+  });
+
+  it("marks a scenario one platform has not captured yet", () => {
+    const merged = unifiedCatalog(iosCatalog, androidCatalog);
+
+    const privacy = merged.scenarios[1];
+    expect(privacy.id).toBe("privacy-locked");
+    expect(privacy.captures[0]).toMatchObject({
+      platform: "iOS",
+      captured: false,
+      missingLabel: "Not captured yet",
+    });
+    expect(privacy.captures[1].captured).toBe(true);
+  });
+
+  it("renders side-by-side shots with platform tags and both reports", () => {
+    const html = galleryHtml(unifiedCatalog(iosCatalog, androidCatalog));
+
+    expect(html).toContain('data-platforms="2"');
+    expect(html).toContain(">iOS</span>");
+    expect(html).toContain(">Android</span>");
+    expect(html).toContain('src="android/screenshots/2/connect.png"');
+    expect(html).toContain('href="maestro/report.html"');
+    expect(html).toContain('href="android/maestro/report.html"');
+    expect(html).toContain("iOS · 2 × iPhone 17 · iOS 26.4");
+    expect(html).toContain("Android · vesta-visual (Android emulator) · Android 16");
   });
 });
 

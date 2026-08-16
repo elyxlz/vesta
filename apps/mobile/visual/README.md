@@ -24,8 +24,13 @@ npm run mobile:visual:watch -- --device "iPhone 17"
 npm run mobile:visual:android
 ```
 
-The iOS gallery is served at `http://127.0.0.1:4173` and the Android gallery
-at `http://127.0.0.1:4174`, so both can stay open side by side.
+The gallery is one unified page: every scenario card shows its iOS and
+Android captures side by side, each labeled, with a "Not captured yet" slot
+for a platform that has not run and an "iOS only" slot for scenarios Android
+hides by design. Any serve command serves that same page; the iOS commands
+default to `http://127.0.0.1:4173` and the Android commands to
+`http://127.0.0.1:4174`, so a capture on either platform can keep its own
+server while both show the full picture.
 
 The current iOS reference target is two iPhone 17 simulators running iOS 26.4.
 Passing `--device "iPhone 17"` makes the target explicit and lets the runner
@@ -273,7 +278,9 @@ the platform mechanics differ:
   full battery, no notifications) and animations are disabled with the global
   animation scales, mirroring the iOS status-bar override and animation
   hooks.
-- The gallery publishes to `.visual/android/` on port 4174.
+- The Android capture publishes its screenshots and `catalog.json` to
+  `.visual/android/`, then refreshes the unified gallery at
+  `.visual/index.html`, the same page the iOS runner writes.
 
 Commands, from `apps/`:
 
@@ -284,7 +291,7 @@ npm run mobile:visual:android
 # Capture and exit.
 npm run mobile:visual:android:capture
 
-# Serve the most recent Android catalog without capturing.
+# Serve the unified iOS + Android catalog without capturing.
 npm run mobile:visual:android:serve
 
 # Reuse the installed visual app when nothing changed.
@@ -298,8 +305,9 @@ npm run mobile:visual:android:capture -- --clean-native
 
 `visual/scenarios.json` entries accept an optional `platforms` array
 (default: both platforms). A scenario marked `"platforms": ["ios"]` is not
-expected from an Android capture, and the Android gallery renders its card
-with an explicit "iOS only" label instead of silently missing it. The flows
+expected from an Android capture, and the unified gallery renders its
+Android slot with an explicit "iOS only" label instead of silently missing
+it. The flows
 skip those captures on Android through `runFlow` blocks conditioned on
 `when: platform`, so one flow file drives both platforms.
 

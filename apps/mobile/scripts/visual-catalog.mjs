@@ -23,6 +23,7 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDirectory, "..");
 const repositoryRoot = path.resolve(mobileRoot, "../..");
 const visualDirectory = path.join(mobileRoot, ".visual");
+export const androidVisualDirectory = path.join(visualDirectory, "android");
 const screenshotsDirectory = path.join(visualDirectory, "screenshots");
 const captureScreenshotsDirectory = path.join(
   visualDirectory,
@@ -1088,46 +1089,82 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function scenarioCaptures(scenario) {
+  return (
+    scenario.captures ?? [
+      {
+        platform: "",
+        captured: scenario.captured,
+        image: scenario.image,
+        size: scenario.size,
+        missingLabel: scenario.missingLabel,
+      },
+    ]
+  );
+}
+
+function captureShotHtml(scenario, capture) {
+  const subject = capture.platform
+    ? `${scenario.title} on ${capture.platform}`
+    : scenario.title;
+  return `
+          <div class="shot">
+            <button class="preview"${
+              capture.captured
+                ? ` data-image="${escapeHtml(capture.image)}"`
+                : ""
+            } aria-label="Open ${escapeHtml(subject)}">
+              <span class="device-screen"${
+                capture.size
+                  ? ` style="--shot-ratio: ${capture.size.width} / ${capture.size.height}"`
+                  : ""
+              }>
+                ${
+                  capture.captured
+                    ? `<img src="${escapeHtml(capture.image)}" alt="${escapeHtml(
+                        subject,
+                      )}" loading="lazy">`
+                    : `<span class="missing">${escapeHtml(
+                        capture.missingLabel ?? "Screenshot missing",
+                      )}</span>`
+                }
+              </span>
+            </button>
+            ${
+              capture.platform
+                ? `<span class="platform-tag">${escapeHtml(capture.platform)}</span>`
+                : ""
+            }
+          </div>`;
+}
+
 export function galleryHtml(catalog) {
   const catalogJson = JSON.stringify(catalog).replaceAll("<", "\\u003c");
   const scenarioGroups = new Map();
+  let platformColumns = 1;
   for (const scenario of catalog.scenarios) {
     const group = scenario.group || "Other";
     const scenarios = scenarioGroups.get(group) ?? [];
     scenarios.push(scenario);
     scenarioGroups.set(group, scenarios);
+    platformColumns = Math.max(platformColumns, scenarioCaptures(scenario).length);
   }
   const sections = [...scenarioGroups.entries()]
     .map(([group, scenarios], sectionIndex) => {
       const cards = scenarios
-        .map(
-          (scenario) => `
+        .map((scenario) => {
+          const captures = scenarioCaptures(scenario);
+          return `
         <article class="card">
-          <button class="preview" data-image="${escapeHtml(
-            scenario.image,
-          )}" aria-label="Open ${escapeHtml(scenario.title)}">
-            <span class="device-screen"${
-              scenario.size
-                ? ` style="--shot-ratio: ${scenario.size.width} / ${scenario.size.height}"`
-                : ""
-            }>
-              ${
-                scenario.captured
-                  ? `<img src="${escapeHtml(scenario.image)}" alt="${escapeHtml(
-                      scenario.title,
-                    )}" loading="lazy">`
-                  : `<span class="missing">${escapeHtml(
-                      scenario.missingLabel ?? "Screenshot missing",
-                    )}</span>`
-              }
-            </span>
-          </button>
+          <div class="shots" style="--shots: ${captures.length}">${captures
+            .map((capture) => captureShotHtml(scenario, capture))
+            .join("")}</div>
           <div class="card-copy">
             <h3>${escapeHtml(scenario.title)}</h3>
             <p>${escapeHtml(scenario.description)}</p>
           </div>
-        </article>`,
-        )
+        </article>`;
+        })
         .join("");
       const sectionId = `scenario-section-${sectionIndex}`;
       return `
@@ -1142,6 +1179,33 @@ export function galleryHtml(catalog) {
     </section>`;
     })
     .join("");
+  const deviceChips = (
+    catalog.platforms
+      ? catalog.platforms.map(
+          (platform) =>
+            `${platform.label} · ${platform.device.name} · ${platform.device.runtime}`,
+        )
+      : [catalog.device.name, catalog.device.runtime]
+  )
+    .map((chip) => `<span>${escapeHtml(chip)}</span>`)
+    .join("\n      ");
+  const reportLinks = (
+    catalog.platforms
+      ? catalog.platforms
+          .filter((platform) => platform.reportAvailable)
+          .map((platform) => ({
+            label: `${platform.label} Maestro report`,
+            href: platform.reportHref,
+          }))
+      : catalog.reportAvailable
+        ? [{ label: "Maestro report", href: "maestro/report.html" }]
+        : []
+  )
+    .map(
+      (link) =>
+        `<a class="report" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`,
+    )
+    .join("\n      ");
 
   return `<!doctype html>
 <html lang="en">
@@ -1241,9 +1305,29 @@ export function galleryHtml(catalog) {
       align-items: start;
       gap: 16px;
     }
+    body[data-platforms="2"] .grid {
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+    }
     .card {
       min-width: 0;
       transition: transform 160ms ease, opacity 180ms ease, filter 180ms ease;
+    }
+    .shots {
+      display: grid;
+      grid-template-columns: repeat(var(--shots, 1), minmax(0, 1fr));
+      align-items: start;
+      gap: 10px;
+    }
+    .shot { min-width: 0; }
+    .platform-tag {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-align: center;
+      text-transform: uppercase;
     }
     .card:hover { transform: translateY(-2px); }
     body[data-capture-state="capturing"] .card {
@@ -1412,7 +1496,7 @@ export function galleryHtml(catalog) {
     }
   </style>
 </head>
-<body>
+<body data-platforms="${platformColumns}">
   <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
     <span class="status-spinner" aria-hidden="true"></span>
     <span class="status-copy">
@@ -1427,15 +1511,10 @@ export function galleryHtml(catalog) {
       <p class="intro">Complete device captures at a glance. Click any image to expand it.</p>
     </div>
     <div class="meta">
-      <span>${escapeHtml(catalog.device.name)}</span>
-      <span>${escapeHtml(catalog.device.runtime)}</span>
+      ${deviceChips}
       <span>${escapeHtml(catalog.generatedAt)}</span>
       <span>${escapeHtml(catalog.git.revision)}${catalog.git.dirty ? " · dirty" : ""}</span>
-      ${
-        catalog.reportAvailable
-          ? '<a class="report" href="maestro/report.html">Maestro report</a>'
-          : ""
-      }
+      ${reportLinks}
     </div>
   </header>
   <main>${sections}</main>
@@ -1484,14 +1563,19 @@ export function galleryHtml(catalog) {
     window.setInterval(async () => {
       if (document.visibilityState === "hidden") return;
       try {
-        const [catalogResponse, statusResponse] = await Promise.all([
+        const [iosResponse, androidResponse, statusResponse] = await Promise.all([
           fetch("catalog.json", { cache: "no-store" }),
+          fetch("android/catalog.json", { cache: "no-store" }),
           fetch("status.json", { cache: "no-store" }),
         ]);
         if (statusResponse.ok) showCaptureStatus(await statusResponse.json());
-        if (!catalogResponse.ok) return;
-        const nextCatalog = await catalogResponse.json();
-        if (nextCatalog.generatedAt !== generatedAt) window.location.reload();
+        const stamps = [];
+        for (const response of [iosResponse, androidResponse]) {
+          if (response.ok) stamps.push((await response.json()).generatedAt);
+        }
+        if (stamps.length === 0) return;
+        const newest = stamps.sort().at(-1);
+        if (newest !== generatedAt) window.location.reload();
       } catch {
         // The local server may be between restarts.
       }
@@ -1499,6 +1583,107 @@ export function galleryHtml(catalog) {
   </script>
 </body>
 </html>`;
+}
+
+function platformCapture(label, scenario, imagePrefix) {
+  return {
+    platform: label,
+    captured: scenario.captured,
+    image: scenario.image ? `${imagePrefix}${scenario.image}` : "",
+    size: scenario.size ?? null,
+    missingLabel: scenario.captured
+      ? undefined
+      : (scenario.missingLabel ?? "Not captured yet"),
+  };
+}
+
+function missingCapture(label) {
+  return {
+    platform: label,
+    captured: false,
+    image: "",
+    size: null,
+    missingLabel: "Not captured yet",
+  };
+}
+
+export function unifiedCatalog(iosCatalog, androidCatalog) {
+  if (!iosCatalog || !androidCatalog) return iosCatalog ?? androidCatalog ?? null;
+  const androidById = new Map(
+    androidCatalog.scenarios.map((scenario) => [scenario.id, scenario]),
+  );
+  const scenarios = iosCatalog.scenarios.map((scenario) => {
+    const android = androidById.get(scenario.id);
+    return {
+      ...scenario,
+      captures: [
+        platformCapture("iOS", scenario, ""),
+        android
+          ? platformCapture("Android", android, "android/")
+          : missingCapture("Android"),
+      ],
+    };
+  });
+  const iosIds = new Set(iosCatalog.scenarios.map((scenario) => scenario.id));
+  for (const scenario of androidCatalog.scenarios) {
+    if (iosIds.has(scenario.id)) continue;
+    scenarios.push({
+      ...scenario,
+      captures: [
+        missingCapture("iOS"),
+        platformCapture("Android", scenario, "android/"),
+      ],
+    });
+  }
+  const newest =
+    Date.parse(androidCatalog.generatedAt) > Date.parse(iosCatalog.generatedAt)
+      ? androidCatalog
+      : iosCatalog;
+  return {
+    ...iosCatalog,
+    generatedAt: newest.generatedAt,
+    git: newest.git,
+    platforms: [
+      {
+        label: "iOS",
+        device: iosCatalog.device,
+        reportAvailable: iosCatalog.reportAvailable === true,
+        reportHref: "maestro/report.html",
+      },
+      {
+        label: "Android",
+        device: androidCatalog.device,
+        reportAvailable: androidCatalog.reportAvailable === true,
+        reportHref: "android/maestro/report.html",
+      },
+    ],
+    scenarios,
+  };
+}
+
+async function storedCatalog(directory) {
+  const file = path.join(directory, "catalog.json");
+  if (!(await exists(file))) return null;
+  return JSON.parse(await readFile(file, "utf8"));
+}
+
+export async function composedCatalog(overrides = {}) {
+  const ios =
+    "ios" in overrides ? overrides.ios : await storedCatalog(visualDirectory);
+  const android =
+    "android" in overrides
+      ? overrides.android
+      : await storedCatalog(androidVisualDirectory);
+  return unifiedCatalog(ios, android);
+}
+
+export async function writeUnifiedIndex(overrides = {}) {
+  const catalog = await composedCatalog(overrides);
+  if (!catalog) return;
+  await atomicWriteFile(
+    path.join(visualDirectory, "index.html"),
+    galleryHtml(catalog),
+  );
 }
 
 async function cleanupScreenshotReleases(activeRelease) {
@@ -1592,7 +1777,10 @@ async function prepareGalleryPublication(
   const catalogTemporary = `${catalogPath}.${release}.tmp`;
   const indexTemporary = `${indexPath}.${release}.tmp`;
   await writeFile(catalogTemporary, `${JSON.stringify(catalog, null, 2)}\n`);
-  await writeFile(indexTemporary, galleryHtml(catalog));
+  await writeFile(
+    indexTemporary,
+    galleryHtml(await composedCatalog({ ios: catalog })),
+  );
 
   return {
     catalog,
@@ -1640,7 +1828,7 @@ async function markCatalogAsWatchMode() {
   };
   await atomicWriteFile(
     path.join(visualDirectory, "index.html"),
-    galleryHtml(watchCatalog),
+    galleryHtml(await composedCatalog({ ios: watchCatalog })),
   );
   await atomicWriteFile(
     catalogPath,
@@ -1657,15 +1845,9 @@ function safeStaticPath(url, baseDirectory) {
   return target;
 }
 
-export async function serveCatalog(port, shouldOpen, baseDirectory = visualDirectory) {
-  const catalogPath = path.join(baseDirectory, "catalog.json");
-  if (await exists(catalogPath)) {
-    const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
-    await writeFile(
-      path.join(baseDirectory, "index.html"),
-      galleryHtml(catalog),
-    );
-  }
+export async function serveCatalog(port, shouldOpen) {
+  const baseDirectory = visualDirectory;
+  await writeUnifiedIndex();
   if (!(await exists(path.join(baseDirectory, "index.html")))) {
     throw new Error("No visual catalog exists yet. Run the capture command first.");
   }
@@ -1683,7 +1865,8 @@ export async function serveCatalog(port, shouldOpen, baseDirectory = visualDirec
     }
     if (pathname === "/" || pathname === "/index.html") {
       try {
-        const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
+        const catalog = await composedCatalog();
+        if (!catalog) throw new Error("no catalog");
         response.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",

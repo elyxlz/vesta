@@ -256,9 +256,12 @@ npm run mobile:visual:android:capture
 npm run mobile:visual:android:serve
 ```
 
-The Android runner captures the same manifest on one dedicated emulator.
-Scenarios marked `"platforms": ["ios"]` are skipped by `runFlow` platform
-blocks in the flows and rendered as explicit "iOS only" cards in the Android
+The gallery is one unified page for both platforms: each scenario card shows
+its iOS and Android captures side by side, and every serve command serves
+that same page. The Android runner captures the same manifest on one
+dedicated emulator and refreshes the unified gallery. Scenarios marked
+`"platforms": ["ios"]` are skipped by `runFlow` platform blocks in the flows
+and rendered as explicit "iOS only" Android slots in the unified
 gallery. Read the "Android catalog" section of `visual/README.md` before
 changing Android behavior; keep every shared step identical across platforms
 and put a platform difference inside a `when: platform` block, never in a
