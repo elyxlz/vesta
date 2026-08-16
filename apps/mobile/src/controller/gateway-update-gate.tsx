@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { useRouter, useSegments, type Href } from "expo-router";
 import { BlockingSheetGateView } from "@/components/blocking-sheet-gate-view";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
+import { useGatewayOperation } from "./gateway-operation-context";
 import { gatewayUpdateGateNavigationAction } from "./gateway-update-gate-model";
 
 const GATEWAY_UPDATE_ROUTE = "/gateway-update" as Href;
@@ -34,9 +35,13 @@ export function GatewayUpdateGate({
   const privacyRouteActive = activeRoute === "privacy";
   const gatewayUpdateRouteActive = activeRoute === "gateway-update";
   const privacyBlocked = usePrivacyBlocked();
-  const gatewayUpdateBlocked = blocked && !privacyBlocked;
+  const { operation } = useGatewayOperation();
+  const operationRunning = operation !== null;
+  // The backdrop yields while an operation runs, so home's progress page is what the user sees.
+  const gatewayUpdateBlocked = blocked && !privacyBlocked && !operationRunning;
   const action = gatewayUpdateGateNavigationAction({
     blocked,
+    operationRunning,
     privacyBlocked,
     privacyRouteActive,
     gatewayUpdateRouteActive,
@@ -53,9 +58,11 @@ export function GatewayUpdateGate({
       return;
     }
 
-    if (action === "dismiss") {
+    if (action === "dismiss" || action === "dismiss-home") {
       presentationPending.current = false;
-      if (router.canGoBack()) {
+      if (action === "dismiss-home") {
+        router.dismissTo(ROOT_ROUTE);
+      } else if (router.canGoBack()) {
         router.back();
       } else {
         router.replace(ROOT_ROUTE);
