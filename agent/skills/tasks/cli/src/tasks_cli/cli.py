@@ -60,6 +60,18 @@ def _add_due_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--in-days", "--due-in-days", dest="due_in_days", type=int, default=None)
 
 
+def _due_spec(args: argparse.Namespace, *, clear: bool = False) -> commands.DueSpec:
+    """The DueSpec the flags from `_add_due_args` describe."""
+    return commands.DueSpec(
+        due_datetime=args.due_datetime,
+        timezone=args.timezone,
+        due_in_minutes=args.due_in_minutes,
+        due_in_hours=args.due_in_hours,
+        due_in_days=args.due_in_days,
+        clear=clear,
+    )
+
+
 def _add_id_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("id_pos", nargs="?", default=None, metavar="id")
     parser.add_argument("--id", default=None, dest="task_id")
@@ -129,11 +141,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # postpone
     p_postpone = sub.add_parser("postpone", help="Set a new due date measured from now (also gives undated tasks one)")
     _add_id_args(p_postpone)
-    p_postpone.add_argument("--in-minutes", type=int, default=None)
-    p_postpone.add_argument("--in-hours", type=int, default=None)
-    p_postpone.add_argument("--in-days", type=int, default=None)
-    p_postpone.add_argument("--at", default=None, help="Absolute due datetime, e.g. 2026-12-01T10:00:00")
-    p_postpone.add_argument("--tz", default=None, help="IANA timezone; omit to use the agent's own timezone")
+    _add_due_args(p_postpone)
 
     # delete
     p_delete = sub.add_parser("delete", help="Delete a task")
@@ -187,13 +195,7 @@ def _handle_task(args, config: Config):
         result = commands.add_task(
             config,
             subject=subject,
-            due=commands.DueSpec(
-                due_datetime=args.due_datetime,
-                timezone=args.timezone,
-                due_in_minutes=args.due_in_minutes,
-                due_in_hours=args.due_in_hours,
-                due_in_days=args.due_in_days,
-            ),
+            due=_due_spec(args),
             priority=args.priority,
             initial_metadata=args.initial_metadata,
         )
@@ -221,14 +223,7 @@ def _handle_task(args, config: Config):
             status=args.status,
             subject=subject,
             priority=args.priority,
-            due=commands.DueSpec(
-                due_datetime=args.due_datetime,
-                timezone=args.timezone,
-                due_in_minutes=args.due_in_minutes,
-                due_in_hours=args.due_in_hours,
-                due_in_days=args.due_in_days,
-                clear=args.clear_due,
-            ),
+            due=_due_spec(args, clear=args.clear_due),
             backburner=args.backburner,
         )
     elif args.command == "done":
@@ -236,15 +231,7 @@ def _handle_task(args, config: Config):
         result = commands.update_task(config, task_id=task_id, status="completed")
     elif args.command == "postpone":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks postpone <id> --in-days N")
-        result = commands.postpone_task(
-            config,
-            task_id=task_id,
-            due_datetime=args.at,
-            timezone=args.tz,
-            in_minutes=args.in_minutes,
-            in_hours=args.in_hours,
-            in_days=args.in_days,
-        )
+        result = commands.postpone_task(config, task_id=task_id, due=_due_spec(args))
     elif args.command == "delete":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks delete <id> or tasks delete --id <id>")
         result = commands.delete_task(config, task_id=task_id)

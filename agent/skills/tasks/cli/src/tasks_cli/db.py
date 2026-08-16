@@ -30,17 +30,6 @@ class Task(TypedDict, total=False):
     deleted_at: str | None
 
 
-class Reminder(TypedDict, total=False):
-    id: str
-    task_id: str | None
-    message: str
-    schedule_type: str | None
-    scheduled_time: str | None
-    completed: int
-    created_at: str
-    trigger_data: str | None
-
-
 def get_db(data_dir: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(data_dir / "tasks.db")
     conn.row_factory = sqlite3.Row
@@ -275,10 +264,6 @@ def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, du
 
     if due_dt > now and due_dt.isoformat() not in taken:
         _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), AT_DUE_SCHEDULE, due_dt)
-
-
-def delete_task_reminders(conn: sqlite3.Connection, task_id: str):
-    conn.execute("DELETE FROM reminders WHERE task_id = ?", (task_id,))
 
 
 def _create_auto_reminders_for_existing(conn: sqlite3.Connection):

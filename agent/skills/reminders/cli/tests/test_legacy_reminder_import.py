@@ -28,15 +28,26 @@ LEGACY_ROW = (
 )
 
 
-def _make_legacy_db(home: pathlib.Path) -> None:
+# A materialized pre-due rung, as the tasks store built them before checkpoints were computed.
+AUTO_ROW = ("auto0001", "t1", "Task due in 1 day: file taxes", "auto: 1 day before due", "2026-01-02T09:00:00+00:00", 0, "2026-01-01", None)
+
+
+def _make_legacy_db(home: pathlib.Path, *, with_auto_column: bool = False) -> None:
+    """A tasks store holding LEGACY_ROW; `with_auto_column` gives it the v7 shape (the
+    auto_generated column present) plus one materialized rung."""
     legacy = home / ".tasks"
     legacy.mkdir(parents=True)
     conn = sqlite3.connect(legacy / "tasks.db")
+    auto_column = ", auto_generated INTEGER" if with_auto_column else ""
     conn.execute(
         "CREATE TABLE reminders (id TEXT PRIMARY KEY, task_id TEXT, message TEXT, schedule_type TEXT,"
-        " scheduled_time TEXT, completed INTEGER, created_at TEXT, trigger_data TEXT)"
+        f" scheduled_time TEXT, completed INTEGER, created_at TEXT, trigger_data TEXT{auto_column})"
     )
-    conn.execute("INSERT INTO reminders VALUES (?,?,?,?,?,?,?,?)", LEGACY_ROW)
+    if with_auto_column:
+        conn.execute("INSERT INTO reminders VALUES (?,?,?,?,?,?,?,?,0)", LEGACY_ROW)
+        conn.execute("INSERT INTO reminders VALUES (?,?,?,?,?,?,?,?,1)", AUTO_ROW)
+    else:
+        conn.execute("INSERT INTO reminders VALUES (?,?,?,?,?,?,?,?)", LEGACY_ROW)
     conn.commit()
     conn.close()
 
@@ -96,3 +107,43 @@ def test_imported_row_drops_the_task_link(tmp_path, monkeypatch):
         assert message == "a reminder from the old CLI"
     finally:
         conn.close()
+
+
+def test_materialized_task_checkpoints_are_not_imported(tmp_path, monkeypatch):
+    """The tasks daemon computes its own checkpoints; importing the old rung rows would fire each one twice."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: home))
+    _make_legacy_db(home, with_auto_column=True)
+
+    real = home / ".reminders"
+    real.mkdir()
+    db.init_db(real)
+
+    conn = sqlite3.connect(real / "reminders.db")
+    try:
+        ids = {row[0] for row in conn.execute("SELECT id FROM reminders")}
+    finally:
+        conn.close()
+    assert ids == {"leg00001"}
+
+
+def test_a_failed_read_leaves_the_import_to_retry(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: home))
+    legacy = home / ".tasks"
+    legacy.mkdir(parents=True)
+    (legacy / "tasks.db").write_text("not a database")
+
+    real = home / ".reminders"
+    real.mkdir()
+    db.init_db(real)
+    assert _reminder_count(real) == 0
+
+    # The store heals; the next init imports because no marker was set on the failure.
+    (legacy / "tasks.db").unlink()
+    legacy.rmdir()
+    _make_legacy_db(home)
+    db.init_db(real)
+    assert _reminder_count(real) == 1

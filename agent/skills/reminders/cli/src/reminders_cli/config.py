@@ -11,4 +11,3 @@ def default_data_dir() -> Path:
 class Config:
     data_dir: Path = field(default_factory=default_data_dir)
     log_dir: Path = field(default_factory=lambda: default_data_dir() / "logs")
-    monitor_interval: int = 60

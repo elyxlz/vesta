@@ -1,4 +1,4 @@
-The reminders skill is now its own `cli/` uv project at `~/agent/skills/reminders/cli`. Its command `reminders` sets and manages time-based reminders. The tasks skill keeps tasks only. The reminders a box already has live in the tasks database at `~/.tasks/tasks.db`. The reminders daemon copies them into its own store at `~/.reminders/reminders.db` once, on its first start. This migration installs the `reminders` command, activates the reminders skill, starts its daemon, and gives it a restart line. Every step reads what is on disk first, so it is safe to run more than once.
+The reminders skill is now its own `cli/` uv project at `~/agent/skills/reminders/cli`. Its command `reminders` sets and manages time-based reminders. The tasks skill keeps tasks only. The reminders a box already has live in the tasks database at `~/.tasks/tasks.db`. The first `reminders` command on the box copies them into its own store at `~/.reminders/reminders.db`, once. This migration installs the `reminders` command, activates the reminders skill, starts its daemon, and gives it a restart line. Every step reads what is on disk first, so it is safe to run more than once.
 
 ### 1. Install the reminders command
 
@@ -21,12 +21,12 @@ command -v tasks
 ### 3. Activate the reminders skill
 
 ```bash
-skills-activate reminders
+~/agent/skills/skills-registry/scripts/skills-activate reminders
 ```
 
 ### 4. Start the reminders daemon and give it a restart line
 
-The daemon copies any existing reminders out of `~/.tasks/tasks.db` on its first start, so start it first:
+Starting the daemon is the first `reminders` command, so it runs the one-time copy out of `~/.tasks/tasks.db`:
 
 ```bash
 reminders daemon start
@@ -51,11 +51,17 @@ tasks daemon status
 ### 6. Verify the reminders moved
 
 ```bash
-reminders list --show-completed --limit 5
+reminders list --show-completed
 ```
 
-This lists the reminders the box had before. A box that never used reminders shows an empty list, which is correct.
+This lists the reminders the box had before, recurring ones first. A box that never used reminders shows an empty list, which is correct.
 
-### 7. Mark this migration applied
+If that list holds a recurring reminder whose message is about updating contacts and reconciling them across messaging apps and services (the nightly contacts pass), delete it by id with `reminders delete <id>`: the `dream` runs that pass now, and an earlier migration that removed it could only find it under the old `tasks remind` command. If there is none, nothing to do.
+
+### 7. Carry your reminder patterns across
+
+Look at the end of `~/agent/skills/tasks/SKILL.md`. If it still has a `### Reminder Patterns` section holding notes you wrote (not just the bare placeholder), move that body under `### Reminder Patterns` at the end of `~/agent/skills/reminders/SKILL.md`, then delete the section from the tasks file. If there is no such section, or only the placeholder, nothing to do.
+
+### 8. Mark this migration applied
 
 Call `mark_migration_applied` with `name="2026-08-reminders-skill-split"`.

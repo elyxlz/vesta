@@ -8,6 +8,7 @@ is a no-op, so a delete racing the daemon's next sync tick can never write a str
 from contextlib import closing
 from pathlib import Path
 
+import pytest
 from reminders_cli import commands, db
 from reminders_cli import format as fmt
 from reminders_cli.commands import send_reminder_job
@@ -27,6 +28,23 @@ def test_delete_keeps_the_row_and_stamps_deleted_at(tmp_config: Config):
     row = _row(tmp_config, reminder["id"])
     assert row is not None, "soft delete must keep the row"
     assert row["deleted_at"] is not None
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        lambda cfg, rid: commands.remind_snooze(cfg, reminder_id=rid, spec=commands.SnoozeSpec(in_hours=2)),
+        lambda cfg, rid: commands.remind_update(cfg, reminder_id=rid, message="renamed"),
+    ],
+    ids=["snooze", "update"],
+)
+def test_writes_on_a_deleted_reminder_are_refused(tmp_config: Config, write):
+    """There is no undelete: a snooze that succeeded would report a fire time nothing ever fires at."""
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="gone", in_minutes=30))
+    commands.remind_delete(tmp_config, reminder_id=reminder["id"])
+    with pytest.raises(ValueError, match="was deleted"):
+        write(tmp_config, reminder["id"])
+    assert commands.remind_get(tmp_config, reminder_id=reminder["id"])["message"] == "gone"
 
 
 def test_deleted_reminder_absent_from_default_list(tmp_config: Config):

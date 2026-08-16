@@ -3,14 +3,12 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypedDict
 
 from .config import default_data_dir
 
 logger = logging.getLogger(__name__)
 
-# Head schema version. Bump this in the same commit as a new migration step, and assert against it
-# in tests rather than hard-coding an integer, so adding a migration cannot break unrelated tests.
+# Head schema version, recorded in meta so a later migration step knows where a store starts.
 SCHEMA_VERSION = 1
 
 _SCHEMA_VERSION_KEY = "schema_version"
@@ -18,17 +16,6 @@ _LEGACY_IMPORT_KEY = "legacy_import_done"
 
 # Columns copied out of a legacy `~/.tasks/tasks.db` reminders table, dropping its `task_id` link.
 _LEGACY_COLUMNS = ("id", "message", "schedule_type", "scheduled_time", "completed", "created_at", "trigger_data")
-
-
-class Reminder(TypedDict, total=False):
-    id: str
-    message: str
-    schedule_type: str | None
-    scheduled_time: str | None
-    completed: int
-    created_at: str
-    trigger_data: str | None
-    deleted_at: str | None
 
 
 def get_db(data_dir: Path) -> sqlite3.Connection:
@@ -80,22 +67,27 @@ def _import_legacy_reminders(conn: sqlite3.Connection, data_dir: Path):
             with closing(sqlite3.connect(f"file:{legacy_db}?mode=ro", uri=True)) as old_conn:
                 old_conn.row_factory = sqlite3.Row
                 if _has_reminders_table(old_conn):
-                    columns = ", ".join(_LEGACY_COLUMNS)
-                    placeholders = ", ".join("?" for _ in _LEGACY_COLUMNS)
-                    imported = 0
-                    for row in old_conn.execute(f"SELECT {columns} FROM reminders"):
-                        try:
-                            conn.execute(
-                                f"INSERT OR IGNORE INTO reminders ({columns}) VALUES ({placeholders})",
-                                tuple(row[column] for column in _LEGACY_COLUMNS),
-                            )
-                            imported += 1
-                        except sqlite3.Error as e:
-                            logger.warning("Skipped importing reminder %s: %s", row["id"], e)
-                    logger.info("Imported %s reminders from the legacy tasks store", imported)
+                    _copy_legacy_rows(old_conn, conn)
         except sqlite3.Error as e:
+            # The marker stays unset, so the next init retries instead of losing the box's reminders.
             logger.warning("Failed to import legacy reminders: %s", e)
+            return
     set_meta(conn, _LEGACY_IMPORT_KEY, datetime.now(UTC).isoformat())
+
+
+def _copy_legacy_rows(old_conn: sqlite3.Connection, conn: sqlite3.Connection):
+    """Copy the hand-written reminders out of a legacy tasks store.
+
+    The tasks store materialized each dated task's pre-due checkpoints as `auto_generated = 1`
+    rows; the tasks daemon computes those itself, so only `auto_generated = 0` rows are copied.
+    A tasks store already past its own v8 step has neither the column nor such rows."""
+    legacy_columns = {row["name"] for row in old_conn.execute("PRAGMA table_info(reminders)")}
+    where = " WHERE auto_generated = 0" if "auto_generated" in legacy_columns else ""
+    columns = ", ".join(_LEGACY_COLUMNS)
+    placeholders = ", ".join("?" for _ in _LEGACY_COLUMNS)
+    rows = [tuple(row) for row in old_conn.execute(f"SELECT {columns} FROM reminders{where}")]
+    cursor = conn.executemany(f"INSERT OR IGNORE INTO reminders ({columns}) VALUES ({placeholders})", rows)
+    logger.info("Imported %s of %s reminders from the legacy tasks store", cursor.rowcount, len(rows))
 
 
 def init_db(data_dir: Path):

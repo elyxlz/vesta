@@ -6,6 +6,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from tasks_cli import commands, db
 from tasks_cli.config import Config
 from tasks_cli.format import format_task_list
@@ -48,6 +49,23 @@ def test_delete_is_idempotent(tmp_config: Config):
     commands.delete_task(tmp_config, task_id=task["id"])
     again = commands.delete_task(tmp_config, task_id=task["id"])
     assert again["status"] == "deleted"
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        lambda cfg, task_id: commands.postpone_task(cfg, task_id=task_id, due=commands.DueSpec(due_in_days=2)),
+        lambda cfg, task_id: commands.update_task(cfg, task_id=task_id, status="completed"),
+        lambda cfg, task_id: commands.update_task(cfg, task_id=task_id, subject="renamed"),
+    ],
+    ids=["postpone", "done", "retitle"],
+)
+def test_writes_on_a_deleted_task_are_refused(tmp_config: Config, write):
+    """There is no undelete: a write that succeeded would report a due date or completion nothing acts on."""
+    task = commands.add_task(tmp_config, subject="gone")
+    commands.delete_task(tmp_config, task_id=task["id"])
+    with pytest.raises(ValueError, match="was deleted"):
+        write(tmp_config, task["id"])
 
 
 def test_get_returns_a_deleted_task_with_its_deleted_at(tmp_config: Config):

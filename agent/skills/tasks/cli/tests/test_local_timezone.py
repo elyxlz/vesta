@@ -63,7 +63,7 @@ def test_update_accepts_at_without_tz(tmp_config: Config, monkeypatch):
 def test_postpone_accepts_at_without_tz(tmp_config: Config, monkeypatch):
     monkeypatch.setenv("TZ", NY_ZONE)
     task = commands.add_task(tmp_config, subject="postponable")
-    updated = commands.postpone_task(tmp_config, task_id=task["id"], due_datetime=NY_WINTER_WALL_CLOCK)
+    updated = commands.postpone_task(tmp_config, task_id=task["id"], due=commands.DueSpec(due_datetime=NY_WINTER_WALL_CLOCK))
     assert db.parse_datetime(updated["due_date"]) == datetime(2027, 1, 5, 9, tzinfo=ZoneInfo(NY_ZONE))
 
 

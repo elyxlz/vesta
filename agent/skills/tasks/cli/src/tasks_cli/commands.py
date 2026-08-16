@@ -58,20 +58,19 @@ def _relative_offset(minutes: int | None, hours: int | None, days: int | None) -
     return offset if offset.total_seconds() > 0 else None
 
 
-def _local_tz_name() -> str:
-    return os.environ["TZ"] if "TZ" in os.environ else "UTC"
-
-
-def _resolve_tz_name(timezone_str: str | None) -> str:
-    """The zone that reads a wall-clock due datetime: an explicit timezone wins, else the agent's own."""
-    if timezone_str is not None:
-        return timezone_str
-    name = _local_tz_name()
+def _zone(tz_name: str | None) -> ZoneInfo:
+    """Resolve an explicit IANA name; None means the agent's own zone (boot applies the config
+    store's timezone as the TZ env var)."""
+    if tz_name is not None:
+        try:
+            return ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, KeyError):
+            raise ValueError(f"Invalid timezone: '{tz_name}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from None
+    local_name = os.environ["TZ"] if "TZ" in os.environ else "UTC"
     try:
-        ZoneInfo(name)
+        return ZoneInfo(local_name)
     except (ZoneInfoNotFoundError, KeyError):
-        raise ValueError(f"The agent's TZ value '{name}' is not a valid IANA timezone. Fix the timezone config or pass --tz.") from None
-    return name
+        raise ValueError(f"The agent's TZ value '{local_name}' is not a valid IANA timezone. Fix the timezone config or pass --tz.") from None
 
 
 def _display_due_date(stored: str | None) -> str | None:
@@ -81,30 +80,18 @@ def _display_due_date(stored: str | None) -> str | None:
     if stored is None:
         return None
     try:
-        local_tz = ZoneInfo(_local_tz_name())
-    except (ZoneInfoNotFoundError, KeyError):
+        local_tz = _zone(None)
+    except ValueError:
         local_tz = ZoneInfo("UTC")
     return db.parse_datetime(stored).astimezone(local_tz).isoformat()
 
 
-def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
-    try:
-        local_tz = ZoneInfo(timezone_str)
-    except (ZoneInfoNotFoundError, KeyError):
-        raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from None
-
+def _to_utc(datetime_str: str, timezone_str: str | None) -> str:
+    """A wall-clock datetime read in `timezone_str` (the agent's own zone when None), stored as a UTC instant."""
+    local_tz = _zone(timezone_str)
     parsed = datetime.fromisoformat(datetime_str)
-    if parsed.tzinfo is not None:
-        return parsed.astimezone(local_tz)
-    return parsed.replace(tzinfo=local_tz)
-
-
-def _to_utc_dt(datetime_str: str, timezone_str: str) -> datetime:
-    return _parse_local_dt(datetime_str, timezone_str).astimezone(UTC)
-
-
-def _to_utc(datetime_str: str, timezone_str: str) -> str:
-    return _to_utc_dt(datetime_str, timezone_str).isoformat()
+    local_dt = parsed.astimezone(local_tz) if parsed.tzinfo is not None else parsed.replace(tzinfo=local_tz)
+    return local_dt.astimezone(UTC).isoformat()
 
 
 def normalize_priority(priority: int | str) -> int:
@@ -139,7 +126,7 @@ def _compute_due_date(due: DueSpec | None) -> str | None:
             raise ValueError("clear removes the due date, so it cannot be combined with a due date or offset")
         return None
     if due.due_datetime is not None:
-        return _to_utc(due.due_datetime, _resolve_tz_name(due.timezone))
+        return _to_utc(due.due_datetime, due.timezone)
 
     offset = _relative_offset(due.due_in_minutes, due.due_in_hours, due.due_in_days)
     if offset is not None:
@@ -177,11 +164,20 @@ def _require_task_row(conn, task_id: str):
     return row
 
 
+def _require_live_task_row(conn, task_id: str):
+    """A row a write may change: reads still resolve a deleted task, but there is no undelete, so a
+    write on one would report a state (a due date, a completion) nothing ever acts on."""
+    row = _require_task_row(conn, task_id)
+    if row["deleted_at"] is not None:
+        raise ValueError(f"Task '{task_id}' was deleted at {row['deleted_at']}; create a new task instead.")
+    return row
+
+
 def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False) -> dict:
     task = dict(row)
     # Checkpoint bookkeeping, not task state: the ladder engine's marker means nothing to a reader.
     # deleted_at stays: a reader must see whether a task is deleted and when.
-    task.pop("checkpoint_fired_through", None)
+    del task["checkpoint_fired_through"]
     task["due_date"] = _display_due_date(task["due_date"])
     task_id = task["id"]
     task["metadata_path"] = str(_get_metadata_path(data_dir, task_id))
@@ -227,13 +223,19 @@ def add_task(
     }
 
 
+def _visibility_clauses(*, show_completed: bool, show_deleted: bool) -> list[str]:
+    """The WHERE terms that hide completed and soft-deleted rows unless a flag reveals them."""
+    clauses = []
+    if not show_completed:
+        clauses.append("status != 'completed'")
+    if not show_deleted:
+        clauses.append("deleted_at IS NULL")
+    return clauses
+
+
 def list_tasks(config: Config, *, show_completed: bool = False, show_deleted: bool = False) -> list[dict]:
     with closing(db.get_db(config.data_dir)) as conn:
-        clauses = []
-        if not show_completed:
-            clauses.append("status != 'completed'")
-        if not show_deleted:
-            clauses.append("deleted_at IS NULL")
+        clauses = _visibility_clauses(show_completed=show_completed, show_deleted=show_deleted)
         query = "SELECT * FROM tasks"
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
@@ -281,7 +283,7 @@ def update_task(
     new_due_date = _compute_due_date(due)
 
     with closing(db.get_db(config.data_dir)) as conn:
-        result = _require_task_row(conn, task_id)
+        result = _require_live_task_row(conn, task_id)
 
         updates = []
         params = []
@@ -309,8 +311,10 @@ def update_task(
                 params.append(value)
 
         if due_date_changed:
-            updates.append("due_date = ?")
-            params.append(new_due_date)
+            # A ladder starts when its date is set: rungs the new date puts in the past could
+            # never have fired, so they must not fire now as a mislabelled catch-up.
+            updates.append("due_date = ?, checkpoint_fired_through = ?")
+            params.extend([new_due_date, _now_utc().isoformat()])
 
         if updates:
             params.append(task_id)
@@ -322,25 +326,12 @@ def update_task(
         return _task_with_metadata(config.data_dir, dict(cursor.fetchone()), include_content=True)
 
 
-def postpone_task(
-    config: Config,
-    *,
-    task_id: str,
-    due_datetime: str | None = None,
-    timezone: str | None = None,
-    in_minutes: int | None = None,
-    in_hours: int | None = None,
-    in_days: int | None = None,
-) -> dict:
+def postpone_task(config: Config, *, task_id: str, due: DueSpec) -> dict:
     """Set a new due date measured from now (or an absolute one).
     Also gives a due date to a task that never had one."""
-    if due_datetime is None and not (in_minutes or in_hours or in_days):
+    if not _due_field_set(due):
         raise ValueError("Say when: tasks postpone <id> --in-days N (or --in-minutes/--in-hours, or --at)")
-    return update_task(
-        config,
-        task_id=task_id,
-        due=DueSpec(due_datetime=due_datetime, timezone=timezone, due_in_minutes=in_minutes, due_in_hours=in_hours, due_in_days=in_days),
-    )
+    return update_task(config, task_id=task_id, due=due)
 
 
 def get_task(config: Config, *, task_id: str) -> dict:
@@ -403,12 +394,8 @@ def delete_task(config: Config, *, task_id: str) -> dict:
 
 def search_tasks(config: Config, *, query: str, show_completed: bool = False, show_deleted: bool = False) -> list[dict]:
     with closing(db.get_db(config.data_dir)) as conn:
-        sql = "SELECT * FROM tasks WHERE subject LIKE ?"
-        if not show_completed:
-            sql += " AND status != 'completed'"
-        if not show_deleted:
-            sql += " AND deleted_at IS NULL"
-        sql += _TASK_ORDER_BY
+        clauses = ["subject LIKE ?", *_visibility_clauses(show_completed=show_completed, show_deleted=show_deleted)]
+        sql = "SELECT * FROM tasks WHERE " + " AND ".join(clauses) + _TASK_ORDER_BY
         cursor = conn.execute(sql, (f"%{query}%",))
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
@@ -416,6 +403,9 @@ def search_tasks(config: Config, *, query: str, show_completed: bool = False, sh
 # ---------------------------------------------------------------------------
 # Daily digest (overdue + stale tasks)
 # ---------------------------------------------------------------------------
+
+# A task the daemon still acts on: neither closed nor soft-deleted.
+_OPEN_TASK = "status != 'completed' AND deleted_at IS NULL"
 
 DIGEST_TYPE = "task_digest"
 DIGEST_MIN_GAP = timedelta(hours=24)
@@ -439,9 +429,7 @@ def build_digest(config: Config, *, now: datetime | None = None) -> str | None:
     """The daily digest message, or None when nothing needs attention."""
     now = now or _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        pending = conn.execute(
-            "SELECT id, subject, priority, due_date, created_at, backburner FROM tasks WHERE status != 'completed' AND deleted_at IS NULL"
-        ).fetchall()
+        pending = conn.execute(f"SELECT id, subject, priority, due_date, created_at, backburner FROM tasks WHERE {_OPEN_TASK}").fetchall()
 
     overdue: list[tuple[dict, datetime]] = []
     stale: list[tuple[dict, datetime]] = []
@@ -541,14 +529,13 @@ def fire_due_checkpoints(config: Config, notif_dir: Path, *, now: datetime | Non
 
     checkpoint_fired_through is the single piece of state: rungs at or before it are covered.
     Only the newest uncovered rung fires, so downtime collapses to one catch-up notification per
-    task instead of a backlog, and a postpone re-arms the ladder by itself because the new due
-    date moves every rung past the marker. Returns the number of notifications written."""
+    task instead of a backlog. Every due-date write re-stamps the marker, so a postpone re-arms
+    the ladder from that moment on. Returns the number of notifications written."""
     now = now or _now_utc()
     fired = 0
     with closing(db.get_db(config.data_dir)) as conn:
         rows = conn.execute(
-            "SELECT id, subject, due_date, created_at, checkpoint_fired_through FROM tasks"
-            " WHERE due_date IS NOT NULL AND status != 'completed' AND deleted_at IS NULL"
+            f"SELECT id, subject, due_date, created_at, checkpoint_fired_through FROM tasks WHERE due_date IS NOT NULL AND {_OPEN_TASK}"
         ).fetchall()
         for row in rows:
             due_dt = db.parse_datetime(row["due_date"])

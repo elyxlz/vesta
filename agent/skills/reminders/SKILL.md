@@ -17,9 +17,9 @@ reminders create "Contraceptive" --recurring daily --at "23:00"
 reminders create "Evening check-in" --recurring daily --at "21:30" --fuzz-minutes 75
 reminders create "Weekdays 9am" --cron "0 9 * * 1-5"
 reminders create "Market open" --recurring daily --at "09:30" --tz "America/New_York"   # --tz pins the schedule to that zone
-reminders list [--show-completed] [--show-deleted]   # reveal fired one-shots, or deleted ones marked [deleted]
+reminders list [--show-completed] [--show-deleted]   # fired and deleted ones stay hidden until asked for
 reminders get <id>                             # one reminder as JSON; resolves deleted ones too
-reminders get <id> --field next_run            # just that value (repeat --field for several, tab-separated)
+reminders get <id> --field next_run            # just that value
 reminders snooze <id> --in-hours 4             # fire 4h from NOW; works on already-fired ones too
 reminders snooze <id> --at "2026-12-01T17:00:00"   # move it to a specific time
 reminders update <id> --message "..."
@@ -34,8 +34,8 @@ reminders delete <id>
 - Snooze moves one-shot reminders only, fired ones included; a recurring reminder fires again on its own, and the CLI rejects snoozing it. Snooze says when two ways, one per call: `--in-*` counts from now, `--at` names the moment (add `--tz` for a different zone). The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
 - `update` changes the message only. To reschedule: move a one-shot with snooze; a recurring reminder's schedule changes only by delete plus recreate, which changes the id, so fix everything that referenced the old one.
 - `get <id> --field <name>` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, message, schedule, next_run, created_at, status, deleted_at.
-- `delete` is a soft delete: the reminder is kept, it never fires again, and it drops off `reminders list`. There is no undelete. `reminders list --show-deleted` brings it back, marked `[deleted]`, so a past id still resolves.
-- `list` prints a compact table (`--show-completed` includes fired one-shots, `--show-deleted` includes deleted ones marked `[deleted]`); the table shows the first 50, and `--json`/`--json-pretty` list all unless `--limit` is given.
+- `delete` is a soft delete: the reminder is kept, it never fires again, and it drops off `reminders list`. There is no undelete: `snooze` and `update` refuse a deleted id. `reminders list --show-deleted` brings it back, marked `[deleted]`, so a past id still resolves.
+- `list` prints a compact table of the first 50; `--json`/`--json-pretty` list all unless `--limit` is given.
 
 ## When a reminder needs more than a sentence: staged files
 

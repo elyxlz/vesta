@@ -21,6 +21,12 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
+def _add_id_args(parser: argparse.ArgumentParser) -> None:
+    """The reminder id, as a positional or --id."""
+    parser.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    parser.add_argument("--id", default=None, dest="reminder_id")
+
+
 def _require_arg(value: str | None, name: str, usage: str) -> str:
     if not value:
         raise ValueError(f"{name} is required: {usage}")
@@ -37,9 +43,7 @@ def _require_daemon():
 def _sync_jobs(config: Config, scheduler, notif_dir: Path):
     """Sync scheduler jobs with DB state: remove stale, add new, re-add moved one-shots (snooze)."""
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute(
-            "SELECT id, scheduled_time, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL AND deleted_at IS NULL"
-        )
+        cursor = conn.execute(f"SELECT id, scheduled_time, trigger_data FROM reminders WHERE {commands.LIVE_REMINDER}")
         rows = {row["id"]: (row["scheduled_time"], row["trigger_data"]) for row in cursor}
 
     jobs = {job.id: job for job in scheduler.get_jobs()}
@@ -129,15 +133,20 @@ def _list_cmd(config: Config, argv: list[str]) -> None:
     paged = args.limit is None and not (args.json or args.json_pretty)
     reminders = commands.remind_list(config, limit=args.limit, show_completed=args.show_completed, show_deleted=args.show_deleted)
     held_back = len(reminders) - REMIND_LIST_PAGE_SIZE if paged else 0
-    _print_list(args, reminders[:REMIND_LIST_PAGE_SIZE] if paged else reminders, fmt.format_reminder_list)
+    shown = reminders[:REMIND_LIST_PAGE_SIZE] if paged else reminders
+    if args.json_pretty:
+        print(json.dumps(shown, indent=2))
+    elif args.json:
+        print(json.dumps(shown))
+    else:
+        print(fmt.format_reminder_list(shown))
     if held_back > 0:
         print(f"... showing {REMIND_LIST_PAGE_SIZE} of {len(reminders)}. Use --limit <n> or --json to see them all.", file=sys.stderr)
 
 
 def _get_cmd(config: Config, argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog="reminders get")
-    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p.add_argument("--id", default=None, dest="reminder_id")
+    _add_id_args(p)
     p.add_argument(
         "--field",
         action="append",
@@ -158,8 +167,7 @@ def _get_cmd(config: Config, argv: list[str]) -> None:
 
 def _delete_cmd(config: Config, argv: list[str]) -> dict:
     p = argparse.ArgumentParser(prog="reminders delete")
-    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p.add_argument("--id", default=None, dest="reminder_id")
+    _add_id_args(p)
     args = p.parse_args(argv)
     reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders delete <id> or reminders delete --id <id>")
     return commands.remind_delete(config, reminder_id=reminder_id)
@@ -167,8 +175,7 @@ def _delete_cmd(config: Config, argv: list[str]) -> dict:
 
 def _update_cmd(config: Config, argv: list[str]) -> dict:
     p = argparse.ArgumentParser(prog="reminders update")
-    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p.add_argument("--id", default=None, dest="reminder_id")
+    _add_id_args(p)
     p.add_argument("--message", required=True)
     args = p.parse_args(argv)
     reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders update <id> or reminders update --id <id>")
@@ -177,8 +184,7 @@ def _update_cmd(config: Config, argv: list[str]) -> dict:
 
 def _snooze_cmd(config: Config, argv: list[str]) -> dict:
     p = argparse.ArgumentParser(prog="reminders snooze")
-    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p.add_argument("--id", default=None, dest="reminder_id")
+    _add_id_args(p)
     p.add_argument("--in-minutes", type=int, default=None, help="Fire N minutes from now")
     p.add_argument("--in-hours", type=int, default=None, help="Fire N hours from now")
     p.add_argument("--in-days", type=int, default=None, help="Fire N days from now")
@@ -261,17 +267,6 @@ subcommands:
   snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at <iso> [--tz <tz>]
   delete                Soft-delete a reminder: it never fires again and drops off list (see it with list --show-deleted)
   update                Update a reminder message""")
-
-
-def _print_list(args, result: list, formatter) -> None:
-    """Dispatch a list-style command result to --json-pretty / --json / compact formatter."""
-    attrs = vars(args)
-    if attrs.get("json_pretty"):
-        print(json.dumps(result, indent=2))
-    elif attrs.get("json"):
-        print(json.dumps(result))
-    else:
-        print(formatter(result))
 
 
 def _serve_cmd(config: Config, argv: list[str]) -> None:

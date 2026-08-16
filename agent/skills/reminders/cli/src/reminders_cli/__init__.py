@@ -1,1 +1,1 @@
-"""Reminders CLI - time-based nudges: one-shot, recurring, and cron schedules."""
+"""Reminders CLI: time-based nudges on one-shot, recurring, and cron schedules."""

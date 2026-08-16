@@ -1,9 +1,7 @@
 """Unit tests for the agent-facing interface: working --help on reminders subcommands, snooze's two
 timing forms with the old-to-new echo, bare times for daily reminders, and local-offset echoes."""
 
-import os
 import sys
-import time
 
 import pytest
 from reminders_cli import cli, commands, db
@@ -11,18 +9,9 @@ from reminders_cli.config import Config
 
 
 @pytest.fixture
-def rome_process_tz():
-    """Pin the whole process to Europe/Rome: the TZ env var the commands read, and the C-library
-    local zone that astimezone() renders with, restored (with tzset) on teardown."""
-    previous = os.environ["TZ"] if "TZ" in os.environ else None
-    os.environ["TZ"] = "Europe/Rome"
-    time.tzset()
-    yield
-    if previous is None:
-        del os.environ["TZ"]
-    else:
-        os.environ["TZ"] = previous
-    time.tzset()
+def rome_process_tz(monkeypatch):
+    """The agent's own zone is Europe/Rome: the TZ env var every command reads and echoes with."""
+    monkeypatch.setenv("TZ", "Europe/Rome")
 
 
 # ---------------------------------------------------------------------------

@@ -16,12 +16,6 @@ def _add_task_due_in(config: Config, subject: str, delta: timedelta) -> dict:
     return commands.add_task(config, subject=subject, due=commands.DueSpec(due_datetime=due, timezone="UTC"))
 
 
-def _force_due_date(config: Config, task_id: str, due: datetime):
-    with closing(db.get_db(config.data_dir)) as conn:
-        conn.execute("UPDATE tasks SET due_date = ? WHERE id = ?", (due.isoformat(), task_id))
-        conn.commit()
-
-
 def _reminder_notifications(notif_dir: Path) -> list[dict]:
     return [json.loads(p.read_text()) for p in sorted(notif_dir.glob("*.json")) if json.loads(p.read_text())["type"] == "reminder"]
 
@@ -113,10 +107,29 @@ def test_postpone_rearms_the_ladder(tmp_config: Config, tmp_path: Path):
     task = _add_task_due_in(tmp_config, "moving target", timedelta(seconds=1))
     commands.fire_due_checkpoints(tmp_config, notif_dir, now=datetime.now(UTC) + timedelta(minutes=1))
 
-    commands.postpone_task(tmp_config, task_id=task["id"], in_days=2)
+    commands.postpone_task(tmp_config, task_id=task["id"], due=commands.DueSpec(due_in_days=2))
 
     later = datetime.now(UTC) + timedelta(days=1, hours=1)
     assert commands.fire_due_checkpoints(tmp_config, notif_dir, now=later) == 1
+    assert "Task due in 1 day" in _reminder_notifications(notif_dir)[-1]["message"]
+
+
+def test_dating_an_old_task_does_not_fire_rungs_the_date_put_in_the_past(tmp_config: Config, tmp_path: Path):
+    """A task created a month ago and postponed to three days out has its due-1w rung in the past;
+    that rung could never have fired, so it must not fire now as a mislabelled catch-up."""
+    notif_dir = tmp_path / "notifs"
+    notif_dir.mkdir()
+    task = commands.add_task(tmp_config, subject="old undated")
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        month_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        conn.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (month_ago, task["id"]))
+        conn.commit()
+
+    commands.postpone_task(tmp_config, task_id=task["id"], due=commands.DueSpec(due_in_days=3))
+
+    assert commands.fire_due_checkpoints(tmp_config, notif_dir, now=datetime.now(UTC)) == 0
+    two_days_on = datetime.now(UTC) + timedelta(days=2, minutes=1)
+    assert commands.fire_due_checkpoints(tmp_config, notif_dir, now=two_days_on) == 1
     assert "Task due in 1 day" in _reminder_notifications(notif_dir)[-1]["message"]
 
 

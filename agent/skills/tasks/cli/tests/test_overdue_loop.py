@@ -39,21 +39,21 @@ def test_postpone_overdue_task_moves_due_forward(tmp_config: Config):
     task = _add_task_due_in(tmp_config, "late", timedelta(minutes=30))
     _force_due_date(tmp_config, task["id"], datetime.now(UTC) - timedelta(days=3))
 
-    updated = commands.postpone_task(tmp_config, task_id=task["id"], in_days=2)
+    updated = commands.postpone_task(tmp_config, task_id=task["id"], due=commands.DueSpec(due_in_days=2))
 
     assert db.parse_datetime(updated["due_date"]) > datetime.now(UTC) + timedelta(days=1)
 
 
 def test_postpone_gives_undated_task_a_due_date(tmp_config: Config):
     task = commands.add_task(tmp_config, subject="undated")
-    updated = commands.postpone_task(tmp_config, task_id=task["id"], in_hours=6)
+    updated = commands.postpone_task(tmp_config, task_id=task["id"], due=commands.DueSpec(due_in_hours=6))
     assert updated["due_date"] is not None
 
 
 def test_postpone_requires_timing(tmp_config: Config):
     task = commands.add_task(tmp_config, subject="no timing")
     with pytest.raises(ValueError, match="Say when"):
-        commands.postpone_task(tmp_config, task_id=task["id"])
+        commands.postpone_task(tmp_config, task_id=task["id"], due=commands.DueSpec())
 
 
 # ---------------------------------------------------------------------------

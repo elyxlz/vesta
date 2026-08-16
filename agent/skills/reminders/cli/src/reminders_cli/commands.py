@@ -39,6 +39,9 @@ class TriggerData(TypedDict, total=False):
 
 RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more than once; "date" is the one-shot type
 
+# A reminder the daemon still schedules: not fired, not soft-deleted, and carrying a trigger.
+LIVE_REMINDER = "completed = 0 AND trigger_data IS NOT NULL AND deleted_at IS NULL"
+
 
 class SnoozeSpec(BaseModel):
     """When a snoozed reminder should fire: from now (--in-*) or at a named moment (--at,
@@ -69,19 +72,15 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _local_tz_name() -> str:
-    """The agent's own IANA timezone: boot applies the config store's timezone as the TZ env var."""
-    return os.environ["TZ"] if "TZ" in os.environ else "UTC"
-
-
 def _zone(tz_name: str | None) -> ZoneInfo:
-    """Resolve an explicit IANA name; None means the agent's own zone."""
+    """Resolve an explicit IANA name; None means the agent's own zone (boot applies the config
+    store's timezone as the TZ env var)."""
     if tz_name is not None:
         try:
             return ZoneInfo(tz_name)
         except (ZoneInfoNotFoundError, KeyError):
             raise ValueError(f"Invalid timezone: '{tz_name}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from None
-    local_name = _local_tz_name()
+    local_name = os.environ["TZ"] if "TZ" in os.environ else "UTC"
     try:
         return ZoneInfo(local_name)
     except (ZoneInfoNotFoundError, KeyError):
@@ -89,7 +88,9 @@ def _zone(tz_name: str | None) -> ZoneInfo:
 
 
 def _echo_local(value: str | datetime | None) -> str | None:
-    """Instants echoed in command results render in the agent's local zone; storage stays UTC."""
+    """Instants echoed in command results render in the agent's local zone; storage stays UTC.
+
+    A broken TZ value falls back to UTC here so reads keep working; writes surface the error."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -97,7 +98,11 @@ def _echo_local(value: str | datetime | None) -> str | None:
             value = db.parse_datetime(value)
         except ValueError:
             return value  # a malformed stored value is echoed as-is rather than hiding the row
-    return value.astimezone().isoformat()
+    try:
+        local_tz = _zone(None)
+    except ValueError:
+        local_tz = UTC
+    return value.astimezone(local_tz).isoformat()
 
 
 # A one-shot job whose DB run_date moved further than this into the future was snoozed after the
@@ -386,9 +391,7 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
     Past-due one-time reminders fire missed notifications immediately."""
     now = _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute(
-            "SELECT id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL AND deleted_at IS NULL"
-        )
+        cursor = conn.execute(f"SELECT id, message, trigger_data FROM reminders WHERE {LIVE_REMINDER}")
         for row in cursor:
             _restore_row(scheduler, row, now, notif_dir, conn, config)
         conn.commit()
@@ -400,8 +403,7 @@ def restore_jobs_by_ids(config: Config, scheduler: BackgroundScheduler, ids: set
     placeholders = ",".join("?" for _ in ids)
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute(
-            "SELECT id, message, trigger_data FROM reminders "
-            f"WHERE completed = 0 AND trigger_data IS NOT NULL AND deleted_at IS NULL AND id IN ({placeholders})",
+            f"SELECT id, message, trigger_data FROM reminders WHERE {LIVE_REMINDER} AND id IN ({placeholders})",
             list(ids),
         )
         for row in cursor:
@@ -447,6 +449,11 @@ def _recurring_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, Trigg
         expr = f"{m} {h} {local_dt.day} {local_dt.month} *"
         schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d}{zone_label}"
 
+    return _cron_schedule(reminder_id, spec, expr, schedule_info)
+
+
+def _cron_schedule(reminder_id: str, spec: ReminderSpec, expr: str, schedule_info: str) -> tuple[str, TriggerData, datetime | None]:
+    """The stored trigger for a cron expression: pinned to spec.tz when given, fuzzed when asked."""
     trigger_data: TriggerData = {"type": "cron", "expr": _normalize_cron_expr(expr)}
     if spec.tz:
         trigger_data["tz"] = spec.tz
@@ -465,15 +472,8 @@ def _build_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, TriggerDa
     if spec.cron is not None:
         if spec.recurring or spec.scheduled_datetime or spec.in_minutes or spec.in_hours or spec.in_days:
             raise ValueError("--cron cannot be combined with --recurring, --at, or --in-* options")
-        trigger_data: TriggerData = {"type": "cron", "expr": _normalize_cron_expr(spec.cron)}
-        if spec.tz:
-            trigger_data["tz"] = spec.tz
-        trigger = _cron_trigger_from_data(trigger_data)
         schedule_info = f"cron: {spec.cron} ({spec.tz})" if spec.tz else f"cron: {spec.cron}"
-        next_run = trigger.get_next_fire_time(None, _now_utc())
-        if spec.fuzz_minutes is not None:
-            schedule_info, next_run = _apply_fuzz(reminder_id, trigger_data, trigger, schedule_info, spec.fuzz_minutes)
-        return schedule_info, trigger_data, next_run
+        return _cron_schedule(reminder_id, spec, spec.cron, schedule_info)
 
     if spec.recurring == "hourly":
         return "hourly", {"type": "interval", "hours": 1}, None
@@ -551,8 +551,9 @@ def _next_run_for_row(row) -> str | None:
                 if stored is None or stored < now:
                     hours = trigger_data["hours"] if "hours" in trigger_data else 1
                     return _echo_local(now + timedelta(hours=hours))
-        except (ValueError, KeyError):
-            pass  # malformed trigger_data: fall back to the stored column rather than hiding the row
+        except (ValueError, KeyError) as e:
+            # Malformed trigger_data: fall back to the stored column rather than hiding the row.
+            logger.warning("Reminder %s: cannot compute next fire from trigger_data (%s)", row["id"], e)
     return _echo_local(row["scheduled_time"])
 
 
@@ -604,13 +605,26 @@ def _reminder_view(row) -> dict:
     }
 
 
+def _require_reminder_row(conn, reminder_id: str):
+    row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    if not row:
+        raise ValueError(f"Reminder '{reminder_id}' not found. Use 'reminders list' to see active reminders.")
+    return row
+
+
+def _require_live_reminder_row(conn, reminder_id: str):
+    """A row a write may change: reads still resolve a deleted reminder, but there is no undelete,
+    so a write on one would report a fire time nothing ever fires at."""
+    row = _require_reminder_row(conn, reminder_id)
+    if row["deleted_at"] is not None:
+        raise ValueError(f"Reminder '{reminder_id}' was deleted at {row['deleted_at']}; create a new reminder instead.")
+    return row
+
+
 def remind_get(config: Config, *, reminder_id: str) -> dict:
     """One reminder by id. A soft-deleted one still resolves, so a past id can always be inspected."""
     with closing(db.get_db(config.data_dir)) as conn:
-        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
-        if not row:
-            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'reminders list' to see active reminders.")
-        return _reminder_view(row)
+        return _reminder_view(_require_reminder_row(conn, reminder_id))
 
 
 def remind_delete(config: Config, *, reminder_id: str) -> dict:
@@ -619,9 +633,7 @@ def remind_delete(config: Config, *, reminder_id: str) -> dict:
     # callback is a no-op meanwhile, so a deleted reminder never fires again.
     deleted_at = _now_utc().isoformat()
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT 1 FROM reminders WHERE id = ?", (reminder_id,))
-        if not cursor.fetchone():
-            raise ValueError(f"Reminder '{reminder_id}' not found")
+        _require_reminder_row(conn, reminder_id)
         conn.execute("UPDATE reminders SET deleted_at = ? WHERE id = ?", (deleted_at, reminder_id))
         conn.commit()
 
@@ -633,23 +645,20 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
 
     The result echoes previous_run and next_run so the new fire time is confirmed in the same call."""
     with closing(db.get_db(config.data_dir)) as conn:
-        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
-        if not row:
-            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'reminders list' to see active reminders.")
+        row = _require_live_reminder_row(conn, reminder_id)
         trigger_data = json.loads(row["trigger_data"]) if row["trigger_data"] else {}
         if "type" in trigger_data and trigger_data["type"] != "date":
             raise ValueError("Recurring reminders fire again on their own; snooze only works on one-shot reminders (delete if unwanted)")
 
         in_offset = _relative_offset(spec.in_minutes, spec.in_hours, spec.in_days)
-        given = [form for form in (spec.at, in_offset) if form is not None]
-        if len(given) > 1:
+        if spec.at is not None and in_offset is not None:
             raise ValueError("Pick one way to say when: --in-* (from now) or --at <iso> [--tz <tz>]")
         if spec.at is not None:
             run_time = _to_utc_dt(spec.at, spec.tz)
         elif in_offset is not None:
             run_time = _now_utc() + in_offset
         else:
-            raise ValueError("Say when: remind snooze <id> --in-hours N (from now) or --at <iso> [--tz <tz>]")
+            raise ValueError("Say when: reminders snooze <id> --in-hours N (from now) or --at <iso> [--tz <tz>]")
 
         run_time = run_time.replace(microsecond=0)
         new_data = {"type": "date", "run_date": run_time.isoformat()}
@@ -673,10 +682,7 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
 
 def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
-        reminder = cursor.fetchone()
-        if not reminder:
-            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'reminders list' to see active reminders.")
+        reminder = _require_live_reminder_row(conn, reminder_id)
         conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
         conn.commit()
 
