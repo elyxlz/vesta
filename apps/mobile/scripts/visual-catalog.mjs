@@ -182,7 +182,7 @@ function parseArguments(values) {
   return options;
 }
 
-function run(command, argumentsList, options = {}) {
+export function run(command, argumentsList, options = {}) {
   const shown = [command, ...argumentsList]
     .map((value) => (value.includes(" ") ? JSON.stringify(value) : value))
     .join(" ");
@@ -219,7 +219,7 @@ function run(command, argumentsList, options = {}) {
   });
 }
 
-async function exists(target) {
+export async function exists(target) {
   try {
     await access(target);
     return true;
@@ -230,7 +230,7 @@ async function exists(target) {
 
 let temporaryFileCounter = 0;
 
-async function atomicWriteFile(target, contents) {
+export async function atomicWriteFile(target, contents) {
   await mkdir(path.dirname(target), { recursive: true });
   temporaryFileCounter += 1;
   const temporary = `${target}.${process.pid}.${temporaryFileCounter}.tmp`;
@@ -286,7 +286,14 @@ export async function nativeInputFingerprint() {
   return fingerprintPaths(nativeInputTargets());
 }
 
-async function loadManifest() {
+const scenarioPlatforms = ["ios", "android"];
+
+export function scenarioOnPlatform(scenario, platform) {
+  return !Array.isArray(scenario.platforms) ||
+    scenario.platforms.includes(platform);
+}
+
+export async function loadManifest(platform = "ios") {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   if (manifest.version !== 1) {
     throw new Error(`Unsupported visual manifest version: ${manifest.version}`);
@@ -322,6 +329,14 @@ async function loadManifest() {
     if (screenshots.has(scenario.screenshot)) {
       throw new Error(`Duplicate screenshot name: ${scenario.screenshot}`);
     }
+    if (
+      "platforms" in scenario &&
+      (!Array.isArray(scenario.platforms) ||
+        scenario.platforms.length === 0 ||
+        scenario.platforms.some((name) => !scenarioPlatforms.includes(name)))
+    ) {
+      throw new Error(`Invalid platforms for ${scenario.id}.`);
+    }
     ids.add(scenario.id);
     screenshots.add(scenario.screenshot);
   }
@@ -335,7 +350,13 @@ async function loadManifest() {
       throw new Error(`Visual flow does not exist: ${flow}`);
     }
   }
-  return manifest;
+  return {
+    ...manifest,
+    scenarios: manifest.scenarios.filter((scenario) =>
+      scenarioOnPlatform(scenario, platform),
+    ),
+    allScenarios: manifest.scenarios,
+  };
 }
 
 async function requireCaptureTools() {
@@ -994,7 +1015,7 @@ async function runMaestro(manifest, simulators, tools) {
   );
 }
 
-async function filesBelow(directory) {
+export async function filesBelow(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
@@ -1005,7 +1026,7 @@ async function filesBelow(directory) {
   return files;
 }
 
-async function assertHarnessBoundary() {
+export async function assertHarnessBoundary() {
   const applicationFiles = [
     ...(await filesBelow(path.join(mobileRoot, "app"))),
     ...(await filesBelow(path.join(mobileRoot, "src"))),
@@ -1030,7 +1051,7 @@ async function assertHarnessBoundary() {
   }
 }
 
-async function pngSize(filePath) {
+export async function pngSize(filePath) {
   const file = await readFile(filePath);
   if (
     file.length < 24 ||
@@ -1042,7 +1063,7 @@ async function pngSize(filePath) {
   return { width: file.readUInt32BE(16), height: file.readUInt32BE(20) };
 }
 
-async function gitMetadata() {
+export async function gitMetadata() {
   const revision = await run("git", ["rev-parse", "--short", "HEAD"], {
     cwd: repositoryRoot,
     capture: true,
@@ -1095,7 +1116,9 @@ export function galleryHtml(catalog) {
                   ? `<img src="${escapeHtml(scenario.image)}" alt="${escapeHtml(
                       scenario.title,
                     )}" loading="lazy">`
-                  : `<span class="missing">Screenshot missing</span>`
+                  : `<span class="missing">${escapeHtml(
+                      scenario.missingLabel ?? "Screenshot missing",
+                    )}</span>`
               }
             </span>
           </button>
@@ -1625,25 +1648,25 @@ async function markCatalogAsWatchMode() {
   );
 }
 
-function safeStaticPath(url) {
+function safeStaticPath(url, baseDirectory) {
   const pathname = decodeURIComponent(new URL(url, "http://localhost").pathname);
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
-  const target = path.resolve(visualDirectory, relative);
-  const relation = path.relative(visualDirectory, target);
+  const target = path.resolve(baseDirectory, relative);
+  const relation = path.relative(baseDirectory, target);
   if (relation.startsWith("..") || path.isAbsolute(relation)) return null;
   return target;
 }
 
-async function serveCatalog(port, shouldOpen) {
-  const catalogPath = path.join(visualDirectory, "catalog.json");
+export async function serveCatalog(port, shouldOpen, baseDirectory = visualDirectory) {
+  const catalogPath = path.join(baseDirectory, "catalog.json");
   if (await exists(catalogPath)) {
     const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
     await writeFile(
-      path.join(visualDirectory, "index.html"),
+      path.join(baseDirectory, "index.html"),
       galleryHtml(catalog),
     );
   }
-  if (!(await exists(path.join(visualDirectory, "index.html")))) {
+  if (!(await exists(path.join(baseDirectory, "index.html")))) {
     throw new Error("No visual catalog exists yet. Run the capture command first.");
   }
   const server = createServer(async (request, response) => {
@@ -1671,7 +1694,7 @@ async function serveCatalog(port, shouldOpen) {
       }
       return;
     }
-    const target = safeStaticPath(request.url ?? "/");
+    const target = safeStaticPath(request.url ?? "/", baseDirectory);
     if (!target) {
       response.writeHead(403).end("Forbidden");
       return;

@@ -23,14 +23,16 @@
       "title": "Vesta is locked",
       "description": "Protected app content remains hidden until Face ID authentication.",
       "group": "Privacy",
-      "screenshot": "privacy-locked.png"
+      "screenshot": "privacy-locked.png",
+      "platforms": ["ios"]
     },
     {
       "id": "privacy-unlock-error",
       "title": "Unlock failed",
       "description": "Device authentication lockout with recovery guidance.",
       "group": "Privacy",
-      "screenshot": "privacy-unlock-error.png"
+      "screenshot": "privacy-unlock-error.png",
+      "platforms": ["ios"]
     },
     {
       "id": "connect-actions",
@@ -142,35 +144,40 @@
       "title": "Provider and model",
       "description": "Connected provider identity, model, context window, plan, and usage meters.",
       "group": "Agent settings",
-      "screenshot": "agent-provider.png"
+      "screenshot": "agent-provider.png",
+      "platforms": ["ios"]
     },
     {
       "id": "agent-voice",
       "title": "Voice settings",
       "description": "Configured speech-to-text and text-to-speech services with deterministic options.",
       "group": "Agent settings",
-      "screenshot": "agent-voice.png"
+      "screenshot": "agent-voice.png",
+      "platforms": ["ios"]
     },
     {
       "id": "agent-notification-rules",
       "title": "Notification rules",
       "description": "Prioritized calendar and email rules with the composer for new interruption policies.",
       "group": "Agent settings",
-      "screenshot": "agent-notification-rules.png"
+      "screenshot": "agent-notification-rules.png",
+      "platforms": ["ios"]
     },
     {
       "id": "agent-host-access",
       "title": "Host access",
       "description": "Deterministic shared gateway folders with read and write permissions.",
       "group": "Agent settings",
-      "screenshot": "agent-host-access.png"
+      "screenshot": "agent-host-access.png",
+      "platforms": ["ios"]
     },
     {
       "id": "agent-backups",
       "title": "Agent backups",
       "description": "Available manual and automatic snapshots with restore and deletion actions.",
       "group": "Agent settings",
-      "screenshot": "agent-backups.png"
+      "screenshot": "agent-backups.png",
+      "platforms": ["ios"]
     },
     {
       "id": "agent-notifications",
@@ -191,14 +198,16 @@
       "title": "Agent files",
       "description": "Memory, constitution, dreams, and installed abilities from a fixed file tree.",
       "group": "Agent settings",
-      "screenshot": "agent-files.png"
+      "screenshot": "agent-files.png",
+      "platforms": ["ios"]
     },
     {
       "id": "agent-file-editor",
       "title": "Agent file editor",
       "description": "Writable working-memory document opened in the production mobile editor.",
       "group": "Agent settings",
-      "screenshot": "agent-file-editor.png"
+      "screenshot": "agent-file-editor.png",
+      "platforms": ["ios"]
     },
     {
       "id": "home-empty",

@@ -35,6 +35,9 @@
     "mobile:visual": "npm -w @vesta/mobile run visual:ios --",
     "mobile:visual:capture": "npm -w @vesta/mobile run visual:ios:capture --",
     "mobile:visual:watch": "npm -w @vesta/mobile run visual:watch --",
-    "mobile:visual:serve": "npm -w @vesta/mobile run visual:serve --"
+    "mobile:visual:serve": "npm -w @vesta/mobile run visual:serve --",
+    "mobile:visual:android": "npm -w @vesta/mobile run visual:android --",
+    "mobile:visual:android:capture": "npm -w @vesta/mobile run visual:android:capture --",
+    "mobile:visual:android:serve": "npm -w @vesta/mobile run visual:android:serve --"
   }
 }

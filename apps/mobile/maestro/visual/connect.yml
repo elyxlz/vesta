@@ -66,15 +66,57 @@ tags:
 - tapOn:
     text: "Scan connection QR code"
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: ".*Open Settings"
-    timeout: 10000
+# iOS shows the denied recovery state directly; Android asks again through the
+# system dialog, and only a second denial makes the denial permanent, so deny
+# until the app's recovery state appears.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Open Settings"
+          timeout: 10000
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          text: "Don’t allow"
+          waitToSettleTimeoutMs: 1
+      - tapOn:
+          text: "Don’t allow"
+          optional: true
+          waitToSettleTimeoutMs: 1
+      - extendedWaitUntil:
+          visible: ".*Open Settings"
+          timeout: 10000
+      - waitForAnimationToEnd:
+          timeout: 3000
 - takeScreenshot: scan-permission
 - runScript:
     file: capture-screenshot.js
     env:
       SCREENSHOT: scan-permission.png
-- tapOn: "Close scanner"
+# The Android close control exposes no label yet, so relaunch instead of
+# dismissing the scanner sheet.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: "Close scanner"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - stopApp
+      - openLink:
+          link: "vesta-dev://connect?visualPrivacy=unlocked"
+      - extendedWaitUntil:
+          visible: "Connect with Vesta Cloud"
+          timeout: 30000
+      - tapOn:
+          text: "Connect to self-hosted Vesta"
+          waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
     visible: "Connection link"
     timeout: 10000
@@ -115,9 +157,14 @@ tags:
 - tapOn:
     text: "Scan connection QR code"
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Close scanner"
-    timeout: 10000
+# The Android close control exposes no label yet, so only iOS can wait on it.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: "Close scanner"
+          timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: scan-ready

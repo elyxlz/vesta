@@ -67,9 +67,14 @@ tags:
     duration: 500
 - waitForAnimationToEnd:
     timeout: 3000
-- extendedWaitUntil:
-    visible: "Close settings"
-    timeout: 10000
+# The Android close control exposes no label yet, so only iOS can wait on it.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: "Close settings"
+          timeout: 10000
 - scrollUntilVisible:
     element:
       text: "Gateway"

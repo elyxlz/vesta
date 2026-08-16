@@ -1,14 +1,13 @@
 # Mobile visual catalog
 
-The mobile visual catalog renders the real Vesta iOS application with
-deterministic, visual-only data providers, drives it with Maestro on two iOS
-Simulators, captures every registered state, and serves the results in a local
-browser gallery.
+The mobile visual catalog renders the real Vesta mobile application with
+deterministic, visual-only data providers, drives it with Maestro, captures
+every registered state, and serves the results in a local browser gallery.
+The iOS runner drives two iOS Simulators; the Android runner drives one
+dedicated Android emulator with the same manifest, fixtures, and flows.
 
 The system is intended for fast visual QA while building screens. It is local
-only today; no GitHub Actions workflow is included yet. The catalog captures
-iOS only; Android compiles in CI (`./check.sh mobile-android`) but has no
-visual catalog.
+only today; no GitHub Actions workflow is included yet.
 
 ## Quick start
 
@@ -20,17 +19,19 @@ npm run mobile:visual -- --device "iPhone 17"
 
 # Recommended while editing: recapture whenever source files change.
 npm run mobile:visual:watch -- --device "iPhone 17"
+
+# Android: capture once on the dedicated emulator and serve the gallery.
+npm run mobile:visual:android
 ```
 
-The gallery is served at:
+The iOS gallery is served at `http://127.0.0.1:4173` and the Android gallery
+at `http://127.0.0.1:4174`, so both can stay open side by side.
 
-```text
-http://127.0.0.1:4173
-```
-
-The current reference target is two iPhone 17 simulators running iOS 26.4.
+The current iOS reference target is two iPhone 17 simulators running iOS 26.4.
 Passing `--device "iPhone 17"` makes the target explicit and lets the runner
-create or reuse its dedicated two-simulator pair.
+create or reuse its dedicated two-simulator pair. The Android reference target
+is one `vesta-visual` AVD (Pixel 7 profile, API 36, arm64), booted headless by
+the runner.
 
 ## What the system guarantees
 
@@ -77,13 +78,14 @@ fixtures.
 
 | Path | Responsibility |
 | --- | --- |
-| `scripts/visual-catalog.mjs` | Simulator lifecycle, cached builds, Maestro execution, watch cancellation, validation, and gallery server |
-| `visual/scenarios.json` | Catalog manifest: app ID, flow list, screenshot names, titles, descriptions, and groups |
+| `scripts/visual-catalog.mjs` | iOS simulator lifecycle, cached builds, Maestro execution, watch cancellation, validation, and gallery server |
+| `scripts/visual-catalog-android.mjs` | Android emulator lifecycle, the cached visual Gradle build, Maestro execution, validation, and the Android gallery |
+| `visual/scenarios.json` | Catalog manifest: app ID, flow list, screenshot names, titles, descriptions, groups, and per-scenario platforms |
 | `visual/metro.config.js` | Visual-build-only module substitution |
 | `visual/harness/` | Deterministic providers, APIs, storage, splash behavior, and animation adapters |
-| `maestro/visual/*.yml` | User-visible navigation, interactions, assertions, and screenshot commands |
+| `maestro/visual/*.yml` | User-visible navigation, interactions, assertions, and screenshot commands, with `runFlow` platform blocks where the platforms diverge |
 | `maestro/visual/capture-screenshot.js` | Notifies persistent watch mode that a named screenshot completed |
-| `.visual/` | Ignored native cache, bundles, reports, screenshots, staging files, and generated gallery |
+| `.visual/` | Ignored native caches, bundles, reports, screenshots, staging files, and generated galleries (`.visual/android/` for Android) |
 
 ## Production boundary
 
@@ -243,6 +245,81 @@ iOS's one-time confirmation for opening a custom scheme.
 
 For future modal groups, prefer a fresh launch with deterministic initial data
 over navigating backward through several native sheets.
+
+## Android catalog
+
+The Android runner (`scripts/visual-catalog-android.mjs`) reuses the whole
+system end to end: the same manifest, the same Metro substitutions and
+harness fixtures, the same Maestro flows, and the same gallery format. Only
+the platform mechanics differ:
+
+- One dedicated emulator instead of two simulator shards. The runner reuses a
+  booted `vesta-visual` AVD or boots it headless, and leaves it running.
+  Create the AVD once in Android Studio or with `avdmanager` (Pixel 7
+  profile, API 36, arm64 recommended). `--show-emulator` boots it with a
+  window for interactive diagnosis.
+- The build is a release APK through the generated visual Gradle project, so
+  the visual JavaScript bundle is embedded. The project is cached at
+  `.visual/native/android` with the same fingerprint inputs as iOS and
+  swapped in and out of `android/` transactionally; production prebuilds are
+  restored untouched. There is no separate fast-rebundle path: JavaScript
+  changes go through the incremental Gradle build.
+- Screenshots come from Maestro's own `takeScreenshot` framebuffer capture.
+  The iOS completion bridge exists for host-controlled keyboard capture and
+  watch cancellation; on Android the software keyboard renders inside the
+  framebuffer, and watch mode is not implemented, so the bridge callbacks are
+  inert no-ops there.
+- The status bar is normalized through Android demo mode (9:41, full wifi,
+  full battery, no notifications) and animations are disabled with the global
+  animation scales, mirroring the iOS status-bar override and animation
+  hooks.
+- The gallery publishes to `.visual/android/` on port 4174.
+
+Commands, from `apps/`:
+
+```sh
+# Capture, serve, and keep the gallery open.
+npm run mobile:visual:android
+
+# Capture and exit.
+npm run mobile:visual:android:capture
+
+# Serve the most recent Android catalog without capturing.
+npm run mobile:visual:android:serve
+
+# Reuse the installed visual app when nothing changed.
+npm run mobile:visual:android:capture -- --skip-build
+
+# Regenerate the cached visual Gradle project.
+npm run mobile:visual:android:capture -- --clean-native
+```
+
+### Platform-aware scenarios
+
+`visual/scenarios.json` entries accept an optional `platforms` array
+(default: both platforms). A scenario marked `"platforms": ["ios"]` is not
+expected from an Android capture, and the Android gallery renders its card
+with an explicit "iOS only" label instead of silently missing it. The flows
+skip those captures on Android through `runFlow` blocks conditioned on
+`when: platform`, so one flow file drives both platforms.
+
+Two kinds of scenarios are iOS only today:
+
+- By product scope: the seven agent-settings sections Android deliberately
+  hides (provider, voice, notification rules, host access, backups, files,
+  and the file editor). These stay iOS only for as long as the product keeps
+  those sections off Android.
+- By a known Android defect: `privacy-locked` and `privacy-unlock-error`.
+  The privacy form sheet pushed at launch renders invisibly on Android in
+  the visual build, so its relock interactions cannot be reached. The
+  `privacy-initialization-error` capture stays registered on Android and
+  currently shows that defect (an empty background where the sheet should
+  be), which is the gallery doing its job. Restore both scenarios to Android
+  once the sheet renders.
+
+The Android close control on native sheets exposes no accessibility label
+yet, so the flows wait on it only on iOS; give it a `contentDescription` and
+the platform blocks around "Close settings" / "Close scanner" can collapse.
 
 ## Everyday commands
 

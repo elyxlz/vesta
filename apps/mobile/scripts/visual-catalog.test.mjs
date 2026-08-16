@@ -9,6 +9,8 @@ import {
   createInactivityWatchdog,
   createMaestroFailureParser,
   galleryHtml,
+  loadManifest,
+  scenarioOnPlatform,
   shouldIgnoreWatchPath,
   watchChangePath,
 } from "./visual-catalog.mjs";
@@ -171,6 +173,25 @@ describe("galleryHtml", () => {
     expect(html).not.toContain("dynamic-island");
   });
 
+  it("labels an uncaptured scenario with its platform note", () => {
+    const html = galleryHtml({
+      ...catalog,
+      scenarios: [
+        {
+          captured: false,
+          description: "Provider settings",
+          group: "Agent settings",
+          image: "",
+          missingLabel: "iOS only",
+          title: "Provider and model",
+        },
+      ],
+    });
+
+    expect(html).toContain(">iOS only</span>");
+    expect(html).not.toContain("Screenshot missing");
+  });
+
   it("groups screenshots into manifest-ordered sections without search", () => {
     const html = galleryHtml({
       ...catalog,
@@ -206,6 +227,32 @@ describe("galleryHtml", () => {
     );
     expect(html).not.toContain('type="search"');
     expect(html).not.toContain('querySelector("#filter")');
+  });
+});
+
+describe("loadManifest", () => {
+  it("keeps every scenario on iOS and filters iOS-only scenarios on Android", async () => {
+    const iosManifest = await loadManifest("ios");
+    expect(iosManifest.scenarios).toHaveLength(iosManifest.allScenarios.length);
+
+    const androidManifest = await loadManifest("android");
+    const excluded = androidManifest.allScenarios
+      .filter((scenario) => !scenarioOnPlatform(scenario, "android"))
+      .map((scenario) => scenario.id);
+    expect(excluded).toEqual([
+      "privacy-locked",
+      "privacy-unlock-error",
+      "agent-provider",
+      "agent-voice",
+      "agent-notification-rules",
+      "agent-host-access",
+      "agent-backups",
+      "agent-files",
+      "agent-file-editor",
+    ]);
+    expect(androidManifest.scenarios).toHaveLength(
+      androidManifest.allScenarios.length - excluded.length,
+    );
   });
 });
 

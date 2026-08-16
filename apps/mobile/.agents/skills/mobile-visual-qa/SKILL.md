@@ -1,6 +1,6 @@
 ---
 name: mobile-visual-qa
-description: Operate and extend Vesta's deterministic mobile visual QA system. Use when Codex needs to capture or serve the iOS screenshot gallery, add or update screenshot scenarios and Maestro flows, create visual-only fixtures for screens or UI states, diagnose screenshot timeouts, native sheets, keyboards, simulators, watch mode, or gallery failures, optimize headless or sharded captures, or review changes against the strict production-boundary rule.
+description: Operate and extend Vesta's deterministic mobile visual QA system. Use when Codex needs to capture or serve the iOS or Android screenshot gallery, add or update screenshot scenarios and Maestro flows, create visual-only fixtures for screens or UI states, diagnose screenshot timeouts, native sheets, keyboards, simulators, emulators, watch mode, or gallery failures, optimize headless or sharded captures, or review changes against the strict production-boundary rule.
 ---
 
 # Mobile Visual QA
@@ -12,11 +12,11 @@ Work from `apps/mobile` unless a command explicitly targets the `apps` workspace
 Read these live sources before changing the system:
 
 1. Read `visual/README.md` completely for the current architecture and commands.
-2. Read `visual/scenarios.json` for the registered flow and screenshot contract.
+2. Read `visual/scenarios.json` for the registered flow and screenshot contract, including per-scenario `platforms`.
 3. Read `visual/metro.config.js` and the relevant module under `visual/harness/` when data is mocked.
 4. Read the affected `maestro/visual/*.yml` flow.
 5. Read the production route and its infrastructure dependencies to preserve the real rendering path.
-6. Read the relevant section of `scripts/visual-catalog.mjs` before changing build, simulator, sharding, watch, capture, or gallery behavior.
+6. Read the relevant section of `scripts/visual-catalog.mjs` before changing build, simulator, sharding, watch, capture, or gallery behavior, and `scripts/visual-catalog-android.mjs` before changing Android emulator, build, or capture behavior.
 
 Treat the repository files as authoritative if details in this skill become stale.
 
@@ -203,7 +203,7 @@ Add exactly one matching item to `visual/scenarios.json`:
 }
 ```
 
-Match `screenshot` exactly to the callback filename. Keep titles and descriptions understandable without reading the flow. The publisher rejects missing, duplicated, unexpected, or invalid PNG output.
+Match `screenshot` exactly to the callback filename. Keep titles and descriptions understandable without reading the flow. The publisher rejects missing, duplicated, unexpected, or invalid PNG output. Add `"platforms": ["ios"]` only when the state genuinely cannot exist on Android, and wrap its flow steps in a matching `when: platform: iOS` block.
 
 ### 7. Verify the complete catalog
 
@@ -249,7 +249,20 @@ npm run mobile:visual:capture -- --device "iPhone 17"
 
 # Serve the most recently published result without capturing.
 npm run mobile:visual:serve
+
+# Android: capture on the vesta-visual AVD and serve on port 4174.
+npm run mobile:visual:android
+npm run mobile:visual:android:capture
+npm run mobile:visual:android:serve
 ```
+
+The Android runner captures the same manifest on one dedicated emulator.
+Scenarios marked `"platforms": ["ios"]` are skipped by `runFlow` platform
+blocks in the flows and rendered as explicit "iOS only" cards in the Android
+gallery. Read the "Android catalog" section of `visual/README.md` before
+changing Android behavior; keep every shared step identical across platforms
+and put a platform difference inside a `when: platform` block, never in a
+copied flow file.
 
 Use these options deliberately:
 

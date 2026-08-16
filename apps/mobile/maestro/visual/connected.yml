@@ -49,9 +49,14 @@ tags:
 - extendedWaitUntil:
     visible: "Natural chat pacing"
     timeout: 10000
-- extendedWaitUntil:
-    visible: "Close agent settings"
-    timeout: 10000
+# The Android close control exposes no label yet, so only iOS can wait on it.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: "Close agent settings"
+          timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings
@@ -100,29 +105,33 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: agent-logs.png
-- openLink:
-    link: "vesta-dev://agent/aria/settings"
-- extendedWaitUntil:
-    visible: "Natural chat pacing"
-    timeout: 10000
-- scrollUntilVisible:
-    element:
-      text: "^Files,.*"
-    direction: DOWN
-    timeout: 10000
-    speed: 40
-    visibilityPercentage: 100
-
-- tapOn:
-    text: "^Files,.*"
-- extendedWaitUntil:
-    visible: "Who aria is"
-    timeout: 10000
-- takeScreenshot: agent-files
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: agent-files.png
+# iOS only: Android agent settings hide the files section by design.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - openLink:
+          link: "vesta-dev://agent/aria/settings"
+      - extendedWaitUntil:
+          visible: "Natural chat pacing"
+          timeout: 10000
+      - scrollUntilVisible:
+          element:
+            text: "^Files,.*"
+          direction: DOWN
+          timeout: 10000
+          speed: 40
+          visibilityPercentage: 100
+      - tapOn:
+          text: "^Files,.*"
+      - extendedWaitUntil:
+          visible: "Who aria is"
+          timeout: 10000
+      - takeScreenshot: agent-files
+      - runScript:
+          file: capture-screenshot.js
+          env:
+            SCREENSHOT: agent-files.png
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
@@ -193,9 +202,14 @@ tags:
     duration: 500
 - waitForAnimationToEnd:
     timeout: 3000
-- extendedWaitUntil:
-    visible: "Close settings"
-    timeout: 10000
+# The Android close control exposes no label yet, so only iOS can wait on it.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: "Close settings"
+          timeout: 10000
 
 - scrollUntilVisible:
     element:
