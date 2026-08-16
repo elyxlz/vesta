@@ -178,7 +178,7 @@ function RecentGatewaysContent() {
               <Ionicons
                 name="alert-circle-outline"
                 size={32}
-                color={colors.danger}
+                color={colors.text}
               />
             </View>
           )}

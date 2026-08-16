@@ -139,7 +139,7 @@ function ToastContent({
   return (
     <>
       <View style={[styles.icon, { backgroundColor: colors.input }]}>
-        <Ionicons name="alert-circle" size={17} color={colors.danger} />
+        <Ionicons name="alert-circle" size={17} color={colors.text} />
       </View>
       <Text
         selectable
