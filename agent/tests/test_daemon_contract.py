@@ -198,8 +198,8 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
-        command=["uv", "run", "--project", str(SKILLS_DIR / "reminders/cli"), "remind"],
-        name="remind",
+        command=["uv", "run", "--project", str(SKILLS_DIR / "reminders/cli"), "reminders"],
+        name="reminders",
         serves_port=True,
         emits_daemon_died=True,
     ),

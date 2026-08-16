@@ -29,7 +29,7 @@ tasks delete <id>                 # remove the task
 - `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, subject, status, priority, due_date, created_at, completed_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
 - `list`/`search` print compact tables (`--show-completed` to include completed); add `--json` or `--json-pretty` for JSON.
 - A task's status is `pending`, `in_progress`, or `completed`. `tasks done <id>` and `tasks update <id> --status completed` both close it. `tasks update <id> --status in_progress` marks a task started: it stays open, so it still shows in `tasks list` and still fires its due-date checkpoints.
-- To nudge yourself about a task (for example one blocked on someone else), set a reminder with the `remind` skill whose message names the task and its metadata file. The task carries the state; the reminder is only the nudge.
+- To nudge yourself about a task (for example one blocked on someone else), set a reminder with the `reminders` skill (`reminders create "..."`) whose message names the task and its metadata file. The task carries the state; the reminder is only the nudge.
 
 ## What the daemon does on its own
 

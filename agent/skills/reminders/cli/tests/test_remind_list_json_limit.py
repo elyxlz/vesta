@@ -1,4 +1,4 @@
-"""`tasks remind list` never silently truncates, in either format.
+"""`reminders list` never silently truncates, in either format.
 
 JSON returns every row unless --limit caps it. The human table keeps its page size but reports,
 on stderr so no stdout pipe can eat it, when it held rows back."""
@@ -31,7 +31,7 @@ def _seed_reminders(cfg: Config, count: int) -> None:
 def _run_remind_list(monkeypatch, capsys, cfg: Config, *argv: str) -> tuple[str, str]:
     monkeypatch.setattr(cli, "Config", lambda: cfg)
     monkeypatch.setattr(cli.daemon, "live_pid", lambda: 1)
-    monkeypatch.setattr(sys, "argv", ["remind", "list", *argv])
+    monkeypatch.setattr(sys, "argv", ["reminders", "list", *argv])
     cli.main()
     captured = capsys.readouterr()
     return captured.out, captured.err

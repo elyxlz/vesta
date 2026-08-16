@@ -13,9 +13,6 @@ from . import format as fmt
 from .config import Config
 from .scheduler import create_scheduler, write_notification
 
-# Words that would silently become a reminder message if we treated them as the message-first form.
-_REJECTED_SUBCOMMANDS = {"create", "add", "new", "set", "get", "show"}
-
 
 def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     """Attach mutually-exclusive --json / --json-pretty flags to a list-style subparser."""
@@ -32,7 +29,7 @@ def _require_arg(value: str | None, name: str, usage: str) -> str:
 
 def _require_daemon():
     if daemon.live_pid() is None:
-        msg = "daemon not running, start it with: remind daemon start"
+        msg = "daemon not running, start it with: reminders daemon start"
         print(json.dumps({"error": msg}), file=sys.stderr)
         sys.exit(1)
 
@@ -56,8 +53,8 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
             continue
         if abs((jobs[jid].next_run_time - db.parse_datetime(scheduled_time)).total_seconds()) <= commands.STALE_FIRE_SLACK.total_seconds():
             continue
-        # Only one-shot ("date") triggers move underneath a live job (remind snooze rewrites them
-        # in place); recurring jobs recompute their own next fire and must not be reset here.
+        # Only one-shot ("date") triggers move underneath a live job (snooze rewrites them in place);
+        # recurring jobs recompute their own next fire and must not be reset here.
         data = json.loads(trigger_data)
         if "type" in data and data["type"] == "date":
             to_restore.add(jid)
@@ -68,7 +65,7 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
 def main():
     argv = sys.argv[1:]
     if not argv or argv[0] == "help" or argv in (["-h"], ["--help"]):
-        _print_remind_help()
+        _print_help()
         return
 
     config = Config()
@@ -89,22 +86,19 @@ def main():
         _require_daemon()
 
         if cmd == "list":
-            _remind_list_cmd(config, argv[1:])
+            _list_cmd(config, argv[1:])
             return
-        if cmd == "delete":
-            result = _remind_delete_cmd(config, argv[1:])
+        if cmd == "create":
+            result = _create_cmd(config, argv[1:])
+        elif cmd == "delete":
+            result = _delete_cmd(config, argv[1:])
         elif cmd == "update":
-            result = _remind_update_cmd(config, argv[1:])
+            result = _update_cmd(config, argv[1:])
         elif cmd == "snooze":
-            result = _remind_snooze_cmd(config, argv[1:])
-        elif cmd in _REJECTED_SUBCOMMANDS:
-            print(
-                f'Error: "{cmd}" is not a valid subcommand. To set a reminder, use: remind "your message" [options]',
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            result = _snooze_cmd(config, argv[1:])
         else:
-            result = _remind_set_cmd(config, argv)
+            print(json.dumps({"error": f'"{cmd}" is not a subcommand. Set one with: reminders create "message" [options]'}), file=sys.stderr)
+            sys.exit(1)
 
         print(json.dumps(result, indent=2))
 
@@ -116,8 +110,8 @@ def main():
 REMIND_LIST_PAGE_SIZE = 50
 
 
-def _remind_list_cmd(config: Config, argv: list[str]) -> None:
-    p = argparse.ArgumentParser(prog="remind list")
+def _list_cmd(config: Config, argv: list[str]) -> None:
+    p = argparse.ArgumentParser(prog="reminders list")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--show-completed", action="store_true")
     _add_format_flags(p)
@@ -134,27 +128,27 @@ def _remind_list_cmd(config: Config, argv: list[str]) -> None:
         print(f"... showing {REMIND_LIST_PAGE_SIZE} of {len(reminders)}. Use --limit <n> or --json to see them all.", file=sys.stderr)
 
 
-def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="remind delete")
+def _delete_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="reminders delete")
     p.add_argument("id_pos", nargs="?", default=None, metavar="id")
     p.add_argument("--id", default=None, dest="reminder_id")
     args = p.parse_args(argv)
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "remind delete <id> or remind delete --id <id>")
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders delete <id> or reminders delete --id <id>")
     return commands.remind_delete(config, reminder_id=reminder_id)
 
 
-def _remind_update_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="remind update")
+def _update_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="reminders update")
     p.add_argument("id_pos", nargs="?", default=None, metavar="id")
     p.add_argument("--id", default=None, dest="reminder_id")
     p.add_argument("--message", required=True)
     args = p.parse_args(argv)
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "remind update <id> or remind update --id <id>")
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders update <id> or reminders update --id <id>")
     return commands.remind_update(config, reminder_id=reminder_id, message=args.message)
 
 
-def _remind_snooze_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="remind snooze")
+def _snooze_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="reminders snooze")
     p.add_argument("id_pos", nargs="?", default=None, metavar="id")
     p.add_argument("--id", default=None, dest="reminder_id")
     p.add_argument("--in-minutes", type=int, default=None, help="Fire N minutes from now")
@@ -163,7 +157,7 @@ def _remind_snooze_cmd(config: Config, argv: list[str]) -> dict:
     p.add_argument("--at", default=None, help="Fire at this datetime (requires --tz)")
     p.add_argument("--tz", default=None, help="IANA timezone for --at")
     args = p.parse_args(argv)
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "remind snooze <id> --in-hours N (or --at <iso> --tz <tz>)")
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders snooze <id> --in-hours N (or --at <iso> --tz <tz>)")
     spec = commands.SnoozeSpec(
         in_minutes=args.in_minutes,
         in_hours=args.in_hours,
@@ -174,8 +168,8 @@ def _remind_snooze_cmd(config: Config, argv: list[str]) -> dict:
     return commands.remind_snooze(config, reminder_id=reminder_id, spec=spec)
 
 
-def _remind_set_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="remind")
+def _create_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="reminders create")
     p.add_argument("message_pos", nargs="?", default=None, metavar="message")
     p.add_argument("--message", default=None)
     p.add_argument("--at", default=None, dest="scheduled_datetime")
@@ -187,7 +181,7 @@ def _remind_set_cmd(config: Config, argv: list[str]) -> dict:
     p.add_argument("--cron", default=None)
     p.add_argument("--fuzz-minutes", type=int, default=None)
     args = p.parse_args(argv)
-    message = _require_arg(args.message_pos or args.message, "message", 'remind "message" or remind --message "message"')
+    message = _require_arg(args.message_pos or args.message, "message", 'reminders create "message" or reminders create --message "message"')
     return commands.remind_set(
         config,
         commands.ReminderSpec(
@@ -204,21 +198,21 @@ def _remind_set_cmd(config: Config, argv: list[str]) -> dict:
     )
 
 
-def _print_remind_help():
-    print("""usage: remind <message> [options]
-       remind list [--limit N] [--show-completed]
-       remind snooze <id> --in-hours N | --at <iso> --tz <tz>
-       remind delete <id>
-       remind update <id> --message <msg>
+def _print_help():
+    print("""usage: reminders create <message> [options]
+       reminders list [--limit N] [--show-completed]
+       reminders snooze <id> --in-hours N | --at <iso> --tz <tz>
+       reminders delete <id>
+       reminders update <id> --message <msg>
 
-Set a reminder (default):
-  remind "call mom" --in-minutes 30
-  remind "event" --at <datetime> --tz <tz>
-  remind "standup" --recurring daily --at 09:30 --tz <tz>
-  remind "wind down" --recurring daily --at 21:30 --tz <tz> --fuzz-minutes 75
-  remind "weekdays 9am" --cron "0 9 * * 1-5" --tz <tz>
+Create a reminder:
+  reminders create "call mom" --in-minutes 30
+  reminders create "event" --at <datetime> --tz <tz>
+  reminders create "standup" --recurring daily --at 09:30 --tz <tz>
+  reminders create "wind down" --recurring daily --at 21:30 --tz <tz> --fuzz-minutes 75
+  reminders create "weekdays 9am" --cron "0 9 * * 1-5" --tz <tz>
 
-options:
+create options:
   --message MSG         Message (alternative to positional)
   --at DATETIME         Scheduled datetime (ISO-8601; a bare HH:MM works with --recurring daily)
   --tz TZ               Timezone (IANA name)
@@ -230,6 +224,7 @@ options:
   --fuzz-minutes N      Recurring/cron only: each fire lands within +/-N minutes of the nominal time
 
 subcommands:
+  create                Set a reminder
   list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
   snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at + --tz
   delete                Delete a reminder
@@ -248,7 +243,7 @@ def _print_list(args, result: list, formatter) -> None:
 
 
 def _serve_cmd(config: Config, argv: list[str]) -> None:
-    p = argparse.ArgumentParser(prog="remind serve")
+    p = argparse.ArgumentParser(prog="reminders serve")
     p.add_argument("--notifications-dir", default=str(Path.home() / "agent" / "notifications"))
     p.add_argument("--port", type=int, required=True, help="HTTP server port (allocated by vestad)")
     args = p.parse_args(argv)
@@ -273,7 +268,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
     asked_to_stop = False
 
     def handle_signal(signum, _frame):
-        # SIGTERM is what `remind daemon stop` sends, so it is the one exit the agent asked
+        # SIGTERM is what `reminders daemon stop` sends, so it is the one exit the agent asked
         # for; every other way out of the loop below is news the agent needs.
         nonlocal shutdown_reason, asked_to_stop
         shutdown_reason = signal.Signals(signum).name
@@ -290,7 +285,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
     scheduler.start()
     commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
 
-    sync_interval = int(os.environ["REMIND_SYNC_INTERVAL"]) if "REMIND_SYNC_INTERVAL" in os.environ else 5
+    sync_interval = int(os.environ["REMINDERS_SYNC_INTERVAL"]) if "REMINDERS_SYNC_INTERVAL" in os.environ else 5
 
     print(json.dumps({"status": "serving", "sync_interval": sync_interval, "http_port": port}))
     sys.stdout.flush()

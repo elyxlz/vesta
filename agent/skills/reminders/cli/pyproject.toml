@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-remind = "reminders_cli.cli:main"
+reminders = "reminders_cli.cli:main"
 
 [dependency-groups]
 dev = [

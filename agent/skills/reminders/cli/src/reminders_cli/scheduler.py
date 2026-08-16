@@ -20,7 +20,7 @@ def create_scheduler() -> BackgroundScheduler:
     )
 
 
-_SNOOZE_HINT = "Not actionable right now? Push it back: `remind snooze {rid} --in-hours N`."
+_SNOOZE_HINT = "Not actionable right now? Push it back: `reminders snooze {rid} --in-hours N`."
 
 
 def write_notification(notif_dir: Path, type_: str, **fields: object) -> None:

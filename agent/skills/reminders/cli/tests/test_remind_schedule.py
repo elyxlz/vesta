@@ -205,7 +205,7 @@ def test_cron_reminder_restores_into_scheduler(tmp_config: Config):
 
 
 # ---------------------------------------------------------------------------
-# remind list: recurring reminders stay visible past the one-shot limit
+# reminders list: recurring reminders stay visible past the one-shot limit
 # ---------------------------------------------------------------------------
 
 

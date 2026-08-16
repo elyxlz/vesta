@@ -11,7 +11,7 @@ def test_serve_notifications_dir_defaults_to_agent_notifications(tmp_path, monke
         captured["notif_dir"] = notif_dir
 
     monkeypatch.setattr(cli, "_run_serve", fake_run_serve)
-    monkeypatch.setattr("sys.argv", ["remind", "serve", "--port", "1"])
+    monkeypatch.setattr("sys.argv", ["reminders", "serve", "--port", "1"])
     cli.main()
 
     assert captured["notif_dir"] == tmp_path / "agent" / "notifications"

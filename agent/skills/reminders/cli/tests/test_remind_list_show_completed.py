@@ -1,4 +1,4 @@
-"""`remind list` hides completed reminders by default and reveals them with --show-completed.
+"""`reminders list` hides completed reminders by default and reveals them with --show-completed.
 
 A one-shot reminder that has fired is marked completed and drops off the default list, so a
 self-chaining reminder cannot re-read its own body once it has fired. --show-completed makes the
@@ -22,7 +22,7 @@ def _mark_completed(cfg: Config, reminder_id: str) -> None:
 def _run(monkeypatch, capsys, cfg: Config, *argv: str) -> str:
     monkeypatch.setattr(cli, "Config", lambda: cfg)
     monkeypatch.setattr(cli.daemon, "live_pid", lambda: 1)
-    monkeypatch.setattr(sys, "argv", ["remind", "list", *argv])
+    monkeypatch.setattr(sys, "argv", ["reminders", "list", *argv])
     cli.main()
     return capsys.readouterr().out
 

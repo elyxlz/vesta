@@ -64,4 +64,4 @@ Reach out if you found something good, something needs attention, or you just ha
 ## How to decide
 
 - Read MEMORY.md's user state and the recent conversation before acting
-- Check for anything overdue or upcoming: `tasks list` and `tasks remind list`
+- Check for anything overdue or upcoming: `tasks list` and `reminders list`

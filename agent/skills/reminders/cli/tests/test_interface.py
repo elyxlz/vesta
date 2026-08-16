@@ -1,4 +1,4 @@
-"""Unit tests for the agent-facing interface: working --help on remind subcommands, snooze's two
+"""Unit tests for the agent-facing interface: working --help on reminders subcommands, snooze's two
 timing forms with the old-to-new echo, and bare times for daily reminders."""
 
 import sys
@@ -16,11 +16,11 @@ from reminders_cli.config import Config
 def test_remind_subcommand_help_exits_zero_and_prints_usage(tmp_config: Config, monkeypatch, capsys, subcommand: str):
     monkeypatch.setattr(cli, "Config", lambda: tmp_config)
     monkeypatch.setattr(cli.daemon, "live_pid", lambda: 1)
-    monkeypatch.setattr(sys, "argv", ["remind", subcommand, "--help"])
+    monkeypatch.setattr(sys, "argv", ["reminders", subcommand, "--help"])
     with pytest.raises(SystemExit) as excinfo:
         cli.main()
     assert excinfo.value.code == 0
-    assert f"usage: remind {subcommand}" in capsys.readouterr().out
+    assert f"usage: reminders {subcommand}" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

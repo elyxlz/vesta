@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-NAME = "remind"
+NAME = "reminders"
 DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
 PORTFILE = DAEMONS_DIR / f"{NAME}.port"
