@@ -335,9 +335,10 @@ function ModelCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-2xl [corner-shape:squircle] px-2.5 py-1.5 text-left",
+        // A scroll-list row hovers with a fill/border shift, not the card lift
+        // + shadow of glassHover, whose shadow the overflow container clips.
+        "flex cursor-pointer items-center gap-2.5 rounded-2xl [corner-shape:squircle] px-2.5 py-1.5 text-left transition-colors hover:border-border/80 hover:bg-input/50",
         glassFrost,
-        glassHover,
         active && glassSelected,
       )}
     >
