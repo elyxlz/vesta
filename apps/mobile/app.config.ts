@@ -64,7 +64,13 @@ const config: ExpoConfig = {
       foregroundImage: appIcon,
       backgroundColor: nativeConfigTokens.background,
     },
+    edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: true,
+    permissions: [
+      "android.permission.CAMERA",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.POST_NOTIFICATIONS",
+    ],
     intentFilters: [
       {
         action: "VIEW",
