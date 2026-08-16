@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from .payloads import AGENT_EVENT_CATEGORY
+
 
 def strip_odata(obj: Any) -> Any:
     """Recursively drop keys starting with `@odata.` from dicts and lists."""
@@ -44,17 +46,27 @@ def format_email_list(emails: list[dict[str, Any]]) -> str:
 
 
 def format_calendar_event_list(events: list[dict[str, Any]]) -> str:
-    """One line per event: start  end  subject  location  id."""
+    """One line per event: start  end  subject  location  id.
+
+    An event this agent created is prefixed `[vesta]`. Without that mark, a suggestion the agent
+    put on the calendar reads back days later exactly like a plan the user committed to, and any
+    reasoning built on its dates inherits the invention. The mark is what stops the agent quoting
+    itself as a source.
+    """
     if not events:
         return "(no events)"
-    return "\n".join(
-        f"{_trunc(_pick(e, 'start', 'dateTime'), 20)}\t"
-        f"{_trunc(_pick(e, 'end', 'dateTime'), 20)}\t"
-        f"{_trunc(_pick(e, 'subject'), 80)}\t"
-        f"{_trunc(_pick(e, 'location', 'displayName'), 32)}\t"
-        f"{_pick(e, 'id')}"
-        for e in events
-    )
+    rows = []
+    for e in events:
+        agent_made = AGENT_EVENT_CATEGORY in (e["categories"] if "categories" in e else [])
+        subject = f"[{AGENT_EVENT_CATEGORY}] {_pick(e, 'subject')}" if agent_made else _pick(e, "subject")
+        rows.append(
+            f"{_trunc(_pick(e, 'start', 'dateTime'), 20)}\t"
+            f"{_trunc(_pick(e, 'end', 'dateTime'), 20)}\t"
+            f"{_trunc(subject, 80)}\t"
+            f"{_trunc(_pick(e, 'location', 'displayName'), 32)}\t"
+            f"{_pick(e, 'id')}"
+        )
+    return "\n".join(rows)
 
 
 def format_folder_list(folders: list[dict[str, Any]]) -> str:

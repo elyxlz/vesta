@@ -8,7 +8,7 @@ import httpx
 
 from . import auth, graph
 from .config import Config
-from .payloads import EventFields, EventPatch
+from .payloads import AGENT_EVENT_CATEGORY, EventFields, EventPatch
 
 
 def _validate_timezone(timezone: str) -> None:
@@ -79,9 +79,9 @@ def list_events(
         account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
         if include_details:
-            select = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
+            select = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId,categories"
         else:
-            select = "id,subject,start,end,location,organizer,seriesMasterId"
+            select = "id,subject,start,end,location,organizer,seriesMasterId,categories"
 
         if calendar_name:
             calendar_id = _get_calendar_id_by_name(config, client, account_id, calendar_name)
@@ -192,6 +192,10 @@ def create_event(config: Config, client: httpx.Client, *, account_email: str, ev
 
     if event.location:
         payload["location"] = {"displayName": event.location}
+
+    # Provenance, always, on every event this CLI creates. Not optional and not caller-supplied:
+    # the whole point is that it cannot be forgotten at the call site.
+    payload["categories"] = [*(event.categories or []), AGENT_EVENT_CATEGORY]
 
     if event.body:
         payload["body"] = {"contentType": "Text", "content": event.body}
