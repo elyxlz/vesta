@@ -362,6 +362,10 @@ describe("unifiedCatalog", () => {
     expect(html).toContain('data-live-platform="android"');
     expect(html).toContain('data-expected="false"');
     expect(html).toContain('fetch("live.json"');
+    expect(html).toContain('data-scenario-id="connect"');
+    expect(html).toContain('data-title="Connect"');
+    expect(html).toContain('class="copy-ref"');
+    expect(html).toContain("visual-ref: ");
   });
 
   it("renders a scan row per platform with its last-scan stamp and trigger", () => {

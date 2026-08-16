@@ -1128,7 +1128,9 @@ function captureShotHtml(scenario, capture, defaultPlatform) {
             scenario.screenshot,
           )}" data-live-platform="${livePlatform}" data-expected="${
             capture.expected === false ? "false" : "true"
-          }">
+          }" data-scenario-id="${escapeHtml(scenario.id ?? "")}" data-group="${escapeHtml(
+            scenario.group ?? "",
+          )}" data-title="${escapeHtml(scenario.title)}">
             <button class="preview"${
               capture.captured
                 ? ` data-image="${escapeHtml(capture.image)}"`
@@ -1150,6 +1152,9 @@ function captureShotHtml(scenario, capture, defaultPlatform) {
                 }
               </span>
             </button>
+            <button class="copy-ref" type="button" aria-label="Copy reference for ${escapeHtml(
+              subject,
+            )}">Copy ref</button>
             ${
               capture.platform
                 ? `<span class="platform-tag">${escapeHtml(capture.platform)}</span>`
@@ -1398,7 +1403,7 @@ export function galleryHtml(catalog) {
       align-items: start;
       gap: 10px;
     }
-    .shot { min-width: 0; }
+    .shot { position: relative; min-width: 0; }
     .platform-tag {
       display: block;
       margin-top: 5px;
@@ -1423,9 +1428,26 @@ export function galleryHtml(catalog) {
       border-radius: 50%;
       animation: status-spin .8s linear infinite;
     }
-    .shot.pending img { opacity: .35; }
+    .shot.pending .device-screen img { opacity: .35; }
     .shot.pending .missing { visibility: hidden; }
     .shot.fresh .preview { border-color: #7f6fd4; }
+    .copy-ref {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 2;
+      border: 1px solid #625799;
+      border-radius: 999px;
+      padding: 3px 9px;
+      background: #181522f2;
+      color: var(--text);
+      font-size: 10px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 140ms ease;
+    }
+    .shot:hover .copy-ref, .copy-ref:focus-visible { opacity: 1; }
+    .copy-ref:hover { border-color: var(--accent); }
     .capture-status {
       position: fixed;
       top: 16px;
@@ -1626,6 +1648,29 @@ export function galleryHtml(catalog) {
         dialogImage.src = button.dataset.image;
         dialogImage.alt = image.alt;
         dialog.showModal();
+      });
+    });
+    document.querySelectorAll(".copy-ref").forEach((copyButton) => {
+      copyButton.addEventListener("click", async () => {
+        const shot = copyButton.closest(".shot");
+        const preview = shot.querySelector(".preview");
+        const reference = [
+          "visual-ref: " + shot.dataset.scenarioId +
+            " [" + shot.dataset.livePlatform + "]",
+          "group: " + shot.dataset.group + " | title: " + shot.dataset.title,
+          "image: " + (preview.dataset.image || "not captured"),
+          "catalog: " + generatedAt +
+            " | rev: " + window.__VISUAL_CATALOG__.git.revision,
+        ].join("\n");
+        try {
+          await navigator.clipboard.writeText(reference);
+          copyButton.textContent = "Copied";
+        } catch {
+          copyButton.textContent = "Copy failed";
+        }
+        window.setTimeout(() => {
+          copyButton.textContent = "Copy ref";
+        }, 1200);
       });
     });
     dialog.querySelector("button").addEventListener("click", () => dialog.close());
