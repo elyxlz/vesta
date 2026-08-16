@@ -7,11 +7,11 @@ require (
 	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20260317061908-dc9611662265
 	github.com/go-audio/wav v1.1.0
 	github.com/google/uuid v1.6.0
-	github.com/mattn/go-sqlite3 v1.14.45
+	github.com/mattn/go-sqlite3 v1.14.49
 	github.com/purpshell/meowcaller v0.0.0-20260626012300-0f1265d7ebee
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.mau.fi/whatsmeow v0.0.0-20260713112832-d8960d9575d2
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
