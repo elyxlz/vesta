@@ -49,11 +49,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     if (!trimmedMessage) return;
     nextId.current += 1;
     setToast({ id: nextId.current, message: trimmedMessage });
-    if (IS_IOS) {
-      void Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Error,
-      ).catch(() => undefined);
-    }
+    void Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Error,
+    ).catch(() => undefined);
   }, []);
 
   const dismiss = useCallback((id: number) => {
