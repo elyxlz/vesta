@@ -39,7 +39,7 @@ export function NameStep({
             }}
             onKeyDown={handleKeyDown}
             autoFocus
-            className={cn("h-11 px-5 text-center", glassPill)}
+            className={cn("h-12 px-5 text-center", glassPill)}
           />
         </Field>
       </FieldGroup>

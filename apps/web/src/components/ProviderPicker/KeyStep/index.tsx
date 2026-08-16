@@ -71,7 +71,7 @@ export function KeyStep({
           if (error) setError(null);
         }}
         autoFocus
-        className="w-full text-center"
+        className="h-12 w-full text-center"
       />
     </ProviderStep>
   );
