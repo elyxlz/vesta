@@ -506,37 +506,26 @@ describe("visual Metro privacy override", () => {
 });
 
 describe("visual Metro agent fixtures", () => {
-  it("uses one chat hold fixture for both provider import paths", () => {
+  it("substitutes the seeded agent-holds fixture for every consumer", () => {
     const config = require("../visual/metro.config.js");
     const fallback = vi.fn(() => ({ type: "empty" }));
     const fixture = path.resolve(
       scriptDirectory,
-      "../visual/harness/chat-hold-provider.tsx",
+      "../visual/harness/agent-holds-provider.tsx",
     );
 
-    expect(
-      config.resolver.resolveRequest(
-        {
-          originModulePath: path.resolve(scriptDirectory, "../app/_layout.tsx"),
-          resolveRequest: fallback,
-        },
-        "@/chat/ChatHoldProvider",
-        "ios",
-      ),
-    ).toEqual({ type: "sourceFile", filePath: fixture });
-    expect(
-      config.resolver.resolveRequest(
-        {
-          originModulePath: path.resolve(
-            scriptDirectory,
-            "../src/chat/useAgentSocket.ts",
-          ),
-          resolveRequest: fallback,
-        },
-        "./ChatHoldProvider",
-        "ios",
-      ),
-    ).toEqual({ type: "sourceFile", filePath: fixture });
+    for (const origin of ["../app/_layout.tsx", "../src/chat/useAgentSocket.ts"]) {
+      expect(
+        config.resolver.resolveRequest(
+          {
+            originModulePath: path.resolve(scriptDirectory, origin),
+            resolveRequest: fallback,
+          },
+          "@/holds/AgentHoldsProvider",
+          "ios",
+        ),
+      ).toEqual({ type: "sourceFile", filePath: fixture });
+    }
     expect(fallback).not.toHaveBeenCalled();
   });
 

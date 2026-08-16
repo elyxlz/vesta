@@ -12,12 +12,7 @@ import {
 } from "@vesta/core";
 import type { ConnectionConfig } from "@/api/types";
 import { connectionKeyOf } from "@/session/session-model";
-import {
-  captureChatHold,
-  chatHoldKey,
-  emptyChatHold,
-  heldChatState,
-} from "./chat-hold-model";
+import { agentHoldKey, createKeyedHoldStore } from "./keyed-hold";
 
 function chat(id: number, text: string): VestaEvent {
   return { type: "chat", text, id };
@@ -49,13 +44,14 @@ function tailWith(...ids: [number, string][]): ChatState {
   return seedTail(state, { events: [], cursor: 7 });
 }
 
-describe("chat hold", () => {
-  it("holds the tail across a controller epoch and merges a fresh seed by id", () => {
-    const key = chatHoldKey("ada", GW);
-    const captured = captureChatHold(key, tailWith([1, "a"], [2, "b"]));
+describe("keyed hold store", () => {
+  it("holds the chat tail across a controller epoch and merges a fresh seed by id", () => {
+    const store = createKeyedHoldStore<ChatState>();
+    const key = agentHoldKey("ada", GW);
+    store.persist(key, tailWith([1, "a"], [2, "b"]));
 
     // Foreground: the same key seeds the held tail immediately (stale), no skeleton.
-    const seed = heldChatState(captured, key);
+    const seed = store.read(key);
     expect(seed).not.toBeNull();
     if (!seed) throw new Error("expected held state");
     expect(seed.messages.map((m) => (m.type === "chat" ? m.text : ""))).toEqual([
@@ -70,12 +66,13 @@ describe("chat hold", () => {
   });
 
   it("keeps a loadMore-extended history across the epoch", () => {
-    const key = chatHoldKey("ada", GW);
+    const store = createKeyedHoldStore<ChatState>();
+    const key = agentHoldKey("ada", GW);
     let state = tailWith([3, "c"]);
     state = prependPage(state, [chat(1, "a"), chat(2, "b")], 1);
-    const captured = captureChatHold(key, state);
+    store.persist(key, state);
 
-    const seed = heldChatState(captured, key);
+    const seed = store.read(key);
     if (!seed) throw new Error("expected held state");
     expect(seed.messages.map((m) => (m.type === "chat" ? m.text : ""))).toEqual([
       "a",
@@ -85,24 +82,31 @@ describe("chat hold", () => {
     expect(seed.cursor).toBe(1);
   });
 
-  it("clears synchronously on an agent switch so no messages bleed across", () => {
-    const captured = captureChatHold(chatHoldKey("ada", GW), tailWith([1, "a"]));
-    expect(heldChatState(captured, chatHoldKey("ben", GW))).toBeNull();
+  it("keeps each agent's conversation in its own cell across switches", () => {
+    const store = createKeyedHoldStore<ChatState>();
+    store.persist(agentHoldKey("ada", GW), tailWith([1, "a"]));
+    store.persist(agentHoldKey("ben", GW), tailWith([2, "b"]));
+
+    const ada = store.read(agentHoldKey("ada", GW));
+    const ben = store.read(agentHoldKey("ben", GW));
+    expect(ada?.messages.map((m) => (m.type === "chat" ? m.text : ""))).toEqual(["a"]);
+    expect(ben?.messages.map((m) => (m.type === "chat" ? m.text : ""))).toEqual(["b"]);
   });
 
-  it("clears on a connection (gateway) switch", () => {
-    const captured = captureChatHold(chatHoldKey("ada", GW), tailWith([1, "a"]));
+  it("a connection (gateway) switch never reads another gateway's cell", () => {
+    const store = createKeyedHoldStore<ChatState>();
+    store.persist(agentHoldKey("ada", GW), tailWith([1, "a"]));
     const otherGateway = connectionKeyOf(connection("https://gw-b")) ?? "";
-    expect(heldChatState(captured, chatHoldKey("ada", otherGateway))).toBeNull();
+    expect(store.read(agentHoldKey("ada", otherGateway))).toBeNull();
   });
 
   it("preserves a pending optimistic bubble across the epoch and confirms its echo after foreground", () => {
-    const key = chatHoldKey("ada", GW);
-    const sending = beginSend(initialChatState(), "hi", "typed", "i-1");
-    const captured = captureChatHold(key, sending);
+    const store = createKeyedHoldStore<ChatState>();
+    const key = agentHoldKey("ada", GW);
+    store.persist(key, beginSend(initialChatState(), "hi", "typed", "i-1"));
 
     // Foreground seeds the surviving optimistic bubble (still sending, intent still pending).
-    const seed = heldChatState(captured, key);
+    const seed = store.read(key);
     if (!seed) throw new Error("expected held state");
     expect(seed.pendingIntents.has("i-1")).toBe(true);
     const users = seed.messages.filter((m) => m.type === "user");
@@ -115,7 +119,21 @@ describe("chat hold", () => {
     expect(confirmedUsers[0]?.send_state).toBeUndefined();
   });
 
-  it("an empty hold seeds nothing", () => {
-    expect(heldChatState(emptyChatHold, chatHoldKey("ada", GW))).toBeNull();
+  it("an empty store seeds nothing", () => {
+    const store = createKeyedHoldStore<ChatState>();
+    expect(store.read(agentHoldKey("ada", GW))).toBeNull();
+  });
+
+  it("evicts only the least recently written cell past the cap", () => {
+    const store = createKeyedHoldStore<number>();
+    for (let index = 0; index < 12; index += 1) {
+      store.persist(`k${String(index)}`, index);
+    }
+    // Rewriting k0 refreshes it, so the next eviction takes k1.
+    store.persist("k0", 100);
+    store.persist("k12", 12);
+    expect(store.read("k0")).toBe(100);
+    expect(store.read("k1")).toBeNull();
+    expect(store.read("k12")).toBe(12);
   });
 });

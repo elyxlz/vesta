@@ -5,17 +5,12 @@ import {
   type ChatState,
 } from "@vesta/core";
 import {
-  captureChatHold,
-  chatHoldKey,
-  type ChatHold,
-} from "../../src/chat/chat-hold-model";
+  createAgentHolds,
+  type AgentHolds,
+} from "../../src/holds/AgentHoldsProvider";
+import { agentHoldKey } from "../../src/holds/keyed-hold";
 import { connectionKeyOf } from "../../src/session/session-model";
 import { visualConnection } from "./session-provider";
-
-interface ChatHoldStore {
-  read: () => ChatHold;
-  persist: (next: ChatHold) => void;
-}
 
 const chatState: ChatState = seedTail(initialChatState(), {
   events: [
@@ -47,32 +42,30 @@ const chatState: ChatState = seedTail(initialChatState(), {
   cursor: null,
 });
 
-function createVisualChatHoldStore(): ChatHoldStore {
-  let hold = captureChatHold(
-    chatHoldKey("aria", connectionKeyOf(visualConnection) ?? ""),
+function createVisualAgentHolds(): AgentHolds {
+  const holds = createAgentHolds();
+  holds.chat.persist(
+    agentHoldKey("aria", connectionKeyOf(visualConnection) ?? ""),
     chatState,
   );
-  return {
-    read: () => hold,
-    persist: (next) => {
-      hold = next;
-    },
-  };
+  return holds;
 }
 
-const ChatHoldContext = createContext<ChatHoldStore | null>(null);
+const AgentHoldsContext = createContext<AgentHolds | null>(null);
 
-export function ChatHoldProvider({ children }: { children: ReactNode }) {
-  const [store] = useState(createVisualChatHoldStore);
+export function AgentHoldsProvider({ children }: { children: ReactNode }) {
+  const [holds] = useState(createVisualAgentHolds);
   return (
-    <ChatHoldContext.Provider value={store}>
+    <AgentHoldsContext.Provider value={holds}>
       {children}
-    </ChatHoldContext.Provider>
+    </AgentHoldsContext.Provider>
   );
 }
 
-export function useChatHold(): ChatHoldStore {
-  const store = use(ChatHoldContext);
-  if (!store) throw new Error("useChatHold must be used within ChatHoldProvider");
-  return store;
+export function useAgentHolds(): AgentHolds {
+  const holds = use(AgentHoldsContext);
+  if (!holds) {
+    throw new Error("useAgentHolds must be used within AgentHoldsProvider");
+  }
+  return holds;
 }

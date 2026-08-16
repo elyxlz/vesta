@@ -43,7 +43,7 @@ import {
   useRoster,
 } from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
-import { ChatHoldProvider } from "@/chat/ChatHoldProvider";
+import { AgentHoldsProvider } from "@/holds/AgentHoldsProvider";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
@@ -397,7 +397,7 @@ export default function RootLayout() {
                 <SessionProvider>
                   <PrivacyGate>
                     <RosterHoldProvider>
-                      <ChatHoldProvider>
+                      <AgentHoldsProvider>
                         <ControllerProvider>
                           <RosterProvider>
                             <UserNotifications />
@@ -406,7 +406,7 @@ export default function RootLayout() {
                             <SessionNavigation />
                           </RosterProvider>
                         </ControllerProvider>
-                      </ChatHoldProvider>
+                      </AgentHoldsProvider>
                     </RosterHoldProvider>
                   </PrivacyGate>
                 </SessionProvider>
