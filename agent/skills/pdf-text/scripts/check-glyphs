@@ -1,0 +1,417 @@
+#!/usr/bin/env python3
+"""check-glyphs: which characters in this PDF's extracted text are fiction?
+
+Written after an agent quoted, and then reasoned from, characters that were
+never in the document.
+
+In one economics working paper the parameter line reads, on the rendered page,
+"sigma = 0.75; alpha = 0.1". pdftotext extracts it as "V 0.75; D 0.1". Nothing
+warns you: no error, no replacement character, no encoding complaint. The
+extracted text is a well formed sentence containing two letters the author never
+wrote, which is exactly why it gets read straight past.
+
+THE MECHANISM, traced to the primary objects rather than guessed:
+
+  Both letters are drawn by one font, UWPNAD+SymbolMT, Identity-H CID TrueType.
+  Its ToUnicode CMap EXISTS and DEFINES NOTHING: a codespace range <0000><FFFF>
+  and then endcmap, zero bfchar, zero bfrange. Its embedded subset has NO cmap
+  table (legal: Identity-H renders straight from glyph indices). With every
+  route to a character removed, poppler falls back to reading the raw CID as a
+  Unicode scalar. The CIDs are 0x56 and 0x44, so out come 'V' and 'D'.
+
+  They are not corrupt bytes and they are not mojibake. They are plausible
+  capital letters sitting in a sentence, so nothing downstream can flag them.
+
+AND THE PART THAT MATTERS MOST: `pdffonts` prints "uni yes" for that font. Its
+uni column asks whether a ToUnicode OBJECT exists, not whether the map inside it
+maps anything. An empty CMap answers yes. That is the same defect as a size
+script labelled "chars" that counts bytes: the instrument reports on the
+container while being read as a report on the content.
+
+WHAT THIS DOES:
+
+  For every font, count the ACTUAL entries in its ToUnicode CMap, then decode
+  the page content streams and count how many drawn characters come from a font
+  that cannot map them. Those are the positions where the extracted text is
+  invention. It prints what pdftotext will emit for each, so the mangled
+  character can be recognised on sight next time.
+
+  It does NOT tell you what the character really was. Only the rendered page
+  does that. This says WHERE to go and look.
+
+  check-glyphs paper.pdf              # whole document
+  check-glyphs paper.pdf --pages 40-42
+  check-glyphs --selftest             # force the failure branch and watch it
+
+Exit 1 if any unmappable glyph is actually drawn, 0 if clean, 2 if the parse
+failed. A parse failure is NOT clean and never reports as clean.
+"""
+
+import argparse
+import os
+import re
+import sys
+import zlib
+
+MAX_SHOWN = 12
+
+
+UNREADABLE = []
+
+
+def inflate(raw):
+    try:
+        return zlib.decompress(raw)
+    except Exception:
+        try:
+            return zlib.decompressobj().decompress(raw)
+        except Exception:
+            return b""
+
+
+def stream_bytes(body):
+    """Decode one stream, and NEVER return empty for 'I could not read it'.
+
+    The first version of this called zlib and returned b'' on failure. That is
+    the same defect this script was written to complain about: an uncompressed
+    or JPX-filtered stream came back empty, every font read as having no map,
+    no drawn glyph was found, and the run printed a confident 'clean'. The
+    selftest caught it on its first execution. An unreadable stream is recorded
+    and surfaced, not silently treated as absent.
+    """
+    sm = re.search(rb"stream\r?\n", body)
+    if not sm:
+        return b""
+    raw = body[sm.end() :].rsplit(b"endstream", 1)[0]
+    head = body[: sm.start()]
+    if b"/Filter" not in head:
+        return raw
+    if b"/FlateDecode" in head:
+        out = inflate(raw)
+        if not out:
+            UNREADABLE.append("a FlateDecode stream failed to decompress")
+        return out
+    filt = re.search(rb"/Filter\s*/?(\w+)", head)
+    UNREADABLE.append(f"unsupported filter /{filt.group(1).decode() if filt else '?'}")
+    return b""
+
+
+def load_objects(data):
+    """Top-level objects, plus objects packed inside object streams.
+
+    Modern producers put most non-stream objects in an /ObjStm, so a parser that
+    only scans for 'N 0 obj' finds the pages and none of the font dictionaries,
+    then reports a document with no fonts. That reads exactly like a clean
+    document, which is the failure this whole script exists to complain about.
+    """
+    objs = {}
+    for m in re.finditer(rb"(\d+)\s+(\d+)\s+obj(.*?)endobj", data, re.DOTALL):
+        objs[int(m.group(1))] = m.group(3)
+
+    for num, body in list(objs.items()):
+        if b"/ObjStm" not in body:
+            continue
+        dec = stream_bytes(body)
+        if not dec:
+            continue
+        n = re.search(rb"/N\s+(\d+)", body)
+        first = re.search(rb"/First\s+(\d+)", body)
+        if not (n and first):
+            continue
+        n, first = int(n.group(1)), int(first.group(1))
+        header = dec[:first].split()
+        for i in range(n):
+            try:
+                onum = int(header[2 * i])
+                off = int(header[2 * i + 1])
+            except (IndexError, ValueError):
+                break
+            end = int(header[2 * i + 3]) + first if 2 * i + 3 < len(header) else len(dec)
+            objs.setdefault(onum, dec[first + off : end])
+    return objs
+
+
+def stream_of(objs, num):
+    return stream_bytes(objs.get(num, b""))
+
+
+def parse_cmap(txt):
+    """Count REAL mappings. bfrange is three tokens per line, not two, so a
+    regex that pairs <a><b> across the whole file silently mis-associates every
+    entry. That was the first bug here, caught only by printing the raw CMap and
+    reading it."""
+    out = {}
+    for blk in re.findall(r"beginbfchar(.*?)endbfchar", txt, re.DOTALL):
+        for s, d in re.findall(r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
+            out[int(s, 16)] = int(d[:4], 16)
+    for blk in re.findall(r"beginbfrange(.*?)endbfrange", txt, re.DOTALL):
+        for lo, hi, d in re.findall(r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
+            lo, hi, base = int(lo, 16), int(hi, 16), int(d, 16)
+            if hi - lo > 65535:
+                continue
+            for i in range(lo, hi + 1):
+                out[i] = base + i - lo
+    return out
+
+
+def font_table(objs):
+    fonts = {}
+    for num, body in objs.items():
+        if b"/BaseFont" not in body:
+            continue
+        base = re.search(rb"/BaseFont\s*/([\w+-]+)", body)
+        if not base:
+            continue
+        tou = re.search(rb"/ToUnicode\s+(\d+)\s+0\s+R", body)
+        cmap = parse_cmap(stream_of(objs, int(tou.group(1))).decode("latin-1")) if tou else {}
+        two_byte = b"/Identity-H" in body or b"/Type0" in body
+        # A SIMPLE font that declares a standard encoding needs no ToUnicode:
+        # its code IS the character, and every extractor resolves it correctly.
+        # Flagging those produced a page of ordinary Latin letters reported as
+        # fiction on the first real document tried, which is the noise that
+        # makes a checker get ignored. Only symbolic or custom encodings, and
+        # Type0 fonts, can actually lie.
+        enc = re.search(rb"/Encoding\s*/(\w+)", body)
+        standard_enc = bool(enc) and enc.group(1) in (
+            b"WinAnsiEncoding",
+            b"MacRomanEncoding",
+            b"StandardEncoding",
+            b"MacExpertEncoding",
+        )
+        fonts[num] = {
+            "name": base.group(1).decode(),
+            "cmap": cmap,
+            "has_tounicode": bool(tou),
+            "two_byte": two_byte,
+            "safe_simple": (not two_byte) and standard_enc,
+        }
+    return fonts
+
+
+def pages_in_order(objs):
+    out = []
+    for num, body in objs.items():
+        if re.search(rb"/Type\s*/Page[^s]", body):
+            out.append(num)
+    return sorted(out)
+
+
+def resources_of(objs, page_obj):
+    body = objs.get(page_obj, b"")
+    ref = re.search(rb"/Resources\s+(\d+)\s+0\s+R", body)
+    return objs.get(int(ref.group(1)), b"") if ref else body
+
+
+def font_map(res):
+    fd = re.search(rb"/Font\s*<<(.*?)>>", res, re.DOTALL)
+    if not fd:
+        return {}
+    return {n.decode(): int(o) for n, o in re.findall(rb"/(\w+)\s+(\d+)\s+0\s+R", fd.group(1))}
+
+
+def scan_page(objs, fonts, page_obj):
+    body = objs.get(page_obj, b"")
+    cont = re.search(rb"/Contents\s+(\d+)\s+0\s+R", body)
+    if not cont:
+        return [], 0
+    fmap = font_map(resources_of(objs, page_obj))
+    dec = stream_of(objs, int(cont.group(1)))
+    bad, total = [], 0
+    cur = None
+
+    def widen(seq, two_byte):
+        """A Type0 font's codes are TWO bytes. Splitting them as one byte each
+        turns every CID into a pair of meaningless small numbers, which then all
+        look unmappable and bury the real finding in noise."""
+        if not two_byte:
+            return list(seq)
+        return [(seq[i] << 8) | seq[i + 1] for i in range(0, len(seq) - 1, 2)]
+
+    def from_hex(h, two_byte):
+        h = h.replace(" ", "")
+        step = 4 if two_byte else 2
+        h = h + "0" * (-len(h) % step)
+        return [int(h[i : i + step], 16) for i in range(0, len(h), step)]
+
+    for chunk in re.split(rb"(/\w+\s+[\d.]+\s+Tf)", dec):
+        m = re.match(rb"/(\w+)\s+[\d.]+\s+Tf", chunk)
+        if m:
+            cur = m.group(1).decode()
+            continue
+        info = fonts.get(fmap.get(cur))
+        wide = bool(info and info["two_byte"])
+        for mm in re.finditer(rb"\[(.*?)\]\s*TJ|\(((?:[^()\\]|\\.)*)\)\s*Tj|<([0-9A-Fa-f\s]+)>\s*Tj", chunk, re.DOTALL):
+            codes = []
+            if mm.group(1) is not None:
+                for lit in re.findall(rb"\(((?:[^()\\]|\\.)*)\)", mm.group(1)):
+                    codes += widen(re.sub(rb"\\([()\\])", rb"\1", lit), wide)
+                for hx in re.findall(rb"<([0-9A-Fa-f]+)>", mm.group(1)):
+                    codes += from_hex(hx.decode(), wide)
+            elif mm.group(2) is not None:
+                codes = widen(re.sub(rb"\\([()\\])", rb"\1", mm.group(2)), wide)
+            else:
+                codes = from_hex(mm.group(3).decode(), wide)
+            total += len(codes)
+            if info is None or info["safe_simple"]:
+                continue
+            for c in codes:
+                if c in info["cmap"] or c == 0x00:
+                    continue
+                # 0x20 is a space in a simple font and skipping it kills a lot
+                # of noise. In a Type0 font it is a GLYPH INDEX like any other,
+                # and on the page that prompted this script it is the '=' sign:
+                # eight of them printed as eight spaces and the equation lost
+                # every operator. Skipping 0x20 everywhere would have hidden
+                # exactly the defect this exists to catch.
+                if c == 0x20 and not info["two_byte"]:
+                    continue
+                bad.append((info["name"], c))
+    return bad, total
+
+
+def parse_pages(spec, count):
+    if not spec:
+        return list(range(count))
+    out = set()
+    for part in spec.split(","):
+        if "-" in part:
+            a, b = part.split("-", 1)
+            out |= set(range(int(a) - 1, int(b)))
+        else:
+            out.add(int(part) - 1)
+    return sorted(i for i in out if 0 <= i < count)
+
+
+def report(path, pagespec):
+    data = open(path, "rb").read()
+    objs = load_objects(data)
+    fonts = font_table(objs)
+    pages = pages_in_order(objs)
+
+    if not fonts or not pages:
+        print(f"check-glyphs: parsed {len(objs)} objects, {len(fonts)} fonts, {len(pages)} pages.", file=sys.stderr)
+        print("  THAT IS A PARSE FAILURE, NOT A CLEAN DOCUMENT. A PDF with no fonts", file=sys.stderr)
+        print("  or no pages means this script could not read it (encrypted, linearised", file=sys.stderr)
+        print("  oddly, cross-reference stream it does not follow). Do not conclude the", file=sys.stderr)
+        print("  extracted text is trustworthy. Render the pages instead.", file=sys.stderr)
+        return 2
+
+    # Collapse by BaseFont name. A Type0 font is TWO objects, the parent that
+    # carries the ToUnicode and the descendant CIDFont that never does, so a
+    # per-object listing prints every one of them twice and half the lines are
+    # an artefact of the file format rather than a defect in the document.
+    by_name = {}
+    for f in fonts.values():
+        cur = by_name.get(f["name"])
+        if cur is None or (not cur["cmap"] and f["cmap"]) or (not cur["has_tounicode"] and f["has_tounicode"]):
+            by_name[f["name"]] = f
+
+    empty = {n: f for n, f in by_name.items() if not f["cmap"] and not f["safe_simple"]}
+    print(f"check-glyphs: {os.path.basename(path)}, {len(pages)} pages, {len(by_name)} fonts")
+    for name in sorted(empty):
+        f = empty[name]
+        why = "ToUnicode present but EMPTY" if f["has_tounicode"] else "no ToUnicode at all"
+        print(f"  font {name:38s} {why}")
+    if not empty:
+        print("  no font here can misreport: every one either carries a non-empty")
+        print("  ToUnicode map or is a simple font with a standard encoding")
+
+    wanted = parse_pages(pagespec, len(pages))
+    findings = []
+    for idx in wanted:
+        bad, total = scan_page(objs, fonts, pages[idx])
+        if bad:
+            findings.append((idx + 1, bad, total))
+
+    if UNREADABLE:
+        kinds = sorted(set(UNREADABLE))
+        print(f"\n  WARNING: {len(UNREADABLE)} stream(s) could not be decoded ({', '.join(kinds)}).")
+        print("  Whatever they draw was NOT inspected, so a clean result below is partial.")
+
+    if not findings:
+        print("check-glyphs: no unmappable glyph is actually drawn on the pages checked.")
+        print("  (Fonts can carry an empty map and never be used. Only usage matters.)")
+        return 0
+
+    total_bad = sum(len(b) for _, b, _ in findings)
+    print(f"\n  {total_bad} DRAWN CHARACTER(S) HAVE NO UNICODE MAPPING ANYWHERE.")
+    print("  pdftotext will invent something plausible for each. Open the RENDERED page.\n")
+    for pageno, bad, total in findings:
+        seen = {}
+        for name, code in bad:
+            seen.setdefault((name, code), 0)
+            seen[(name, code)] += 1
+        print(f"  PAGE {pageno}  ({len(bad)} of {total} characters)")
+        for (name, code), count in sorted(seen.items(), key=lambda kv: -kv[1])[:MAX_SHOWN]:
+            if code == 0x20:
+                guess = "a SPACE, so it vanishes silently"
+            elif 32 < code < 0x2FFFF:
+                guess = repr(chr(code))
+            else:
+                guess = "(dropped)"
+            print(f"    {name:38s} code 0x{code:04x} x{count:<3d} extracts as {guess}")
+        if len(seen) > MAX_SHOWN:
+            print(f"    ... and {len(seen) - MAX_SHOWN} more distinct code(s)")
+        print()
+    print("  Render with: pdftoppm -f N -l N -r 150 -png <file> /tmp/pg")
+    return 1
+
+
+def selftest():
+    """Two controls, because a check nobody has watched fail is not a check.
+
+    POSITIVE: a font whose ToUnicode is an empty CMap, with its glyphs actually
+    drawn. Must be reported.
+    NEGATIVE: a font with a real map, drawn on the same page. Must NOT be.
+    """
+    import tempfile
+
+    def obj(n, body):
+        return f"{n} 0 obj\n".encode() + body + b"\nendobj\n"
+
+    empty_cmap = b"/CIDInit /ProcSet findresource begin\nbegincmap\n1 begincodespacerange\n<0000><FFFF>\nendcodespacerange\nendcmap\nend\n"
+    real_cmap = (
+        b"/CIDInit /ProcSet findresource begin\nbegincmap\n"
+        b"1 begincodespacerange\n<00><FF>\nendcodespacerange\n"
+        b"1 beginbfrange\n<41><41><0041>\nendbfrange\nendcmap\nend\n"
+    )
+    content = b"BT /FGOOD 12 Tf (A) Tj /FBAD 12 Tf <0056> Tj ET"
+
+    parts = [b"%PDF-1.4\n"]
+    parts.append(obj(1, b"<< /Type /Page /Contents 2 0 R /Resources 3 0 R >>"))
+    parts.append(obj(2, b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream"))
+    parts.append(obj(3, b"<< /Font << /FGOOD 4 0 R /FBAD 5 0 R >> >>"))
+    parts.append(obj(4, b"<< /BaseFont /AAAAAA+Clean /ToUnicode 6 0 R >>"))
+    parts.append(obj(5, b"<< /BaseFont /BBBBBB+Broken /Identity-H /ToUnicode 7 0 R >>"))
+    parts.append(obj(6, b"<< /Length %d >>\nstream\n" % len(real_cmap) + real_cmap + b"\nendstream"))
+    parts.append(obj(7, b"<< /Length %d >>\nstream\n" % len(empty_cmap) + empty_cmap + b"\nendstream"))
+    path = os.path.join(tempfile.mkdtemp(prefix="pdfglyph-selftest-"), "t.pdf")
+    open(path, "wb").write(b"".join(parts))
+
+    print("check-glyphs: SELFTEST on a synthetic PDF.")
+    print("  Expect BBBBBB+Broken reported with code 0x0056 extracting as 'V',")
+    print("  and AAAAAA+Clean NOT reported at all.\n")
+    rc = report(path, None)
+    print(f"\n  selftest exit code {rc} (1 is correct: it found the broken font)")
+    return 0 if rc == 1 else 2
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("pdf", nargs="?")
+    ap.add_argument("--pages", help="e.g. 40-42 or 3,7,9 (1-based)")
+    ap.add_argument("--selftest", action="store_true")
+    args = ap.parse_args()
+
+    if args.selftest:
+        return selftest()
+    if not args.pdf:
+        ap.error("give a PDF, or --selftest")
+    if not os.path.exists(args.pdf):
+        print(f"check-glyphs: no such file {args.pdf}", file=sys.stderr)
+        return 2
+    return report(args.pdf, args.pages)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
