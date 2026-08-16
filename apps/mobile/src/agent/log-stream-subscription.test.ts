@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SseHandle, StreamEvent } from "@vesta/core";
-import { subscribeLogs } from "./log-stream-subscription";
+import { subscribeLogs, type LogStream } from "./log-stream-subscription";
 
 interface FakeStream {
   reconnect: boolean;
@@ -12,27 +12,34 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function makeHarness(overrides?: Partial<LogStream>) {
+  const streams: FakeStream[] = [];
+  const open = (
+    reconnect: boolean,
+    onEvent: (event: StreamEvent) => void,
+  ): SseHandle => {
+    const cancel = vi.fn();
+    streams.push({ reconnect, emit: onEvent, cancel });
+    return { cancel };
+  };
+  const onLine = vi.fn();
+  const onError = vi.fn();
+  const stop = subscribeLogs({
+    open,
+    onLine,
+    onError,
+    retryDelayMs: 1_000,
+    maxRetryDelayMs: 30_000,
+    resume: false,
+    ...overrides,
+  });
+  return { streams, onLine, onError, stop };
+}
+
 describe("log stream subscription", () => {
   it("cancels the live stream before a retry opens the next one", async () => {
     vi.useFakeTimers();
-    const streams: FakeStream[] = [];
-    const open = (
-      reconnect: boolean,
-      onEvent: (event: StreamEvent) => void,
-    ): SseHandle => {
-      const cancel = vi.fn();
-      streams.push({ reconnect, emit: onEvent, cancel });
-      return { cancel };
-    };
-    const onLine = vi.fn();
-    const onError = vi.fn();
-
-    const stop = subscribeLogs({
-      open,
-      onLine,
-      onError,
-      retryDelayMs: 1_000,
-    });
+    const { streams, onLine, onError, stop } = makeHarness();
 
     await vi.advanceTimersByTimeAsync(0);
     expect(streams).toHaveLength(1);
@@ -62,17 +69,51 @@ describe("log stream subscription", () => {
     expect(second.cancel).toHaveBeenCalledTimes(1);
   });
 
-  it("cancels the live stream on teardown", () => {
-    const cancel = vi.fn();
-    const stop = subscribeLogs({
-      open: () => ({ cancel }),
-      onLine: vi.fn(),
-      onError: vi.fn(),
-      retryDelayMs: 1_000,
-    });
+  it("backs off exponentially on repeated errors and resets on a received line", async () => {
+    vi.useFakeTimers();
+    const { streams, stop } = makeHarness({ maxRetryDelayMs: 4_000 });
+
+    await vi.advanceTimersByTimeAsync(0);
+    streams[0]?.emit({ kind: "error", message: "down" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(streams).toHaveLength(2);
+
+    // Second failure waits 2s: at 1s nothing opens yet.
+    streams[1]?.emit({ kind: "error", message: "down" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(streams).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(streams).toHaveLength(3);
+
+    // Third failure waits 4s (the cap).
+    streams[2]?.emit({ kind: "error", message: "down" });
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(streams).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(streams).toHaveLength(4);
+
+    // A received line resets the backoff to the base delay.
+    streams[3]?.emit({ kind: "line", text: "recovered" });
+    streams[3]?.emit({ kind: "error", message: "down" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(streams).toHaveLength(5);
 
     stop();
+  });
 
-    expect(cancel).toHaveBeenCalledTimes(1);
+  it("opens as a reconnect when resuming over held lines", async () => {
+    vi.useFakeTimers();
+    const { streams, stop } = makeHarness({ resume: true });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(streams[0]?.reconnect).toBe(true);
+
+    stop();
+  });
+
+  it("cancels the live stream on teardown", () => {
+    const { streams, stop } = makeHarness();
+    stop();
+    expect(streams[0]?.cancel).toHaveBeenCalledTimes(1);
   });
 });

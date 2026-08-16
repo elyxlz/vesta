@@ -71,8 +71,12 @@ import {
   messageActionIds,
   quotedReply,
   type MessageActionId,
+  type ReplyTarget,
 } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
+import { useAgentHolds } from "@/holds/AgentHoldsProvider";
+import { agentHoldKey } from "@/holds/keyed-hold";
+import { connectionKeyOf } from "@/session/session-model";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
 // Android's translucent 3-button navigation bar shows list content through
@@ -121,8 +125,6 @@ const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
     androidImage: shareIcon,
   },
 };
-
-type ReplyTarget = { text: string; sender: string };
 
 function isFinalMarkdownNode(node: ASTNode, parentNodes: ASTNode[]): boolean {
   let child = node;
@@ -994,17 +996,44 @@ function useTranscriptWordHaptics() {
 export default function ChatPage() {
   const insets = useSafeAreaInsets();
   const { agent, socket, name } = useAgent();
-  const { api } = useSession();
+  const { api, connection } = useSession();
   const { showError } = useToast();
   const preferences = usePreferences();
   const { colors } = preferences;
-  const [input, setInputState] = useState("");
-  const inputValueRef = useRef("");
-  const setInput = useCallback((value: string) => {
-    inputValueRef.current = value;
-    setInputState(value);
-  }, []);
-  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
+  // The draft and armed reply live in a per-agent hold, so popping back to home (or switching
+  // agents) never discards half-typed input; a successful send clears the cell via setInput("").
+  const holds = useAgentHolds();
+  const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
+  const [input, setInputState] = useState(
+    () => holds.composer.read(holdKey)?.draft ?? "",
+  );
+  const inputValueRef = useRef(input);
+  const [replyTarget, setReplyTargetState] = useState<ReplyTarget | null>(
+    () => holds.composer.read(holdKey)?.replyTarget ?? null,
+  );
+  const replyTargetRef = useRef(replyTarget);
+  const setInput = useCallback(
+    (value: string) => {
+      inputValueRef.current = value;
+      setInputState(value);
+      holds.composer.persist(holdKey, {
+        draft: value,
+        replyTarget: replyTargetRef.current,
+      });
+    },
+    [holds, holdKey],
+  );
+  const setReplyTarget = useCallback(
+    (target: ReplyTarget | null) => {
+      replyTargetRef.current = target;
+      setReplyTargetState(target);
+      holds.composer.persist(holdKey, {
+        draft: inputValueRef.current,
+        replyTarget: target,
+      });
+    },
+    [holds, holdKey],
+  );
   const notifyTranscriptWords = useTranscriptWordHaptics();
   const handleTranscript = useCallback(
     (text: string) => {
@@ -1075,7 +1104,7 @@ export default function ChatPage() {
         setReplyTarget(null);
       }
     },
-    [canSend, replyTarget, setInput, socket],
+    [canSend, replyTarget, setInput, setReplyTarget, socket],
   );
   const voice = useLiveVoice({
     name,
@@ -1088,13 +1117,16 @@ export default function ChatPage() {
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
   }, []);
-  const cancelReply = useCallback(() => setReplyTarget(null), []);
+  const cancelReply = useCallback(
+    () => setReplyTarget(null),
+    [setReplyTarget],
+  );
   const replyToMessage = useCallback(
     (text: string, user: boolean) => {
       setReplyTarget({ text, sender: user ? "You" : name });
       focusComposer();
     },
-    [focusComposer, name],
+    [focusComposer, name, setReplyTarget],
   );
   const editAndResend = useCallback(
     (text: string) => {
@@ -1102,7 +1134,7 @@ export default function ChatPage() {
       setInput(text);
       focusComposer();
     },
-    [focusComposer, setInput],
+    [focusComposer, setInput, setReplyTarget],
   );
   const readAloud = useCallback(
     (text: string) => {
