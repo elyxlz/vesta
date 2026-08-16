@@ -10,7 +10,7 @@ import { radii } from "@/theme/layout";
 // BlockingSheetGateView backdrop paints over them, so the blocking gates
 // present full screen instead: the same brand hero above a Material 3
 // bottom card holding the sheet content, behind a modal-bottom-sheet scrim.
-const SCRIM_COLOR = "rgba(0, 0, 0, 0.32)";
+const SCRIM_COLOR = "rgba(0, 0, 0, 0.2)";
 
 export function SheetGateScreen({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
@@ -21,8 +21,8 @@ export function SheetGateScreen({ children }: { children: ReactNode }) {
       <StatusBar style={dark ? "light" : "dark"} />
       <View style={[styles.hero, { paddingTop: insets.top }]}>
         <VestaBrand />
-        <View pointerEvents="none" style={styles.scrim} />
       </View>
+      <View pointerEvents="none" style={styles.scrim} />
       <View
         style={[
           styles.card,
