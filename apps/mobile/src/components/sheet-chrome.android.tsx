@@ -81,7 +81,7 @@ const styles = StyleSheet.create({
   close: {
     position: "absolute",
     top: 4,
-    right: 16,
+    left: 16,
     width: 40,
     height: 40,
     alignItems: "center",
