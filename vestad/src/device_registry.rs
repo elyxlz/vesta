@@ -75,33 +75,35 @@ pub(crate) struct DevicePosition {
     pub place: Option<DevicePlace>,
 }
 
+/// What a report says about the position: a value replaces the stored one, `null` on the wire
+/// retracts it (the user turned location sharing off).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum PositionReport {
+    At(DevicePosition),
+    Retract,
+}
+
 /// What a device reports about itself beyond identity. Both fields optional so a web client reports
-/// its zone alone and a mobile background poll reports whatever it could read.
+/// its zone alone and a mobile background poll reports whatever it could read; an absent field
+/// leaves the stored value alone.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeviceContext {
     #[serde(default)]
     pub timezone: Option<String>,
-    #[serde(default)]
-    pub position: Option<DevicePosition>,
+    #[serde(default, deserialize_with = "deserialize_position_report", skip_serializing_if = "Option::is_none")]
+    pub position: Option<PositionReport>,
+}
+
+/// Absent stays `None` (via `#[serde(default)]`); a present value, `null` included, is a report.
+fn deserialize_position_report<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<PositionReport>, D::Error> {
+    PositionReport::deserialize(deserializer).map(Some)
 }
 
 impl DeviceContext {
     pub(crate) fn is_empty(&self) -> bool {
         self.timezone.is_none() && self.position.is_none()
-    }
-}
-
-/// How a notification names a device: its own descriptor when it composed one, else its kind.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DeviceIdentity {
-    pub kind: ClientKind,
-    pub descriptor: Option<String>,
-}
-
-impl DeviceIdentity {
-    pub(crate) fn label(&self) -> String {
-        self.descriptor.clone().unwrap_or_else(|| self.kind.display_name().to_string())
     }
 }
 
@@ -123,15 +125,16 @@ struct DeviceRecord {
     timezone: Option<String>,
     #[serde(default)]
     position: Option<DevicePosition>,
-    /// Epoch seconds of the report that carried `position`.
+    /// Epoch seconds of the report that last changed `position`.
     #[serde(default)]
     position_at: Option<u64>,
 }
 
 impl DeviceRecord {
-    /// A record with neither an identity descriptor nor a push facet carries nothing worth keeping.
+    /// A record with no identity descriptor, no push facet, and no reported context carries nothing
+    /// worth keeping.
     fn is_empty(&self) -> bool {
-        self.descriptor.is_none() && self.push.is_none()
+        self.descriptor.is_none() && self.push.is_none() && self.timezone.is_none() && self.position.is_none()
     }
 }
 
@@ -149,7 +152,7 @@ pub(crate) struct DeviceInfo {
     pub location: Option<String>,
     pub timezone: Option<String>,
     pub position: Option<DevicePosition>,
-    /// RFC 3339 instant of the report that carried `position`.
+    /// RFC 3339 instant of the report that last changed `position`.
     pub position_at: Option<String>,
 }
 
@@ -257,28 +260,37 @@ impl DeviceRegistry {
     }
 
     /// Record what a device reports about itself: its zone, its position. A field the report omits
-    /// keeps its stored value, so a zone-only report never clears a position. Republishes the roster
-    /// on a real change. Non-blocking; the disk write defers. Returns the device's stored identity,
-    /// which is what a notification names it by.
-    pub(crate) fn report_context(&self, id: &str, context: DeviceContext, now: u64) -> DeviceIdentity {
+    /// keeps its stored value, so a zone-only report never clears a position; a `null` position
+    /// retracts it. Republishes the roster on a real change only, so a phone re-reporting the same
+    /// fix costs no fan-out. Non-blocking; the disk write defers. Returns the device's stored
+    /// label, which is what a notification names it by (its own descriptor when it composed one,
+    /// else its kind), or `None` for a device the registry has never seen: identity is minted by
+    /// `attach` alone, never by a report.
+    pub(crate) fn report_context(&self, id: &str, context: DeviceContext, now: u64) -> Option<String> {
         let mut state = self.state.lock().expect("device registry mutex");
-        let record = state.devices.entry(id.to_string()).or_default();
-        let identity = DeviceIdentity { kind: record.kind, descriptor: record.descriptor.clone() };
+        let record = state.devices.get_mut(id)?;
+        let label = record.descriptor.clone().unwrap_or_else(|| record.kind.display_name().to_string());
         let mut changed = false;
         if context.timezone.is_some() && record.timezone != context.timezone {
             record.timezone = context.timezone;
             changed = true;
         }
-        if let Some(position) = context.position {
-            record.position = Some(position);
-            record.position_at = Some(now);
-            changed = true;
+        if let Some(report) = context.position {
+            let position = match report {
+                PositionReport::At(position) => Some(position),
+                PositionReport::Retract => None,
+            };
+            if record.position != position {
+                record.position_at = position.as_ref().map(|_| now);
+                record.position = position;
+                changed = true;
+            }
         }
         if changed {
             self.republish(&state);
             self.dirty.notify_one();
         }
-        identity
+        Some(label)
     }
 
     /// A `/sync` connection for this device closing. On the device's last connection dropping, stamp
@@ -554,15 +566,21 @@ mod tests {
         }
     }
 
+    fn known(registry: &DeviceRegistry, id: &str) {
+        registry.mark_connected(id, ClientKind::Mobile, Some("Vesta Mobile on iOS".into()), 50);
+    }
+
     #[test]
     fn report_context_stores_zone_and_position_and_projects_them() {
         let dir = tempfile::tempdir().expect("tempdir");
         let registry = DeviceRegistry::load(dir.path());
-        registry.report_context(
+        known(&registry, "dev-a");
+        let label = registry.report_context(
             "dev-a",
-            DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(tokyo()) },
+            DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(PositionReport::At(tokyo())) },
             1_780_000_000,
         );
+        assert_eq!(label.as_deref(), Some("Vesta Mobile on iOS"));
         let device = only(&registry, "dev-a");
         assert_eq!(device.timezone.as_deref(), Some("Asia/Tokyo"));
         assert_eq!(device.position, Some(tokyo()));
@@ -570,21 +588,56 @@ mod tests {
     }
 
     #[test]
-    fn zone_only_report_keeps_the_stored_position() {
+    fn report_context_refuses_a_device_it_has_never_seen() {
         let dir = tempfile::tempdir().expect("tempdir");
         let registry = DeviceRegistry::load(dir.path());
-        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(tokyo()) }, 100);
+        assert!(registry.report_context("ghost", DeviceContext { timezone: Some("Asia/Tokyo".into()), position: None }, 100).is_none());
+        assert!(registry.snapshot().is_empty(), "a report mints no identity");
+    }
+
+    #[test]
+    fn zone_only_report_keeps_the_stored_position_and_null_retracts_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        known(&registry, "dev-a");
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::At(tokyo())) }, 100);
         registry.report_context("dev-a", DeviceContext { timezone: Some("Europe/London".into()), position: None }, 200);
         let device = only(&registry, "dev-a");
         assert_eq!(device.timezone.as_deref(), Some("Europe/London"));
         assert_eq!(device.position, Some(tokyo()));
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::Retract) }, 300);
+        let device = only(&registry, "dev-a");
+        assert_eq!(device.position, None, "the user turned location sharing off");
+        assert_eq!(device.position_at, None);
+    }
+
+    #[test]
+    fn an_identical_position_report_republishes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        known(&registry, "dev-a");
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::At(tokyo())) }, 100);
+        let mut roster = registry.subscribe_devices();
+        roster.mark_unchanged();
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::At(tokyo())) }, 200);
+        assert!(!roster.has_changed().expect("watch"), "same fix, no roster fan-out");
+        assert_eq!(only(&registry, "dev-a").position_at.as_deref(), Some("1970-01-01T00:01:40Z"), "and the stamp keeps the first report");
+    }
+
+    #[test]
+    fn a_context_position_null_deserializes_as_a_retraction() {
+        let cleared: DeviceContext = serde_json::from_str(r#"{"position":null}"#).expect("parse");
+        assert_eq!(cleared.position, Some(PositionReport::Retract));
+        let absent: DeviceContext = serde_json::from_str(r#"{"timezone":"Asia/Tokyo"}"#).expect("parse");
+        assert_eq!(absent.position, None);
     }
 
     #[tokio::test]
     async fn report_context_round_trips_through_the_store() {
         let dir = tempfile::tempdir().expect("tempdir");
         let registry = DeviceRegistry::load(dir.path());
-        registry.report_context("dev-a", DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(tokyo()) }, 100);
+        known(&registry, "dev-a");
+        registry.report_context("dev-a", DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(PositionReport::At(tokyo())) }, 100);
         registry.flush_now().await.expect("flush");
         let reloaded = DeviceRegistry::load(dir.path());
         let device = only(&reloaded, "dev-a");

@@ -188,17 +188,21 @@ export default function SettingsScreen() {
   };
 
   const changeShareLocation = async (enabled: boolean) => {
-    if (enabled) {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (!permission.granted) {
-        showError(
-          new Error("Allow location for Vesta in system settings to share it."),
-          "Location is not allowed",
-        );
-        return;
+    try {
+      if (enabled) {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (!permission.granted) {
+          showError(
+            new Error("Allow location for Vesta in system settings to share it."),
+            "Location is not allowed",
+          );
+          return;
+        }
       }
+      await preferences.update({ shareLocation: enabled });
+    } catch (error) {
+      showError(error, "Location sharing is unavailable");
     }
-    await preferences.update({ shareLocation: enabled });
   };
 
   const changeAppSwitcherPrivacy = async (enabled: boolean) => {

@@ -51,9 +51,13 @@ export function PresenceReporter() {
   useEffect(() => {
     if (!controller || !active) return;
     let current = true;
-    void readDeviceContext({ shareLocation, mode: "foreground" }).then((context) => {
-      if (current) controller.reportDeviceContext(context);
-    });
+    readDeviceContext({ shareLocation, mode: "foreground" })
+      .then((context) => {
+        if (current) controller.reportDeviceContext(context);
+      })
+      .catch((cause: unknown) => {
+        console.warn("Could not read the device context:", cause);
+      });
     return () => {
       current = false;
     };

@@ -209,7 +209,7 @@ impl AppState {
                 mobile_app,
                 device_registry,
                 presence,
-                user_context: crate::user_context::UserContext::new(),
+                user_context: crate::user_context::UserContext::default(),
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
                 sync_hub: Arc::new(crate::sync::SyncHub::new()),

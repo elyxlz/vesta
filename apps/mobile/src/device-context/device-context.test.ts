@@ -1,14 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readDeviceContext, toDevicePosition } from "./device-context";
+import {
+  FRESH_FIX_TIMEOUT_MS,
+  LAST_KNOWN_FIX_MAX_AGE_MS,
+  readDeviceContext,
+  toDevicePosition,
+} from "./device-context";
 
 const location = vi.hoisted(() => ({
   granted: true,
+  permissionThrows: false,
+  // A fresh fix that never settles (indoors, no satellites).
+  pending: false,
   current: null as {
     coords: { latitude: number; longitude: number; accuracy: number | null };
   } | null,
   last: null as {
     coords: { latitude: number; longitude: number; accuracy: number | null };
   } | null,
+  lastOptions: undefined as unknown,
   geocoded: [] as {
     city: string | null;
     region: string | null;
@@ -22,13 +31,18 @@ vi.mock("expo-localization", () => ({
 vi.mock("expo-location", () => ({
   Accuracy: { Balanced: 3 },
   getForegroundPermissionsAsync: () =>
-    Promise.resolve({ granted: location.granted }),
+    location.permissionThrows
+      ? Promise.reject(new Error("no native module"))
+      : Promise.resolve({ granted: location.granted }),
   getCurrentPositionAsync: () => {
     location.calls.push("current");
-    return Promise.resolve(location.current);
+    return location.pending
+      ? new Promise(() => undefined)
+      : Promise.resolve(location.current);
   },
-  getLastKnownPositionAsync: () => {
+  getLastKnownPositionAsync: (options: unknown) => {
     location.calls.push("last");
+    location.lastOptions = options;
     return Promise.resolve(location.last);
   },
   reverseGeocodeAsync: () => Promise.resolve(location.geocoded),
@@ -76,13 +90,46 @@ describe("readDeviceContext", () => {
     location.calls = [];
   });
 
-  it("reports the zone alone when location is not shared", async () => {
+  it("retracts the position when location is not shared", async () => {
     await expect(
       readDeviceContext({ shareLocation: false, mode: "foreground" }),
     ).resolves.toEqual({
       timezone: "Asia/Tokyo",
+      position: null,
     });
     expect(location.calls).toEqual([]);
+  });
+
+  it("gives up on a fresh fix that never arrives and reports the zone alone", async () => {
+    vi.useFakeTimers();
+    try {
+      location.pending = true;
+      const report = readDeviceContext({
+        shareLocation: true,
+        mode: "foreground",
+      });
+      await vi.advanceTimersByTimeAsync(FRESH_FIX_TIMEOUT_MS);
+      await expect(report).resolves.toEqual({ timezone: "Asia/Tokyo" });
+    } finally {
+      location.pending = false;
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks only for a recent last-known fix in the background", async () => {
+    await readDeviceContext({ shareLocation: true, mode: "background" });
+    expect(location.lastOptions).toEqual({ maxAge: LAST_KNOWN_FIX_MAX_AGE_MS });
+  });
+
+  it("reports the zone alone when the permission read itself fails", async () => {
+    location.permissionThrows = true;
+    try {
+      await expect(
+        readDeviceContext({ shareLocation: true, mode: "foreground" }),
+      ).resolves.toEqual({ timezone: "Asia/Tokyo" });
+    } finally {
+      location.permissionThrows = false;
+    }
   });
 
   it("takes a fresh fix in the foreground and the last known one in the background", async () => {

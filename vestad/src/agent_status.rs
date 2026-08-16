@@ -416,7 +416,7 @@ impl AgentStatusCache {
     /// The agents serving their WS tap now, each with the IANA zone its connect snapshot reported.
     /// An agent whose tap is down is absent: vestad holds no current zone for it, and a device fact
     /// delivered against a stale one would be wrong.
-    pub fn serving_timezones(&self) -> HashMap<String, String> {
+    pub fn serving_timezones(&self) -> crate::user_context::AgentZones {
         let zones = self.timezones_rx.borrow();
         self.agents_rx
             .borrow()

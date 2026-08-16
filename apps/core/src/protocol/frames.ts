@@ -19,9 +19,19 @@ export interface ReauthFrame {
   token: string
 }
 
+// The device's reported context, carried on the `client_context` frame and as the body of
+// `PUT /devices/{id}/context`. An absent field leaves the stored value alone; a `null` position
+// retracts it (location sharing off).
+export interface DeviceContext {
+  // The IANA timezone (every client).
+  timezone?: string
+  // The position (mobile, with the user's opt-in).
+  position?: DevicePosition | null
+}
+
 // `resync` is true when the socket replays its cached context on reconnect (not a fresh user focus),
 // so vestad never fires the presence notification on a mere reconnect or a gateway restart.
-export interface ClientContextFrame {
+export interface ClientContextFrame extends DeviceContext {
   type: "client_context"
   focused: boolean
   client: ClientKind
@@ -33,16 +43,6 @@ export interface ClientContextFrame {
   // The agent whose page is open on this client, or null on the roster / a non-agent screen / a
   // blurred window. Drives the per-agent presence notification, independently of `focused`.
   viewing?: string | null
-  // What the device reports about itself: its IANA timezone (every client) and its position (mobile,
-  // with the user's opt-in). vestad stores both per device and tells the agents about a change.
-  timezone?: string
-  position?: DevicePosition
-}
-
-// The device's reported context, the same shape the `PUT /devices/{id}/context` body takes.
-export interface DeviceContext {
-  timezone?: string
-  position?: DevicePosition
 }
 
 export type ClientKind = "web" | "mobile" | "desktop"
@@ -66,9 +66,7 @@ export function clientContextFrame(
     frame.deviceId = device.id
     frame.descriptor = device.descriptor
   }
-  if (context?.timezone !== undefined) frame.timezone = context.timezone
-  if (context?.position !== undefined) frame.position = context.position
-  return frame
+  return { ...frame, ...context }
 }
 
 export function encodeFrame(frame: ClientFrame): string {

@@ -157,12 +157,10 @@ def _compaction_tools(state: vm.State) -> list[tp.Any]:
 def _user_context_tools() -> list[tp.Any]:
     @tool(
         "user_devices",
-        "Where the user is, from their own devices: every phone, browser, and desktop app they have opened, "
-        "with the IANA timezone each one reports and, for a phone that shares its location, its position "
-        "(latitude, longitude, accuracy in metres) plus the place the phone geocoded (city, region, country) "
-        "and when it reported it. Use it to check the user's current timezone or whereabouts before "
-        "scheduling something time-bound, and after a `user-timezone` or `user-location` notification. "
-        "The freshest report (`positionAt`, `lastSeen`) is the best guess; `present` marks a device connected now.",
+        "Where the user is, from their own devices: each phone, browser, and desktop app with the IANA timezone "
+        "it reports and, for a phone that shares its location, its position and place. Use it before scheduling "
+        "something time-bound and after a `user-timezone` or `user-location` notification. The freshest report "
+        "is the best guess; `present` marks a device connected now.",
         {},
     )
     async def user_devices(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:

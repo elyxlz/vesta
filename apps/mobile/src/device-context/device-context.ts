@@ -8,28 +8,29 @@ import type { DeviceContext, DevicePlace, DevicePosition } from "@vesta/core";
 // which needs no "Always" permission).
 export type PositionMode = "foreground" | "background";
 
+// A fresh fix that takes longer than this (indoors, no satellites) is given up on, so the zone
+// report is never held back by the position.
+export const FRESH_FIX_TIMEOUT_MS = 15_000;
+// A last-known fix older than this is not reported: stamped as fresh by the gateway, a stale one
+// would place the user where they were, not where they are.
+export const LAST_KNOWN_FIX_MAX_AGE_MS = 60 * 60 * 1000;
+
 // A fix as expo-location hands it over, narrowed to what the wire carries.
-export interface Fix {
+interface Fix {
   latitude: number;
   longitude: number;
   accuracy: number | null;
 }
 
-// A reverse-geocode row as expo-location hands it over, narrowed to the macro parts.
-export interface Geocoded {
-  city: string | null;
-  region: string | null;
-  country: string | null;
-}
-
 // Read live on every call: expo-localization asks the OS, so a zone change lands on the next report.
-export function deviceTimezone(): string | undefined {
-  return getCalendars()[0].timeZone ?? undefined;
+function deviceTimezone(): string | undefined {
+  return getCalendars()[0]?.timeZone ?? undefined;
 }
 
+// `geocoded` is the reverse-geocode row as expo-location hands it over, narrowed to the macro parts.
 export function toDevicePosition(
   fix: Fix,
-  geocoded: Geocoded | null,
+  geocoded: DevicePlace | null,
 ): DevicePosition {
   const place: DevicePlace | null =
     geocoded && (geocoded.city ?? geocoded.region ?? geocoded.country) !== null
@@ -47,19 +48,34 @@ export function toDevicePosition(
   };
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
+}
+
 // The position, or undefined when the user has not granted location, no fix is available, or the
 // read fails: a report then carries the zone alone. Reverse geocoding is best-effort.
-export async function readDevicePosition(
+async function readDevicePosition(
   mode: PositionMode,
 ): Promise<DevicePosition | undefined> {
-  const permission = await Location.getForegroundPermissionsAsync();
-  if (!permission.granted) return undefined;
+  const permission = await Location.getForegroundPermissionsAsync().catch(
+    () => null,
+  );
+  if (!permission?.granted) return undefined;
   const fix =
     mode === "foreground"
-      ? await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        }).catch(() => null)
-      : await Location.getLastKnownPositionAsync().catch(() => null);
+      ? await withTimeout(
+          Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          }),
+          FRESH_FIX_TIMEOUT_MS,
+        ).catch(() => null)
+      : await Location.getLastKnownPositionAsync({
+          maxAge: LAST_KNOWN_FIX_MAX_AGE_MS,
+        }).catch(() => null);
   if (!fix) return undefined;
   const { latitude, longitude, accuracy } = fix.coords;
   const geocoded = await Location.reverseGeocodeAsync({
@@ -72,6 +88,8 @@ export async function readDevicePosition(
   );
 }
 
+// With sharing off the report carries `position: null`, which retracts the position the gateway
+// holds for this device; with sharing on but no fix, the field is absent and the stored one stands.
 export async function readDeviceContext(input: {
   shareLocation: boolean;
   mode: PositionMode;
@@ -79,9 +97,11 @@ export async function readDeviceContext(input: {
   const context: DeviceContext = {};
   const timezone = deviceTimezone();
   if (timezone !== undefined) context.timezone = timezone;
-  if (input.shareLocation) {
-    const position = await readDevicePosition(input.mode);
-    if (position !== undefined) context.position = position;
+  if (!input.shareLocation) {
+    context.position = null;
+    return context;
   }
+  const position = await readDevicePosition(input.mode);
+  if (position !== undefined) context.position = position;
   return context;
 }

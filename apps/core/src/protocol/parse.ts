@@ -161,12 +161,11 @@ function parseDevice(value: unknown): DeviceInfo | null {
   if (descriptor === null && device.descriptor !== null) return null
   const location = device.location == null ? null : str(device.location)
   if (location === null && device.location != null) return null
-  const timezone = device.timezone == null ? null : str(device.timezone)
-  if (timezone === null && device.timezone != null) return null
+  const timezone = nullableStr(device.timezone)
+  const positionAt = nullableStr(device.positionAt)
+  if (timezone === undefined || positionAt === undefined) return null
   const position = device.position == null ? null : parsePosition(device.position)
   if (position === null && device.position != null) return null
-  const positionAt = device.positionAt == null ? null : str(device.positionAt)
-  if (positionAt === null && device.positionAt != null) return null
   return {
     id,
     kind: kind as DeviceKind,
@@ -185,13 +184,13 @@ function num(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
-// A place part: absent or null is null; anything but a string is `undefined` (malformed).
+// An optional string field: absent or null is null; anything but a string is `undefined` (malformed).
 function nullableStr(value: unknown): string | null | undefined {
   if (value == null) return null
   return str(value) ?? undefined
 }
 
-export function parsePosition(value: unknown): DevicePosition | null {
+function parsePosition(value: unknown): DevicePosition | null {
   const position = record(value)
   if (position === null) return null
   const latitude = num(position.latitude)

@@ -12,10 +12,11 @@ use tokio::sync::broadcast;
 
 use crate::docker::{AgentOperation, AgentStatus, BuildPhase, ListEntry};
 use crate::settings::ServiceEntry;
-use crate::device_registry::{DeviceContext, DeviceInfo, DeviceRegistry};
+use crate::device_registry::{DeviceInfo, DeviceRegistry};
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 use crate::time_utils::now_epoch_secs;
 use crate::types::ClientKind;
+use crate::user_context::UserPresence;
 
 use super::hub::UserNotification;
 use super::presence::PRESENCE_NOTIFY_DELAY;
@@ -267,7 +268,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             }
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
-                    Ok(ClientFrame::ClientContext(ctx)) => {
+                    Ok(ClientFrame::ClientContext(mut ctx)) => {
                         if let Some(device_id) = ctx.device_id.clone() {
                             let newly = device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
                             if newly {
@@ -275,13 +276,14 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                                     resolve_location(&state, device_id.clone(), ip);
                                 }
                             }
-                            let context = DeviceContext { timezone: ctx.timezone.clone(), position: ctx.position.clone() };
+                            let context = std::mem::take(&mut ctx.context);
                             if !context.is_empty() {
-                                // The user is at a focused device; an unfocused replay only stores.
-                                let counts = ctx.focused;
+                                // The user is at a focused device; an unfocused frame or a resync
+                                // replay (context the gateway already had) only stores.
+                                let presence = if ctx.focused && !ctx.resync { UserPresence::AtDevice } else { UserPresence::StoreOnly };
                                 let state = state.clone();
                                 tokio::spawn(async move {
-                                    crate::user_context::report_device_context(&state, &device_id, context, counts).await;
+                                    crate::user_context::report_device_context(&state, &device_id, context, presence).await;
                                 });
                             }
                         }

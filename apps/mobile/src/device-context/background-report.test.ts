@@ -34,7 +34,6 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 }));
 vi.mock("@/storage/connection", () => ({
   readConnection: () => Promise.resolve(state.connection),
-  writeConnection: () => Promise.resolve(),
 }));
 vi.mock("@/controller/device-identity", () => ({
   deviceIdentity: () =>
@@ -87,6 +86,17 @@ describe("reportDeviceContextInBackground", () => {
     state.context = {};
     await reportDeviceContextInBackground();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never refreshes the session: an expiring access token skips the report", async () => {
+    state.connection = { ...connection, expiresAt: Date.now() + 60 * 1000 };
+    await reportDeviceContextInBackground();
+    expect(fetchMock).not.toHaveBeenCalled();
+    state.connection = connection;
+    fetchMock.mockResolvedValue(new Response("{}", { status: 401 }));
+    await expect(reportDeviceContextInBackground()).rejects.toThrow("401");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).not.toContain("/auth/refresh");
   });
 });
 

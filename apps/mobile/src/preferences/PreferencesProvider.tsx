@@ -19,7 +19,6 @@ import {
   type PreferencesState,
 } from "./model";
 
-
 export type { ThemePreference } from "./model";
 
 interface PreferencesValue extends PreferencesState {

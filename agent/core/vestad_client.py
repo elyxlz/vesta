@@ -35,6 +35,12 @@ def _agent_endpoint(path: str) -> AgentEndpoint | None:
     return AgentEndpoint(url=f"https://{host}:{port}/agents/{name}/{path}", token=token)
 
 
+def _agent_session(token: str) -> aiohttp.ClientSession:
+    """One session per call to vestad: its self-signed TLS, the shared timeout, and the agent token
+    header on every request."""
+    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=_TIMEOUT, headers={"X-Agent-Token": token})
+
+
 async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | None = None) -> bool:
     """POST /agents/{me}/{action} to vestad (action = "restart" | "stop"). Returns True when vestad
     accepted it — including the connection being cut mid-request, the expected path once vestad
@@ -44,10 +50,9 @@ async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | N
         return False
     url, token = endpoint
     body = None if reason is None else {"reason": reason.log_reason, "agent_message": reason.agent_message}
-    connector = aiohttp.TCPConnector(ssl=False)
     try:
-        async with aiohttp.ClientSession(connector=connector, timeout=_TIMEOUT) as session:
-            resp = await session.post(url, headers={"X-Agent-Token": token}, json=body)
+        async with _agent_session(token) as session:
+            resp = await session.post(url, json=body)
             resp.raise_for_status()
         # vestad answered 2xx without tearing us down yet (rare — a real restart/stop usually cuts
         # the connection first, below). The action was accepted.
@@ -81,10 +86,9 @@ async def send_user_notification(kind: str, title: str, body: str) -> None:
         return
     url, token = endpoint
     payload = {"kind": kind, "title": title, "body": body}
-    connector = aiohttp.TCPConnector(ssl=False)
     try:
-        async with aiohttp.ClientSession(connector=connector, timeout=_TIMEOUT) as session:
-            resp = await session.post(url, headers={"X-Agent-Token": token}, json=payload)
+        async with _agent_session(token) as session:
+            resp = await session.post(url, json=payload)
             resp.raise_for_status()
     except aiohttp.ClientError as exc:
         logger.warning(f"user notification to vestad failed ({kind}): {exc}")
@@ -100,10 +104,9 @@ async def fetch_user_devices() -> pyd.JsonValue | None:
     if endpoint is None:
         return None
     url, token = endpoint
-    connector = aiohttp.TCPConnector(ssl=False)
     try:
-        async with aiohttp.ClientSession(connector=connector, timeout=_TIMEOUT) as session:
-            resp = await session.get(url, headers={"X-Agent-Token": token})
+        async with _agent_session(token) as session:
+            resp = await session.get(url)
             resp.raise_for_status()
             body: pyd.JsonValue = await resp.json()
             return body

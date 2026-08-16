@@ -20,8 +20,8 @@ The timezone lives in the agent's config store (`~/agent/data/config.json`, key 
 
 The user's devices report where they are, and vestad tells you when that changes:
 
-- `source=vestad` `type=user-timezone`: a device the user is on reports a zone that differs from yours. The notification carries `device` (e.g. `Vesta Mobile on iOS`), `device_timezone`, and `agent_timezone`. You get it once per zone: it does not repeat while nothing changes.
-- `source=vestad` `type=user-location`: the phone's macro place changed (city and country), or it moved 25 km or more when no place name was known. The notification carries `place` (e.g. `Tokyo, Japan`) and `position` (`latitude`, `longitude`, `accuracyM`, `place`). Only a phone whose owner turned on location sharing in the app sends this.
+- `source=vestad` `type=user-timezone`: a device the user is on reports a zone that differs from yours. The notification carries `device` (e.g. `Vesta Mobile on iOS`), `device_timezone`, and `agent_timezone`. You get it once per zone per device: it does not repeat while nothing changes, and it starts over when you change your own timezone (a device still on the old zone is news again).
+- `source=vestad` `type=user-location`: the phone's macro place changed (city and country), or it moved a long way when no place name was known. The notification carries `place` (e.g. `Tokyo, Japan`), `latitude`, `longitude`, and `accuracy_m`. Only a phone whose owner turned on location sharing in the app sends this.
 - The `user_devices` tool lists every device with its current timezone, position, place, and report time, whenever you want to check rather than wait.
 
 Chat channels carry no zone: a WhatsApp or Telegram message tells you nothing about where it was sent from. There, what the user says ("landed in Tokyo") is the signal, as it always is.
