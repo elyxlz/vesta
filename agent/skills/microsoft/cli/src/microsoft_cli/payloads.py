@@ -25,17 +25,13 @@ class MailDraft:
     forward_id: str | None = None
 
 
-# Stamped onto every event this CLI creates, and surfaced by the list formatter.
+# Stamped on every event this CLI creates, and surfaced by the list formatter.
 #
-# WHY: once it is on the calendar, an event the agent created from a tip, a guess or a draft plan
-# is indistinguishable from one the user actually committed to. Reading it back days later and
-# treating it as the user's intent turns the agent's own suggestion into evidence, and any date
-# arithmetic built on it inherits the invention. A convention of writing "added by <agent>" into
-# the body does not survive: the default list does not fetch bodies, and nobody re-reads a body
-# they wrote themselves. `categories` is the field Outlook provides for exactly this, it is cheap
-# to select, and it renders as a label in the user's own client, so provenance is visible to BOTH
-# sides. It lives here because this module is a leaf; importing it from `calendar` would pull msal
-# into the formatter.
+# Once on the calendar, an event the agent created is indistinguishable from one the user
+# committed to, so the agent reads its own suggestion back as evidence of intent. A note in
+# the body cannot fix that: the default list does not select bodies. `categories` is selected
+# in both list modes and renders in the user's own client, so provenance is visible to both.
+# It lives in this leaf module because importing it from `calendar` pulls msal into `format`.
 AGENT_EVENT_CATEGORY = "vesta"
 
 
