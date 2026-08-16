@@ -249,7 +249,7 @@ family, and let the patient choose who is told.
   data when the user is alone, after a self-harm disclosure, or when the last thing you heard was
   deterioration. Know which case you are in.
 - Never let a staged reminder or scheduled nudge fire into a live emergency. If one is due within
-  the hour, **snooze it** (`tasks remind snooze <id> --in-hours N`); anything further out waits for
+  the hour, **snooze it** (`reminders snooze <id> --in-hours N`); anything further out waits for
   Afterwards. A cheerful reminder about a job application landing mid-crisis is its own small
   cruelty. **Snooze, never delete**: deleting is unrecoverable, and it silently drops something the
   user is counting on at the exact moment they have no attention to notice it missing.

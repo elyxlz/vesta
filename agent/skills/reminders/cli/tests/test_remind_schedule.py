@@ -1,16 +1,14 @@
-"""Unit tests for recurring reminder scheduling: preset + cron triggers, DST safety, and migration."""
+"""Unit tests for recurring reminder scheduling: preset + cron triggers and DST safety."""
 
 import json
-import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-from tasks_cli import commands, db
-from tasks_cli.config import Config
+from reminders_cli import commands, db
+from reminders_cli.config import Config
 
 
 def _trigger_data(config: Config, reminder_id: str) -> dict:
@@ -36,12 +34,21 @@ def _fire_days(expr: str, tz: str, start: str, count: int) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_daily_stores_local_cron_expr_and_tz(tmp_config: Config):
+def test_daily_with_tz_pins_the_zone_in_data_and_label(tmp_config: Config):
     result = commands.remind_set(
         tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-04-26T10:30:00", tz="Europe/London", recurring="daily")
     )
     assert result["schedule"] == "daily at 10:30 Europe/London"
     assert _trigger_data(tmp_config, result["id"]) == {"type": "cron", "expr": "30 10 * * *", "tz": "Europe/London"}
+
+
+def test_daily_without_tz_stores_no_zone_and_labels_none(tmp_config: Config, monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Rome")
+    result = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-04-26T10:30:00", recurring="daily")
+    )
+    assert result["schedule"] == "daily at 10:30"
+    assert _trigger_data(tmp_config, result["id"]) == {"type": "cron", "expr": "30 10 * * *"}
 
 
 def test_weekly_uses_local_day_of_week(tmp_config: Config):
@@ -174,8 +181,16 @@ def test_cron_step_expression(tmp_config: Config):
     assert (first.hour, first.minute) == (9, 0)
 
 
-def test_cron_requires_tz(tmp_config: Config):
-    with pytest.raises(ValueError, match="tz is required"):
+def test_cron_without_tz_stores_no_zone_and_labels_none(tmp_config: Config, monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Rome")
+    result = commands.remind_set(tmp_config, commands.ReminderSpec(message="weekday standup", cron="0 9 * * 1-5"))
+    assert _trigger_data(tmp_config, result["id"]) == {"type": "cron", "expr": "0 9 * * mon,tue,wed,thu,fri"}
+    assert result["schedule"] == "cron: 0 9 * * 1-5"
+
+
+def test_unusable_agent_tz_names_the_fix(tmp_config: Config, monkeypatch):
+    monkeypatch.setenv("TZ", "not-a-zone")
+    with pytest.raises(ValueError, match="Fix the timezone config or pass --tz"):
         commands.remind_set(tmp_config, commands.ReminderSpec(message="x", cron="0 9 * * *"))
 
 
@@ -198,7 +213,7 @@ def test_cron_invalid_expression_rejected(tmp_config: Config):
 
 
 def test_cron_reminder_restores_into_scheduler(tmp_config: Config):
-    from tasks_cli.scheduler import create_scheduler
+    from reminders_cli.scheduler import create_scheduler
 
     result = commands.remind_set(tmp_config, commands.ReminderSpec(message="weekday standup", cron="0 9 * * 1-5", tz="America/New_York"))
     scheduler = create_scheduler()
@@ -207,95 +222,66 @@ def test_cron_reminder_restores_into_scheduler(tmp_config: Config):
 
 
 # ---------------------------------------------------------------------------
-# Migration v2 -> v3: legacy UTC-baked cron rows become {expr, tz:"UTC"}
+# Unpinned schedules follow the agent's zone; pinned ones and one-shots do not
 # ---------------------------------------------------------------------------
 
 
-def _make_v2_db(data_dir: Path) -> sqlite3.Connection:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(data_dir / "tasks.db")
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-    conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-    conn.execute(
-        "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT, priority INTEGER, "
-        "due_date TEXT, created_at TEXT, completed_at TEXT)"
+def _restored_next_fire(config: Config, reminder_id: str) -> datetime:
+    """The next fire the daemon would arm for a reminder, via the same restore path startup runs."""
+    from reminders_cli.scheduler import create_scheduler
+
+    scheduler = create_scheduler()
+    scheduler.start(paused=True)
+    try:
+        commands.restore_all_jobs(config, scheduler, notif_dir=None)
+        return scheduler.get_job(reminder_id).next_run_time
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+def test_unpinned_daily_follows_the_agent_zone_across_restore(tmp_config: Config, monkeypatch):
+    """A daily reminder created without tz re-resolves its zone each time the daemon re-arms it,
+    so a timezone change plus restart moves the schedule to the new zone's wall clock."""
+    monkeypatch.setenv("TZ", "Europe/Rome")
+    result = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="brief", scheduled_datetime="2026-04-26T10:30:00", recurring="daily")
     )
-    conn.execute(
-        "CREATE TABLE reminders (id TEXT PRIMARY KEY, task_id TEXT, message TEXT NOT NULL, schedule_type TEXT, "
-        "scheduled_time TEXT, completed INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP, "
-        "trigger_data TEXT, auto_generated INTEGER DEFAULT 0)"
+
+    rome_fire = _restored_next_fire(tmp_config, result["id"]).astimezone(ZoneInfo("Europe/Rome"))
+    assert (rome_fire.hour, rome_fire.minute) == (10, 30)
+
+    monkeypatch.setenv("TZ", "America/New_York")
+    ny_fire = _restored_next_fire(tmp_config, result["id"]).astimezone(ZoneInfo("America/New_York"))
+    assert (ny_fire.hour, ny_fire.minute) == (10, 30)
+    assert ny_fire != rome_fire, "the same wall-clock time in a different zone is a different instant"
+
+
+def test_pinned_daily_holds_its_zone_across_a_tz_change(tmp_config: Config, monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Rome")
+    result = commands.remind_set(
+        tmp_config,
+        commands.ReminderSpec(message="market open", scheduled_datetime="2026-04-26T09:30:00", tz="America/New_York", recurring="daily"),
     )
-    return conn
+
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    fire = _restored_next_fire(tmp_config, result["id"]).astimezone(ZoneInfo("America/New_York"))
+
+    assert (fire.hour, fire.minute) == (9, 30)
 
 
-def _read_trigger(data_dir: Path, rid: str) -> dict:
-    with closing(db.get_db(data_dir)) as conn:
-        return json.loads(conn.execute("SELECT trigger_data FROM reminders WHERE id = ?", (rid,)).fetchone()["trigger_data"])
+def test_one_shot_at_without_tz_resolves_in_the_agent_zone(tmp_config: Config, monkeypatch):
+    """An --at one-shot without tz is fixed to the UTC instant of that local wall-clock time at
+    creation; 09:00 Tokyo is 00:00 UTC."""
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    result = commands.remind_set(tmp_config, commands.ReminderSpec(message="call", scheduled_datetime="2026-12-01T09:00:00"))
 
-
-def test_migration_v2_to_v3_rewrites_legacy_cron(tmp_path: Path):
-    data_dir = tmp_path / "tasks"
-    conn = _make_v2_db(data_dir)
-    legacy = [
-        ("daily1", {"type": "cron", "hour": 9, "minute": 0}),
-        ("weekly1", {"type": "cron", "day_of_week": "fri", "hour": 17, "minute": 0}),
-        ("monthly1", {"type": "cron", "day": 15, "hour": 9, "minute": 0}),
-        ("interval1", {"type": "interval", "hours": 1}),
-        ("date1", {"type": "date", "run_date": "2026-01-01T00:00:00+00:00"}),
-    ]
-    for rid, data in legacy:
-        conn.execute("INSERT INTO reminders (id, message, trigger_data) VALUES (?, ?, ?)", (rid, rid, json.dumps(data)))
-    conn.commit()
-    conn.close()
-
-    db.init_db(data_dir)
-
-    assert _read_trigger(data_dir, "daily1") == {"type": "cron", "expr": "0 9 * * *", "tz": "UTC"}
-    assert _read_trigger(data_dir, "weekly1") == {"type": "cron", "expr": "0 17 * * fri", "tz": "UTC"}
-    assert _read_trigger(data_dir, "monthly1") == {"type": "cron", "expr": "0 9 15 * *", "tz": "UTC"}
-    assert _read_trigger(data_dir, "interval1") == {"type": "interval", "hours": 1}  # non-cron untouched
-    assert _read_trigger(data_dir, "date1") == {"type": "date", "run_date": "2026-01-01T00:00:00+00:00"}
-    with closing(db.get_db(data_dir)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == db.SCHEMA_VERSION
-
-
-def test_migration_preserves_firing_instant(tmp_path: Path):
-    """A migrated legacy cron reminder must fire at the exact same UTC instant it did before."""
-    data_dir = tmp_path / "tasks"
-    conn = _make_v2_db(data_dir)
-    conn.execute(
-        "INSERT INTO reminders (id, message, trigger_data) VALUES (?, ?, ?)",
-        ("daily1", "standup", json.dumps({"type": "cron", "hour": 9, "minute": 30})),
-    )
-    conn.commit()
-    conn.close()
-
-    db.init_db(data_dir)
-    data = _read_trigger(data_dir, "daily1")
-    trigger = CronTrigger.from_crontab(data["expr"], timezone=ZoneInfo(data["tz"]))
-    nxt = trigger.get_next_fire_time(None, datetime(2026, 6, 1, 0, 0, tzinfo=UTC)).astimezone(UTC)
-    assert (nxt.hour, nxt.minute) == (9, 30)
-
-
-def test_migration_is_idempotent(tmp_path: Path):
-    data_dir = tmp_path / "tasks"
-    conn = _make_v2_db(data_dir)
-    conn.execute(
-        "INSERT INTO reminders (id, message, trigger_data) VALUES (?, ?, ?)",
-        ("daily1", "standup", json.dumps({"type": "cron", "hour": 9, "minute": 0})),
-    )
-    conn.commit()
-    conn.close()
-
-    db.init_db(data_dir)
-    first = _read_trigger(data_dir, "daily1")
-    db.init_db(data_dir)  # second run must not touch already-migrated rows
-    assert _read_trigger(data_dir, "daily1") == first == {"type": "cron", "expr": "0 9 * * *", "tz": "UTC"}
+    data = _trigger_data(tmp_config, result["id"])
+    assert data["type"] == "date"
+    assert data["run_date"] == "2026-12-01T00:00:00+00:00"
 
 
 # ---------------------------------------------------------------------------
-# remind list: recurring reminders stay visible past the one-shot limit
+# reminders list: recurring reminders stay visible past the one-shot limit
 # ---------------------------------------------------------------------------
 
 
@@ -388,7 +374,7 @@ def test_remind_list_next_run_keeps_the_column_for_one_shots(tmp_config: Config)
 
     listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
 
-    assert listed[one_shot["id"]]["next_run"] == "2020-01-01T09:00:00+00:00"
+    assert db.parse_datetime(listed[one_shot["id"]]["next_run"]) == datetime(2020, 1, 1, 9, 0, tzinfo=UTC)
 
 
 def test_remind_list_interval_row_never_reports_a_past_next_run(tmp_config: Config):
@@ -419,4 +405,4 @@ def test_remind_list_interval_row_keeps_a_live_future_column(tmp_config: Config)
 
     listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
 
-    assert listed[hourly["id"]]["next_run"] == live
+    assert db.parse_datetime(listed[hourly["id"]]["next_run"]) == db.parse_datetime(live)

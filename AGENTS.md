@@ -233,10 +233,10 @@ Two locations: `agent/skills/{name}/` for most skills, `agent/core/skills/{name}
 ```markdown
 ---
 name: tasks
-description: Tasks, to-dos, reminders, time-based alerts; create and manage. Requires daemon.
+description: Tasks, to-dos, deadlines, due dates; create, track, and manage. Requires daemon.
 ---
 
-# Tasks + Reminders (CLI: tasks)
+# Tasks (CLI: tasks)
 
 <usage, commands, examples: the body the agent reads when the skill activates>
 ```
