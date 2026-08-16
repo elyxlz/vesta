@@ -10,6 +10,10 @@ import {
   stopAgent,
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
+import {
+  sectionTitle,
+  showsAdvancedSections,
+} from "@/agent/settings/sections-model";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
@@ -22,9 +26,7 @@ import { FormSection, SwitchRow } from "@/components/ui/Form";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-// Android keeps the simple critical controls and hides the complex
-// sections (provider sign-in, voice, rules, files, host access, restores).
-const SHOWS_ADVANCED_SECTIONS = process.env.EXPO_OS === "ios";
+const SHOWS_ADVANCED_SECTIONS = showsAdvancedSections();
 
 function AgentSettingsContent() {
   const router = useRouter();
@@ -81,10 +83,10 @@ function AgentSettingsContent() {
           SHOWS_ADVANCED_SECTIONS ? (
             <>
               <Button pill variant="card" onPress={() => open("provider")}>
-                Provider and model
+                {sectionTitle("provider")}
               </Button>
               <Button pill variant="card" onPress={() => open("voice")}>
-                Voice
+                {sectionTitle("voice")}
               </Button>
             </>
           ) : undefined
@@ -116,17 +118,17 @@ function AgentSettingsContent() {
                   variant="cardGrouped"
                   onPress={() => open("notifications")}
                 >
-                  Notification rules
+                  {sectionTitle("notifications")}
                 </Button>
               </ButtonGroup>
               <Button pill variant="card" onPress={() => openPage("logs")}>
                 Logs
               </Button>
               <Button pill variant="card" onPress={() => open("files")}>
-                Files
+                {sectionTitle("files")}
               </Button>
               <Button pill variant="card" onPress={() => open("host-access")}>
-                Host access
+                {sectionTitle("host-access")}
               </Button>
             </>
           ) : (
