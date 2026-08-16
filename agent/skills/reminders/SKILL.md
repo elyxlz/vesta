@@ -17,6 +17,8 @@ reminders create "Contraceptive" --recurring daily --at "23:00" --tz "Europe/Rom
 reminders create "Evening check-in" --recurring daily --at "21:30" --tz "Europe/Rome" --fuzz-minutes 75
 reminders create "Weekdays 9am" --cron "0 9 * * 1-5" --tz "America/New_York"
 reminders list [--show-completed] [--show-deleted]   # reveal fired one-shots, or deleted ones marked [deleted]
+reminders get <id>                             # one reminder as JSON; resolves deleted ones too
+reminders get <id> --field next_run            # just that value (repeat --field for several, tab-separated)
 reminders snooze <id> --in-hours 4             # fire 4h from NOW; works on already-fired ones too
 reminders snooze <id> --at "2026-12-01T17:00:00" --tz "Europe/London"   # move it to a specific time
 reminders update <id> --message "..."

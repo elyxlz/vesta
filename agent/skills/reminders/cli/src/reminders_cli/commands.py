@@ -551,18 +551,32 @@ def remind_list(config: Config, *, limit: int | None = 50, show_completed: bool 
     where = f"WHERE {' AND '.join(conditions)} " if conditions else ""
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute(f"SELECT * FROM reminders {where}{order_clause}", [limit_param])
-        return [
-            {
-                "id": row["id"],
-                "message": row["message"],
-                "schedule": row["schedule_type"],
-                "next_run": _next_run_for_row(row),
-                "created_at": row["created_at"],
-                "status": "completed" if row["completed"] else "pending",
-                "deleted_at": row["deleted_at"],
-            }
-            for row in cursor
-        ]
+        return [_reminder_view(row) for row in cursor]
+
+
+# The fields `reminders get --field` accepts: the keys of the view every read command returns.
+REMINDER_FIELDS = ("id", "message", "schedule", "next_run", "created_at", "status", "deleted_at")
+
+
+def _reminder_view(row) -> dict:
+    return {
+        "id": row["id"],
+        "message": row["message"],
+        "schedule": row["schedule_type"],
+        "next_run": _next_run_for_row(row),
+        "created_at": row["created_at"],
+        "status": "completed" if row["completed"] else "pending",
+        "deleted_at": row["deleted_at"],
+    }
+
+
+def remind_get(config: Config, *, reminder_id: str) -> dict:
+    """One reminder by id. A soft-deleted one still resolves, so a past id can always be inspected."""
+    with closing(db.get_db(config.data_dir)) as conn:
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        if not row:
+            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'reminders list' to see active reminders.")
+        return _reminder_view(row)
 
 
 def remind_delete(config: Config, *, reminder_id: str) -> dict:
@@ -587,7 +601,7 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
     with closing(db.get_db(config.data_dir)) as conn:
         row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
         if not row:
-            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'remind list' to see active reminders.")
+            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'reminders list' to see active reminders.")
         trigger_data = json.loads(row["trigger_data"]) if row["trigger_data"] else {}
         if "type" in trigger_data and trigger_data["type"] != "date":
             raise ValueError("Recurring reminders fire again on their own; snooze only works on one-shot reminders (delete if unwanted)")
@@ -607,7 +621,7 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
 
         run_time = run_time.replace(microsecond=0)
         new_data = {"type": "date", "run_date": run_time.isoformat()}
-        # schedule_type is the human-readable label `remind list` prints, so it tracks the new fire time.
+        # schedule_type is the human-readable label `reminders list` prints, so it tracks the new fire time.
         new_schedule = f"once at {run_time.isoformat()}"
         conn.execute(
             "UPDATE reminders SET completed = 0, trigger_data = ?, scheduled_time = ?, schedule_type = ? WHERE id = ?",
@@ -630,7 +644,7 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
         reminder = cursor.fetchone()
         if not reminder:
-            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'remind list' to see active reminders.")
+            raise ValueError(f"Reminder '{reminder_id}' not found. Use 'reminders list' to see active reminders.")
         conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
         conn.commit()
 

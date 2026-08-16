@@ -36,6 +36,10 @@ def _create_app(config: Config) -> FastAPI:
     def set_reminder(body: commands.ReminderSpec):
         return commands.remind_set(config, body)
 
+    @app.get("/reminders/{reminder_id}")
+    def get_reminder(reminder_id: str):
+        return commands.remind_get(config, reminder_id=reminder_id)
+
     @app.patch("/reminders/{reminder_id}")
     def update_reminder(reminder_id: str, body: UpdateReminderBody):
         return commands.remind_update(config, reminder_id=reminder_id, message=body.message)

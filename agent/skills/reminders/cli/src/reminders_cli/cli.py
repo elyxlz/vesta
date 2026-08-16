@@ -90,6 +90,9 @@ def main():
         if cmd == "list":
             _list_cmd(config, argv[1:])
             return
+        if cmd == "get":
+            _get_cmd(config, argv[1:])
+            return
         if cmd == "create":
             result = _create_cmd(config, argv[1:])
         elif cmd == "delete":
@@ -129,6 +132,28 @@ def _list_cmd(config: Config, argv: list[str]) -> None:
     _print_list(args, reminders[:REMIND_LIST_PAGE_SIZE] if paged else reminders, fmt.format_reminder_list)
     if held_back > 0:
         print(f"... showing {REMIND_LIST_PAGE_SIZE} of {len(reminders)}. Use --limit <n> or --json to see them all.", file=sys.stderr)
+
+
+def _get_cmd(config: Config, argv: list[str]) -> None:
+    p = argparse.ArgumentParser(prog="reminders get")
+    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    p.add_argument("--id", default=None, dest="reminder_id")
+    p.add_argument(
+        "--field",
+        action="append",
+        default=None,
+        choices=list(commands.REMINDER_FIELDS),
+        help="Return only the named field(s). Repeat for multiple.",
+    )
+    args = p.parse_args(argv)
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders get <id> or reminders get --id <id>")
+    result = commands.remind_get(config, reminder_id=reminder_id)
+    if args.field:
+        # Raw field values: one field prints the value alone; multiple are tab-separated.
+        values = ["" if result[f] is None else str(result[f]) for f in args.field]
+        print(values[0] if len(values) == 1 else "\t".join(values))
+        return
+    print(json.dumps(result, indent=2))
 
 
 def _delete_cmd(config: Config, argv: list[str]) -> dict:
@@ -204,6 +229,7 @@ def _create_cmd(config: Config, argv: list[str]) -> dict:
 def _print_help():
     print("""usage: reminders create <message> [options]
        reminders list [--limit N] [--show-completed] [--show-deleted]
+       reminders get <id> [--field <name>]
        reminders snooze <id> --in-hours N | --at <iso> --tz <tz>
        reminders delete <id>
        reminders update <id> --message <msg>
@@ -229,6 +255,7 @@ create options:
 subcommands:
   create                Set a reminder
   list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
+  get                   One reminder by id, deleted ones included (--field prints just that value)
   snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at + --tz
   delete                Soft-delete a reminder: it never fires again and drops off list (see it with list --show-deleted)
   update                Update a reminder message""")
