@@ -45,10 +45,11 @@ export function ProviderStep({
       {logo}
       <StepHeading title={title} description={subtitle} />
       {oauthLink}
-      {children}
-      {/* Actions are one semantic group: a small gap between submit/error/back,
-          while the form's gap-5 keeps a big gap between heading, content, actions. */}
+      {/* Content, submit, error, and back are one tight group (gap-2), so the
+          input keeps the same small gap to the submit button as submit to back,
+          while the form's gap-5 keeps a big gap between heading, link, cluster. */}
       <div className="flex w-full flex-col items-center gap-2">
+        {children}
         <Button type="submit" className="h-12 w-full" disabled={submitDisabled}>
           {submitLabel}
         </Button>
