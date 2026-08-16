@@ -47,6 +47,11 @@ import {
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input";
 import { ChatLoadingSkeleton } from "@/components/chat-loading-skeleton";
+import contentCopyIcon from "../../assets/menu-icons/content-copy.xml";
+import editIcon from "../../assets/menu-icons/edit.xml";
+import replyIcon from "../../assets/menu-icons/reply.xml";
+import shareIcon from "../../assets/menu-icons/share.xml";
+import volumeUpIcon from "../../assets/menu-icons/volume-up.xml";
 import { useToast } from "@/components/native-toast";
 import { Text } from "@/components/ui/Typography";
 import {
@@ -83,22 +88,31 @@ const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
     id: "reply",
     title: "Reply",
     systemImage: "arrowshape.turn.up.left",
+    androidImage: replyIcon,
   },
-  copy: { id: "copy", title: "Copy", systemImage: "doc.on.doc" },
+  copy: {
+    id: "copy",
+    title: "Copy",
+    systemImage: "doc.on.doc",
+    androidImage: contentCopyIcon,
+  },
   "edit-resend": {
     id: "edit-resend",
     title: "Edit & Resend",
     systemImage: "pencil",
+    androidImage: editIcon,
   },
   "read-aloud": {
     id: "read-aloud",
     title: "Read Aloud",
     systemImage: "speaker.wave.2",
+    androidImage: volumeUpIcon,
   },
   share: {
     id: "share",
     title: "Share",
     systemImage: "square.and.arrow.up",
+    androidImage: shareIcon,
   },
 };
 
