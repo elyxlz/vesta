@@ -29,10 +29,6 @@ type ConnectionAttempt =
       message: string;
     };
 
-export default function RecentGatewaysScreen() {
-  return <RecentGatewaysContent />;
-}
-
 function gatewayName(gateway: RecentGateway): string {
   return new URL(gateway.url).host;
 }
@@ -49,7 +45,7 @@ function lastConnectedLabel(timestamp: number): string {
   return `${day} at ${time}`;
 }
 
-function RecentGatewaysContent() {
+export default function RecentGatewaysScreen() {
   const {
     recentGateways,
     connectRecentGateway,

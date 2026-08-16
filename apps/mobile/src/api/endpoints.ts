@@ -1,11 +1,8 @@
 import {
   RESTART_REASONS,
-  agentIsConnectable,
-  agentIsDown,
   normalizeProviderInfo,
   providerPutBody,
   restartBody,
-  type AgentStatus,
   type NotificationEvent,
   type ProviderInfo,
   type ProviderSelection,
@@ -42,29 +39,6 @@ export interface OpenRouterModelOption {
 
 export async function fetchManifest(api: ApiClient): Promise<Manifest> {
   return api.json("/manifest");
-}
-
-export async function createAgent(api: ApiClient, name: string): Promise<void> {
-  await api.request("/agents", api.jsonInit("POST", { name }));
-}
-
-export async function waitUntilRunning(
-  api: ApiClient,
-  name: string,
-  timeoutMs = 10 * 60 * 1000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const response = await api.json<{ status: AgentStatus }>(
-      `/agents/${encodeURIComponent(name)}`,
-    );
-    if (agentIsConnectable(response.status)) return;
-    if (agentIsDown(response.status)) {
-      throw new Error(`${name} could not start: ${response.status}.`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 750));
-  }
-  throw new Error(`${name} did not finish starting in time.`);
 }
 
 export async function provisionAgent(
