@@ -425,6 +425,26 @@ describe("liveCaptureEntries", () => {
       "android/maestro/flow-1/takeScreenshot/connect.png",
     );
   });
+
+  it("contains a root that fails mid-scan instead of throwing", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-live-"));
+    const flat = path.join(base, "shots");
+    await mkdir(flat, { recursive: true });
+    await writeFile(path.join(flat, "connect.png"), "shot");
+    const notADirectory = path.join(base, "not-a-directory");
+    await writeFile(notADirectory, "capture is rewriting this");
+
+    const entries = await liveCaptureEntries(
+      [
+        { platform: "android", directory: notADirectory, maestro: true },
+        { platform: "ios", directory: flat },
+      ],
+      base,
+    );
+
+    expect(entries.ios["connect.png"].src).toBe("shots/connect.png");
+    expect(entries.android).toEqual({});
+  });
 });
 
 describe("loadManifest", () => {

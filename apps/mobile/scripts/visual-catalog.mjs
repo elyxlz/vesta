@@ -1974,18 +1974,24 @@ export async function liveCaptureEntries(
     };
   };
   for (const root of roots) {
-    if (!(await exists(root.directory))) continue;
-    if (root.maestro) {
-      for (const file of await filesBelow(root.directory)) {
-        if (!file.endsWith(".png")) continue;
-        if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
-        await record(root.platform, file);
+    // A running capture rewrites these directories continuously, so any
+    // file or directory can vanish mid-scan; the next poll rescans.
+    try {
+      if (!(await exists(root.directory))) continue;
+      if (root.maestro) {
+        for (const file of await filesBelow(root.directory)) {
+          if (!file.endsWith(".png")) continue;
+          if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
+          await record(root.platform, file);
+        }
+        continue;
       }
+      for (const entry of await readdir(root.directory)) {
+        if (!entry.endsWith(".png")) continue;
+        await record(root.platform, path.join(root.directory, entry));
+      }
+    } catch {
       continue;
-    }
-    for (const entry of await readdir(root.directory)) {
-      if (!entry.endsWith(".png")) continue;
-      await record(root.platform, path.join(root.directory, entry));
     }
   }
   return entries;
