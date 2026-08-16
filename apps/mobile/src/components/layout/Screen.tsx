@@ -7,11 +7,9 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useBottomInset } from "@/components/layout/use-bottom-inset";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { spacing } from "@/theme/layout";
-
-const IS_IOS = process.env.EXPO_OS === "ios";
 
 interface ScreenProps {
   children: ReactNode;
@@ -31,7 +29,10 @@ export function Screen({
   transparent = false,
 }: ScreenProps) {
   const { colors } = usePreferences();
-  const insets = useSafeAreaInsets();
+  const flattened = StyleSheet.flatten([styles.content, contentStyle]);
+  const bottomPadding = useBottomInset(
+    typeof flattened.paddingBottom === "number" ? flattened.paddingBottom : 0,
+  );
   const backgroundColor = transparent ? "transparent" : colors.background;
   if (!scroll) {
     return (
@@ -40,21 +41,14 @@ export function Screen({
       </View>
     );
   }
-  // iOS adds the bottom safe-area inset through automatic content-inset
-  // adjustment; Android has no such mechanism, so fold it into the padding.
-  const flattened = StyleSheet.flatten([styles.content, contentStyle]);
-  const androidBottomInset = IS_IOS
-    ? null
-    : {
-        paddingBottom:
-          (typeof flattened.paddingBottom === "number"
-            ? flattened.paddingBottom
-            : 0) + insets.bottom,
-      };
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor }]}
-      contentContainerStyle={[styles.content, contentStyle, androidBottomInset]}
+      contentContainerStyle={[
+        styles.content,
+        contentStyle,
+        { paddingBottom: bottomPadding },
+      ]}
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"

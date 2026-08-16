@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Animated, KeyboardAvoidingView, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useBottomInset } from "@/components/layout/use-bottom-inset";
 import { SheetChrome } from "@/components/sheet-chrome";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -27,18 +27,16 @@ export function AuthSheet({
   gap,
 }: AuthSheetProps) {
   const { colors } = usePreferences();
-  const insets = useSafeAreaInsets();
+  const bottomPadding = useBottomInset(BASE_BOTTOM_PADDING);
   const [scrollY] = useState(() => new Animated.Value(0));
   const topPadding = hasGrabber ? 36 : 28;
   // iOS floats a native grabber above the sheet; Android renders none, so
   // the Material drag handle renders in content there.
   const grabberChrome =
     hasGrabber && IS_ANDROID ? <SheetChrome grabber /> : null;
-  // The iOS form sheet floats above the home indicator; the Android sheet
-  // reaches the screen bottom, so the gesture inset joins the padding.
   const contentStyle = [
     styles.content,
-    { paddingBottom: BASE_BOTTOM_PADDING + (IS_ANDROID ? insets.bottom : 0) },
+    { paddingBottom: bottomPadding },
     title ? null : { paddingTop: topPadding },
     gap === undefined ? null : { gap },
   ];

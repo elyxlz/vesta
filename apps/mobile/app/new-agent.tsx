@@ -2,6 +2,7 @@ import { StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/layout/Screen";
+import { useBottomInset } from "@/components/layout/use-bottom-inset";
 import { SheetChrome } from "@/components/sheet-chrome";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
@@ -11,6 +12,7 @@ import { useSession } from "@/session/SessionProvider";
 export default function NewAgentScreen() {
   const { connection } = useSession();
   const { colors } = usePreferences();
+  const bottomPadding = useBottomInset(24);
   const webUrl = connection
     ? `${connection.url.replace(/\/+$/, "")}/app/new`
     : "https://vesta.run/app/new";
@@ -18,7 +20,10 @@ export default function NewAgentScreen() {
   return (
     <>
       <SheetChrome grabber />
-      <Screen scroll={false} contentStyle={styles.screen}>
+      <Screen
+        scroll={false}
+        contentStyle={[styles.screen, { paddingBottom: bottomPadding }]}
+      >
         <View style={[styles.icon, { backgroundColor: colors.accentSoft }]}>
           <Ionicons name="desktop-outline" size={28} color={colors.accent} />
         </View>
@@ -56,7 +61,6 @@ const styles = StyleSheet.create({
     gap: 24,
     paddingHorizontal: 24,
     paddingTop: 36,
-    paddingBottom: 24,
   },
   icon: {
     width: 58,
