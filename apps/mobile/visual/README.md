@@ -32,6 +32,12 @@ default to `http://127.0.0.1:4173` and the Android commands to
 `http://127.0.0.1:4174`, so a capture on either platform can keep its own
 server while both show the full picture.
 
+The page also shows capture progress live: the server's `live.json` indexes
+the in-progress capture directories on both platforms, and while a capture
+runs, each shot swaps in as its file lands, with a spinner on every shot the
+run has not produced yet. When the capture publishes, the page reloads onto
+the final release.
+
 The current iOS reference target is two iPhone 17 simulators running iOS 26.4.
 Passing `--device "iPhone 17"` makes the target explicit and lets the runner
 create or reuse its dedicated two-simulator pair. The Android reference target

@@ -1,4 +1,6 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +11,7 @@ import {
   createInactivityWatchdog,
   createMaestroFailureParser,
   galleryHtml,
+  liveCaptureEntries,
   loadManifest,
   scenarioOnPlatform,
   shouldIgnoreWatchPath,
@@ -321,6 +324,77 @@ describe("unifiedCatalog", () => {
     expect(html).toContain('href="android/maestro/report.html"');
     expect(html).toContain("iOS · 2 × iPhone 17 · iOS 26.4");
     expect(html).toContain("Android · vesta-visual (Android emulator) · Android 16");
+  });
+
+  it("annotates each shot for the live-capture poll", () => {
+    const iosOnly = {
+      ...androidCatalog,
+      scenarios: [
+        androidCatalog.scenarios[0],
+        {
+          id: "provider",
+          screenshot: "provider.png",
+          captured: false,
+          expected: false,
+          description: "Provider settings",
+          group: "Agent settings",
+          image: "",
+          missingLabel: "iOS only",
+          title: "Provider",
+        },
+      ],
+    };
+    const html = galleryHtml(
+      unifiedCatalog(
+        {
+          ...iosCatalog,
+          scenarios: iosCatalog.scenarios.map((scenario) => ({
+            ...scenario,
+            screenshot: "connect.png",
+          })),
+        },
+        iosOnly,
+      ),
+    );
+
+    expect(html).toContain('data-screenshot="connect.png"');
+    expect(html).toContain('data-live-platform="ios"');
+    expect(html).toContain('data-live-platform="android"');
+    expect(html).toContain('data-expected="false"');
+    expect(html).toContain('fetch("live.json"');
+  });
+});
+
+describe("liveCaptureEntries", () => {
+  it("indexes flat and maestro capture files by newest per platform", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-live-"));
+    const flat = path.join(base, "watch/screenshots");
+    const maestro = path.join(base, "android/maestro/flow-1/takeScreenshot");
+    await mkdir(flat, { recursive: true });
+    await mkdir(maestro, { recursive: true });
+    await writeFile(path.join(flat, "connect.png"), "ios-shot");
+    await writeFile(path.join(flat, "notes.txt"), "ignored");
+    await writeFile(path.join(maestro, "connect.png"), "android-shot");
+
+    const entries = await liveCaptureEntries(
+      [
+        { platform: "ios", directory: flat },
+        { platform: "ios", directory: path.join(base, "missing") },
+        {
+          platform: "android",
+          directory: path.join(base, "android/maestro"),
+          maestro: true,
+        },
+      ],
+      base,
+    );
+
+    expect(entries.ios["connect.png"].src).toBe("watch/screenshots/connect.png");
+    expect(entries.ios["connect.png"].mtime).toBeGreaterThan(0);
+    expect(entries.ios["notes.txt"]).toBeUndefined();
+    expect(entries.android["connect.png"].src).toBe(
+      "android/maestro/flow-1/takeScreenshot/connect.png",
+    );
   });
 });
 

@@ -18,6 +18,8 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  androidCaptureScreenshotsDirectory as captureScreenshotsDirectory,
+  androidMaestroDirectory as maestroDirectory,
   androidVisualDirectory,
   assertHarnessBoundary,
   atomicWriteFile,
@@ -36,11 +38,6 @@ import {
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDirectory, "..");
 const screenshotsDirectory = path.join(androidVisualDirectory, "screenshots");
-const captureScreenshotsDirectory = path.join(
-  androidVisualDirectory,
-  "capture/screenshots",
-);
-const maestroDirectory = path.join(androidVisualDirectory, "maestro");
 const apkPath = path.join(androidVisualDirectory, "apk/app-release.apk");
 const nativeAndroidDirectory = path.join(mobileRoot, ".visual/native/android");
 const androidFingerprintPath = path.join(
@@ -679,12 +676,14 @@ export function catalogScenarios(allScenarios, release, sizes) {
       ? {
           ...scenario,
           captured: true,
+          expected: true,
           image: `screenshots/${release}/${scenario.screenshot}`,
           size: sizes.get(scenario.screenshot) ?? null,
         }
       : {
           ...scenario,
           captured: false,
+          expected: false,
           image: "",
           size: null,
           missingLabel: "iOS only",

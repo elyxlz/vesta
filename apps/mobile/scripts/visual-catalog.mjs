@@ -24,6 +24,14 @@ const mobileRoot = path.resolve(scriptDirectory, "..");
 const repositoryRoot = path.resolve(mobileRoot, "../..");
 const visualDirectory = path.join(mobileRoot, ".visual");
 export const androidVisualDirectory = path.join(visualDirectory, "android");
+export const androidMaestroDirectory = path.join(
+  androidVisualDirectory,
+  "maestro",
+);
+export const androidCaptureScreenshotsDirectory = path.join(
+  androidVisualDirectory,
+  "capture/screenshots",
+);
 const screenshotsDirectory = path.join(visualDirectory, "screenshots");
 const captureScreenshotsDirectory = path.join(
   visualDirectory,
@@ -1098,17 +1106,23 @@ function scenarioCaptures(scenario) {
         image: scenario.image,
         size: scenario.size,
         missingLabel: scenario.missingLabel,
+        expected: scenario.expected ?? true,
       },
     ]
   );
 }
 
-function captureShotHtml(scenario, capture) {
+function captureShotHtml(scenario, capture, defaultPlatform) {
   const subject = capture.platform
     ? `${scenario.title} on ${capture.platform}`
     : scenario.title;
+  const livePlatform = (capture.platform || defaultPlatform).toLowerCase();
   return `
-          <div class="shot">
+          <div class="shot" data-screenshot="${escapeHtml(
+            scenario.screenshot,
+          )}" data-live-platform="${livePlatform}" data-expected="${
+            capture.expected === false ? "false" : "true"
+          }">
             <button class="preview"${
               capture.captured
                 ? ` data-image="${escapeHtml(capture.image)}"`
@@ -1140,6 +1154,7 @@ function captureShotHtml(scenario, capture) {
 
 export function galleryHtml(catalog) {
   const catalogJson = JSON.stringify(catalog).replaceAll("<", "\\u003c");
+  const defaultPlatform = catalog.platform === "android" ? "android" : "ios";
   const scenarioGroups = new Map();
   let platformColumns = 1;
   for (const scenario of catalog.scenarios) {
@@ -1157,7 +1172,7 @@ export function galleryHtml(catalog) {
           return `
         <article class="card">
           <div class="shots" style="--shots: ${captures.length}">${captures
-            .map((capture) => captureShotHtml(scenario, capture))
+            .map((capture) => captureShotHtml(scenario, capture, defaultPlatform))
             .join("")}</div>
           <div class="card-copy">
             <h3>${escapeHtml(scenario.title)}</h3>
@@ -1330,11 +1345,22 @@ export function galleryHtml(catalog) {
       text-transform: uppercase;
     }
     .card:hover { transform: translateY(-2px); }
-    body[data-capture-state="capturing"] .card {
-      opacity: .42;
-      filter: saturate(.55);
-      pointer-events: none;
+    .shot.pending .device-screen::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 26px;
+      height: 26px;
+      margin: -13px 0 0 -13px;
+      border: 3px solid #b8a7ff35;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: status-spin .8s linear infinite;
     }
+    .shot.pending img { opacity: .35; }
+    .shot.pending .missing { visibility: hidden; }
+    .shot.fresh .preview { border-color: #7f6fd4; }
     .capture-status {
       position: fixed;
       top: 16px;
@@ -1526,10 +1552,10 @@ export function galleryHtml(catalog) {
     window.__VISUAL_CATALOG__ = ${catalogJson};
     const dialog = document.querySelector("#lightbox");
     const dialogImage = dialog.querySelector("img");
-    document.querySelectorAll(".preview[data-image]").forEach((button) => {
+    document.querySelectorAll(".preview").forEach((button) => {
       button.addEventListener("click", () => {
         const image = button.querySelector("img");
-        if (!image) return;
+        if (!image || !button.dataset.image) return;
         dialogImage.src = button.dataset.image;
         dialogImage.alt = image.alt;
         dialog.showModal();
@@ -1560,15 +1586,52 @@ export function galleryHtml(catalog) {
       }
     }
     const generatedAt = window.__VISUAL_CATALOG__.generatedAt;
+    const publishedMs = Date.parse(generatedAt);
+    function applyLive(live) {
+      let active = false;
+      for (const platform of ["ios", "android"]) {
+        for (const entry of Object.values(live[platform] ?? {})) {
+          if (entry.mtime > publishedMs) active = true;
+        }
+      }
+      document.querySelectorAll(".shot[data-screenshot]").forEach((shot) => {
+        if (shot.dataset.expected === "false") return;
+        const platformEntries = live[shot.dataset.livePlatform] ?? {};
+        const entry = platformEntries[shot.dataset.screenshot];
+        const fresh = Boolean(entry && entry.mtime > publishedMs);
+        shot.classList.toggle("pending", active && !fresh);
+        shot.classList.toggle("fresh", fresh);
+        if (!fresh) return;
+        const button = shot.querySelector(".preview");
+        const screen = shot.querySelector(".device-screen");
+        let image = screen.querySelector("img");
+        if (!image) {
+          screen.textContent = "";
+          image = document.createElement("img");
+          image.alt = shot.dataset.screenshot;
+          screen.appendChild(image);
+        }
+        const stamp = String(entry.mtime);
+        if (image.dataset.liveStamp !== stamp) {
+          const src = entry.src + "?v=" + stamp;
+          image.src = src;
+          image.dataset.liveStamp = stamp;
+          button.dataset.image = src;
+        }
+      });
+    }
     window.setInterval(async () => {
       if (document.visibilityState === "hidden") return;
       try {
-        const [iosResponse, androidResponse, statusResponse] = await Promise.all([
-          fetch("catalog.json", { cache: "no-store" }),
-          fetch("android/catalog.json", { cache: "no-store" }),
-          fetch("status.json", { cache: "no-store" }),
-        ]);
+        const [iosResponse, androidResponse, statusResponse, liveResponse] =
+          await Promise.all([
+            fetch("catalog.json", { cache: "no-store" }),
+            fetch("android/catalog.json", { cache: "no-store" }),
+            fetch("status.json", { cache: "no-store" }),
+            fetch("live.json", { cache: "no-store" }),
+          ]);
         if (statusResponse.ok) showCaptureStatus(await statusResponse.json());
+        if (liveResponse.ok) applyLive(await liveResponse.json());
         const stamps = [];
         for (const response of [iosResponse, androidResponse]) {
           if (response.ok) stamps.push((await response.json()).generatedAt);
@@ -1594,6 +1657,7 @@ function platformCapture(label, scenario, imagePrefix) {
     missingLabel: scenario.captured
       ? undefined
       : (scenario.missingLabel ?? "Not captured yet"),
+    expected: scenario.expected ?? true,
   };
 }
 
@@ -1604,6 +1668,7 @@ function missingCapture(label) {
     image: "",
     size: null,
     missingLabel: "Not captured yet",
+    expected: true,
   };
 }
 
@@ -1665,6 +1730,48 @@ async function storedCatalog(directory) {
   const file = path.join(directory, "catalog.json");
   if (!(await exists(file))) return null;
   return JSON.parse(await readFile(file, "utf8"));
+}
+
+const LIVE_CAPTURE_ROOTS = [
+  { platform: "ios", directory: watchScreenshotsDirectory },
+  { platform: "ios", directory: captureScreenshotsDirectory },
+  { platform: "android", directory: androidCaptureScreenshotsDirectory },
+  { platform: "android", directory: androidMaestroDirectory, maestro: true },
+];
+
+// Index of in-progress capture screenshots: platform -> filename -> newest
+// file, with src relative to the gallery root so the page can load it live.
+export async function liveCaptureEntries(
+  roots = LIVE_CAPTURE_ROOTS,
+  baseDirectory = visualDirectory,
+) {
+  const entries = { ios: {}, android: {} };
+  const record = async (platform, file) => {
+    const name = path.basename(file);
+    const mtime = Math.round((await stat(file)).mtimeMs);
+    const existing = entries[platform][name];
+    if (existing && existing.mtime >= mtime) return;
+    entries[platform][name] = {
+      src: path.relative(baseDirectory, file).split(path.sep).join("/"),
+      mtime,
+    };
+  };
+  for (const root of roots) {
+    if (!(await exists(root.directory))) continue;
+    if (root.maestro) {
+      for (const file of await filesBelow(root.directory)) {
+        if (!file.endsWith(".png")) continue;
+        if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
+        await record(root.platform, file);
+      }
+      continue;
+    }
+    for (const entry of await readdir(root.directory)) {
+      if (!entry.endsWith(".png")) continue;
+      await record(root.platform, path.join(root.directory, entry));
+    }
+  }
+  return entries;
 }
 
 export async function composedCatalog(overrides = {}) {
@@ -1861,6 +1968,14 @@ export async function serveCatalog(port, shouldOpen) {
         "Cache-Control": "no-store",
       });
       response.end(`${JSON.stringify(visualCatalogStatus)}\n`);
+      return;
+    }
+    if (pathname === "/live.json") {
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      response.end(`${JSON.stringify(await liveCaptureEntries())}\n`);
       return;
     }
     if (pathname === "/" || pathname === "/index.html") {
