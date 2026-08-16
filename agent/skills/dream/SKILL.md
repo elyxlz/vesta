@@ -197,7 +197,7 @@ The user reviews this summary, so it's an accountability record, not a private l
 
 Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
 
-**Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `tasks` skill on your own channel.
+**Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `reminders` skill on your own channel.
 
 ## Commit the day
 

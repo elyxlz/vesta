@@ -40,18 +40,6 @@ class UpdateTaskBody(BaseModel):
     clear_due: bool = False
 
 
-class UpdateReminderBody(BaseModel):
-    message: str
-
-
-class SnoozeReminderBody(BaseModel):
-    in_minutes: int | None = None
-    in_hours: int | None = None
-    in_days: int | None = None
-    at: str | None = None
-    tz: str | None = None
-
-
 # --- Task update (app path) ---
 
 
@@ -93,12 +81,12 @@ def _create_app(config: Config, notif_dir: Path) -> FastAPI:
     # -- Tasks --
 
     @app.get("/tasks")
-    def list_tasks(show_completed: bool = False):
-        return commands.list_tasks(config, show_completed=show_completed)
+    def list_tasks(show_completed: bool = False, show_deleted: bool = False):
+        return commands.list_tasks(config, show_completed=show_completed, show_deleted=show_deleted)
 
     @app.get("/tasks/search")
-    def search_tasks(q: str = Query(), show_completed: bool = False):
-        return commands.search_tasks(config, query=q, show_completed=show_completed)
+    def search_tasks(q: str = Query(), show_completed: bool = False, show_deleted: bool = False):
+        return commands.search_tasks(config, query=q, show_completed=show_completed, show_deleted=show_deleted)
 
     @app.post("/tasks", status_code=201)
     def add_task(body: AddTaskBody):
@@ -127,36 +115,6 @@ def _create_app(config: Config, notif_dir: Path) -> FastAPI:
     @app.delete("/tasks/{task_id}")
     def delete_task(task_id: str):
         return commands.delete_task(config, task_id=task_id)
-
-    # -- Reminders --
-
-    @app.get("/reminders")
-    def list_reminders(task_id: str | None = None, limit: int = 50):
-        return commands.remind_list(config, task_id=task_id, limit=limit)
-
-    @app.post("/reminders", status_code=201)
-    def set_reminder(body: commands.ReminderSpec):
-        return commands.remind_set(config, body)
-
-    @app.patch("/reminders/{reminder_id}")
-    def update_reminder(reminder_id: str, body: UpdateReminderBody):
-        return commands.remind_update(config, reminder_id=reminder_id, message=body.message)
-
-    @app.post("/reminders/{reminder_id}/snooze")
-    def snooze_reminder(reminder_id: str, body: SnoozeReminderBody):
-        return commands.remind_snooze(
-            config,
-            reminder_id=reminder_id,
-            in_minutes=body.in_minutes,
-            in_hours=body.in_hours,
-            in_days=body.in_days,
-            at=body.at,
-            tz=body.tz,
-        )
-
-    @app.delete("/reminders/{reminder_id}")
-    def delete_reminder(reminder_id: str):
-        return commands.remind_delete(config, reminder_id=reminder_id)
 
     return app
 

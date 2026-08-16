@@ -113,7 +113,7 @@ browser launch   # Camoufox is stealth by default; handles Cloudflare
 ### Post-Booking Checklist
 1. Capture booking confirmation number from the confirmation page
 2. Create calendar event (use flight time in local airport timezone)
-3. Set 24h-before check-in reminder via `tasks remind`
+3. Set 24h-before check-in reminder via `reminders create`
 4. Report booking details to user: airline, flight number, route, times, price, booking ref
 
 ### Subagent Template for Trip.com Booking

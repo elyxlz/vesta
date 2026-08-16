@@ -27,19 +27,16 @@ interface Task {
 
 interface Reminder {
   id: string
-  task_id: string | null
   message: string
   schedule: string
   next_run: string | null
-  auto_generated: boolean
   status: string
 }
 
-// A "cron" is a recurring reminder: its schedule is not a one-shot ("once at ...")
-// and not an auto-generated task-due nudge ("auto: ...").
+// A "cron" is a recurring reminder: its schedule is not a one-shot ("once at ...").
 function isRecurring(r: Reminder): boolean {
   const s = (r.schedule || "").trim().toLowerCase()
-  return !r.auto_generated && !s.startsWith("once") && !s.startsWith("auto")
+  return !s.startsWith("once")
 }
 
 function relNext(next: string | null): string {
@@ -110,9 +107,10 @@ export function TasksPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data: Task[] = await res.json()
       setTasks(Array.isArray(data) ? data.filter((t) => t.status !== "done") : [])
-      // Reminders (crons) are best-effort: a failure here must not break tasks.
+      // Reminders (crons) come from the reminders skill's own service and are best-effort:
+      // a failure here (skill inactive, daemon down) must not break tasks.
       try {
-        const remRes = await apiFetch("tasks/reminders")
+        const remRes = await apiFetch("reminders/reminders")
         if (remRes.ok) {
           const remData = await remRes.json()
           const list: Reminder[] = Array.isArray(remData) ? remData : (remData?.reminders ?? [])
