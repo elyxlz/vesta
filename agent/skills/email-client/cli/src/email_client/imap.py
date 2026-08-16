@@ -520,9 +520,24 @@ _HTML_BLOCK_TAGS = {
     "footer",
 }
 _HTML_CELL_TAGS = {"td", "th"}
-# Elements whose text is markup, not message. ``head`` carries the stylesheet a
-# bulk sender puts in front of every mail, which is what fills a body slice.
-_HTML_SKIP_TAGS = ("head", "script", "style")
+# Elements whose text is markup, not message. Their end tags are MANDATORY in HTML,
+# so depth counting is safe for these two.
+_HTML_SKIP_TAGS = ("script", "style")
+# ``head`` is a flag, never a depth count: its end tag is OPTIONAL in HTML, so a depth
+# only ``</head>`` decrements never returns to zero on the mail that omits it, and every
+# word of the message is dropped while ``get`` still answers successfully. It closes the
+# way the HTML parsing spec closes it: explicitly by ``</head>``, or IMPLICITLY at the
+# first start tag that cannot legally appear inside it, ``<body>`` included.
+_HTML_HEAD_ONLY_TAGS = {
+    "title",
+    "base",
+    "link",
+    "style",
+    "meta",
+    "script",
+    "noscript",
+    "template",
+}
 
 
 class _HTMLToText(HTMLParser):
@@ -536,10 +551,17 @@ class _HTMLToText(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self._skip_depth = 0
+        self._in_head = False
         self._href: str | None = None
         self._anchor_start = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "head":
+            self._in_head = True
+            return
+        # The implicit close. Without this, a missing </head> swallowed the whole message.
+        if self._in_head and tag not in _HTML_HEAD_ONLY_TAGS:
+            self._in_head = False
         if tag in _HTML_SKIP_TAGS:
             self._skip_depth += 1
         elif tag == "a":
@@ -549,7 +571,9 @@ class _HTMLToText(HTMLParser):
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in _HTML_SKIP_TAGS and self._skip_depth:
+        if tag == "head":
+            self._in_head = False
+        elif tag in _HTML_SKIP_TAGS and self._skip_depth:
             self._skip_depth -= 1
         elif tag == "a":
             href = self._href
@@ -566,7 +590,7 @@ class _HTMLToText(HTMLParser):
             self.parts.append("\n")
 
     def handle_data(self, data: str) -> None:
-        if not self._skip_depth:
+        if not self._skip_depth and not self._in_head:
             self.parts.append(data)
 
     def get_text(self) -> str:
