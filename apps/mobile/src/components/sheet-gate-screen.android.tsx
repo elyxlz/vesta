@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { StyleSheet, View } from "react-native";
+import { useEffect, type ReactNode } from "react";
+import { BackHandler, StyleSheet, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { VestaBrand } from "@/components/VestaBrand";
@@ -15,6 +15,17 @@ const SCRIM_COLOR = "rgba(0, 0, 0, 0.2)";
 export function SheetGateScreen({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
   const { colors, dark } = usePreferences();
+  // The hardware back button must not pop a blocking gate: the owning gate would only re-push it
+  // with animation "none", blinking the screen. Programmatic dismissal stays untouched.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => true,
+    );
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
