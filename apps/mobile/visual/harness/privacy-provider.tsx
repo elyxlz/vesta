@@ -69,7 +69,7 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
       locked,
       authenticating,
       authenticationName:
-        process.env.EXPO_OS === "ios" ? "Face ID" : "device authentication",
+        process.env.EXPO_OS === "ios" ? "Face ID" : "fingerprint",
       initializationError,
       unlockError,
       retryInitialization,
