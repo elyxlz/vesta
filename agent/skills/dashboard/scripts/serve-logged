@@ -16,8 +16,29 @@
 # it went. The cost is one extra shell process between the daemon's pid record and vite. The daemon
 # signals the recorded pid on stop, and this shell forwards TERM/INT to the child so that path still
 # terminates the server rather than orphaning it.
+#
+# THE WRAPPER MUST NOT OUTLIVE ITS CHILD BY EVEN A MOMENT, and the first version of this script did.
+# `wait` returns as soon as a TRAPPED SIGNAL IS HANDLED, not when the child exits, so on `daemon stop`
+# the trap fired, `wait` returned instantly, and this shell logged EXITED and quit while vite was
+# still running. Reproduced deliberately with a child that traps and ignores TERM: the wrapper exited
+# 143 reporting "child alive? YES" and left an orphan holding the port.
+#
+# That is worse than having no wrapper, because the daemon records THIS shell's pid: `await_gone`
+# then sees the recorded pid vanish, reports {"status":"stopped"}, and its SIGKILL escalation is
+# aimed at a pid that is already dead. A wedged vite keeps port 61002 and the next `start` cannot
+# bind, while `status` says the daemon is down. The whole contract rests on this shell being alive
+# for exactly as long as the server is, so the loop below waits for the child to be GENUINELY gone
+# and escalates to SIGKILL itself if the child ignores TERM.
+#
+# Found by an external review on PR 2081 (7 daemon-contract tests red), confirmed here rather than
+# taken on trust, then verified fixed in all three directions: a child that handles TERM exits 0 with
+# no orphan, a child that ignores TERM is SIGKILLed after the grace period with no orphan, and a child
+# that exits on its own still reports its own code (7) rather than a signal.
 
 LOG="${LOG:-$HOME/agent/logs/dashboard.log}"
+# How long the server may take to shut down cleanly before this escalates. Generous, because a slow
+# clean exit is normal under load and killing it early loses whatever it was flushing.
+TERM_GRACE_SECS=${DASHBOARD_TERM_GRACE_SECS:-10}
 stamp() { date -Is 2>/dev/null || date; }
 
 echo "[$(stamp)] dashboard: starting (wrapper pid $$, PORT=${PORT:-unset})" >> "$LOG"
@@ -30,6 +51,28 @@ trap 'kill -TERM "$child" 2>/dev/null' TERM INT
 
 wait "$child"
 code=$?
+
+# A single `wait` is not proof the child is gone: if our own trap interrupted it, the child is still
+# shutting down, or refusing to. Only leave once it is actually dead.
+if kill -0 "$child" 2>/dev/null; then
+    ticks=0
+    max=$((TERM_GRACE_SECS * 5))
+    while kill -0 "$child" 2>/dev/null && [ "$ticks" -lt "$max" ]; do
+        sleep 0.2
+        ticks=$((ticks + 1))
+    done
+    if kill -0 "$child" 2>/dev/null; then
+        echo "[$(stamp)] dashboard: server ignored SIGTERM for ${TERM_GRACE_SECS}s, escalating to SIGKILL" >> "$LOG"
+        kill -KILL "$child" 2>/dev/null
+        while kill -0 "$child" 2>/dev/null; do sleep 0.1; done
+        code=137
+    else
+        # Reap it and prefer its real status. 127 means it was already reaped, so keep what we had.
+        wait "$child" 2>/dev/null
+        reaped=$?
+        [ "$reaped" -ne 127 ] && code=$reaped
+    fi
+fi
 # 128+N is the shell's encoding of "killed by signal N", and it is the case that matters here:
 # a silent death with no stderr is almost always a signal rather than a clean non-zero exit.
 if [ "$code" -gt 128 ]; then
