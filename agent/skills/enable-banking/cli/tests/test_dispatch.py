@@ -94,9 +94,9 @@ def test_summary_aggregates(monkeypatch, capsys):
     accounts = [{"uid": "u1", "name": "Main", "currency": "GBP"}]
     conf = {"app_id": "a1", "key_path": "/k.pem", "session_id": "s1", "accounts": accounts}
     txns = [
-        {"credit_debit_indicator": "DBIT", "transaction_amount": {"amount": "10"}, "creditor_name": "Shop"},
-        {"credit_debit_indicator": "DBIT", "transaction_amount": {"amount": "5"}, "creditor_name": "Shop"},
-        {"credit_debit_indicator": "CRDT", "transaction_amount": {"amount": "99"}, "creditor_name": "Pay"},
+        {"credit_debit_indicator": "DBIT", "transaction_amount": {"amount": "10", "currency": "GBP"}, "creditor_name": "Shop"},
+        {"credit_debit_indicator": "DBIT", "transaction_amount": {"amount": "5", "currency": "GBP"}, "creditor_name": "Shop"},
+        {"credit_debit_indicator": "CRDT", "transaction_amount": {"amount": "99", "currency": "GBP"}, "creditor_name": "Pay"},
     ]
     out, _ = run(
         monkeypatch,
@@ -105,9 +105,9 @@ def test_summary_aggregates(monkeypatch, capsys):
         conf,
         {"get_transactions": lambda c, uid, date_from, date_to: list(txns)},
     )
-    assert out["grand_total"] == 15.0
+    assert out["grand_total"] == {"GBP": 15.0}
     assert out["transaction_count"] == 2
-    assert out["categories"] == [{"category": "Shop", "total": 15.0, "count": 2}]
+    assert out["categories"] == [{"category": "Shop", "currency": "GBP", "total": 15.0, "count": 2}]
     assert out["period"] == {"from": "2026-03-01", "to": "2026-04-01"}
 
 
