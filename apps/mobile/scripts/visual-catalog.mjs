@@ -1786,7 +1786,8 @@ export function galleryHtml(catalog) {
         ).length;
         const fresh = freshCounts[platform] ?? 0;
         progress.hidden = !running && fresh === 0;
-        progress.textContent = fresh + "/" + total;
+        progress.textContent =
+          running && fresh === 0 ? "preparing" : fresh + "/" + total;
         const failed = Boolean(run && !running && run.exitCode);
         row.dataset.state = failed ? "failed" : "ok";
         if (failed) {
