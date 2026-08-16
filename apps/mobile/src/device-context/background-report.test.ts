@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   defined: [] as string[],
   registered: [] as { name: string; options: unknown }[],
   status: 2,
+  written: [] as ConnectionConfig[],
 }));
 vi.mock("expo-background-task", () => ({
   BackgroundTaskStatus: { Restricted: 1, Available: 2 },
@@ -34,6 +35,10 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 }));
 vi.mock("@/storage/connection", () => ({
   readConnection: () => Promise.resolve(state.connection),
+  writeConnection: (next: ConnectionConfig) => {
+    state.written.push(next);
+    return Promise.resolve();
+  },
 }));
 vi.mock("@/controller/device-identity", () => ({
   deviceIdentity: () =>
@@ -57,6 +62,7 @@ describe("reportDeviceContextInBackground", () => {
     state.connection = connection;
     state.preferences = null;
     state.context = { timezone: "Asia/Tokyo" };
+    state.written = [];
     fetchMock.mockReset();
     fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -88,15 +94,35 @@ describe("reportDeviceContextInBackground", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("never refreshes the session: an expiring access token skips the report", async () => {
+  it("refreshes an expiring session, writes the rotated tokens, and reports with them", async () => {
     state.connection = { ...connection, expiresAt: Date.now() + 60 * 1000 };
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith("/auth/refresh")
+          ? new Response(
+              JSON.stringify({
+                access_token: "rotated-access",
+                refresh_token: "rotated-refresh",
+                expires_in: 3600,
+              }),
+              { status: 200 },
+            )
+          : new Response("{}", { status: 200 }),
+      ),
+    );
     await reportDeviceContextInBackground();
-    expect(fetchMock).not.toHaveBeenCalled();
-    state.connection = connection;
-    fetchMock.mockResolvedValue(new Response("{}", { status: 401 }));
-    await expect(reportDeviceContextInBackground()).rejects.toThrow("401");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).not.toContain("/auth/refresh");
+    const urls = fetchMock.mock.calls.map((call) => call[0] as string);
+    expect(urls).toEqual([
+      "https://gateway.example/auth/refresh",
+      "https://gateway.example/devices/install-1/context",
+    ]);
+    const put = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(new Headers(put.headers).get("authorization")).toBe(
+      "Bearer rotated-access",
+    );
+    expect(state.written.map((written) => written.refreshToken)).toEqual([
+      "rotated-refresh",
+    ]);
   });
 });
 
