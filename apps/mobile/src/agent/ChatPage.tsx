@@ -36,6 +36,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
@@ -74,6 +75,11 @@ import {
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+// Android's translucent 3-button navigation bar shows list content through
+// it, so a background veil covers the bar zone; iOS keeps content visible
+// under its hairline home indicator.
+const NAV_BAR_VEIL = process.env.EXPO_OS === "android";
+const NAV_BAR_VEIL_FADE = 12;
 const COMPOSER_RESIZE_DURATION = 250;
 const COMPOSER_SURFACE_PADDING = 4;
 const CHAT_COMPOSER_GAP = 6;
@@ -1217,6 +1223,21 @@ export default function ChatPage() {
           <ChatLoadingSkeleton />
         </Reanimated.View>
       ) : null}
+      {NAV_BAR_VEIL && insets.bottom > 0 ? (
+        <LinearGradient
+          pointerEvents="none"
+          colors={[`${colors.background}00`, colors.background, colors.background]}
+          locations={[
+            0,
+            NAV_BAR_VEIL_FADE / (insets.bottom + NAV_BAR_VEIL_FADE),
+            1,
+          ]}
+          style={[
+            styles.navBarVeil,
+            { height: insets.bottom + NAV_BAR_VEIL_FADE },
+          ]}
+        />
+      ) : null}
       <KeyboardStickyView
         offset={{ closed: 0, opened: Math.max(insets.bottom - 8, 0) }}
         pointerEvents="box-none"
@@ -1275,6 +1296,13 @@ export default function ChatPage() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   listContent: { paddingHorizontal: 12 },
+  navBarVeil: {
+    position: "absolute",
+    zIndex: 1,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   loadingOverlay: {
     position: "absolute",
     zIndex: 1,
