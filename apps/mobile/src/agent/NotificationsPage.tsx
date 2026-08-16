@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { FlatList, StyleSheet, View, type ListRenderItem } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getNotificationHistory } from "@/api/endpoints";
@@ -19,7 +19,9 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { navHeaderHeight, radii } from "@/theme/layout";
 
-function NotificationRow({
+// Memoized: row identities are stable across merges, so unrelated chat events re-render no rows,
+// and the parsed content plus formatted timestamp are computed once per event.
+const NotificationRow = memo(function NotificationRow({
   event,
   pending,
 }: {
@@ -42,7 +44,19 @@ function NotificationRow({
         : event.decided === "trash"
           ? "trashed"
           : null;
-  const content = parseNotificationContent(event);
+  const content = useMemo(() => parseNotificationContent(event), [event]);
+  const timeLabel = useMemo(
+    () =>
+      event.ts
+        ? new Date(event.ts).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null,
+    [event.ts],
+  );
 
   return (
     <View
@@ -64,16 +78,11 @@ function NotificationRow({
             pending
           </Text>
         ) : null}
-        {decision || event.ts ? (
+        {decision || timeLabel ? (
           <View style={styles.notificationMeta}>
-            {event.ts ? (
+            {timeLabel ? (
               <Text style={[styles.time, { color: colors.tertiaryText }]}>
-                {new Date(event.ts).toLocaleString([], {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+                {timeLabel}
               </Text>
             ) : null}
             {decision ? (
@@ -109,7 +118,7 @@ function NotificationRow({
       ) : null}
     </View>
   );
-}
+});
 
 interface NotificationsPageProps {
   presentation?: "pager" | "standalone";
@@ -155,6 +164,16 @@ export default function NotificationsPage({
     void refetch();
   }, [refetch, socket.reseedRevision]);
 
+  const renderNotification = useCallback<ListRenderItem<NotificationView>>(
+    ({ item }) => (
+      <NotificationRow
+        event={item}
+        pending={Boolean(item.notif_id && pendingIds.has(item.notif_id))}
+      />
+    ),
+    [pendingIds],
+  );
+
   return (
     <View style={styles.screen}>
       <FlatList
@@ -168,12 +187,7 @@ export default function NotificationsPage({
         data={displayItems}
         inverted={!standalone}
         keyExtractor={notificationRowKey}
-        renderItem={({ item }) => (
-          <NotificationRow
-            event={item}
-            pending={Boolean(item.notif_id && pendingIds.has(item.notif_id))}
-          />
-        )}
+        renderItem={renderNotification}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
