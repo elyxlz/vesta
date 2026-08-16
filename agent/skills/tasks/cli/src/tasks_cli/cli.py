@@ -78,12 +78,15 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
 
 
 def _add_due_args(parser: argparse.ArgumentParser) -> None:
-    """The shared due-date flags: an absolute datetime + timezone, or a relative offset."""
-    parser.add_argument("--due-datetime", default=None)
-    parser.add_argument("--timezone", default=None)
-    parser.add_argument("--due-in-minutes", type=int, default=None)
-    parser.add_argument("--due-in-hours", type=int, default=None)
-    parser.add_argument("--due-in-days", type=int, default=None)
+    """The shared due-date flags: an absolute datetime + timezone, or a relative offset.
+
+    Each flag answers to the same spelling `remind`, `snooze`, and `postpone` use (--at, --tz,
+    --in-*), so one time vocabulary works across every command; the --due-* forms are aliases."""
+    parser.add_argument("--at", "--due-datetime", dest="due_datetime", default=None)
+    parser.add_argument("--tz", "--timezone", dest="timezone", default=None)
+    parser.add_argument("--in-minutes", "--due-in-minutes", dest="due_in_minutes", type=int, default=None)
+    parser.add_argument("--in-hours", "--due-in-hours", dest="due_in_hours", type=int, default=None)
+    parser.add_argument("--in-days", "--due-in-days", dest="due_in_days", type=int, default=None)
 
 
 def _add_id_args(parser: argparse.ArgumentParser) -> None:
@@ -135,7 +138,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_update.add_argument("--subject", default=None)
     p_update.add_argument("--priority", default=None)
     _add_due_args(p_update)
-    p_update.add_argument("--clear-due", action="store_true", help="Remove the task's due date and its auto reminders")
+    p_update.add_argument("--clear-due", action="store_true", help="Remove the task's due date, which silences its pre-due checkpoints")
     p_update.add_argument(
         "--backburner",
         dest="backburner",
@@ -218,7 +221,7 @@ REMIND_LIST_PAGE_SIZE = 50
 
 
 def _remind_list_cmd(config: Config, argv: list[str]) -> None:
-    p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
+    p = argparse.ArgumentParser(prog="tasks remind list")
     p.add_argument("--task", default=None, dest="task_id")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--show-completed", action="store_true")
@@ -237,7 +240,7 @@ def _remind_list_cmd(config: Config, argv: list[str]) -> None:
 
 
 def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="tasks remind delete", add_help=False)
+    p = argparse.ArgumentParser(prog="tasks remind delete")
     p.add_argument("id_pos", nargs="?", default=None, metavar="id")
     p.add_argument("--id", default=None, dest="reminder_id")
     args = p.parse_args(argv)
@@ -246,7 +249,7 @@ def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:
 
 
 def _remind_update_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="tasks remind update", add_help=False)
+    p = argparse.ArgumentParser(prog="tasks remind update")
     p.add_argument("id_pos", nargs="?", default=None, metavar="id")
     p.add_argument("--id", default=None, dest="reminder_id")
     p.add_argument("--message", required=True)
@@ -256,29 +259,36 @@ def _remind_update_cmd(config: Config, argv: list[str]) -> dict:
 
 
 def _remind_snooze_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="tasks remind snooze", add_help=False)
+    p = argparse.ArgumentParser(prog="tasks remind snooze")
     p.add_argument("id_pos", nargs="?", default=None, metavar="id")
     p.add_argument("--id", default=None, dest="reminder_id")
-    p.add_argument("--in-minutes", type=int, default=None)
-    p.add_argument("--in-hours", type=int, default=None)
-    p.add_argument("--in-days", type=int, default=None)
-    p.add_argument("--at", default=None)
-    p.add_argument("--tz", default=None)
+    p.add_argument("--in-minutes", type=int, default=None, help="Fire N minutes from now")
+    p.add_argument("--in-hours", type=int, default=None, help="Fire N hours from now")
+    p.add_argument("--in-days", type=int, default=None, help="Fire N days from now")
+    p.add_argument("--by-minutes", type=int, default=None, help="Push the fire time back N minutes")
+    p.add_argument("--by-hours", type=int, default=None, help="Push the fire time back N hours")
+    p.add_argument("--by-days", type=int, default=None, help="Push the fire time back N days")
+    p.add_argument("--at", default=None, help="Fire at this datetime (requires --tz)")
+    p.add_argument("--tz", default=None, help="IANA timezone for --at")
     args = p.parse_args(argv)
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind snooze <id> --in-hours N (or --at <iso> --tz <tz>)")
-    return commands.remind_snooze(
-        config,
-        reminder_id=reminder_id,
+    reminder_id = _require_arg(
+        args.id_pos or args.reminder_id, "id", "tasks remind snooze <id> --in-hours N (or --by-hours N, or --at <iso> --tz <tz>)"
+    )
+    spec = commands.SnoozeSpec(
         in_minutes=args.in_minutes,
         in_hours=args.in_hours,
         in_days=args.in_days,
+        by_minutes=args.by_minutes,
+        by_hours=args.by_hours,
+        by_days=args.by_days,
         at=args.at,
         tz=args.tz,
     )
+    return commands.remind_snooze(config, reminder_id=reminder_id, spec=spec)
 
 
 def _remind_set_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="tasks remind", add_help=False)
+    p = argparse.ArgumentParser(prog="tasks remind")
     p.add_argument("message_pos", nargs="?", default=None, metavar="message")
     p.add_argument("--message", default=None)
     p.add_argument("--task", default=None, dest="task_id")
@@ -357,21 +367,21 @@ def _main_remind():
 def _print_remind_help():
     print("""usage: tasks remind <message> [options]
        tasks remind list [--task <id>] [--limit N] [--show-completed]
-       tasks remind snooze <id> --in-hours N | --at <iso> --tz <tz>
+       tasks remind snooze <id> --in-hours N | --by-hours N | --at <iso> --tz <tz>
        tasks remind delete <id>
        tasks remind update <id> --message <msg>
 
 Set a reminder (default):
   tasks remind "call mom" --in-minutes 30
   tasks remind "check this" --task <id> --at <datetime> --tz <tz>
-  tasks remind "standup" --recurring daily --at <datetime> --tz <tz>
-  tasks remind "wind down" --recurring daily --at <datetime> --tz <tz> --fuzz-minutes 75
+  tasks remind "standup" --recurring daily --at 09:30 --tz <tz>
+  tasks remind "wind down" --recurring daily --at 21:30 --tz <tz> --fuzz-minutes 75
   tasks remind "weekdays 9am" --cron "0 9 * * 1-5" --tz <tz>
 
 options:
   --message MSG         Message (alternative to positional)
   --task ID             Link to a task
-  --at DATETIME         Scheduled datetime (ISO-8601)
+  --at DATETIME         Scheduled datetime (ISO-8601; a bare HH:MM works with --recurring daily)
   --tz TZ               Timezone (IANA name)
   --in-minutes N        Fire in N minutes
   --in-hours N          Fire in N hours
@@ -382,7 +392,7 @@ options:
 
 subcommands:
   list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
-  snooze                Push a one-shot reminder back (works on fired ones too)
+  snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, --by-* from its fire time, or --at
   delete                Delete a reminder
   update                Update a reminder message""")
 
@@ -526,6 +536,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
             time.sleep(sync_interval)
             try:
                 _sync_jobs(config, scheduler, notif_dir)
+                commands.fire_due_checkpoints(config, notif_dir)
                 commands.maybe_send_digest(config, notif_dir)
             except Exception:
                 # A bad tick (locked db, malformed row) must not kill the daemon; retry next tick.

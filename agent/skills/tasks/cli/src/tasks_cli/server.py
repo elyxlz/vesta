@@ -44,14 +44,6 @@ class UpdateReminderBody(BaseModel):
     message: str
 
 
-class SnoozeReminderBody(BaseModel):
-    in_minutes: int | None = None
-    in_hours: int | None = None
-    in_days: int | None = None
-    at: str | None = None
-    tz: str | None = None
-
-
 # --- Task update (app path) ---
 
 
@@ -143,16 +135,8 @@ def _create_app(config: Config, notif_dir: Path) -> FastAPI:
         return commands.remind_update(config, reminder_id=reminder_id, message=body.message)
 
     @app.post("/reminders/{reminder_id}/snooze")
-    def snooze_reminder(reminder_id: str, body: SnoozeReminderBody):
-        return commands.remind_snooze(
-            config,
-            reminder_id=reminder_id,
-            in_minutes=body.in_minutes,
-            in_hours=body.in_hours,
-            in_days=body.in_days,
-            at=body.at,
-            tz=body.tz,
-        )
+    def snooze_reminder(reminder_id: str, body: commands.SnoozeSpec):
+        return commands.remind_snooze(config, reminder_id=reminder_id, spec=body)
 
     @app.delete("/reminders/{reminder_id}")
     def delete_reminder(reminder_id: str):

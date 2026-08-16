@@ -10,11 +10,6 @@ import pytest
 from tasks_cli import commands, db
 
 
-def _auto_reminder_count(config, task_id: str) -> int:
-    with closing(db.get_db(config.data_dir)) as conn:
-        return conn.execute("SELECT COUNT(*) FROM reminders WHERE task_id = ? AND auto_generated = 1", (task_id,)).fetchone()[0]
-
-
 def test_completed_closes_a_task(tmp_config):
     task = commands.add_task(tmp_config, subject="finish")
     result = commands.update_task(tmp_config, task_id=task["id"], status="completed")
@@ -38,24 +33,13 @@ def test_in_progress_stays_open_in_list_and_digest(tmp_config):
     assert task["id"] in digest
 
 
-def test_open_status_toggle_never_duplicates_reminders(tmp_config):
-    due = (datetime.now(UTC) + timedelta(days=3)).isoformat()
-    task = commands.add_task(tmp_config, subject="wip", due=commands.DueSpec(due_datetime=due, timezone="UTC"))
-    baseline = _auto_reminder_count(tmp_config, task["id"])
-    assert baseline > 0
-    commands.update_task(tmp_config, task_id=task["id"], status="in_progress")
-    assert _auto_reminder_count(tmp_config, task["id"]) == baseline
-
-
-def test_reopen_from_completed_via_in_progress_rebuilds_reminders(tmp_config):
+def test_reopen_from_completed_via_in_progress_clears_completion(tmp_config):
     due = (datetime.now(UTC) + timedelta(days=3)).isoformat()
     task = commands.add_task(tmp_config, subject="reopen", due=commands.DueSpec(due_datetime=due, timezone="UTC"))
     commands.update_task(tmp_config, task_id=task["id"], status="completed")
-    assert _auto_reminder_count(tmp_config, task["id"]) == 0
     reopened = commands.update_task(tmp_config, task_id=task["id"], status="in_progress")
     assert reopened["status"] == "in_progress"
     assert reopened["completed_at"] is None
-    assert _auto_reminder_count(tmp_config, task["id"]) > 0
 
 
 def test_migration_v6_to_v7_renames_subject_and_completed(tmp_path):
@@ -70,6 +54,11 @@ def test_migration_v6_to_v7_renames_subject_and_completed(tmp_path):
         " priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)), due_date TEXT,"
         " created_at TEXT DEFAULT CURRENT_TIMESTAMP, completed_at TEXT,"
         " backburner INTEGER NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "CREATE TABLE reminders (id TEXT PRIMARY KEY, task_id TEXT, message TEXT NOT NULL, schedule_type TEXT,"
+        " scheduled_time TEXT, completed INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+        " trigger_data TEXT, auto_generated INTEGER DEFAULT 0)"
     )
     conn.execute("INSERT INTO tasks (id, title, status) VALUES ('t1', 'kept', 'done')")
     conn.commit()

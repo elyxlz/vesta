@@ -27,7 +27,7 @@ def test_format_task_list_marks_parked_tasks():
     assert "[parked]" not in lines[1]
 
 
-def test_format_reminder_list_renders_fields_and_markers():
+def test_format_reminder_list_renders_fields_and_task_links():
     assert fmt.format_reminder_list([]) == "(no reminders)"
     reminders = [
         {
@@ -36,7 +36,6 @@ def test_format_reminder_list_renders_fields_and_markers():
             "message": "follow up",
             "schedule": "once at 2026-04-25T09:00",
             "next_run": "2026-04-25T09:00:00+00:00",
-            "auto_generated": True,
         },
         {
             "id": "r2",
@@ -44,9 +43,8 @@ def test_format_reminder_list_renders_fields_and_markers():
             "message": "call mom",
             "schedule": "daily at 09:00 UTC",
             "next_run": "2026-04-24T09:00:00+00:00",
-            "auto_generated": False,
         },
     ]
     lines = fmt.format_reminder_list(reminders).splitlines()
-    assert "r1" in lines[0] and "follow up" in lines[0] and " *" in lines[0] and "task=t1" in lines[0]
-    assert "r2" in lines[1] and " *" not in lines[1] and "task=" not in lines[1]
+    assert "r1" in lines[0] and "follow up" in lines[0] and "task=t1" in lines[0]
+    assert "r2" in lines[1] and "task=" not in lines[1]
