@@ -293,6 +293,25 @@ impl DeviceRegistry {
         Some(label)
     }
 
+    /// Forget every device's reported context (the gateway's user-context switch turned off): the
+    /// zone, the position, and its stamp. Identity and push stay. Republishes on a real change.
+    pub(crate) fn clear_context(&self) {
+        let mut state = self.state.lock().expect("device registry mutex");
+        let mut changed = false;
+        for record in state.devices.values_mut() {
+            if record.timezone.is_some() || record.position.is_some() {
+                record.timezone = None;
+                record.position = None;
+                record.position_at = None;
+                changed = true;
+            }
+        }
+        if changed {
+            self.republish(&state);
+            self.dirty.notify_one();
+        }
+    }
+
     /// A `/sync` connection for this device closing. On the device's last connection dropping, stamp
     /// `last_seen`. Non-blocking; safe from `PresenceGuard::drop`, which cannot `await`.
     pub(crate) fn mark_disconnected(&self, id: &str, now: u64) {
@@ -608,6 +627,24 @@ mod tests {
         registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::Retract) }, 300);
         let device = only(&registry, "dev-a");
         assert_eq!(device.position, None, "the user turned location sharing off");
+        assert_eq!(device.position_at, None);
+    }
+
+    #[test]
+    fn clear_context_forgets_zone_and_position_but_keeps_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        registry.mark_connected("dev-a", ClientKind::Mobile, Some("Vesta Mobile on iOS".into()), 100);
+        registry.report_context(
+            "dev-a",
+            DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(PositionReport::At(tokyo())) },
+            200,
+        );
+        registry.clear_context();
+        let device = only(&registry, "dev-a");
+        assert_eq!(device.descriptor.as_deref(), Some("Vesta Mobile on iOS"));
+        assert_eq!(device.timezone, None);
+        assert_eq!(device.position, None);
         assert_eq!(device.position_at, None);
     }
 

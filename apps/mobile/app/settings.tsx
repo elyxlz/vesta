@@ -7,6 +7,7 @@ import {
   checkForGatewayUpdate,
   triggerGatewayRestart,
   triggerGatewayUpdate,
+  type DeviceInfo,
   type ReleaseChannel,
 } from "@vesta/core";
 import {
@@ -55,6 +56,19 @@ function lastSeenLabel(lastSeen: string): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
+// The device's reported place and zone, falling back to the gateway's IP-derived location.
+function deviceContextLine(device: DeviceInfo): string | undefined {
+  const place = device.position?.place;
+  const placeLabel =
+    place && (place.city ?? place.region)
+      ? [place.city ?? place.region, place.country].filter(Boolean).join(", ")
+      : device.location;
+  const parts = [placeLabel, device.timezone].filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -94,7 +108,9 @@ export default function SettingsScreen() {
   });
   const gatewaySettings = useMutation({
     mutationFn: (
-      patch: Partial<Pick<GatewaySettings, "auto_update" | "channel">>,
+      patch: Partial<
+        Pick<GatewaySettings, "auto_update" | "user_context" | "channel">
+      >,
     ) => updateGatewaySettings(session.api, patch),
     onMutate: async (patch) => {
       await queryClient.cancelQueries({ queryKey: gatewayQueryKey });
@@ -190,14 +206,18 @@ export default function SettingsScreen() {
   const changeShareLocation = async (enabled: boolean) => {
     try {
       if (enabled) {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (!permission.granted) {
+        const foreground = await Location.requestForegroundPermissionsAsync();
+        if (!foreground.granted) {
           showError(
             new Error("Allow location for Vesta in system settings to share it."),
             "Location is not allowed",
           );
           return;
         }
+        // The always-on grant is what lets the closed-app poll read a fix; the OS asks in its own
+        // way (iOS a second prompt, Android a settings screen). Declined, sharing still works while
+        // the app is open, so the switch turns on either way.
+        await Location.requestBackgroundPermissionsAsync();
       }
       await preferences.update({ shareLocation: enabled });
     } catch (error) {
@@ -282,7 +302,7 @@ export default function SettingsScreen() {
         />
         <SwitchRow
           label="Share device location"
-          detail="Tell your agents where this phone is, place and coordinates, also while the app is closed, so plans and reminders follow your travel. Your timezone is always shared."
+          detail="Tell your agents where this phone is, place and coordinates, so plans and reminders follow your travel. Allow location always to keep sharing while the app is closed. Your timezone is always shared."
           value={preferences.shareLocation}
           onValueChange={(value) => void changeShareLocation(value)}
         />
@@ -410,9 +430,19 @@ export default function SettingsScreen() {
             <FormRow
               key={device.id}
               label={device.descriptor ?? "Unnamed device"}
+              detail={deviceContextLine(device)}
               value={device.present ? "present now" : lastSeenLabel(device.lastSeen)}
             />
           ))}
+          <SwitchRow
+            label="Share device context"
+            detail="Tell your agents each device's timezone and, when a phone shares it, its location, so they follow your travel. Off stops the reports and forgets what was stored."
+            value={gateway.data?.settings.user_context ?? false}
+            disabled={gatewayControlsDisabled}
+            onValueChange={(user_context) =>
+              gatewaySettings.mutate({ user_context })
+            }
+          />
         </FormSection>
       ) : null}
 

@@ -8,6 +8,7 @@ import {
 
 const location = vi.hoisted(() => ({
   granted: true,
+  backgroundGranted: false,
   permissionThrows: false,
   // A fresh fix that never settles (indoors, no satellites).
   pending: false,
@@ -29,13 +30,15 @@ vi.mock("expo-localization", () => ({
   getCalendars: () => [{ timeZone: "Asia/Tokyo" }],
 }));
 vi.mock("expo-location", () => ({
-  Accuracy: { Balanced: 3 },
+  Accuracy: { Low: 1, Balanced: 3 },
   getForegroundPermissionsAsync: () =>
     location.permissionThrows
       ? Promise.reject(new Error("no native module"))
       : Promise.resolve({ granted: location.granted }),
-  getCurrentPositionAsync: () => {
-    location.calls.push("current");
+  getBackgroundPermissionsAsync: () =>
+    Promise.resolve({ granted: location.backgroundGranted }),
+  getCurrentPositionAsync: (options: { accuracy: number }) => {
+    location.calls.push(`current:${String(options.accuracy)}`);
     return location.pending
       ? new Promise(() => undefined)
       : Promise.resolve(location.current);
@@ -84,6 +87,7 @@ describe("toDevicePosition", () => {
 describe("readDeviceContext", () => {
   beforeEach(() => {
     location.granted = true;
+    location.backgroundGranted = false;
     location.current = tokyo;
     location.last = tokyo;
     location.geocoded = [{ city: "Tokyo", region: null, country: "Japan" }];
@@ -116,6 +120,17 @@ describe("readDeviceContext", () => {
     }
   });
 
+  it("takes a low-power fresh fix in the background when location is allowed always", async () => {
+    location.backgroundGranted = true;
+    await readDeviceContext({ shareLocation: true, mode: "background" });
+    expect(location.calls).toEqual(["current:1"]);
+    // No fresh fix in time: the last known one is the fallback.
+    location.calls = [];
+    location.current = null;
+    await readDeviceContext({ shareLocation: true, mode: "background" });
+    expect(location.calls).toEqual(["current:1", "last"]);
+  });
+
   it("asks only for a recent last-known fix in the background", async () => {
     await readDeviceContext({ shareLocation: true, mode: "background" });
     expect(location.lastOptions).toEqual({ maxAge: LAST_KNOWN_FIX_MAX_AGE_MS });
@@ -144,7 +159,7 @@ describe("readDeviceContext", () => {
         place: { city: "Tokyo", region: null, country: "Japan" },
       },
     });
-    expect(location.calls).toEqual(["current"]);
+    expect(location.calls).toEqual(["current:3"]);
     location.calls = [];
     await readDeviceContext({ shareLocation: true, mode: "background" });
     expect(location.calls).toEqual(["last"]);

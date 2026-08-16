@@ -105,6 +105,11 @@ pub(crate) enum UserPresence {
 /// identity to report against. Best-effort past the store: a stopped agent or a write failure
 /// logs itself.
 pub(crate) async fn report_device_context(state: &SharedState, device_id: &str, context: DeviceContext, presence: UserPresence) -> Option<()> {
+    // The gateway's user-context switch: off, a report is accepted and ignored, nothing stored,
+    // no one told.
+    if !state.settings.read().await.user_context {
+        return Some(());
+    }
     let now = crate::time_utils::now_epoch_secs();
     let device = state.device_registry.report_context(device_id, context.clone(), now)?;
     let timestamp = match crate::time_utils::epoch_to_rfc3339(now) {

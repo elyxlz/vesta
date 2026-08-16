@@ -4,8 +4,8 @@ import type { DeviceContext, DevicePlace, DevicePosition } from "@vesta/core";
 
 // What the phone reports about itself: its zone (always) and, with the user's opt-in, its position
 // plus the macro place the OS geocoder gives for it. One reader for the foreground reporter and the
-// background poll; `mode` picks a fresh fix (foreground) or the OS's last known one (background,
-// which needs no "Always" permission).
+// background poll; `mode` picks a balanced fresh fix (foreground) or, in the background, a low-power
+// fresh fix when the always-on grant allows one and the OS's last known fix otherwise.
 export type PositionMode = "foreground" | "background";
 
 // A fresh fix that takes longer than this (indoors, no satellites) is given up on, so the zone
@@ -56,6 +56,31 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
 }
 
+async function freshFix(
+  accuracy: Location.LocationAccuracy,
+): Promise<Location.LocationObject | null> {
+  return withTimeout(
+    Location.getCurrentPositionAsync({ accuracy }),
+    FRESH_FIX_TIMEOUT_MS,
+  ).catch(() => null);
+}
+
+async function readFix(
+  mode: PositionMode,
+): Promise<Location.LocationObject | null> {
+  if (mode === "foreground") return freshFix(Location.Accuracy.Balanced);
+  const background = await Location.getBackgroundPermissionsAsync().catch(
+    () => null,
+  );
+  if (background?.granted) {
+    const fix = await freshFix(Location.Accuracy.Low);
+    if (fix) return fix;
+  }
+  return Location.getLastKnownPositionAsync({
+    maxAge: LAST_KNOWN_FIX_MAX_AGE_MS,
+  }).catch(() => null);
+}
+
 // The position, or undefined when the user has not granted location, no fix is available, or the
 // read fails: a report then carries the zone alone. Reverse geocoding is best-effort.
 async function readDevicePosition(
@@ -65,17 +90,7 @@ async function readDevicePosition(
     () => null,
   );
   if (!permission?.granted) return undefined;
-  const fix =
-    mode === "foreground"
-      ? await withTimeout(
-          Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          }),
-          FRESH_FIX_TIMEOUT_MS,
-        ).catch(() => null)
-      : await Location.getLastKnownPositionAsync({
-          maxAge: LAST_KNOWN_FIX_MAX_AGE_MS,
-        }).catch(() => null);
+  const fix = await readFix(mode);
   if (!fix) return undefined;
   const { latitude, longitude, accuracy } = fix.coords;
   const geocoded = await Location.reverseGeocodeAsync({

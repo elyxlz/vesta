@@ -2206,6 +2206,7 @@ async fn delete_backup_handler(
 fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Value {
     serde_json::json!({
         "auto_update": settings.auto_update,
+        "user_context": settings.user_context,
         "channel": channel,
         "auto_backup": {
             "enabled": settings.backup.enabled,
@@ -2284,6 +2285,7 @@ fn validate_retention(
 #[derive(Deserialize)]
 struct UpdateSettingsBody {
     auto_update: Option<bool>,
+    user_context: Option<bool>,
     channel: Option<String>,
     auto_backup: Option<SetBackupSettingsBody>,
 }
@@ -2323,6 +2325,15 @@ async fn put_gateway_settings_handler(
         if let Some(auto_update) = body.auto_update {
             settings.auto_update = auto_update;
             tracing::info!(auto_update, "auto-update setting updated");
+        }
+        if let Some(user_context) = body.user_context {
+            settings.user_context = user_context;
+            tracing::info!(user_context, "user context setting updated");
+            if !user_context {
+                // Off forgets, not just stops: a stale zone or place must not linger in the roster or
+                // in what the agents can read.
+                state.device_registry.clear_context();
+            }
         }
         if let Some(channel) = parsed_channel {
             settings.channel = channel.as_str().to_string();
@@ -4092,6 +4103,7 @@ mod gateway_settings_tests {
         let settings = Settings::default();
         let value = gateway_settings_json(&settings, "beta");
         assert_eq!(value["auto_update"], serde_json::json!(true));
+        assert_eq!(value["user_context"], serde_json::json!(true));
         assert_eq!(value["channel"], serde_json::json!("beta"));
         assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
         assert_eq!(

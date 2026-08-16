@@ -121,6 +121,9 @@ export interface GatewayInfo {
 
 export interface GatewaySettings {
   auto_update: boolean;
+  // Whether the gateway stores what devices report about themselves (timezone, position) and
+  // tells the agents when it changes.
+  user_context: boolean;
   channel: ReleaseChannel;
   auto_backup: {
     enabled: boolean;
