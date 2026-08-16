@@ -33,7 +33,6 @@ import Markdown, {
   type RenderRules,
 } from "react-native-markdown-display";
 import { Ionicons } from "@expo/vector-icons";
-import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -54,6 +53,7 @@ import replyIcon from "../../assets/menu-icons/reply.xml";
 import shareIcon from "../../assets/menu-icons/share.xml";
 import volumeUpIcon from "../../assets/menu-icons/volume-up.xml";
 import { useToast } from "@/components/native-toast";
+import { GlassSurface } from "@/components/ui/glass-surface";
 import { Text } from "@/components/ui/Typography";
 import {
   MessageContextMenu,
@@ -788,29 +788,10 @@ const ReplyPreview = memo(function ReplyPreview({
 });
 
 function ComposerSurface({ children }: { children: ReactNode }) {
-  const { colors, dark } = usePreferences();
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView
-        glassEffectStyle="regular"
-        colorScheme={dark ? "dark" : "light"}
-        isInteractive
-        style={styles.composerSurface}
-      >
-        {children}
-      </GlassView>
-    );
-  }
   return (
-    <View
-      style={[
-        styles.composerSurface,
-        styles.composerFallback,
-        { backgroundColor: colors.elevated, borderColor: colors.border },
-      ]}
-    >
+    <GlassSurface isInteractive style={styles.composerSurface}>
       {children}
-    </View>
+    </GlassSurface>
   );
 }
 
@@ -906,45 +887,22 @@ function ComposerActionButton({
 }
 
 function ScrollToBottomButton({ onPress }: { onPress: () => void }) {
-  const { colors, dark } = usePreferences();
-  const content = (
-    <Pressable
-      accessibilityLabel="Scroll to latest message"
-      accessibilityRole="button"
-      hitSlop={8}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.scrollToBottomPressable,
-        { opacity: pressed ? 0.7 : 1 },
-      ]}
-    >
-      <Ionicons name="arrow-down" size={18} color={colors.text} />
-    </Pressable>
-  );
-
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView
-        glassEffectStyle="regular"
-        colorScheme={dark ? "dark" : "light"}
-        isInteractive
-        style={styles.scrollToBottomButton}
-      >
-        {content}
-      </GlassView>
-    );
-  }
-
+  const { colors } = usePreferences();
   return (
-    <View
-      style={[
-        styles.scrollToBottomButton,
-        styles.scrollToBottomFallback,
-        { backgroundColor: colors.elevated, borderColor: colors.border },
-      ]}
-    >
-      {content}
-    </View>
+    <GlassSurface isInteractive style={styles.scrollToBottomButton}>
+      <Pressable
+        accessibilityLabel="Scroll to latest message"
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.scrollToBottomPressable,
+          { opacity: pressed ? 0.7 : 1 },
+        ]}
+      >
+        <Ionicons name="arrow-down" size={18} color={colors.text} />
+      </Pressable>
+    </GlassSurface>
   );
 }
 
@@ -1450,14 +1408,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  scrollToBottomFallback: { borderWidth: StyleSheet.hairlineWidth },
   composerSurface: {
     padding: COMPOSER_SURFACE_PADDING,
     borderRadius: 22,
     overflow: "hidden",
   },
   composerRow: { flexDirection: "row", alignItems: "flex-end" },
-  composerFallback: { borderWidth: StyleSheet.hairlineWidth },
   replyPreview: {
     flexDirection: "row",
     alignItems: "center",
