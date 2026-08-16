@@ -1152,14 +1152,16 @@ function captureShotHtml(scenario, capture, defaultPlatform) {
                 }
               </span>
             </button>
-            <button class="copy-ref" type="button" aria-label="Copy reference for ${escapeHtml(
-              subject,
-            )}">Copy ref</button>
-            ${
-              capture.platform
-                ? `<span class="platform-tag">${escapeHtml(capture.platform)}</span>`
-                : ""
-            }
+            <div class="shot-meta">
+              ${
+                capture.platform
+                  ? `<span class="platform-tag">${escapeHtml(capture.platform)}</span>`
+                  : ""
+              }
+              <button class="copy-ref" type="button" aria-label="Copy reference for ${escapeHtml(
+                subject,
+              )}">Copy ref</button>
+            </div>
           </div>`;
 }
 
@@ -1186,7 +1188,12 @@ export function galleryHtml(catalog) {
             .map((capture) => captureShotHtml(scenario, capture, defaultPlatform))
             .join("")}</div>
           <div class="card-copy">
-            <h3>${escapeHtml(scenario.title)}</h3>
+            <div class="card-head">
+              <h3>${escapeHtml(scenario.title)}</h3>
+              <button class="copy-card" type="button" aria-label="Copy reference for ${escapeHtml(
+                scenario.title,
+              )}">Copy ref</button>
+            </div>
             <p>${escapeHtml(scenario.description)}</p>
           </div>
         </article>`;
@@ -1393,10 +1400,7 @@ export function galleryHtml(catalog) {
     body[data-platforms="2"] .grid {
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
     }
-    .card {
-      min-width: 0;
-      transition: transform 160ms ease, opacity 180ms ease, filter 180ms ease;
-    }
+    .card { min-width: 0; }
     .shots {
       display: grid;
       grid-template-columns: repeat(var(--shots, 1), minmax(0, 1fr));
@@ -1405,16 +1409,12 @@ export function galleryHtml(catalog) {
     }
     .shot { position: relative; min-width: 0; }
     .platform-tag {
-      display: block;
-      margin-top: 5px;
       color: var(--muted);
       font-size: 9px;
       font-weight: 700;
       letter-spacing: .1em;
-      text-align: center;
       text-transform: uppercase;
     }
-    .card:hover { transform: translateY(-2px); }
     .shot.pending .device-screen::after {
       content: "";
       position: absolute;
@@ -1431,23 +1431,37 @@ export function galleryHtml(catalog) {
     .shot.pending .device-screen img { opacity: .35; }
     .shot.pending .missing { visibility: hidden; }
     .shot.fresh .preview { border-color: #7f6fd4; }
-    .copy-ref {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      z-index: 2;
-      border: 1px solid #625799;
+    .copy-ref, .copy-card {
+      border: 1px solid var(--border);
       border-radius: 999px;
-      padding: 3px 9px;
-      background: #181522f2;
-      color: var(--text);
+      padding: 2px 9px;
+      background: transparent;
+      color: var(--muted);
       font-size: 10px;
+      white-space: nowrap;
       cursor: pointer;
       opacity: 0;
       transition: opacity 140ms ease;
     }
-    .shot:hover .copy-ref, .copy-ref:focus-visible { opacity: 1; }
-    .copy-ref:hover { border-color: var(--accent); }
+    .card:hover .copy-ref, .card:hover .copy-card,
+    .copy-ref:focus-visible, .copy-card:focus-visible { opacity: 1; }
+    .copy-ref:hover, .copy-card:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    .shot-meta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .card-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
     .capture-status {
       position: fixed;
       top: 16px;
@@ -1650,27 +1664,68 @@ export function galleryHtml(catalog) {
         dialog.showModal();
       });
     });
+    async function writeClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fall through to the textarea path below.
+      }
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      area.remove();
+      return copied;
+    }
+    function refHeader(shot) {
+      return [
+        "group: " + shot.dataset.group + " | title: " + shot.dataset.title,
+        "catalog: " + window.__VISUAL_CATALOG__.generatedAt +
+          " | rev: " + window.__VISUAL_CATALOG__.git.revision,
+      ];
+    }
+    function shotImage(shot) {
+      return shot.querySelector(".preview").dataset.image || "not captured";
+    }
+    async function copyWithFeedback(copyButton, lines) {
+      const label = copyButton.textContent;
+      const copied = await writeClipboard(lines.join("\\n"));
+      copyButton.textContent = copied ? "Copied" : "Copy failed";
+      window.setTimeout(() => {
+        copyButton.textContent = label;
+      }, 1200);
+    }
     document.querySelectorAll(".copy-ref").forEach((copyButton) => {
-      copyButton.addEventListener("click", async () => {
+      copyButton.addEventListener("click", () => {
         const shot = copyButton.closest(".shot");
-        const preview = shot.querySelector(".preview");
-        const reference = [
+        void copyWithFeedback(copyButton, [
           "visual-ref: " + shot.dataset.scenarioId +
             " [" + shot.dataset.livePlatform + "]",
-          "group: " + shot.dataset.group + " | title: " + shot.dataset.title,
-          "image: " + (preview.dataset.image || "not captured"),
-          "catalog: " + generatedAt +
-            " | rev: " + window.__VISUAL_CATALOG__.git.revision,
-        ].join("\n");
-        try {
-          await navigator.clipboard.writeText(reference);
-          copyButton.textContent = "Copied";
-        } catch {
-          copyButton.textContent = "Copy failed";
-        }
-        window.setTimeout(() => {
-          copyButton.textContent = "Copy ref";
-        }, 1200);
+          ...refHeader(shot),
+          "image: " + shotImage(shot),
+        ]);
+      });
+    });
+    document.querySelectorAll(".copy-card").forEach((copyButton) => {
+      copyButton.addEventListener("click", () => {
+        const shots = [...copyButton.closest(".card").querySelectorAll(".shot")];
+        void copyWithFeedback(copyButton, [
+          "visual-ref: " + shots[0].dataset.scenarioId,
+          ...refHeader(shots[0]),
+          ...shots.map(
+            (shot) => shot.dataset.livePlatform + ": " + shotImage(shot),
+          ),
+        ]);
       });
     });
     dialog.querySelector("button").addEventListener("click", () => dialog.close());

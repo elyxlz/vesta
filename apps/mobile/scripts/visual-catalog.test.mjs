@@ -368,6 +368,16 @@ describe("unifiedCatalog", () => {
     expect(html).toContain("visual-ref: ");
   });
 
+  it("emits an inline script that parses", () => {
+    const html = galleryHtml(unifiedCatalog(iosCatalog, androidCatalog));
+    const open = "<scr" + "ipt>";
+    const start = html.lastIndexOf(open) + open.length;
+    const end = html.lastIndexOf("</scr" + "ipt>");
+    const body = html.slice(start, end);
+    expect(body.length).toBeGreaterThan(0);
+    expect(() => new Function(body)).not.toThrow();
+  });
+
   it("renders a scan row per platform with its last-scan stamp and trigger", () => {
     const merged = galleryHtml(unifiedCatalog(iosCatalog, androidCatalog));
     expect(merged).toContain('class="scan-row" data-platform="ios"');
