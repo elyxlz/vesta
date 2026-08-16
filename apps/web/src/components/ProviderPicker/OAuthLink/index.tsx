@@ -29,12 +29,12 @@ export function OAuthLink({ url }: { url: string }) {
   };
 
   return (
-    <div className="mt-2 flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
+    <div className="mt-2 flex w-full min-w-0 max-w-full items-center justify-center gap-1.5 overflow-hidden">
       <a
         href={url}
         target="_blank"
         rel="noopener"
-        className="block min-w-0 flex-1 truncate text-xs text-muted-foreground hover:text-foreground"
+        className="min-w-0 truncate text-xs text-muted-foreground hover:text-foreground"
       >
         {url}
       </a>
