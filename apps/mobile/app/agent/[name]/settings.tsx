@@ -1,4 +1,5 @@
-import { Alert, StyleSheet } from "react-native";
+import { useState } from "react";
+import { StyleSheet } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
@@ -12,7 +13,9 @@ import { useAgent } from "@/agent/AgentProvider";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormSection, SwitchRow } from "@/components/ui/Form";
@@ -30,6 +33,7 @@ function AgentSettingsContent() {
   const { name, agent, activityState } = useAgent();
   const preferences = usePreferences();
   const { showError } = useToast();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const action = useMutation({
     mutationFn: async (
       operation: "start" | "stop" | "restart" | "backup" | "delete",
@@ -207,23 +211,24 @@ function AgentSettingsContent() {
             disabled={action.isPending}
             loading={action.isPending && action.variables === "delete"}
             onPress={() => {
-              Alert.alert(
-                `Delete ${name}?`,
-                "This permanently deletes the agent and their local state.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: () => action.mutate("delete"),
-                  },
-                ],
-              );
+              setConfirmingDelete(true);
             }}
           >
             Delete agent
           </Button>
         }
+      />
+      <ConfirmDialog
+        visible={confirmingDelete}
+        title={`Delete ${name}?`}
+        message="This permanently deletes the agent and their local state."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          action.mutate("delete");
+        }}
+        onDismiss={() => setConfirmingDelete(false)}
       />
     </Screen>
   );
@@ -233,6 +238,7 @@ export default function AgentSettingsScreen() {
   return (
     <>
       <NativeSheetCloseButton accessibilityLabel="Close agent settings" />
+      <SheetChrome title="Settings" closeLabel="Close agent settings" />
       <AgentSettingsContent />
     </>
   );

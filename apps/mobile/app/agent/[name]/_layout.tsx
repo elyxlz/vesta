@@ -1,6 +1,7 @@
 import Stack from "expo-router/stack";
 import { AgentProvider } from "@/agent/AgentProvider";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { formSheetCorners } from "@/theme/sheets";
 import { fontNames } from "@/theme/typography";
 
 export default function AgentLayout() {
@@ -30,6 +31,7 @@ export default function AgentLayout() {
             title: "Settings",
             headerTitleAlign: "center",
             presentation: "formSheet",
+            ...formSheetCorners,
             sheetAllowedDetents: [1],
             sheetGrabberVisible: false,
             sheetExpandsWhenScrolledToEdge: false,

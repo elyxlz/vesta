@@ -3,6 +3,7 @@ import {
   use,
   useCallback,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -47,11 +48,16 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
     setLocked(true);
   }, []);
 
+  const unlockAttempts = useRef(0);
+  // The first attempt models a dismissed system prompt (no error), so the
+  // locked state stays capturable through the gate's automatic unlock;
+  // later attempts model the lockout fixture.
   const unlock = useCallback(async (): Promise<boolean> => {
     setAuthenticating(true);
     await new Promise((resolve) => setTimeout(resolve, 300));
     setAuthenticating(false);
-    setUnlockError(unlockMessage);
+    unlockAttempts.current += 1;
+    if (unlockAttempts.current > 1) setUnlockError(unlockMessage);
     return false;
   }, []);
 
@@ -62,7 +68,8 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
       hydrated: true,
       locked,
       authenticating,
-      authenticationName: "Face ID",
+      authenticationName:
+        process.env.EXPO_OS === "ios" ? "Face ID" : "device authentication",
       initializationError,
       unlockError,
       retryInitialization,

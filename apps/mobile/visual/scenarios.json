@@ -21,18 +21,16 @@
     {
       "id": "privacy-locked",
       "title": "Vesta is locked",
-      "description": "Protected app content remains hidden until Face ID authentication.",
+      "description": "Protected app content remains hidden until device authentication.",
       "group": "Privacy",
-      "screenshot": "privacy-locked.png",
-      "platforms": ["ios"]
+      "screenshot": "privacy-locked.png"
     },
     {
       "id": "privacy-unlock-error",
       "title": "Unlock failed",
       "description": "Device authentication lockout with recovery guidance.",
       "group": "Privacy",
-      "screenshot": "privacy-unlock-error.png",
-      "platforms": ["ios"]
+      "screenshot": "privacy-unlock-error.png"
     },
     {
       "id": "connect-actions",

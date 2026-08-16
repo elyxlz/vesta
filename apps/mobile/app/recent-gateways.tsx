@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useToast } from "@/components/native-toast";
 import { NativeDeleteRow } from "@/components/NativeDeleteRow";
 import { Button } from "@/components/ui/Button";
@@ -41,13 +36,16 @@ function gatewayName(gateway: RecentGateway): string {
   return new URL(gateway.url).host;
 }
 
+// Joined by hand so the label reads identically on iOS and Android; the
+// platforms join date and time with different separators otherwise.
 function lastConnectedLabel(timestamp: number): string {
-  return new Date(timestamp).toLocaleString([], {
-    month: "short",
-    day: "numeric",
+  const date = new Date(timestamp);
+  const day = date.toLocaleDateString([], { month: "short", day: "numeric" });
+  const time = date.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
+  return `${day} at ${time}`;
 }
 
 function RecentGatewaysContent() {
@@ -65,6 +63,10 @@ function RecentGatewaysContent() {
   const [connectionAttempt, setConnectionAttempt] =
     useState<ConnectionAttempt | null>(null);
   const [showConnectionState, setShowConnectionState] = useState(false);
+  const [pendingForget, setPendingForget] = useState<RecentGateway | null>(
+    null,
+  );
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const isConnecting = connectionAttempt?.status === "connecting";
   const showsConnectionState =
     showConnectionState && connectionAttempt !== null;
@@ -118,40 +120,26 @@ function RecentGatewaysContent() {
   };
 
   const confirmForget = (gateway: RecentGateway) => {
-    Alert.alert(
-      `Forget ${gatewayName(gateway)}?`,
-      "Its saved connection credentials will be permanently removed from this device.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Forget",
-          style: "destructive",
-          onPress: () => {
-            void forgetRecentGateway(gateway.id).catch((cause: unknown) =>
-              showError(cause, "Could not forget this gateway"),
-            );
-          },
-        },
-      ],
-    );
+    setPendingForget(gateway);
   };
 
   const confirmClear = () => {
-    Alert.alert(
-      "Clear all recent gateways?",
-      "All saved gateway credentials will be permanently removed from this device.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear all",
-          style: "destructive",
-          onPress: () => {
-            void clearRecentGateways().catch((cause: unknown) =>
-              showError(cause, "Could not clear recent gateways"),
-            );
-          },
-        },
-      ],
+    setConfirmingClear(true);
+  };
+
+  const performForget = () => {
+    const gateway = pendingForget;
+    setPendingForget(null);
+    if (!gateway) return;
+    void forgetRecentGateway(gateway.id).catch((cause: unknown) =>
+      showError(cause, "Could not forget this gateway"),
+    );
+  };
+
+  const performClear = () => {
+    setConfirmingClear(false);
+    void clearRecentGateways().catch((cause: unknown) =>
+      showError(cause, "Could not clear recent gateways"),
     );
   };
 
@@ -330,6 +318,24 @@ function RecentGatewaysContent() {
           ) : null}
         </Animated.View>
       )}
+      <ConfirmDialog
+        visible={pendingForget !== null}
+        title={`Forget ${pendingForget ? gatewayName(pendingForget) : ""}?`}
+        message="Its saved connection credentials will be permanently removed from this device."
+        confirmLabel="Forget"
+        destructive
+        onConfirm={performForget}
+        onDismiss={() => setPendingForget(null)}
+      />
+      <ConfirmDialog
+        visible={confirmingClear}
+        title="Clear all recent gateways?"
+        message="All saved gateway credentials will be permanently removed from this device."
+        confirmLabel="Clear all"
+        destructive
+        onConfirm={performClear}
+        onDismiss={() => setConfirmingClear(false)}
+      />
     </AuthSheet>
   );
 }

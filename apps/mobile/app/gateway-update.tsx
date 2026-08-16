@@ -1,5 +1,10 @@
+import { SheetGateScreen } from "@/components/sheet-gate-screen";
 import { GatewayUpdateSheet } from "@/controller/gateway-update-sheet";
 
 export default function GatewayUpdateScreen() {
-  return <GatewayUpdateSheet />;
+  return (
+    <SheetGateScreen>
+      <GatewayUpdateSheet />
+    </SheetGateScreen>
+  );
 }

@@ -18,37 +18,37 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: privacy-initialization-error.png
-# iOS only: the Android privacy sheet does not render its relock states yet.
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - tapOn:
-          text: "Try again"
-          waitToSettleTimeoutMs: 1
-      - extendedWaitUntil:
-          visible: "Unlock with Face ID"
-          timeout: 10000
-      - waitForAnimationToEnd:
-          timeout: 3000
-      - takeScreenshot: privacy-locked
-      - runScript:
-          file: capture-screenshot.js
-          env:
-            SCREENSHOT: privacy-locked.png
-      - tapOn:
-          text: "Unlock with Face ID"
-          waitToSettleTimeoutMs: 1
-      - extendedWaitUntil:
-          visible: "Device authentication is temporarily locked.*"
-          timeout: 10000
-      - waitForAnimationToEnd:
-          timeout: 3000
-      - takeScreenshot: privacy-unlock-error
-      - runScript:
-          file: capture-screenshot.js
-          env:
-            SCREENSHOT: privacy-unlock-error.png
+# The unlock label carries the platform authentication name ("Unlock with
+# Face ID" on iOS, "Unlock Vesta" on Android), so the steps match by prefix.
+- tapOn:
+    text: "Try again"
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Vesta is locked"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Unlock.*"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-locked
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-locked.png
+- tapOn:
+    text: "Unlock.*"
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Device authentication is temporarily locked.*"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-unlock-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-unlock-error.png
 - clearState
 - setPermissions:
     permissions:

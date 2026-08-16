@@ -240,8 +240,6 @@ describe("loadManifest", () => {
       .filter((scenario) => !scenarioOnPlatform(scenario, "android"))
       .map((scenario) => scenario.id);
     expect(excluded).toEqual([
-      "privacy-locked",
-      "privacy-unlock-error",
       "agent-provider",
       "agent-voice",
       "agent-notification-rules",

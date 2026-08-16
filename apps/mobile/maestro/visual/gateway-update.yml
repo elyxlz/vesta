@@ -67,14 +67,9 @@ tags:
     duration: 500
 - waitForAnimationToEnd:
     timeout: 3000
-# The Android close control exposes no label yet, so only iOS can wait on it.
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - extendedWaitUntil:
-          visible: "Close settings"
-          timeout: 10000
+- extendedWaitUntil:
+    visible: "Close settings"
+    timeout: 10000
 - scrollUntilVisible:
     element:
       text: "Gateway"
@@ -89,6 +84,13 @@ tags:
     env:
       SCREENSHOT: settings-gateway-update-available.png
 
+- scrollUntilVisible:
+    element:
+      text: "^Update gateway,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
 - tapOn:
     text: "^Update gateway,.*"
 - extendedWaitUntil:

@@ -264,7 +264,17 @@ const ChatEvent = memo(function ChatEvent({
         <Text key={node.key} style={markdownStyles.textgroup}>
           {children}
           {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
-            <Text key="timestamp-spacer" style={styles.timestampSpacer}>
+            // Android applies neither opacity nor a transparent color to
+            // nested Text, so there the spacer hides in the bubble color.
+            <Text
+              key="timestamp-spacer"
+              style={[
+                styles.timestampSpacer,
+                USES_NATIVE_BUBBLE_SHAPE
+                  ? null
+                  : { color: user ? colors.accent : colors.card },
+              ]}
+            >
               {"\u00A0\u00A0\u00A0\u00A0"}
               {timestamp}
             </Text>
@@ -306,7 +316,14 @@ const ChatEvent = memo(function ChatEvent({
         </View>
       ),
     }),
-    [colors.input, colors.interactive, timestamp],
+    [
+      colors.accent,
+      colors.card,
+      colors.input,
+      colors.interactive,
+      timestamp,
+      user,
+    ],
   );
   const markdownStyles = useMemo(
     () => ({

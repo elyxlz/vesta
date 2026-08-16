@@ -1,8 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { Animated, KeyboardAvoidingView, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+
+const IS_ANDROID = process.env.EXPO_OS === "android";
 
 type AuthSheetMode = "plain" | "keyboard" | "scroll";
 
@@ -24,6 +27,10 @@ export function AuthSheet({
   const { colors } = usePreferences();
   const [scrollY] = useState(() => new Animated.Value(0));
   const topPadding = hasGrabber ? 36 : 28;
+  // iOS floats a native grabber above the sheet; Android renders none, so
+  // the Material drag handle renders in content there.
+  const grabberChrome =
+    hasGrabber && IS_ANDROID ? <SheetChrome grabber /> : null;
   const contentStyle = [
     styles.content,
     title ? null : { paddingTop: topPadding },
@@ -49,8 +56,9 @@ export function AuthSheet({
         )}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
-        stickyHeaderIndices={title ? [0] : undefined}
+        stickyHeaderIndices={title ? [grabberChrome ? 1 : 0] : undefined}
       >
+        {grabberChrome}
         {header}
         {children}
       </Animated.ScrollView>
@@ -77,8 +85,18 @@ export function AuthSheet({
         behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
         style={{ backgroundColor: colors.card }}
       >
+        {grabberChrome}
         {content}
       </KeyboardAvoidingView>
+    );
+  }
+
+  if (grabberChrome) {
+    return (
+      <View style={{ backgroundColor: colors.card }}>
+        {grabberChrome}
+        {content}
+      </View>
     );
   }
 

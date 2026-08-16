@@ -303,23 +303,19 @@ with an explicit "iOS only" label instead of silently missing it. The flows
 skip those captures on Android through `runFlow` blocks conditioned on
 `when: platform`, so one flow file drives both platforms.
 
-Two kinds of scenarios are iOS only today:
+One kind of scenario is iOS only today, by product scope: the seven
+agent-settings sections Android deliberately hides (provider, voice,
+notification rules, host access, backups, files, and the file editor).
+These stay iOS only for as long as the product keeps those sections off
+Android. The privacy gates and relock states capture on both platforms; on
+Android they present full screen through `SheetGateScreen` instead of a
+form sheet, and the unlock label carries the platform authentication name,
+so the flows match it by the "Unlock" prefix.
 
-- By product scope: the seven agent-settings sections Android deliberately
-  hides (provider, voice, notification rules, host access, backups, files,
-  and the file editor). These stay iOS only for as long as the product keeps
-  those sections off Android.
-- By a known Android defect: `privacy-locked` and `privacy-unlock-error`.
-  The privacy form sheet pushed at launch renders invisibly on Android in
-  the visual build, so its relock interactions cannot be reached. The
-  `privacy-initialization-error` capture stays registered on Android and
-  currently shows that defect (an empty background where the sheet should
-  be), which is the gallery doing its job. Restore both scenarios to Android
-  once the sheet renders.
-
-The Android close control on native sheets exposes no accessibility label
-yet, so the flows wait on it only on iOS; give it a `contentDescription` and
-the platform blocks around "Close settings" / "Close scanner" can collapse.
+The sheet close control is addressable by its accessibility label on both
+platforms (the Android sheet chrome renders a labeled close button), so the
+flows wait on and tap "Close settings" / "Close scanner" without platform
+blocks.
 
 ## Everyday commands
 

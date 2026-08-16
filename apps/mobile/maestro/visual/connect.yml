@@ -97,26 +97,7 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: scan-permission.png
-# The Android close control exposes no label yet, so relaunch instead of
-# dismissing the scanner sheet.
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - tapOn: "Close scanner"
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - stopApp
-      - openLink:
-          link: "vesta-dev://connect?visualPrivacy=unlocked"
-      - extendedWaitUntil:
-          visible: "Connect with Vesta Cloud"
-          timeout: 30000
-      - tapOn:
-          text: "Connect to self-hosted Vesta"
-          waitToSettleTimeoutMs: 1
+- tapOn: "Close scanner"
 - extendedWaitUntil:
     visible: "Connection link"
     timeout: 10000
@@ -157,14 +138,9 @@ tags:
 - tapOn:
     text: "Scan connection QR code"
     waitToSettleTimeoutMs: 1
-# The Android close control exposes no label yet, so only iOS can wait on it.
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - extendedWaitUntil:
-          visible: "Close scanner"
-          timeout: 10000
+- extendedWaitUntil:
+    visible: "Close scanner"
+    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: scan-ready
