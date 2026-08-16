@@ -42,7 +42,6 @@ export function AuthFlow({
 
   return (
     <ProviderStep
-      className="gap-2"
       logo={<ClaudeLogo />}
       title="sign in to claude"
       subtitle="open the link, sign in, then paste the code below."
