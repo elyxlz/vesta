@@ -497,6 +497,7 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
                   disconnectedColor={colors.danger}
                   reachable={reachable}
                   label="App settings"
+                  backgroundColor={colors.input}
                   onPress={openSettings}
                 />
               ),

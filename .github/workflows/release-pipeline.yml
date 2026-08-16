@@ -276,13 +276,18 @@ jobs:
   # Gated on the release gates (test-live + test-linux, the same pair push-image
   # waits on), not on publish-release: this job reads only the release event's body
   # and builds mobile from the tag checkout, so it needs no uploaded GitHub assets.
-  # Decoupling lets TestFlight delivery run in parallel with the GHCR push and asset
+  # Decoupling lets mobile delivery run in parallel with the GHCR push and asset
   # upload. Accepted tradeoff: if publish-release later fails and revert-failed-release
   # fires, a TestFlight build of a since-reverted release may already be delivered to
   # the internal (beta) group. The user accepted this beta-channel risk.
-  mobile-testflight:
-    name: Mobile · Build and upload to TestFlight
+  # Delivery covers both platforms: iOS to TestFlight, and the Android internal
+  # APK attached to the GitHub release as vesta-android.apk, which is what the
+  # README's stable releases/latest/download link serves.
+  mobile-delivery:
+    name: Mobile · Deliver TestFlight build and release APK
     needs: [test-live, test-linux]
+    permissions:
+      contents: write
     if: >-
       ${{ !failure() && !cancelled() &&
       contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
@@ -307,16 +312,30 @@ jobs:
       - name: Install app deps
         run: npm --prefix apps ci
 
-      - name: Build and deliver the tagged app to TestFlight
+      - name: Build and deliver the tagged app on both platforms
         working-directory: apps/mobile
         env:
           RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           CHANGELOG=$(printf '%s\n' "$RELEASE_BODY" | sed -n '/<!-- whats-new -->/,/<!-- \/whats-new -->/p' | sed '1d;$d')
           jq -n --arg changelog "$CHANGELOG" '{changelog: $changelog}' | \
-            eas workflow:run .eas/workflows/testflight-prerelease.yml \
+            eas workflow:run .eas/workflows/mobile-prerelease.yml \
               --non-interactive \
               --wait
+
+      - name: Attach the Android APK to the release
+        working-directory: apps/mobile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apk_url=$(eas build:list --platform android --status finished --limit 10 --json --non-interactive |
+            jq -r --arg sha "$GITHUB_SHA" '[.[] | select(.gitCommitHash == $sha)][0].artifacts.buildUrl')
+          if [ -z "$apk_url" ] || [ "$apk_url" = "null" ]; then
+            echo "::error::no finished Android build found for $GITHUB_SHA"
+            exit 1
+          fi
+          curl --fail --silent --show-error --location "$apk_url" --output vesta-android.apk
+          gh release upload "${{ github.event.release.tag_name }}" vesta-android.apk --clobber
 
   revert-failed-release:
     name: Release · Revert failed release
@@ -329,7 +348,7 @@ jobs:
         push-image,
         push-image-manifest,
         publish-release,
-        mobile-testflight,
+        mobile-delivery,
       ]
     if: ${{ failure() }}
     runs-on: ubuntu-latest

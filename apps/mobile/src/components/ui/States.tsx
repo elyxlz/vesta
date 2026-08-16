@@ -1,4 +1,5 @@
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Button } from "./Button";
 import { Text } from "./Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -7,7 +8,7 @@ export function LoadingState({ label = "Loading…" }: { label?: string }) {
   const { colors } = usePreferences();
   return (
     <View style={styles.state}>
-      <ActivityIndicator color={colors.accent} size="large" />
+      <LoadingSpinner color={colors.accent} size="large" />
       <Text style={[styles.detail, { color: colors.secondaryText }]}>{label}</Text>
     </View>
   );

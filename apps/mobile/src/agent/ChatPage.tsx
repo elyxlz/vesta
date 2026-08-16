@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Animated,
   Easing,
@@ -20,6 +19,7 @@ import {
   type LayoutChangeEvent,
   type ListRenderItem,
 } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { useQuery } from "@tanstack/react-query";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import Reanimated, {
@@ -36,6 +36,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
@@ -47,6 +48,11 @@ import {
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input";
 import { ChatLoadingSkeleton } from "@/components/chat-loading-skeleton";
+import contentCopyIcon from "../../assets/menu-icons/content-copy.xml";
+import editIcon from "../../assets/menu-icons/edit.xml";
+import replyIcon from "../../assets/menu-icons/reply.xml";
+import shareIcon from "../../assets/menu-icons/share.xml";
+import volumeUpIcon from "../../assets/menu-icons/volume-up.xml";
 import { useToast } from "@/components/native-toast";
 import { Text } from "@/components/ui/Typography";
 import {
@@ -69,6 +75,11 @@ import {
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+// Android's translucent 3-button navigation bar shows list content through
+// it, so a background veil covers the bar zone; iOS keeps content visible
+// under its hairline home indicator.
+const NAV_BAR_VEIL = process.env.EXPO_OS === "android";
+const NAV_BAR_VEIL_FADE = 12;
 const COMPOSER_RESIZE_DURATION = 250;
 const COMPOSER_SURFACE_PADDING = 4;
 const CHAT_COMPOSER_GAP = 6;
@@ -83,22 +94,31 @@ const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
     id: "reply",
     title: "Reply",
     systemImage: "arrowshape.turn.up.left",
+    androidImage: replyIcon,
   },
-  copy: { id: "copy", title: "Copy", systemImage: "doc.on.doc" },
+  copy: {
+    id: "copy",
+    title: "Copy",
+    systemImage: "doc.on.doc",
+    androidImage: contentCopyIcon,
+  },
   "edit-resend": {
     id: "edit-resend",
     title: "Edit & Resend",
     systemImage: "pencil",
+    androidImage: editIcon,
   },
   "read-aloud": {
     id: "read-aloud",
     title: "Read Aloud",
     systemImage: "speaker.wave.2",
+    androidImage: volumeUpIcon,
   },
   share: {
     id: "share",
     title: "Share",
     systemImage: "square.and.arrow.up",
+    androidImage: shareIcon,
   },
 };
 
@@ -250,7 +270,17 @@ const ChatEvent = memo(function ChatEvent({
         <Text key={node.key} style={markdownStyles.textgroup}>
           {children}
           {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
-            <Text key="timestamp-spacer" style={styles.timestampSpacer}>
+            // Android applies neither opacity nor a transparent color to
+            // nested Text, so there the spacer hides in the bubble color.
+            <Text
+              key="timestamp-spacer"
+              style={[
+                styles.timestampSpacer,
+                USES_NATIVE_BUBBLE_SHAPE
+                  ? null
+                  : { color: user ? colors.accent : colors.card },
+              ]}
+            >
               {"\u00A0\u00A0\u00A0\u00A0"}
               {timestamp}
             </Text>
@@ -292,7 +322,14 @@ const ChatEvent = memo(function ChatEvent({
         </View>
       ),
     }),
-    [colors.input, colors.interactive, timestamp],
+    [
+      colors.accent,
+      colors.card,
+      colors.input,
+      colors.interactive,
+      timestamp,
+      user,
+    ],
   );
   const markdownStyles = useMemo(
     () => ({
@@ -1156,7 +1193,7 @@ export default function ChatPage() {
         ListFooterComponent={
           socket.loadingMore ? (
             <View style={styles.loadingMore}>
-              <ActivityIndicator color={colors.interactive} />
+              <LoadingSpinner color={colors.interactive} />
             </View>
           ) : null
         }
@@ -1185,6 +1222,21 @@ export default function ChatPage() {
         >
           <ChatLoadingSkeleton />
         </Reanimated.View>
+      ) : null}
+      {NAV_BAR_VEIL && insets.bottom > 0 ? (
+        <LinearGradient
+          pointerEvents="none"
+          colors={[`${colors.background}00`, colors.background, colors.background]}
+          locations={[
+            0,
+            NAV_BAR_VEIL_FADE / (insets.bottom + NAV_BAR_VEIL_FADE),
+            1,
+          ]}
+          style={[
+            styles.navBarVeil,
+            { height: insets.bottom + NAV_BAR_VEIL_FADE },
+          ]}
+        />
       ) : null}
       <KeyboardStickyView
         offset={{ closed: 0, opened: Math.max(insets.bottom - 8, 0) }}
@@ -1244,6 +1296,13 @@ export default function ChatPage() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   listContent: { paddingHorizontal: 12 },
+  navBarVeil: {
+    position: "absolute",
+    zIndex: 1,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   loadingOverlay: {
     position: "absolute",
     zIndex: 1,

@@ -67,6 +67,14 @@ function configuredProjectId(): string | null {
   return typeof eas.projectId === "string" ? eas.projectId : null;
 }
 
+// Android push tokens come from FCM, wired in through android.googleServicesFile. A build
+// without those credentials cannot mint a device token (the native fetch rejects), so
+// registration on such a build is a quiet no-op: no permission prompt, no crash, and the
+// unregister paths stay safe because no token was ever stored.
+function androidPushConfigured(): boolean {
+  return typeof Constants.expoConfig?.android?.googleServicesFile === "string";
+}
+
 // The stable per-install id, reused as this device's id in both push registration and the device
 // registry so one install is one device across both.
 export async function pushInstallationId(): Promise<string> {
@@ -290,6 +298,7 @@ function EnabledPushCoordinator() {
     const platform = Platform.OS;
     if (!Device.isDevice || (platform !== "ios" && platform !== "android"))
       return;
+    if (platform === "android" && !androidPushConfigured()) return;
     const gateway = session.connection?.url;
     if (!gateway) return;
     const eventTypes = [

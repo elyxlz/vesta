@@ -66,9 +66,32 @@ tags:
 - tapOn:
     text: "Scan connection QR code"
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: ".*Open Settings"
-    timeout: 10000
+# iOS shows the denied recovery state directly; Android asks again through the
+# system dialog, and only a second denial makes the denial permanent, so deny
+# until the app's recovery state appears.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Open Settings"
+          timeout: 10000
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          text: "Don’t allow"
+          waitToSettleTimeoutMs: 1
+      - tapOn:
+          text: "Don’t allow"
+          optional: true
+          waitToSettleTimeoutMs: 1
+      - extendedWaitUntil:
+          visible: ".*Open Settings"
+          timeout: 10000
+      - waitForAnimationToEnd:
+          timeout: 3000
 - takeScreenshot: scan-permission
 - runScript:
     file: capture-screenshot.js

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ActivityIndicator, Alert, Linking, StyleSheet } from "react-native";
+import { Linking, StyleSheet } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
@@ -16,8 +17,12 @@ import {
 } from "@/api/endpoints";
 import type { GatewayInfo, GatewaySettings } from "@/api/types";
 import { Screen } from "@/components/layout/Screen";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { useToast } from "@/components/native-toast";
+import { OptionPicker } from "@/components/option-picker";
+import type { OptionPickerOption } from "@/components/option-picker.types";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import {
@@ -38,6 +43,17 @@ const appearanceValueIcons = {
   light: "sunny-outline",
   dark: "moon-outline",
 } as const;
+const themeOptions: readonly OptionPickerOption<ThemePreference>[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+const channelOptions: readonly OptionPickerOption<ReleaseChannel>[] = [
+  { value: "stable", label: "Stable" },
+  { value: "beta", label: "Beta" },
+];
+type ActivePicker = "theme" | "channel" | null;
+type ActiveConfirm = "update" | "restart" | "disconnect" | null;
 type GatewayQueryData = {
   info: GatewayInfo;
   settings: GatewaySettings;
@@ -82,6 +98,8 @@ export default function SettingsScreen() {
   const { showError } = useToast();
   const gatewayQueryKey = ["gateway", session.connection?.url] as const;
   const [privacySaving, setPrivacySaving] = useState(false);
+  const [activePicker, setActivePicker] = useState<ActivePicker>(null);
+  const [activeConfirm, setActiveConfirm] = useState<ActiveConfirm>(null);
   const gateway = useQuery({
     queryKey: gatewayQueryKey,
     queryFn: async () => {
@@ -160,39 +178,16 @@ export default function SettingsScreen() {
     !gateway.data || !roster.reachable || gatewaySettings.isPending;
 
   const confirmGatewayUpdate = () => {
-    Alert.alert("Update gateway?", "Agents will briefly restart.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Update",
-        onPress: () => gatewayUpdate.mutate(),
-      },
-    ]);
+    setActiveConfirm("update");
   };
 
   const confirmGatewayRestart = () => {
-    Alert.alert(
-      "Restart gateway?",
-      "Agent connections drop briefly and reconnect on their own.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Restart",
-          onPress: () => gatewayRestart.mutate(),
-        },
-      ],
-    );
+    setActiveConfirm("restart");
   };
 
-  const chooseTheme = () => {
-    const select = (theme: ThemePreference) => {
-      void preferences.update({ theme });
-    };
-    Alert.alert("Appearance", undefined, [
-      { text: "System", onPress: () => select("system") },
-      { text: "Light", onPress: () => select("light") },
-      { text: "Dark", onPress: () => select("dark") },
-      { text: "Cancel", style: "cancel" },
-    ]);
+  const selectTheme = (theme: ThemePreference) => {
+    setActivePicker(null);
+    void preferences.update({ theme });
   };
 
   const changeAppLock = async (enabled: boolean) => {
@@ -247,277 +242,321 @@ export default function SettingsScreen() {
     }
   };
 
-  const chooseReleaseChannel = () => {
-    if (gatewayControlsDisabled) return;
-    const select = (channel: ReleaseChannel) => {
-      if (channel !== gateway.data?.settings.channel) {
-        gatewaySettings.mutate({ channel });
-      }
-    };
-    Alert.alert(
-      "Release channel",
-      "Beta receives prereleases first. Switching to Stable never downgrades the current gateway.",
-      [
-        { text: "Stable", onPress: () => select("stable") },
-        { text: "Beta", onPress: () => select("beta") },
-        { text: "Cancel", style: "cancel" },
-      ],
-    );
+  const selectReleaseChannel = (channel: ReleaseChannel) => {
+    setActivePicker(null);
+    if (channel !== gateway.data?.settings.channel) {
+      gatewaySettings.mutate({ channel });
+    }
   };
 
   return (
-    <Screen contentStyle={styles.content}>
-      <NativeSheetCloseButton
-        accessibilityLabel="Close settings"
-        visibleFromDetentIndex={1}
-      />
-      <FormSection
-        title="Experience"
-        actions={
-          <Button
-            pill
-            variant="card"
-            trailingIcon={appearanceValueIcon}
-            accessibilityLabel={`Appearance, ${resolvedAppearance}${
-              preferences.theme === "system" ? " from system setting" : ""
-            }`}
-            onPress={chooseTheme}
-          >
-            Appearance
-          </Button>
-        }
-      />
-
-      <FormSection title="Privacy">
-        <SwitchRow
-          label="App Lock"
-          detail={`Require ${privacy.authenticationName} when returning to Vesta.`}
-          value={privacy.appLockEnabled}
-          disabled={!privacy.hydrated || privacySaving}
-          onValueChange={(value) => void changeAppLock(value)}
+    <>
+      <SheetChrome grabber title="Settings" closeLabel="Close settings" />
+      <Screen contentStyle={styles.content}>
+        <NativeSheetCloseButton
+          accessibilityLabel="Close settings"
+          visibleFromDetentIndex={1}
         />
-        <SwitchRow
-          label="Hide in app switcher"
-          detail={
-            privacy.appLockEnabled
-              ? "Always enabled while App Lock is on."
-              : IS_IOS
-                ? "Blur Vesta in the app switcher and during interruptions."
-                : "Hide Vesta in recent apps and block screen capture."
-          }
-          value={privacy.appLockEnabled || privacy.hideAppSwitcherPreview}
-          disabled={
-            !privacy.hydrated || privacySaving || privacy.appLockEnabled
-          }
-          onValueChange={(value) => void changeAppSwitcherPrivacy(value)}
+        <OptionPicker
+          visible={activePicker === "theme"}
+          title="Appearance"
+          options={themeOptions}
+          selectedValue={preferences.theme}
+          onSelect={selectTheme}
+          onDismiss={() => setActivePicker(null)}
         />
-        <SwitchRow
-          label="Share device location"
-          detail="Tell your agents where this phone is, place and coordinates, so plans and reminders follow your travel. Allow location always to keep sharing while the app is closed. Your timezone is always shared."
-          value={preferences.shareLocation}
-          onValueChange={(value) => void changeShareLocation(value)}
+        <OptionPicker
+          visible={activePicker === "channel"}
+          title="Release channel"
+          message="Beta receives prereleases first. Switching to Stable never downgrades the current gateway."
+          options={channelOptions}
+          selectedValue={gateway.data?.settings.channel}
+          onSelect={selectReleaseChannel}
+          onDismiss={() => setActivePicker(null)}
         />
-      </FormSection>
-
-      <FormSection title="Notifications">
-        <SwitchRow
-          label="Allow notifications"
-          detail="Receive selected agent updates when the app is closed."
-          value={preferences.remoteNotifications}
-          onValueChange={(value) =>
-            void preferences.update({ remoteNotifications: value })
-          }
+        <ConfirmDialog
+          visible={activeConfirm === "update"}
+          title="Update gateway?"
+          message="Agents will briefly restart."
+          confirmLabel="Update"
+          onConfirm={() => {
+            setActiveConfirm(null);
+            gatewayUpdate.mutate();
+          }}
+          onDismiss={() => setActiveConfirm(null)}
         />
-        <SwitchRow
-          label="Chat replies"
-          detail="Notify when an agent sends a completed chat reply."
-          value={preferences.remoteNotifications && preferences.pushChatReplies}
-          disabled={!preferences.remoteNotifications}
-          onValueChange={(value) =>
-            void preferences.update({ pushChatReplies: value })
-          }
+        <ConfirmDialog
+          visible={activeConfirm === "restart"}
+          title="Restart gateway?"
+          message="Agent connections drop briefly and reconnect on their own."
+          confirmLabel="Restart"
+          onConfirm={() => {
+            setActiveConfirm(null);
+            gatewayRestart.mutate();
+          }}
+          onDismiss={() => setActiveConfirm(null)}
         />
-        <SwitchRow
-          label="Show message content"
-          detail="Show chat text on the lock screen. Off keeps messages private."
-          value={
-            preferences.remoteNotifications &&
-            preferences.pushChatReplies &&
-            preferences.notificationPreviews
-          }
-          disabled={
-            !preferences.remoteNotifications || !preferences.pushChatReplies
-          }
-          onValueChange={(value) =>
-            void preferences.update({ notificationPreviews: value })
-          }
+        <ConfirmDialog
+          visible={activeConfirm === "disconnect"}
+          title="Disconnect from Vesta?"
+          message="You can reconnect using your account or tunnel link."
+          confirmLabel="Disconnect"
+          destructive
+          onConfirm={() => {
+            setActiveConfirm(null);
+            void unregisterCurrentMobileDevice(session.api)
+              .catch(() => undefined)
+              .then(() => session.disconnect())
+              .then(() => router.replace("/connect"));
+          }}
+          onDismiss={() => setActiveConfirm(null)}
         />
-        <SwitchRow
-          label="Status changes"
-          detail="Notify when an agent starts, stops, or changes availability."
-          value={
-            preferences.remoteNotifications && preferences.pushStatusChanges
-          }
-          disabled={!preferences.remoteNotifications}
-          onValueChange={(value) =>
-            void preferences.update({ pushStatusChanges: value })
-          }
-        />
-      </FormSection>
-
-      <FormSection
-        title="Gateway"
-        actions={
-          <ButtonGroup>
-            <Button
-              variant="cardGrouped"
-              loading={gatewayUpdate.isPending || updateCheck.isPending}
-              onPress={
-                updateAvailable
-                  ? confirmGatewayUpdate
-                  : () => updateCheck.mutate()
-              }
-            >
-              {updateCheck.isPending
-                ? "Checking for updates"
-                : updateAvailable
-                  ? "Update gateway"
-                  : updateCheck.isError
-                    ? "Retry update check"
-                    : updateCheck.isSuccess
-                      ? "Check again for updates"
-                      : "Check for updates"}
-            </Button>
-            <Button
-              variant="cardGrouped"
-              loading={gatewayRestart.isPending}
-              onPress={confirmGatewayRestart}
-            >
-              Restart gateway
-            </Button>
-          </ButtonGroup>
-        }
-      >
-        <FormRow
-          label="Status"
-          value={roster.reachable ? "connected" : "reconnecting"}
-        />
-        <FormRow
-          label="Host"
-          value={
-            session.connection ? new URL(session.connection.url).hostname : ""
-          }
-        />
-        <FormRow label="Version" value={roster.gatewayVersion ?? "unknown"} />
-        <FormRow
-          label="Release channel"
-          detail="Choose Stable releases or opt into prerelease builds."
-          value={titleCaseChannel(gateway.data?.settings.channel)}
-          trailing={
-            gatewaySettings.isPending && gatewaySettings.variables?.channel ? (
-              <ActivityIndicator size="small" />
-            ) : undefined
-          }
-          onPress={gatewayControlsDisabled ? undefined : chooseReleaseChannel}
-        />
-        <SwitchRow
-          label="Automatic updates"
-          detail="Install new gateway releases automatically in the background."
-          value={gateway.data?.settings.auto_update ?? false}
-          disabled={gatewayControlsDisabled}
-          onValueChange={(auto_update) =>
-            gatewaySettings.mutate({ auto_update })
-          }
-        />
-        <FormRow
-          label="Public tunnel"
-          value={gateway.data?.info.tunnel_url ? "active" : "unavailable"}
-        />
-      </FormSection>
-
-      {roster.devices.length > 0 ? (
-        <FormSection title="Devices">
-          {roster.devices.map((device) => (
-            <FormRow
-              key={device.id}
-              label={device.descriptor ?? "Unnamed device"}
-              detail={deviceContextLine(device)}
-              value={device.present ? "present now" : lastSeenLabel(device.lastSeen)}
-            />
-          ))}
-          <SwitchRow
-            label="Share device context"
-            detail="Tell your agents each device's timezone and, when a phone shares it, its location, so they follow your travel. Off stops the reports and forgets what was stored."
-            value={gateway.data?.settings.user_context ?? false}
-            disabled={gatewayControlsDisabled}
-            onValueChange={(value) => void changeUserContext(value)}
-          />
-        </FormSection>
-      ) : null}
-
-      {roster.managed ? (
         <FormSection
-          title="Account"
+          title="Experience"
           actions={
             <Button
               pill
               variant="card"
-              onPress={() => void Linking.openURL("https://vesta.run/account")}
+              trailingIcon={appearanceValueIcon}
+              accessibilityLabel={`Appearance, ${resolvedAppearance}${
+                preferences.theme === "system" ? " from system setting" : ""
+              }`}
+              onPress={() => setActivePicker("theme")}
             >
-              Manage account and billing
+              Appearance
             </Button>
           }
         />
-      ) : null}
 
-      <FormSection
-        title="Support"
-        actions={
-          <>
-            <Button pill variant="card" onPress={() => router.push("/debug")}>
-              Diagnostics
-            </Button>
+        <FormSection title="Privacy">
+          <SwitchRow
+            label="App Lock"
+            detail={`Require ${privacy.authenticationName} when returning to Vesta.`}
+            value={privacy.appLockEnabled}
+            disabled={!privacy.hydrated || privacySaving}
+            onValueChange={(value) => void changeAppLock(value)}
+          />
+          <SwitchRow
+            label="Hide in app switcher"
+            detail={
+              privacy.appLockEnabled
+                ? "Always enabled while App Lock is on."
+                : IS_IOS
+                  ? "Blur Vesta in the app switcher and during interruptions."
+                  : "Hide Vesta in recent apps and block screen capture."
+            }
+            value={privacy.appLockEnabled || privacy.hideAppSwitcherPreview}
+            disabled={
+              !privacy.hydrated || privacySaving || privacy.appLockEnabled
+            }
+            onValueChange={(value) => void changeAppSwitcherPrivacy(value)}
+          />
+          <SwitchRow
+            label="Share device location"
+            detail="Tell your agents where this phone is, place and coordinates, so plans and reminders follow your travel. Allow location always to keep sharing while the app is closed. Your timezone is always shared."
+            value={preferences.shareLocation}
+            onValueChange={(value) => void changeShareLocation(value)}
+          />
+        </FormSection>
+
+        <FormSection title="Notifications">
+          <SwitchRow
+            label="Allow notifications"
+            detail="Receive selected agent updates when the app is closed."
+            value={preferences.remoteNotifications}
+            onValueChange={(value) =>
+              void preferences.update({ remoteNotifications: value })
+            }
+          />
+          <SwitchRow
+            label="Chat replies"
+            detail="Notify when an agent sends a completed chat reply."
+            value={
+              preferences.remoteNotifications && preferences.pushChatReplies
+            }
+            disabled={!preferences.remoteNotifications}
+            onValueChange={(value) =>
+              void preferences.update({ pushChatReplies: value })
+            }
+          />
+          <SwitchRow
+            label="Show message content"
+            detail="Show chat text on the lock screen. Off keeps messages private."
+            value={
+              preferences.remoteNotifications &&
+              preferences.pushChatReplies &&
+              preferences.notificationPreviews
+            }
+            disabled={
+              !preferences.remoteNotifications || !preferences.pushChatReplies
+            }
+            onValueChange={(value) =>
+              void preferences.update({ notificationPreviews: value })
+            }
+          />
+          <SwitchRow
+            label="Status changes"
+            detail="Notify when an agent starts, stops, or changes availability."
+            value={
+              preferences.remoteNotifications && preferences.pushStatusChanges
+            }
+            disabled={!preferences.remoteNotifications}
+            onValueChange={(value) =>
+              void preferences.update({ pushStatusChanges: value })
+            }
+          />
+        </FormSection>
+
+        <FormSection
+          title="Gateway"
+          actions={
+            <ButtonGroup>
+              <Button
+                variant="cardGrouped"
+                loading={gatewayUpdate.isPending || updateCheck.isPending}
+                onPress={
+                  updateAvailable
+                    ? confirmGatewayUpdate
+                    : () => updateCheck.mutate()
+                }
+              >
+                {updateCheck.isPending
+                  ? "Checking for updates"
+                  : updateAvailable
+                    ? "Update gateway"
+                    : updateCheck.isError
+                      ? "Retry update check"
+                      : updateCheck.isSuccess
+                        ? "Check again for updates"
+                        : "Check for updates"}
+              </Button>
+              <Button
+                variant="cardGrouped"
+                loading={gatewayRestart.isPending}
+                onPress={confirmGatewayRestart}
+              >
+                Restart gateway
+              </Button>
+            </ButtonGroup>
+          }
+        >
+          <FormRow
+            label="Status"
+            value={roster.reachable ? "connected" : "reconnecting"}
+          />
+          <FormRow
+            label="Host"
+            value={
+              session.connection ? new URL(session.connection.url).hostname : ""
+            }
+          />
+          <FormRow label="Version" value={roster.gatewayVersion ?? "unknown"} />
+          <FormRow
+            label="Release channel"
+            detail="Choose Stable releases or opt into prerelease builds."
+            value={titleCaseChannel(gateway.data?.settings.channel)}
+            trailing={
+              gatewaySettings.isPending &&
+              gatewaySettings.variables?.channel ? (
+                <LoadingSpinner size="small" />
+              ) : undefined
+            }
+            onPress={
+              gatewayControlsDisabled
+                ? undefined
+                : () => setActivePicker("channel")
+            }
+          />
+          <SwitchRow
+            label="Automatic updates"
+            detail="Install new gateway releases automatically in the background."
+            value={gateway.data?.settings.auto_update ?? false}
+            disabled={gatewayControlsDisabled}
+            onValueChange={(auto_update) =>
+              gatewaySettings.mutate({ auto_update })
+            }
+          />
+          <FormRow
+            label="Public tunnel"
+            value={gateway.data?.info.tunnel_url ? "active" : "unavailable"}
+          />
+        </FormSection>
+
+        {roster.devices.length > 0 ? (
+          <FormSection title="Devices">
+            {roster.devices.map((device) => (
+              <FormRow
+                key={device.id}
+                label={device.descriptor ?? "Unnamed device"}
+                detail={deviceContextLine(device)}
+                value={
+                  device.present
+                    ? "present now"
+                    : lastSeenLabel(device.lastSeen)
+                }
+              />
+            ))}
+            <SwitchRow
+              label="Share device context"
+              detail="Tell your agents each device's timezone and, when a phone shares it, its location, so they follow your travel. Off stops the reports and forgets what was stored."
+              value={gateway.data?.settings.user_context ?? false}
+              disabled={gatewayControlsDisabled}
+              onValueChange={(value) => void changeUserContext(value)}
+            />
+          </FormSection>
+        ) : null}
+
+        {roster.managed ? (
+          <FormSection
+            title="Account"
+            actions={
+              <Button
+                pill
+                variant="card"
+                onPress={() =>
+                  void Linking.openURL("https://vesta.run/account")
+                }
+              >
+                Manage account and billing
+              </Button>
+            }
+          />
+        ) : null}
+
+        <FormSection
+          title="Support"
+          actions={
+            <>
+              <Button pill variant="card" onPress={() => router.push("/debug")}>
+                Diagnostics
+              </Button>
+              <Button
+                pill
+                variant="card"
+                onPress={() => router.push("/whats-new")}
+              >
+                What’s new
+              </Button>
+            </>
+          }
+        />
+
+        <FormSection
+          title="Other"
+          actions={
             <Button
               pill
-              variant="card"
-              onPress={() => router.push("/whats-new")}
+              variant="cardDanger"
+              onPress={() => {
+                setActiveConfirm("disconnect");
+              }}
             >
-              What’s new
+              Disconnect
             </Button>
-          </>
-        }
-      />
-
-      <FormSection
-        title="Other"
-        actions={
-          <Button
-            pill
-            variant="cardDanger"
-            onPress={() => {
-              Alert.alert(
-                "Disconnect from Vesta?",
-                "You can reconnect using your account or tunnel link.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Disconnect",
-                    style: "destructive",
-                    onPress: () =>
-                      void unregisterCurrentMobileDevice(session.api)
-                        .catch(() => undefined)
-                        .then(() => session.disconnect())
-                        .then(() => router.replace("/connect")),
-                  },
-                ],
-              );
-            }}
-          >
-            Disconnect
-          </Button>
-        }
-      />
-    </Screen>
+          }
+        />
+      </Screen>
+    </>
   );
 }
 

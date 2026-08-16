@@ -6,6 +6,7 @@ import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 
@@ -51,6 +52,9 @@ function ScanContent() {
         accessibilityLabel="Close scanner"
         tintColor={headerTintColor}
       />
+      <View pointerEvents="box-none" style={styles.androidChrome}>
+        <SheetChrome closeLabel="Close scanner" tintColor={headerTintColor} />
+      </View>
     </>
   );
 
@@ -127,6 +131,7 @@ function ScanContent() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  androidChrome: { position: "absolute", top: 0, left: 0, right: 0 },
   overlay: { flex: 1, justifyContent: "center", alignItems: "center" },
   finder: {
     width: 248,
