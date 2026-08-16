@@ -56,15 +56,12 @@ class DueSpec(BaseModel):
 
 
 class SnoozeSpec(BaseModel):
-    """When a snoozed reminder should fire: from now (--in-*), from its own fire time (--by-*),
-    or at a named moment (--at + --tz). One form per call."""
+    """When a snoozed reminder should fire: from now (--in-*) or at a named moment (--at + --tz).
+    One form per call."""
 
     in_minutes: int | None = None
     in_hours: int | None = None
     in_days: int | None = None
-    by_minutes: int | None = None
-    by_hours: int | None = None
-    by_days: int | None = None
     at: str | None = None
     tz: str | None = None
 
@@ -111,11 +108,11 @@ MISSED_GRACE = timedelta(seconds=30)
 FUZZ_VALIDATION_FIRES = 26
 
 
-def _relative_offset(minutes: int | None, hours: int | None, days: int | None, *, prefix: str = "in") -> timedelta | None:
-    """Validated offset from --in-*/--by-*/--due-in-* flags; None when no flag was given."""
+def _relative_offset(minutes: int | None, hours: int | None, days: int | None) -> timedelta | None:
+    """Validated offset from --in-*/--due-in-* flags; None when no flag was given."""
     for name, val in [("minutes", minutes), ("hours", hours), ("days", days)]:
         if val is not None and val <= 0:
-            raise ValueError(f"{prefix}_{name} must be positive")
+            raise ValueError(f"in_{name} must be positive")
     offset = timedelta(minutes=minutes or 0, hours=hours or 0, days=days or 0)
     return offset if offset.total_seconds() > 0 else None
 
@@ -473,7 +470,7 @@ def postpone_task(
     in_hours: int | None = None,
     in_days: int | None = None,
 ) -> dict:
-    """Set a new due date measured from now (or an absolute one) and rebuild the auto reminders.
+    """Set a new due date measured from now (or an absolute one).
     Also gives a due date to a task that never had one."""
     if due_datetime is None and not (in_minutes or in_hours or in_days):
         raise ValueError("Say when: tasks postpone <id> --in-days N (or --in-minutes/--in-hours, or --at + --tz)")
@@ -1071,8 +1068,7 @@ def remind_delete(config: Config, *, reminder_id: str) -> dict:
 def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict:
     """Reschedule a one-shot reminder for later; works on already-fired reminders too.
 
-    The result echoes previous_run and next_run so a misread of the from-now vs from-fire-time
-    difference is visible the moment it happens."""
+    The result echoes previous_run and next_run so the new fire time is confirmed in the same call."""
     with closing(db.get_db(config.data_dir)) as conn:
         row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
         if not row:
@@ -1082,22 +1078,17 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
             raise ValueError("Recurring reminders fire again on their own; snooze only works on one-shot reminders (delete if unwanted)")
 
         in_offset = _relative_offset(spec.in_minutes, spec.in_hours, spec.in_days)
-        by_offset = _relative_offset(spec.by_minutes, spec.by_hours, spec.by_days, prefix="by")
-        given = [form for form in (spec.at, in_offset, by_offset) if form is not None]
+        given = [form for form in (spec.at, in_offset) if form is not None]
         if len(given) > 1:
-            raise ValueError("Pick one way to say when: --in-* (from now), --by-* (from the fire time), or --at + --tz")
+            raise ValueError("Pick one way to say when: --in-* (from now) or --at + --tz")
         if spec.at is not None:
             if not spec.tz:
                 raise ValueError("tz is required when at is provided")
             run_time = _to_utc_dt(spec.at, spec.tz)
         elif in_offset is not None:
             run_time = _now_utc() + in_offset
-        elif by_offset is not None:
-            if not row["scheduled_time"]:
-                raise ValueError("This reminder has no fire time to shift from; use --in-* or --at + --tz")
-            run_time = db.parse_datetime(row["scheduled_time"]) + by_offset
         else:
-            raise ValueError("Say when: tasks remind snooze <id> --in-hours N (from now), --by-hours N (from the fire time), or --at + --tz")
+            raise ValueError("Say when: tasks remind snooze <id> --in-hours N (from now) or --at + --tz")
 
         run_time = run_time.replace(microsecond=0)
         new_data = {"type": "date", "run_date": run_time.isoformat()}

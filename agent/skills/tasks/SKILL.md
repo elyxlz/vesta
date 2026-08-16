@@ -43,7 +43,6 @@ tasks remind "Evening check-in" --recurring daily --at "21:30" --tz "Europe/Rome
 tasks remind "Weekdays 9am" --cron "0 9 * * 1-5" --tz "America/New_York"
 tasks remind list [--task <id>] [--show-completed]   # --show-completed reveals fired one-shots too
 tasks remind snooze <id> --in-hours 4    # fire 4h from NOW; works on already-fired ones too
-tasks remind snooze <id> --by-hours 4    # push the fire time back 4h
 tasks remind snooze <id> --at "2026-12-01T17:00:00" --tz "Europe/London"   # move it to a specific time
 tasks remind update <id> --message "..."
 tasks remind delete <id>
@@ -53,7 +52,7 @@ tasks remind delete <id>
 - Recurring: `--recurring hourly|daily|weekly|monthly|yearly` (all but hourly need `--at` + `--tz`; daily accepts a bare time like `--at "21:30"`, the others take their weekday or day from the date), or `--cron "min hour dom month dow"` + `--tz` for anything else (standard cron: 0/7 = Sunday, ranges/lists/steps/names supported). Both keep their wall-clock time across DST.
 - `--fuzz-minutes N` (recurring/cron only): each fire lands at a varying point within N minutes either side of the nominal time, so a routine feels natural instead of firing at 09:30:00 sharp every day. Translate vague times yourself: "late evening" is roughly `--at ...T21:30:00 --fuzz-minutes 75`. Use fuzz for human-facing rhythms, never for deadlines; it must fit within half the gap between fires.
 - A recurring reminder's message is an instruction: when it fires, act on it. Recurring reminders double as scheduled automations.
-- Snooze says when three ways, one per call: `--in-*` counts from now, `--by-*` counts from the reminder's own fire time, `--at` + `--tz` names the moment. The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
+- Snooze says when two ways, one per call: `--in-*` counts from now, `--at` + `--tz` names the moment. The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
 - To keep a hand-written checkpoint on a task (say, one blocked on someone else), create a reminder with `--task <id>`: it rides the task, and closing the task with `tasks done` clears every reminder tied to it, so a finished task never keeps firing.
 
 ### When a reminder needs more than a sentence: staged files

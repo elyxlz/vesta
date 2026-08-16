@@ -265,22 +265,14 @@ def _remind_snooze_cmd(config: Config, argv: list[str]) -> dict:
     p.add_argument("--in-minutes", type=int, default=None, help="Fire N minutes from now")
     p.add_argument("--in-hours", type=int, default=None, help="Fire N hours from now")
     p.add_argument("--in-days", type=int, default=None, help="Fire N days from now")
-    p.add_argument("--by-minutes", type=int, default=None, help="Push the fire time back N minutes")
-    p.add_argument("--by-hours", type=int, default=None, help="Push the fire time back N hours")
-    p.add_argument("--by-days", type=int, default=None, help="Push the fire time back N days")
     p.add_argument("--at", default=None, help="Fire at this datetime (requires --tz)")
     p.add_argument("--tz", default=None, help="IANA timezone for --at")
     args = p.parse_args(argv)
-    reminder_id = _require_arg(
-        args.id_pos or args.reminder_id, "id", "tasks remind snooze <id> --in-hours N (or --by-hours N, or --at <iso> --tz <tz>)"
-    )
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind snooze <id> --in-hours N (or --at <iso> --tz <tz>)")
     spec = commands.SnoozeSpec(
         in_minutes=args.in_minutes,
         in_hours=args.in_hours,
         in_days=args.in_days,
-        by_minutes=args.by_minutes,
-        by_hours=args.by_hours,
-        by_days=args.by_days,
         at=args.at,
         tz=args.tz,
     )
@@ -367,7 +359,7 @@ def _main_remind():
 def _print_remind_help():
     print("""usage: tasks remind <message> [options]
        tasks remind list [--task <id>] [--limit N] [--show-completed]
-       tasks remind snooze <id> --in-hours N | --by-hours N | --at <iso> --tz <tz>
+       tasks remind snooze <id> --in-hours N | --at <iso> --tz <tz>
        tasks remind delete <id>
        tasks remind update <id> --message <msg>
 
@@ -392,7 +384,7 @@ options:
 
 subcommands:
   list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
-  snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, --by-* from its fire time, or --at
+  snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at + --tz
   delete                Delete a reminder
   update                Update a reminder message""")
 

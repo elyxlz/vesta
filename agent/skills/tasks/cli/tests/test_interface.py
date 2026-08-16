@@ -1,5 +1,5 @@
 """Unit tests for the agent-facing interface: one time vocabulary across commands, working
---help on remind subcommands, snooze's three timing forms with the old-to-new echo, and bare
+--help on remind subcommands, snooze's two timing forms with the old-to-new echo, and bare
 times for daily reminders."""
 
 import json
@@ -66,7 +66,7 @@ def test_remind_subcommand_help_exits_zero_and_prints_usage(tmp_config: Config, 
 
 
 # ---------------------------------------------------------------------------
-# Snooze: three timing forms, old-to-new echo
+# Snooze: two timing forms, old-to-new echo
 # ---------------------------------------------------------------------------
 
 
@@ -77,17 +77,10 @@ def test_snooze_result_echoes_previous_and_next_run(tmp_config: Config):
     assert db.parse_datetime(result["next_run"]) > db.parse_datetime(result["previous_run"])
 
 
-def test_snooze_by_counts_from_the_fire_time_not_now(tmp_config: Config):
-    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="m", in_days=4))
-    result = commands.remind_snooze(tmp_config, reminder_id=reminder["id"], spec=commands.SnoozeSpec(by_hours=7))
-    shift = db.parse_datetime(result["next_run"]) - db.parse_datetime(reminder["next_run"])
-    assert timedelta(hours=6, minutes=59) <= shift <= timedelta(hours=7, minutes=1)
-
-
 def test_snooze_rejects_mixed_timing_forms(tmp_config: Config):
     reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="m", in_hours=1))
     with pytest.raises(ValueError, match="Pick one"):
-        commands.remind_snooze(tmp_config, reminder_id=reminder["id"], spec=commands.SnoozeSpec(in_hours=2, by_hours=2))
+        commands.remind_snooze(tmp_config, reminder_id=reminder["id"], spec=commands.SnoozeSpec(in_hours=2, at="2026-12-01T10:00:00", tz="UTC"))
 
 
 # ---------------------------------------------------------------------------
