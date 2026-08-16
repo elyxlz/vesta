@@ -23,15 +23,7 @@ export function SheetGateScreen({ children }: { children: ReactNode }) {
         <VestaBrand />
       </View>
       <View pointerEvents="none" style={styles.scrim} />
-      <View
-        style={[
-          styles.card,
-          {
-            backgroundColor: colors.card,
-            paddingBottom: insets.bottom,
-          },
-        ]}
-      >
+      <View style={[styles.card, { backgroundColor: colors.card }]}>
         {children}
       </View>
     </View>
