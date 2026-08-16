@@ -61,7 +61,7 @@ export function AuthFlow({
         onChange={(e) => setCode(e.target.value)}
         autoFocus
         disabled={submitting}
-        className="h-12 w-full text-center"
+        className="h-11 w-full text-center"
       />
     </ProviderStep>
   );

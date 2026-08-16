@@ -140,7 +140,7 @@ export function ModelStep({
                   placeholder="search models..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  className="h-12 pl-10"
+                  className="h-11 pl-10"
                 />
               </div>
               <ModelCardList
