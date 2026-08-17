@@ -1,19 +1,21 @@
-import { useState, type ReactNode } from "react";
+import { createContext, use, useState, type ReactNode } from "react";
 import {
   initialChatState,
   seedTail,
   type ChatState,
 } from "@vesta/core";
 import {
-  AgentHoldsContext,
-  createAgentHolds,
-  type AgentHolds,
-} from "../../src/holds/AgentHoldsProvider";
-import { agentHoldKey } from "../../src/holds/keyed-hold";
+  captureChatHold,
+  chatHoldKey,
+  type ChatHold,
+} from "../../src/chat/chat-hold-model";
 import { connectionKeyOf } from "../../src/session/session-model";
 import { visualConnection } from "./session-provider";
 
-export { useAgentHolds } from "../../src/holds/AgentHoldsProvider";
+interface ChatHoldStore {
+  read: () => ChatHold;
+  persist: (next: ChatHold) => void;
+}
 
 const chatState: ChatState = seedTail(initialChatState(), {
   events: [
@@ -45,23 +47,32 @@ const chatState: ChatState = seedTail(initialChatState(), {
   cursor: null,
 });
 
-function createVisualAgentHolds(): AgentHolds {
-  const holds = createAgentHolds();
-  const connectionKey = connectionKeyOf(visualConnection) ?? "";
-  holds.chat.persist(agentHoldKey("aria", connectionKey), chatState);
-  // nova has history loaded and no messages, so opening nova renders the empty-chat state.
-  holds.chat.persist(
-    agentHoldKey("nova", connectionKey),
-    seedTail(initialChatState(), { events: [], cursor: null }),
+function createVisualChatHoldStore(): ChatHoldStore {
+  let hold = captureChatHold(
+    chatHoldKey("aria", connectionKeyOf(visualConnection) ?? ""),
+    chatState,
   );
-  return holds;
+  return {
+    read: () => hold,
+    persist: (next) => {
+      hold = next;
+    },
+  };
 }
 
-export function AgentHoldsProvider({ children }: { children: ReactNode }) {
-  const [holds] = useState(createVisualAgentHolds);
+const ChatHoldContext = createContext<ChatHoldStore | null>(null);
+
+export function ChatHoldProvider({ children }: { children: ReactNode }) {
+  const [store] = useState(createVisualChatHoldStore);
   return (
-    <AgentHoldsContext.Provider value={holds}>
+    <ChatHoldContext.Provider value={store}>
       {children}
-    </AgentHoldsContext.Provider>
+    </ChatHoldContext.Provider>
   );
+}
+
+export function useChatHold(): ChatHoldStore {
+  const store = use(ChatHoldContext);
+  if (!store) throw new Error("useChatHold must be used within ChatHoldProvider");
+  return store;
 }

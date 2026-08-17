@@ -110,11 +110,25 @@
       "screenshot": "home-gateway-disconnected.png"
     },
     {
+      "id": "home-loading",
+      "title": "Home loading",
+      "description": "The home skeleton shown while the connected gateway's roster is still arriving.",
+      "group": "Home",
+      "screenshot": "home-loading.png"
+    },
+    {
       "id": "agent-chat",
       "title": "Agent conversation",
       "description": "Held conversation remains available while the agent connection is recovering.",
       "group": "Agent",
       "screenshot": "agent-chat.png"
+    },
+    {
+      "id": "agent-chat-empty",
+      "title": "Agent chat empty",
+      "description": "A loaded conversation with no messages yet invites the first message.",
+      "group": "Agent",
+      "screenshot": "agent-chat-empty.png"
     },
     {
       "id": "agent-dashboard-empty",
@@ -142,40 +156,35 @@
       "title": "Provider and model",
       "description": "Connected provider identity, model, context window, plan, and usage meters.",
       "group": "Agent settings",
-      "screenshot": "agent-provider.png",
-      "platforms": ["ios"]
+      "screenshot": "agent-provider.png"
     },
     {
       "id": "agent-voice",
       "title": "Voice settings",
       "description": "Configured speech-to-text and text-to-speech services with deterministic options.",
       "group": "Agent settings",
-      "screenshot": "agent-voice.png",
-      "platforms": ["ios"]
+      "screenshot": "agent-voice.png"
     },
     {
       "id": "agent-notification-rules",
       "title": "Notification rules",
       "description": "Prioritized calendar and email rules with the composer for new interruption policies.",
       "group": "Agent settings",
-      "screenshot": "agent-notification-rules.png",
-      "platforms": ["ios"]
+      "screenshot": "agent-notification-rules.png"
     },
     {
       "id": "agent-host-access",
       "title": "Host access",
       "description": "Deterministic shared gateway folders with read and write permissions.",
       "group": "Agent settings",
-      "screenshot": "agent-host-access.png",
-      "platforms": ["ios"]
+      "screenshot": "agent-host-access.png"
     },
     {
       "id": "agent-backups",
       "title": "Agent backups",
       "description": "Available manual and automatic snapshots with restore and deletion actions.",
       "group": "Agent settings",
-      "screenshot": "agent-backups.png",
-      "platforms": ["ios"]
+      "screenshot": "agent-backups.png"
     },
     {
       "id": "agent-notifications",
@@ -196,16 +205,14 @@
       "title": "Agent files",
       "description": "Memory, constitution, dreams, and installed abilities from a fixed file tree.",
       "group": "Agent settings",
-      "screenshot": "agent-files.png",
-      "platforms": ["ios"]
+      "screenshot": "agent-files.png"
     },
     {
       "id": "agent-file-editor",
       "title": "Agent file editor",
       "description": "Writable working-memory document opened in the production mobile editor.",
       "group": "Agent settings",
-      "screenshot": "agent-file-editor.png",
-      "platforms": ["ios"]
+      "screenshot": "agent-file-editor.png"
     },
     {
       "id": "home-empty",
@@ -248,6 +255,13 @@
       "description": "Connected gateway health, version, release channel, and update controls.",
       "group": "Settings",
       "screenshot": "settings-gateway.png"
+    },
+    {
+      "id": "settings-devices",
+      "title": "Settings devices",
+      "description": "The device registry: a present device, an absent one with its last-seen time, and the device-context switch.",
+      "group": "Settings",
+      "screenshot": "settings-devices.png"
     },
     {
       "id": "gateway-update-required",
@@ -306,6 +320,13 @@
       "screenshot": "gateway-updated.png"
     },
     {
+      "id": "app-behind",
+      "title": "App behind",
+      "description": "The app fell below the gateway's supported version window and points at the store update.",
+      "group": "Gateway update",
+      "screenshot": "app-behind.png"
+    },
+    {
       "id": "diagnostics",
       "title": "Diagnostics",
       "description": "Application, simulator, gateway, and roster details with the native sharing action.",
@@ -314,23 +335,23 @@
     },
     {
       "id": "whats-new",
-      "title": "What’s new",
+      "title": "What\u2019s new",
       "description": "Deterministic release notes available to the connected gateway version.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new.png"
     },
     {
       "id": "whats-new-empty",
       "title": "No release notes",
       "description": "Empty release-note state when nothing new applies to this gateway.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new-empty.png"
     },
     {
       "id": "whats-new-error",
       "title": "Release notes unavailable",
       "description": "Recoverable error state when release notes cannot be loaded.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new-error.png"
     }
   ]

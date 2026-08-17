@@ -448,7 +448,7 @@ describe("liveCaptureEntries", () => {
 });
 
 describe("loadManifest", () => {
-  it("keeps every scenario on iOS and filters iOS-only scenarios on Android", async () => {
+  it("serves every scenario on both platforms now that no state is iOS-only", async () => {
     const iosManifest = await loadManifest("ios");
     expect(iosManifest.scenarios).toHaveLength(iosManifest.allScenarios.length);
 
@@ -456,17 +456,9 @@ describe("loadManifest", () => {
     const excluded = androidManifest.allScenarios
       .filter((scenario) => !scenarioOnPlatform(scenario, "android"))
       .map((scenario) => scenario.id);
-    expect(excluded).toEqual([
-      "agent-provider",
-      "agent-voice",
-      "agent-notification-rules",
-      "agent-host-access",
-      "agent-backups",
-      "agent-files",
-      "agent-file-editor",
-    ]);
+    expect(excluded).toEqual([]);
     expect(androidManifest.scenarios).toHaveLength(
-      androidManifest.allScenarios.length - excluded.length,
+      androidManifest.allScenarios.length,
     );
   });
 });

@@ -27,95 +27,89 @@ tags:
     env:
       SCREENSHOT: whats-new-empty.png
 
-# iOS only: Android agent settings hide the notification rules, host access,
-# and files sections by design.
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - stopApp
-      - openLink:
-          link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-      - extendedWaitUntil:
-          visible: "Natural chat pacing"
-          timeout: 30000
-      - scrollUntilVisible:
-          element:
-            text: "^Notification rules,.*"
-          direction: DOWN
-          timeout: 10000
-          speed: 40
-          visibilityPercentage: 100
-      - tapOn:
-          text: "^Notification rules,.*"
-      - extendedWaitUntil:
-          visible: "Priority rules"
-          timeout: 10000
-      - extendedWaitUntil:
-          visible: "source is calendar"
-          timeout: 10000
-      - waitForAnimationToEnd:
-          timeout: 3000
-      - takeScreenshot: agent-notification-rules
-      - runScript:
-          file: capture-screenshot.js
-          env:
-            SCREENSHOT: agent-notification-rules.png
-      - stopApp
-      - openLink:
-          link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-      - extendedWaitUntil:
-          visible: "Natural chat pacing"
-          timeout: 30000
-      - scrollUntilVisible:
-          element:
-            text: "^Host access,.*"
-          direction: DOWN
-          timeout: 10000
-          speed: 40
-          visibilityPercentage: 100
-      - tapOn:
-          text: "^Host access,.*"
-      - extendedWaitUntil:
-          visible: "Shared folders"
-          timeout: 10000
-      - extendedWaitUntil:
-          visible: "vesta"
-          timeout: 10000
-      - waitForAnimationToEnd:
-          timeout: 3000
-      - takeScreenshot: agent-host-access
-      - runScript:
-          file: capture-screenshot.js
-          env:
-            SCREENSHOT: agent-host-access.png
-      - stopApp
-      - openLink:
-          link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-      - extendedWaitUntil:
-          visible: "Natural chat pacing"
-          timeout: 30000
-      - scrollUntilVisible:
-          element:
-            text: "^Files,.*"
-          direction: DOWN
-          timeout: 10000
-          speed: 40
-          visibilityPercentage: 100
-      - tapOn:
-          text: "^Files,.*"
-      - extendedWaitUntil:
-          visible: "Who aria is"
-          timeout: 10000
-      - tapOn:
-          text: ".*Memory.*"
-      - extendedWaitUntil:
-          visible: "Contents of MEMORY.md"
-          timeout: 10000
-      - waitForAnimationToEnd:
-          timeout: 3000
-      - takeScreenshot: agent-file-editor
-      - runScript:
-          file: capture-screenshot.js
-          env:
-            SCREENSHOT: agent-file-editor.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: "^Notification rules,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "^Notification rules,.*"
+- extendedWaitUntil:
+    visible: "Priority rules"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "source is calendar"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-notification-rules
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notification-rules.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: "^Host access,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "^Host access,.*"
+- extendedWaitUntil:
+    visible: "Shared folders"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "vesta"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-host-access
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-host-access.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: "^Files,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "^Files,.*"
+- extendedWaitUntil:
+    visible: "Who aria is"
+    timeout: 10000
+- tapOn:
+    text: ".*Memory.*"
+- extendedWaitUntil:
+    visible: "Contents of MEMORY.md"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-file-editor
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-file-editor.png
