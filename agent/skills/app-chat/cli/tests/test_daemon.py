@@ -6,6 +6,7 @@ import functools
 import json
 import os
 import signal
+import threading
 import types
 
 import pytest
@@ -209,6 +210,41 @@ def test_send_command_persists_chat_event_and_fans_it_to_subscribers(tmp_path, m
     assert queue.qsize() == 1
     fanned = queue.get_nowait()
     assert fanned["id"] == 1 and fanned["type"] == "chat"
+    state.service.store.close()
+
+
+def test_send_acks_the_client_before_the_user_notification_finishes(tmp_path, monkeypatch):
+    # The user notification can block up to its timeout. The durable ack must reach the client
+    # first, so a blocking notification must not stall the send response. A read that waited on
+    # the notification (the pre-ack order) would time out here instead of returning the ack.
+    state = _daemon_state(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_notification(text: str) -> None:
+        started.set()
+        release.wait(timeout=5.0)
+
+    monkeypatch.setattr(daemon, "_send_user_notification", blocking_notification)
+
+    async def run() -> dict[str, object]:
+        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
+        async with server:
+            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
+            writer.write(json.dumps({"command": "send", "message": "hey there"}).encode())
+            writer.write_eof()
+            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+            release.set()  # ack received; let the notification thread finish so shutdown is clean
+            writer.close()
+            await writer.wait_closed()
+            return json.loads(data.decode())
+
+    response = asyncio.run(run())
+
+    assert response == {"ok": True, "message": "hey there", "id": 1}
+    assert started.is_set()  # the notification still runs, just after the ack
+    events, _ = state.service.store.page()
+    assert [(e["type"], e["text"]) for e in events] == [("chat", "hey there")]
     state.service.store.close()
 
 
