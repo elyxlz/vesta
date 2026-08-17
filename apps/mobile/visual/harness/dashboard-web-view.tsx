@@ -1,5 +1,5 @@
 import { forwardRef, useState, type ComponentProps } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, Text } from "react-native";
 import {
   DashboardWebView as ProductionDashboardWebView,
   type DashboardWebViewHandle,
@@ -11,8 +11,9 @@ type DashboardWebViewProps = ComponentProps<typeof ProductionDashboardWebView>;
 
 // Maestro reads the native accessibility tree, which does not reliably expose
 // text rendered inside a WebView on Android. onLoad is a native RN callback, so
-// this marker is a deterministic "content painted" signal the flows wait on
-// instead of racing the WebView's inner text.
+// this transparent Text is a deterministic "content painted" signal the flows
+// wait on instead of racing the WebView's inner text. A Text node exposes its
+// string to Android accessibility where a content-less View does not.
 const DASHBOARD_READY_LABEL = "Dashboard ready";
 
 function dashboardDocument(dark: boolean): string {
@@ -113,16 +114,21 @@ export const DashboardWebView = forwardRef<
         }}
       />
       {loaded ? (
-        <View
-          accessible
-          accessibilityLabel={DASHBOARD_READY_LABEL}
-          style={styles.readyMarker}
-        />
+        <Text accessible style={styles.readyMarker}>
+          {DASHBOARD_READY_LABEL}
+        </Text>
       ) : null}
     </>
   );
 });
 
 const styles = StyleSheet.create({
-  readyMarker: { position: "absolute", top: 0, left: 0, width: 4, height: 4 },
+  // Present in the accessibility tree, invisible in the screenshot.
+  readyMarker: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    fontSize: 4,
+    color: "transparent",
+  },
 });
