@@ -183,23 +183,31 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
         request = json.loads(data.decode())
         command = request["command"]
 
+        notify_message: str | None = None
+        response: dict[str, object]
         if command == "send":
             message = request["message"].strip()
             if not message:
-                response: dict[str, object] = {"error": "empty message"}
+                response = {"error": "empty message"}
             else:
                 event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
                 state.service.store.append(event)
                 state.service.emit(event)
-                await asyncio.to_thread(_send_user_notification, message)
                 response = {"ok": True, "message": message, "id": event["id"]}
+                notify_message = message
         elif command == "status":
             response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers)}
         else:
             response = {"error": f"unknown command: {command}"}
 
         writer.write(json.dumps(response).encode())
-        await writer.drain()
+        # The notification runs after the ack so it never delays it, but a durable reply must
+        # still notify even if the caller died before reading the ack, so a broken pipe on the
+        # ack must not skip it.
+        with contextlib.suppress(OSError):
+            await writer.drain()
+        if notify_message is not None:
+            await asyncio.to_thread(_send_user_notification, notify_message)
     except (json.JSONDecodeError, KeyError, TimeoutError, OSError) as exc:
         _log(f"socket error: {exc}")
     finally:
