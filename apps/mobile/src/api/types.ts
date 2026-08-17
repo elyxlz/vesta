@@ -49,9 +49,18 @@ export interface UsageMeter {
   resets_at: string | null;
 }
 
+export interface Account {
+  name: string | null;
+  email: string | null;
+  plan: string | null;
+  organization: string | null;
+  created_at: string | null;
+}
+
 export interface Usage {
   meters: UsageMeter[];
   credits: { used: number | null; limit: number | null } | null;
+  account: Account | null;
 }
 
 export interface FieldPredicate {

@@ -145,6 +145,13 @@ const usage: Usage = {
     { label: "Weekly allowance", used_pct: 61, resets_at: null },
   ],
   credits: null,
+  account: {
+    name: "Ada Lovelace",
+    email: "ada@example.com",
+    plan: "Claude Max",
+    organization: "Ada's Organization",
+    created_at: "2023-07-18T19:44:58Z",
+  },
 };
 const notificationRules: NotificationInterruptRule[] = [
   {

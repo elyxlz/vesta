@@ -46,8 +46,10 @@ import {
   setModel,
   setContextWindow,
   signOutProvider,
+  type Account,
   type ProviderInfo,
   type Usage,
+  type UsageCredits,
   type UsageMeter,
 } from "@/api/agents";
 import { fetchAgentClaudeModels } from "@/api/providers/claude";
@@ -69,6 +71,49 @@ function formatResetsAt(iso: string): string {
   const mins = Math.floor((diff % 3_600_000) / 60_000);
   if (hours > 0) return `in ${String(hours)}h ${String(mins)}m`;
   return `in ${String(mins)}m`;
+}
+
+function formatMemberSince(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+  });
+}
+
+function AccountSection({ account }: { account: Account }) {
+  const rows = [
+    { label: "name", value: account.name },
+    { label: "email", value: account.email },
+    { label: "plan", value: account.plan },
+    { label: "organization", value: account.organization },
+    {
+      label: "member since",
+      value: account.created_at ? formatMemberSince(account.created_at) : null,
+    },
+  ].filter(
+    (row): row is { label: string; value: string } => row.value !== null,
+  );
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <span className="text-xs font-medium text-muted-foreground">account</span>
+      <div className="flex flex-col gap-1.5">
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            className="flex items-center justify-between gap-4 text-xs"
+          >
+            <span className="text-muted-foreground">{row.label}</span>
+            <span className="text-foreground truncate">{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function UsageBar({ meter }: { meter: UsageMeter }) {
@@ -199,6 +244,57 @@ function ProviderIdentity({
   );
 }
 
+function UsageBody({
+  meters,
+  credits,
+  loading,
+  error,
+}: {
+  meters: UsageMeter[];
+  credits: UsageCredits | null;
+  loading: boolean;
+  error: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-3 w-8" />
+        </div>
+        <Skeleton className="h-1.5 w-full" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <p className="text-xs text-muted-foreground">failed to load usage data</p>
+    );
+  }
+  if (meters.length === 0 && !credits) {
+    return (
+      <p className="text-xs text-muted-foreground">no usage data available</p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2.5">
+      {meters.map((m) => (
+        <UsageBar key={m.label} meter={m} />
+      ))}
+      {credits && (
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">credits</span>
+          <span className="text-foreground tabular-nums">
+            {credits.used != null
+              ? `$${credits.used.toFixed(2)}${credits.limit != null ? ` / $${credits.limit.toFixed(2)}` : ""}`
+              : "—"}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UsageSection({
   usage,
   loading,
@@ -212,52 +308,33 @@ function UsageSection({
 }) {
   const meters = usage?.meters ?? [];
   const credits = usage?.credits ?? null;
+  const account = usage?.account ?? null;
 
   return (
-    <div className="flex flex-col gap-2.5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">
-          plan usage
-        </span>
-        <button
-          onClick={onRefresh}
-          aria-label="refresh usage"
-          className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-        >
-          <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-        </button>
+    <div className="flex flex-col gap-4">
+      {!loading && !error && account && <AccountSection account={account} />}
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted-foreground">
+            plan usage
+          </span>
+          <button
+            onClick={onRefresh}
+            aria-label="refresh usage"
+            className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          >
+            <RefreshCw
+              className={`size-3.5 ${loading ? "animate-spin" : ""}`}
+            />
+          </button>
+        </div>
+        <UsageBody
+          meters={meters}
+          credits={credits}
+          loading={loading}
+          error={error}
+        />
       </div>
-      {loading ? (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <Skeleton className="h-3 w-24" />
-            <Skeleton className="h-3 w-8" />
-          </div>
-          <Skeleton className="h-1.5 w-full" />
-        </div>
-      ) : error ? (
-        <p className="text-xs text-muted-foreground">
-          failed to load usage data
-        </p>
-      ) : meters.length === 0 && !credits ? (
-        <p className="text-xs text-muted-foreground">no usage data available</p>
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          {meters.map((m) => (
-            <UsageBar key={m.label} meter={m} />
-          ))}
-          {credits && (
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">credits</span>
-              <span className="text-foreground tabular-nums">
-                {credits.used != null
-                  ? `$${credits.used.toFixed(2)}${credits.limit != null ? ` / $${credits.limit.toFixed(2)}` : ""}`
-                  : "—"}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

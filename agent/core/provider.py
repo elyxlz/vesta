@@ -414,9 +414,23 @@ class UsageCredits:
 
 
 @dc.dataclass
+class Account:
+    """The account behind the active provider, best-effort. A field the provider does not expose
+    stays None, and a provider with no identity endpoint (a key or subscription plan) reports an
+    all-None account or none at all."""
+
+    name: str | None
+    email: str | None
+    plan: str | None
+    organization: str | None
+    created_at: str | None
+
+
+@dc.dataclass
 class Usage:
     meters: list[UsageMeter]
     credits: UsageCredits | None
+    account: Account | None
 
 
 class UsageError(Exception):
@@ -450,14 +464,15 @@ def _read_oauth_token() -> str | None:
 
 
 async def get_usage(config: VestaConfig) -> Usage:
-    """Provider-agnostic plan usage for the agent's active provider. Returns empty usage when no
-    provider is configured; raises UsageError when an upstream fetch fails."""
+    """Provider-agnostic plan usage plus the signed-in account for the agent's active provider.
+    Returns an empty result when no provider is configured; raises UsageError when the usage fetch
+    fails. The account is best-effort and never blocks the usage it ships beside."""
     kind, _ = _derive_kind_and_auth(config)
     if kind == "claude":
         return await _claude_usage()
     if kind == "openrouter":
         return await _openrouter_usage(config)
-    return Usage(meters=[], credits=None)
+    return Usage(meters=[], credits=None, account=None)
 
 
 async def _claude_usage() -> Usage:
@@ -493,7 +508,31 @@ async def _claude_usage() -> Usage:
         used = used_credits / 100 if used_credits is not None else None
         limit = monthly_limit / 100 if monthly_limit is not None else None
         usage_credits = UsageCredits(used=used, limit=limit)
-    return Usage(meters=meters, credits=usage_credits)
+    account = await _claude_account(headers)
+    return Usage(meters=meters, credits=usage_credits, account=account)
+
+
+async def _claude_account(headers: dict[str, str]) -> Account | None:
+    """The Claude profile behind the OAuth token, from /api/oauth/profile. Best-effort: a failed
+    profile fetch returns None so a working usage fetch still reports its meters."""
+    try:
+        data = await _fetch_usage_json(f"{ANTHROPIC_API_URL}/api/oauth/profile", headers=headers)
+    except UsageError:
+        return None
+    account_raw = data["account"] if "account" in data else None
+    account = account_raw if isinstance(account_raw, dict) else {}
+    org_raw = data["organization"] if "organization" in data else None
+    org = org_raw if isinstance(org_raw, dict) else {}
+    has_max = "has_claude_max" in account and account["has_claude_max"]
+    has_pro = "has_claude_pro" in account and account["has_claude_pro"]
+    plan = "Claude Max" if has_max else "Claude Pro" if has_pro else None
+    return Account(
+        name=_as_str(account["full_name"]) if "full_name" in account else None,
+        email=_as_str(account["email"]) if "email" in account else None,
+        plan=plan,
+        organization=_as_str(org["name"]) if "name" in org else None,
+        created_at=_as_str(account["created_at"]) if "created_at" in account else None,
+    )
 
 
 async def _openrouter_usage(config: VestaConfig) -> Usage:
@@ -506,7 +545,12 @@ async def _openrouter_usage(config: VestaConfig) -> Usage:
     payload = payload_raw if isinstance(payload_raw, dict) else {}
     used = _as_float(payload["usage"]) if "usage" in payload else None
     limit = _as_float(payload["limit"]) if "limit" in payload else None
-    return Usage(meters=[], credits=UsageCredits(used=used, limit=limit))
+    label = _as_str(payload["label"]) if "label" in payload else None
+    is_free = "is_free_tier" in payload and payload["is_free_tier"]
+    account = (
+        None if label is None else Account(name=label, email=None, plan="Free tier" if is_free else "Paid", organization=None, created_at=None)
+    )
+    return Usage(meters=[], credits=UsageCredits(used=used, limit=limit), account=account)
 
 
 async def _fetch_usage_json(url: str, *, headers: dict[str, str]) -> dict[str, pyd.JsonValue]:
