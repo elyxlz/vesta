@@ -244,6 +244,9 @@ export async function installGatewayMocks(
   await page.route("**/providers/claude/oauth/complete", (route) =>
     route.fulfill({ json: OAUTH_CREDENTIALS }),
   );
+  await page.route("**/providers/openai/oauth/complete", (route) =>
+    route.fulfill({ json: { credentials: "visual-openai-credentials" } }),
+  );
   await page.route("**/providers/claude/models", (route) =>
     route.fulfill({ json: CLAUDE_MODELS }),
   );

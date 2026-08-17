@@ -182,9 +182,10 @@ export function ProviderPicker({
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
   className?: string;
-  // Skip ModelStep/ContextStep when the manifest supplies a static default. Live-catalog
-  // providers still require a model choice. Onboarding uses this mode; both values stay
-  // editable afterward in AgentSettings' full picker.
+  // Onboarding mode: every provider walks the model step, but a fixed-catalog
+  // provider finishes right after with the default context for the chosen model
+  // instead of walking ContextStep. Context stays editable afterward in
+  // AgentSettings' full picker.
   defaultsOnly?: boolean;
   // The provider chooser's layout: "grid" is the onboarding glass-tile look,
   // undefined keeps the compact settings look.
@@ -258,44 +259,32 @@ export function ProviderPicker({
   };
 
   // Claude auth no longer ends the flow: stash the credentials and continue to
-  // model + context, mirroring the OpenRouter path.
+  // the model step, mirroring the OpenRouter path. Every provider now picks a
+  // model, a fixed-catalog one from the manifest list.
   const handleCredentialsReady = (creds: string) => {
     setCredentials(creds);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
-      finishWithDefaults(creds, key);
-      return;
-    }
     setStep("model");
   };
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
-      finishWithDefaults(credentials, newKey);
-      return;
-    }
     setStep("model");
   };
 
-  // Onboarding skips ModelStep/ContextStep entirely: finish with the
-  // manifest's default model and context window as soon as the provider is
-  // ready, mirroring handleContextSubmit's result shape.
-  const finishWithDefaults = (creds: string | null, apiKey: string) => {
+  // Onboarding (defaultsOnly) finishes a fixed-catalog provider right after the
+  // model step, taking the default context window for the chosen model instead
+  // of walking ContextStep. Context stays editable later in AgentSettings.
+  const finishWithModel = (selectedModel: string) => {
     if (provider === null) return;
-    const defaultModel = manifest.providers[provider]?.default_model ?? "";
-    const context = contextForModel(manifest.providers[provider], defaultModel);
-    const plan =
-      provider === "claude" && creds !== null
-        ? planFromCredentials(creds)
-        : null;
+    const context = contextForModel(manifest.providers[provider], selectedModel);
     const { initial } = context
-      ? planContextOptions(context, plan)
+      ? planContextOptions(context, null)
       : { initial: 0 };
     const result = providerResult(
       provider,
-      creds,
-      apiKey,
-      defaultModel,
+      credentials,
+      key,
+      selectedModel,
       initial,
     );
     if (result) onDone(result);
@@ -386,6 +375,8 @@ export function ProviderPicker({
               setModel(m);
               if (provider === "openrouter") {
                 onDone({ kind: "openrouter", key, model: m });
+              } else if (defaultsOnly && !catalogIsLive(provider, manifest)) {
+                finishWithModel(m);
               } else {
                 setStep("context");
               }
