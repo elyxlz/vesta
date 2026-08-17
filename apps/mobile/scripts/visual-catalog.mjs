@@ -174,11 +174,35 @@ async function provisionalCatalog() {
   } catch {
     return null;
   }
-  return {
-    generatedAt: new Date(0).toISOString(),
+  const waitingCapture = (platform) => ({
+    platform,
+    captured: false,
+    image: "",
+    size: null,
+    missingLabel: "Waiting for capture",
+    expected: true,
+  });
+  const device = {
+    name: "Live capture preview",
+    runtime: "no published catalog yet",
+  };
+  const epoch = new Date(0).toISOString();
+  const platformSlot = (label, reportHref) => ({
+    label,
+    device,
+    generatedAt: epoch,
     reportAvailable: false,
-    device: { name: "Live capture preview", runtime: "no published catalog yet" },
+    reportHref,
+  });
+  return {
+    generatedAt: epoch,
+    reportAvailable: false,
+    device,
     git: await gitMetadata(),
+    platforms: [
+      platformSlot("iOS", "maestro/report.html"),
+      platformSlot("Android", "android/maestro/report.html"),
+    ],
     scenarios: manifest.scenarios.map((scenario) => ({
       id: scenario.id,
       title: scenario.title,
@@ -189,6 +213,7 @@ async function provisionalCatalog() {
       image: "",
       size: null,
       missingLabel: "Waiting for capture",
+      captures: [waitingCapture("iOS"), waitingCapture("Android")],
     })),
   };
 }
