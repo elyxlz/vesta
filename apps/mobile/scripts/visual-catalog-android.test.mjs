@@ -1,6 +1,10 @@
+import { mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { catalogScenarios, parseArguments } from "./visual-catalog-android.mjs";
+import { parseArguments, stageMaestroShots } from "./visual-catalog-android.mjs";
 
 describe("parseArguments", () => {
   it("captures on the dedicated AVD by default", () => {
@@ -40,34 +44,56 @@ describe("parseArguments", () => {
   });
 });
 
-describe("catalogScenarios", () => {
-  it("keeps manifest order and marks iOS-only scenarios instead of dropping them", () => {
-    const scenarios = catalogScenarios(
-      [
-        { id: "captured-state", screenshot: "captured-state.png" },
-        {
-          id: "ios-only-state",
-          screenshot: "ios-only-state.png",
-          platforms: ["ios"],
-        },
-      ],
-      "release-1",
-      new Map([["captured-state.png", { width: 1080, height: 2400 }]]),
+describe("stageMaestroShots", () => {
+  it("stages takeScreenshot artifacts into the shots directory by name", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-stage-"));
+    const source = path.join(base, "maestro");
+    const target = path.join(base, "shots/android");
+    await mkdir(path.join(source, "flow-a/takeScreenshot"), { recursive: true });
+    await mkdir(target, { recursive: true });
+    await writeFile(
+      path.join(source, "flow-a/takeScreenshot/connect.png"),
+      "new-shot",
     );
+    await writeFile(path.join(source, "flow-a/stray.png"), "not-an-artifact");
+    await writeFile(path.join(target, "connect.png"), "old-shot");
+    await writeFile(path.join(target, "untouched.png"), "kept");
 
-    expect(scenarios.map((scenario) => scenario.id)).toEqual([
-      "captured-state",
-      "ios-only-state",
+    const staged = await stageMaestroShots(source, target);
+
+    expect(staged.produced).toEqual(new Set(["connect.png"]));
+    expect(staged.duplicates).toEqual([]);
+    expect(await readFile(path.join(target, "connect.png"), "utf8")).toBe(
+      "new-shot",
+    );
+    expect(await readFile(path.join(target, "untouched.png"), "utf8")).toBe(
+      "kept",
+    );
+    expect((await readdir(target)).sort()).toEqual([
+      "connect.png",
+      "untouched.png",
     ]);
-    expect(scenarios[0]).toMatchObject({
-      captured: true,
-      image: "screenshots/release-1/captured-state.png",
-      size: { width: 1080, height: 2400 },
-    });
-    expect(scenarios[1]).toMatchObject({
-      captured: false,
-      image: "",
-      missingLabel: "iOS only",
-    });
+  });
+
+  it("keeps the newest artifact for a name duplicated across flows", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-stage-"));
+    const source = path.join(base, "maestro");
+    const target = path.join(base, "shots/android");
+    const older = path.join(source, "flow-a/takeScreenshot/connect.png");
+    const newer = path.join(source, "flow-b/takeScreenshot/connect.png");
+    await mkdir(path.dirname(older), { recursive: true });
+    await mkdir(path.dirname(newer), { recursive: true });
+    await writeFile(older, "older-shot");
+    await writeFile(newer, "newer-shot");
+    await utimes(older, new Date(1000), new Date(1000));
+    await utimes(newer, new Date(2000), new Date(2000));
+
+    const staged = await stageMaestroShots(source, target);
+
+    expect(staged.produced).toEqual(new Set(["connect.png"]));
+    expect(staged.duplicates).toEqual(["connect.png"]);
+    expect(await readFile(path.join(target, "connect.png"), "utf8")).toBe(
+      "newer-shot",
+    );
   });
 });

@@ -34,15 +34,12 @@ export const androidMaestroDirectory = path.join(
   androidVisualDirectory,
   "maestro",
 );
-export const androidCaptureScreenshotsDirectory = path.join(
-  androidVisualDirectory,
-  "capture/screenshots",
-);
-const screenshotsDirectory = path.join(visualDirectory, "screenshots");
-const captureScreenshotsDirectory = path.join(
-  visualDirectory,
-  "capture/screenshots",
-);
+// The shots registry on disk: one PNG per scenario per platform, replaced in
+// place as each scan captures it. A failed or partial run leaves the entries
+// it did not reach untouched.
+const shotsDirectory = path.join(visualDirectory, "shots");
+const iosShotsDirectory = path.join(shotsDirectory, "ios");
+export const androidShotsDirectory = path.join(shotsDirectory, "android");
 const maestroDirectory = path.join(visualDirectory, "maestro");
 const derivedDataDirectory = path.join(visualDirectory, "derived-data");
 const bundleDirectory = path.join(visualDirectory, "bundle");
@@ -59,9 +56,7 @@ const nativeTransactionStatePath = path.join(
   nativeTransactionDirectory,
   "state.json",
 );
-const watchDirectory = path.join(visualDirectory, "watch");
-const watchFlowsDirectory = path.join(watchDirectory, "flows");
-const watchScreenshotsDirectory = path.join(watchDirectory, "screenshots");
+const watchFlowsDirectory = path.join(visualDirectory, "watch/flows");
 const manifestPath = path.join(mobileRoot, "visual/scenarios.json");
 const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
 const nativeAnimationHookPath = path.join(
@@ -114,6 +109,7 @@ function setVisualCatalogStatus(state, options = {}) {
     message: options.message ?? "",
     detail: options.detail ?? "",
     startedAt: options.startedAt ?? null,
+    platform: options.platform ?? null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -164,50 +160,15 @@ class CaptureSupersededError extends Error {
   }
 }
 
-// One platform's provisional side: every manifest scenario in its "waiting" state, filled live
-// by /live.json as screenshots land (the epoch generatedAt makes every live entry count as fresh).
-// It stands in for a platform that has not published yet, so the unified gallery always renders
-// both slots, and for both platforms before any publish at all.
-async function provisionalSideCatalog() {
-  let manifest;
-  try {
-    manifest = await loadManifest();
-  } catch {
-    return null;
-  }
-  return {
-    generatedAt: new Date(0).toISOString(),
-    reportAvailable: false,
-    device: { name: "Live capture preview", runtime: "no published catalog yet" },
-    git: await gitMetadata(),
-    scenarios: manifest.scenarios.map((scenario) => ({
-      id: scenario.id,
-      title: scenario.title,
-      description: scenario.description,
-      group: scenario.group,
-      screenshot: scenario.screenshot,
-      captured: false,
-      image: "",
-      size: null,
-      missingLabel: "Waiting for capture",
-    })),
-  };
-}
-
-async function provisionalCatalog() {
-  const side = await provisionalSideCatalog();
-  return side ? unifiedCatalog(side, side) : null;
-}
-
 function usage() {
   console.log(`Usage:
   npm run visual:ios -- [options]
   npm run visual:serve -- [options]
 
 Commands:
-  capture       Build, capture, generate, and serve the catalog (default)
-  serve         Serve the most recently generated catalog
-  watch         Capture, watch code, and refresh the catalog after edits
+  capture       Build, capture screenshots, and serve the gallery (default)
+  serve         Serve the gallery from the registry and existing shots
+  watch         Capture, watch code, and recapture after edits
 
 Options:
   --device <name-or-udid>  Simulator to use
@@ -1123,9 +1084,7 @@ async function requireInstalledApp(udid, appId) {
 }
 
 async function runMaestro(manifest, simulators, tools) {
-  await rm(captureScreenshotsDirectory, { recursive: true, force: true });
   await rm(maestroDirectory, { recursive: true, force: true });
-  await mkdir(captureScreenshotsDirectory, { recursive: true });
   await mkdir(maestroDirectory, { recursive: true });
 
   const flowPaths = manifest.flows.map((flow) =>
@@ -1156,6 +1115,9 @@ async function runMaestro(manifest, simulators, tools) {
       ],
       { cwd: mobileRoot, env: tools.environment, tee: true },
     );
+    // Maestro exited, so every bridge callback has been served; a scenario
+    // whose callback never fired is registry drift to warn about, not a hang.
+    cycle.settle();
     await cycle.completion;
   } catch (error) {
     const failure = flowFailureError(error);
@@ -1165,14 +1127,7 @@ async function runMaestro(manifest, simulators, tools) {
   } finally {
     await bridge.close();
   }
-  await Promise.all(
-    manifest.scenarios.map((scenario) =>
-      copyFile(
-        path.join(watchScreenshotsDirectory, scenario.screenshot),
-        path.join(captureScreenshotsDirectory, scenario.screenshot),
-      ),
-    ),
-  );
+  return cycle.seen;
 }
 
 export async function filesBelow(directory) {
@@ -1248,61 +1203,122 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function scenarioCaptures(scenario) {
-  return (
-    scenario.captures ?? [
-      {
-        platform: "",
-        captured: scenario.captured,
-        image: scenario.image,
-        size: scenario.size,
-        missingLabel: scenario.missingLabel,
-        expected: scenario.expected ?? true,
-      },
-    ]
-  );
+const galleryPlatforms = ["ios", "android"];
+const platformLabels = { ios: "iOS", android: "Android" };
+
+// Index of the shot files on disk: platform -> filename -> {src, mtime}, with
+// src relative to the gallery root so the page can load and cache-bust it.
+export async function shotEntries(baseDirectory = visualDirectory) {
+  const entries = { ios: {}, android: {} };
+  for (const platform of galleryPlatforms) {
+    const directory = path.join(baseDirectory, "shots", platform);
+    let names = [];
+    try {
+      names = await readdir(directory);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".png")) continue;
+      try {
+        const mtime = Math.round(
+          (await stat(path.join(directory, name))).mtimeMs,
+        );
+        entries[platform][name] = { src: `shots/${platform}/${name}`, mtime };
+      } catch {
+        continue;
+      }
+    }
+  }
+  return entries;
 }
 
-function captureShotHtml(scenario, capture, defaultPlatform) {
-  const subject = capture.platform
-    ? `${scenario.title} on ${capture.platform}`
-    : scenario.title;
-  const livePlatform = (capture.platform || defaultPlatform).toLowerCase();
+// A scan warns about registry drift instead of refusing: the shot files it
+// replaced stay valid either way.
+export function shotDriftWarning(producedNames, manifest) {
+  const expected = manifest.scenarios.map((scenario) => scenario.screenshot);
+  const missing = expected.filter((name) => !producedNames.has(name));
+  const unexpected = [...producedNames]
+    .filter((name) => !expected.includes(name))
+    .sort();
+  const parts = [];
+  if (missing.length > 0) parts.push(`missing: ${missing.join(", ")}`);
+  if (unexpected.length > 0) parts.push(`unexpected: ${unexpected.join(", ")}`);
+  return parts.join("; ");
+}
+
+function excludedNote(scenario) {
+  const labels = (scenario.platforms ?? []).map(
+    (platform) => platformLabels[platform] ?? platform,
+  );
+  return `${labels.join(" + ")} only`;
+}
+
+// Composes the page model from the scenario registry plus whatever shot files
+// exist: every scenario renders both platform slots.
+export function galleryView(scenarios, shots, options = {}) {
+  return {
+    git: options.git ?? { revision: "unknown", dirty: false },
+    reports: options.reports ?? [],
+    scenarios: scenarios.map((scenario) => ({
+      id: scenario.id,
+      title: scenario.title,
+      description: scenario.description,
+      group: scenario.group,
+      screenshot: scenario.screenshot,
+      slots: galleryPlatforms.map((platform) => {
+        const label = platformLabels[platform];
+        if (!scenarioOnPlatform(scenario, platform)) {
+          return { platform, label, state: "excluded", note: excludedNote(scenario) };
+        }
+        const entry = shots[platform][scenario.screenshot];
+        if (!entry) {
+          return { platform, label, state: "missing", note: "Not captured yet" };
+        }
+        return {
+          platform,
+          label,
+          state: "captured",
+          src: entry.src,
+          mtime: entry.mtime,
+          size: entry.size ?? null,
+        };
+      }),
+    })),
+  };
+}
+
+function slotHtml(scenario, slot) {
+  const subject = `${scenario.title} on ${slot.label}`;
+  const captured = slot.state === "captured";
+  const image = captured ? `${slot.src}?v=${slot.mtime}` : "";
   return `
           <div class="shot" data-screenshot="${escapeHtml(
             scenario.screenshot,
-          )}" data-live-platform="${livePlatform}" data-expected="${
-            capture.expected === false ? "false" : "true"
-          }" data-scenario-id="${escapeHtml(scenario.id ?? "")}" data-group="${escapeHtml(
+          )}" data-platform="${slot.platform}" data-state="${slot.state}" data-scenario-id="${escapeHtml(
+            scenario.id ?? "",
+          )}" data-group="${escapeHtml(
             scenario.group ?? "",
           )}" data-title="${escapeHtml(scenario.title)}">
             <button class="preview"${
-              capture.captured
-                ? ` data-image="${escapeHtml(capture.image)}"`
-                : ""
+              captured ? ` data-image="${escapeHtml(image)}"` : ""
             } aria-label="Open ${escapeHtml(subject)}">
               <span class="device-screen"${
-                capture.size
-                  ? ` style="--shot-ratio: ${capture.size.width} / ${capture.size.height}"`
+                slot.size
+                  ? ` style="--shot-ratio: ${slot.size.width} / ${slot.size.height}"`
                   : ""
               }>
                 ${
-                  capture.captured
-                    ? `<img src="${escapeHtml(capture.image)}" alt="${escapeHtml(
+                  captured
+                    ? `<img src="${escapeHtml(image)}" data-stamp="${slot.mtime}" alt="${escapeHtml(
                         subject,
                       )}" loading="lazy">`
-                    : `<span class="missing">${escapeHtml(
-                        capture.missingLabel ?? "Screenshot missing",
-                      )}</span>`
+                    : `<span class="missing">${escapeHtml(slot.note)}</span>`
                 }
               </span>
             </button>
             <div class="shot-meta">
-              ${
-                capture.platform
-                  ? `<span class="platform-tag">${escapeHtml(capture.platform)}</span>`
-                  : ""
-              }
+              <span class="platform-tag">${escapeHtml(slot.label)}</span>
               <button class="copy-ref" type="button" aria-label="Copy reference for ${escapeHtml(
                 subject,
               )}">Copy ref</button>
@@ -1310,27 +1326,22 @@ function captureShotHtml(scenario, capture, defaultPlatform) {
           </div>`;
 }
 
-export function galleryHtml(catalog) {
-  const catalogJson = JSON.stringify(catalog).replaceAll("<", "\\u003c");
-  const defaultPlatform = catalog.platform === "android" ? "android" : "ios";
+export function galleryHtml(view) {
   const scenarioGroups = new Map();
-  let platformColumns = 1;
-  for (const scenario of catalog.scenarios) {
+  for (const scenario of view.scenarios) {
     const group = scenario.group || "Other";
     const scenarios = scenarioGroups.get(group) ?? [];
     scenarios.push(scenario);
     scenarioGroups.set(group, scenarios);
-    platformColumns = Math.max(platformColumns, scenarioCaptures(scenario).length);
   }
   const sections = [...scenarioGroups.entries()]
     .map(([group, scenarios], sectionIndex) => {
       const cards = scenarios
-        .map((scenario) => {
-          const captures = scenarioCaptures(scenario);
-          return `
+        .map(
+          (scenario) => `
         <article class="card">
-          <div class="shots" style="--shots: ${captures.length}">${captures
-            .map((capture) => captureShotHtml(scenario, capture, defaultPlatform))
+          <div class="shots" style="--shots: ${scenario.slots.length}">${scenario.slots
+            .map((slot) => slotHtml(scenario, slot))
             .join("")}</div>
           <div class="card-copy">
             <div class="card-head">
@@ -1341,8 +1352,8 @@ export function galleryHtml(catalog) {
             </div>
             <p>${escapeHtml(scenario.description)}</p>
           </div>
-        </article>`;
-        })
+        </article>`,
+        )
         .join("");
       const sectionId = `scenario-section-${sectionIndex}`;
       return `
@@ -1357,55 +1368,19 @@ export function galleryHtml(catalog) {
     </section>`;
     })
     .join("");
-  const deviceChips = (
-    catalog.platforms
-      ? catalog.platforms.map(
-          (platform) =>
-            `${platform.label} · ${platform.device.name} · ${platform.device.runtime}`,
-        )
-      : [catalog.device.name, catalog.device.runtime]
-  )
-    .map((chip) => `<span>${escapeHtml(chip)}</span>`)
-    .join("\n      ");
-  const reportLinks = (
-    catalog.platforms
-      ? catalog.platforms
-          .filter((platform) => platform.reportAvailable)
-          .map((platform) => ({
-            label: `${platform.label} Maestro report`,
-            href: platform.reportHref,
-          }))
-      : catalog.reportAvailable
-        ? [{ label: "Maestro report", href: "maestro/report.html" }]
-        : []
-  )
+  const reportLinks = view.reports
     .map(
       (link) =>
         `<a class="report" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`,
     )
     .join("\n      ");
-  const scanPlatforms = catalog.platforms
-    ? catalog.platforms.map((platform) => ({
-        key: platform.label.toLowerCase(),
-        label: platform.label,
-        generatedAt: platform.generatedAt ?? catalog.generatedAt,
-      }))
-    : [
-        {
-          key: defaultPlatform,
-          label: defaultPlatform === "android" ? "Android" : "iOS",
-          generatedAt: catalog.generatedAt,
-        },
-      ];
-  const scanRows = scanPlatforms
+  const scanRows = galleryPlatforms
     .map(
       (platform) => `
-    <div class="scan-row" data-platform="${platform.key}">
-      <span class="scan-platform">${escapeHtml(platform.label)}</span>
-      <span class="scan-last" data-generated-at="${escapeHtml(
-        platform.generatedAt,
-      )}">last scan</span>
-      <span class="scan-progress" hidden></span>
+    <div class="scan-row" data-platform="${platform}">
+      <span class="scan-platform">${escapeHtml(platformLabels[platform])}</span>
+      <span class="scan-last">last scan</span>
+      <span class="scan-progress"></span>
       <button class="scan-button" type="button">Scan</button>
     </div>`,
     )
@@ -1560,22 +1535,6 @@ export function galleryHtml(catalog) {
       letter-spacing: .1em;
       text-transform: uppercase;
     }
-    .shot.pending .device-screen::after {
-      content: "";
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 26px;
-      height: 26px;
-      margin: -13px 0 0 -13px;
-      border: 3px solid #b8a7ff35;
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: status-spin .8s linear infinite;
-    }
-    .shot.pending .device-screen img { opacity: .35; }
-    .shot.pending .missing { visibility: hidden; }
-    .shot.fresh .preview { border-color: #7f6fd4; }
     .copy-ref, .copy-card {
       border: 1px solid var(--border);
       border-radius: 999px;
@@ -1691,6 +1650,23 @@ export function galleryHtml(catalog) {
     }
     .preview::before { top: 18%; height: 9%; }
     .preview::after { top: 30%; height: 14%; }
+    .shot.refreshing .device-screen img,
+    .shot.refreshing .device-screen .missing {
+      opacity: 0.35;
+    }
+    .shot.refreshing .device-screen::after {
+      content: "Refreshing…";
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      color: var(--muted);
+      animation: refreshing-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes refreshing-pulse {
+      50% { opacity: 0.35; }
+    }
     .device-screen {
       position: relative;
       display: grid;
@@ -1768,7 +1744,7 @@ export function galleryHtml(catalog) {
     }
   </style>
 </head>
-<body data-platforms="${platformColumns}">
+<body data-platforms="${galleryPlatforms.length}" data-revision="${escapeHtml(view.git.revision)}">
   <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
     <span class="status-spinner" aria-hidden="true"></span>
     <span class="status-copy">
@@ -1783,9 +1759,7 @@ export function galleryHtml(catalog) {
       <p class="intro">Complete device captures at a glance. Click any image to expand it.</p>
     </div>
     <div class="meta">
-      ${deviceChips}
-      <span>${escapeHtml(catalog.generatedAt)}</span>
-      <span>${escapeHtml(catalog.git.revision)}${catalog.git.dirty ? " · dirty" : ""}</span>
+      <span>${escapeHtml(view.git.revision)}${view.git.dirty ? " · dirty" : ""}</span>
       ${reportLinks}
     </div>
   </header>
@@ -1797,7 +1771,6 @@ export function galleryHtml(catalog) {
     <img alt="">
   </dialog>
   <script>
-    window.__VISUAL_CATALOG__ = ${catalogJson};
     const dialog = document.querySelector("#lightbox");
     const dialogImage = dialog.querySelector("img");
     document.querySelectorAll(".preview").forEach((button) => {
@@ -1835,8 +1808,7 @@ export function galleryHtml(catalog) {
     function refHeader(shot) {
       return [
         "group: " + shot.dataset.group + " | title: " + shot.dataset.title,
-        "catalog: " + window.__VISUAL_CATALOG__.generatedAt +
-          " | rev: " + window.__VISUAL_CATALOG__.git.revision,
+        "rev: " + document.body.dataset.revision,
       ];
     }
     function shotImage(shot) {
@@ -1855,7 +1827,7 @@ export function galleryHtml(catalog) {
         const shot = copyButton.closest(".shot");
         void copyWithFeedback(copyButton, [
           "visual-ref: " + shot.dataset.scenarioId +
-            " [" + shot.dataset.livePlatform + "]",
+            " [" + shot.dataset.platform + "]",
           ...refHeader(shot),
           "image: " + shotImage(shot),
         ]);
@@ -1868,7 +1840,7 @@ export function galleryHtml(catalog) {
           "visual-ref: " + shots[0].dataset.scenarioId,
           ...refHeader(shots[0]),
           ...shots.map(
-            (shot) => shot.dataset.livePlatform + ": " + shotImage(shot),
+            (shot) => shot.dataset.platform + ": " + shotImage(shot),
           ),
         ]);
       });
@@ -1897,67 +1869,25 @@ export function galleryHtml(catalog) {
         statusDetail.textContent = nextStatus.detail || "Fix the issue and save again.";
       }
     }
-    const generatedAt = window.__VISUAL_CATALOG__.generatedAt;
-    const publishedMs = Date.parse(generatedAt);
-    function formatScanTime(iso) {
-      const ms = Date.parse(iso ?? "");
-      if (Number.isNaN(ms)) return "never";
-      return new Date(ms).toLocaleString();
-    }
-    document.querySelectorAll(".scan-row").forEach((row) => {
-      const last = row.querySelector(".scan-last");
-      last.textContent = "last scan " + formatScanTime(last.dataset.generatedAt);
-      const button = row.querySelector(".scan-button");
+    document.querySelectorAll(".scan-row .scan-button").forEach((button) => {
       button.addEventListener("click", async () => {
         button.disabled = true;
         try {
-          await fetch("capture/" + row.dataset.platform, { method: "POST" });
+          await fetch("capture/" + button.closest(".scan-row").dataset.platform, {
+            method: "POST",
+          });
         } catch {
           button.disabled = false;
         }
       });
     });
-    function updateScanRows(runs, freshCounts) {
-      document.querySelectorAll(".scan-row").forEach((row) => {
-        const platform = row.dataset.platform;
-        const run = (runs ?? {})[platform];
-        const running = Boolean(run && run.running);
-        const button = row.querySelector(".scan-button");
-        const progress = row.querySelector(".scan-progress");
-        button.disabled = running;
-        button.textContent = running ? "Scanning" : "Scan";
-        const total = document.querySelectorAll(
-          '.shot[data-live-platform="' + platform + '"][data-expected="true"]',
-        ).length;
-        const fresh = freshCounts[platform] ?? 0;
-        progress.hidden = !running && fresh === 0;
-        progress.textContent =
-          running && fresh === 0 ? "preparing" : fresh + "/" + total;
-        const failed = Boolean(run && !running && run.exitCode);
-        row.dataset.state = failed ? "failed" : "ok";
-        if (failed) {
-          row.querySelector(".scan-last").textContent =
-            "last scan failed, see capture-" + platform + ".log";
-        }
-      });
-    }
-    function applyLive(live) {
-      let active = false;
-      const freshCounts = { ios: 0, android: 0 };
-      for (const platform of ["ios", "android"]) {
-        for (const entry of Object.values(live[platform] ?? {})) {
-          if (entry.mtime > publishedMs) active = true;
-        }
-      }
+    function applyShots(payload) {
       document.querySelectorAll(".shot[data-screenshot]").forEach((shot) => {
-        if (shot.dataset.expected === "false") return;
-        const platformEntries = live[shot.dataset.livePlatform] ?? {};
-        const entry = platformEntries[shot.dataset.screenshot];
-        const fresh = Boolean(entry && entry.mtime > publishedMs);
-        if (fresh) freshCounts[shot.dataset.livePlatform] += 1;
-        shot.classList.toggle("pending", active && !fresh);
-        shot.classList.toggle("fresh", fresh);
-        if (!fresh) return;
+        if (shot.dataset.state === "excluded") return;
+        const entry = (payload[shot.dataset.platform] ?? {})[
+          shot.dataset.screenshot
+        ];
+        if (!entry) return;
         const button = shot.querySelector(".preview");
         const screen = shot.querySelector(".device-screen");
         let image = screen.querySelector("img");
@@ -1966,39 +1896,88 @@ export function galleryHtml(catalog) {
           image = document.createElement("img");
           image.alt = shot.dataset.screenshot;
           screen.appendChild(image);
+          shot.dataset.state = "captured";
         }
         const stamp = String(entry.mtime);
-        if (image.dataset.liveStamp !== stamp) {
+        if (image.dataset.stamp !== stamp) {
           const src = entry.src + "?v=" + stamp;
           image.src = src;
-          image.dataset.liveStamp = stamp;
+          image.dataset.stamp = stamp;
           button.dataset.image = src;
         }
       });
-      return freshCounts;
     }
+    function updateScanRows(payload) {
+      document.querySelectorAll(".scan-row").forEach((row) => {
+        const platform = row.dataset.platform;
+        const run = (payload.runs ?? {})[platform];
+        const running = Boolean(run && run.running);
+        const button = row.querySelector(".scan-button");
+        button.disabled = running;
+        button.textContent = running ? "Scanning" : "Scan";
+        const entries = payload[platform] ?? {};
+        const slots = document.querySelectorAll(
+          '.shot[data-platform="' + platform + '"]:not([data-state="excluded"])',
+        );
+        let have = 0;
+        slots.forEach((slot) => {
+          if (entries[slot.dataset.screenshot]) have += 1;
+        });
+        row.querySelector(".scan-progress").textContent =
+          have + "/" + slots.length;
+        const failed = Boolean(run && !running && run.exitCode);
+        row.dataset.state = failed ? "failed" : "ok";
+        const mtimes = Object.values(entries).map((entry) => entry.mtime);
+        row.querySelector(".scan-last").textContent = failed
+          ? "last scan failed, see capture-" + platform + ".log"
+          : "last scan " +
+            (mtimes.length
+              ? new Date(Math.max.apply(null, mtimes)).toLocaleString()
+              : "never");
+      });
+    }
+    function markRefreshing(status, payload) {
+      const capturing = Boolean(
+        status &&
+          status.state === "capturing" &&
+          status.platform &&
+          status.startedAt,
+      );
+      const startedMs = capturing ? Date.parse(status.startedAt) : 0;
+      document.querySelectorAll(".shot").forEach((shot) => {
+        const applies =
+          capturing &&
+          shot.dataset.platform === status.platform &&
+          shot.dataset.state !== "excluded";
+        if (!applies) {
+          shot.classList.remove("refreshing");
+          return;
+        }
+        const entry = (payload[status.platform] ?? {})[
+          shot.dataset.screenshot
+        ];
+        const replaced = Boolean(entry && entry.mtime >= startedMs);
+        shot.classList.toggle("refreshing", !replaced);
+      });
+    }
+    let lastStatus = null;
     window.setInterval(async () => {
       if (document.visibilityState === "hidden") return;
       try {
-        const [iosResponse, androidResponse, statusResponse, liveResponse] =
-          await Promise.all([
-            fetch("catalog.json", { cache: "no-store" }),
-            fetch("android/catalog.json", { cache: "no-store" }),
-            fetch("status.json", { cache: "no-store" }),
-            fetch("live.json", { cache: "no-store" }),
-          ]);
-        if (statusResponse.ok) showCaptureStatus(await statusResponse.json());
-        if (liveResponse.ok) {
-          const live = await liveResponse.json();
-          updateScanRows(live.runs, applyLive(live));
+        const [statusResponse, shotsResponse] = await Promise.all([
+          fetch("status.json", { cache: "no-store" }),
+          fetch("shots.json", { cache: "no-store" }),
+        ]);
+        if (statusResponse.ok) {
+          lastStatus = await statusResponse.json();
+          showCaptureStatus(lastStatus);
         }
-        const stamps = [];
-        for (const response of [iosResponse, androidResponse]) {
-          if (response.ok) stamps.push((await response.json()).generatedAt);
+        if (shotsResponse.ok) {
+          const payload = await shotsResponse.json();
+          applyShots(payload);
+          updateScanRows(payload);
+          markRefreshing(lastStatus, payload);
         }
-        if (stamps.length === 0) return;
-        const newest = stamps.sort().at(-1);
-        if (newest !== generatedAt) window.location.reload();
       } catch {
         // The local server may be between restarts.
       }
@@ -2008,309 +1987,32 @@ export function galleryHtml(catalog) {
 </html>`;
 }
 
-function platformCapture(label, scenario, imagePrefix) {
-  return {
-    platform: label,
-    captured: scenario.captured,
-    image: scenario.image ? `${imagePrefix}${scenario.image}` : "",
-    size: scenario.size ?? null,
-    missingLabel: scenario.captured
-      ? undefined
-      : (scenario.missingLabel ?? "Not captured yet"),
-    expected: scenario.expected ?? true,
-  };
-}
-
-function missingCapture(label) {
-  return {
-    platform: label,
-    captured: false,
-    image: "",
-    size: null,
-    missingLabel: "Not captured yet",
-    expected: true,
-  };
-}
-
-export function unifiedCatalog(iosCatalog, androidCatalog) {
-  if (!iosCatalog || !androidCatalog) return iosCatalog ?? androidCatalog ?? null;
-  const androidById = new Map(
-    androidCatalog.scenarios.map((scenario) => [scenario.id, scenario]),
-  );
-  const scenarios = iosCatalog.scenarios.map((scenario) => {
-    const android = androidById.get(scenario.id);
-    return {
-      ...scenario,
-      captures: [
-        platformCapture("iOS", scenario, ""),
-        android
-          ? platformCapture("Android", android, "android/")
-          : missingCapture("Android"),
-      ],
-    };
-  });
-  const iosIds = new Set(iosCatalog.scenarios.map((scenario) => scenario.id));
-  for (const scenario of androidCatalog.scenarios) {
-    if (iosIds.has(scenario.id)) continue;
-    scenarios.push({
-      ...scenario,
-      captures: [
-        missingCapture("iOS"),
-        platformCapture("Android", scenario, "android/"),
-      ],
-    });
-  }
-  const newest =
-    Date.parse(androidCatalog.generatedAt) > Date.parse(iosCatalog.generatedAt)
-      ? androidCatalog
-      : iosCatalog;
-  return {
-    ...iosCatalog,
-    generatedAt: newest.generatedAt,
-    git: newest.git,
-    platforms: [
-      {
-        label: "iOS",
-        device: iosCatalog.device,
-        generatedAt: iosCatalog.generatedAt,
-        reportAvailable: iosCatalog.reportAvailable === true,
-        reportHref: "maestro/report.html",
-      },
-      {
-        label: "Android",
-        device: androidCatalog.device,
-        generatedAt: androidCatalog.generatedAt,
-        reportAvailable: androidCatalog.reportAvailable === true,
-        reportHref: "android/maestro/report.html",
-      },
-    ],
-    scenarios,
-  };
-}
-
-async function storedCatalog(directory) {
-  const file = path.join(directory, "catalog.json");
-  if (!(await exists(file))) return null;
-  return JSON.parse(await readFile(file, "utf8"));
-}
-
-const LIVE_CAPTURE_ROOTS = [
-  { platform: "ios", directory: watchScreenshotsDirectory },
-  { platform: "ios", directory: captureScreenshotsDirectory },
-  { platform: "android", directory: androidCaptureScreenshotsDirectory },
-  { platform: "android", directory: androidMaestroDirectory, maestro: true },
-];
-
-// Index of in-progress capture screenshots: platform -> filename -> newest
-// file, with src relative to the gallery root so the page can load it live.
-export async function liveCaptureEntries(
-  roots = LIVE_CAPTURE_ROOTS,
-  baseDirectory = visualDirectory,
-) {
-  const entries = { ios: {}, android: {} };
-  const record = async (platform, file) => {
-    const name = path.basename(file);
-    const mtime = Math.round((await stat(file)).mtimeMs);
-    const existing = entries[platform][name];
-    if (existing && existing.mtime >= mtime) return;
-    entries[platform][name] = {
-      src: path.relative(baseDirectory, file).split(path.sep).join("/"),
-      mtime,
-    };
-  };
-  for (const root of roots) {
-    // A running capture rewrites these directories continuously, so any
-    // file or directory can vanish mid-scan; the next poll rescans.
-    try {
-      if (!(await exists(root.directory))) continue;
-      if (root.maestro) {
-        for (const file of await filesBelow(root.directory)) {
-          if (!file.endsWith(".png")) continue;
-          if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
-          await record(root.platform, file);
-        }
-        continue;
+export async function composeGallery() {
+  const manifest = await loadManifest();
+  const shots = await shotEntries();
+  for (const platform of galleryPlatforms) {
+    for (const entry of Object.values(shots[platform])) {
+      try {
+        entry.size = await pngSize(path.join(visualDirectory, entry.src));
+      } catch {
+        entry.size = null;
       }
-      for (const entry of await readdir(root.directory)) {
-        if (!entry.endsWith(".png")) continue;
-        await record(root.platform, path.join(root.directory, entry));
-      }
-    } catch {
-      continue;
     }
   }
-  return entries;
-}
-
-export async function composedCatalog(overrides = {}) {
-  let ios =
-    "ios" in overrides ? overrides.ios : await storedCatalog(visualDirectory);
-  let android =
-    "android" in overrides
-      ? overrides.android
-      : await storedCatalog(androidVisualDirectory);
-  if (ios && !android) android = await provisionalSideCatalog();
-  else if (android && !ios) ios = await provisionalSideCatalog();
-  return unifiedCatalog(ios, android);
-}
-
-export async function writeUnifiedIndex(overrides = {}) {
-  const catalog = await composedCatalog(overrides);
-  if (!catalog) return;
-  await atomicWriteFile(
-    path.join(visualDirectory, "index.html"),
-    galleryHtml(catalog),
-  );
-}
-
-async function cleanupScreenshotReleases(activeRelease) {
-  const entries = await readdir(screenshotsDirectory, { withFileTypes: true });
-  const releases = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const target = path.join(screenshotsDirectory, entry.name);
-    releases.push({ name: entry.name, modified: (await stat(target)).mtimeMs });
+  const reports = [];
+  if (await exists(path.join(maestroDirectory, "report.html"))) {
+    reports.push({ label: "iOS Maestro report", href: "maestro/report.html" });
   }
-  releases.sort((left, right) => right.modified - left.modified);
-  const keep = new Set([
-    activeRelease,
-    ...releases
-      .filter((release) => release.name !== activeRelease)
-      .slice(0, 2)
-      .map((release) => release.name),
-  ]);
-  await Promise.all(
-    releases
-      .filter((release) => !keep.has(release.name))
-      .map((release) =>
-        rm(path.join(screenshotsDirectory, release.name), {
-          recursive: true,
-          force: true,
-        }),
-      ),
-  );
-}
-
-async function prepareGalleryPublication(
-  manifest,
-  simulators,
-  sourceDirectory,
-  options = {},
-) {
-  temporaryFileCounter += 1;
-  const release = `${Date.now()}-${process.pid}-${temporaryFileCounter}`;
-  const releaseDirectory = path.join(screenshotsDirectory, release);
-  await mkdir(releaseDirectory, { recursive: true });
-  await Promise.all(
-    manifest.scenarios.map((scenario) =>
-      copyFile(
-        path.join(sourceDirectory, scenario.screenshot),
-        path.join(releaseDirectory, scenario.screenshot),
-      ),
-    ),
-  );
-
-  const git = await gitMetadata();
-  const scenarios = [];
-  for (const scenario of manifest.scenarios) {
-    const screenshot = path.join(releaseDirectory, scenario.screenshot);
-    const captured = await exists(screenshot);
-    const size = captured ? await pngSize(screenshot) : null;
-    scenarios.push({
-      ...scenario,
-      captured,
-      image: `screenshots/${release}/${scenario.screenshot}`,
-      size,
+  if (await exists(path.join(androidMaestroDirectory, "report.html"))) {
+    reports.push({
+      label: "Android Maestro report",
+      href: "android/maestro/report.html",
     });
   }
-  const invalid = scenarios.filter(
-    (scenario) => !scenario.captured || !scenario.size,
-  );
-  if (invalid.length > 0) {
-    throw new Error(
-      `Missing or invalid screenshots: ${invalid
-        .map((scenario) => scenario.screenshot)
-        .join(", ")}`,
-    );
-  }
-
-  const catalog = {
-    generatedAt: new Date().toISOString(),
-    appId: manifest.appId,
-    mode: options.mode ?? "capture",
-    reportAvailable: options.reportAvailable === true,
-    device: {
-      name: `${simulators.length} × ${simulators[0].name
-        .replace(/^Vesta Visual \d+ — /, "")
-        .replace(/ \(.+\)$/, "")}`,
-      udid: simulators.map((simulator) => simulator.udid).join(","),
-      runtime: simulators[0].runtimeName,
-    },
-    git,
-    scenarios,
-  };
-  const catalogPath = path.join(visualDirectory, "catalog.json");
-  const indexPath = path.join(visualDirectory, "index.html");
-  const catalogTemporary = `${catalogPath}.${release}.tmp`;
-  const indexTemporary = `${indexPath}.${release}.tmp`;
-  await writeFile(catalogTemporary, `${JSON.stringify(catalog, null, 2)}\n`);
-  await writeFile(
-    indexTemporary,
-    galleryHtml(await composedCatalog({ ios: catalog })),
-  );
-
-  return {
-    catalog,
-    async commit(validate = () => {}) {
-      await validate();
-      await rename(indexTemporary, indexPath);
-      await validate();
-      await rename(catalogTemporary, catalogPath);
-      try {
-        await cleanupScreenshotReleases(release);
-      } catch (error) {
-        console.warn(`Could not prune old screenshot releases: ${error.message}`);
-      }
-      return catalog;
-    },
-  };
-}
-
-async function publishGallery(
-  manifest,
-  simulators,
-  sourceDirectory,
-  options = {},
-) {
-  await mkdir(screenshotsDirectory, { recursive: true });
-  const publication = await prepareGalleryPublication(
-    manifest,
-    simulators,
-    sourceDirectory,
-    options,
-  );
-  return publication.commit(options.validate);
-}
-
-async function markCatalogAsWatchMode() {
-  const catalogPath = path.join(visualDirectory, "catalog.json");
-  if (!(await exists(catalogPath))) return;
-  const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
-  if (catalog.mode === "watch" && catalog.reportAvailable === false) return;
-  const watchCatalog = {
-    ...catalog,
-    generatedAt: new Date().toISOString(),
-    mode: "watch",
-    reportAvailable: false,
-  };
-  await atomicWriteFile(
-    path.join(visualDirectory, "index.html"),
-    galleryHtml(await composedCatalog({ ios: watchCatalog })),
-  );
-  await atomicWriteFile(
-    catalogPath,
-    `${JSON.stringify(watchCatalog, null, 2)}\n`,
-  );
+  return galleryView(manifest.allScenarios, shots, {
+    git: await gitMetadata(),
+    reports,
+  });
 }
 
 function safeStaticPath(url, baseDirectory) {
@@ -2324,7 +2026,6 @@ function safeStaticPath(url, baseDirectory) {
 
 export async function serveCatalog(port, shouldOpen) {
   const baseDirectory = visualDirectory;
-  await writeUnifiedIndex();
   const idleRun = { running: false, startedAt: null, finishedAt: null, exitCode: null };
   const captureRuns = { ios: { ...idleRun }, android: { ...idleRun } };
   const captureScripts = {
@@ -2373,13 +2074,13 @@ export async function serveCatalog(port, shouldOpen) {
       response.end(`${JSON.stringify(await currentRunStatus())}\n`);
       return;
     }
-    if (pathname === "/live.json") {
+    if (pathname === "/shots.json") {
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
       response.end(
-        `${JSON.stringify({ ...(await liveCaptureEntries()), runs: captureRuns })}\n`,
+        `${JSON.stringify({ ...(await shotEntries()), runs: captureRuns })}\n`,
       );
       return;
     }
@@ -2399,24 +2100,16 @@ export async function serveCatalog(port, shouldOpen) {
     }
     if (pathname === "/" || pathname === "/index.html") {
       try {
-        const catalog = await composedCatalog();
-        if (!catalog) throw new Error("no catalog");
+        const html = galleryHtml(await composeGallery());
         response.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        response.end(galleryHtml(catalog));
-      } catch {
-        const provisional = await provisionalCatalog();
-        if (!provisional) {
-          response.writeHead(404).end("No visual catalog exists yet.");
-          return;
-        }
-        response.writeHead(200, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-        });
-        response.end(galleryHtml(provisional));
+        response.end(html);
+      } catch (error) {
+        response
+          .writeHead(500)
+          .end(`Could not compose the gallery: ${error.message}`);
       }
       return;
     }
@@ -2502,19 +2195,8 @@ async function runCaptureIteration(options, session, onPhase = async () => {}) {
   await onPhase(
     `Running ${manifest.flows.length} flows on ${session.simulators.length} simulator shard(s)`,
   );
-  await runMaestro(manifest, session.simulators, session.tools);
-  await onPhase("Publishing the catalog");
-  const catalog = await publishGallery(
-    manifest,
-    session.simulators,
-    captureScreenshotsDirectory,
-    {
-      mode: "capture",
-      reportAvailable: await exists(path.join(maestroDirectory, "report.html")),
-    },
-  );
-  console.log(`\nCaptured ${catalog.scenarios.length} mobile screenshots.`);
-  return catalog;
+  const produced = await runMaestro(manifest, session.simulators, session.tools);
+  return { produced, warning: reportShotDrift(produced, manifest) };
 }
 
 async function installVisualApp(options, session, manifest) {
@@ -2545,18 +2227,19 @@ async function closeCaptureSession(session) {
 async function capture(options) {
   const startedAt = new Date().toISOString();
   const phase = (message) =>
-    publishRunStatus("capturing", { message, startedAt });
+    publishRunStatus("capturing", { message, startedAt, platform: "ios" });
   try {
     await phase("Preparing simulators");
     const session = await prepareCaptureSession(options);
-    let catalog;
+    let result;
     try {
-      catalog = await runCaptureIteration(options, session, phase);
+      result = await runCaptureIteration(options, session, phase);
     } finally {
       await closeCaptureSession(session);
     }
     await publishRunStatus("ready", {
-      message: `Captured ${catalog.scenarios.length} screenshots`,
+      message: `Captured ${result.produced.size} screenshots`,
+      detail: result.warning,
     });
   } catch (error) {
     await publishRunStatus("error", {
@@ -2702,26 +2385,24 @@ async function startScreenshotBridge(simulators) {
       const screenshot = payload.screenshot;
       if (
         typeof screenshot !== "string" ||
-        !cycle.expected.has(screenshot) ||
-        path.basename(screenshot) !== screenshot
+        path.basename(screenshot) !== screenshot ||
+        !screenshot.endsWith(".png")
       ) {
-        throw new Error(`Unexpected screenshot: ${screenshot}`);
+        throw new Error(`Invalid screenshot name: ${screenshot}`);
       }
+      // Capture to a temporary path, then rename: the shot registry entry is
+      // replaced atomically, so a gallery poll never reads a torn PNG.
+      const target = path.join(iosShotsDirectory, screenshot);
+      const temporary = `${target}.${process.pid}.tmp`;
       await run(
         "xcrun",
-        [
-          "simctl",
-          "io",
-          simulator.udid,
-          "screenshot",
-          "--type=png",
-          path.join(watchScreenshotsDirectory, screenshot),
-        ],
+        ["simctl", "io", simulator.udid, "screenshot", "--type=png", temporary],
         { capture: true, quiet: true },
       );
+      await rename(temporary, target);
       cycle.seen.add(screenshot);
       response.writeHead(204).end();
-      if (cycle.seen.size === cycle.expected.size) {
+      if ([...cycle.expected].every((name) => cycle.seen.has(name))) {
         cycle.completed = true;
         cycle.watchdog.cancel();
         cycle.resolve();
@@ -2757,8 +2438,7 @@ async function startScreenshotBridge(simulators) {
       if (cycle && !cycle.completed) {
         throw new Error("A screenshot cycle is already active.");
       }
-      await rm(watchScreenshotsDirectory, { recursive: true, force: true });
-      await mkdir(watchScreenshotsDirectory, { recursive: true });
+      await mkdir(iosShotsDirectory, { recursive: true });
       const expected = new Set(
         manifest.scenarios.map((scenario) => scenario.screenshot),
       );
@@ -2787,7 +2467,17 @@ async function startScreenshotBridge(simulators) {
           ),
         );
       }, timeoutMs);
-      return { completion };
+      const startedCycle = cycle;
+      return {
+        completion,
+        seen: startedCycle.seen,
+        settle() {
+          if (startedCycle.completed) return;
+          startedCycle.completed = true;
+          startedCycle.watchdog.cancel();
+          startedCycle.resolve();
+        },
+      };
     },
     fail(error) {
       if (!cycle || cycle.completed) return;
@@ -3016,15 +2706,11 @@ tags:
 ${commands.join("\n\n")}\n`;
 }
 
-async function publishWatchScreenshots(manifest, simulators, validate) {
-  const catalog = await publishGallery(
-    manifest,
-    simulators,
-    watchScreenshotsDirectory,
-    { mode: "watch", reportAvailable: false, validate },
-  );
-  console.log(`\nCaptured ${catalog.scenarios.length} mobile screenshots.`);
-  return catalog;
+function reportShotDrift(seen, manifest) {
+  const warning = shotDriftWarning(seen, manifest);
+  if (warning) console.warn(`\nShot registry drift: ${warning}`);
+  console.log(`\nCaptured ${seen.size} mobile screenshots into .visual/shots/ios.`);
+  return warning;
 }
 
 export function shouldIgnoreWatchPath(changedPath) {
@@ -3138,7 +2824,6 @@ async function watchTargetFingerprints(targets) {
 async function watchCatalog(options) {
   const targets = visualWatchTargets();
   const startupFingerprints = await watchTargetFingerprints(targets);
-  await markCatalogAsWatchMode();
   const session = await prepareCaptureSession(options);
   let bridge;
   let processes;
@@ -3161,9 +2846,10 @@ async function watchCatalog(options) {
     console.log("\nStarting persistent Maestro sessions…");
     try {
       await initialCycle.completion;
-      await publishWatchScreenshots(manifest, session.simulators);
+      const warning = reportShotDrift(initialCycle.seen, manifest);
       setVisualCatalogStatus("ready", {
         message: "Screenshots are up to date",
+        detail: warning,
       });
     } catch (error) {
       setVisualCatalogStatus("error", {
@@ -3275,15 +2961,10 @@ async function watchCatalog(options) {
         }
         await cycle.completion;
         requireLatestRevision();
-        await publishWatchScreenshots(
-          manifest,
-          session.simulators,
-          requireLatestRevision,
-        );
-        requireLatestRevision();
+        const warning = reportShotDrift(cycle.seen, manifest);
         setVisualCatalogStatus("ready", {
           message: "Screenshots are up to date",
-          detail: `${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
+          detail: warning || `${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
         });
         console.log(
           `\nCatalog refreshed in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`,
