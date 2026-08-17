@@ -2040,7 +2040,8 @@ export async function serveCatalog(port, shouldOpen) {
     );
     const child = spawn(
       process.execPath,
-      [captureScripts[platform], "capture", "--no-serve", "--no-open"],
+      // Gallery-triggered scans run gentle: the user is at the machine when they click Scan.
+      [captureScripts[platform], "capture", "--no-serve", "--no-open", "--gentle"],
       { cwd: mobileRoot, env: process.env, stdio: ["ignore", logFile, logFile] },
     );
     closeSync(logFile);
