@@ -16,6 +16,7 @@ use crate::device_registry::{DeviceInfo, DeviceRegistry};
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 use crate::time_utils::now_epoch_secs;
 use crate::types::ClientKind;
+use crate::user_context::UserPresence;
 
 use super::hub::UserNotification;
 use super::presence::PRESENCE_NOTIFY_DELAY;
@@ -122,24 +123,23 @@ fn token_deadline(token: &str, api_key: &str) -> Option<tokio::time::Instant> {
     Some(tokio::time::Instant::now() + Duration::from_secs(remaining))
 }
 
-/// Wait the settle window, then drop the return-to-focus notification into every tapped agent,
-/// unless `confirm_return` reports the return was only a glance. Runs detached so the sleep never
-/// stalls the session loop's keepalive and deltas.
-async fn settle_and_notify(state: SharedState) {
+/// Wait the settle window, then drop the presence notification into the one agent whose page was
+/// opened, unless `confirm_return` reports the user navigated away (a glance) or the agent has
+/// opted out of presence notifications. Runs detached so the sleep never stalls the session loop's
+/// keepalive and deltas.
+async fn settle_and_notify(state: SharedState, agent: String) {
     tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
-    let Some(client) = state.presence.confirm_return(tokio::time::Instant::now()) else {
+    let Some(client) = state.presence.confirm_return(&agent, tokio::time::Instant::now()) else {
         return;
     };
-    let agents = state.agent_status_cache.presence_notification_agents();
-    // The docker uploads are untimed, so run them concurrently rather than serializing behind the
-    // slowest; best-effort, each failure logs itself.
-    let docker = &state.docker;
-    let drops = agents.iter().map(|agent| async move {
-        if let Err(error) = crate::serve::drop_presence_notification(docker, agent, client).await {
-            tracing::warn!(%agent, %error, "could not drop presence notification");
-        }
-    });
-    futures_util::future::join_all(drops).await;
+    if !state.agent_status_cache.presence_notification_target(&agent) {
+        return;
+    }
+    // Best-effort: a stopped agent or write failure logs itself, never fatal.
+    let notification = crate::agent_notification::user_presence(client);
+    if let Err(error) = crate::agent_notification::drop(&state.docker, &agent, &notification).await {
+        tracing::warn!(%agent, %error, "could not drop presence notification");
+    }
 }
 
 async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>, client_ip: Option<IpAddr>) {
@@ -269,17 +269,27 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             }
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
-                    Ok(ClientFrame::ClientContext(ctx)) => {
+                    Ok(ClientFrame::ClientContext(mut ctx)) => {
                         if let Some(device_id) = ctx.device_id.clone() {
                             let newly = device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
                             if newly {
                                 if let Some(ip) = client_ip {
-                                    resolve_location(&state, device_id, ip);
+                                    resolve_location(&state, device_id.clone(), ip);
                                 }
                             }
+                            let context = std::mem::take(&mut ctx.context);
+                            if !context.is_empty() {
+                                // The user is at a focused device; an unfocused frame or a resync
+                                // replay (context the gateway already had) only stores.
+                                let presence = if ctx.focused && !ctx.resync { UserPresence::AtDevice } else { UserPresence::StoreOnly };
+                                let state = state.clone();
+                                tokio::spawn(async move {
+                                    crate::user_context::report_device_context(&state, &device_id, context, presence).await;
+                                });
+                            }
                         }
-                        if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
-                            tokio::spawn(settle_and_notify(state.clone()));
+                        if let Some(agent) = state.presence.record(conn, ctx, tokio::time::Instant::now()) {
+                            tokio::spawn(settle_and_notify(state.clone(), agent));
                         }
                     }
                     Ok(ClientFrame::Reauth { token }) => {

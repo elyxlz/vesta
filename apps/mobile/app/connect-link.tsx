@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
@@ -100,7 +101,7 @@ function ConnectLinkContent({
           accessibilityLabel="Connecting to gateway"
           style={styles.connecting}
         >
-          <ActivityIndicator color={colors.interactive} />
+          <LoadingSpinner color={colors.interactive} />
           <View style={styles.connectingCopy}>
             <Text
               family="heading"

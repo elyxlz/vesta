@@ -123,6 +123,14 @@ describe("parseServerFrame", () => {
       lastSeen: "2026-01-01T00:00:00Z",
       pushEnabled: false,
       location: "London, United Kingdom",
+      timezone: "Europe/London",
+      position: {
+        latitude: 51.5074,
+        longitude: -0.1278,
+        accuracyM: 50,
+        place: { city: "London", region: "England", country: "United Kingdom" },
+      },
+      positionAt: "2026-01-01T00:00:00Z",
     }
     const parsed = parseServerFrame(JSON.stringify({ type: "devices", devices: [device] }))
     expect(parsed).toEqual({ kind: "delta", delta: { type: "devices", devices: [device] } })
@@ -137,12 +145,15 @@ describe("parseServerFrame", () => {
       lastSeen: "2026-01-01T00:00:00Z",
       pushEnabled: true,
       location: null,
+      timezone: null,
+      position: null,
+      positionAt: null,
     }
     const parsed = parseServerFrame(JSON.stringify({ type: "devices", devices: [device] }))
     expect(parsed).toEqual({ kind: "delta", delta: { type: "devices", devices: [device] } })
   })
 
-  it("defaults an absent location to null and rejects a non-string one", () => {
+  it("defaults absent context fields to null and rejects malformed ones", () => {
     const base = {
       id: "dev-1",
       kind: "web",
@@ -153,11 +164,47 @@ describe("parseServerFrame", () => {
     }
     expect(parseServerFrame(JSON.stringify({ type: "devices", devices: [base] }))).toEqual({
       kind: "delta",
-      delta: { type: "devices", devices: [{ ...base, location: null }] },
+      delta: {
+        type: "devices",
+        devices: [{ ...base, location: null, timezone: null, position: null, positionAt: null }],
+      },
     })
-    const bad = { ...base, location: 42 }
-    expect(parseServerFrame(JSON.stringify({ type: "devices", devices: [bad] }))).toEqual({
-      kind: "unknown",
+    for (const bad of [
+      { ...base, location: 42 },
+      { ...base, timezone: 42 },
+      { ...base, position: { latitude: "x", longitude: 1 } },
+      { ...base, position: { latitude: 1, longitude: 1, place: { city: 3 } } },
+    ]) {
+      expect(parseServerFrame(JSON.stringify({ type: "devices", devices: [bad] }))).toEqual({
+        kind: "unknown",
+      })
+    }
+  })
+
+  it("fills a position's optional parts with null", () => {
+    const device = {
+      id: "dev-1",
+      kind: "mobile",
+      descriptor: "Vesta Mobile on iOS",
+      present: true,
+      lastSeen: "2026-01-01T00:00:00Z",
+      pushEnabled: true,
+      position: { latitude: 1.5, longitude: 2.5, place: { city: "Tokyo" } },
+    }
+    const parsed = parseServerFrame(JSON.stringify({ type: "devices", devices: [device] }))
+    expect(parsed).toMatchObject({
+      delta: {
+        devices: [
+          {
+            position: {
+              latitude: 1.5,
+              longitude: 2.5,
+              accuracyM: null,
+              place: { city: "Tokyo", region: null, country: null },
+            },
+          },
+        ],
+      },
     })
   })
 

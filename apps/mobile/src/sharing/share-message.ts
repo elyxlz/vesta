@@ -9,9 +9,7 @@ interface VestaShareModule {
 }
 
 const nativeShare =
-  process.env.EXPO_OS === "ios"
-    ? requireOptionalNativeModule<VestaShareModule>("VestaShare")
-    : null;
+  requireOptionalNativeModule<VestaShareModule>("VestaShare");
 
 export async function shareVestaMessage(message: string): Promise<void> {
   if (nativeShare) {

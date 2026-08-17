@@ -51,6 +51,7 @@ SCREEN_W, SCREEN_H = 1280, 800
 # `$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html` (no token).
 HANDOVER_SERVICE = "browser"
 REGISTER_SERVICE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
+DEREGISTER_SERVICE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "deregister-service"
 SERVICE_REGISTER_TIMEOUT_S = 35  # register-service polls vestad up to ~30s before giving up
 
 # The handover display shows exactly one app. Without this, openbox smart-places the window a
@@ -184,6 +185,25 @@ def _register_public_service() -> tuple[int, str] | None:
         return None
     port = int(result.stdout.strip())
     return port, f"{tunnel.rstrip('/')}/agents/{agent}/{HANDOVER_SERVICE}/handover.html"
+
+
+def _deregister_public_service() -> None:
+    """Remove the public handover registration. The counterpart to `_register_public_service`.
+
+    A registration outlives the process behind it, so tearing down the bridge without this leaves
+    vestad advertising a PUBLIC route at a port nothing is listening on. Best-effort by design:
+    teardown must not fail because vestad is unreachable, and the script treats an already-absent
+    name as success, so this is safe to call on a session that never registered one.
+    """
+    if not DEREGISTER_SERVICE.exists():
+        return
+    subprocess.run(
+        [str(DEREGISTER_SERVICE), HANDOVER_SERVICE],
+        capture_output=True,
+        text=True,
+        timeout=SERVICE_REGISTER_TIMEOUT_S,
+        check=False,
+    )
 
 
 def render_page() -> str:
@@ -357,12 +377,18 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
 
 
 def stop() -> dict[str, object]:
-    """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, Xvfb, and the web root. Idempotent.
+    """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, Xvfb, the web root, and
+    the public vestad registration. Idempotent.
 
     Xvfb goes last: the bridge and the browser are its clients, so dropping the display first would
     leave them thrashing against a server that vanished. Nothing else reaps it, and a live leftover
     keeps answering on its display number, so `_free_display` skips past it and the next handover
     climbs to the following one until the range runs dry.
+
+    The registration is removed too, and it is not optional tidiness. `start` registers a PUBLIC
+    route, so leaving it behind advertises a public path at a dead port, and the next handover
+    inherits a route it never created. A handover is by definition an authenticated session on
+    something the user cares about, so its route must not outlive it.
     """
     for suffix in ("websockify-pid", "x11vnc-pid", "openbox-pid"):
         pid = _read_pid(suffix)
@@ -383,6 +409,7 @@ def stop() -> dict[str, object]:
         _session_file(suffix).unlink(missing_ok=True)
     if WEBROOT.exists():
         shutil.rmtree(WEBROOT)
+    _deregister_public_service()
     return {"stopped": True}
 
 

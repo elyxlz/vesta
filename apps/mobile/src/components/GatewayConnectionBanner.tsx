@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Ionicons } from "@expo/vector-icons";
 import {
   GlassView,
@@ -44,18 +45,12 @@ export function GatewayConnectionBanner({ visible }: { visible: boolean }) {
   const content = (
     <>
       <View style={[styles.icon, { backgroundColor: colors.input }]}>
-        <Ionicons
-          name="cloud-offline-outline"
-          size={19}
-          color={colors.danger}
-        />
+        <Ionicons name="cloud-offline-outline" size={16} color={colors.text} />
       </View>
-      <View style={styles.copy}>
-        <Text style={[styles.title, { color: colors.text }]}>
-          Gateway disconnected
-        </Text>
-      </View>
-      <ActivityIndicator size="small" color={colors.text} />
+      <Text style={[styles.title, { color: colors.text }]}>
+        Gateway disconnected
+      </Text>
+      <LoadingSpinner size="small" color={colors.secondaryText} />
     </>
   );
 
@@ -110,16 +105,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   banner: {
-    width: "100%",
+    alignSelf: "center",
     maxWidth: 420,
-    minHeight: 54,
+    minHeight: 44,
     borderRadius: radii.pill,
     borderCurve: "continuous",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 9,
     shadowOpacity: 0.12,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 5 },
@@ -128,12 +123,11 @@ const styles = StyleSheet.create({
   },
   fallback: { borderWidth: StyleSheet.hairlineWidth },
   icon: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  copy: { flex: 1 },
-  title: { fontSize: 14, fontWeight: "600" },
+  title: { fontSize: 14, fontWeight: "600", paddingRight: 2 },
 });

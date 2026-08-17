@@ -405,16 +405,24 @@ impl AgentStatusCache {
         self.presence_notifications_rx.borrow().get(agent).copied().unwrap_or(true)
     }
 
-    /// Every agent that should receive the next global user-presence event: the tapped set, which is
-    /// both up to read the drop now and the set whose `presence_notifications` preference vestad
-    /// still holds (the tap supplies that preference and the poll loop drops the entry when the tap
-    /// closes, so an agent outside it would read as enabled and ignore an opt-out).
-    pub fn presence_notification_agents(&self) -> Vec<String> {
+    /// Whether a presence notification should reach `agent`: it serves its WS tap now (so vestad
+    /// holds its real preference) and that preference is enabled. An agent whose tap is down reads
+    /// as enabled by default, so gating on the live tap is what keeps a mid-restart opt-out honored.
+    pub fn presence_notification_target(&self, agent: &str) -> bool {
+        let serving = self.agents_rx.borrow().iter().any(|entry| entry.name == agent && entry.status.serves_ws());
+        serving && self.presence_notifications_enabled(agent)
+    }
+
+    /// The agents serving their WS tap now, each with the IANA zone its connect snapshot reported.
+    /// An agent whose tap is down is absent: vestad holds no current zone for it, and a device fact
+    /// delivered against a stale one would be wrong.
+    pub fn serving_timezones(&self) -> crate::user_context::AgentZones {
+        let zones = self.timezones_rx.borrow();
         self.agents_rx
             .borrow()
             .iter()
-            .filter(|entry| entry.status.serves_ws() && self.presence_notifications_enabled(&entry.name))
-            .map(|entry| entry.name.clone())
+            .filter(|entry| entry.status.serves_ws())
+            .filter_map(|entry| zones.get(&entry.name).map(|zone| (entry.name.clone(), zone.clone())))
             .collect()
     }
 
@@ -1071,47 +1079,50 @@ mod tests {
     }
 
     #[test]
-    fn presence_notification_agents_fans_out_to_enabled_agents() {
+    fn presence_notification_target_requires_a_serving_enabled_agent() {
         let cache = AgentStatusCache::new();
         cache.agents_tx.send_modify(|agents| {
             agents.extend([
-                ListEntry {
-                    name: "scout".into(),
-                    status: docker::AgentStatus::Alive,
-                    ws_port: 1,
-                    booting: false,
-                    started_at: None,
-                },
-                ListEntry {
-                    name: "quiet".into(),
-                    status: docker::AgentStatus::Alive,
-                    ws_port: 2,
-                    booting: false,
-                    started_at: None,
-                },
-                ListEntry {
-                    name: "asleep".into(),
-                    status: docker::AgentStatus::Stopped,
-                    ws_port: 3,
-                    booting: false,
-                    started_at: None,
-                },
-                // Mid-restart: outside the tapped set, so its preference has been dropped and an
-                // opt-out would silently read as enabled again.
-                ListEntry {
-                    name: "booting".into(),
-                    status: docker::AgentStatus::Starting,
-                    ws_port: 4,
-                    booting: false,
-                    started_at: None,
-                },
+                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, started_at: None },
+                ListEntry { name: "quiet".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, started_at: None },
+                ListEntry { name: "asleep".into(), status: docker::AgentStatus::Stopped, ws_port: 3, booting: false, started_at: None },
+                // Mid-restart: its tap is down, so its preference reads as the enabled default.
+                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 4, booting: false, started_at: None },
             ]);
         });
         cache.presence_notifications_tx.send_modify(|preferences| {
             preferences.insert("quiet".into(), false);
         });
 
-        assert_eq!(cache.presence_notification_agents(), vec!["scout"]);
+        assert!(cache.presence_notification_target("scout"));
+        // Opted out: enabled is false even though it serves.
+        assert!(!cache.presence_notification_target("quiet"));
+        // Stopped: cannot receive it.
+        assert!(!cache.presence_notification_target("asleep"));
+        // Mid-restart: tap down, so a true opt-out could not be read; do not notify.
+        assert!(!cache.presence_notification_target("booting"));
+        // Unknown agent: not serving.
+        assert!(!cache.presence_notification_target("ghost"));
+    }
+
+    #[test]
+    fn serving_timezones_covers_only_agents_serving_their_tap_with_a_reported_zone() {
+        let cache = AgentStatusCache::new();
+        cache.agents_tx.send_modify(|agents| {
+            agents.extend([
+                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, started_at: None },
+                ListEntry { name: "mute".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, started_at: None },
+                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 3, booting: false, started_at: None },
+            ]);
+        });
+        cache.timezones_tx.send_modify(|zones| {
+            zones.insert("scout".into(), "Europe/London".into());
+            zones.insert("booting".into(), "Asia/Tokyo".into());
+        });
+        let zones = cache.serving_timezones();
+        assert_eq!(zones.get("scout").map(String::as_str), Some("Europe/London"));
+        assert!(!zones.contains_key("mute"), "serving but no zone reported yet");
+        assert!(!zones.contains_key("booting"), "zone held from before, tap down now");
     }
 
     use crate::sync::SyncHub;

@@ -476,6 +476,24 @@ impl Client {
         Ok(())
     }
 
+    /// Report a device's context outside the `/sync` socket via `PUT /devices/{device_id}/context`
+    /// (client auth), the mobile background poll's carrier. `context` is `{timezone?, position?}`.
+    pub fn report_device_context(&self, device_id: &str, context: &serde_json::Value) -> Result<(), String> {
+        let resp = self.put_json(&format!("/devices/{device_id}/context"), context)?;
+        check_response(resp)?;
+        Ok(())
+    }
+
+    /// Read every device the user has via `GET /agents/{name}/devices` carrying the agent's own
+    /// `X-Agent-Token` (self-scoped, what the agent's `user_devices` tool calls).
+    pub fn agent_devices(&self, name: &str, agent_token: &str) -> Result<serde_json::Value, String> {
+        let (status, body) = self.proxy_get(&format!("/agents/{name}/devices"), ProxyAuth::AgentToken(agent_token))?;
+        if status != 200 {
+            return Err(format!("HTTP {status}: {body}"));
+        }
+        serde_json::from_str(&body).map_err(|e| format!("parse error: {e}"))
+    }
+
     /// Mint a JWT access token (+ rotating refresh token) via `POST /auth/session`, exchanging the
     /// raw API key. Use the returned `access_token` for `open_sync_with_token` to exercise the `/sync`
     /// deadline/`reauth` path a raw-key connect never hits.

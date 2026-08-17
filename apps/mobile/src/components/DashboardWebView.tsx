@@ -128,6 +128,14 @@ export const DashboardWebView = forwardRef<
   return Platform.OS === "ios" ? (
     <IOSWebView {...sharedProps} />
   ) : (
-    <AndroidWebView {...sharedProps} />
+    // setSupportMultipleWindows(false) routes target=_blank links through
+    // onShouldStartLoadWithRequest, matching the iOS branch; textZoom pins the
+    // dashboard to its own type scale instead of the system font scale.
+    <AndroidWebView
+      {...sharedProps}
+      overScrollMode="never"
+      setSupportMultipleWindows={false}
+      textZoom={100}
+    />
   );
 });

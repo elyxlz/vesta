@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::device_registry::DeviceInfo;
+use crate::device_registry::{DeviceContext, DeviceInfo};
 use crate::docker::{AgentOperation, AgentStatus, BuildPhase};
 use crate::types::ClientKind;
 
@@ -211,7 +211,9 @@ pub(crate) enum ClientFrame {
 /// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
 /// web visibility/window focus or mobile foreground state. `client` identifies the surface that
 /// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
-/// reconnect never looks like the user returning.
+/// reconnect never looks like the user returning. `viewing` is the agent whose page is open on this
+/// client, or `None` on the roster, a non-agent screen, or a blurred window: it drives the per-agent
+/// presence notification, independently of `focused`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientContext {
@@ -220,6 +222,8 @@ pub(crate) struct ClientContext {
     pub client: ClientKind,
     #[serde(default)]
     pub resync: bool,
+    #[serde(default)]
+    pub viewing: Option<String>,
     /// The client-minted installation id identifying the device across reconnects. Absent from
     /// older clients, which are simply not tracked in the device registry.
     #[serde(default)]
@@ -227,6 +231,11 @@ pub(crate) struct ClientContext {
     /// A human label the client composes for itself, e.g. "Chrome on macOS".
     #[serde(default)]
     pub descriptor: Option<String>,
+    /// What the device reports about itself (`timezone`, `position`), read when the frame is built
+    /// so a change after mount is reported on the next focus edge or reconnect. The same shape the
+    /// registry stores and `PUT /devices/{id}/context` takes.
+    #[serde(flatten)]
+    pub context: DeviceContext,
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -284,6 +293,18 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         last_seen: "2026-01-01T00:00:00Z".into(),
         push_enabled: false,
         location: Some("London, United Kingdom".into()),
+        timezone: Some("Europe/London".into()),
+        position: Some(crate::device_registry::DevicePosition {
+            latitude: 51.5074,
+            longitude: -0.1278,
+            accuracy_m: Some(50.0),
+            place: Some(crate::device_registry::DevicePlace {
+                city: Some("London".into()),
+                region: Some("England".into()),
+                country: Some("United Kingdom".into()),
+            }),
+        }),
+        position_at: Some("2026-01-01T00:00:00Z".into()),
     }];
     let tree = Tree { gateway: gateway.clone(), agents, devices: devices.clone() };
 
@@ -509,6 +530,55 @@ mod tests {
                 focused: false,
                 client: ClientKind::Unknown,
                 resync: true,
+                ..Default::default()
+            })
+        );
+        // `timezone` and `position` are the device's reported context, camelCase like the rest.
+        let context: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"mobile","timezone":"Asia/Tokyo",
+                "position":{"latitude":35.6762,"longitude":139.6503,"accuracyM":50.0,"place":{"city":"Tokyo","country":"Japan"}}}"#,
+        )
+        .expect("parse client_context with context");
+        assert_eq!(
+            context,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Mobile,
+                context: DeviceContext {
+                    timezone: Some("Asia/Tokyo".into()),
+                    position: Some(crate::device_registry::PositionReport::At(crate::device_registry::DevicePosition {
+                        latitude: 35.6762,
+                        longitude: 139.6503,
+                        accuracy_m: Some(50.0),
+                        place: Some(crate::device_registry::DevicePlace {
+                            city: Some("Tokyo".into()),
+                            region: None,
+                            country: Some("Japan".into()),
+                        }),
+                    })),
+                },
+                ..Default::default()
+            })
+        );
+        // A `position: null` is a retraction (location sharing turned off), distinct from absent.
+        let retracted: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"mobile","timezone":"Asia/Tokyo","position":null}"#,
+        )
+        .expect("parse client_context retracting the position");
+        let ClientFrame::ClientContext(retracted) = retracted else { panic!("client_context expected") };
+        assert_eq!(retracted.context.position, Some(crate::device_registry::PositionReport::Retract));
+        // `viewing` carries the open agent's name; absent it defaults to None (additive-safe).
+        let viewing: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"web","viewing":"scout"}"#,
+        )
+        .expect("parse client_context viewing");
+        assert_eq!(
+            viewing,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Web,
+                resync: false,
+                viewing: Some("scout".into()),
                 ..Default::default()
             })
         );

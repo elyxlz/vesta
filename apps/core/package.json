@@ -39,7 +39,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "typescript": "^7.0.2",
-    "typescript-eslint": "^8.65.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
   }
 }

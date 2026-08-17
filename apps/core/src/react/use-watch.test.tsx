@@ -27,6 +27,8 @@ function fakeController(initial: SyncState = "connecting"): {
       return () => listeners.delete(listener)
     },
     reportPresence: () => undefined,
+    reportViewing: () => undefined,
+    reportDeviceContext: () => undefined,
     getAnyFocused: () => false,
     subscribeAnyFocused: () => () => undefined,
     close: () => undefined,

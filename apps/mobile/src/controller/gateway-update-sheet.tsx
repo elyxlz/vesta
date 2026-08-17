@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Alert, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { triggerGatewayUpdate } from "@vesta/core";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
@@ -16,6 +17,7 @@ export function GatewayUpdateSheet() {
   const { api, disconnect } = useSession();
   const [updating, setUpdating] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const handleUpdate = () => {
     setUpdating(true);
@@ -25,24 +27,16 @@ export function GatewayUpdateSheet() {
   };
 
   const confirmDisconnect = () => {
-    Alert.alert(
-      "Disconnect from gateway?",
-      "You can reconnect using your account or tunnel link.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Disconnect",
-          style: "destructive",
-          onPress: () => {
-            setDisconnecting(true);
-            void unregisterCurrentMobileDevice(api)
-              .catch(() => undefined)
-              .then(disconnect)
-              .catch(() => setDisconnecting(false));
-          },
-        },
-      ],
-    );
+    setConfirmingDisconnect(true);
+  };
+
+  const performDisconnect = () => {
+    setConfirmingDisconnect(false);
+    setDisconnecting(true);
+    void unregisterCurrentMobileDevice(api)
+      .catch(() => undefined)
+      .then(disconnect)
+      .catch(() => setDisconnecting(false));
   };
 
   return (
@@ -83,6 +77,15 @@ export function GatewayUpdateSheet() {
           Disconnect gateway
         </Button>
       </View>
+      <ConfirmDialog
+        visible={confirmingDisconnect}
+        title="Disconnect from gateway?"
+        message="You can reconnect using your account or tunnel link."
+        confirmLabel="Disconnect"
+        destructive
+        onConfirm={performDisconnect}
+        onDismiss={() => setConfirmingDisconnect(false)}
+      />
     </AuthSheet>
   );
 }

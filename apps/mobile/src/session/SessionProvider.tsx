@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   connectWithKey,
@@ -29,7 +30,10 @@ import {
   readRecentGateways,
   saveRecentGateway,
 } from "@/storage/recent-gateways";
-import { changesGateway } from "@/session/session-model";
+import {
+  changesGateway,
+  rotatedStoredConnection,
+} from "@/session/session-model";
 
 type SessionStatus = "booting" | "disconnected" | "connected";
 
@@ -149,6 +153,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
+  }, [connectionStore]);
+
+  // The background device-context poll may refresh the session and write SecureStore while the app
+  // is suspended; adopt those tokens on foreground so the next in-app refresh presents the live one.
+  useEffect(() => {
+    const adopt = async () => {
+      const rotated = rotatedStoredConnection(
+        connectionStore.read(),
+        await readConnection(),
+      );
+      if (!rotated) return;
+      connectionStore.write(rotated);
+      setConnection(rotated);
+    };
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void adopt();
+    });
+    return () => sub.remove();
   }, [connectionStore]);
 
   const connectLink = useCallback(

@@ -1,12 +1,12 @@
 import { Children, type ComponentProps, type ReactNode } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   StyleSheet,
   View,
   type StyleProp,
   type TextStyle,
 } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -159,7 +159,7 @@ export function Button({
             style={[styles.content, usesCardLayout ? styles.cardContent : null]}
           >
             {loading && !usesCardLayout ? (
-              <ActivityIndicator color={contentColor} />
+              <LoadingSpinner color={contentColor} />
             ) : icon && !loading ? (
               <Ionicons
                 name={icon}
@@ -188,7 +188,7 @@ export function Button({
               />
             ) : null}
             {usesCardLayout && loading ? (
-              <ActivityIndicator color={contentColor} />
+              <LoadingSpinner color={contentColor} />
             ) : usesCardLayout ? (
               <Ionicons
                 name="chevron-forward"

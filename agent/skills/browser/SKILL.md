@@ -37,12 +37,12 @@ exact call that stalled, while terminating early leaves you with "it hung" and s
 a block that is not there. Once you have seen it on a box, reach for **`browser navigate <url>`**,
 which skips tab creation and returns at once.
 
-**When a button does nothing, read the click's own output first.** `browser click <ref>` reports
-what was topmost at the point it clicked when that is not your element (`# e14 is covered by
-<div.modal-wrap>, which took the click instead.`). That line means an invisible overlay ate it, and
-every retry, every coordinate fallback and every theory about validation is wasted until it is
-dismissed. A modal can be absent from `innerText` and still sit over an enabled button. See
-[interaction-skills/clicking.md](interaction-skills/clicking.md).
+**When a button does nothing, check the click's exit code first.** `browser click <ref>` exits
+non-zero and names what was topmost at the point it clicked when that is not your element, on
+stderr (`e14 is covered by <div.modal-wrap>, which took the click instead.`). That means an
+invisible overlay ate it, and every retry, every coordinate fallback and every theory about
+validation is wasted until it is dismissed. A modal can be absent from `innerText` and still sit
+over an enabled button. See [interaction-skills/clicking.md](interaction-skills/clicking.md).
 
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
 
@@ -121,8 +121,8 @@ browser launch --user-data-dir ~/.browser/work    # isolated DURABLE profile, ke
 browser connect http://192.168.1.10:9222          # attach to the user's own Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
 browser mode screenshot                           # switch perception: a11y | screenshot | both
-browser stop                                      # stop this session
-browser stop-all                                  # stop everything
+browser stop [session]                            # stop this session, or the named one
+browser stop-all                                  # stop every session; refuses while other sessions are live (--force overrides)
 browser sessions                                  # list active sessions
 browser prune                                     # report ephemeral profiles left by crashes (--yes deletes)
 browser doctor                                    # report Camoufox install + session health
@@ -217,7 +217,8 @@ order, most-preferred first:
    locked tenants) rather than fingerprint, hand your headed browser to the user to sign in once;
    the session persists in the shared profile and you resume automating. One command does it:
    `browser handover start --url "<sign-in URL>"` registers the public route itself and returns a
-   ready-to-send `user_url` (send the user that link, not `web_port`). See
+   ready-to-send `user_url` (send the user that link, not `web_port`). `handover stop` tears down the
+   processes AND the public registration, so the route never outlives the session; confirm both. See
    [interaction-skills/handover.md](interaction-skills/handover.md).
 3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*
    logged-in Chrome, drive it over a tunnel with `browser connect`. See
@@ -253,6 +254,30 @@ Occasional topics live in their own files so this one stays lean:
 - **Bot detection / blocked**: `browser screenshot` to see the page. Camoufox is already
   stealthy, so a block is usually account-trust, geo/IP, or a CAPTCHA, so try handover.
 - **Stale refs**: take a fresh `browser snapshot` after navigation or major DOM change.
+- **Give each subagent its own session.** Tell a browser-using subagent to run every command with
+  its own `BROWSER_SESSION=<name>` and to end with `browser stop <name>`, so concurrent work never
+  shares a browser. `stop-all` is for cleaning up everything at once: it refuses while other
+  sessions are live, and `--force` is for when you mean exactly that.
+- **`daemon did not come up` at high concurrency is contention, not a broken install.** Concurrent
+  session launches compete for CPU, so the startup wait scales itself up and the timeout error names
+  the competing sessions. Stagger browser-using subagents, and use `http_get` or WebFetch for pages
+  that render without a browser. Suspect a real fault only when a solo launch fails; the reason is
+  in `/tmp/vesta-browser-<session>.log`.
+- **`browser open` can land in an existing blank tab.** Some builds accept the BiDi connection but
+  never answer `browsingContext.create`; after the bounded wait, `open` takes over an existing blank
+  context instead and reports it in `# target_id`. Your page is loaded either way, so keep driving
+  the reported context. If every command on the session wedges, `browser stop <session>` and
+  relaunch once.
+- **An intercepted click fails; trust the exit code over the page.** When an overlay sits on top of
+  a ref (a consent banner is the classic), `browser click` exits non-zero naming the interceptor,
+  because the page after such a click looks exactly like success while every control kept its
+  default. Dismiss the overlay, take a fresh snapshot, click again, and verify the control changed
+  (read the checked input) before trusting a value the page renders.
+- **A block on one route does not characterise the host.** A WAF can answer per route: on one site a
+  `GET` of an HTML page returned 200 with a JS challenge page (`<title>Waiting</title>`) while a
+  `POST` to its internal JSON API returned 403 with a block page. So "curl gets 403 here" and "curl
+  gets 200 here" can both be true of the same host, and a single probe is not a verdict on whether
+  the browser is needed.
 
 ## Auth-gated / heavy-JS pages
 

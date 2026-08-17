@@ -41,7 +41,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services",
+    "services", "devices",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 
@@ -964,7 +964,7 @@ async fn rename_agent_handler(
         save_settings(&settings);
     }
 
-    if let Err(e) = drop_rename_notification(&state.docker, &new_name, &name).await {
+    if let Err(e) = crate::agent_notification::drop(&state.docker, &new_name, &crate::agent_notification::rename(&name, &new_name)).await {
         tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
     }
 
@@ -973,90 +973,6 @@ async fn rename_agent_handler(
         .map_err(map_docker_err)?;
 
     Ok(Json(serde_json::json!({"name": new_name})))
-}
-
-/// Build the rename notification payload. Pure (no IO) so its shape can be
-/// asserted without spinning up a container.
-fn rename_notification_payload(
-    old_name: &str,
-    new_name: &str,
-    epoch_secs: u64,
-) -> Result<serde_json::Value, String> {
-    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
-    Ok(serde_json::json!({
-        "timestamp": timestamp,
-        "source": "vestad",
-        "type": "rename",
-        "interrupt": true,
-        "old_name": old_name,
-        "new_name": new_name,
-        "message": format!(
-            "you have been renamed from '{old_name}' to '{new_name}'. \
-             AGENT_NAME is now '{new_name}'. update your MEMORY.md and anything else \
-             that references your old name."
-        ),
-    }))
-}
-
-/// Write a vestad-authored notification JSON into an agent's notification intake. Best-effort: the
-/// caller decides whether a failure is fatal. Returns the file name written.
-async fn drop_notification(
-    docker: &bollard::Docker,
-    agent: &str,
-    file_name: &str,
-    payload: &serde_json::Value,
-) -> Result<String, String> {
-    let cname = docker::container_name(agent);
-    let bytes = serde_json::to_vec(payload).map_err(|e| format!("serialize notification: {e}"))?;
-    docker::upload_to_container(docker, &cname, "/root/agent/notifications", file_name, &bytes)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(file_name.to_string())
-}
-
-/// Drop a high-priority notification into the renamed agent so it self-updates
-/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
-/// to write the notification doesn't block the rename. Returns the notification
-/// file name written into the container.
-pub(crate) async fn drop_rename_notification(
-    docker: &bollard::Docker,
-    new_name: &str,
-    old_name: &str,
-) -> Result<String, String> {
-    let epoch = crate::time_utils::now_epoch_secs();
-    let payload = rename_notification_payload(old_name, new_name, epoch)?;
-    drop_notification(docker, new_name, &format!("rename-{epoch}.json"), &payload).await
-}
-
-/// Build the presence notification payload. Pure (no IO) so its shape can be
-/// asserted without spinning up a container. `interrupt: false` snoozes it
-/// (ambient presence), overridable by the user's `notification_rules`.
-fn presence_notification_payload(
-    epoch_secs: u64,
-    client: crate::types::ClientKind,
-) -> Result<serde_json::Value, String> {
-    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
-    let client = client.display_name();
-    Ok(serde_json::json!({
-        "timestamp": timestamp,
-        "source": "vestad",
-        "type": "user-presence",
-        "interrupt": false,
-        "message": format!("the user just opened {client} and is here now."),
-    }))
-}
-
-/// Drop a snoozed presence notification into the agent so Vesta knows the user
-/// just returned to a client. Best-effort: a stopped agent or write failure is
-/// logged, never fatal. Returns the notification file name written.
-pub(crate) async fn drop_presence_notification(
-    docker: &bollard::Docker,
-    agent: &str,
-    client: crate::types::ClientKind,
-) -> Result<String, String> {
-    let epoch = crate::time_utils::now_epoch_secs();
-    let payload = presence_notification_payload(epoch, client)?;
-    drop_notification(docker, agent, &format!("user-presence-{epoch}.json"), &payload).await
 }
 
 /// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent` so the
@@ -2206,6 +2122,7 @@ async fn delete_backup_handler(
 fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Value {
     serde_json::json!({
         "auto_update": settings.auto_update,
+        "user_context": settings.user_context,
         "channel": channel,
         "auto_backup": {
             "enabled": settings.backup.enabled,
@@ -2284,6 +2201,7 @@ fn validate_retention(
 #[derive(Deserialize)]
 struct UpdateSettingsBody {
     auto_update: Option<bool>,
+    user_context: Option<bool>,
     channel: Option<String>,
     auto_backup: Option<SetBackupSettingsBody>,
 }
@@ -2323,6 +2241,15 @@ async fn put_gateway_settings_handler(
         if let Some(auto_update) = body.auto_update {
             settings.auto_update = auto_update;
             tracing::info!(auto_update, "auto-update setting updated");
+        }
+        if let Some(user_context) = body.user_context {
+            settings.user_context = user_context;
+            tracing::info!(user_context, "user context setting updated");
+            if !user_context {
+                // Off forgets, not just stops: a stale zone or place must not linger in the roster or
+                // in what the agents can read.
+                state.device_registry.clear_context();
+            }
         }
         if let Some(channel) = parsed_channel {
             settings.channel = channel.as_str().to_string();
@@ -2742,6 +2669,10 @@ pub fn build_router(state: SharedState) -> Router {
             put(mobile_app::register_device_handler).delete(mobile_app::delete_device_handler),
         )
         .route(
+            "/devices/{device_id}/context",
+            put(crate::user_context::report_context_handler),
+        )
+        .route(
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
         )
@@ -2800,6 +2731,7 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route("/agents/{name}/user-notification", post(user_notification_handler))
+        .route("/agents/{name}/devices", get(crate::user_context::agent_devices_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -3491,46 +3423,6 @@ mod tests {
         );
     }
 
-    // --- Rename notification payload (the content contract the agent self-heals on) ---
-
-    #[test]
-    fn rename_notification_payload_carries_both_names_and_rfc3339_timestamp() {
-        // Fixed epoch -> deterministic RFC3339 timestamp, no wall clock.
-        let payload = super::rename_notification_payload("old-bot", "new-bot", 1_700_000_000)
-            .expect("payload");
-        assert_eq!(payload["source"], "vestad");
-        assert_eq!(payload["type"], "rename");
-        assert_eq!(payload["interrupt"], true);
-        assert_eq!(payload["old_name"], "old-bot");
-        assert_eq!(payload["new_name"], "new-bot");
-        assert_eq!(payload["timestamp"], "2023-11-14T22:13:20Z");
-        let message = payload["message"].as_str().expect("message is a string");
-        assert!(
-            message.contains("old-bot"),
-            "message missing old name: {message}"
-        );
-        assert!(
-            message.contains("new-bot"),
-            "message missing new name: {message}"
-        );
-    }
-
-    #[test]
-    fn presence_payload_is_snoozed_vestad_notification() {
-        let payload = super::presence_notification_payload(
-            1_700_000_000,
-            crate::types::ClientKind::Web,
-        )
-        .expect("payload");
-        assert_eq!(payload["source"], "vestad");
-        assert_eq!(payload["type"], "user-presence");
-        assert_eq!(payload["interrupt"], false);
-        assert_eq!(
-            payload["message"],
-            "the user just opened Vesta Web App and is here now."
-        );
-    }
-
     // --- Legacy workspace.bundle endpoint: 404 before first build, bytes after ---
 
     #[tokio::test]
@@ -4087,6 +3979,7 @@ mod gateway_settings_tests {
         let settings = Settings::default();
         let value = gateway_settings_json(&settings, "beta");
         assert_eq!(value["auto_update"], serde_json::json!(true));
+        assert_eq!(value["user_context"], serde_json::json!(true));
         assert_eq!(value["channel"], serde_json::json!("beta"));
         assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
         assert_eq!(

@@ -5,30 +5,40 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { VestaBrand } from "@/components/VestaBrand";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
+const IS_ANDROID = process.env.EXPO_OS === "android";
+
 interface BlockingSheetGateViewProps {
   blocked: boolean;
+  /** Whether the gate route itself is the active route. */
+  presented: boolean;
   children: ReactNode;
   estimatedSheetHeight: number;
 }
 
 export function BlockingSheetGateView({
   blocked,
+  presented,
   children,
   estimatedSheetHeight,
 }: BlockingSheetGateViewProps) {
   const insets = useSafeAreaInsets();
   const { colors, dark } = usePreferences();
+  // iOS presents the gate as a native modal above this backdrop. Android
+  // presents it inside the stack, under this view, so once the gate route
+  // is active the full-screen route covers the app and the backdrop must
+  // yield or it would paint over the gate itself.
+  const covered = blocked && !(IS_ANDROID && presented);
 
   return (
     <View style={styles.root}>
       <View
-        accessibilityElementsHidden={blocked}
-        importantForAccessibility={blocked ? "no-hide-descendants" : "auto"}
+        accessibilityElementsHidden={covered}
+        importantForAccessibility={covered ? "no-hide-descendants" : "auto"}
         style={styles.content}
       >
         {children}
       </View>
-      {blocked ? (
+      {covered ? (
         <View
           importantForAccessibility="no-hide-descendants"
           style={[

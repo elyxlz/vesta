@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
-import { Pressable, StyleSheet, Switch, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FormSwitch } from "@/components/ui/form-switch";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
 import { Text, TextInput } from "./Typography";
@@ -234,16 +235,14 @@ export function SwitchRow({
   disabled = false,
   ...rowProps
 }: SwitchRowProps) {
-  const { colors } = usePreferences();
   return (
     <FormRow
       {...rowProps}
       trailing={
-        <Switch
+        <FormSwitch
           value={value}
           onValueChange={onValueChange}
           disabled={disabled}
-          trackColor={{ false: colors.input, true: colors.accent }}
         />
       }
     />

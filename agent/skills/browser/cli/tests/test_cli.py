@@ -276,3 +276,88 @@ def test_cmd_screenshot_rejects_malformed_region(monkeypatch):
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
     with pytest.raises(ValueError, match="--region expects"):
         cli.cmd_screenshot(argparse.Namespace(path=None, full_page=False, webp=False, jpeg=False, region="0,0,320", quality=None))
+
+
+def test_cmd_stop_accepts_a_session_name(monkeypatch):
+    stopped = []
+    monkeypatch.setattr(cli.admin, "shutdown", stopped.append)
+    parser = cli._build_parser()
+
+    ns = parser.parse_args(["stop", "research-3"])
+    cli.cmd_stop(ns)
+    ns = parser.parse_args(["stop"])
+    cli.cmd_stop(ns)
+
+    assert stopped == ["research-3", None], "a name stops that session; none stops $BROWSER_SESSION"
+
+
+def _stop_all_setup(monkeypatch, sessions):
+    calls = []
+    monkeypatch.setattr(cli.admin, "_session_name", lambda name=None: "mine")
+    monkeypatch.setattr(cli.admin, "list_sessions", lambda: sessions)
+    monkeypatch.setattr(cli.admin, "stop_all", lambda: calls.append("stop_all"))
+    return calls
+
+
+_MINE_ALIVE = {"name": "mine", "browser_alive": True, "daemon_alive": True}
+_OTHER_ALIVE = {"name": "research-2", "browser_alive": True, "daemon_alive": False}
+
+
+def test_cmd_stop_all_refuses_when_other_sessions_are_live(monkeypatch, capsys):
+    calls = _stop_all_setup(monkeypatch, [_MINE_ALIVE, _OTHER_ALIVE])
+
+    rc = cli.cmd_stop_all(argparse.Namespace(force=False))
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert calls == []
+    assert "research-2" in captured.err
+    assert "--force" in captured.err
+    assert captured.out == "", "the refusal goes to stderr, so piped stdout cannot swallow it"
+
+
+def test_cmd_stop_all_force_overrides_the_guard(monkeypatch):
+    calls = _stop_all_setup(monkeypatch, [_MINE_ALIVE, _OTHER_ALIVE])
+
+    rc = cli.cmd_stop_all(argparse.Namespace(force=True))
+
+    assert rc == 0
+    assert calls == ["stop_all"]
+
+
+def test_cmd_stop_all_proceeds_when_only_own_session_is_live(monkeypatch):
+    calls = _stop_all_setup(monkeypatch, [_MINE_ALIVE])
+
+    rc = cli.cmd_stop_all(argparse.Namespace(force=False))
+
+    assert rc == 0
+    assert calls == ["stop_all"]
+
+
+def _click_setup(monkeypatch, occluder):
+    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
+    monkeypatch.setattr(cli.helpers, "click_ref", lambda *a, **kw: occluder)
+    monkeypatch.setattr(cli.helpers, "wait", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_print_feedback", lambda *a, **kw: None)
+
+
+def test_cmd_click_fails_when_an_overlay_takes_the_click(monkeypatch, capsys):
+    """An intercepted click is a failed click: the page state it leaves behind looks
+    exactly like success, so only the exit code and stderr can say otherwise."""
+    _click_setup(monkeypatch, "div.onetrust-pc-dark-filter")
+
+    rc = cli.cmd_click(argparse.Namespace(at=None, ref="e5", double=False, right=False))
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "div.onetrust-pc-dark-filter" in captured.err
+    assert "e5" in captured.err
+
+
+def test_cmd_click_succeeds_when_the_ref_is_clear(monkeypatch, capsys):
+    _click_setup(monkeypatch, None)
+
+    rc = cli.cmd_click(argparse.Namespace(at=None, ref="e5", double=False, right=False))
+
+    assert rc == 0
+    assert capsys.readouterr().err == ""

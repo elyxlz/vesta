@@ -34,16 +34,16 @@ A real click fixes all three, which is why it is the right first move rather tha
 ## 2. An overlay intercepting the click
 
 `browser click <ref>` checks this for you. When something else is topmost at the point it clicks,
-it says so and names it:
+the command exits non-zero and names the interceptor on stderr:
 
 ```
-# e14 is covered by <div.modal-wrap>, which took the click instead.
+e14 is covered by <div.modal-wrap>, which took the click instead. ...
 ```
 
-The click is still dispatched, because taking it is sometimes what you want; the line tells you
-where it went. When you see it, dismiss the overlay (below) and click again. Nothing else is worth
-trying first: every retry, every coordinate fallback and every theory about validation is wasted
-while something is on top.
+The click is still dispatched, because taking it is sometimes what you want (clicking a backdrop
+can be the dismissal); the exit code and message tell you where it went. When you see it, dismiss
+the overlay (below) and click again. Nothing else is worth trying first: every retry, every
+coordinate fallback and every theory about validation is wasted while something is on top.
 
 A modal can be invisible in `innerText` because it renders above the fold, and still sit over an
 enabled button that reports `disabled=false` with no validation error, no unticked checkbox and no

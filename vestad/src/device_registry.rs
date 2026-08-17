@@ -4,7 +4,10 @@
 //! push facet (Expo token + prefs, fed by `mobile_app`). Neither of those modules touches the file;
 //! all mutation, the live-connection refcount, the roster projection, and the atomic persistence
 //! live here behind the state lock, with the write serialized on a flush lock so concurrent flushers
-//! never tear the file. The push token is never placed on the `/sync` wire.
+//! never tear the file. The push token is never placed on the `/sync` wire. A device's reported
+//! context (its IANA timezone and, on mobile with the user's opt-in, its position plus the macro
+//! place the device reverse geocoded) is a third facet, written by `report_context` from both
+//! carriers (the `/sync` `client_context` frame and `PUT /devices/{id}/context`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,9 +37,79 @@ pub(crate) struct PushSubscription {
     pub registered_at: u64,
 }
 
+/// The macro place a device reverse geocoded for its position, with the OS geocoder. Any part may be
+/// missing (a fix at sea has no city).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DevicePlace {
+    #[serde(default)]
+    pub city: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub country: Option<String>,
+}
+
+impl DevicePlace {
+    /// The macro label an agent is told and the location notification keys on: city and country,
+    /// falling back to the region for a place with no city. `None` when nothing is known.
+    pub(crate) fn macro_label(&self) -> Option<String> {
+        let locality = self.city.as_deref().or(self.region.as_deref());
+        match (locality, self.country.as_deref()) {
+            (Some(locality), Some(country)) => Some(format!("{locality}, {country}")),
+            (Some(only), None) | (None, Some(only)) => Some(only.to_string()),
+            (None, None) => None,
+        }
+    }
+}
+
+/// A device-reported position. One shape on the frame, the HTTP body, the store, and the roster.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DevicePosition {
+    pub latitude: f64,
+    pub longitude: f64,
+    #[serde(default)]
+    pub accuracy_m: Option<f64>,
+    #[serde(default)]
+    pub place: Option<DevicePlace>,
+}
+
+/// What a report says about the position: a value replaces the stored one, `null` on the wire
+/// retracts it (the user turned location sharing off).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum PositionReport {
+    At(DevicePosition),
+    Retract,
+}
+
+/// What a device reports about itself beyond identity. Both fields optional so a web client reports
+/// its zone alone and a mobile background poll reports whatever it could read; an absent field
+/// leaves the stored value alone.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeviceContext {
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_position_report", skip_serializing_if = "Option::is_none")]
+    pub position: Option<PositionReport>,
+}
+
+/// Absent stays `None` (via `#[serde(default)]`); a present value, `null` included, is a report.
+fn deserialize_position_report<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<PositionReport>, D::Error> {
+    PositionReport::deserialize(deserializer).map(Some)
+}
+
+impl DeviceContext {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.timezone.is_none() && self.position.is_none()
+    }
+}
+
 /// One device. Either facet may be absent: a web/desktop device has identity but no push; a mobile
 /// device that registered push before ever opening a `/sync` socket has push but no descriptor.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
 struct DeviceRecord {
     kind: ClientKind,
     #[serde(default)]
@@ -48,12 +121,20 @@ struct DeviceRecord {
     ip: Option<String>,
     #[serde(default)]
     location: Option<String>,
+    #[serde(default)]
+    timezone: Option<String>,
+    #[serde(default)]
+    position: Option<DevicePosition>,
+    /// Epoch seconds of the report that last changed `position`.
+    #[serde(default)]
+    position_at: Option<u64>,
 }
 
 impl DeviceRecord {
-    /// A record with neither an identity descriptor nor a push facet carries nothing worth keeping.
+    /// A record with no identity descriptor, no push facet, and no reported context carries nothing
+    /// worth keeping.
     fn is_empty(&self) -> bool {
-        self.descriptor.is_none() && self.push.is_none()
+        self.descriptor.is_none() && self.push.is_none() && self.timezone.is_none() && self.position.is_none()
     }
 }
 
@@ -69,6 +150,10 @@ pub(crate) struct DeviceInfo {
     pub last_seen: String,
     pub push_enabled: bool,
     pub location: Option<String>,
+    pub timezone: Option<String>,
+    pub position: Option<DevicePosition>,
+    /// RFC 3339 instant of the report that last changed `position`.
+    pub position_at: Option<String>,
 }
 
 /// The legacy `mobile-devices.json` element, read once to migrate into `devices.json`.
@@ -169,6 +254,59 @@ impl DeviceRegistry {
             _ => false,
         };
         if updated {
+            self.republish(&state);
+            self.dirty.notify_one();
+        }
+    }
+
+    /// Record what a device reports about itself: its zone, its position. A field the report omits
+    /// keeps its stored value, so a zone-only report never clears a position; a `null` position
+    /// retracts it. Republishes the roster on a real change only, so a phone re-reporting the same
+    /// fix costs no fan-out. Non-blocking; the disk write defers. Returns the device's stored
+    /// label, which is what a notification names it by (its own descriptor when it composed one,
+    /// else its kind), or `None` for a device the registry has never seen: identity is minted by
+    /// `attach` alone, never by a report.
+    pub(crate) fn report_context(&self, id: &str, context: DeviceContext, now: u64) -> Option<String> {
+        let mut state = self.state.lock().expect("device registry mutex");
+        let record = state.devices.get_mut(id)?;
+        let label = record.descriptor.clone().unwrap_or_else(|| record.kind.display_name().to_string());
+        let mut changed = false;
+        if context.timezone.is_some() && record.timezone != context.timezone {
+            record.timezone = context.timezone;
+            changed = true;
+        }
+        if let Some(report) = context.position {
+            let position = match report {
+                PositionReport::At(position) => Some(position),
+                PositionReport::Retract => None,
+            };
+            if record.position != position {
+                record.position_at = position.as_ref().map(|_| now);
+                record.position = position;
+                changed = true;
+            }
+        }
+        if changed {
+            self.republish(&state);
+            self.dirty.notify_one();
+        }
+        Some(label)
+    }
+
+    /// Forget every device's reported context (the gateway's user-context switch turned off): the
+    /// zone, the position, and its stamp. Identity and push stay. Republishes on a real change.
+    pub(crate) fn clear_context(&self) {
+        let mut state = self.state.lock().expect("device registry mutex");
+        let mut changed = false;
+        for record in state.devices.values_mut() {
+            if record.timezone.is_some() || record.position.is_some() {
+                record.timezone = None;
+                record.position = None;
+                record.position_at = None;
+                changed = true;
+            }
+        }
+        if changed {
             self.republish(&state);
             self.dirty.notify_one();
         }
@@ -310,6 +448,9 @@ fn project(state: &RegistryState) -> Vec<DeviceInfo> {
             last_seen: epoch_to_rfc3339(record.last_seen).unwrap_or_default(),
             push_enabled: record.push.is_some(),
             location: record.location.clone(),
+            timezone: record.timezone.clone(),
+            position: record.position.clone(),
+            position_at: record.position_at.and_then(|at| epoch_to_rfc3339(at).ok()),
         })
         .collect();
     devices.sort_by(|a, b| a.id.cmp(&b.id));
@@ -378,6 +519,9 @@ fn migrate_legacy(legacy_path: &Path) -> Option<HashMap<InstallationId, DeviceRe
                 }),
                 ip: None,
                 location: None,
+                timezone: None,
+                position: None,
+                position_at: None,
             },
         );
     }
@@ -430,6 +574,121 @@ mod tests {
         let ip: std::net::IpAddr = "1.2.3.4".parse().expect("ip");
         assert!(registry.note_ip("dev-a", ip), "new ip needs a lookup");
         assert!(registry.note_ip("dev-a", ip), "same ip with no location still needs one until resolved");
+    }
+
+    fn tokyo() -> DevicePosition {
+        DevicePosition {
+            latitude: 35.6762,
+            longitude: 139.6503,
+            accuracy_m: Some(50.0),
+            place: Some(DevicePlace { city: Some("Tokyo".into()), region: None, country: Some("Japan".into()) }),
+        }
+    }
+
+    fn known(registry: &DeviceRegistry, id: &str) {
+        registry.mark_connected(id, ClientKind::Mobile, Some("Vesta Mobile on iOS".into()), 50);
+    }
+
+    #[test]
+    fn report_context_stores_zone_and_position_and_projects_them() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        known(&registry, "dev-a");
+        let label = registry.report_context(
+            "dev-a",
+            DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(PositionReport::At(tokyo())) },
+            1_780_000_000,
+        );
+        assert_eq!(label.as_deref(), Some("Vesta Mobile on iOS"));
+        let device = only(&registry, "dev-a");
+        assert_eq!(device.timezone.as_deref(), Some("Asia/Tokyo"));
+        assert_eq!(device.position, Some(tokyo()));
+        assert_eq!(device.position_at.as_deref(), Some("2026-05-28T20:26:40Z"));
+    }
+
+    #[test]
+    fn report_context_refuses_a_device_it_has_never_seen() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        assert!(registry.report_context("ghost", DeviceContext { timezone: Some("Asia/Tokyo".into()), position: None }, 100).is_none());
+        assert!(registry.snapshot().is_empty(), "a report mints no identity");
+    }
+
+    #[test]
+    fn zone_only_report_keeps_the_stored_position_and_null_retracts_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        known(&registry, "dev-a");
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::At(tokyo())) }, 100);
+        registry.report_context("dev-a", DeviceContext { timezone: Some("Europe/London".into()), position: None }, 200);
+        let device = only(&registry, "dev-a");
+        assert_eq!(device.timezone.as_deref(), Some("Europe/London"));
+        assert_eq!(device.position, Some(tokyo()));
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::Retract) }, 300);
+        let device = only(&registry, "dev-a");
+        assert_eq!(device.position, None, "the user turned location sharing off");
+        assert_eq!(device.position_at, None);
+    }
+
+    #[test]
+    fn clear_context_forgets_zone_and_position_but_keeps_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        registry.mark_connected("dev-a", ClientKind::Mobile, Some("Vesta Mobile on iOS".into()), 100);
+        registry.report_context(
+            "dev-a",
+            DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(PositionReport::At(tokyo())) },
+            200,
+        );
+        registry.clear_context();
+        let device = only(&registry, "dev-a");
+        assert_eq!(device.descriptor.as_deref(), Some("Vesta Mobile on iOS"));
+        assert_eq!(device.timezone, None);
+        assert_eq!(device.position, None);
+        assert_eq!(device.position_at, None);
+    }
+
+    #[test]
+    fn an_identical_position_report_republishes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        known(&registry, "dev-a");
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::At(tokyo())) }, 100);
+        let mut roster = registry.subscribe_devices();
+        roster.mark_unchanged();
+        registry.report_context("dev-a", DeviceContext { timezone: None, position: Some(PositionReport::At(tokyo())) }, 200);
+        assert!(!roster.has_changed().expect("watch"), "same fix, no roster fan-out");
+        assert_eq!(only(&registry, "dev-a").position_at.as_deref(), Some("1970-01-01T00:01:40Z"), "and the stamp keeps the first report");
+    }
+
+    #[test]
+    fn a_context_position_null_deserializes_as_a_retraction() {
+        let cleared: DeviceContext = serde_json::from_str(r#"{"position":null}"#).expect("parse");
+        assert_eq!(cleared.position, Some(PositionReport::Retract));
+        let absent: DeviceContext = serde_json::from_str(r#"{"timezone":"Asia/Tokyo"}"#).expect("parse");
+        assert_eq!(absent.position, None);
+    }
+
+    #[tokio::test]
+    async fn report_context_round_trips_through_the_store() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(dir.path());
+        known(&registry, "dev-a");
+        registry.report_context("dev-a", DeviceContext { timezone: Some("Asia/Tokyo".into()), position: Some(PositionReport::At(tokyo())) }, 100);
+        registry.flush_now().await.expect("flush");
+        let reloaded = DeviceRegistry::load(dir.path());
+        let device = only(&reloaded, "dev-a");
+        assert_eq!(device.timezone.as_deref(), Some("Asia/Tokyo"));
+        assert_eq!(device.position, Some(tokyo()));
+    }
+
+    #[test]
+    fn macro_label_prefers_city_and_country() {
+        let place = DevicePlace { city: Some("Tokyo".into()), region: Some("Kanto".into()), country: Some("Japan".into()) };
+        assert_eq!(place.macro_label().as_deref(), Some("Tokyo, Japan"));
+        let region_only = DevicePlace { city: None, region: Some("Kanto".into()), country: Some("Japan".into()) };
+        assert_eq!(region_only.macro_label().as_deref(), Some("Kanto, Japan"));
+        assert_eq!(DevicePlace::default().macro_label(), None);
     }
 
     #[test]

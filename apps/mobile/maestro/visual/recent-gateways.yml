@@ -18,11 +18,16 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: privacy-initialization-error.png
+# The unlock label carries the platform authentication name ("Unlock with
+# Face ID" on iOS, "Unlock Vesta" on Android), so the steps match by prefix.
 - tapOn:
     text: "Try again"
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
-    visible: "Unlock with Face ID"
+    visible: "Vesta is locked"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Unlock.*"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
@@ -32,7 +37,7 @@ tags:
     env:
       SCREENSHOT: privacy-locked.png
 - tapOn:
-    text: "Unlock with Face ID"
+    text: "Unlock.*"
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
     visible: "Device authentication is temporarily locked.*"
@@ -92,31 +97,36 @@ tags:
     env:
       SCREENSHOT: recent-gateway-error.png
 
-- stopApp
-- openLink:
-    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: "Natural chat pacing"
-    timeout: 30000
-- scrollUntilVisible:
-    element:
-      text: "^Manage backups,.*"
-    direction: DOWN
-    timeout: 10000
-    speed: 40
-    visibilityPercentage: 100
-- tapOn:
-    text: "^Manage backups,.*"
-- extendedWaitUntil:
-    visible: "Available backups"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "2"
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: agent-backups
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: agent-backups.png
+# iOS only: Android agent settings hide the backup management section by design.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - stopApp
+      - openLink:
+          link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+      - extendedWaitUntil:
+          visible: "Natural chat pacing"
+          timeout: 30000
+      - scrollUntilVisible:
+          element:
+            text: "^Manage backups,.*"
+          direction: DOWN
+          timeout: 10000
+          speed: 40
+          visibilityPercentage: 100
+      - tapOn:
+          text: "^Manage backups,.*"
+      - extendedWaitUntil:
+          visible: "Available backups"
+          timeout: 10000
+      - extendedWaitUntil:
+          visible: "2"
+          timeout: 10000
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - takeScreenshot: agent-backups
+      - runScript:
+          file: capture-screenshot.js
+          env:
+            SCREENSHOT: agent-backups.png

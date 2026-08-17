@@ -54,6 +54,9 @@ import {
   type BootTargetFrame,
 } from "@/components/BootTransition";
 import { fontNames } from "@/theme/typography";
+import { formSheetCorners } from "@/theme/sheets";
+
+const IS_ANDROID = process.env.EXPO_OS === "android";
 
 WebBrowser.maybeCompleteAuthSession();
 void SplashScreen.preventAutoHideAsync();
@@ -165,14 +168,23 @@ function SessionNavigation() {
           >
             <Stack.Screen
               name="privacy"
-              options={{
-                headerShown: false,
-                presentation: "formSheet",
-                sheetAllowedDetents: "fitToContents",
-                sheetGrabberVisible: false,
-                gestureEnabled: false,
-                contentStyle: { backgroundColor: colors.card },
-              }}
+              options={
+                IS_ANDROID
+                  ? {
+                      headerShown: false,
+                      animation: "none",
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.background },
+                    }
+                  : {
+                      headerShown: false,
+                      presentation: "formSheet",
+                      sheetAllowedDetents: "fitToContents",
+                      sheetGrabberVisible: false,
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.card },
+                    }
+              }
             />
             <Stack.Protected guard={status !== "connected"}>
               <Stack.Screen
@@ -188,6 +200,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: false,
                   sheetLargestUndimmedDetentIndex: "last",
@@ -200,6 +213,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
                   contentStyle: { backgroundColor: colors.card },
@@ -210,6 +224,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
                   contentStyle: { backgroundColor: colors.card },
@@ -222,6 +237,7 @@ function SessionNavigation() {
                   headerShown: true,
                   headerTitleAlign: "center",
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: [1],
                   sheetGrabberVisible: false,
                   sheetExpandsWhenScrolledToEdge: false,
@@ -239,6 +255,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetInitialDetentIndex: 0,
                   sheetGrabberVisible: true,
@@ -247,14 +264,23 @@ function SessionNavigation() {
               />
               <Stack.Screen
                 name="gateway-update"
-                options={{
-                  headerShown: false,
-                  presentation: "formSheet",
-                  sheetAllowedDetents: "fitToContents",
-                  sheetGrabberVisible: false,
-                  gestureEnabled: false,
-                  contentStyle: { backgroundColor: colors.card },
-                }}
+                options={
+                  IS_ANDROID
+                    ? {
+                        headerShown: false,
+                        animation: "none",
+                        gestureEnabled: false,
+                        contentStyle: { backgroundColor: colors.background },
+                      }
+                    : {
+                        headerShown: false,
+                        presentation: "formSheet",
+                        sheetAllowedDetents: "fitToContents",
+                        sheetGrabberVisible: false,
+                        gestureEnabled: false,
+                        contentStyle: { backgroundColor: colors.card },
+                      }
+                }
               />
               <Stack.Screen
                 name="settings"
@@ -262,6 +288,7 @@ function SessionNavigation() {
                   title: "Settings",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: [0.5, 1],
                   sheetInitialDetentIndex: 0,
                   sheetGrabberVisible: true,
@@ -275,6 +302,7 @@ function SessionNavigation() {
                   title: "What’s new",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: [0.5, 1],
                   sheetInitialDetentIndex: 0,
                   sheetGrabberVisible: true,
@@ -282,7 +310,20 @@ function SessionNavigation() {
                   contentStyle: { backgroundColor: colors.background },
                 }}
               />
-              <Stack.Screen name="debug" options={{ title: "Diagnostics" }} />
+              <Stack.Screen
+                name="debug"
+                options={{
+                  title: "Diagnostics",
+                  // Android has no automatic content inset for transparent
+                  // headers, so the toolbar goes opaque and offsets content.
+                  ...(IS_ANDROID
+                    ? {
+                        headerTransparent: false,
+                        headerStyle: { backgroundColor: colors.background },
+                      }
+                    : {}),
+                }}
+              />
               <Stack.Screen
                 name="agent/[name]"
                 options={{ headerShown: false }}

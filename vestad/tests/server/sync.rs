@@ -295,3 +295,86 @@ async fn unknown_client_frames_are_ignored() {
     send_user_notification_and_expect_delta(&c, &mut sock, &agent.name, &token, "still alive").await;
     sock.close().await.ok();
 }
+
+/// (6) A device's reported context reaches the store, the roster, the agent, and the agent's read
+/// path. A `client_context` frame carrying `timezone` + `position` from a focused device fans a
+/// `devices` delta with those facts; the agent's `GET /agents/{name}/devices` (X-Agent-Token) returns
+/// them; and vestad drops a `user-timezone` notification into an agent whose own zone differs (a
+/// fresh agent runs on UTC). The HTTP carrier `PUT /devices/{id}/context` lands in the same store.
+#[tokio::test]
+async fn device_context_reaches_roster_agent_and_notification_intake() {
+    let c = SERVER.client();
+    let agent = running_agent(&c, "sync-context");
+    let token = c.read_agent_token(&agent.name).expect("read agent token");
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+
+    let device_id = format!("dev-{}", agent.name);
+    sock.send_client_frame(&serde_json::json!({
+        "type": "client_context", "focused": true, "client": "mobile",
+        "deviceId": device_id, "descriptor": "Vesta Mobile on iOS",
+        "timezone": "Asia/Tokyo",
+        "position": {"latitude": 35.6762, "longitude": 139.6503, "accuracyM": 50.0,
+                     "place": {"city": "Tokyo", "country": "Japan"}},
+    }))
+    .await
+    .expect("send client_context with device context");
+    let devices = sock
+        .expect_frame_matching(
+            |f| {
+                f["type"].as_str() == Some("devices")
+                    && f["devices"].as_array().is_some_and(|list| {
+                        list.iter().any(|d| d["id"].as_str() == Some(device_id.as_str()) && d["timezone"].is_string())
+                    })
+            },
+            USER_NOTIFICATION_TIMEOUT,
+        )
+        .await
+        .expect("a devices delta carrying the reported context");
+    let device = devices["devices"]
+        .as_array()
+        .and_then(|list| list.iter().find(|d| d["id"].as_str() == Some(device_id.as_str())))
+        .expect("the reporting device");
+    assert_eq!(device["timezone"].as_str(), Some("Asia/Tokyo"));
+    assert_eq!(device["position"]["place"]["city"].as_str(), Some("Tokyo"));
+
+    // The agent reads the same facts through its own self-scoped route.
+    let seen = c.agent_devices(&agent.name, &token).expect("agent devices");
+    let mine = seen["devices"]
+        .as_array()
+        .and_then(|list| list.iter().find(|d| d["id"].as_str() == Some(device_id.as_str())))
+        .expect("the device on the agent's read path");
+    assert_eq!(mine["timezone"].as_str(), Some("Asia/Tokyo"));
+    assert_eq!(mine["position"]["latitude"].as_f64(), Some(35.6762));
+
+    // A fresh agent runs on UTC, so Tokyo is news: the notification lands in its intake. A model-less
+    // agent never consumes it, so it stays for the poll.
+    let container = vesta_tests::agent_container_name(&agent.name);
+    let deadline = Instant::now() + USER_NOTIFICATION_TIMEOUT;
+    let listing = loop {
+        let listing = vesta_tests::exec_in_container(&container, "ls /root/agent/notifications").unwrap_or_default();
+        if listing.contains("user-timezone-") && listing.contains("user-location-") {
+            break listing;
+        }
+        assert!(Instant::now() < deadline, "no user-timezone/user-location notification landed; intake: {listing}");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    let payload = vesta_tests::exec_in_container(
+        &container,
+        "cat /root/agent/notifications/user-timezone-*.json",
+    )
+    .expect("read the timezone notification");
+    assert!(payload.contains("\"source\":\"vestad\"") && payload.contains("Asia/Tokyo"), "payload: {payload}, intake: {listing}");
+
+    // The HTTP carrier writes the same store: a later zone shows on the agent's read path.
+    c.report_device_context(&device_id, &serde_json::json!({ "timezone": "Europe/Paris" }))
+        .expect("report context over http");
+    let seen = c.agent_devices(&agent.name, &token).expect("agent devices after http report");
+    let mine = seen["devices"]
+        .as_array()
+        .and_then(|list| list.iter().find(|d| d["id"].as_str() == Some(device_id.as_str())))
+        .expect("the device on the agent's read path");
+    assert_eq!(mine["timezone"].as_str(), Some("Europe/Paris"));
+    assert_eq!(mine["position"]["place"]["city"].as_str(), Some("Tokyo"), "a zone-only report keeps the position");
+    sock.close().await.ok();
+}

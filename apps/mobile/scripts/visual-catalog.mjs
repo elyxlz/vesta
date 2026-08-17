@@ -2,7 +2,13 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, statSync, watch as watchPath } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  statSync,
+  watch as watchPath,
+} from "node:fs";
 import { createServer } from "node:http";
 import {
   access,
@@ -23,6 +29,15 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDirectory, "..");
 const repositoryRoot = path.resolve(mobileRoot, "../..");
 const visualDirectory = path.join(mobileRoot, ".visual");
+export const androidVisualDirectory = path.join(visualDirectory, "android");
+export const androidMaestroDirectory = path.join(
+  androidVisualDirectory,
+  "maestro",
+);
+export const androidCaptureScreenshotsDirectory = path.join(
+  androidVisualDirectory,
+  "capture/screenshots",
+);
 const screenshotsDirectory = path.join(visualDirectory, "screenshots");
 const captureScreenshotsDirectory = path.join(
   visualDirectory,
@@ -182,7 +197,7 @@ function parseArguments(values) {
   return options;
 }
 
-function run(command, argumentsList, options = {}) {
+export function run(command, argumentsList, options = {}) {
   const shown = [command, ...argumentsList]
     .map((value) => (value.includes(" ") ? JSON.stringify(value) : value))
     .join(" ");
@@ -219,7 +234,7 @@ function run(command, argumentsList, options = {}) {
   });
 }
 
-async function exists(target) {
+export async function exists(target) {
   try {
     await access(target);
     return true;
@@ -230,7 +245,7 @@ async function exists(target) {
 
 let temporaryFileCounter = 0;
 
-async function atomicWriteFile(target, contents) {
+export async function atomicWriteFile(target, contents) {
   await mkdir(path.dirname(target), { recursive: true });
   temporaryFileCounter += 1;
   const temporary = `${target}.${process.pid}.${temporaryFileCounter}.tmp`;
@@ -286,7 +301,14 @@ export async function nativeInputFingerprint() {
   return fingerprintPaths(nativeInputTargets());
 }
 
-async function loadManifest() {
+const scenarioPlatforms = ["ios", "android"];
+
+export function scenarioOnPlatform(scenario, platform) {
+  return !Array.isArray(scenario.platforms) ||
+    scenario.platforms.includes(platform);
+}
+
+export async function loadManifest(platform = "ios") {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   if (manifest.version !== 1) {
     throw new Error(`Unsupported visual manifest version: ${manifest.version}`);
@@ -322,6 +344,14 @@ async function loadManifest() {
     if (screenshots.has(scenario.screenshot)) {
       throw new Error(`Duplicate screenshot name: ${scenario.screenshot}`);
     }
+    if (
+      "platforms" in scenario &&
+      (!Array.isArray(scenario.platforms) ||
+        scenario.platforms.length === 0 ||
+        scenario.platforms.some((name) => !scenarioPlatforms.includes(name)))
+    ) {
+      throw new Error(`Invalid platforms for ${scenario.id}.`);
+    }
     ids.add(scenario.id);
     screenshots.add(scenario.screenshot);
   }
@@ -335,7 +365,13 @@ async function loadManifest() {
       throw new Error(`Visual flow does not exist: ${flow}`);
     }
   }
-  return manifest;
+  return {
+    ...manifest,
+    scenarios: manifest.scenarios.filter((scenario) =>
+      scenarioOnPlatform(scenario, platform),
+    ),
+    allScenarios: manifest.scenarios,
+  };
 }
 
 async function requireCaptureTools() {
@@ -994,7 +1030,7 @@ async function runMaestro(manifest, simulators, tools) {
   );
 }
 
-async function filesBelow(directory) {
+export async function filesBelow(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
@@ -1005,7 +1041,7 @@ async function filesBelow(directory) {
   return files;
 }
 
-async function assertHarnessBoundary() {
+export async function assertHarnessBoundary() {
   const applicationFiles = [
     ...(await filesBelow(path.join(mobileRoot, "app"))),
     ...(await filesBelow(path.join(mobileRoot, "src"))),
@@ -1030,7 +1066,7 @@ async function assertHarnessBoundary() {
   }
 }
 
-async function pngSize(filePath) {
+export async function pngSize(filePath) {
   const file = await readFile(filePath);
   if (
     file.length < 24 ||
@@ -1042,7 +1078,7 @@ async function pngSize(filePath) {
   return { width: file.readUInt32BE(16), height: file.readUInt32BE(20) };
 }
 
-async function gitMetadata() {
+export async function gitMetadata() {
   const revision = await run("git", ["rev-parse", "--short", "HEAD"], {
     cwd: repositoryRoot,
     capture: true,
@@ -1067,44 +1103,101 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function scenarioCaptures(scenario) {
+  return (
+    scenario.captures ?? [
+      {
+        platform: "",
+        captured: scenario.captured,
+        image: scenario.image,
+        size: scenario.size,
+        missingLabel: scenario.missingLabel,
+        expected: scenario.expected ?? true,
+      },
+    ]
+  );
+}
+
+function captureShotHtml(scenario, capture, defaultPlatform) {
+  const subject = capture.platform
+    ? `${scenario.title} on ${capture.platform}`
+    : scenario.title;
+  const livePlatform = (capture.platform || defaultPlatform).toLowerCase();
+  return `
+          <div class="shot" data-screenshot="${escapeHtml(
+            scenario.screenshot,
+          )}" data-live-platform="${livePlatform}" data-expected="${
+            capture.expected === false ? "false" : "true"
+          }" data-scenario-id="${escapeHtml(scenario.id ?? "")}" data-group="${escapeHtml(
+            scenario.group ?? "",
+          )}" data-title="${escapeHtml(scenario.title)}">
+            <button class="preview"${
+              capture.captured
+                ? ` data-image="${escapeHtml(capture.image)}"`
+                : ""
+            } aria-label="Open ${escapeHtml(subject)}">
+              <span class="device-screen"${
+                capture.size
+                  ? ` style="--shot-ratio: ${capture.size.width} / ${capture.size.height}"`
+                  : ""
+              }>
+                ${
+                  capture.captured
+                    ? `<img src="${escapeHtml(capture.image)}" alt="${escapeHtml(
+                        subject,
+                      )}" loading="lazy">`
+                    : `<span class="missing">${escapeHtml(
+                        capture.missingLabel ?? "Screenshot missing",
+                      )}</span>`
+                }
+              </span>
+            </button>
+            <div class="shot-meta">
+              ${
+                capture.platform
+                  ? `<span class="platform-tag">${escapeHtml(capture.platform)}</span>`
+                  : ""
+              }
+              <button class="copy-ref" type="button" aria-label="Copy reference for ${escapeHtml(
+                subject,
+              )}">Copy ref</button>
+            </div>
+          </div>`;
+}
+
 export function galleryHtml(catalog) {
   const catalogJson = JSON.stringify(catalog).replaceAll("<", "\\u003c");
+  const defaultPlatform = catalog.platform === "android" ? "android" : "ios";
   const scenarioGroups = new Map();
+  let platformColumns = 1;
   for (const scenario of catalog.scenarios) {
     const group = scenario.group || "Other";
     const scenarios = scenarioGroups.get(group) ?? [];
     scenarios.push(scenario);
     scenarioGroups.set(group, scenarios);
+    platformColumns = Math.max(platformColumns, scenarioCaptures(scenario).length);
   }
   const sections = [...scenarioGroups.entries()]
     .map(([group, scenarios], sectionIndex) => {
       const cards = scenarios
-        .map(
-          (scenario) => `
+        .map((scenario) => {
+          const captures = scenarioCaptures(scenario);
+          return `
         <article class="card">
-          <button class="preview" data-image="${escapeHtml(
-            scenario.image,
-          )}" aria-label="Open ${escapeHtml(scenario.title)}">
-            <span class="device-screen"${
-              scenario.size
-                ? ` style="--shot-ratio: ${scenario.size.width} / ${scenario.size.height}"`
-                : ""
-            }>
-              ${
-                scenario.captured
-                  ? `<img src="${escapeHtml(scenario.image)}" alt="${escapeHtml(
-                      scenario.title,
-                    )}" loading="lazy">`
-                  : `<span class="missing">Screenshot missing</span>`
-              }
-            </span>
-          </button>
+          <div class="shots" style="--shots: ${captures.length}">${captures
+            .map((capture) => captureShotHtml(scenario, capture, defaultPlatform))
+            .join("")}</div>
           <div class="card-copy">
-            <h3>${escapeHtml(scenario.title)}</h3>
+            <div class="card-head">
+              <h3>${escapeHtml(scenario.title)}</h3>
+              <button class="copy-card" type="button" aria-label="Copy reference for ${escapeHtml(
+                scenario.title,
+              )}">Copy ref</button>
+            </div>
             <p>${escapeHtml(scenario.description)}</p>
           </div>
-        </article>`,
-        )
+        </article>`;
+        })
         .join("");
       const sectionId = `scenario-section-${sectionIndex}`;
       return `
@@ -1118,6 +1211,59 @@ export function galleryHtml(catalog) {
       <div class="grid">${cards}</div>
     </section>`;
     })
+    .join("");
+  const deviceChips = (
+    catalog.platforms
+      ? catalog.platforms.map(
+          (platform) =>
+            `${platform.label} · ${platform.device.name} · ${platform.device.runtime}`,
+        )
+      : [catalog.device.name, catalog.device.runtime]
+  )
+    .map((chip) => `<span>${escapeHtml(chip)}</span>`)
+    .join("\n      ");
+  const reportLinks = (
+    catalog.platforms
+      ? catalog.platforms
+          .filter((platform) => platform.reportAvailable)
+          .map((platform) => ({
+            label: `${platform.label} Maestro report`,
+            href: platform.reportHref,
+          }))
+      : catalog.reportAvailable
+        ? [{ label: "Maestro report", href: "maestro/report.html" }]
+        : []
+  )
+    .map(
+      (link) =>
+        `<a class="report" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`,
+    )
+    .join("\n      ");
+  const scanPlatforms = catalog.platforms
+    ? catalog.platforms.map((platform) => ({
+        key: platform.label.toLowerCase(),
+        label: platform.label,
+        generatedAt: platform.generatedAt ?? catalog.generatedAt,
+      }))
+    : [
+        {
+          key: defaultPlatform,
+          label: defaultPlatform === "android" ? "Android" : "iOS",
+          generatedAt: catalog.generatedAt,
+        },
+      ];
+  const scanRows = scanPlatforms
+    .map(
+      (platform) => `
+    <div class="scan-row" data-platform="${platform.key}">
+      <span class="scan-platform">${escapeHtml(platform.label)}</span>
+      <span class="scan-last" data-generated-at="${escapeHtml(
+        platform.generatedAt,
+      )}">last scan</span>
+      <span class="scan-progress" hidden></span>
+      <button class="scan-button" type="button">Scan</button>
+    </div>`,
+    )
     .join("");
 
   return `<!doctype html>
@@ -1186,6 +1332,39 @@ export function galleryHtml(catalog) {
       font-size: 10px;
     }
     .report:hover { color: var(--text); border-color: #555563; }
+    .scan-bar {
+      display: flex;
+      max-width: 1680px;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0 auto;
+      padding: 0 24px 10px;
+    }
+    .scan-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 8px 6px 14px;
+      background: #111116cc;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .scan-platform { color: var(--text); font-weight: 700; }
+    .scan-progress { color: var(--accent); font-weight: 700; }
+    .scan-row[data-state="failed"] .scan-last { color: #ee6673; }
+    .scan-button {
+      border: 1px solid #625799;
+      border-radius: 999px;
+      padding: 4px 13px;
+      background: #241f38;
+      color: var(--text);
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .scan-button:hover:not(:disabled) { border-color: var(--accent); }
+    .scan-button:disabled { opacity: .55; cursor: default; }
     main {
       max-width: 1680px;
       margin: 0 auto;
@@ -1218,15 +1397,70 @@ export function galleryHtml(catalog) {
       align-items: start;
       gap: 16px;
     }
-    .card {
-      min-width: 0;
-      transition: transform 160ms ease, opacity 180ms ease, filter 180ms ease;
+    body[data-platforms="2"] .grid {
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
     }
-    .card:hover { transform: translateY(-2px); }
-    body[data-capture-state="capturing"] .card {
-      opacity: .42;
-      filter: saturate(.55);
-      pointer-events: none;
+    .card { min-width: 0; }
+    .shots {
+      display: grid;
+      grid-template-columns: repeat(var(--shots, 1), minmax(0, 1fr));
+      align-items: start;
+      gap: 10px;
+    }
+    .shot { position: relative; min-width: 0; }
+    .platform-tag {
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .shot.pending .device-screen::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 26px;
+      height: 26px;
+      margin: -13px 0 0 -13px;
+      border: 3px solid #b8a7ff35;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: status-spin .8s linear infinite;
+    }
+    .shot.pending .device-screen img { opacity: .35; }
+    .shot.pending .missing { visibility: hidden; }
+    .shot.fresh .preview { border-color: #7f6fd4; }
+    .copy-ref, .copy-card {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 9px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 140ms ease;
+    }
+    .card:hover .copy-ref, .card:hover .copy-card,
+    .copy-ref:focus-visible, .copy-card:focus-visible { opacity: 1; }
+    .copy-ref:hover, .copy-card:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    .shot-meta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .card-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
     }
     .capture-status {
       position: fixed;
@@ -1389,7 +1623,7 @@ export function galleryHtml(catalog) {
     }
   </style>
 </head>
-<body>
+<body data-platforms="${platformColumns}">
   <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
     <span class="status-spinner" aria-hidden="true"></span>
     <span class="status-copy">
@@ -1404,17 +1638,14 @@ export function galleryHtml(catalog) {
       <p class="intro">Complete device captures at a glance. Click any image to expand it.</p>
     </div>
     <div class="meta">
-      <span>${escapeHtml(catalog.device.name)}</span>
-      <span>${escapeHtml(catalog.device.runtime)}</span>
+      ${deviceChips}
       <span>${escapeHtml(catalog.generatedAt)}</span>
       <span>${escapeHtml(catalog.git.revision)}${catalog.git.dirty ? " · dirty" : ""}</span>
-      ${
-        catalog.reportAvailable
-          ? '<a class="report" href="maestro/report.html">Maestro report</a>'
-          : ""
-      }
+      ${reportLinks}
     </div>
   </header>
+  <section class="scan-bar" aria-label="Capture runs">${scanRows}
+  </section>
   <main>${sections}</main>
   <dialog id="lightbox">
     <button aria-label="Close">×</button>
@@ -1424,13 +1655,77 @@ export function galleryHtml(catalog) {
     window.__VISUAL_CATALOG__ = ${catalogJson};
     const dialog = document.querySelector("#lightbox");
     const dialogImage = dialog.querySelector("img");
-    document.querySelectorAll(".preview[data-image]").forEach((button) => {
+    document.querySelectorAll(".preview").forEach((button) => {
       button.addEventListener("click", () => {
         const image = button.querySelector("img");
-        if (!image) return;
+        if (!image || !button.dataset.image) return;
         dialogImage.src = button.dataset.image;
         dialogImage.alt = image.alt;
         dialog.showModal();
+      });
+    });
+    async function writeClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fall through to the textarea path below.
+      }
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      area.remove();
+      return copied;
+    }
+    function refHeader(shot) {
+      return [
+        "group: " + shot.dataset.group + " | title: " + shot.dataset.title,
+        "catalog: " + window.__VISUAL_CATALOG__.generatedAt +
+          " | rev: " + window.__VISUAL_CATALOG__.git.revision,
+      ];
+    }
+    function shotImage(shot) {
+      return shot.querySelector(".preview").dataset.image || "not captured";
+    }
+    async function copyWithFeedback(copyButton, lines) {
+      const label = copyButton.textContent;
+      const copied = await writeClipboard(lines.join("\\n"));
+      copyButton.textContent = copied ? "Copied" : "Copy failed";
+      window.setTimeout(() => {
+        copyButton.textContent = label;
+      }, 1200);
+    }
+    document.querySelectorAll(".copy-ref").forEach((copyButton) => {
+      copyButton.addEventListener("click", () => {
+        const shot = copyButton.closest(".shot");
+        void copyWithFeedback(copyButton, [
+          "visual-ref: " + shot.dataset.scenarioId +
+            " [" + shot.dataset.livePlatform + "]",
+          ...refHeader(shot),
+          "image: " + shotImage(shot),
+        ]);
+      });
+    });
+    document.querySelectorAll(".copy-card").forEach((copyButton) => {
+      copyButton.addEventListener("click", () => {
+        const shots = [...copyButton.closest(".card").querySelectorAll(".shot")];
+        void copyWithFeedback(copyButton, [
+          "visual-ref: " + shots[0].dataset.scenarioId,
+          ...refHeader(shots[0]),
+          ...shots.map(
+            (shot) => shot.dataset.livePlatform + ": " + shotImage(shot),
+          ),
+        ]);
       });
     });
     dialog.querySelector("button").addEventListener("click", () => dialog.close());
@@ -1458,17 +1753,107 @@ export function galleryHtml(catalog) {
       }
     }
     const generatedAt = window.__VISUAL_CATALOG__.generatedAt;
+    const publishedMs = Date.parse(generatedAt);
+    function formatScanTime(iso) {
+      const ms = Date.parse(iso ?? "");
+      if (Number.isNaN(ms)) return "never";
+      return new Date(ms).toLocaleString();
+    }
+    document.querySelectorAll(".scan-row").forEach((row) => {
+      const last = row.querySelector(".scan-last");
+      last.textContent = "last scan " + formatScanTime(last.dataset.generatedAt);
+      const button = row.querySelector(".scan-button");
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await fetch("capture/" + row.dataset.platform, { method: "POST" });
+        } catch {
+          button.disabled = false;
+        }
+      });
+    });
+    function updateScanRows(runs, freshCounts) {
+      document.querySelectorAll(".scan-row").forEach((row) => {
+        const platform = row.dataset.platform;
+        const run = (runs ?? {})[platform];
+        const running = Boolean(run && run.running);
+        const button = row.querySelector(".scan-button");
+        const progress = row.querySelector(".scan-progress");
+        button.disabled = running;
+        button.textContent = running ? "Scanning" : "Scan";
+        const total = document.querySelectorAll(
+          '.shot[data-live-platform="' + platform + '"][data-expected="true"]',
+        ).length;
+        const fresh = freshCounts[platform] ?? 0;
+        progress.hidden = !running && fresh === 0;
+        progress.textContent =
+          running && fresh === 0 ? "preparing" : fresh + "/" + total;
+        const failed = Boolean(run && !running && run.exitCode);
+        row.dataset.state = failed ? "failed" : "ok";
+        if (failed) {
+          row.querySelector(".scan-last").textContent =
+            "last scan failed, see capture-" + platform + ".log";
+        }
+      });
+    }
+    function applyLive(live) {
+      let active = false;
+      const freshCounts = { ios: 0, android: 0 };
+      for (const platform of ["ios", "android"]) {
+        for (const entry of Object.values(live[platform] ?? {})) {
+          if (entry.mtime > publishedMs) active = true;
+        }
+      }
+      document.querySelectorAll(".shot[data-screenshot]").forEach((shot) => {
+        if (shot.dataset.expected === "false") return;
+        const platformEntries = live[shot.dataset.livePlatform] ?? {};
+        const entry = platformEntries[shot.dataset.screenshot];
+        const fresh = Boolean(entry && entry.mtime > publishedMs);
+        if (fresh) freshCounts[shot.dataset.livePlatform] += 1;
+        shot.classList.toggle("pending", active && !fresh);
+        shot.classList.toggle("fresh", fresh);
+        if (!fresh) return;
+        const button = shot.querySelector(".preview");
+        const screen = shot.querySelector(".device-screen");
+        let image = screen.querySelector("img");
+        if (!image) {
+          screen.textContent = "";
+          image = document.createElement("img");
+          image.alt = shot.dataset.screenshot;
+          screen.appendChild(image);
+        }
+        const stamp = String(entry.mtime);
+        if (image.dataset.liveStamp !== stamp) {
+          const src = entry.src + "?v=" + stamp;
+          image.src = src;
+          image.dataset.liveStamp = stamp;
+          button.dataset.image = src;
+        }
+      });
+      return freshCounts;
+    }
     window.setInterval(async () => {
       if (document.visibilityState === "hidden") return;
       try {
-        const [catalogResponse, statusResponse] = await Promise.all([
-          fetch("catalog.json", { cache: "no-store" }),
-          fetch("status.json", { cache: "no-store" }),
-        ]);
+        const [iosResponse, androidResponse, statusResponse, liveResponse] =
+          await Promise.all([
+            fetch("catalog.json", { cache: "no-store" }),
+            fetch("android/catalog.json", { cache: "no-store" }),
+            fetch("status.json", { cache: "no-store" }),
+            fetch("live.json", { cache: "no-store" }),
+          ]);
         if (statusResponse.ok) showCaptureStatus(await statusResponse.json());
-        if (!catalogResponse.ok) return;
-        const nextCatalog = await catalogResponse.json();
-        if (nextCatalog.generatedAt !== generatedAt) window.location.reload();
+        if (liveResponse.ok) {
+          const live = await liveResponse.json();
+          updateScanRows(live.runs, applyLive(live));
+        }
+        const stamps = [];
+        for (const response of [iosResponse, androidResponse]) {
+          if (response.ok) stamps.push((await response.json()).generatedAt);
+        }
+        if (stamps.length === 0) return;
+        const newest = stamps.sort().at(-1);
+        if (newest !== generatedAt) window.location.reload();
       } catch {
         // The local server may be between restarts.
       }
@@ -1476,6 +1861,159 @@ export function galleryHtml(catalog) {
   </script>
 </body>
 </html>`;
+}
+
+function platformCapture(label, scenario, imagePrefix) {
+  return {
+    platform: label,
+    captured: scenario.captured,
+    image: scenario.image ? `${imagePrefix}${scenario.image}` : "",
+    size: scenario.size ?? null,
+    missingLabel: scenario.captured
+      ? undefined
+      : (scenario.missingLabel ?? "Not captured yet"),
+    expected: scenario.expected ?? true,
+  };
+}
+
+function missingCapture(label) {
+  return {
+    platform: label,
+    captured: false,
+    image: "",
+    size: null,
+    missingLabel: "Not captured yet",
+    expected: true,
+  };
+}
+
+export function unifiedCatalog(iosCatalog, androidCatalog) {
+  if (!iosCatalog || !androidCatalog) return iosCatalog ?? androidCatalog ?? null;
+  const androidById = new Map(
+    androidCatalog.scenarios.map((scenario) => [scenario.id, scenario]),
+  );
+  const scenarios = iosCatalog.scenarios.map((scenario) => {
+    const android = androidById.get(scenario.id);
+    return {
+      ...scenario,
+      captures: [
+        platformCapture("iOS", scenario, ""),
+        android
+          ? platformCapture("Android", android, "android/")
+          : missingCapture("Android"),
+      ],
+    };
+  });
+  const iosIds = new Set(iosCatalog.scenarios.map((scenario) => scenario.id));
+  for (const scenario of androidCatalog.scenarios) {
+    if (iosIds.has(scenario.id)) continue;
+    scenarios.push({
+      ...scenario,
+      captures: [
+        missingCapture("iOS"),
+        platformCapture("Android", scenario, "android/"),
+      ],
+    });
+  }
+  const newest =
+    Date.parse(androidCatalog.generatedAt) > Date.parse(iosCatalog.generatedAt)
+      ? androidCatalog
+      : iosCatalog;
+  return {
+    ...iosCatalog,
+    generatedAt: newest.generatedAt,
+    git: newest.git,
+    platforms: [
+      {
+        label: "iOS",
+        device: iosCatalog.device,
+        generatedAt: iosCatalog.generatedAt,
+        reportAvailable: iosCatalog.reportAvailable === true,
+        reportHref: "maestro/report.html",
+      },
+      {
+        label: "Android",
+        device: androidCatalog.device,
+        generatedAt: androidCatalog.generatedAt,
+        reportAvailable: androidCatalog.reportAvailable === true,
+        reportHref: "android/maestro/report.html",
+      },
+    ],
+    scenarios,
+  };
+}
+
+async function storedCatalog(directory) {
+  const file = path.join(directory, "catalog.json");
+  if (!(await exists(file))) return null;
+  return JSON.parse(await readFile(file, "utf8"));
+}
+
+const LIVE_CAPTURE_ROOTS = [
+  { platform: "ios", directory: watchScreenshotsDirectory },
+  { platform: "ios", directory: captureScreenshotsDirectory },
+  { platform: "android", directory: androidCaptureScreenshotsDirectory },
+  { platform: "android", directory: androidMaestroDirectory, maestro: true },
+];
+
+// Index of in-progress capture screenshots: platform -> filename -> newest
+// file, with src relative to the gallery root so the page can load it live.
+export async function liveCaptureEntries(
+  roots = LIVE_CAPTURE_ROOTS,
+  baseDirectory = visualDirectory,
+) {
+  const entries = { ios: {}, android: {} };
+  const record = async (platform, file) => {
+    const name = path.basename(file);
+    const mtime = Math.round((await stat(file)).mtimeMs);
+    const existing = entries[platform][name];
+    if (existing && existing.mtime >= mtime) return;
+    entries[platform][name] = {
+      src: path.relative(baseDirectory, file).split(path.sep).join("/"),
+      mtime,
+    };
+  };
+  for (const root of roots) {
+    // A running capture rewrites these directories continuously, so any
+    // file or directory can vanish mid-scan; the next poll rescans.
+    try {
+      if (!(await exists(root.directory))) continue;
+      if (root.maestro) {
+        for (const file of await filesBelow(root.directory)) {
+          if (!file.endsWith(".png")) continue;
+          if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
+          await record(root.platform, file);
+        }
+        continue;
+      }
+      for (const entry of await readdir(root.directory)) {
+        if (!entry.endsWith(".png")) continue;
+        await record(root.platform, path.join(root.directory, entry));
+      }
+    } catch {
+      continue;
+    }
+  }
+  return entries;
+}
+
+export async function composedCatalog(overrides = {}) {
+  const ios =
+    "ios" in overrides ? overrides.ios : await storedCatalog(visualDirectory);
+  const android =
+    "android" in overrides
+      ? overrides.android
+      : await storedCatalog(androidVisualDirectory);
+  return unifiedCatalog(ios, android);
+}
+
+export async function writeUnifiedIndex(overrides = {}) {
+  const catalog = await composedCatalog(overrides);
+  if (!catalog) return;
+  await atomicWriteFile(
+    path.join(visualDirectory, "index.html"),
+    galleryHtml(catalog),
+  );
 }
 
 async function cleanupScreenshotReleases(activeRelease) {
@@ -1569,7 +2107,10 @@ async function prepareGalleryPublication(
   const catalogTemporary = `${catalogPath}.${release}.tmp`;
   const indexTemporary = `${indexPath}.${release}.tmp`;
   await writeFile(catalogTemporary, `${JSON.stringify(catalog, null, 2)}\n`);
-  await writeFile(indexTemporary, galleryHtml(catalog));
+  await writeFile(
+    indexTemporary,
+    galleryHtml(await composedCatalog({ ios: catalog })),
+  );
 
   return {
     catalog,
@@ -1617,7 +2158,7 @@ async function markCatalogAsWatchMode() {
   };
   await atomicWriteFile(
     path.join(visualDirectory, "index.html"),
-    galleryHtml(watchCatalog),
+    galleryHtml(await composedCatalog({ ios: watchCatalog })),
   );
   await atomicWriteFile(
     catalogPath,
@@ -1625,27 +2166,57 @@ async function markCatalogAsWatchMode() {
   );
 }
 
-function safeStaticPath(url) {
+function safeStaticPath(url, baseDirectory) {
   const pathname = decodeURIComponent(new URL(url, "http://localhost").pathname);
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
-  const target = path.resolve(visualDirectory, relative);
-  const relation = path.relative(visualDirectory, target);
+  const target = path.resolve(baseDirectory, relative);
+  const relation = path.relative(baseDirectory, target);
   if (relation.startsWith("..") || path.isAbsolute(relation)) return null;
   return target;
 }
 
-async function serveCatalog(port, shouldOpen) {
-  const catalogPath = path.join(visualDirectory, "catalog.json");
-  if (await exists(catalogPath)) {
-    const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
-    await writeFile(
-      path.join(visualDirectory, "index.html"),
-      galleryHtml(catalog),
-    );
-  }
-  if (!(await exists(path.join(visualDirectory, "index.html")))) {
+export async function serveCatalog(port, shouldOpen) {
+  const baseDirectory = visualDirectory;
+  await writeUnifiedIndex();
+  if (!(await exists(path.join(baseDirectory, "index.html")))) {
     throw new Error("No visual catalog exists yet. Run the capture command first.");
   }
+  const idleRun = { running: false, startedAt: null, finishedAt: null, exitCode: null };
+  const captureRuns = { ios: { ...idleRun }, android: { ...idleRun } };
+  const captureScripts = {
+    ios: fileURLToPath(import.meta.url),
+    android: path.join(mobileRoot, "scripts/visual-catalog-android.mjs"),
+  };
+  const startCaptureRun = (platform) => {
+    if (captureRuns[platform].running) return false;
+    const logFile = openSync(
+      path.join(visualDirectory, `capture-${platform}.log`),
+      "w",
+    );
+    const child = spawn(
+      process.execPath,
+      [captureScripts[platform], "capture", "--no-serve", "--no-open"],
+      { cwd: mobileRoot, env: process.env, stdio: ["ignore", logFile, logFile] },
+    );
+    closeSync(logFile);
+    captureRuns[platform] = {
+      running: true,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      exitCode: null,
+    };
+    const finish = (exitCode) => {
+      captureRuns[platform] = {
+        ...captureRuns[platform],
+        running: false,
+        finishedAt: new Date().toISOString(),
+        exitCode,
+      };
+    };
+    child.on("error", () => finish(1));
+    child.on("exit", (code) => finish(code ?? 1));
+    return true;
+  };
   const server = createServer(async (request, response) => {
     const pathname = decodeURIComponent(
       new URL(request.url ?? "/", "http://localhost").pathname,
@@ -1658,9 +2229,34 @@ async function serveCatalog(port, shouldOpen) {
       response.end(`${JSON.stringify(visualCatalogStatus)}\n`);
       return;
     }
+    if (pathname === "/live.json") {
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      response.end(
+        `${JSON.stringify({ ...(await liveCaptureEntries()), runs: captureRuns })}\n`,
+      );
+      return;
+    }
+    if (pathname === "/capture/ios" || pathname === "/capture/android") {
+      const platform = pathname.split("/")[2];
+      if (request.method !== "POST") {
+        response.writeHead(405).end("POST required");
+        return;
+      }
+      const started = startCaptureRun(platform);
+      response.writeHead(started ? 202 : 409, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      response.end(`${JSON.stringify({ started, run: captureRuns[platform] })}\n`);
+      return;
+    }
     if (pathname === "/" || pathname === "/index.html") {
       try {
-        const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
+        const catalog = await composedCatalog();
+        if (!catalog) throw new Error("no catalog");
         response.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
@@ -1671,7 +2267,7 @@ async function serveCatalog(port, shouldOpen) {
       }
       return;
     }
-    const target = safeStaticPath(request.url ?? "/");
+    const target = safeStaticPath(request.url ?? "/", baseDirectory);
     if (!target) {
       response.writeHead(403).end("Forbidden");
       return;
