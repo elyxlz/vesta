@@ -125,11 +125,14 @@ export function ModelStep({
               onSelect={setModel}
             />
           ) : isFixed ? (
+            // A fixed catalog is one provider, so a per-row icon is redundant
+            // (and its author is a display name the icon CDN can't resolve).
             <ModelCardList
               models={filtered}
               selected={model}
               onSelect={setModel}
               loading={false}
+              showIcon={false}
             />
           ) : (
             <>
