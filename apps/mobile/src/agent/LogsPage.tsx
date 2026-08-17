@@ -14,7 +14,6 @@ import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { subscribeLogs } from "@/agent/log-stream-subscription";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
-import { useBottomGap } from "@/components/layout/use-bottom-inset";
 import { useAgentHolds, type AgentHolds } from "@/holds/AgentHoldsProvider";
 import { agentHoldKey } from "@/holds/keyed-hold";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -125,7 +124,6 @@ function LogList({
 }) {
   const { colors } = usePreferences();
   const insets = useSafeAreaInsets();
-  const bottomGap = useBottomGap();
   const topChrome =
     presentation === "standalone" ? navHeaderHeight : PAGER_HEADER_HEIGHT;
   // The boot tail streams in line by line while the position hold pins a stale offset, which
@@ -173,7 +171,7 @@ function LogList({
         contentContainerStyle={[
           styles.listContent,
           {
-            paddingTop: bottomGap,
+            paddingTop: insets.bottom,
             paddingBottom: insets.top + topChrome,
           },
         ]}
