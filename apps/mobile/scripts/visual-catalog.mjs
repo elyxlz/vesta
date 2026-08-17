@@ -1399,16 +1399,16 @@ export function galleryHtml(view) {
   <title>Vesta Mobile Apps QA</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: #fffdfa;
-      --card: #f4f1ed;
-      --border: #e9e5de;
-      --muted: #3b3732;
+      color-scheme: dark;
+      --bg: #0c0a08;
+      --card: #1b1916;
+      --border: rgba(255, 255, 248, 0.10);
+      --muted: #d5d0c8;
       --faint: #777269;
-      --text: #0c0a08;
-      --accent: #69502e;
+      --text: #fcfaf6;
+      --accent: #d5b993;
       --gold: #d5b993;
-      --gold-soft: rgba(213, 185, 147, 0.18);
+      --gold-soft: rgba(213, 185, 147, 0.20);
     }
     * { box-sizing: border-box; }
     body {
@@ -1473,13 +1473,13 @@ export function galleryHtml(view) {
     }
     .scan-platform { color: var(--text); font-weight: 700; }
     .scan-progress { color: var(--accent); font-weight: 700; }
-    .scan-row[data-state="failed"] .scan-last { color: #e7000b; }
+    .scan-row[data-state="failed"] .scan-last { color: #ff6467; }
     .scan-button {
       border: 1px solid var(--gold);
       border-radius: 999px;
       padding: 4px 13px;
       background: var(--gold-soft);
-      color: var(--accent);
+      color: var(--gold);
       font-size: 11px;
       cursor: pointer;
     }
@@ -1590,8 +1590,8 @@ export function galleryHtml(view) {
       border: 1px solid var(--border);
       border-radius: 999px;
       padding: 9px 14px 9px 10px;
-      background: #fffdfaf2;
-      box-shadow: 0 12px 40px rgba(12, 10, 8, 0.14);
+      background: #1b1916f2;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
       opacity: 1;
       transform: translateX(-50%);
       transition: opacity 160ms ease, transform 160ms ease;
@@ -1604,8 +1604,8 @@ export function galleryHtml(view) {
       transform: translate(-50%, -8px);
     }
     .capture-status[data-state="error"] {
-      border-color: #e7000b;
-      background: #fdf1f1f2;
+      border-color: #ff6467;
+      background: #241413f2;
     }
     .status-spinner {
       width: 25px;
@@ -1619,8 +1619,8 @@ export function galleryHtml(view) {
     .capture-status[data-state="error"] .status-spinner {
       display: grid;
       border: 0;
-      background: #e7000b;
-      color: #fffdfa;
+      background: #ff6467;
+      color: #26211a;
       font-weight: 900;
       place-items: center;
       animation: none;
@@ -1704,7 +1704,7 @@ export function galleryHtml(view) {
       border-radius: 13px;
       padding: 11px 12px 12px;
       background: var(--card);
-      box-shadow: 0 8px 24px rgba(12, 10, 8, 0.08), inset 0 0 0 1px rgba(12, 10, 8, 0.05);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(252, 250, 246, 0.10);
     }
     h3 { margin: 0 0 4px; font-size: 16px; line-height: 1.2; letter-spacing: -.015em; }
     .card p {
