@@ -1385,13 +1385,18 @@ export function galleryHtml(view) {
     </div>`,
     )
     .join("");
+  const gentleToggle = `
+    <label class="gentle-toggle" title="One simulator shard at background priority: slower, but the machine stays responsive.">
+      <input type="checkbox" id="gentle-toggle" checked>
+      <span>Gentle scans</span>
+    </label>`;
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vesta mobile visual catalog</title>
+  <title>Vesta Mobile Apps QA</title>
   <style>
     :root {
       color-scheme: dark;
@@ -1421,20 +1426,12 @@ export function galleryHtml(view) {
       margin: 0 auto;
       padding: 32px 24px 22px;
     }
-    .kicker {
-      color: var(--accent);
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-    }
     h1 {
       margin: 4px 0 5px;
       font-size: clamp(28px, 4vw, 42px);
       line-height: 1;
       letter-spacing: -.045em;
     }
-    .intro { margin: 0; color: var(--muted); font-size: 14px; }
     .meta {
       display: flex;
       max-width: 540px;
@@ -1485,6 +1482,16 @@ export function galleryHtml(view) {
     }
     .scan-button:hover:not(:disabled) { border-color: var(--accent); }
     .scan-button:disabled { opacity: .55; cursor: default; }
+    .gentle-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .gentle-toggle input { accent-color: var(--accent); }
     main {
       max-width: 1680px;
       margin: 0 auto;
@@ -1754,16 +1761,14 @@ export function galleryHtml(view) {
   </div>
   <header>
     <div>
-      <span class="kicker">Mobile QA</span>
-      <h1>Visual catalog</h1>
-      <p class="intro">Complete device captures at a glance. Click any image to expand it.</p>
+      <h1>Vesta Mobile Apps QA</h1>
     </div>
     <div class="meta">
       <span>${escapeHtml(view.git.revision)}${view.git.dirty ? " · dirty" : ""}</span>
       ${reportLinks}
     </div>
   </header>
-  <section class="scan-bar" aria-label="Capture runs">${scanRows}
+  <section class="scan-bar" aria-label="Capture runs">${scanRows}${gentleToggle}
   </section>
   <main>${sections}</main>
   <dialog id="lightbox">
@@ -1869,11 +1874,18 @@ export function galleryHtml(view) {
         statusDetail.textContent = nextStatus.detail || "Fix the issue and save again.";
       }
     }
+    const gentleToggle = document.querySelector("#gentle-toggle");
+    gentleToggle.checked = localStorage.getItem("visual-gentle") !== "0";
+    gentleToggle.addEventListener("change", () => {
+      localStorage.setItem("visual-gentle", gentleToggle.checked ? "1" : "0");
+    });
     document.querySelectorAll(".scan-row .scan-button").forEach((button) => {
       button.addEventListener("click", async () => {
         button.disabled = true;
+        const platform = button.closest(".scan-row").dataset.platform;
+        const gentle = gentleToggle.checked ? "1" : "0";
         try {
-          await fetch("capture/" + button.closest(".scan-row").dataset.platform, {
+          await fetch("capture/" + platform + "?gentle=" + gentle, {
             method: "POST",
           });
         } catch {
@@ -2032,7 +2044,7 @@ export async function serveCatalog(port, shouldOpen) {
     ios: fileURLToPath(import.meta.url),
     android: path.join(mobileRoot, "scripts/visual-catalog-android.mjs"),
   };
-  const startCaptureRun = (platform) => {
+  const startCaptureRun = (platform, gentle) => {
     if (captureRuns[platform].running) return false;
     const logFile = openSync(
       path.join(visualDirectory, `capture-${platform}.log`),
@@ -2040,8 +2052,13 @@ export async function serveCatalog(port, shouldOpen) {
     );
     const child = spawn(
       process.execPath,
-      // Gallery-triggered scans run gentle: the user is at the machine when they click Scan.
-      [captureScripts[platform], "capture", "--no-serve", "--no-open", "--gentle"],
+      [
+        captureScripts[platform],
+        "capture",
+        "--no-serve",
+        "--no-open",
+        ...(gentle ? ["--gentle"] : []),
+      ],
       { cwd: mobileRoot, env: process.env, stdio: ["ignore", logFile, logFile] },
     );
     closeSync(logFile);
@@ -2091,7 +2108,11 @@ export async function serveCatalog(port, shouldOpen) {
         response.writeHead(405).end("POST required");
         return;
       }
-      const started = startCaptureRun(platform);
+      const gentle =
+        new URL(request.url ?? "/", "http://localhost").searchParams.get(
+          "gentle",
+        ) !== "0";
+      const started = startCaptureRun(platform, gentle);
       response.writeHead(started ? 202 : 409, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",

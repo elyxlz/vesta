@@ -398,7 +398,8 @@ describe("galleryHtml", () => {
   it("renders a scan row per platform with its trigger", () => {
     expect(html).toContain('class="scan-row" data-platform="ios"');
     expect(html).toContain('class="scan-row" data-platform="android"');
-    expect(html).toContain('"capture/" + button.closest(".scan-row").dataset.platform');
+    expect(html).toContain('"capture/" + platform + "?gentle=" + gentle');
+    expect(html).toContain('id="gentle-toggle"');
   });
 
   it("emits an inline script that parses", () => {
