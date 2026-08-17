@@ -434,6 +434,43 @@ export async function nativeInputFingerprint() {
   return fingerprintPaths(nativeInputTargets());
 }
 
+// The JavaScript bundle's inputs: when their fingerprint matches the one recorded at the last
+// successful install for a target, the export/install phase is skipped and a scan goes straight
+// to its flows. Flow and fixture edits count (the harness ships in the bundle); Maestro yml does
+// not, since it never enters the bundle.
+function jsInputTargets() {
+  return [
+    path.join(mobileRoot, "app"),
+    path.join(mobileRoot, "src"),
+    path.join(mobileRoot, "visual"),
+    path.join(mobileRoot, "assets"),
+    path.join(mobileRoot, "app.config.ts"),
+    path.join(mobileRoot, "package.json"),
+    path.join(repositoryRoot, "package-lock.json"),
+  ];
+}
+
+export async function jsInputFingerprint() {
+  return fingerprintPaths(jsInputTargets());
+}
+
+export function jsFingerprintPath(target) {
+  return path.join(visualDirectory, `js-fingerprint-${target}.txt`);
+}
+
+export async function jsBundleCurrent(target) {
+  try {
+    const stored = await readFile(jsFingerprintPath(target), "utf8");
+    return stored === (await jsInputFingerprint());
+  } catch {
+    return false;
+  }
+}
+
+export async function recordJsBundle(target) {
+  await atomicWriteFile(jsFingerprintPath(target), await jsInputFingerprint());
+}
+
 const scenarioPlatforms = ["ios", "android"];
 
 export function scenarioOnPlatform(scenario, platform) {
@@ -2299,13 +2336,27 @@ async function installVisualApp(options, session, manifest) {
         requireInstalledApp(simulator.udid, manifest.appId),
       ),
     );
-  } else {
-    if (options.cleanNative) {
-      await rm(nativeIosDirectory, { recursive: true, force: true });
-      await rm(nativeFingerprintPath, { force: true });
-    }
-    await buildAndInstall(simulators, manifest.appId);
+    return;
   }
+  if (!options.cleanNative && (await jsBundleCurrent("ios"))) {
+    try {
+      await Promise.all(
+        simulators.map((simulator) =>
+          requireInstalledApp(simulator.udid, manifest.appId),
+        ),
+      );
+      console.log("\nJS inputs unchanged; reusing the installed bundle.");
+      return;
+    } catch {
+      // Not installed after all; fall through to the build.
+    }
+  }
+  if (options.cleanNative) {
+    await rm(nativeIosDirectory, { recursive: true, force: true });
+    await rm(nativeFingerprintPath, { force: true });
+  }
+  await buildAndInstall(simulators, manifest.appId);
+  await recordJsBundle("ios");
 }
 
 async function closeCaptureSession(session) {
