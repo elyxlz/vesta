@@ -18,9 +18,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  androidMaestroDirectory as maestroDirectory,
-  androidShotsDirectory,
+  androidMaestroDirectoryOf,
+  androidVariants,
   androidVisualDirectory,
+  platformShotsDirectory,
   assertHarnessBoundary,
   atomicWriteFile,
   exists,
@@ -53,7 +54,7 @@ const nativeTransactionStatePath = path.join(
   "state.json",
 );
 const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
-const DEFAULT_AVD_NAME = "vesta-visual";
+const DEFAULT_VARIANT = "android";
 const DEFAULT_GALLERY_PORT = 4174;
 const ANDROID_BUILD_ABI = "arm64-v8a";
 const EMULATOR_BOOT_TIMEOUT_MS = 240_000;
@@ -70,7 +71,9 @@ Commands:
   serve         Serve the unified iOS + Android catalog
 
 Options:
-  --avd <name>        Emulator AVD to boot or reuse (default: ${DEFAULT_AVD_NAME})
+  --variant <key>     Android variant to capture: ${Object.keys(androidVariants).join(", ")}
+                      (default: ${DEFAULT_VARIANT}; the galaxy variant runs 3-button navigation)
+  --avd <name>        Emulator AVD to boot or reuse (default: the variant's AVD)
   --device <serial>   Use an already-connected adb device instead
   --show-emulator     Boot the emulator with a visible window
   --skip-build        Reuse the installed visual app without building
@@ -92,7 +95,8 @@ export function parseArguments(values) {
       : "capture";
   const options = {
     command,
-    avd: DEFAULT_AVD_NAME,
+    variant: DEFAULT_VARIANT,
+    avd: "",
     device: "",
     showEmulator: false,
     skipBuild: false,
@@ -133,11 +137,12 @@ export function parseArguments(values) {
       options.open = false;
       continue;
     }
-    if (["--avd", "--device", "--port"].includes(argument)) {
+    if (["--avd", "--device", "--port", "--variant"].includes(argument)) {
       const value = argumentsCopy[index + 1];
       if (!value) throw new Error(`${argument} requires a value.`);
       index += 1;
       if (argument === "--avd") options.avd = value;
+      if (argument === "--variant") options.variant = value;
       if (argument === "--device") options.device = value;
       if (argument === "--port") {
         const port = Number(value);
@@ -157,6 +162,14 @@ export function parseArguments(values) {
   if (options.skipBuild && options.cleanNative) {
     throw new Error("--skip-build and --clean-native cannot be used together.");
   }
+  if (!(options.variant in androidVariants)) {
+    throw new Error(
+      `Unknown Android variant: ${options.variant}. Known: ${Object.keys(
+        androidVariants,
+      ).join(", ")}`,
+    );
+  }
+  if (!options.avd) options.avd = androidVariants[options.variant].avd;
   return options;
 }
 
@@ -351,7 +364,7 @@ async function demoModeCommand(tools, serial, command, extras = []) {
   );
 }
 
-async function normalizeEmulator(tools, serial) {
+async function normalizeEmulator(tools, serial, navOverlay) {
   const settings = [
     ["global", "window_animation_scale", "0"],
     ["global", "transition_animation_scale", "0"],
@@ -365,6 +378,13 @@ async function normalizeEmulator(tools, serial) {
   await adb(tools, serial, ["shell", "cmd", "uimode", "night", "no"], {
     allowFailure: true,
   });
+  // The variant decides the system navigation persona: gesture pill or 3-button bar.
+  await adb(
+    tools,
+    serial,
+    ["shell", "cmd", "overlay", "enable-exclusive", navOverlay],
+    { allowFailure: true },
+  );
   await demoModeCommand(tools, serial, "enter");
   await demoModeCommand(tools, serial, "clock", ["-e", "hhmm", STATUS_BAR_CLOCK]);
   await demoModeCommand(tools, serial, "battery", [
@@ -628,7 +648,8 @@ export async function stageMaestroShots(sourceDirectory, targetDirectory) {
   };
 }
 
-async function runMaestro(manifest, tools, serial) {
+async function runMaestro(manifest, tools, serial, variant) {
+  const maestroDirectory = androidMaestroDirectoryOf(variant);
   await rm(maestroDirectory, { recursive: true, force: true });
   await mkdir(maestroDirectory, { recursive: true });
 
@@ -655,26 +676,30 @@ async function runMaestro(manifest, tools, serial) {
   }
   // Stage even a failed run's artifacts: each is a valid capture, and the
   // scenarios the run never reached keep their previous shot files.
-  const staged = await stageMaestroShots(maestroDirectory, androidShotsDirectory);
+  const staged = await stageMaestroShots(
+    maestroDirectory,
+    platformShotsDirectory(variant),
+  );
   if (failure) throw failure;
   return staged;
 }
 
 async function capture(options) {
   const startedAt = new Date().toISOString();
+  const variant = options.variant;
   const phase = (message) =>
-    publishRunStatus("capturing", { message, startedAt, platform: "android" });
+    publishRunStatus("capturing", { message, startedAt, platform: variant });
   await assertHarnessBoundary();
   const manifest = await loadManifest("android");
   const tools = await requireCaptureTools();
   await mkdir(androidVisualDirectory, { recursive: true });
-  await phase("Preparing the Android emulator");
+  await phase(`Preparing the ${androidVariants[variant].label} emulator`);
   const serial = await prepareEmulator(tools, options);
   const avdName = options.device
     ? await avdNameOf(tools, serial)
     : options.avd;
   console.log(`\nUsing Android emulator ${serial} (${avdName}).`);
-  await normalizeEmulator(tools, serial);
+  await normalizeEmulator(tools, serial, androidVariants[variant].navOverlay);
   try {
     await phase(
       options.skipBuild
@@ -689,7 +714,12 @@ async function capture(options) {
     await phase(
       `Running ${manifest.flows.length} flows on the Android emulator`,
     );
-    const { produced, duplicates } = await runMaestro(manifest, tools, serial);
+    const { produced, duplicates } = await runMaestro(
+      manifest,
+      tools,
+      serial,
+      variant,
+    );
     const warning = [
       shotDriftWarning(produced, manifest),
       duplicates.length > 0
@@ -700,16 +730,18 @@ async function capture(options) {
       .join("; ");
     if (warning) console.warn(`\nShot registry drift: ${warning}`);
     console.log(
-      `\nCaptured ${produced.size} Android screenshots into .visual/shots/android.`,
+      `\nCaptured ${produced.size} ${androidVariants[variant].label} screenshots into .visual/shots/${variant}.`,
     );
     await publishRunStatus("ready", {
-      message: `Captured ${produced.size} Android screenshots`,
+      message: `Captured ${produced.size} ${androidVariants[variant].label} screenshots`,
       detail: warning,
+      platform: variant,
     });
   } catch (error) {
     await publishRunStatus("error", {
-      message: "Android capture failed",
+      message: `${androidVariants[variant].label} capture failed`,
       detail: error instanceof Error ? error.message : String(error),
+      platform: variant,
     });
     throw error;
   } finally {

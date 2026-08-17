@@ -30,6 +30,32 @@ const mobileRoot = path.resolve(scriptDirectory, "..");
 const repositoryRoot = path.resolve(mobileRoot, "../..");
 const visualDirectory = path.join(mobileRoot, ".visual");
 export const androidVisualDirectory = path.join(visualDirectory, "android");
+// The Android runner captures one variant per run: the same build and flows on a different
+// emulator persona. The galaxy variant runs classic 3-button navigation, so every screen is
+// exercised with a visible bottom navigation bar and its status bar insets.
+export const androidVariants = {
+  android: {
+    avd: "vesta-visual",
+    label: "Android",
+    navOverlay: "com.android.internal.systemui.navbar.gestural",
+  },
+  "android-galaxy": {
+    avd: "vesta-visual-galaxy",
+    label: "Android \u00b7 3-button",
+    navOverlay: "com.android.internal.systemui.navbar.threebutton",
+  },
+};
+export function androidWorkDirectory(variant) {
+  return variant === "android"
+    ? androidVisualDirectory
+    : path.join(visualDirectory, variant);
+}
+export function androidMaestroDirectoryOf(variant) {
+  return path.join(androidWorkDirectory(variant), "maestro");
+}
+export function platformShotsDirectory(platform) {
+  return path.join(shotsDirectory, platform);
+}
 export const androidMaestroDirectory = path.join(
   androidVisualDirectory,
   "maestro",
@@ -411,8 +437,9 @@ export async function nativeInputFingerprint() {
 const scenarioPlatforms = ["ios", "android"];
 
 export function scenarioOnPlatform(scenario, platform) {
+  const family = platform.startsWith("android") ? "android" : platform;
   return !Array.isArray(scenario.platforms) ||
-    scenario.platforms.includes(platform);
+    scenario.platforms.includes(family);
 }
 
 export async function loadManifest(platform = "ios") {
@@ -1203,13 +1230,21 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-const galleryPlatforms = ["ios", "android"];
-const platformLabels = { ios: "iOS", android: "Android" };
+const galleryPlatforms = ["ios", ...Object.keys(androidVariants)];
+const platformLabels = {
+  ios: "iOS",
+  ...Object.fromEntries(
+    Object.entries(androidVariants).map(([key, variant]) => [
+      key,
+      variant.label,
+    ]),
+  ),
+};
 
 // Index of the shot files on disk: platform -> filename -> {src, mtime}, with
 // src relative to the gallery root so the page can load and cache-bust it.
 export async function shotEntries(baseDirectory = visualDirectory) {
-  const entries = { ios: {}, android: {} };
+  const entries = Object.fromEntries(galleryPlatforms.map((platform) => [platform, {}]));
   for (const platform of galleryPlatforms) {
     const directory = path.join(baseDirectory, "shots", platform);
     let names = [];
@@ -1271,7 +1306,7 @@ export function galleryView(scenarios, shots, options = {}) {
         if (!scenarioOnPlatform(scenario, platform)) {
           return { platform, label, state: "excluded", note: excludedNote(scenario) };
         }
-        const entry = shots[platform][scenario.screenshot];
+        const entry = (shots[platform] ?? {})[scenario.screenshot];
         if (!entry) {
           return { platform, label, state: "missing", note: "Not captured yet" };
         }
@@ -2034,10 +2069,14 @@ export async function composeGallery() {
   if (await exists(path.join(maestroDirectory, "report.html"))) {
     reports.push({ label: "iOS Maestro report", href: "maestro/report.html" });
   }
-  if (await exists(path.join(androidMaestroDirectory, "report.html"))) {
+  for (const [variant, config] of Object.entries(androidVariants)) {
+    const workDirectory = androidWorkDirectory(variant);
+    if (!(await exists(path.join(workDirectory, "maestro/report.html")))) {
+      continue;
+    }
     reports.push({
-      label: "Android Maestro report",
-      href: "android/maestro/report.html",
+      label: `${config.label} Maestro report`,
+      href: `${path.basename(workDirectory)}/maestro/report.html`,
     });
   }
   return galleryView(manifest.allScenarios, shots, {
@@ -2058,10 +2097,18 @@ function safeStaticPath(url, baseDirectory) {
 export async function serveCatalog(port, shouldOpen) {
   const baseDirectory = visualDirectory;
   const idleRun = { running: false, startedAt: null, finishedAt: null, exitCode: null };
-  const captureRuns = { ios: { ...idleRun }, android: { ...idleRun } };
+  const captureRuns = Object.fromEntries(
+    galleryPlatforms.map((platform) => [platform, { ...idleRun }]),
+  );
+  const androidScript = path.join(
+    mobileRoot,
+    "scripts/visual-catalog-android.mjs",
+  );
   const captureScripts = {
     ios: fileURLToPath(import.meta.url),
-    android: path.join(mobileRoot, "scripts/visual-catalog-android.mjs"),
+    ...Object.fromEntries(
+      Object.keys(androidVariants).map((variant) => [variant, androidScript]),
+    ),
   };
   const startCaptureRun = (platform, gentle) => {
     if (captureRuns[platform].running) return false;
@@ -2076,6 +2123,7 @@ export async function serveCatalog(port, shouldOpen) {
         "capture",
         "--no-serve",
         "--no-open",
+        ...(platform.startsWith("android") ? ["--variant", platform] : []),
         ...(gentle ? ["--gentle"] : []),
       ],
       { cwd: mobileRoot, env: process.env, stdio: ["ignore", logFile, logFile] },
@@ -2121,7 +2169,10 @@ export async function serveCatalog(port, shouldOpen) {
       );
       return;
     }
-    if (pathname === "/capture/ios" || pathname === "/capture/android") {
+    if (
+      pathname.startsWith("/capture/") &&
+      galleryPlatforms.includes(pathname.split("/")[2])
+    ) {
       const platform = pathname.split("/")[2];
       if (request.method !== "POST") {
         response.writeHead(405).end("POST required");

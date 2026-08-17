@@ -303,12 +303,13 @@ describe("shotDriftWarning", () => {
 describe("galleryView", () => {
   const view = galleryView(registryScenarios, registryShots);
 
-  it("renders both platform slots for every registry scenario", () => {
+  it("renders a slot per platform for every registry scenario", () => {
     expect(view.scenarios).toHaveLength(registryScenarios.length);
     for (const scenario of view.scenarios) {
       expect(scenario.slots.map((slot) => slot.label)).toEqual([
         "iOS",
         "Android",
+        "Android \u00b7 3-button",
       ]);
     }
   });
@@ -433,7 +434,11 @@ describe("shotEntries", () => {
 
   it("serves empty platforms while the shots directories do not exist", async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "visual-shots-"));
-    expect(await shotEntries(base)).toEqual({ ios: {}, android: {} });
+    expect(await shotEntries(base)).toEqual({
+      ios: {},
+      android: {},
+      "android-galaxy": {},
+    });
   });
 });
 

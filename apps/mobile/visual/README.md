@@ -396,6 +396,12 @@ Native/config changes invalidate the cache automatically. `--clean-native` is
 an explicit recovery option and is not needed for ordinary React Native UI
 work.
 
+The Android runner captures one variant per run via `--variant`: `android`
+(the gesture-navigation emulator) or `android-galaxy` (its own AVD running
+classic 3-button navigation, so every screen is exercised with a visible
+bottom navigation bar and its status bar insets). Each variant owns a shots
+directory and a gallery column; the scan bar has a row per variant.
+
 `--gentle` (capture commands on both platforms) trades wall time for machine
 responsiveness: the iOS run uses one simulator shard instead of two, and every
 child process (build, bundler, Maestro, the Android emulator) runs at utility
