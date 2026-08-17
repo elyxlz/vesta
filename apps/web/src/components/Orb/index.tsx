@@ -431,10 +431,20 @@ export function Orb({
       );
       lastFrameTime = frameTime;
 
-      const colorAmount = 1 - Math.exp(-deltaTime * COLOR_LERP_SPEED);
-      const valueAmount = 1 - Math.exp(-deltaTime * VALUE_LERP_SPEED);
-      const trackAmount = 1 - Math.exp(-deltaTime * TRACK_LERP_SPEED);
-      const floatAmount = 1 - Math.exp(-deltaTime * FLOAT_LERP_SPEED);
+      // Suppressed motion snaps every lerp to its target: state changes land
+      // as a cut, not a transition, per prefers-reduced-motion.
+      const colorAmount = motionSuppressed
+        ? 1
+        : 1 - Math.exp(-deltaTime * COLOR_LERP_SPEED);
+      const valueAmount = motionSuppressed
+        ? 1
+        : 1 - Math.exp(-deltaTime * VALUE_LERP_SPEED);
+      const trackAmount = motionSuppressed
+        ? 1
+        : 1 - Math.exp(-deltaTime * TRACK_LERP_SPEED);
+      const floatAmount = motionSuppressed
+        ? 1
+        : 1 - Math.exp(-deltaTime * FLOAT_LERP_SPEED);
       const pulseWave = Math.sin(
         (frameTime / 1000 / visualTarget.pulseDuration) * Math.PI * 2,
       );
@@ -537,7 +547,7 @@ export function Orb({
       gl.deleteBuffer(buffer);
       gl.deleteProgram(program);
     };
-  }, [size, state]);
+  }, [size, state, motionSuppressed]);
 
   return (
     <div

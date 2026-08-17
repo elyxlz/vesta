@@ -1,0 +1,276 @@
+import type { Page } from "@playwright/test";
+import type {
+  AgentStatus,
+  ProviderContextPolicy,
+  ProviderManifest,
+} from "@vesta/core";
+
+export const AGENT = "luna";
+
+// Small DTO duplicated on this side of the seam (the src Manifest type lives in
+// the app tsconfig project): GET /manifest is the provider catalog plus the
+// personality presets.
+interface Personality {
+  name: string;
+  emoji: string;
+  title: string;
+  description: string;
+  sample: string;
+  order: number;
+}
+
+type Manifest = ProviderManifest & { personalities: Personality[] };
+
+const CONTEXT: ProviderContextPolicy = {
+  default: 131072,
+  max: 131072,
+  presets: [{ tokens: 131072, label: "128K", note: "the full window" }],
+};
+
+export const MANIFEST: Manifest = {
+  default_provider: "claude",
+  default_personality: "dry",
+  providers: {
+    claude: {
+      display: "Claude",
+      order: 1,
+      auth_kind: "claude_oauth",
+      models: "live",
+      default_model: null,
+      context: CONTEXT,
+    },
+    zai: {
+      display: "Z.AI",
+      order: 2,
+      auth_kind: "subscription_key",
+      models: ["glm-5.2", "glm-5-turbo", "glm-4.7"],
+      model_names: {
+        "glm-5.2": "GLM 5.2",
+        "glm-5-turbo": "GLM 5 Turbo",
+        "glm-4.7": "GLM 4.7",
+      },
+      default_model: "glm-5.2",
+      context: CONTEXT,
+    },
+    openrouter: {
+      display: "OpenRouter",
+      order: 3,
+      auth_kind: "api_key",
+      models: "live",
+      default_model: null,
+      context: CONTEXT,
+    },
+    kimi: {
+      display: "Kimi Code",
+      order: 4,
+      auth_kind: "subscription_key",
+      models: ["kimi-for-coding", "kimi-for-coding-highspeed", "k3"],
+      model_names: {
+        "kimi-for-coding": "Coding",
+        "kimi-for-coding-highspeed": "Coding Highspeed",
+        k3: "K3",
+      },
+      default_model: "kimi-for-coding",
+      context: CONTEXT,
+    },
+    openai: {
+      display: "ChatGPT",
+      order: 5,
+      auth_kind: "device_oauth",
+      models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+      model_names: {
+        "gpt-5.6-sol": "GPT 5.6 Sol",
+        "gpt-5.6-terra": "GPT 5.6 Terra",
+        "gpt-5.6-luna": "GPT 5.6 Luna",
+      },
+      default_model: "gpt-5.6-sol",
+      context: CONTEXT,
+    },
+  },
+  personalities: [
+    {
+      name: "dry",
+      emoji: "😏",
+      title: "dry",
+      description: "lowercase, minimal, dry humor. the safe default.",
+      sample: "nah. why though",
+      order: 1,
+    },
+    {
+      name: "classic",
+      emoji: "😂",
+      title: "classic",
+      description:
+        "capital letters, full punctuation, 😂 reserved for genuinely funny moments.",
+      sample: "Oh no, want me to help?",
+      order: 2,
+    },
+    {
+      name: "polished",
+      emoji: "🎩",
+      title: "polished",
+      description: "sentence case, precise, no slang. an aide, not a friend.",
+      sample: "Understood. Shall I draft a note?",
+      order: 3,
+    },
+    {
+      name: "terse",
+      emoji: "⚪",
+      title: "terse",
+      description: "ultra-minimal. no humor, no emoji, pure utility.",
+      sample: "who to",
+      order: 4,
+    },
+    {
+      name: "chill",
+      emoji: "🤙",
+      title: "chill",
+      description: "lowercase, slangy, relaxed. casual and loyal.",
+      sample: "bet, lemme handle it",
+      order: 5,
+    },
+    {
+      name: "extra",
+      emoji: "💅",
+      title: "extra",
+      description:
+        "lowercase with CAPS for emphasis, stretched words, emoji-rich. maximally expressive.",
+      sample: "OMGGG GIRL 💅",
+      order: 6,
+    },
+  ],
+};
+
+// Small DTO duplicated from the src OpenRouter module, like Manifest above.
+interface OpenRouterModelOption {
+  slug: string;
+  label: string;
+  author: string;
+  context_length?: number;
+  input_price?: number | null;
+  output_price?: number | null;
+}
+
+export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
+  {
+    slug: "anthropic/claude-sonnet-5",
+    label: "Claude Sonnet 5",
+    author: "Anthropic",
+    context_length: 200000,
+    input_price: 3,
+    output_price: 15,
+  },
+  {
+    slug: "openai/gpt-5.2",
+    label: "GPT 5.2",
+    author: "OpenAI",
+    context_length: 200000,
+    input_price: 2.5,
+    output_price: 10,
+  },
+  {
+    slug: "moonshotai/kimi-k2",
+    label: "Kimi K2",
+    author: "MoonshotAI",
+    context_length: 131072,
+    input_price: 0.6,
+    output_price: 2.5,
+  },
+];
+
+export const OAUTH_START = {
+  auth_url: "https://claude.ai/oauth/authorize?visual-fixture",
+  session_id: "visual-oauth-session",
+};
+
+export const OPENAI_OAUTH_START = {
+  auth_url: "https://chatgpt.com/device?visual-fixture",
+  user_code: "WDJB-MJHT",
+  session_id: "visual-openai-session",
+};
+
+export const OAUTH_CREDENTIALS = {
+  credentials: JSON.stringify({ claudeAiOauth: { subscriptionType: "max" } }),
+};
+
+export const CLAUDE_MODELS = [
+  { slug: "claude-opus-5", label: "Claude Opus 5", author: "Anthropic" },
+  { slug: "claude-sonnet-5", label: "Claude Sonnet 5", author: "Anthropic" },
+  { slug: "claude-haiku-4-5", label: "Claude Haiku 4.5", author: "Anthropic" },
+];
+
+// An endpoint the scenario wants to leave pending, to capture a loading state.
+export type HangEndpoint = "openrouter-models";
+
+// The GET /provider shape the settings card reads (a subset of the wire type).
+export interface ProviderInfoFixture {
+  kind: "zai" | "kimi" | "openai";
+  model: string | null;
+  resolved_model: string | null;
+  max_context_tokens: number | null;
+  authed: boolean;
+  plan: string | null;
+}
+
+export interface GatewayMockOptions {
+  agentStatus: AgentStatus;
+  createResponse: { status: number; body: { error: string } } | null;
+  hang?: HangEndpoint;
+  provider?: ProviderInfoFixture;
+}
+
+// Later-registered routes win in Playwright, so the hermetic catch-all for the
+// fake gateway origin goes first and the specific answers override it.
+export async function installGatewayMocks(
+  page: Page,
+  opts: GatewayMockOptions,
+): Promise<void> {
+  await page.route("**://vestad.local/**", (route) =>
+    route.fulfill({ json: {} }),
+  );
+  await page.route("**/manifest", (route) => route.fulfill({ json: MANIFEST }));
+  // A hung route is left pending (never fulfilled), so the consumer stays in
+  // its loading state for the shot.
+  await page.route("**/providers/openrouter/models/top", (route) => {
+    if (opts.hang === "openrouter-models") return;
+    return route.fulfill({ json: OPENROUTER_MODELS });
+  });
+  await page.route("**/providers/claude/oauth/start", (route) =>
+    route.fulfill({ json: OAUTH_START }),
+  );
+  await page.route("**/providers/openai/oauth/start", (route) =>
+    route.fulfill({ json: OPENAI_OAUTH_START }),
+  );
+  await page.route("**/providers/claude/oauth/complete", (route) =>
+    route.fulfill({ json: OAUTH_CREDENTIALS }),
+  );
+  await page.route("**/providers/openai/oauth/complete", (route) =>
+    route.fulfill({ json: { credentials: "visual-openai-credentials" } }),
+  );
+  await page.route("**/providers/claude/models", (route) =>
+    route.fulfill({ json: CLAUDE_MODELS }),
+  );
+  await page.route("**/providers/openrouter/validate-key", (route) =>
+    route.fulfill({ json: {} }),
+  );
+  await page.route(`**/agents/${AGENT}`, (route) =>
+    route.fulfill({ json: { status: opts.agentStatus } }),
+  );
+  await page.route("**/agents", (route) => {
+    const failure = opts.createResponse;
+    if (failure !== null) {
+      return route.fulfill({ status: failure.status, json: failure.body });
+    }
+    return route.fulfill({ json: {} });
+  });
+  // The settings provider card reads GET /provider; other methods (PATCH on a
+  // model change) fall through to the catch-all.
+  const provider = opts.provider;
+  if (provider) {
+    await page.route("**/agents/*/provider", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: provider })
+        : route.fulfill({ json: {} }),
+    );
+  }
+}

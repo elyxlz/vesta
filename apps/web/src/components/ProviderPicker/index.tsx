@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { ChevronLeftIcon } from "lucide-react";
 import { claudeProvider, openaiProvider, openrouterProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
 
 type AuthStartResult =
   claudeProvider.OAuthStartResult | openaiProvider.OAuthStartResult;
-import { ChoiceStep } from "./ChoiceStep";
+import { ChoiceStep, type ChoiceVariant } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
@@ -142,13 +141,13 @@ function ProviderAuthStep({
   authStart,
   startError,
   onCredentialsReady,
-  onCancel,
+  onBack,
 }: {
   provider: ProviderMode | null;
   authStart: AuthStartResult | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
-  onCancel: () => void;
+  onBack: () => void;
 }) {
   if (provider === "claude") {
     return (
@@ -156,7 +155,7 @@ function ProviderAuthStep({
         authStart={authStart}
         startError={startError}
         onCredentialsReady={onCredentialsReady}
-        onCancel={onCancel}
+        onBack={onBack}
       />
     );
   }
@@ -166,7 +165,7 @@ function ProviderAuthStep({
         authStart={authStart as openaiProvider.OAuthStartResult | null}
         startError={startError}
         onCredentialsReady={onCredentialsReady}
-        onCancel={onCancel}
+        onBack={onBack}
       />
     );
   }
@@ -178,14 +177,19 @@ export function ProviderPicker({
   onBack,
   className,
   defaultsOnly,
+  choiceVariant,
 }: {
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
   className?: string;
-  // Skip ModelStep/ContextStep when the manifest supplies a static default. Live-catalog
-  // providers still require a model choice. Onboarding uses this mode; both values stay
-  // editable afterward in AgentSettings' full picker.
+  // Onboarding mode: every provider walks the model step, but a fixed-catalog
+  // provider finishes right after with the default context for the chosen model
+  // instead of walking ContextStep. Context stays editable afterward in
+  // AgentSettings' full picker.
   defaultsOnly?: boolean;
+  // The provider chooser's layout: "grid" is the onboarding glass-tile look,
+  // undefined keeps the compact settings look.
+  choiceVariant?: ChoiceVariant;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   // The chosen provider drives the shared model/context steps (which list to
@@ -255,44 +259,35 @@ export function ProviderPicker({
   };
 
   // Claude auth no longer ends the flow: stash the credentials and continue to
-  // model + context, mirroring the OpenRouter path.
+  // the model step, mirroring the OpenRouter path. Every provider now picks a
+  // model, a fixed-catalog one from the manifest list.
   const handleCredentialsReady = (creds: string) => {
     setCredentials(creds);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
-      finishWithDefaults(creds, key);
-      return;
-    }
     setStep("model");
   };
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
-      finishWithDefaults(credentials, newKey);
-      return;
-    }
     setStep("model");
   };
 
-  // Onboarding skips ModelStep/ContextStep entirely: finish with the
-  // manifest's default model and context window as soon as the provider is
-  // ready, mirroring handleContextSubmit's result shape.
-  const finishWithDefaults = (creds: string | null, apiKey: string) => {
+  // Onboarding (defaultsOnly) finishes a fixed-catalog provider right after the
+  // model step, taking the default context window for the chosen model instead
+  // of walking ContextStep. Context stays editable later in AgentSettings.
+  const finishWithModel = (selectedModel: string) => {
     if (provider === null) return;
-    const defaultModel = manifest.providers[provider]?.default_model ?? "";
-    const context = contextForModel(manifest.providers[provider], defaultModel);
-    const plan =
-      provider === "claude" && creds !== null
-        ? planFromCredentials(creds)
-        : null;
+    const context = contextForModel(
+      manifest.providers[provider],
+      selectedModel,
+    );
     const { initial } = context
-      ? planContextOptions(context, plan)
+      ? planContextOptions(context, null)
       : { initial: 0 };
     const result = providerResult(
       provider,
-      creds,
-      apiKey,
-      defaultModel,
+      credentials,
+      key,
+      selectedModel,
       initial,
     );
     if (result) onDone(result);
@@ -315,8 +310,8 @@ export function ProviderPicker({
     setAuthStartError(null);
   };
 
-  // Cancel abandons the chosen provider and returns to the choice screen,
-  // distinct from the back-chevron which steps back one screen at a time.
+  // Abandon the chosen provider and return to the choice screen. Auth and key
+  // back out here; model and context step back one screen without resetting.
   const cancelToChoice = () => {
     resetAuth();
     setCredentials(null);
@@ -326,38 +321,29 @@ export function ProviderPicker({
     setStep("choice");
   };
 
-  const back = (() => {
-    if (step === "choice") return onBack;
-    // The model step's previous screen depends on how the provider started.
-    if (step === "model")
-      return () =>
-        setStep(providerUsesOAuth(provider, manifest) ? "auth" : "key");
-    if (step === "context") return () => setStep("model");
-    // auth and key both return to the choice screen.
-    return cancelToChoice;
-  })();
+  // The model step's previous screen depends on how the provider started.
+  const backFromModel = () =>
+    setStep(providerUsesOAuth(provider, manifest) ? "auth" : "key");
 
+  // The grid choice step is as wide as the onboarding vibe grid; every other
+  // step keeps the compact column.
+  const gridChoice = step === "choice" && choiceVariant === "grid";
   return (
     <div
       className={cn(
-        "relative flex w-[380px] max-w-full flex-col items-start gap-4 px-4",
+        "flex max-w-full flex-col items-start gap-4 px-4",
+        gridChoice ? "w-[560px]" : "w-[380px]",
         className,
       )}
     >
-      {back && (
-        <button
-          type="button"
-          onClick={back}
-          className="absolute top-0 left-0 -ml-1 flex size-6 items-center justify-center rounded-full text-muted-foreground transition hover:bg-input/60 hover:text-foreground"
-          aria-label="back"
-        >
-          <ChevronLeftIcon className="size-4" />
-        </button>
-      )}
-
       <div className="w-full">
         {step === "choice" && (
-          <ChoiceStep onPick={handleChoice} manifest={manifest} />
+          <ChoiceStep
+            onPick={handleChoice}
+            manifest={manifest}
+            variant={choiceVariant}
+            onBack={onBack}
+          />
         )}
         {step === "auth" && (
           <ProviderAuthStep
@@ -365,7 +351,7 @@ export function ProviderPicker({
             authStart={authStart}
             startError={authStartError}
             onCredentialsReady={handleCredentialsReady}
-            onCancel={cancelToChoice}
+            onBack={cancelToChoice}
           />
         )}
         {step === "key" && (
@@ -373,7 +359,7 @@ export function ProviderPicker({
             initialKey={key}
             onNext={handleKeyNext}
             logo={stepLogo}
-            onCancel={cancelToChoice}
+            onBack={cancelToChoice}
             title={keyCopy.title}
             subtitle={keyCopy.subtitle}
             placeholder={keyCopy.placeholder}
@@ -392,6 +378,8 @@ export function ProviderPicker({
               setModel(m);
               if (provider === "openrouter") {
                 onDone({ kind: "openrouter", key, model: m });
+              } else if (defaultsOnly && !catalogIsLive(provider, manifest)) {
+                finishWithModel(m);
               } else {
                 setStep("context");
               }
@@ -400,9 +388,8 @@ export function ProviderPicker({
             claudeLiveModels={
               provider === "claude" ? claudeLiveModels : undefined
             }
-            allowCustom={provider === "openrouter"}
             logo={stepLogo}
-            onCancel={cancelToChoice}
+            onBack={backFromModel}
           />
         )}
         {step === "context" &&
@@ -428,7 +415,7 @@ export function ProviderPicker({
                 initial={initial}
                 onSubmit={handleContextSubmit}
                 logo={stepLogo}
-                onCancel={cancelToChoice}
+                onBack={() => setStep("model")}
               />
             );
           })()}
