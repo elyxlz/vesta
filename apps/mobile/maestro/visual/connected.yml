@@ -45,19 +45,17 @@ tags:
     env:
       SCREENSHOT: agent-dashboard-empty.png
 
-- tapOn: "Agent settings"
+# Enter via deep link: the tap path can open the Android sheet scrolled to its
+# first Compose switch (a product quirk tracked as issue #2105), and the deep
+# link lands at the top on both platforms.
+- openLink:
+    link: "vesta-dev://agent/aria/settings"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
 - extendedWaitUntil:
     visible: "Close agent settings"
     timeout: 30000
-# On Android the sheet can open scrolled to the first Compose switch (tracked
-# as a product bug); scroll back to the top so the capture starts at the card.
-- scrollUntilVisible:
-    element:
-      text: "Natural chat pacing"
-    direction: UP
-    timeout: 30000
-    speed: 40
-    visibilityPercentage: 100
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings
