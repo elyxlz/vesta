@@ -30,6 +30,7 @@ import {
   loadManifest,
   nativeInputFingerprint,
   pngSize,
+  publishRunStatus,
   run,
   scenarioOnPlatform,
   serveCatalog,
@@ -758,10 +759,14 @@ async function publishGallery(manifest, device, reportAvailable) {
 }
 
 async function capture(options) {
+  const startedAt = new Date().toISOString();
+  const phase = (message) =>
+    publishRunStatus("capturing", { message, startedAt });
   await assertHarnessBoundary();
   const manifest = await loadManifest("android");
   const tools = await requireCaptureTools();
   await mkdir(androidVisualDirectory, { recursive: true });
+  await phase("Preparing the Android emulator");
   const serial = await prepareEmulator(tools, options);
   const avdName = options.device
     ? await avdNameOf(tools, serial)
@@ -769,12 +774,21 @@ async function capture(options) {
   console.log(`\nUsing Android emulator ${serial} (${avdName}).`);
   await normalizeEmulator(tools, serial);
   try {
+    await phase(
+      options.skipBuild
+        ? "Checking the installed Android visual app"
+        : "Building and installing the Android visual app",
+    );
     if (options.skipBuild) {
       await requireInstalledApp(tools, serial, manifest.appId);
     } else {
       await buildAndInstall(tools, serial, manifest.appId, options);
     }
+    await phase(
+      `Running ${manifest.flows.length} flows on the Android emulator`,
+    );
     await runMaestro(manifest, tools, serial);
+    await phase("Publishing the Android catalog");
     const catalog = await publishGallery(
       manifest,
       {
@@ -792,6 +806,15 @@ async function capture(options) {
         catalog.scenarios.length - captured
       } scenarios are iOS only).`,
     );
+    await publishRunStatus("ready", {
+      message: `Captured ${captured} Android screenshots`,
+    });
+  } catch (error) {
+    await publishRunStatus("error", {
+      message: "Android capture failed",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
     await restoreEmulator(tools, serial);
   }
