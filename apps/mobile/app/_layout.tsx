@@ -166,26 +166,6 @@ function SessionNavigation() {
               headerBackButtonDisplayMode: "minimal",
             }}
           >
-            <Stack.Screen
-              name="privacy"
-              options={
-                IS_ANDROID
-                  ? {
-                      headerShown: false,
-                      animation: "none",
-                      gestureEnabled: false,
-                      contentStyle: { backgroundColor: colors.background },
-                    }
-                  : {
-                      headerShown: false,
-                      presentation: "formSheet",
-                      sheetAllowedDetents: "fitToContents",
-                      sheetGrabberVisible: false,
-                      gestureEnabled: false,
-                      contentStyle: { backgroundColor: colors.card },
-                    }
-              }
-            />
             <Stack.Protected guard={status !== "connected"}>
               <Stack.Screen
                 name="connect"
@@ -329,6 +309,29 @@ function SessionNavigation() {
                 options={{ headerShown: false }}
               />
             </Stack.Protected>
+            {/* Declared after both groups: a screen listed before them becomes the router's
+                fallback base route whenever the guarded initial route is unavailable, and a base
+                screen renders inline instead of presenting as the privacy gate's sheet. */}
+            <Stack.Screen
+              name="privacy"
+              options={
+                IS_ANDROID
+                  ? {
+                      headerShown: false,
+                      animation: "none",
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.background },
+                    }
+                  : {
+                      headerShown: false,
+                      presentation: "formSheet",
+                      sheetAllowedDetents: "fitToContents",
+                      sheetGrabberVisible: false,
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.card },
+                    }
+              }
+            />
           </Stack>
           <GatewayConnectionBanner
             visible={
