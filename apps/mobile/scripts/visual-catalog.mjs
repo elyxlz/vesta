@@ -334,16 +334,19 @@ export function run(command, argumentsList, options = {}) {
     const child = spawn(plan.command, plan.argumentsList, {
       cwd: options.cwd ?? mobileRoot,
       env: { ...process.env, ...options.env },
-      stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+      stdio:
+        options.capture || options.tee ? ["ignore", "pipe", "pipe"] : "inherit",
     });
     let stdout = "";
     let stderr = "";
-    if (options.capture) {
+    if (options.capture || options.tee) {
       child.stdout.on("data", (chunk) => {
         stdout += chunk;
+        if (options.tee) process.stdout.write(chunk);
       });
       child.stderr.on("data", (chunk) => {
         stderr += chunk;
+        if (options.tee) process.stderr.write(chunk);
       });
     }
     child.on("error", reject);
@@ -352,14 +355,48 @@ export function run(command, argumentsList, options = {}) {
         resolve({ code, signal, stdout, stderr });
         return;
       }
-      const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
-      reject(
-        new Error(
-          `${command} exited with ${code ?? signal}.${detail ? `\n${detail}` : ""}`,
-        ),
+      const detail = options.capture
+        ? [stdout.trim(), stderr.trim()].filter(Boolean).join("\n")
+        : "";
+      const failure = new Error(
+        `${command} exited with ${code ?? signal}.${detail ? `\n${detail}` : ""}`,
       );
+      failure.stdout = stdout;
+      failure.stderr = stderr;
+      reject(failure);
     });
   });
+}
+
+// Maestro prints one result line per flow; fold them into pass/fail lists so a failed run's
+// status names the failing flows instead of a bare exit code.
+export function maestroFlowSummary(output) {
+  const passed = [];
+  const failed = [];
+  const resultLine =
+    /\[(Passed|Failed)\]\s+(.+?)\s+\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\)(?:\s+\((.+)\))?\s*$/;
+  for (const line of output.split("\n")) {
+    const match = resultLine.exec(line);
+    if (!match) continue;
+    if (match[1] === "Passed") passed.push(match[2]);
+    else failed.push({ name: match[2], reason: match[3] ?? "" });
+  }
+  return { passed, failed };
+}
+
+export function flowFailureError(error) {
+  const summary = maestroFlowSummary(
+    `${error.stdout ?? ""}\n${error.stderr ?? ""}`,
+  );
+  if (summary.failed.length === 0) return error;
+  const names = summary.failed
+    .map((flow) => (flow.reason ? `${flow.name} (${flow.reason})` : flow.name))
+    .join("; ");
+  return new Error(
+    `${summary.failed.length} of ${
+      summary.passed.length + summary.failed.length
+    } flows failed: ${names}`,
+  );
 }
 
 export async function exists(target) {
@@ -1138,13 +1175,14 @@ async function runMaestro(manifest, simulators, tools) {
         `--output=${path.join(maestroDirectory, "report.html")}`,
         "--test-suite-name=Vesta visual catalog",
       ],
-      { cwd: mobileRoot, env: tools.environment },
+      { cwd: mobileRoot, env: tools.environment, tee: true },
     );
     await cycle.completion;
   } catch (error) {
-    bridge.fail(error);
+    const failure = flowFailureError(error);
+    bridge.fail(failure);
     await cycle.completion.catch(() => {});
-    throw error;
+    throw failure;
   } finally {
     await bridge.close();
   }

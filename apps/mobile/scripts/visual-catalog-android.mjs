@@ -25,6 +25,7 @@ import {
   atomicWriteFile,
   exists,
   filesBelow,
+  flowFailureError,
   gentleSpawnPlan,
   gitMetadata,
   loadManifest,
@@ -616,21 +617,25 @@ async function runMaestro(manifest, tools, serial) {
   await mkdir(maestroDirectory, { recursive: true });
 
   const flowPaths = manifest.flows.map((flow) => path.resolve(mobileRoot, flow));
-  await run(
-    tools.maestro,
-    [
-      `--device=${serial}`,
-      "test",
-      ...flowPaths,
-      "-e",
-      `APP_ID=${manifest.appId}`,
-      `--test-output-dir=${maestroDirectory}`,
-      "--format=HTML",
-      `--output=${path.join(maestroDirectory, "report.html")}`,
-      "--test-suite-name=Vesta visual catalog (Android)",
-    ],
-    { cwd: captureScreenshotsDirectory, env: tools.environment },
-  );
+  try {
+    await run(
+      tools.maestro,
+      [
+        `--device=${serial}`,
+        "test",
+        ...flowPaths,
+        "-e",
+        `APP_ID=${manifest.appId}`,
+        `--test-output-dir=${maestroDirectory}`,
+        "--format=HTML",
+        `--output=${path.join(maestroDirectory, "report.html")}`,
+        "--test-suite-name=Vesta visual catalog (Android)",
+      ],
+      { cwd: captureScreenshotsDirectory, env: tools.environment, tee: true },
+    );
+  } catch (error) {
+    throw flowFailureError(error);
+  }
 
   // Maestro's suite mode writes each takeScreenshot artifact into its flow's
   // takeScreenshot/ directory under the test output; stage them by name.
