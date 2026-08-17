@@ -1,5 +1,6 @@
 """Per-agent LLM-provider auth and subscription credentials."""
 
+import asyncio
 import dataclasses as dc
 import enum
 import json
@@ -485,7 +486,10 @@ async def _claude_usage() -> Usage:
         "Content-Type": "application/json",
         "User-Agent": _USAGE_USER_AGENT,
     }
-    data = await _fetch_usage_json(f"{ANTHROPIC_API_URL}/api/oauth/usage", headers=headers)
+    data, account = await asyncio.gather(
+        _fetch_usage_json(f"{ANTHROPIC_API_URL}/api/oauth/usage", headers=headers),
+        _claude_account(headers),
+    )
     meters = []
     for key, label in _CLAUDE_USAGE_METERS:
         bucket_raw = data[key] if key in data else None
@@ -508,7 +512,6 @@ async def _claude_usage() -> Usage:
         used = used_credits / 100 if used_credits is not None else None
         limit = monthly_limit / 100 if monthly_limit is not None else None
         usage_credits = UsageCredits(used=used, limit=limit)
-    account = await _claude_account(headers)
     return Usage(meters=meters, credits=usage_credits, account=account)
 
 

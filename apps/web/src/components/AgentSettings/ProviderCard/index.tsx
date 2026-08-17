@@ -312,7 +312,7 @@ function UsageSection({
 
   return (
     <div className="flex flex-col gap-4">
-      {!loading && !error && account && <AccountSection account={account} />}
+      {account && <AccountSection account={account} />}
       <div className="flex flex-col gap-2.5">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-muted-foreground">
