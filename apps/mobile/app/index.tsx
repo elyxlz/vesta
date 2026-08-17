@@ -480,6 +480,9 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
       <Stack.Screen
         options={{
           headerLargeTitle: false,
+          // Android centers the title in the space left between unequal side
+          // controls; center on the screen instead, matching iOS.
+          headerTitleAlign: "center",
           headerTransparent: true,
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,

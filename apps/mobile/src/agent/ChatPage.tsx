@@ -232,7 +232,7 @@ export default function ChatPage() {
               { paddingBottom: Math.max(insets.bottom, 8) },
             ]}
           >
-            {isAwayFromLatest ? (
+            {isAwayFromLatest && rows.length > 0 ? (
               <View pointerEvents="box-none" style={styles.scrollToBottomSlot}>
                 <ScrollToBottomButton onPress={scrollToLatest} />
               </View>
