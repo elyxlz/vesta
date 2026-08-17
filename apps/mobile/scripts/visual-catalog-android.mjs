@@ -25,6 +25,7 @@ import {
   atomicWriteFile,
   exists,
   filesBelow,
+  gentleSpawnPlan,
   gitMetadata,
   loadManifest,
   nativeInputFingerprint,
@@ -32,6 +33,7 @@ import {
   run,
   scenarioOnPlatform,
   serveCatalog,
+  setGentleMode,
   writeUnifiedIndex,
 } from "./visual-catalog.mjs";
 
@@ -76,6 +78,8 @@ Options:
   --show-emulator     Boot the emulator with a visible window
   --skip-build        Reuse the installed visual app without building
   --clean-native      Regenerate the cached native Android project
+  --gentle            Run build, emulator, and Maestro at utility QoS:
+                      slower, but the machine stays responsive
   --no-serve          Capture without starting the gallery server
   --no-open           Do not open the gallery in a browser
   --port <number>     Gallery port (default: ${DEFAULT_GALLERY_PORT})
@@ -96,6 +100,7 @@ export function parseArguments(values) {
     showEmulator: false,
     skipBuild: false,
     cleanNative: false,
+    gentle: false,
     serve: true,
     open: true,
     port: DEFAULT_GALLERY_PORT,
@@ -117,6 +122,10 @@ export function parseArguments(values) {
     }
     if (argument === "--clean-native") {
       options.cleanNative = true;
+      continue;
+    }
+    if (argument === "--gentle") {
+      options.gentle = true;
       continue;
     }
     if (argument === "--no-serve") {
@@ -282,7 +291,13 @@ async function bootEmulator(tools, options) {
     ...(options.showEmulator ? [] : ["-no-window"]),
   ];
   console.log(`\n› ${tools.emulator} ${emulatorArguments.join(" ")}`);
-  const child = spawn(tools.emulator, emulatorArguments, {
+  const plan = gentleSpawnPlan(
+    tools.emulator,
+    emulatorArguments,
+    options.gentle,
+    process.platform,
+  );
+  const child = spawn(plan.command, plan.argumentsList, {
     detached: true,
     stdio: "ignore",
   });
@@ -788,6 +803,7 @@ async function capture(options) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
+  setGentleMode(options.gentle);
   if (options.command === "serve") {
     await serveCatalog(options.port, options.open);
     return;

@@ -73,6 +73,23 @@ const expoRouterEntryPath = path.resolve(
   "../node_modules/expo-router/entry.js",
 );
 const shardCount = 2;
+// Gentle mode trades wall time for machine responsiveness: one simulator shard instead of two,
+// and every child process (build, bundler, Maestro, emulator) runs at utility QoS so the capture
+// never competes with foreground work. One-shot commands only; watch mode keeps both shards.
+let gentleMode = false;
+export function setGentleMode(enabled) {
+  gentleMode = enabled;
+}
+export function activeShardCount() {
+  return gentleMode ? 1 : shardCount;
+}
+export function gentleSpawnPlan(command, argumentsList, gentle, platform) {
+  if (!gentle || platform !== "darwin") return { command, argumentsList };
+  return {
+    command: "taskpolicy",
+    argumentsList: ["-c", "utility", command, ...argumentsList],
+  };
+}
 let visualCatalogStatus = {
   state: "ready",
   message: "Screenshots are up to date",
@@ -121,6 +138,8 @@ Options:
   --show-simulator         Open Simulator.app while capturing
   --skip-build             Skip even the fast JavaScript rebundle
   --clean-native           Regenerate the cached native iOS project
+  --gentle                 One simulator shard at utility QoS: slower, but the
+                           machine stays responsive (capture only)
   --no-serve               Capture without starting the gallery server
   --no-open                Do not open the gallery in a browser
   --port <number>          Gallery port (default: 4173)
@@ -140,6 +159,7 @@ function parseArguments(values) {
     showSimulator: false,
     skipBuild: false,
     cleanNative: false,
+    gentle: false,
     serve: true,
     open: true,
     port: 4173,
@@ -161,6 +181,10 @@ function parseArguments(values) {
     }
     if (argument === "--clean-native") {
       options.cleanNative = true;
+      continue;
+    }
+    if (argument === "--gentle") {
+      options.gentle = true;
       continue;
     }
     if (argument === "--no-serve") {
@@ -194,6 +218,9 @@ function parseArguments(values) {
   if (options.skipBuild && options.cleanNative) {
     throw new Error("--skip-build and --clean-native cannot be used together.");
   }
+  if (options.gentle && command === "watch") {
+    throw new Error("--gentle only applies to one-shot capture commands.");
+  }
   return options;
 }
 
@@ -202,8 +229,14 @@ export function run(command, argumentsList, options = {}) {
     .map((value) => (value.includes(" ") ? JSON.stringify(value) : value))
     .join(" ");
   if (!options.quiet) console.log(`\n› ${shown}`);
+  const plan = gentleSpawnPlan(
+    command,
+    argumentsList,
+    gentleMode,
+    process.platform,
+  );
   return new Promise((resolve, reject) => {
-    const child = spawn(command, argumentsList, {
+    const child = spawn(plan.command, plan.argumentsList, {
       cwd: options.cwd ?? mobileRoot,
       env: { ...process.env, ...options.env },
       stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
@@ -475,7 +508,7 @@ async function prepareSimulators(requested, showSimulator) {
   if (!template) throw new Error("No available iPhone simulator was found.");
   const simulators = [];
 
-  for (let index = 1; index <= shardCount; index += 1) {
+  for (let index = 1; index <= activeShardCount(); index += 1) {
     const name =
       `Vesta Visual ${index} — ${template.name} (${template.runtimeName})`;
     const namedDevices = devices.filter((device) => device.name === name);
@@ -3233,6 +3266,7 @@ async function watchCatalog(options) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
+  setGentleMode(options.gentle);
   if (options.command === "serve") {
     await serveCatalog(options.port, options.open);
     return;
