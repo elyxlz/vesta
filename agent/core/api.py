@@ -3,7 +3,7 @@
 Routes:
   - WS   /ws                   bidirectional event bus
   - GET  /history              paginated event history (cursor optional), or full-text search with ?q=
-  - GET  /usage                normalized, provider-agnostic plan usage
+  - GET  /usage                normalized, provider-agnostic plan usage plus the signed-in account
   - GET  /status               operational readiness: {authed, setup_complete, boot_complete} (vestad polls this)
   - GET  /config               prefs + notification_rules (personality, timezone, seed_context, operational)
   - PUT  /config               update prefs and/or notification_rules (provider is set via /provider)
@@ -203,7 +203,8 @@ async def _history_handler(request: web.Request) -> web.Response:
 
 
 async def _usage_handler(request: web.Request) -> web.Response:
-    """Report normalized, provider-agnostic plan usage for the agent's active provider."""
+    """Report normalized, provider-agnostic plan usage plus the signed-in account for the active
+    provider."""
     config = request.app["config"]
     try:
         usage = await get_usage(config)

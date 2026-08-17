@@ -282,9 +282,20 @@ export interface UsageCredits {
   limit: number | null;
 }
 
+/// The account behind the active provider (best-effort). Providers with no identity endpoint
+/// report null, and any field the provider does not expose stays null.
+export interface Account {
+  name: string | null;
+  email: string | null;
+  plan: string | null;
+  organization: string | null;
+  created_at: string | null;
+}
+
 export interface Usage {
   meters: UsageMeter[];
   credits: UsageCredits | null;
+  account: Account | null;
 }
 
 export async function fetchUsage(name: string): Promise<Usage> {

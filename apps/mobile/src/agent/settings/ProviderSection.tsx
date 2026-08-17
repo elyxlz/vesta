@@ -31,8 +31,43 @@ import { Field, FormRow, FormSection } from "@/components/ui/Form";
 import { ErrorState, LoadingState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
+import type { Account } from "@/api/types";
 
 type KeyProviderKind = Extract<ProviderSelection, { key: string }>["kind"];
+
+function formatMemberSince(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+  });
+}
+
+function AccountSection({ account }: { account: Account }) {
+  const rows = [
+    { label: "Name", value: account.name },
+    { label: "Email", value: account.email },
+    { label: "Plan", value: account.plan },
+    { label: "Organization", value: account.organization },
+    {
+      label: "Member since",
+      value: account.created_at ? formatMemberSince(account.created_at) : null,
+    },
+  ].filter(
+    (row): row is { label: string; value: string } => row.value !== null,
+  );
+
+  if (rows.length === 0) return null;
+
+  return (
+    <FormSection title="Account">
+      {rows.map((row) => (
+        <FormRow key={row.label} label={row.label} value={row.value} />
+      ))}
+    </FormSection>
+  );
+}
 
 function isKeyProviderKind(kind: ProviderKind): kind is KeyProviderKind {
   return kind === "openrouter" || kind === "zai" || kind === "kimi";
@@ -293,6 +328,10 @@ export function ProviderSection() {
           }
         />
       </FormSection>
+
+      {usage.data?.account ? (
+        <AccountSection account={usage.data.account} />
+      ) : null}
 
       {usage.data ? (
         <FormSection title="Usage">
