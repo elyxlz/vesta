@@ -249,7 +249,7 @@ export function NewAgent() {
   // over a long run before it slides under the transparent navbar; mask-t
   // positions run bottom-to-top, hence the 100% arithmetic.
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col font-serif">
       <div
         className="flex-1 overflow-y-auto overscroll-contain mask-t-from-[calc(100%-var(--navbar-h)-72px)] mask-t-to-[calc(100%-var(--navbar-h))]"
         style={
