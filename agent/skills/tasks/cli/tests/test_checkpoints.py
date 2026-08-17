@@ -78,6 +78,16 @@ def test_lead_checkpoint_fires_once_and_advances_the_marker(tmp_config: Config, 
     assert notifs[0]["task_id"] == task["id"]
 
 
+def test_creating_a_task_fires_no_rung_that_lands_at_creation(tmp_config: Config, tmp_path: Path):
+    """--in-days 1 puts the due-1d rung at the creation instant; created_at is second-truncated,
+    so without the marker that rung reads as already passed and fires on the first tick."""
+    notif_dir = tmp_path / "notifs"
+    notif_dir.mkdir()
+    commands.add_task(tmp_config, subject="fresh", due=commands.DueSpec(due_in_days=1))
+
+    assert commands.fire_due_checkpoints(tmp_config, notif_dir, now=datetime.now(UTC) + timedelta(seconds=2)) == 0
+
+
 def test_at_due_fires_the_decision_menu(tmp_config: Config, tmp_path: Path):
     notif_dir = tmp_path / "notifs"
     notif_dir.mkdir()
