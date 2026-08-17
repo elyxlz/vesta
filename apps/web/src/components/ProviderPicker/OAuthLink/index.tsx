@@ -29,7 +29,7 @@ export function OAuthLink({ url }: { url: string }) {
   };
 
   return (
-    <div className="mt-2 flex w-full min-w-0 max-w-full items-center justify-center gap-1.5 overflow-hidden">
+    <div className="flex w-full min-w-0 max-w-full items-center justify-center gap-1.5 overflow-hidden">
       <a
         href={url}
         target="_blank"
