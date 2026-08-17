@@ -28,6 +28,8 @@ import {
   filesBelow,
   flowFailureError,
   gentleSpawnPlan,
+  jsBundleCurrent,
+  recordJsBundle,
   loadManifest,
   nativeInputFingerprint,
   publishRunStatus,
@@ -708,8 +710,17 @@ async function capture(options) {
     );
     if (options.skipBuild) {
       await requireInstalledApp(tools, serial, manifest.appId);
+    } else if (
+      !options.cleanNative &&
+      (await jsBundleCurrent(variant)) &&
+      (await requireInstalledApp(tools, serial, manifest.appId)
+        .then(() => true)
+        .catch(() => false))
+    ) {
+      console.log("\nJS inputs unchanged; reusing the installed app.");
     } else {
       await buildAndInstall(tools, serial, manifest.appId, options);
+      await recordJsBundle(variant);
     }
     await phase(
       `Running ${manifest.flows.length} flows on the Android emulator`,
