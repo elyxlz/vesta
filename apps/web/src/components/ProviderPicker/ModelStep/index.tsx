@@ -262,7 +262,9 @@ function ModelCardList({
     <div
       ref={fade.ref}
       style={fade.style}
-      className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto pr-1 -mr-1"
+      // p-1/-m-1 keeps the layout width but gives the selected row's ring room
+      // inside the padding box, so the overflow clip never cuts it.
+      className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto p-1 -m-1"
     >
       {models.map((m) => (
         <ModelCard
