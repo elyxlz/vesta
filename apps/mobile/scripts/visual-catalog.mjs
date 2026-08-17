@@ -164,45 +164,22 @@ class CaptureSupersededError extends Error {
   }
 }
 
-// Before any catalog has published, the gallery renders provisionally from the scenario
-// manifest: the same page, every card in its "waiting" state, filled live by /live.json as each
-// screenshot lands (the epoch generatedAt makes every live entry count as fresh).
-async function provisionalCatalog() {
+// One platform's provisional side: every manifest scenario in its "waiting" state, filled live
+// by /live.json as screenshots land (the epoch generatedAt makes every live entry count as fresh).
+// It stands in for a platform that has not published yet, so the unified gallery always renders
+// both slots, and for both platforms before any publish at all.
+async function provisionalSideCatalog() {
   let manifest;
   try {
     manifest = await loadManifest();
   } catch {
     return null;
   }
-  const waitingCapture = (platform) => ({
-    platform,
-    captured: false,
-    image: "",
-    size: null,
-    missingLabel: "Waiting for capture",
-    expected: true,
-  });
-  const device = {
-    name: "Live capture preview",
-    runtime: "no published catalog yet",
-  };
-  const epoch = new Date(0).toISOString();
-  const platformSlot = (label, reportHref) => ({
-    label,
-    device,
-    generatedAt: epoch,
-    reportAvailable: false,
-    reportHref,
-  });
   return {
-    generatedAt: epoch,
+    generatedAt: new Date(0).toISOString(),
     reportAvailable: false,
-    device,
+    device: { name: "Live capture preview", runtime: "no published catalog yet" },
     git: await gitMetadata(),
-    platforms: [
-      platformSlot("iOS", "maestro/report.html"),
-      platformSlot("Android", "android/maestro/report.html"),
-    ],
     scenarios: manifest.scenarios.map((scenario) => ({
       id: scenario.id,
       title: scenario.title,
@@ -213,9 +190,13 @@ async function provisionalCatalog() {
       image: "",
       size: null,
       missingLabel: "Waiting for capture",
-      captures: [waitingCapture("iOS"), waitingCapture("Android")],
     })),
   };
+}
+
+async function provisionalCatalog() {
+  const side = await provisionalSideCatalog();
+  return side ? unifiedCatalog(side, side) : null;
 }
 
 function usage() {
@@ -2162,12 +2143,14 @@ export async function liveCaptureEntries(
 }
 
 export async function composedCatalog(overrides = {}) {
-  const ios =
+  let ios =
     "ios" in overrides ? overrides.ios : await storedCatalog(visualDirectory);
-  const android =
+  let android =
     "android" in overrides
       ? overrides.android
       : await storedCatalog(androidVisualDirectory);
+  if (ios && !android) android = await provisionalSideCatalog();
+  else if (android && !ios) ios = await provisionalSideCatalog();
   return unifiedCatalog(ios, android);
 }
 
