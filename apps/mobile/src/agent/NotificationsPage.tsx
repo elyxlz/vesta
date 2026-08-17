@@ -14,6 +14,7 @@ import {
   type NotificationView,
 } from "@vesta/core";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
+import { useBottomGap } from "@/components/layout/use-bottom-inset";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -137,6 +138,7 @@ export default function NotificationsPage({
   const { name, socket } = useAgent();
   const { colors } = usePreferences();
   const insets = useSafeAreaInsets();
+  const bottomGap = useBottomGap();
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["notifications", name],
     queryFn: () => getNotificationHistory(api, name),
@@ -203,14 +205,14 @@ export default function NotificationsPage({
                 styles.listContent,
                 {
                   paddingTop: insets.top + navHeaderHeight,
-                  paddingBottom: insets.bottom,
+                  paddingBottom: bottomGap,
                 },
                 displayItems.length > 0 ? styles.bottomAligned : null,
               ]
             : [
                 styles.listContent,
                 {
-                  paddingTop: insets.bottom,
+                  paddingTop: bottomGap,
                   paddingBottom: insets.top + 104,
                 },
               ]

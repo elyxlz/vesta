@@ -6,6 +6,7 @@ import { serviceKeyPathUrl } from "@vesta/core";
 import { useServiceKey } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
 import { DashboardWebView, type DashboardWebViewHandle } from "@/components/DashboardWebView";
+import { useBottomGap } from "@/components/layout/use-bottom-inset";
 import { EmptyState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -19,6 +20,7 @@ interface DashboardMessage {
 export default function DashboardPage() {
   const webView = useRef<DashboardWebViewHandle>(null);
   const insets = useSafeAreaInsets();
+  const bottomGap = useBottomGap();
   const { name, agent } = useAgent();
   const { connection, api } = useSession();
   const { colors, dark } = usePreferences();
@@ -119,7 +121,7 @@ export default function DashboardPage() {
         styles.screen,
         {
           paddingTop: insets.top + navHeaderHeight,
-          paddingBottom: insets.bottom,
+          paddingBottom: bottomGap,
         },
       ]}
     >
