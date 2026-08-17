@@ -9,7 +9,18 @@
 # stuck filesystem can never hang the dream that runs this probe.
 OWN_USAGE_RED_MB=20000
 HOST_DISK_NOTE_PERCENT=90
-DU_TIMEOUT_SECS=120
+# Overridable for the same reason as the pressure paths below: the timeout branch is unreachable in
+# a test otherwise, since it needs a walk that genuinely exceeds two minutes to happen on cue.
+DU_TIMEOUT_SECS="${DU_TIMEOUT_SECS:-120}"
+# Above this much IO stall (cgroup io.pressure `some avg60`, the percent of the last minute with at
+# least one task blocked on disk) a slow filesystem walk is the host starving us, not a local fault.
+# A quiet window sits near 1 and a saturated one near 50, so 20 separates them with room either way.
+IO_STALL_PERCENT=20
+# Overridable so both branches can be exercised. Without this the only reading available is the real
+# one, so which branch fires depends on how busy the host happens to be and the other branch can
+# never be proven at all. That is how a checker gets shipped half-tested.
+IO_PRESSURE_FILE="${IO_PRESSURE_FILE:-/sys/fs/cgroup/io.pressure}"
+CPU_PRESSURE_FILE="${CPU_PRESSURE_FILE:-/sys/fs/cgroup/cpu.pressure}"
 
 red=0
 ok() { printf 'OK  %s\n' "$1"; }
@@ -40,7 +51,25 @@ du_lines=$(timeout "$DU_TIMEOUT_SECS" du -sm "$HOME" /tmp 2>/dev/null)
 du_status=$?
 mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
 if [ "$du_status" -eq 124 ]; then
-    bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
+    # A timed-out walk has two causes that call for opposite responses, and one file read separates
+    # them rather than guessing. High IO stall with no CPU stall means the walk was starved by the
+    # host's disk, which is external and no amount of cleanup here moves it. Low IO stall with a
+    # walk that still could not finish in ${DU_TIMEOUT_SECS}s means something is wrong locally.
+    io_stall=$(awk '/^some/ {for (i = 1; i <= NF; i++) if ($i ~ /^avg60=/) {sub("avg60=", "", $i); print int($i); exit}}' \
+        "$IO_PRESSURE_FILE" 2>/dev/null)
+    cpu_stall=$(awk '/^some/ {for (i = 1; i <= NF; i++) if ($i ~ /^avg60=/) {sub("avg60=", "", $i); print int($i); exit}}' \
+        "$CPU_PRESSURE_FILE" 2>/dev/null)
+    if [ -n "$io_stall" ] && [ "$io_stall" -ge "$IO_STALL_PERCENT" ]; then
+        # Deliberately not a RED: it recurs whenever the host is busy, and a nightly RED nobody can
+        # act on is how a real RED stops being read. A loud line carrying its evidence instead.
+        ok "sizing \$HOME and /tmp exceeded ${DU_TIMEOUT_SECS}s, so the footprint is UNMEASURED, and the cause is external: io.pressure some avg60=${io_stall}% with cpu.pressure ${cpu_stall:-?}%, so the walk was starved by the host's disk rather than by anything here. Nothing to clean up on this line."
+    elif [ -z "$io_stall" ]; then
+        # An unreadable reading is not a low one, and "IO is NOT stalled" here would assert the one
+        # thing that could not be measured. Still a RED, but one that names which case it is.
+        bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s and I could NOT read $IO_PRESSURE_FILE, so I cannot tell a starved walk from a pathological tree; investigate tonight"
+    else
+        bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s while IO was NOT stalled (io.pressure some avg60=${io_stall}%), so this is local: the tree is enormous or a filesystem is stuck; investigate tonight"
+    fi
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
     bad "this agent is using ${mine}MB across \$HOME and /tmp: clean up tonight (workspace cleanup)"
 elif [ "${usage:-0}" -ge "$HOST_DISK_NOTE_PERCENT" ]; then
