@@ -66,6 +66,13 @@ def test_daily_reminder_bare_time_with_tz_keeps_the_pinned_zone_in_the_label(tmp
     assert result["schedule"] == "daily at 21:30 Europe/Rome"
 
 
+def test_daily_reminder_bare_time_keeps_its_own_offset(tmp_config: Config, monkeypatch):
+    """A bare time carrying an offset is that wall clock in that offset, not in the agent's zone."""
+    monkeypatch.setenv("TZ", "UTC")
+    result = commands.remind_set(tmp_config, commands.ReminderSpec(message="wind down", recurring="daily", scheduled_datetime="21:30+02:00"))
+    assert result["schedule"] == "daily at 19:30"
+
+
 def test_weekly_reminder_still_requires_a_date(tmp_config: Config):
     """A weekly schedule takes its weekday from the date, so a bare time carries too little."""
     with pytest.raises(ValueError):

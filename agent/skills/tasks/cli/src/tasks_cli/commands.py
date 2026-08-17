@@ -203,10 +203,13 @@ def add_task(
     task_id = str(uuid.uuid4())[:8]
     due_date = _compute_due_date(due)
 
+    # The ladder starts when its date is set (see update_task): the marker is the instant after the
+    # due date was computed, so a rung landing at creation (--in-days 1 has its due-1d rung right
+    # here) is not read as already passed.
     with closing(db.get_db(config.data_dir)) as conn:
         conn.execute(
-            "INSERT INTO tasks (id, subject, priority, due_date) VALUES (?, ?, ?, ?)",
-            (task_id, subject, priority, due_date),
+            "INSERT INTO tasks (id, subject, priority, due_date, checkpoint_fired_through) VALUES (?, ?, ?, ?, ?)",
+            (task_id, subject, priority, due_date, _now_utc().isoformat()),
         )
         conn.commit()
 

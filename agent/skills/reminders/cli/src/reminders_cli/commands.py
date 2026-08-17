@@ -238,7 +238,9 @@ def _parse_local_dt(datetime_str: str, timezone_str: str | None, *, allow_bare_t
         except ValueError:
             pass
         else:
-            return datetime.combine(datetime.now(local_tz).date(), bare, tzinfo=local_tz)
+            # combine keeps the bare time's own offset when it carries one, so it lands below like any aware datetime.
+            parsed = datetime.combine(datetime.now(local_tz).date(), bare)
+            return parsed.astimezone(local_tz) if parsed.tzinfo is not None else parsed.replace(tzinfo=local_tz)
 
     parsed = datetime.fromisoformat(datetime_str)
     if parsed.tzinfo is not None:
