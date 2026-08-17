@@ -120,6 +120,12 @@ const NotificationRow = memo(function NotificationRow({
   );
 });
 
+// Module-scoped so the separator keeps one component identity across page renders;
+// an inline arrow would remount every separator on each render.
+function NotificationSeparator() {
+  return <View style={styles.separator} />;
+}
+
 interface NotificationsPageProps {
   presentation?: "pager" | "standalone";
 }
@@ -188,7 +194,7 @@ export default function NotificationsPage({
         inverted={!standalone}
         keyExtractor={notificationRowKey}
         renderItem={renderNotification}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        ItemSeparatorComponent={NotificationSeparator}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={

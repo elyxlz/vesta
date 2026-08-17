@@ -35,9 +35,12 @@ describe("showsAdvancedSections", () => {
 });
 
 describe("sectionAvailability", () => {
-  it("serves every section on iOS", () => {
+  it("serves every section on iOS, carrying the section", () => {
     for (const section of AGENT_SETTINGS_SECTIONS) {
-      expect(sectionAvailability(section.key, "ios")).toBe("available");
+      expect(sectionAvailability(section.key, "ios")).toEqual({
+        state: "available",
+        section,
+      });
     }
   });
 
@@ -50,11 +53,11 @@ describe("sectionAvailability", () => {
     ["host-access", "hidden"],
     ["backups", "hidden"],
   ])("on Android answers %s -> %s", (key, availability) => {
-    expect(sectionAvailability(key, "android")).toBe(availability);
+    expect(sectionAvailability(key, "android").state).toBe(availability);
   });
 
   it("reports an unknown key on both platforms", () => {
-    expect(sectionAvailability("time-travel", "ios")).toBe("unknown");
-    expect(sectionAvailability("time-travel", "android")).toBe("unknown");
+    expect(sectionAvailability("time-travel", "ios").state).toBe("unknown");
+    expect(sectionAvailability("time-travel", "android").state).toBe("unknown");
   });
 });

@@ -5,31 +5,23 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import {
-  GlassView,
-  isGlassEffectAPIAvailable,
-  type GlassStyle,
-} from "expo-glass-effect";
+import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 export function GlassSurface({
   children,
   style,
-  isInteractive = false,
-  glassEffectStyle = "regular",
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
-  isInteractive?: boolean;
-  glassEffectStyle?: GlassStyle;
 }) {
   const { colors, dark } = usePreferences();
   if (isGlassEffectAPIAvailable()) {
     return (
       <GlassView
-        glassEffectStyle={glassEffectStyle}
+        glassEffectStyle="regular"
         colorScheme={dark ? "dark" : "light"}
-        isInteractive={isInteractive}
+        isInteractive
         style={style}
       >
         {children}

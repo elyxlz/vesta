@@ -15,6 +15,10 @@ import { buildController } from "./build-controller";
 import { deviceIdentity } from "./device-identity";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
+import {
+  latchedGatewayBehind,
+  type GatewayBehindLatch,
+} from "./gateway-update-gate-model";
 import { createAppStateForegroundSignal } from "./foreground-signal";
 import {
   useOptionalControllerReplica,
@@ -67,19 +71,13 @@ function ConnectedController({ children }: { children: ReactNode }) {
     };
   }, []);
   const syncState = useOptionalControllerSyncState(controller);
-  // Behind-ness is latched across the reconnect gap: every socket close flips syncState to
-  // "reconnecting" and only an accepted hello reaches "open", so the update sheet neither pops
-  // out on a transient blip nor flashes home mid-update. Derived during render (the previous
-  // render's latch is the carried state); a gateway switch starts unlatched.
-  const [behindLatch, setBehindLatch] = useState({
+  // Derived during render: the previous render's latch is the carried state, and the model
+  // (latchedGatewayBehind) owns the decision.
+  const [behindLatch, setBehindLatch] = useState<GatewayBehindLatch>({
     key: connectionKey,
     behind: false,
   });
-  const gatewayBehind =
-    syncState === "gateway_behind" ||
-    (behindLatch.key === connectionKey &&
-      syncState !== "open" &&
-      behindLatch.behind);
+  const gatewayBehind = latchedGatewayBehind(behindLatch, connectionKey, syncState);
   if (behindLatch.key !== connectionKey || behindLatch.behind !== gatewayBehind) {
     setBehindLatch({ key: connectionKey, behind: gatewayBehind });
   }

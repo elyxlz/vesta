@@ -13,7 +13,7 @@ export interface LiveModel {
 
 // The two Claude aliases offered ahead of the live catalog (owned by @vesta/core), so the
 // picker still shows something useful when the live fetch fails or has not resolved yet.
-export const CLAUDE_ALIAS_OPTIONS: ModelOption[] = CLAUDE_ALIASES.map(
+const CLAUDE_ALIAS_OPTIONS: ModelOption[] = CLAUDE_ALIASES.map(
   (alias) => ({
     label: alias.label,
     value: alias.slug,

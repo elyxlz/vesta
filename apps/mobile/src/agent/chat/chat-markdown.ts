@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import type { AppColors } from "@/theme/colors";
+import { darkColors, lightColors, type AppColors } from "@/theme/colors";
 import { fontNames } from "@/theme/typography";
 
 function buildMarkdownStyles(colors: AppColors) {
@@ -171,31 +171,34 @@ function buildMarkdownStyles(colors: AppColors) {
   };
 }
 
-export type ChatMarkdownStyles = ReturnType<typeof buildMarkdownStyles>;
+type ChatMarkdownStyles = ReturnType<typeof buildMarkdownStyles>;
 
 export interface ChatMarkdownStyleSet {
   base: ChatMarkdownStyles;
   user: ChatMarkdownStyles;
 }
 
-const styleSetsByPalette = new Map<AppColors, ChatMarkdownStyleSet>();
-
-// One frozen style tree per palette (dark and light), so every chat row
-// shares the same objects instead of rebuilding the tree per render.
-export function chatMarkdownStyleSet(colors: AppColors): ChatMarkdownStyleSet {
-  const cached = styleSetsByPalette.get(colors);
-  if (cached) return cached;
-  const base = Object.freeze(buildMarkdownStyles(colors));
-  const user = Object.freeze({
-    ...base,
-    body: { ...base.body, color: colors.accentText },
-    link: {
-      ...base.link,
-      color: colors.accentText,
-      textDecorationColor: colors.accentText,
+function buildStyleSet(colors: AppColors): ChatMarkdownStyleSet {
+  const base = buildMarkdownStyles(colors);
+  return {
+    base,
+    user: {
+      ...base,
+      body: { ...base.body, color: colors.accentText },
+      link: {
+        ...base.link,
+        color: colors.accentText,
+        textDecorationColor: colors.accentText,
+      },
     },
-  });
-  const styleSet = Object.freeze({ base, user });
-  styleSetsByPalette.set(colors, styleSet);
-  return styleSet;
+  };
+}
+
+// One style tree per palette, built once, so every chat row shares the same
+// objects instead of rebuilding the tree per render.
+const DARK_STYLE_SET = buildStyleSet(darkColors);
+const LIGHT_STYLE_SET = buildStyleSet(lightColors);
+
+export function chatMarkdownStyleSet(colors: AppColors): ChatMarkdownStyleSet {
+  return colors === darkColors ? DARK_STYLE_SET : LIGHT_STYLE_SET;
 }

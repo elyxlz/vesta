@@ -14,16 +14,11 @@ export interface ComposerHold {
   replyTarget: ReplyTarget | null;
 }
 
-export interface LogsHold {
-  lines: LogLine[];
-  nextId: number;
-}
-
 export interface AgentHolds {
   chat: KeyedHoldStore<ChatState>;
   composer: KeyedHoldStore<ComposerHold>;
   page: KeyedHoldStore<AgentPageKey>;
-  logs: KeyedHoldStore<LogsHold>;
+  logs: KeyedHoldStore<LogLine[]>;
 }
 
 export function createAgentHolds(): AgentHolds {
@@ -31,11 +26,11 @@ export function createAgentHolds(): AgentHolds {
     chat: createKeyedHoldStore<ChatState>(),
     composer: createKeyedHoldStore<ComposerHold>(),
     page: createKeyedHoldStore<AgentPageKey>(),
-    logs: createKeyedHoldStore<LogsHold>(),
+    logs: createKeyedHoldStore<LogLine[]>(),
   };
 }
 
-const AgentHoldsContext = createContext<AgentHolds | null>(null);
+export const AgentHoldsContext = createContext<AgentHolds | null>(null);
 
 export function AgentHoldsProvider({ children }: { children: ReactNode }) {
   const [holds] = useState(createAgentHolds);

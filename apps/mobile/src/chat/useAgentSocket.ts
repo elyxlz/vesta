@@ -248,6 +248,7 @@ export function useAgentSocket(
 
     let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
     let seedRetryDelay = SEED_RETRY_MS;
+    let socketOpen = false;
     const clearSeedRetry = () => {
       if (seedRetryTimer) clearTimeout(seedRetryTimer);
       seedRetryTimer = null;
@@ -259,7 +260,9 @@ export function useAgentSocket(
         })
         .catch((error: unknown) => {
           console.warn("chat: history load failed", error);
-          if (cancelled) return;
+          // Retries are scoped to a healthy open socket; a fetch that fails after the
+          // socket closed must not keep polling history, the next open reseeds instead.
+          if (cancelled || !socketOpen) return;
           seedRetryTimer = setTimeout(() => {
             seedRetryTimer = null;
             runSeed();
@@ -285,8 +288,9 @@ export function useAgentSocket(
         onEvent: addLiveEvent,
         onClosedBeforeOpen: dropChatKey,
         onStateChange: (socketState) => {
+          socketOpen = socketState === "open";
           clearSeedRetry();
-          if (socketState === "open") {
+          if (socketOpen) {
             resetTyping();
             seedRetryDelay = SEED_RETRY_MS;
             runSeed();

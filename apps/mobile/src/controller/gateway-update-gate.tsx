@@ -3,7 +3,7 @@ import { useRouter, useSegments, type Href } from "expo-router";
 import { BlockingSheetGateView } from "@/components/blocking-sheet-gate-view";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useGatewayOperation } from "./gateway-operation-context";
-import { gatewayUpdateGateNavigationAction } from "./gateway-update-gate-model";
+import { gatewayUpdateGateDecision } from "./gateway-update-gate-model";
 
 const GATEWAY_UPDATE_ROUTE = "/gateway-update" as Href;
 const ROOT_ROUTE = "/" as Href;
@@ -37,9 +37,7 @@ export function GatewayUpdateGate({
   const privacyBlocked = usePrivacyBlocked();
   const { operation } = useGatewayOperation();
   const operationRunning = operation !== null;
-  // The backdrop yields while an operation runs, so home's progress page is what the user sees.
-  const gatewayUpdateBlocked = blocked && !privacyBlocked && !operationRunning;
-  const action = gatewayUpdateGateNavigationAction({
+  const { action, backdropBlocked } = gatewayUpdateGateDecision({
     blocked,
     operationRunning,
     privacyBlocked,
@@ -81,7 +79,7 @@ export function GatewayUpdateGate({
 
   return (
     <BlockingSheetGateView
-      blocked={gatewayUpdateBlocked}
+      blocked={backdropBlocked}
       presented={gatewayUpdateRouteActive}
       estimatedSheetHeight={ESTIMATED_GATEWAY_UPDATE_SHEET_HEIGHT}
     >

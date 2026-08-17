@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { agentIsConnectable } from "@vesta/core";
 import type { ApiClient } from "@/api/client";
 import { useAgent } from "@/agent/AgentProvider";
 import { openAgentLogStream } from "@/agent/agent-log-stream";
@@ -33,17 +32,15 @@ interface LogsPageProps {
 export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
   const { api, connection } = useSession();
   const { reachable } = useRoster();
-  const { name, agent } = useAgent();
+  const { name } = useAgent();
   const holds = useAgentHolds();
   const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
-  // Stream only from an agent that can serve logs; a stopped or restarting one would just bounce
-  // the retry loop. The held buffer keeps the last session's lines on screen either way.
-  const live =
-    reachable && agent !== null && agentIsConnectable(agent.status);
-
-  return live ? (
+  // Stream whenever the gateway is reachable: vestad serves a stopped agent's log-file tail and
+  // ends the stream cleanly, so a dead agent's last lines stay diagnosable. The held buffer keeps
+  // the last session's lines on screen while the gateway itself is unreachable.
+  return reachable ? (
     <LiveLogs
-      key={name}
+      key={holdKey}
       api={api}
       name={name}
       holds={holds}
@@ -52,7 +49,7 @@ export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
     />
   ) : (
     <LogList
-      logs={holds.logs.read(holdKey)?.lines ?? []}
+      logs={holds.logs.read(holdKey) ?? []}
       logError=""
       presentation={presentation}
     />
@@ -72,13 +69,11 @@ function LiveLogs({
   holdKey: string;
   presentation: NonNullable<LogsPageProps["presentation"]>;
 }) {
-  // Seed from the hold so a revisit resumes the accumulated buffer, and open as a reconnect
-  // (no tail replay) whenever held lines are already on screen.
-  const [logs, setLogs] = useState<LogLine[]>(
-    () => holds.logs.read(holdKey)?.lines ?? [],
-  );
+  // Each mount starts empty and replays the tail, so lines logged while unmounted are refetched
+  // rather than silently missing; the hold only backs the not-reachable fallback view.
+  const [logs, setLogs] = useState<LogLine[]>([]);
   const logsRef = useRef(logs);
-  const nextLogId = useRef(holds.logs.read(holdKey)?.nextId ?? 0);
+  const nextLogId = useRef(0);
   const [logError, setLogError] = useState("");
 
   useEffect(
@@ -93,15 +88,11 @@ function LiveLogs({
           const next = addLatestLogLine(logsRef.current, { id, text });
           logsRef.current = next;
           setLogs(next);
-          holds.logs.persist(holdKey, {
-            lines: next,
-            nextId: nextLogId.current,
-          });
+          holds.logs.persist(holdKey, next);
         },
         onError: setLogError,
         retryDelayMs: LOG_RETRY_DELAY_MS,
         maxRetryDelayMs: LOG_RETRY_MAX_DELAY_MS,
-        resume: logsRef.current.length > 0,
       }),
     [api, name, holds, holdKey],
   );
