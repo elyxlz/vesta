@@ -44,6 +44,7 @@ import {
 } from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
 import { AgentHoldsProvider } from "@/holds/AgentHoldsProvider";
+import { AndroidBottomInset } from "@/components/layout/android-bottom-inset";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
@@ -392,32 +393,34 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <KeyboardProvider>
-        <QueryClientProvider client={queryClient}>
-          <PreferencesProvider>
-            <ToastProvider>
-              <PrivacyProvider>
-                <SessionProvider>
-                  <PrivacyGate>
-                    <RosterHoldProvider>
-                      <AgentHoldsProvider>
-                        <ControllerProvider>
-                          <RosterProvider>
-                            <UserNotifications />
-                            <PresenceReporter />
-                            <PushCoordinator />
-                            <SessionNavigation />
-                          </RosterProvider>
-                        </ControllerProvider>
-                      </AgentHoldsProvider>
-                    </RosterHoldProvider>
-                  </PrivacyGate>
-                </SessionProvider>
-              </PrivacyProvider>
-            </ToastProvider>
-          </PreferencesProvider>
-        </QueryClientProvider>
-      </KeyboardProvider>
+      <AndroidBottomInset>
+        <KeyboardProvider>
+          <QueryClientProvider client={queryClient}>
+            <PreferencesProvider>
+              <ToastProvider>
+                <PrivacyProvider>
+                  <SessionProvider>
+                    <PrivacyGate>
+                      <RosterHoldProvider>
+                        <AgentHoldsProvider>
+                          <ControllerProvider>
+                            <RosterProvider>
+                              <UserNotifications />
+                              <PresenceReporter />
+                              <PushCoordinator />
+                              <SessionNavigation />
+                            </RosterProvider>
+                          </ControllerProvider>
+                        </AgentHoldsProvider>
+                      </RosterHoldProvider>
+                    </PrivacyGate>
+                  </SessionProvider>
+                </PrivacyProvider>
+              </ToastProvider>
+            </PreferencesProvider>
+          </QueryClientProvider>
+        </KeyboardProvider>
+      </AndroidBottomInset>
     </GestureHandlerRootView>
   );
 }
