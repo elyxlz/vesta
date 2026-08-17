@@ -85,7 +85,7 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/settings"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: "Close agent settings"
     timeout: 10000
 - scrollUntilVisible:
     element:
@@ -108,7 +108,7 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/settings"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: "Close agent settings"
     timeout: 10000
 - scrollUntilVisible:
     element:
