@@ -164,83 +164,33 @@ class CaptureSupersededError extends Error {
   }
 }
 
-// The page a fresh worktree's gallery shows before any catalog has published: live run status
-// from /status.json, each screenshot from /live.json the moment its file lands, and a reload
-// into the real gallery once a catalog exists.
-export function pendingCatalogHtml() {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Vesta visual catalog</title>
-<style>
-  body { font: 16px/1.5 system-ui, sans-serif; background: #faf7f0; color: #2b2a26; margin: 0; }
-  main { max-width: 72rem; margin: 0 auto; padding: 2rem; }
-  header { text-align: center; margin-bottom: 1.5rem; }
-  h1 { font-size: 1.3rem; margin: 0 0 0.4rem; }
-  #message { font-weight: 600; margin: 0; }
-  #detail { color: #6b675e; font-size: 0.9rem; margin: 0; }
-  #shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; }
-  figure { margin: 0; }
-  figure img { width: 100%; border-radius: 10px; border: 1px solid #e4dfd3; display: block; }
-  figcaption { font-size: 0.75rem; color: #6b675e; text-align: center;
-               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-</style>
-</head>
-<body>
-<main>
-  <header>
-    <h1>No catalog published yet</h1>
-    <p id="message">Waiting for a capture run…</p>
-    <p id="detail"></p>
-  </header>
-  <div id="shots"></div>
-</main>
-<script>
-  const shots = document.querySelector("#shots");
-  function upsertShot(name, entry) {
-    const id = "shot-" + name;
-    let figure = document.getElementById(id);
-    if (!figure) {
-      figure = document.createElement("figure");
-      figure.id = id;
-      const image = document.createElement("img");
-      image.alt = name;
-      const caption = document.createElement("figcaption");
-      caption.textContent = name.replace(/\\.png$/, "");
-      figure.append(image, caption);
-      shots.append(figure);
-    }
-    const image = figure.querySelector("img");
-    const src = entry.src + "?v=" + entry.mtime;
-    if (image.dataset.liveStamp !== String(entry.mtime)) {
-      image.src = src;
-      image.dataset.liveStamp = String(entry.mtime);
-    }
+// Before any catalog has published, the gallery renders provisionally from the scenario
+// manifest: the same page, every card in its "waiting" state, filled live by /live.json as each
+// screenshot lands (the epoch generatedAt makes every live entry count as fresh).
+async function provisionalCatalog() {
+  let manifest;
+  try {
+    manifest = await loadManifest();
+  } catch {
+    return null;
   }
-  window.setInterval(async () => {
-    if (document.visibilityState === "hidden") return;
-    try {
-      const status = await (await fetch("status.json", { cache: "no-store" })).json();
-      document.querySelector("#message").textContent = status.message || "Waiting for a capture run…";
-      document.querySelector("#detail").textContent = status.detail || "";
-      const live = await (await fetch("live.json", { cache: "no-store" })).json();
-      for (const platform of ["ios", "android"]) {
-        for (const [name, entry] of Object.entries(live[platform] ?? {})) {
-          upsertShot(platform + "-" + name, entry);
-        }
-      }
-      const catalog = await fetch("catalog.json", { cache: "no-store" });
-      const android = await fetch("android/catalog.json", { cache: "no-store" });
-      if (catalog.ok || android.ok) window.location.reload();
-    } catch {
-      // The local server may be between restarts.
-    }
-  }, 1000);
-</script>
-</body>
-</html>`;
+  return {
+    generatedAt: new Date(0).toISOString(),
+    reportAvailable: false,
+    device: { name: "Live capture preview", runtime: "no published catalog yet" },
+    git: await gitMetadata(),
+    scenarios: manifest.scenarios.map((scenario) => ({
+      id: scenario.id,
+      title: scenario.title,
+      description: scenario.description,
+      group: scenario.group,
+      screenshot: scenario.screenshot,
+      captured: false,
+      image: "",
+      size: null,
+      missingLabel: "Waiting for capture",
+    })),
+  };
 }
 
 function usage() {
@@ -2413,11 +2363,16 @@ export async function serveCatalog(port, shouldOpen) {
         });
         response.end(galleryHtml(catalog));
       } catch {
+        const provisional = await provisionalCatalog();
+        if (!provisional) {
+          response.writeHead(404).end("No visual catalog exists yet.");
+          return;
+        }
         response.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        response.end(pendingCatalogHtml());
+        response.end(galleryHtml(provisional));
       }
       return;
     }
