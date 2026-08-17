@@ -201,9 +201,11 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
             response = {"error": f"unknown command: {command}"}
 
         writer.write(json.dumps(response).encode())
-        await writer.drain()
-        # The user notification (toast + push) is best-effort and can block up to its
-        # timeout, so it runs only after the client holds its durable ack, never before.
+        # The notification runs after the ack so it never delays it, but a durable reply must
+        # still notify even if the caller died before reading the ack, so a broken pipe on the
+        # ack must not skip it.
+        with contextlib.suppress(OSError):
+            await writer.drain()
         if notify_message is not None:
             await asyncio.to_thread(_send_user_notification, notify_message)
     except (json.JSONDecodeError, KeyError, TimeoutError, OSError) as exc:

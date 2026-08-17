@@ -248,6 +248,34 @@ def test_send_acks_the_client_before_the_user_notification_finishes(tmp_path, mo
     state.service.store.close()
 
 
+def test_send_notifies_even_when_the_ack_write_fails(tmp_path, monkeypatch):
+    # A durable reply must still toast/push even if the caller vanished before reading the ack,
+    # so a broken pipe on the ack write must not skip the notification.
+    state = _daemon_state(tmp_path)
+    fired = threading.Event()
+    monkeypatch.setattr(daemon, "_send_user_notification", lambda text: fired.set())
+
+    async def failing_drain(self) -> None:
+        raise BrokenPipeError("client gone before reading the ack")
+
+    monkeypatch.setattr(asyncio.StreamWriter, "drain", failing_drain)
+
+    async def run() -> bool:
+        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
+        async with server:
+            _, writer = await asyncio.open_unix_connection(str(state.sock_path))
+            writer.write(json.dumps({"command": "send", "message": "hey"}).encode())
+            writer.write_eof()
+            fired_ok = await asyncio.to_thread(fired.wait, 5.0)
+            writer.close()
+            return fired_ok
+
+    assert asyncio.run(run()) is True
+    events, _ = state.service.store.page()
+    assert [(e["type"], e["text"]) for e in events] == [("chat", "hey")]
+    state.service.store.close()
+
+
 def test_send_command_rejects_empty_message(tmp_path):
     state = _daemon_state(tmp_path)
     queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
