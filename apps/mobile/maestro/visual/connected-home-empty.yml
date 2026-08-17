@@ -64,8 +64,9 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=loading"
+# Android appends the busy state to the content description ("Opening Vesta, busy").
 - extendedWaitUntil:
-    visible: "Opening Vesta"
+    visible: "Opening Vesta.*"
     timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000

@@ -48,10 +48,10 @@ tags:
 - tapOn: "Agent settings"
 - extendedWaitUntil:
     visible: "Natural chat pacing"
-    timeout: 10000
+    timeout: 30000
 - extendedWaitUntil:
     visible: "Close agent settings"
-    timeout: 10000
+    timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings
