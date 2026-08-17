@@ -31,10 +31,10 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
 3. **`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` both set?** Run
    `whatsapp connect --source doubletick --opener '<text>'`. See the
    [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) guide.
-4. **Otherwise, ask the user** which they want, then run that one command:
-   - Double Tick credentials in hand:
-     `whatsapp connect --source doubletick --opener '<text>'`. A provisioning
-     service that hands the agent a ready headless account. See the
+4. **Otherwise, ask the user** which they want:
+   - **Double Tick**, a provisioning service that hands the agent a ready headless
+     account: ask whether they have Double Tick credentials. When they do, get the
+     API URL and key from them, then follow the
      [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) guide.
    - Their own account: `whatsapp connect --source self-managed`. The user
      supplies a dedicated WhatsApp account on their own SIM (a second account on
