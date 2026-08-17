@@ -1924,11 +1924,17 @@ export function galleryHtml(view) {
         }
       });
     }
-    function updateScanRows(payload) {
+    function updateScanRows(payload, status) {
       document.querySelectorAll(".scan-row").forEach((row) => {
         const platform = row.dataset.platform;
         const run = (payload.runs ?? {})[platform];
-        const running = Boolean(run && run.running);
+        const statusRun = Boolean(
+          status &&
+            status.state === "capturing" &&
+            status.platform === platform &&
+            status.startedAt,
+        );
+        const running = Boolean(run && run.running) || statusRun;
         const button = row.querySelector(".scan-button");
         button.disabled = running;
         button.textContent = running ? "Scanning" : "Scan";
@@ -1936,9 +1942,17 @@ export function galleryHtml(view) {
         const slots = document.querySelectorAll(
           '.shot[data-platform="' + platform + '"]:not([data-state="excluded"])',
         );
+        // While a scan runs, count this run's replacements from zero; idle, count files on disk.
+        const startedMs = running
+          ? Date.parse(
+              (run && run.startedAt) || (status && status.startedAt) || "",
+            )
+          : 0;
         let have = 0;
         slots.forEach((slot) => {
-          if (entries[slot.dataset.screenshot]) have += 1;
+          const entry = entries[slot.dataset.screenshot];
+          if (!entry) return;
+          if (!running || entry.mtime >= startedMs) have += 1;
         });
         row.querySelector(".scan-progress").textContent =
           have + "/" + slots.length;
@@ -1992,7 +2006,7 @@ export function galleryHtml(view) {
         if (shotsResponse.ok) {
           const payload = await shotsResponse.json();
           applyShots(payload);
-          updateScanRows(payload);
+          updateScanRows(payload, lastStatus);
           markRefreshing(lastStatus, payload);
         }
       } catch {
