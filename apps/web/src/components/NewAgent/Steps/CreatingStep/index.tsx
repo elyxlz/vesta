@@ -5,16 +5,19 @@ import { fade, instant } from "@/lib/motion";
 import { buildPhaseMessage } from "@/api/agents";
 
 // One body for the whole birth: the same mounted orb works (busy), dims on a
-// failure (off), and wakes up (alive). The action button and the error line
-// live in the shell, not here.
+// failure (off), and wakes up (alive). On a failure the orb is joined by a
+// heading and the reason, so the screen explains itself; the retry button lives
+// in the shell.
 export function CreatingStep({
   agentName,
   done,
   failed,
+  error,
 }: {
   agentName: string;
   done: boolean;
   failed: boolean;
+  error?: string | null;
 }) {
   const { agents } = useGateway();
   const reduced = useReducedMotion() ?? false;
@@ -34,7 +37,14 @@ export function CreatingStep({
           <h2 className="text-base font-semibold leading-tight">
             {agentName} is ready
           </h2>
-        ) : failed ? null : (
+        ) : failed ? (
+          <>
+            <h2 className="text-base font-semibold leading-tight">
+              couldn&apos;t create {agentName}
+            </h2>
+            {error && <p className="text-xs text-destructive">{error}</p>}
+          </>
+        ) : (
           <>
             <AnimatePresence mode="wait">
               <motion.p

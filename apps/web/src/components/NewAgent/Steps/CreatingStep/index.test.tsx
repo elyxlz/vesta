@@ -55,4 +55,20 @@ describe("CreatingStep", () => {
     renderCreating("luna");
     expect(screen.getByText("setting things up...")).toBeTruthy();
   });
+
+  it("shows a heading and the reason when the create failed", () => {
+    roster = [];
+    render(
+      <MemoryRouter>
+        <CreatingStep
+          agentName="luna"
+          done={false}
+          failed
+          error="gateway ran out of disk"
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("couldn't create luna")).toBeTruthy();
+    expect(screen.getByText("gateway ran out of disk")).toBeTruthy();
+  });
 });

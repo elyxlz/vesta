@@ -142,8 +142,9 @@ export function NewAgent() {
         setStep("done");
       } catch (e) {
         // Transient failure: stay here with everything collected intact; the
-        // retry button clears the error, which re-enters this pipeline.
-        if (!isCancelled()) reportError(errorMessage(e, "creation failed"));
+        // retry button clears the error, which re-enters this pipeline. The
+        // reason shows in the failed body, so it needs no toast.
+        if (!isCancelled()) setCreateError(errorMessage(e, "creation failed"));
       }
     };
     void run();
@@ -217,6 +218,7 @@ export function NewAgent() {
           agentName={agentName}
           done={step === "done"}
           failed={createError !== null}
+          error={createError}
         />
       );
     return (
