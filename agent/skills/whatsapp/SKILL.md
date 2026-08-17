@@ -25,6 +25,26 @@ Always start with `whatsapp status`:
 
 Never recover by manually re-pairing or restarting the daemon.
 
+## Connected but messaging is dead (stale whatsmeow)
+
+`status` showing `linked:true, connected:true` is a liveness claim, not proof that
+messaging works. A self-managed (whatsmeow) link can reach a state where status looks
+healthy yet messaging is dead in both directions: no inbound arrives, and an outbound
+`send` hangs and never delivers. The usual cause is an outdated whatsmeow after WhatsApp
+changed its protocol server-side; the launcher warns when a newer whatsmeow is available.
+The fix is a deliberate dependency bump, not a re-link:
+
+```bash
+whatsapp update-deps
+whatsapp daemon restart
+```
+
+This usually reconnects with the existing credentials: usually no re-pair, no QR, and it
+burns no pairing attempt, though a bump can occasionally force a re-link. It is the one
+sanctioned reason to restart the daemon; do it at a safe time, not
+mid-critical-session. Every other messaging or session failure is still handled without
+re-pairing or bouncing the daemon (see the linking rule and error 463).
+
 ## Holding an account offline
 
 When the provider flags, suspends, or reviews a number, that account must make no
