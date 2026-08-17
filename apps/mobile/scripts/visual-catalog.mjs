@@ -90,12 +90,14 @@ export function gentleSpawnPlan(command, argumentsList, gentle, platform) {
     argumentsList: ["-c", "utility", command, ...argumentsList],
   };
 }
+// The initial state carries the epoch, not boot time: a restarted server must not outrank the
+// last phase an in-flight capture wrote to the run-status file.
 let visualCatalogStatus = {
   state: "ready",
   message: "Screenshots are up to date",
   detail: "",
   startedAt: null,
-  updatedAt: new Date().toISOString(),
+  updatedAt: new Date(0).toISOString(),
 };
 
 const mimeTypes = new Map([
@@ -163,7 +165,8 @@ class CaptureSupersededError extends Error {
 }
 
 // The page a fresh worktree's gallery shows before any catalog has published: live run status
-// from /status.json, reloading into the real gallery the moment a catalog lands.
+// from /status.json, each screenshot from /live.json the moment its file lands, and a reload
+// into the real gallery once a catalog exists.
 export function pendingCatalogHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -172,26 +175,62 @@ export function pendingCatalogHtml() {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Vesta visual catalog</title>
 <style>
-  body { font: 16px/1.5 system-ui, sans-serif; background: #faf7f0; color: #2b2a26;
-         display: grid; place-items: center; min-height: 100vh; margin: 0; }
-  main { text-align: center; max-width: 30rem; padding: 2rem; }
-  h1 { font-size: 1.3rem; }
-  #message { font-weight: 600; }
-  #detail { color: #6b675e; font-size: 0.9rem; }
+  body { font: 16px/1.5 system-ui, sans-serif; background: #faf7f0; color: #2b2a26; margin: 0; }
+  main { max-width: 72rem; margin: 0 auto; padding: 2rem; }
+  header { text-align: center; margin-bottom: 1.5rem; }
+  h1 { font-size: 1.3rem; margin: 0 0 0.4rem; }
+  #message { font-weight: 600; margin: 0; }
+  #detail { color: #6b675e; font-size: 0.9rem; margin: 0; }
+  #shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; }
+  figure { margin: 0; }
+  figure img { width: 100%; border-radius: 10px; border: 1px solid #e4dfd3; display: block; }
+  figcaption { font-size: 0.75rem; color: #6b675e; text-align: center;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
 <main>
-  <h1>No catalog published yet</h1>
-  <p id="message">Waiting for a capture run…</p>
-  <p id="detail"></p>
+  <header>
+    <h1>No catalog published yet</h1>
+    <p id="message">Waiting for a capture run…</p>
+    <p id="detail"></p>
+  </header>
+  <div id="shots"></div>
 </main>
 <script>
+  const shots = document.querySelector("#shots");
+  function upsertShot(name, entry) {
+    const id = "shot-" + name;
+    let figure = document.getElementById(id);
+    if (!figure) {
+      figure = document.createElement("figure");
+      figure.id = id;
+      const image = document.createElement("img");
+      image.alt = name;
+      const caption = document.createElement("figcaption");
+      caption.textContent = name.replace(/\\.png$/, "");
+      figure.append(image, caption);
+      shots.append(figure);
+    }
+    const image = figure.querySelector("img");
+    const src = entry.src + "?v=" + entry.mtime;
+    if (image.dataset.liveStamp !== String(entry.mtime)) {
+      image.src = src;
+      image.dataset.liveStamp = String(entry.mtime);
+    }
+  }
   window.setInterval(async () => {
+    if (document.visibilityState === "hidden") return;
     try {
       const status = await (await fetch("status.json", { cache: "no-store" })).json();
       document.querySelector("#message").textContent = status.message || "Waiting for a capture run…";
       document.querySelector("#detail").textContent = status.detail || "";
+      const live = await (await fetch("live.json", { cache: "no-store" })).json();
+      for (const platform of ["ios", "android"]) {
+        for (const [name, entry] of Object.entries(live[platform] ?? {})) {
+          upsertShot(platform + "-" + name, entry);
+        }
+      }
       const catalog = await fetch("catalog.json", { cache: "no-store" });
       const android = await fetch("android/catalog.json", { cache: "no-store" });
       if (catalog.ok || android.ok) window.location.reload();
