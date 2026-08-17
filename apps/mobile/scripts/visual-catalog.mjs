@@ -481,10 +481,8 @@ export async function loadManifest(platform = "ios") {
   if (typeof manifest.appId !== "string" || !manifest.appId) {
     throw new Error("The visual manifest must define appId.");
   }
-  if (!Array.isArray(manifest.flows) || manifest.flows.length < shardCount) {
-    throw new Error(
-      `The visual manifest must define at least ${shardCount} flows so every shard has work.`,
-    );
+  if (!Array.isArray(manifest.flows) || manifest.flows.length === 0) {
+    throw new Error("The visual manifest must define at least one flow.");
   }
   if (!Array.isArray(manifest.scenarios) || manifest.scenarios.length === 0) {
     throw new Error("The visual manifest must define at least one scenario.");
