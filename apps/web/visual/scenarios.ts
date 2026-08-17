@@ -218,7 +218,9 @@ export const SCENARIOS: Scenario[] = [
       await page.getByRole("button", { name: "next" }).click();
     },
     settle: async (page) => {
-      await expect(page.locator('[data-slot="skeleton"]').first()).toBeVisible();
+      await expect(
+        page.locator('[data-slot="skeleton"]').first(),
+      ).toBeVisible();
     },
   },
   {
@@ -263,7 +265,9 @@ export const SCENARIOS: Scenario[] = [
       await fillName(page, AGENT);
       await submitName(page);
       await page.getByText("Z.AI", { exact: true }).click();
-      await page.getByPlaceholder("Z.AI subscription key").fill("visual-zai-key");
+      await page
+        .getByPlaceholder("Z.AI subscription key")
+        .fill("visual-zai-key");
       await page.getByRole("button", { name: "next" }).click();
     },
     settle: async (page) => {

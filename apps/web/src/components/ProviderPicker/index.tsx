@@ -276,7 +276,10 @@ export function ProviderPicker({
   // of walking ContextStep. Context stays editable later in AgentSettings.
   const finishWithModel = (selectedModel: string) => {
     if (provider === null) return;
-    const context = contextForModel(manifest.providers[provider], selectedModel);
+    const context = contextForModel(
+      manifest.providers[provider],
+      selectedModel,
+    );
     const { initial } = context
       ? planContextOptions(context, null)
       : { initial: 0 };
