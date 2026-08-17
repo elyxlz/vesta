@@ -62,6 +62,20 @@ If that list holds a recurring reminder whose message is about updating contacts
 
 Look at the end of `~/agent/skills/tasks/SKILL.md`. If it still has a `### Reminder Patterns` section holding notes you wrote (not just the bare placeholder), move that body under `### Reminder Patterns` at the end of `~/agent/skills/reminders/SKILL.md`, then delete the section from the tasks file. If there is no such section, or only the placeholder, nothing to do.
 
-### 8. Mark this migration applied
+### 8. Repoint your own notes
+
+There is no `tasks remind` command: `tasks` refuses it with a usage error. Any note of yours that still spells it out is an instruction you will follow into that error, so find every one:
+
+```bash
+grep -rn 'tasks remind' ~/agent/MEMORY.md ~/agent/skills --exclude-dir=cli --exclude-dir=.venv
+```
+
+Rewrite each hit in place. `tasks remind "..." <flags>` becomes `reminders create "..." <flags>`; `tasks remind list|snooze|update|delete` becomes `reminders list|snooze|update|delete`. A `--task <id>` flag has no equivalent: drop it and name the task in the message instead. No hits means nothing to do.
+
+### 9. Mark this migration applied
 
 Call `mark_migration_applied` with `name="2026-08-reminders-skill-split"`.
+
+### 10. Restart to load the reminders skill
+
+Activation only lists the skill; the boot entrypoint is what links it into `~/.claude/skills`, so until the next boot the daemon runs but the skill body is not in your skill list. Call `restart_vesta` now. Do it only after step 9, so this migration does not run again on the way back up.
