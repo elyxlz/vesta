@@ -6,6 +6,7 @@ use clap::Parser;
 mod agent_bundle;
 mod agent_code;
 mod agent_embed;
+mod agent_notification;
 mod agent_provider;
 mod agent_proxy;
 mod agent_status;
