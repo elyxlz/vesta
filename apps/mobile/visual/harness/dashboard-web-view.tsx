@@ -1,4 +1,5 @@
-import { forwardRef, type ComponentProps } from "react";
+import { forwardRef, useState, type ComponentProps } from "react";
+import { StyleSheet, View } from "react-native";
 import {
   DashboardWebView as ProductionDashboardWebView,
   type DashboardWebViewHandle,
@@ -7,6 +8,12 @@ import {
 export type { DashboardWebViewHandle } from "../../src/components/DashboardWebView";
 
 type DashboardWebViewProps = ComponentProps<typeof ProductionDashboardWebView>;
+
+// Maestro reads the native accessibility tree, which does not reliably expose
+// text rendered inside a WebView on Android. onLoad is a native RN callback, so
+// this marker is a deterministic "content painted" signal the flows wait on
+// instead of racing the WebView's inner text.
+const DASHBOARD_READY_LABEL = "Dashboard ready";
 
 function dashboardDocument(dark: boolean): string {
   const background = dark ? "#111114" : "#f6f5f2";
@@ -87,17 +94,35 @@ function dashboardDocument(dark: boolean): string {
 export const DashboardWebView = forwardRef<
   DashboardWebViewHandle,
   DashboardWebViewProps
->(function VisualDashboardWebView({ dark, source, ...props }, forwardedRef) {
+>(function VisualDashboardWebView({ dark, source, onLoad, ...props }, forwardedRef) {
   const baseUrl = "uri" in source ? source.uri : "https://home.vesta.run/";
+  const [loaded, setLoaded] = useState(false);
   return (
-    <ProductionDashboardWebView
-      {...props}
-      ref={forwardedRef}
-      dark={dark}
-      source={{
-        html: dashboardDocument(dark),
-        baseUrl,
-      }}
-    />
+    <>
+      <ProductionDashboardWebView
+        {...props}
+        ref={forwardedRef}
+        dark={dark}
+        source={{
+          html: dashboardDocument(dark),
+          baseUrl,
+        }}
+        onLoad={() => {
+          setLoaded(true);
+          onLoad?.();
+        }}
+      />
+      {loaded ? (
+        <View
+          accessible
+          accessibilityLabel={DASHBOARD_READY_LABEL}
+          style={styles.readyMarker}
+        />
+      ) : null}
+    </>
   );
+});
+
+const styles = StyleSheet.create({
+  readyMarker: { position: "absolute", top: 0, left: 0, width: 4, height: 4 },
 });

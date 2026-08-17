@@ -36,8 +36,10 @@ tags:
     start: "85%,50%"
     end: "15%,50%"
     duration: 450
+# The dashboard renders in a WebView whose inner text Android does not expose to
+# the accessibility tree; the harness reveals this native marker on WebView load.
 - extendedWaitUntil:
-    visible: "Today at a glance"
+    visible: "Dashboard ready"
     timeout: 60000
 - waitForAnimationToEnd:
     timeout: 3000
