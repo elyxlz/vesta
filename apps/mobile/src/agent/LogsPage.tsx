@@ -142,6 +142,10 @@ function LogList({
   const snapToTail = useCallback(() => {
     if (!atTail.current) return;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    // A snap to an offset the list is already at emits no scroll event, which
+    // on Android leaves the virtualizer's render window stale (blank rows);
+    // recordInteraction forces the window to recompute either way.
+    listRef.current?.recordInteraction();
   }, []);
 
   return (
@@ -159,6 +163,9 @@ function LogList({
         onScroll={trackTail}
         scrollEventThrottle={64}
         onContentSizeChange={snapToTail}
+        initialNumToRender={50}
+        maxToRenderPerBatch={50}
+        windowSize={41}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={[

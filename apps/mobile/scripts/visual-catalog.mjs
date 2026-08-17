@@ -1597,15 +1597,15 @@ export function galleryHtml(view) {
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 225px), 1fr));
       align-items: start;
-      gap: 18px;
+      gap: 16px;
     }
     body[data-platforms="2"] .grid {
-      grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 410px), 1fr));
     }
     body[data-platforms="3"] .grid {
-      grid-template-columns: repeat(auto-fill, minmax(min(100%, 660px), 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 600px), 1fr));
     }
     .card { min-width: 0; }
     .shots {
