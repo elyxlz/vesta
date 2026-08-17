@@ -12,6 +12,7 @@ import {
   createMaestroFailureParser,
   galleryHtml,
   gentleSpawnPlan,
+  newerRunStatus,
   liveCaptureEntries,
   loadManifest,
   scenarioOnPlatform,
@@ -41,6 +42,40 @@ describe("createInactivityWatchdog", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("newerRunStatus", () => {
+  const now = Date.parse("2026-08-17T10:30:00.000Z");
+  const server = {
+    state: "ready",
+    message: "Screenshots are up to date",
+    updatedAt: "2026-08-17T10:00:00.000Z",
+  };
+
+  it("serves the file status when a capture wrote it more recently", () => {
+    const file = {
+      state: "capturing",
+      message: "Running 7 flows",
+      updatedAt: "2026-08-17T10:20:00.000Z",
+    };
+    expect(newerRunStatus(server, file, now)).toBe(file);
+  });
+
+  it("keeps the server status when the file is older or absent", () => {
+    const file = { state: "ready", updatedAt: "2026-08-17T09:00:00.000Z" };
+    expect(newerRunStatus(server, file, now)).toBe(server);
+    expect(newerRunStatus(server, null, now)).toBe(server);
+  });
+
+  it("ignores a capturing entry a hard-killed run left behind", () => {
+    const file = {
+      state: "capturing",
+      message: "Running 7 flows",
+      updatedAt: "2026-08-17T09:30:00.000Z",
+    };
+    const muchLater = Date.parse("2026-08-17T11:00:00.000Z");
+    expect(newerRunStatus(server, file, muchLater)).toBe(server);
   });
 });
 

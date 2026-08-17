@@ -116,11 +116,92 @@ function setVisualCatalogStatus(state, options = {}) {
   };
 }
 
+// One-shot captures run in a separate process from a gallery server, so their progress crosses
+// over on disk: the capture writes each phase to this file and /status.json serves whichever of
+// the server's own state and the file is newer. A "capturing" file entry a hard-killed run left
+// behind goes stale after the cutoff instead of showing a phantom run forever.
+const runStatusPath = path.join(visualDirectory, "run-status.json");
+const STALE_CAPTURING_MS = 45 * 60 * 1000;
+
+export async function publishRunStatus(state, options = {}) {
+  setVisualCatalogStatus(state, options);
+  await mkdir(visualDirectory, { recursive: true });
+  await atomicWriteFile(
+    runStatusPath,
+    `${JSON.stringify(visualCatalogStatus)}\n`,
+  );
+}
+
+export function newerRunStatus(serverStatus, fileStatus, now) {
+  if (!fileStatus?.updatedAt) return serverStatus;
+  if (
+    fileStatus.state === "capturing" &&
+    now - Date.parse(fileStatus.updatedAt) > STALE_CAPTURING_MS
+  ) {
+    return serverStatus;
+  }
+  return fileStatus.updatedAt > serverStatus.updatedAt
+    ? fileStatus
+    : serverStatus;
+}
+
+async function currentRunStatus() {
+  let fileStatus = null;
+  try {
+    fileStatus = JSON.parse(await readFile(runStatusPath, "utf8"));
+  } catch {
+    fileStatus = null;
+  }
+  return newerRunStatus(visualCatalogStatus, fileStatus, Date.now());
+}
+
 class CaptureSupersededError extends Error {
   constructor(detail = "") {
     super(detail ? `Superseded by ${detail}` : "Superseded by newer edits");
     this.name = "CaptureSupersededError";
   }
+}
+
+// The page a fresh worktree's gallery shows before any catalog has published: live run status
+// from /status.json, reloading into the real gallery the moment a catalog lands.
+export function pendingCatalogHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vesta visual catalog</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; background: #faf7f0; color: #2b2a26;
+         display: grid; place-items: center; min-height: 100vh; margin: 0; }
+  main { text-align: center; max-width: 30rem; padding: 2rem; }
+  h1 { font-size: 1.3rem; }
+  #message { font-weight: 600; }
+  #detail { color: #6b675e; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>No catalog published yet</h1>
+  <p id="message">Waiting for a capture run…</p>
+  <p id="detail"></p>
+</main>
+<script>
+  window.setInterval(async () => {
+    try {
+      const status = await (await fetch("status.json", { cache: "no-store" })).json();
+      document.querySelector("#message").textContent = status.message || "Waiting for a capture run…";
+      document.querySelector("#detail").textContent = status.detail || "";
+      const catalog = await fetch("catalog.json", { cache: "no-store" });
+      const android = await fetch("android/catalog.json", { cache: "no-store" });
+      if (catalog.ok || android.ok) window.location.reload();
+    } catch {
+      // The local server may be between restarts.
+    }
+  }, 1000);
+</script>
+</body>
+</html>`;
 }
 
 function usage() {
@@ -1661,7 +1742,7 @@ export function galleryHtml(catalog) {
     <span class="status-spinner" aria-hidden="true"></span>
     <span class="status-copy">
       <strong class="status-title">Recapturing screenshots</strong>
-      <span class="status-detail">Running both simulator shards…</span>
+      <span class="status-detail">Running the simulator shards…</span>
     </span>
   </div>
   <header>
@@ -1778,7 +1859,7 @@ export function galleryHtml(catalog) {
           ? Math.max(0, Math.round((Date.now() - Date.parse(nextStatus.startedAt)) / 1000))
           : 0;
         statusTitle.textContent = nextStatus.message || "Recapturing screenshots";
-        const context = nextStatus.detail || "Running both simulator shards";
+        const context = nextStatus.detail || "Running the simulator shards";
         statusDetail.textContent = context + " · " + elapsed + "s";
       } else if (state === "error") {
         statusTitle.textContent = nextStatus.message || "Screenshot refresh failed";
@@ -2211,9 +2292,6 @@ function safeStaticPath(url, baseDirectory) {
 export async function serveCatalog(port, shouldOpen) {
   const baseDirectory = visualDirectory;
   await writeUnifiedIndex();
-  if (!(await exists(path.join(baseDirectory, "index.html")))) {
-    throw new Error("No visual catalog exists yet. Run the capture command first.");
-  }
   const idleRun = { running: false, startedAt: null, finishedAt: null, exitCode: null };
   const captureRuns = { ios: { ...idleRun }, android: { ...idleRun } };
   const captureScripts = {
@@ -2259,7 +2337,7 @@ export async function serveCatalog(port, shouldOpen) {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      response.end(`${JSON.stringify(visualCatalogStatus)}\n`);
+      response.end(`${JSON.stringify(await currentRunStatus())}\n`);
       return;
     }
     if (pathname === "/live.json") {
@@ -2296,7 +2374,11 @@ export async function serveCatalog(port, shouldOpen) {
         });
         response.end(galleryHtml(catalog));
       } catch {
-        response.writeHead(404).end("No visual catalog exists yet.");
+        response.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        response.end(pendingCatalogHtml());
       }
       return;
     }
@@ -2365,7 +2447,7 @@ async function prepareCaptureSession(options) {
   };
 }
 
-async function runCaptureIteration(options, session) {
+async function runCaptureIteration(options, session, onPhase = async () => {}) {
   await assertHarnessBoundary();
   const manifest = await loadManifest();
   if (manifest.appId !== session.appId) {
@@ -2373,8 +2455,17 @@ async function runCaptureIteration(options, session) {
       "The visual appId changed. Restart the capture command before continuing.",
     );
   }
+  await onPhase(
+    options.skipBuild
+      ? "Checking the installed visual app"
+      : "Bundling and installing the visual app",
+  );
   await installVisualApp(options, session, manifest);
+  await onPhase(
+    `Running ${manifest.flows.length} flows on ${session.simulators.length} simulator shard(s)`,
+  );
   await runMaestro(manifest, session.simulators, session.tools);
+  await onPhase("Publishing the catalog");
   const catalog = await publishGallery(
     manifest,
     session.simulators,
@@ -2414,11 +2505,27 @@ async function closeCaptureSession(session) {
 }
 
 async function capture(options) {
-  const session = await prepareCaptureSession(options);
+  const startedAt = new Date().toISOString();
+  const phase = (message) =>
+    publishRunStatus("capturing", { message, startedAt });
   try {
-    await runCaptureIteration(options, session);
-  } finally {
-    await closeCaptureSession(session);
+    await phase("Preparing simulators");
+    const session = await prepareCaptureSession(options);
+    let catalog;
+    try {
+      catalog = await runCaptureIteration(options, session, phase);
+    } finally {
+      await closeCaptureSession(session);
+    }
+    await publishRunStatus("ready", {
+      message: `Captured ${catalog.scenarios.length} screenshots`,
+    });
+  } catch (error) {
+    await publishRunStatus("error", {
+      message: "Capture failed",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
 
   if (options.serve) await serveCatalog(options.port, options.open);
@@ -3085,7 +3192,7 @@ async function watchCatalog(options) {
           : rebuild
             ? "Rebuilding and recapturing"
             : "Recapturing screenshots",
-        detail: change || "Running both simulator shards",
+        detail: change || "Running the simulator shards",
         startedAt: new Date(startedAt).toISOString(),
       });
       try {
