@@ -176,3 +176,18 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: gateway-updated.png
+
+# The opposite version failure: this app is below the gateway's supported window.
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSyncState=app_behind"
+- extendedWaitUntil:
+    visible: "This app is too old for the gateway.*"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: app-behind
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: app-behind.png

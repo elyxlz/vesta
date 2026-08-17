@@ -60,3 +60,42 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: home-gateway-disconnected.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=loading"
+- extendedWaitUntil:
+    visible: "Opening Vesta"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-loading
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-loading.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- swipe:
+    start: "85%,50%"
+    end: "15%,50%"
+    duration: 450
+- extendedWaitUntil:
+    visible: "Open nova"
+    timeout: 10000
+- tapOn: "Open nova"
+- extendedWaitUntil:
+    visible: "Start a conversation"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-empty.png

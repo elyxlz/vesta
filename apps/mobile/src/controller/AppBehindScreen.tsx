@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
+import * as SplashScreen from "expo-splash-screen";
 import { EmptyState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
@@ -7,6 +9,11 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 // There is no in-app fix, so it points the user at the store to update the app.
 export function AppBehindScreen() {
   const { colors } = usePreferences();
+  // This screen replaces the navigation tree that would normally hide the boot splash, so it must
+  // hide the splash itself or the user stares at it forever.
+  useEffect(() => {
+    void SplashScreen.hideAsync().catch(() => undefined);
+  }, []);
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <EmptyState

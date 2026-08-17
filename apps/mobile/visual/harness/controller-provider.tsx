@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import * as Linking from "expo-linking";
 import type { GatewayOperation } from "@vesta/core";
+import { AppBehindScreen } from "../../src/controller/AppBehindScreen";
 import { GatewayUpdateGate } from "../../src/controller/gateway-update-gate";
 import { GatewayOperationContext } from "../../src/controller/gateway-operation-context";
 import { ControllerContext } from "../../src/controller/context";
@@ -8,6 +9,7 @@ import { ControllerContext } from "../../src/controller/context";
 const launchUrl = Linking.getLinkingURL();
 const query = launchUrl === null ? {} : Linking.parse(launchUrl).queryParams;
 const needsGatewayUpdate = query?.visualGatewayUpdate === "required";
+const appBehind = query?.visualSyncState === "app_behind";
 
 // The gateway operation /sync would carry, one fixed value per launch. The tree holds at most one
 // operation at a time and no public action moves it from one phase to the next, so each state is
@@ -69,9 +71,13 @@ export function ControllerProvider({ children }: { children: ReactNode }) {
   return (
     <ControllerContext.Provider value={null}>
       <GatewayOperationContext.Provider value={{ operation, updatedTo }}>
-        <GatewayUpdateGate blocked={needsGatewayUpdate}>
-          {children}
-        </GatewayUpdateGate>
+        {appBehind ? (
+          <AppBehindScreen />
+        ) : (
+          <GatewayUpdateGate blocked={needsGatewayUpdate}>
+            {children}
+          </GatewayUpdateGate>
+        )}
       </GatewayOperationContext.Provider>
     </ControllerContext.Provider>
   );
