@@ -1399,23 +1399,24 @@ export function galleryHtml(view) {
   <title>Vesta Mobile Apps QA</title>
   <style>
     :root {
-      color-scheme: dark;
-      --bg: #0c0c0f;
-      --card: #17171c;
-      --border: #2b2b33;
-      --muted: #9898a5;
-      --text: #f4f4f6;
-      --accent: #b8a7ff;
+      color-scheme: light;
+      --bg: #fffdfa;
+      --card: #f4f1ed;
+      --border: #e9e5de;
+      --muted: #3b3732;
+      --faint: #777269;
+      --text: #0c0a08;
+      --accent: #69502e;
+      --gold: #d5b993;
+      --gold-soft: rgba(213, 185, 147, 0.18);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      background:
-        radial-gradient(circle at 50% -30%, #30245e 0, transparent 34rem),
-        var(--bg);
+      background: var(--bg);
       color: var(--text);
-      font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 14px/1.45 Archivo, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     header {
       display: grid;
@@ -1428,9 +1429,11 @@ export function galleryHtml(view) {
     }
     h1 {
       margin: 4px 0 5px;
+      font-family: "Source Serif 4", Georgia, serif;
+      font-weight: 600;
       font-size: clamp(28px, 4vw, 42px);
       line-height: 1;
-      letter-spacing: -.045em;
+      letter-spacing: -.03em;
     }
     .meta {
       display: flex;
@@ -1443,12 +1446,12 @@ export function galleryHtml(view) {
       border: 1px solid var(--border);
       border-radius: 999px;
       padding: 5px 9px;
-      background: #111116cc;
-      color: var(--muted);
+      background: var(--card);
+      color: var(--faint);
       text-decoration: none;
       font-size: 10px;
     }
-    .report:hover { color: var(--text); border-color: #555563; }
+    .report:hover { color: var(--text); border-color: var(--gold); }
     .scan-bar {
       display: flex;
       max-width: 1680px;
@@ -1464,19 +1467,19 @@ export function galleryHtml(view) {
       border: 1px solid var(--border);
       border-radius: 999px;
       padding: 6px 8px 6px 14px;
-      background: #111116cc;
-      color: var(--muted);
+      background: var(--card);
+      color: var(--faint);
       font-size: 11px;
     }
     .scan-platform { color: var(--text); font-weight: 700; }
     .scan-progress { color: var(--accent); font-weight: 700; }
-    .scan-row[data-state="failed"] .scan-last { color: #ee6673; }
+    .scan-row[data-state="failed"] .scan-last { color: #e7000b; }
     .scan-button {
-      border: 1px solid #625799;
+      border: 1px solid var(--gold);
       border-radius: 999px;
       padding: 4px 13px;
-      background: #241f38;
-      color: var(--text);
+      background: var(--gold-soft);
+      color: var(--accent);
       font-size: 11px;
       cursor: pointer;
     }
@@ -1509,9 +1512,11 @@ export function galleryHtml(view) {
     }
     .section-title {
       margin: 0;
+      font-family: "Source Serif 4", Georgia, serif;
+      font-weight: 600;
       font-size: 20px;
       line-height: 1.2;
-      letter-spacing: -.025em;
+      letter-spacing: -.02em;
     }
     .section-count {
       flex: 0 0 auto;
@@ -1582,11 +1587,11 @@ export function galleryHtml(view) {
       max-width: min(92vw, 560px);
       align-items: center;
       gap: 11px;
-      border: 1px solid #625799;
+      border: 1px solid var(--border);
       border-radius: 999px;
       padding: 9px 14px 9px 10px;
-      background: #181522f2;
-      box-shadow: 0 12px 40px #0009, inset 0 0 0 1px #ffffff0d;
+      background: #fffdfaf2;
+      box-shadow: 0 12px 40px rgba(12, 10, 8, 0.14);
       opacity: 1;
       transform: translateX(-50%);
       transition: opacity 160ms ease, transform 160ms ease;
@@ -1599,14 +1604,14 @@ export function galleryHtml(view) {
       transform: translate(-50%, -8px);
     }
     .capture-status[data-state="error"] {
-      border-color: #a84952;
-      background: #28161af2;
+      border-color: #e7000b;
+      background: #fdf1f1f2;
     }
     .status-spinner {
       width: 25px;
       height: 25px;
       flex: 0 0 auto;
-      border: 3px solid #b8a7ff35;
+      border: 3px solid var(--gold-soft);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: status-spin .8s linear infinite;
@@ -1614,8 +1619,8 @@ export function galleryHtml(view) {
     .capture-status[data-state="error"] .status-spinner {
       display: grid;
       border: 0;
-      background: #ee6673;
-      color: #21070a;
+      background: #e7000b;
+      color: #fffdfa;
       font-weight: 900;
       place-items: center;
       animation: none;
@@ -1668,7 +1673,7 @@ export function galleryHtml(view) {
       display: grid;
       place-items: center;
       font-size: 12px;
-      color: var(--muted);
+      color: #b9b3a9;
       animation: refreshing-pulse 1.2s ease-in-out infinite;
     }
     @keyframes refreshing-pulse {
@@ -1692,14 +1697,14 @@ export function galleryHtml(view) {
       transition: opacity 160ms ease;
     }
     .preview:hover img { opacity: .88; }
-    .missing { color: var(--muted); }
+    .missing { color: #9a948b; }
     .card-copy {
       margin-top: 9px;
       border: 1px solid var(--border);
       border-radius: 13px;
       padding: 11px 12px 12px;
-      background: linear-gradient(150deg, #1b1b21, var(--card));
-      box-shadow: 0 8px 24px #0003;
+      background: var(--card);
+      box-shadow: 0 8px 24px rgba(12, 10, 8, 0.08), inset 0 0 0 1px rgba(12, 10, 8, 0.05);
     }
     h3 { margin: 0 0 4px; font-size: 16px; line-height: 1.2; letter-spacing: -.015em; }
     .card p {
