@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_SETTINGS_SECTIONS,
-  sectionAvailability,
+  findSection,
   sectionTitle,
-  showsAdvancedSections,
 } from "./sections-model";
 
 describe("sectionTitle", () => {
@@ -24,40 +23,14 @@ describe("sectionTitle", () => {
   });
 });
 
-describe("showsAdvancedSections", () => {
-  it.each([
-    ["ios", true],
-    ["android", false],
-    [undefined, false],
-  ])("on %s answers %s", (os, shows) => {
-    expect(showsAdvancedSections(os)).toBe(shows);
-  });
-});
-
-describe("sectionAvailability", () => {
-  it("serves every section on iOS, carrying the section", () => {
+describe("findSection", () => {
+  it("finds every section, carrying it for content lookup", () => {
     for (const section of AGENT_SETTINGS_SECTIONS) {
-      expect(sectionAvailability(section.key, "ios")).toEqual({
-        state: "available",
-        section,
-      });
+      expect(findSection(section.key)).toEqual(section);
     }
   });
 
-  it.each([
-    ["general", "available"],
-    ["provider", "hidden"],
-    ["voice", "hidden"],
-    ["notifications", "hidden"],
-    ["files", "hidden"],
-    ["host-access", "hidden"],
-    ["backups", "hidden"],
-  ])("on Android answers %s -> %s", (key, availability) => {
-    expect(sectionAvailability(key, "android").state).toBe(availability);
-  });
-
-  it("reports an unknown key on both platforms", () => {
-    expect(sectionAvailability("time-travel", "ios").state).toBe("unknown");
-    expect(sectionAvailability("time-travel", "android").state).toBe("unknown");
+  it("returns null for an unknown deep-link key", () => {
+    expect(findSection("time-travel")).toBeNull();
   });
 });
