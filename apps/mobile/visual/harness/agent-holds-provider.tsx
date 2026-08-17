@@ -1,16 +1,19 @@
-import { createContext, use, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   initialChatState,
   seedTail,
   type ChatState,
 } from "@vesta/core";
 import {
+  AgentHoldsContext,
   createAgentHolds,
   type AgentHolds,
 } from "../../src/holds/AgentHoldsProvider";
 import { agentHoldKey } from "../../src/holds/keyed-hold";
 import { connectionKeyOf } from "../../src/session/session-model";
 import { visualConnection } from "./session-provider";
+
+export { useAgentHolds } from "../../src/holds/AgentHoldsProvider";
 
 const chatState: ChatState = seedTail(initialChatState(), {
   events: [
@@ -51,8 +54,6 @@ function createVisualAgentHolds(): AgentHolds {
   return holds;
 }
 
-const AgentHoldsContext = createContext<AgentHolds | null>(null);
-
 export function AgentHoldsProvider({ children }: { children: ReactNode }) {
   const [holds] = useState(createVisualAgentHolds);
   return (
@@ -60,12 +61,4 @@ export function AgentHoldsProvider({ children }: { children: ReactNode }) {
       {children}
     </AgentHoldsContext.Provider>
   );
-}
-
-export function useAgentHolds(): AgentHolds {
-  const holds = use(AgentHoldsContext);
-  if (!holds) {
-    throw new Error("useAgentHolds must be used within AgentHoldsProvider");
-  }
-  return holds;
 }

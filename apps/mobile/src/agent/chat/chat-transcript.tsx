@@ -66,15 +66,16 @@ export const ChatTranscript = memo(function ChatTranscript({
 }) {
   const insets = useSafeAreaInsets();
   const { colors } = usePreferences();
+  const empty = rows.length === 0;
   const contentContainerStyle = useMemo(
     () => [
       styles.listContent,
       {
         paddingBottom: insets.top + 104,
-        flexGrow: rows.length === 0 ? 1 : undefined,
+        flexGrow: empty ? 1 : undefined,
       },
     ],
-    [insets.top, rows.length],
+    [insets.top, empty],
   );
   const loadingOverlayInsetStyle = useAnimatedStyle(() => ({
     paddingBottom: composerInset.value,

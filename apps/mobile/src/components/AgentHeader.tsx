@@ -120,7 +120,7 @@ export function AgentIsland({
   );
 
   return (
-    <GlassSurface isInteractive style={styles.titlePill}>
+    <GlassSurface style={styles.titlePill}>
       {content}
     </GlassSurface>
   );

@@ -38,20 +38,14 @@ const RosterContext = createContext<RosterValue | null>(null);
 
 // The roster consumes five gateway fields; selecting them with their own equality keeps every
 // unrelated gateway delta (e.g. an operation phase tick) from re-identifying the context value.
-interface GatewaySummary {
-  version: string;
-  channel: ReleaseChannel;
-  managed: boolean;
-  updateAvailable: boolean;
-  latestVersion: string | null;
-}
+type GatewaySummary = Omit<RosterSnapshot, "agents">;
 
 function selectGatewaySummary(tree: Tree | null): GatewaySummary | null {
   const gateway = tree?.gateway;
   if (!gateway) return null;
   return {
-    version: gateway.version,
-    channel: gateway.channel,
+    gatewayVersion: gateway.version,
+    gatewayChannel: gateway.channel,
     managed: gateway.managed,
     updateAvailable: gateway.updateAvailable,
     latestVersion: gateway.latestVersion,
@@ -64,8 +58,8 @@ function gatewaySummariesEqual(
 ): boolean {
   if (a === null || b === null) return a === b;
   return (
-    a.version === b.version &&
-    a.channel === b.channel &&
+    a.gatewayVersion === b.gatewayVersion &&
+    a.gatewayChannel === b.gatewayChannel &&
     a.managed === b.managed &&
     a.updateAvailable === b.updateAvailable &&
     a.latestVersion === b.latestVersion
@@ -164,17 +158,7 @@ export function RosterProvider({ children }: { children: ReactNode }) {
   const devices = useOptionalControllerReplica(controller, selectDevices, devicesEqual);
   // A non-null gateway means the summary snapshot has populated the tree; only then is the roster fresh.
   const fresh = useMemo<RosterSnapshot | null>(
-    () =>
-      gateway
-        ? {
-            agents,
-            gatewayVersion: gateway.version,
-            gatewayChannel: gateway.channel,
-            managed: gateway.managed,
-            updateAvailable: gateway.updateAvailable,
-            latestVersion: gateway.latestVersion,
-          }
-        : null,
+    () => (gateway ? { agents, ...gateway } : null),
     [agents, gateway],
   );
   const value = useServedRoster(store, connectionKey, fresh, syncState === "open");

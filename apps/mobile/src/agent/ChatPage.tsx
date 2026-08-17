@@ -18,9 +18,9 @@ import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
 import { createInvertedChatRows, type ChatRow } from "@/agent/chat-list-model";
 import { quotedReply, type ReplyTarget } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
+import { GlassSurface } from "@/components/ui/glass-surface";
 import {
   ComposerActionButton,
-  ComposerSurface,
   ReplyPreview,
 } from "@/agent/chat/chat-composer";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
@@ -128,19 +128,21 @@ export default function ChatPage() {
   const playSpeech = speech.play;
   const stopSpeech = speech.stop;
   const canSend = socket.connected && agent?.status === "alive";
+  const sendChat = socket.send;
+  // Reads the draft and armed reply from their refs, so the voice socket's captured
+  // onTurnEnd sends what is armed at turn end, not what was armed at start().
   const sendCurrentInput = useCallback(
     (source?: "voice") => {
       const text = inputValueRef.current.trim();
       if (!text || !canSend) return;
-      const outgoing = replyTarget
-        ? `${quotedReply(replyTarget.text)}${text}`
-        : text;
-      if (socket.send(outgoing, source)) {
+      const reply = replyTargetRef.current;
+      const outgoing = reply ? `${quotedReply(reply.text)}${text}` : text;
+      if (sendChat(outgoing, source)) {
         setInput("");
         setReplyTarget(null);
       }
     },
-    [canSend, replyTarget, setInput, setReplyTarget, socket],
+    [canSend, sendChat, setInput, setReplyTarget],
   );
   const voice = useLiveVoice({
     name,
@@ -178,11 +180,6 @@ export default function ChatPage() {
     },
     [playSpeech],
   );
-  const loadEarlier = useCallback(() => {
-    if (!socket.hasMore || socket.loadingMore) return;
-    void socket.loadMore();
-  }, [socket]);
-
   const send = () => {
     sendCurrentInput();
   };
@@ -217,7 +214,7 @@ export default function ChatPage() {
         attachList={attachList}
         onScroll={handleScroll}
         renderScrollComponent={renderScrollComponent}
-        onLoadEarlier={loadEarlier}
+        onLoadEarlier={socket.loadMore}
         onReply={replyToMessage}
         onEditAndResend={editAndResend}
         onReadAloud={readAloud}
@@ -240,7 +237,7 @@ export default function ChatPage() {
                 <ScrollToBottomButton onPress={scrollToLatest} />
               </View>
             ) : null}
-            <ComposerSurface>
+            <GlassSurface style={styles.composerSurface}>
               {replyTarget ? (
                 <ReplyPreview target={replyTarget} onCancel={cancelReply} />
               ) : null}
@@ -270,7 +267,7 @@ export default function ChatPage() {
                   onToggleVoice={toggleVoice}
                 />
               </View>
-            </ComposerSurface>
+            </GlassSurface>
           </View>
         </View>
       </KeyboardStickyView>
@@ -290,6 +287,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   composerDock: { paddingHorizontal: 22, paddingTop: 8 },
+  composerSurface: { padding: 4, borderRadius: 22, overflow: "hidden" },
   scrollToBottomSlot: {
     position: "absolute",
     top: -36,

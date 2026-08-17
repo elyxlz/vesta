@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import { StyleSheet } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import Stack from "expo-router/stack";
@@ -10,6 +11,7 @@ import { ProviderSection } from "@/agent/settings/ProviderSection";
 import {
   sectionAvailability,
   sectionTitle,
+  type AgentSettingsSectionKey,
 } from "@/agent/settings/sections-model";
 import { VoiceSection } from "@/agent/settings/VoiceSection";
 import { Screen } from "@/components/layout/Screen";
@@ -17,38 +19,42 @@ import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
+const SECTION_CONTENT: Record<AgentSettingsSectionKey, ComponentType> = {
+  general: GeneralSection,
+  provider: ProviderSection,
+  voice: VoiceSection,
+  notifications: NotificationsSection,
+  files: FilesSection,
+  "host-access": HostAccessSection,
+  backups: BackupsSection,
+};
+
 export default function AgentDetailScreen() {
   const parameters = useLocalSearchParams<{ section?: string }>();
   const { colors } = usePreferences();
   const section =
     typeof parameters.section === "string" ? parameters.section : "general";
   const title = sectionTitle(section);
-  const content = (() => {
-    if (sectionAvailability(section) === "hidden") {
-      return (
-        <Text style={[styles.unknown, { color: colors.secondaryText }]}>
-          This settings section is not available on Android yet.
-        </Text>
-      );
-    }
-    if (section === "general") return <GeneralSection />;
-    if (section === "provider") return <ProviderSection />;
-    if (section === "voice") return <VoiceSection />;
-    if (section === "notifications") return <NotificationsSection />;
-    if (section === "files") return <FilesSection />;
-    if (section === "host-access") return <HostAccessSection />;
-    if (section === "backups") return <BackupsSection />;
-    return (
-      <Text style={[styles.unknown, { color: colors.secondaryText }]}>
-        This settings section does not exist.
-      </Text>
-    );
-  })();
+  const availability = sectionAvailability(section);
+  const Section =
+    availability.state === "available"
+      ? SECTION_CONTENT[availability.section.key]
+      : null;
   return (
     <>
       <Stack.Title>{title}</Stack.Title>
       <NativeSheetCloseButton accessibilityLabel={`Close ${title}`} />
-      <Screen contentStyle={styles.content}>{content}</Screen>
+      <Screen contentStyle={styles.content}>
+        {Section ? (
+          <Section />
+        ) : (
+          <Text style={[styles.unknown, { color: colors.secondaryText }]}>
+            {availability.state === "hidden"
+              ? "This settings section is not available on Android yet."
+              : "This settings section does not exist."}
+          </Text>
+        )}
+      </Screen>
     </>
   );
 }

@@ -6,7 +6,7 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 export function ScrollToBottomButton({ onPress }: { onPress: () => void }) {
   const { colors } = usePreferences();
   return (
-    <GlassSurface isInteractive style={styles.scrollToBottomButton}>
+    <GlassSurface style={styles.scrollToBottomButton}>
       <Pressable
         accessibilityLabel="Scroll to latest message"
         accessibilityRole="button"

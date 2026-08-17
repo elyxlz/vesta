@@ -31,8 +31,8 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 import { shareVestaMessage } from "@/sharing/share-message";
 import { radii } from "@/theme/layout";
 import { messageActionIds, type MessageActionId } from "@/agent/message-actions";
-import { replyPreviewStyles } from "@/agent/chat/chat-composer";
 import { chatMarkdownStyleSet } from "@/agent/chat/chat-markdown";
+import { QuotedBlock } from "@/agent/chat/quoted-block";
 import {
   chatDateLabel,
   isFinalMarkdownNode,
@@ -173,12 +173,18 @@ export const ChatEvent = memo(function ChatEvent({
   onRetry: (intentId: string, text: string) => void;
 }) {
   const { colors } = usePreferences();
-  const timestamp = event.ts
-    ? new Date(event.ts).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : null;
+  // Memoized because toLocaleTimeString builds an Intl formatter per call and
+  // rows legitimately re-render (bubble-group flips on each appended message).
+  const timestamp = useMemo(
+    () =>
+      event.ts
+        ? new Date(event.ts).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null,
+    [event.ts],
+  );
   const user = event.type === "user";
   const markdownRules = useMemo<RenderRules>(
     () => ({
@@ -220,32 +226,12 @@ export const ChatEvent = memo(function ChatEvent({
         </View>
       ),
       blockquote: (node, children) => (
-        <View
-          key={node.key}
-          style={[
-            replyPreviewStyles.replyPreview,
-            styles.markdownBlockquote,
-            { backgroundColor: colors.input },
-          ]}
-        >
-          <View
-            style={[
-              replyPreviewStyles.replyAccent,
-              { backgroundColor: colors.interactive },
-            ]}
-          />
-          <View style={replyPreviewStyles.replyCopy}>{children}</View>
-        </View>
+        <QuotedBlock key={node.key} style={styles.markdownBlockquote}>
+          {children}
+        </QuotedBlock>
       ),
     }),
-    [
-      colors.accent,
-      colors.card,
-      colors.input,
-      colors.interactive,
-      timestamp,
-      user,
-    ],
+    [colors.accent, colors.card, timestamp, user],
   );
   const markdownStyleSet = chatMarkdownStyleSet(colors);
   const sendState = event.type === "user" ? event.send_state : undefined;

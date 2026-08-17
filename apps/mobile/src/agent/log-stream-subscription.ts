@@ -6,8 +6,6 @@ export interface LogStream {
   onError: (message: string) => void;
   retryDelayMs: number;
   maxRetryDelayMs: number;
-  /** Open as a reconnect (no tail replay) because held lines are already on screen. */
-  resume: boolean;
 }
 
 // Drive the agent log stream, retrying on error while keeping at most one live stream. An inline
@@ -20,7 +18,7 @@ export function subscribeLogs(stream: LogStream): () => void {
   let cancelled = false;
   let handle: SseHandle | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  let receivedLine = stream.resume;
+  let receivedLine = false;
   let retryDelay = stream.retryDelayMs;
 
   const open = (): void => {

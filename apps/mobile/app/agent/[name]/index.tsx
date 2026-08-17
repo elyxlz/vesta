@@ -15,7 +15,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAgent } from "@/agent/AgentProvider";
+import { useLocalSearchParams } from "expo-router";
 import ChatPage from "@/agent/ChatPage";
 import DashboardPage from "@/agent/DashboardPage";
 import LogsPage from "@/agent/LogsPage";
@@ -69,7 +69,10 @@ const PAGE_TABS = {
 function AgentPages() {
   const insets = useSafeAreaInsets();
   const { showNotificationsPage, showLogsPage } = usePreferences();
-  const { name } = useAgent();
+  // The name comes from the route, not useAgent(): the agent context re-identifies on every
+  // chat tick and would re-render the whole pager shell with it.
+  const parameters = useLocalSearchParams<{ name?: string }>();
+  const name = typeof parameters.name === "string" ? parameters.name : "";
   const { connection } = useSession();
   const holds = useAgentHolds();
   const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
@@ -269,7 +272,11 @@ function AgentPages() {
   const selectPage = useCallback(
     (page: number) => {
       const target = pages[page];
-      if (target) markVisited([target]);
+      // Mount every page the animated jump slides across, or an unvisited
+      // intermediate pane renders blank mid-flight.
+      const current = pages.indexOf(activePageKey);
+      const [first, last] = current <= page ? [current, page] : [page, current];
+      markVisited(pages.slice(Math.max(first, 0), last + 1));
       if (target && target !== hapticPageKey.current) {
         hapticPageKey.current = target;
         void Haptics.selectionAsync().catch(() => undefined);
@@ -277,7 +284,7 @@ function AgentPages() {
       showTabs();
       pager.current?.setPage(page);
     },
-    [markVisited, pages, showTabs],
+    [activePageKey, markVisited, pages, showTabs],
   );
 
   return (
@@ -308,7 +315,9 @@ function AgentPages() {
           <View key={page} collapsable={false} style={styles.page}>
             {visitedPages.includes(page) ? (
               page === "chat" ? (
-                <ChatPage />
+                // Keyed by holdKey so a gateway switch under a retained screen remounts the
+                // composer and reseeds from the new key's cell instead of persisting stale state.
+                <ChatPage key={holdKey} />
               ) : page === "dashboard" ? (
                 <DashboardPage />
               ) : page === "notifications" ? (

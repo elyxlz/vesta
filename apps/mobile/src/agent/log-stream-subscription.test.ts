@@ -30,7 +30,6 @@ function makeHarness(overrides?: Partial<LogStream>) {
     onError,
     retryDelayMs: 1_000,
     maxRetryDelayMs: 30_000,
-    resume: false,
     ...overrides,
   });
   return { streams, onLine, onError, stop };
@@ -101,12 +100,12 @@ describe("log stream subscription", () => {
     stop();
   });
 
-  it("opens as a reconnect when resuming over held lines", async () => {
+  it("always replays the tail on the first open of a subscription", async () => {
     vi.useFakeTimers();
-    const { streams, stop } = makeHarness({ resume: true });
+    const { streams, stop } = makeHarness();
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(streams[0]?.reconnect).toBe(true);
+    expect(streams[0]?.reconnect).toBe(false);
 
     stop();
   });

@@ -1,34 +1,15 @@
-import { memo, useEffect, useMemo, type ReactNode } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { memo, useEffect, useMemo } from "react";
+import { Pressable, StyleSheet } from "react-native";
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
-import { GlassSurface } from "@/components/ui/glass-surface";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import type { ReplyTarget } from "@/agent/message-actions";
-
-const COMPOSER_SURFACE_PADDING = 4;
-
-export const replyPreviewStyles = StyleSheet.create({
-  replyPreview: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    margin: 3,
-    marginBottom: 6,
-    paddingLeft: 9,
-    paddingRight: 3,
-    paddingVertical: 7,
-    borderRadius: 16,
-    borderCurve: "continuous",
-  },
-  replyAccent: { alignSelf: "stretch", width: 3, borderRadius: 2 },
-  replyCopy: { flex: 1, minWidth: 0, gap: 1 },
-});
+import { QuotedBlock } from "@/agent/chat/quoted-block";
 
 export const ReplyPreview = memo(function ReplyPreview({
   target,
@@ -44,51 +25,33 @@ export const ReplyPreview = memo(function ReplyPreview({
   );
 
   return (
-    <View
-      style={[
-        replyPreviewStyles.replyPreview,
-        { backgroundColor: colors.input },
-      ]}
+    <QuotedBlock
+      trailing={
+        <Pressable
+          accessibilityLabel="Cancel reply"
+          hitSlop={8}
+          onPress={onCancel}
+          style={styles.replyClose}
+        >
+          <Ionicons name="close" size={17} color={colors.secondaryText} />
+        </Pressable>
+      }
     >
-      <View
-        style={[
-          replyPreviewStyles.replyAccent,
-          { backgroundColor: colors.interactive },
-        ]}
-      />
-      <View style={replyPreviewStyles.replyCopy}>
-        <Text
-          numberOfLines={1}
-          style={[styles.replyLabel, { color: colors.interactive }]}
-        >
-          Replying to {target.sender}
-        </Text>
-        <Text
-          numberOfLines={2}
-          style={[styles.replyText, { color: colors.secondaryText }]}
-        >
-          {preview}
-        </Text>
-      </View>
-      <Pressable
-        accessibilityLabel="Cancel reply"
-        hitSlop={8}
-        onPress={onCancel}
-        style={styles.replyClose}
+      <Text
+        numberOfLines={1}
+        style={[styles.replyLabel, { color: colors.interactive }]}
       >
-        <Ionicons name="close" size={17} color={colors.secondaryText} />
-      </Pressable>
-    </View>
+        Replying to {target.sender}
+      </Text>
+      <Text
+        numberOfLines={2}
+        style={[styles.replyText, { color: colors.secondaryText }]}
+      >
+        {preview}
+      </Text>
+    </QuotedBlock>
   );
 });
-
-export function ComposerSurface({ children }: { children: ReactNode }) {
-  return (
-    <GlassSurface isInteractive style={styles.composerSurface}>
-      {children}
-    </GlassSurface>
-  );
-}
 
 export function ComposerActionButton({
   canSend,
@@ -182,11 +145,6 @@ export function ComposerActionButton({
 }
 
 const styles = StyleSheet.create({
-  composerSurface: {
-    padding: COMPOSER_SURFACE_PADDING,
-    borderRadius: 22,
-    overflow: "hidden",
-  },
   replyLabel: { fontSize: 12, fontWeight: "600" },
   replyText: { fontSize: 13, lineHeight: 17 },
   replyClose: {
