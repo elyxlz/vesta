@@ -16,7 +16,6 @@ import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
-import { SheetChrome } from "@/components/sheet-chrome";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormSection, SwitchRow } from "@/components/ui/Form";
@@ -207,7 +206,6 @@ export default function AgentSettingsScreen() {
   return (
     <>
       <NativeSheetCloseButton accessibilityLabel="Close agent settings" />
-      <SheetChrome title="Settings" closeLabel="Close agent settings" />
       <AgentSettingsContent />
     </>
   );

@@ -54,7 +54,19 @@ export default function AgentLayout() {
         />
         <Stack.Screen name="logs" options={androidSheetOptions} />
         <Stack.Screen name="notifications" options={androidSheetOptions} />
-        <Stack.Screen name="file" />
+        <Stack.Screen
+          name="file"
+          // Android has no automatic content inset for transparent headers,
+          // so the toolbar goes opaque and lays the editor out below it.
+          options={
+            process.env.EXPO_OS === "android"
+              ? {
+                  headerTransparent: false,
+                  headerStyle: { backgroundColor: colors.background },
+                }
+              : {}
+          }
+        />
         <Stack.Screen name="details/[section]" options={androidSheetOptions} />
       </Stack>
     </AgentProvider>

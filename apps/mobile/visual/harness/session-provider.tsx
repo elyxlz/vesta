@@ -178,14 +178,14 @@ const backups: BackupInfo[] = [
     id: "visual-backup-1",
     agent_name: "aria",
     backup_type: "manual",
-    created_at: "2026-08-01T08:45:00.000Z",
+    created_at: "20260801-084500",
     size: 18_874_368,
   },
   {
     id: "visual-backup-2",
     agent_name: "aria",
     backup_type: "automatic",
-    created_at: "2026-07-31T03:00:00.000Z",
+    created_at: "20260731-030000",
     size: 17_825_792,
   },
 ];
@@ -274,6 +274,9 @@ function createVisualApi(): ApiClient {
     request: async () => new Response(null, { status: 204 }),
     json: async <ResponseBody,>(path: string): Promise<ResponseBody> => {
       if (path === "/manifest") return manifest as ResponseBody;
+      // A started update keeps the sheet's spinner up, which is the state the
+      // gateway-update-in-progress scenario captures.
+      if (path === "/gateway/update") return { started: true } as ResponseBody;
       if (path.endsWith("/provider")) {
         return {
           kind: "claude",
