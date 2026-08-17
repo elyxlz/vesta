@@ -55,7 +55,7 @@ export default function AgentLayout() {
         <Stack.Screen name="logs" options={androidSheetOptions} />
         <Stack.Screen name="notifications" options={androidSheetOptions} />
         <Stack.Screen name="file" />
-        <Stack.Screen name="details/[section]" />
+        <Stack.Screen name="details/[section]" options={androidSheetOptions} />
       </Stack>
     </AgentProvider>
   );

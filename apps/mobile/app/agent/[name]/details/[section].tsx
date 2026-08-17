@@ -9,13 +9,14 @@ import { HostAccessSection } from "@/agent/settings/HostAccessSection";
 import { NotificationsSection } from "@/agent/settings/NotificationsSection";
 import { ProviderSection } from "@/agent/settings/ProviderSection";
 import {
-  sectionAvailability,
+  findSection,
   sectionTitle,
   type AgentSettingsSectionKey,
 } from "@/agent/settings/sections-model";
 import { VoiceSection } from "@/agent/settings/VoiceSection";
 import { Screen } from "@/components/layout/Screen";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
@@ -35,23 +36,19 @@ export default function AgentDetailScreen() {
   const section =
     typeof parameters.section === "string" ? parameters.section : "general";
   const title = sectionTitle(section);
-  const availability = sectionAvailability(section);
-  const Section =
-    availability.state === "available"
-      ? SECTION_CONTENT[availability.section.key]
-      : null;
+  const found = findSection(section);
+  const Section = found ? SECTION_CONTENT[found.key] : null;
   return (
     <>
       <Stack.Title>{title}</Stack.Title>
       <NativeSheetCloseButton accessibilityLabel={`Close ${title}`} />
+      <SheetChrome title={title} closeLabel={`Close ${title}`} />
       <Screen contentStyle={styles.content}>
         {Section ? (
           <Section />
         ) : (
           <Text style={[styles.unknown, { color: colors.secondaryText }]}>
-            {availability.state === "hidden"
-              ? "This settings section is not available on Android yet."
-              : "This settings section does not exist."}
+            This settings section does not exist.
           </Text>
         )}
       </Screen>
