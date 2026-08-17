@@ -11,6 +11,7 @@ import {
   createInactivityWatchdog,
   createMaestroFailureParser,
   galleryHtml,
+  gentleSpawnPlan,
   liveCaptureEntries,
   loadManifest,
   scenarioOnPlatform,
@@ -40,6 +41,25 @@ describe("createInactivityWatchdog", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("gentleSpawnPlan", () => {
+  it.each([
+    ["off", false, "darwin", "xcodebuild", ["build"]],
+    ["non-darwin", true, "linux", "gradle", ["assembleRelease"]],
+  ])("passes commands through when %s", (_name, gentle, platform, command, args) => {
+    expect(gentleSpawnPlan(command, args, gentle, platform)).toEqual({
+      command,
+      argumentsList: args,
+    });
+  });
+
+  it("wraps the command at utility QoS when gentle on macOS", () => {
+    expect(gentleSpawnPlan("maestro", ["test", "flow.yml"], true, "darwin")).toEqual({
+      command: "taskpolicy",
+      argumentsList: ["-c", "utility", "maestro", "test", "flow.yml"],
+    });
   });
 });
 

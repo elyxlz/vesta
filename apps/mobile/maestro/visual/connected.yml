@@ -47,11 +47,17 @@ tags:
 
 - tapOn: "Agent settings"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
-    timeout: 30000
-- extendedWaitUntil:
     visible: "Close agent settings"
     timeout: 30000
+# On Android the sheet can open scrolled to the first Compose switch (tracked
+# as a product bug); scroll back to the top so the capture starts at the card.
+- scrollUntilVisible:
+    element:
+      text: "Natural chat pacing"
+    direction: UP
+    timeout: 30000
+    speed: 40
+    visibilityPercentage: 100
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings

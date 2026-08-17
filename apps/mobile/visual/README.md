@@ -398,6 +398,12 @@ Native/config changes invalidate the cache automatically. `--clean-native` is
 an explicit recovery option and is not needed for ordinary React Native UI
 work.
 
+`--gentle` (capture commands on both platforms) trades wall time for machine
+responsiveness: the iOS run uses one simulator shard instead of two, and every
+child process (build, bundler, Maestro, the Android emulator) runs at utility
+QoS via `taskpolicy`, so a capture can run in the background of an interactive
+session without starving it. Watch mode does not accept it.
+
 ## Watch-mode behavior
 
 Watch mode observes the UI and flow sources above, plus native build inputs:

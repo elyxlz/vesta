@@ -24,6 +24,11 @@ describe("parseArguments", () => {
     expect(options.serve).toBe(false);
   });
 
+  it("parses gentle mode off by default and on by flag", () => {
+    expect(parseArguments([]).gentle).toBe(false);
+    expect(parseArguments(["capture", "--gentle"]).gentle).toBe(true);
+  });
+
   it("rejects contradictory build options", () => {
     expect(() => parseArguments(["--skip-build", "--clean-native"])).toThrow(
       "--skip-build and --clean-native cannot be used together.",

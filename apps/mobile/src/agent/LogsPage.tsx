@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  FlatList,
+  StyleSheet,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
 import { useAgent } from "@/agent/AgentProvider";
@@ -24,6 +30,7 @@ const PAGER_HEADER_HEIGHT = 104;
 // first visible line in place keeps arrivals from shifting the view mid-read;
 // within the threshold of the newest line the list follows the tail instead.
 const FOLLOW_TAIL = { minIndexForVisible: 0, autoscrollToTopThreshold: 32 };
+const TAIL_OFFSET_THRESHOLD = 32;
 
 interface LogsPageProps {
   presentation?: "pager" | "standalone";
@@ -119,10 +126,28 @@ function LogList({
   const insets = useSafeAreaInsets();
   const topChrome =
     presentation === "standalone" ? navHeaderHeight : PAGER_HEADER_HEIGHT;
+  // The boot tail streams in line by line while the position hold pins a stale offset, which
+  // leaves the virtualizer's render window behind the real viewport until a scroll event: only a
+  // few lines paint until the user nudges the list. Snapping to the tail whenever content grows
+  // while the reader is at the tail emits that scroll event; a reader mid-history is left held.
+  const listRef = useRef<FlatList<LogLine>>(null);
+  const atTail = useRef(true);
+  const trackTail = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      atTail.current =
+        event.nativeEvent.contentOffset.y <= TAIL_OFFSET_THRESHOLD;
+    },
+    [],
+  );
+  const snapToTail = useCallback(() => {
+    if (!atTail.current) return;
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
 
   return (
     <View style={styles.screen}>
       <FlatList
+        ref={listRef}
         style={styles.list}
         data={logs}
         inverted
@@ -131,6 +156,9 @@ function LogList({
         renderItem={({ item }) => (
           <AnsiText value={item.text} selectable style={styles.logLine} />
         )}
+        onScroll={trackTail}
+        scrollEventThrottle={64}
+        onContentSizeChange={snapToTail}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={[
