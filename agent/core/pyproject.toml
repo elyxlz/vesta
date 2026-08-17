@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.14.3",
-    "claude-agent-sdk>=0.2.136",
+    "claude-agent-sdk>=0.2.138",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.15.0",
     "rich>=15.0.0",
@@ -22,9 +22,9 @@ Repository = "https://github.com/elyxlz/vesta"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.16.2",
+    "ruff>=0.16.3",
     "pytest>=9.1.1",
     "pytest-timeout>=2.4.0",
-    "hypothesis>=6.165.4",
-    "ty>=0.0.70",
+    "hypothesis>=6.165.8",
+    "ty>=0.0.71",
 ]
