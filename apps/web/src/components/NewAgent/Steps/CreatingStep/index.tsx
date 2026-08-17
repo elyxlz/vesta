@@ -32,7 +32,7 @@ export function CreatingStep({
   return (
     <div className="flex w-full flex-col items-center px-4">
       <Orb state={orbState} size={96} />
-      <div className="mt-3 flex flex-col items-center gap-1 text-center">
+      <div className="mt-3 flex flex-col items-center gap-1 text-center font-serif">
         {done ? (
           <h2 className="text-base font-semibold leading-tight">
             {agentName} is ready

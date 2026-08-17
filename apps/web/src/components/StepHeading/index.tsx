@@ -14,7 +14,7 @@ export function StepHeading({
   return (
     <div
       className={cn(
-        "flex w-full flex-col items-center gap-1 text-center",
+        "flex w-full flex-col items-center gap-1 text-center font-serif",
         className,
       )}
     >

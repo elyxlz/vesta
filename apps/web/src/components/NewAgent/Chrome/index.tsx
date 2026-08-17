@@ -39,7 +39,7 @@ export function Chrome({
             key={heading.title}
             {...headingSwap}
             className={cn(
-              "flex max-w-full flex-col items-center gap-1 px-4 text-center",
+              "flex max-w-full flex-col items-center gap-1 px-4 text-center font-serif",
               widthClass,
             )}
           >
