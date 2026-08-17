@@ -59,7 +59,10 @@ Maestro flows split across two shards
 simctl framebuffer screenshots + completion bridge
         |
         v
-Validated immutable release + localhost gallery
+Shot files replaced in place under .visual/shots/
+        |
+        v
+Localhost gallery composed from the registry + shots
 ```
 
 Know the ownership of each path:
@@ -72,8 +75,8 @@ Know the ownership of each path:
 | `visual/harness/` | Deterministic provider, API, storage, session, animation, and native-build fixtures |
 | `maestro/visual/*.yml` | Public-UI navigation, permissions, assertions, transitions, and capture points |
 | `maestro/visual/capture-screenshot.js` | Screenshot/action callback to the local bridge |
-| `scripts/visual-catalog.mjs` | Builds, simulators, sharding, watch cancellation, capture validation, publishing, and server |
-| `.visual/` | Ignored generated app, native cache, screenshots, reports, catalog, and gallery |
+| `scripts/visual-catalog.mjs` | Builds, simulators, sharding, watch cancellation, drift warnings, and the gallery server |
+| `.visual/` | Ignored generated app, native cache, Maestro reports, and the shot registry at `.visual/shots/{ios,android}/` |
 
 The first capture may generate an isolated iOS project and perform an Xcode build. Ordinary TypeScript, JavaScript, harness, and asset changes use a fast Metro export, replace the cached app bundle, codesign it, and install it on both simulators.
 
@@ -173,7 +176,7 @@ Give every state a unique lowercase kebab-case name. Always pair the screenshot 
       SCREENSHOT: example-state.png
 ```
 
-The published PNG comes from `xcrun simctl io ... screenshot`, triggered by the callback, because it captures host-controlled UI such as the real keyboard reliably. Maestro's artifact remains useful in its diagnostic report. Omitting either command breaks an execution or diagnostic path.
+The gallery shot comes from `xcrun simctl io ... screenshot`, triggered by the callback and written straight into `.visual/shots/ios/`, because it captures host-controlled UI such as the real keyboard reliably. Maestro's artifact remains useful in its diagnostic report. Omitting either command breaks an execution or diagnostic path.
 
 For a real focused keyboard state, use the existing bridge action before capture:
 
@@ -203,7 +206,7 @@ Add exactly one matching item to `visual/scenarios.json`:
 }
 ```
 
-Match `screenshot` exactly to the callback filename. Keep titles and descriptions understandable without reading the flow. The publisher rejects missing, duplicated, unexpected, or invalid PNG output. Add `"platforms": ["ios"]` only when the state genuinely cannot exist on Android, and wrap its flow steps in a matching `when: platform: iOS` block.
+Match `screenshot` exactly to the callback filename. Keep titles and descriptions understandable without reading the flow. The registry loader rejects duplicate ids and screenshot names; after a run, the runner warns about shot names that are missing from or unexpected against the registry, without failing the run. Add `"platforms": ["ios"]` only when the state genuinely cannot exist on Android, and wrap its flow steps in a matching `when: platform: iOS` block.
 
 ### 7. Verify the complete catalog
 
@@ -247,7 +250,7 @@ npm run mobile:visual:watch -- --device "iPhone 17"
 # Capture and exit.
 npm run mobile:visual:capture -- --device "iPhone 17"
 
-# Serve the most recently published result without capturing.
+# Serve the gallery from the registry and existing shots without capturing.
 npm run mobile:visual:serve
 
 # Android: capture on the vesta-visual AVD and serve on port 4174.
@@ -256,16 +259,19 @@ npm run mobile:visual:android:capture
 npm run mobile:visual:android:serve
 ```
 
-The gallery is one unified page for both platforms: each scenario card shows
-its iOS and Android captures side by side, and every serve command serves
-that same page. The Android runner captures the same manifest on one
-dedicated emulator and refreshes the unified gallery. Scenarios marked
-`"platforms": ["ios"]` are skipped by `runFlow` platform blocks in the flows
-and rendered as explicit "iOS only" Android slots in the unified
-gallery. Read the "Android catalog" section of `visual/README.md` before
-changing Android behavior; keep every shared step identical across platforms
-and put a platform difference inside a `when: platform` block, never in a
-copied flow file.
+The gallery is one page for both platforms, composed per request from
+`visual/scenarios.json` plus the shot files under `.visual/shots/`: each
+scenario card shows its iOS and Android slots side by side, and every serve
+command serves that same page. Each scan replaces its platform's shot files
+in place (the iOS bridge writes them directly; the Android runner stages
+Maestro's `takeScreenshot` artifacts into `.visual/shots/android/` after the
+run), so a missing file renders "Not captured yet" until a scan produces it.
+Scenarios marked `"platforms": ["ios"]` are skipped by `runFlow` platform
+blocks in the flows and rendered as explicit "iOS only" Android slots. Read
+the "Android catalog" section of `visual/README.md` before changing Android
+behavior; keep every shared step identical across platforms and put a
+platform difference inside a `when: platform` block, never in a copied flow
+file.
 
 Use these options deliberately:
 
@@ -275,7 +281,7 @@ Use these options deliberately:
 - `--show-simulator`: Display Simulator.app for interactive debugging.
 - `--port <number>`: Change the localhost gallery port.
 
-Keep watch mode running during UI polish. It debounces edit bursts, cancels an obsolete Maestro run when newer edits arrive, preserves the last complete catalog on failure, and publishes only after every registered screenshot succeeds.
+Keep watch mode running during UI polish. It debounces edit bursts and cancels an obsolete Maestro run when newer edits arrive. Shots replace their files as they are captured; a failed or cancelled run leaves every shot it did not reach untouched.
 
 ## Diagnose failures
 
@@ -286,7 +292,7 @@ Use the portal error first, then inspect:
 .visual/maestro/**/screenshots/
 .visual/maestro/**/screen-hierarchy/
 .visual/maestro/**/logs/
-.visual/catalog.json
+.visual/shots/{ios,android}/
 ```
 
 Apply these diagnoses:
@@ -303,7 +309,7 @@ Apply these diagnoses:
 - **Port is occupied or server slept**: Stop the stale server or use `--port`; restart `mobile:visual:serve` for an existing catalog.
 - **Visual app crashes at launch**: Inspect the simulator log for the first unhandled JS/native exception. Check Metro fixture exports and module interop before blaming Maestro.
 
-Do not publish partial screenshots or weaken the manifest to make a run pass.
+Do not weaken the registry or delete scenarios to silence a drift warning; fix the flow that stopped producing the shot.
 
 ## Review every visual-suite change
 
@@ -318,6 +324,6 @@ Confirm all of the following before handoff:
 - Native sheets start from clean presentation context and are fully settled.
 - Headless behavior, real keyboard capture, and animation suppression still work.
 - One-shot capture succeeds for every registered state on two iPhone 17/iOS 26.4 shards.
-- Watch mode survives a source edit, cancellation, and successful republish when its scheduling was affected.
+- Watch mode survives a source edit, cancellation, and a successful recapture when its scheduling was affected.
 - Typecheck, lint, tests, formatting/guards, and `git diff --check` pass.
 - Generated `.visual/` artifacts remain ignored and uncommitted.

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Android visual catalog runner: captures the same manifest as the iOS runner
-// on one dedicated Android emulator and publishes the same gallery format.
+// Android visual catalog runner: captures the same scenario registry as the
+// iOS runner on one dedicated Android emulator and replaces the Android shot
+// files the shared gallery composes from.
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   copyFile,
   mkdir,
-  readdir,
   readFile,
   rename,
   rm,
@@ -18,8 +18,8 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  androidCaptureScreenshotsDirectory as captureScreenshotsDirectory,
   androidMaestroDirectory as maestroDirectory,
+  androidShotsDirectory,
   androidVisualDirectory,
   assertHarnessBoundary,
   atomicWriteFile,
@@ -27,21 +27,17 @@ import {
   filesBelow,
   flowFailureError,
   gentleSpawnPlan,
-  gitMetadata,
   loadManifest,
   nativeInputFingerprint,
-  pngSize,
   publishRunStatus,
   run,
-  scenarioOnPlatform,
   serveCatalog,
   setGentleMode,
-  writeUnifiedIndex,
+  shotDriftWarning,
 } from "./visual-catalog.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDirectory, "..");
-const screenshotsDirectory = path.join(androidVisualDirectory, "screenshots");
 const apkPath = path.join(androidVisualDirectory, "apk/app-release.apk");
 const nativeAndroidDirectory = path.join(mobileRoot, ".visual/native/android");
 const androidFingerprintPath = path.join(
@@ -63,7 +59,6 @@ const ANDROID_BUILD_ABI = "arm64-v8a";
 const EMULATOR_BOOT_TIMEOUT_MS = 240_000;
 const EMULATOR_BOOT_POLL_MS = 2_000;
 const STATUS_BAR_CLOCK = "0941";
-const KEPT_PREVIOUS_RELEASES = 2;
 
 function usage() {
   console.log(`Usage:
@@ -337,16 +332,6 @@ async function prepareEmulator(tools, options) {
   return bootEmulator(tools, options);
 }
 
-async function emulatorRuntime(tools, serial) {
-  const release = (
-    await adb(tools, serial, ["shell", "getprop", "ro.build.version.release"])
-  ).stdout.trim();
-  const sdk = (
-    await adb(tools, serial, ["shell", "getprop", "ro.build.version.sdk"])
-  ).stdout.trim();
-  return `Android ${release} (API ${sdk})`;
-}
-
 async function demoModeCommand(tools, serial, command, extras = []) {
   await adb(
     tools,
@@ -610,13 +595,45 @@ async function requireInstalledApp(tools, serial, appId) {
   }
 }
 
+// Maestro's suite mode writes each takeScreenshot artifact into its flow's
+// takeScreenshot/ directory under the test output; stage them into the shot
+// registry by name, replacing per file. Duplicate names across flows keep the
+// newest artifact and are reported for the drift warning.
+export async function stageMaestroShots(sourceDirectory, targetDirectory) {
+  const newest = new Map();
+  for (const file of await filesBelow(sourceDirectory)) {
+    if (!file.endsWith(".png")) continue;
+    if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
+    const name = path.basename(file);
+    const modified = (await stat(file)).mtimeMs;
+    const current = newest.get(name);
+    if (!current) {
+      newest.set(name, { file, modified, duplicate: false });
+    } else if (modified > current.modified) {
+      newest.set(name, { file, modified, duplicate: true });
+    } else {
+      current.duplicate = true;
+    }
+  }
+  await mkdir(targetDirectory, { recursive: true });
+  for (const [name, entry] of newest) {
+    await copyFile(entry.file, path.join(targetDirectory, name));
+  }
+  return {
+    produced: new Set(newest.keys()),
+    duplicates: [...newest]
+      .filter(([, entry]) => entry.duplicate)
+      .map(([name]) => name)
+      .sort(),
+  };
+}
+
 async function runMaestro(manifest, tools, serial) {
-  await rm(captureScreenshotsDirectory, { recursive: true, force: true });
   await rm(maestroDirectory, { recursive: true, force: true });
-  await mkdir(captureScreenshotsDirectory, { recursive: true });
   await mkdir(maestroDirectory, { recursive: true });
 
   const flowPaths = manifest.flows.map((flow) => path.resolve(mobileRoot, flow));
+  let failure;
   try {
     await run(
       tools.maestro,
@@ -631,142 +648,22 @@ async function runMaestro(manifest, tools, serial) {
         `--output=${path.join(maestroDirectory, "report.html")}`,
         "--test-suite-name=Vesta visual catalog (Android)",
       ],
-      { cwd: captureScreenshotsDirectory, env: tools.environment, tee: true },
+      { cwd: maestroDirectory, env: tools.environment, tee: true },
     );
   } catch (error) {
-    throw flowFailureError(error);
+    failure = flowFailureError(error);
   }
-
-  // Maestro's suite mode writes each takeScreenshot artifact into its flow's
-  // takeScreenshot/ directory under the test output; stage them by name.
-  const expected = new Set(
-    manifest.scenarios.map((scenario) => scenario.screenshot),
-  );
-  const produced = new Map();
-  for (const file of await filesBelow(maestroDirectory)) {
-    if (!file.endsWith(".png")) continue;
-    if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
-    const name = path.basename(file);
-    if (produced.has(name)) {
-      throw new Error(`Duplicate Android screenshot across flows: ${name}`);
-    }
-    produced.set(name, file);
-  }
-  const unexpected = [...produced.keys()].filter((name) => !expected.has(name));
-  if (unexpected.length > 0) {
-    throw new Error(
-      `Unexpected Android screenshots (check flow platform conditions): ${unexpected.join(", ")}`,
-    );
-  }
-  for (const [name, file] of produced) {
-    await copyFile(file, path.join(captureScreenshotsDirectory, name));
-  }
-}
-
-async function cleanupScreenshotReleases(activeRelease) {
-  const entries = await readdir(screenshotsDirectory, { withFileTypes: true });
-  const releases = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const target = path.join(screenshotsDirectory, entry.name);
-    releases.push({ name: entry.name, modified: (await stat(target)).mtimeMs });
-  }
-  releases.sort((left, right) => right.modified - left.modified);
-  const keep = new Set([
-    activeRelease,
-    ...releases
-      .filter((release) => release.name !== activeRelease)
-      .slice(0, KEPT_PREVIOUS_RELEASES)
-      .map((release) => release.name),
-  ]);
-  await Promise.all(
-    releases
-      .filter((release) => !keep.has(release.name))
-      .map((release) =>
-        rm(path.join(screenshotsDirectory, release.name), {
-          recursive: true,
-          force: true,
-        }),
-      ),
-  );
-}
-
-export function catalogScenarios(allScenarios, release, sizes) {
-  return allScenarios.map((scenario) =>
-    scenarioOnPlatform(scenario, "android")
-      ? {
-          ...scenario,
-          captured: true,
-          expected: true,
-          image: `screenshots/${release}/${scenario.screenshot}`,
-          size: sizes.get(scenario.screenshot) ?? null,
-        }
-      : {
-          ...scenario,
-          captured: false,
-          expected: false,
-          image: "",
-          size: null,
-          missingLabel: "iOS only",
-        },
-  );
-}
-
-async function publishGallery(manifest, device, reportAvailable) {
-  await mkdir(screenshotsDirectory, { recursive: true });
-  const release = `${Date.now()}-${process.pid}`;
-  const releaseDirectory = path.join(screenshotsDirectory, release);
-  await mkdir(releaseDirectory, { recursive: true });
-
-  const sizes = new Map();
-  const invalid = [];
-  for (const scenario of manifest.scenarios) {
-    const source = path.join(captureScreenshotsDirectory, scenario.screenshot);
-    if (!(await exists(source))) {
-      invalid.push(scenario.screenshot);
-      continue;
-    }
-    const size = await pngSize(source);
-    if (!size) {
-      invalid.push(scenario.screenshot);
-      continue;
-    }
-    await copyFile(source, path.join(releaseDirectory, scenario.screenshot));
-    sizes.set(scenario.screenshot, size);
-  }
-  if (invalid.length > 0) {
-    throw new Error(`Missing or invalid screenshots: ${invalid.join(", ")}`);
-  }
-
-  const catalog = {
-    generatedAt: new Date().toISOString(),
-    appId: manifest.appId,
-    platform: "android",
-    mode: "capture",
-    reportAvailable,
-    device,
-    git: await gitMetadata(),
-    scenarios: catalogScenarios(manifest.allScenarios, release, sizes),
-  };
-  await atomicWriteFile(
-    path.join(androidVisualDirectory, "catalog.json"),
-    `${JSON.stringify(catalog, null, 2)}\n`,
-  );
-  // The gallery is one unified page at .visual/index.html for both platforms.
-  await rm(path.join(androidVisualDirectory, "index.html"), { force: true });
-  await writeUnifiedIndex({ android: catalog });
-  try {
-    await cleanupScreenshotReleases(release);
-  } catch (error) {
-    console.warn(`Could not prune old screenshot releases: ${error.message}`);
-  }
-  return catalog;
+  // Stage even a failed run's artifacts: each is a valid capture, and the
+  // scenarios the run never reached keep their previous shot files.
+  const staged = await stageMaestroShots(maestroDirectory, androidShotsDirectory);
+  if (failure) throw failure;
+  return staged;
 }
 
 async function capture(options) {
   const startedAt = new Date().toISOString();
   const phase = (message) =>
-    publishRunStatus("capturing", { message, startedAt });
+    publishRunStatus("capturing", { message, startedAt, platform: "android" });
   await assertHarnessBoundary();
   const manifest = await loadManifest("android");
   const tools = await requireCaptureTools();
@@ -792,27 +689,22 @@ async function capture(options) {
     await phase(
       `Running ${manifest.flows.length} flows on the Android emulator`,
     );
-    await runMaestro(manifest, tools, serial);
-    await phase("Publishing the Android catalog");
-    const catalog = await publishGallery(
-      manifest,
-      {
-        name: `${avdName || serial} (Android emulator)`,
-        udid: serial,
-        runtime: await emulatorRuntime(tools, serial),
-      },
-      await exists(path.join(maestroDirectory, "report.html")),
-    );
-    const captured = catalog.scenarios.filter(
-      (scenario) => scenario.captured,
-    ).length;
+    const { produced, duplicates } = await runMaestro(manifest, tools, serial);
+    const warning = [
+      shotDriftWarning(produced, manifest),
+      duplicates.length > 0
+        ? `duplicate across flows: ${duplicates.join(", ")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+    if (warning) console.warn(`\nShot registry drift: ${warning}`);
     console.log(
-      `\nCaptured ${captured} Android screenshots (${
-        catalog.scenarios.length - captured
-      } scenarios are iOS only).`,
+      `\nCaptured ${produced.size} Android screenshots into .visual/shots/android.`,
     );
     await publishRunStatus("ready", {
-      message: `Captured ${captured} Android screenshots`,
+      message: `Captured ${produced.size} Android screenshots`,
+      detail: warning,
     });
   } catch (error) {
     await publishRunStatus("error", {

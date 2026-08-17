@@ -24,19 +24,20 @@ npm run mobile:visual:watch -- --device "iPhone 17"
 npm run mobile:visual:android
 ```
 
-The gallery is one unified page: every scenario card shows its iOS and
-Android captures side by side, each labeled, with a "Not captured yet" slot
-for a platform that has not run and an "iOS only" slot for scenarios Android
+The gallery is one page composed per request from the scenario registry
+(`visual/scenarios.json`) plus whatever shot files exist under
+`.visual/shots/{ios,android}/`: every scenario card shows its iOS and
+Android slots side by side, each labeled, with a "Not captured yet" slot for
+a shot no scan has produced and an "iOS only" slot for scenarios Android
 hides by design. Any serve command serves that same page; the iOS commands
 default to `http://127.0.0.1:4173` and the Android commands to
 `http://127.0.0.1:4174`, so a capture on either platform can keep its own
 server while both show the full picture.
 
-The page also shows capture progress live: the server's `live.json` indexes
-the in-progress capture directories on both platforms, and while a capture
-runs, each shot swaps in as its file lands, with a spinner on every shot the
-run has not produced yet. When the capture publishes, the page reloads onto
-the final release.
+The page also updates live: it polls the server's `shots.json` (the shot
+files' names and modification times) and swaps each card's image in place
+when its file's stamp changes, so a running scan shows every shot as it
+lands.
 
 The current iOS reference target is two iPhone 17 simulators running iOS 26.4.
 Passing `--device "iPhone 17"` makes the target explicit and lets the runner
@@ -49,9 +50,11 @@ the runner.
 - Screens and navigation come from the production application.
 - Mock data and scripted failures stay under `visual/harness/`.
 - Capture behavior stays out of `app/` and `src/`.
-- Every scenario registered in the manifest must produce exactly one PNG.
-- Watch mode publishes a new gallery only after the complete capture succeeds.
-- A newer edit cancels an obsolete capture and discards its partial output.
+- A scan replaces each scenario's shot file in place as it captures it; a
+  failed or partial run leaves every shot it did not reach untouched.
+- After a run, the runner compares the produced shots against the registry
+  and warns about missing or unexpected names; drift never blocks a run.
+- A newer edit cancels an obsolete capture.
 - Maestro flows are split across two independent simulator app processes.
 
 ## Architecture
@@ -71,10 +74,10 @@ Two dedicated iOS Simulators
 Two parallel Maestro flow shards
           |
           v
-Staged screenshots + completion bridge
+Shot files replaced in place (.visual/shots)
           |
           v
-Validated catalog and localhost gallery
+Localhost gallery composed from the registry
 ```
 
 The important design choice is that the catalog does not maintain copies of
@@ -95,8 +98,8 @@ fixtures.
 | `visual/metro.config.js` | Visual-build-only module substitution |
 | `visual/harness/` | Deterministic providers, APIs, storage, splash behavior, and animation adapters |
 | `maestro/visual/*.yml` | User-visible navigation, interactions, assertions, and screenshot commands, with `runFlow` platform blocks where the platforms diverge |
-| `maestro/visual/capture-screenshot.js` | Notifies persistent watch mode that a named screenshot completed |
-| `.visual/` | Ignored native caches, bundles, reports, screenshots, staging files, and generated galleries (`.visual/android/` for Android) |
+| `maestro/visual/capture-screenshot.js` | Notifies the runner's bridge that a named screenshot completed |
+| `.visual/` | Ignored native caches, bundles, Maestro reports (`.visual/android/maestro/` for Android), and the shot registry at `.visual/shots/{ios,android}/` |
 
 ## Production boundary
 
@@ -198,26 +201,20 @@ changing the production native project or application source. Native sheets
 still assert their settled content before capture because iOS can resize a
 detent after its content first becomes accessible.
 
-### 5. Validate and publish
+### 5. Replace shots and warn on drift
 
-`visual/scenarios.json` is the contract for the output set. The runner verifies
-that every registered filename exists exactly once, reads image dimensions,
-adds device and Git metadata, and generates:
-
-```text
-mobile/.visual/index.html
-mobile/.visual/catalog.json
-mobile/.visual/screenshots/<release>/*.png
-mobile/.visual/maestro/report.html
-```
-
-Screenshot releases are immutable. The runner stages and validates the entire
-set, writes the new gallery, and atomically commits `catalog.json` last, so a
-failed or superseded capture cannot mix old and new images. Recent releases are
-kept briefly so already-open browser pages can finish loading. All generated
-content under `mobile/.visual/` is ignored by Git.
-While the server is running, `/status.json` is a dynamic endpoint used by the
-portal; it is not a generated file.
+`visual/scenarios.json` is the registry of expected shots. The screenshot
+bridge writes each captured PNG straight to
+`mobile/.visual/shots/ios/<screenshot>` (a temporary file plus a rename, so a
+gallery poll never reads a torn image), replacing that scenario's previous
+shot. After the run, the runner compares the produced names against the
+registry and warns, on the console and in the run status, about missing or
+unexpected names; drift never fails the run. Maestro's own report lands at
+`mobile/.visual/maestro/report.html`. All generated content under
+`mobile/.visual/` is ignored by Git.
+While the server is running, `/status.json` and `/shots.json` are dynamic
+endpoints, and the gallery page is composed per request from the registry
+plus the shot files; none of them is a generated file.
 
 ## Why scenario groups use separate launches
 
@@ -284,9 +281,9 @@ the platform mechanics differ:
   full battery, no notifications) and animations are disabled with the global
   animation scales, mirroring the iOS status-bar override and animation
   hooks.
-- The Android capture publishes its screenshots and `catalog.json` to
-  `.visual/android/`, then refreshes the unified gallery at
-  `.visual/index.html`, the same page the iOS runner writes.
+- After the run, each Maestro `takeScreenshot` artifact is staged into
+  `.visual/shots/android/`, replacing that scenario's previous shot, and the
+  runner warns about names that drift from the registry.
 
 Commands, from `apps/`:
 
@@ -351,8 +348,8 @@ npm run mobile:visual:watch -- --device "iPhone 17"
 ```
 
 Keep this process running. Saving a watched source file automatically updates
-the portal to a recapturing state, rebuilds when needed, reruns both flows, and
-refreshes the browser after a complete result is available.
+the portal to a recapturing state, rebuilds when needed, and reruns both
+flows; the open gallery swaps each shot in as it is recaptured.
 
 ### Capture and exit
 
@@ -369,7 +366,8 @@ open.
 npm run mobile:visual:serve
 ```
 
-This does not build the app or run Maestro.
+This serves the gallery from the registry and the existing shot files; it
+does not build the app or run Maestro.
 
 ### Useful options
 
@@ -441,12 +439,13 @@ arrives during capture, the runner:
 
 1. Marks the current revision as obsolete.
 2. Stops the active Maestro processes.
-3. Rejects the partial screenshot cycle.
+3. Cancels the partial screenshot cycle; the shots it already replaced stand,
+   and every other shot keeps its previous file.
 4. Waits briefly for the edit burst to settle.
 5. Starts one capture from the newest revision.
 
 A bundle already in progress may finish safely, but its obsolete revision is
-not launched or published.
+not launched.
 
 Capture flows avoid assertions against editable titles and error messages. If a
 capture still fails, the portal shows the failed Maestro step immediately and
@@ -463,15 +462,13 @@ Open `http://127.0.0.1:4173` while the visual server is running.
 - Click a screenshot for a larger inspection view. Click outside it or press
   Escape to close it.
 - The status indicator changes while a recapture is running and reports
-  failures without discarding the last complete catalog.
-- After a successful watch capture, the browser refreshes the screenshots
-  automatically.
-- The Maestro HTML report link appears after a one-shot capture only. Persistent
-  watch mode does not generate that report and therefore does not show a stale
-  link.
+  failures; the shots a failed run did not reach keep their previous images.
+- Each shot swaps in automatically as its file is replaced on disk.
+- The Maestro HTML report link appears when a one-shot capture has produced a
+  report file. Persistent watch mode does not generate that report.
 
-The normal capture command starts the gallery server after publishing.
-`npm run visual:serve` serves the most recently published catalog without
+The normal capture command starts the gallery server after capturing.
+`npm run visual:serve` serves the same registry-composed gallery without
 taking new screenshots.
 
 ## Add a screenshot to an existing flow
@@ -504,9 +501,10 @@ Every screenshot needs both commands:
       SCREENSHOT: example-state.png
 ```
 
-`takeScreenshot` creates the Maestro artifact. The following script notifies
-the local completion bridge used by persistent watch mode. Omitting either
-command breaks one of the execution modes.
+`takeScreenshot` creates the Maestro artifact, which is what the Android
+runner stages into `.visual/shots/android/`. The following script notifies
+the local completion bridge, which captures the iOS shot straight into
+`.visual/shots/ios/`. Omitting either command breaks one platform's capture.
 
 ### 3. Register gallery metadata
 
