@@ -52,9 +52,11 @@ du_status=$?
 mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
 if [ "$du_status" -eq 124 ]; then
     # A timed-out walk has two causes that call for opposite responses, and one file read separates
-    # them rather than guessing. High IO stall with no CPU stall means the walk was starved by the
-    # host's disk, which is external and no amount of cleanup here moves it. Low IO stall with a
-    # walk that still could not finish in ${DU_TIMEOUT_SECS}s means something is wrong locally.
+    # them rather than guessing. High IO stall alone means the walk was starved by the host's disk,
+    # which is external and no amount of cleanup here moves it; cpu_stall is read and reported
+    # alongside for context but is not part of this decision, so this does not distinguish a busy
+    # host from a box that is also burning local CPU. Low IO stall with a walk that still could not
+    # finish in ${DU_TIMEOUT_SECS}s means something is wrong locally.
     io_stall=$(awk '/^some/ {for (i = 1; i <= NF; i++) if ($i ~ /^avg60=/) {sub("avg60=", "", $i); print int($i); exit}}' \
         "$IO_PRESSURE_FILE" 2>/dev/null)
     cpu_stall=$(awk '/^some/ {for (i = 1; i <= NF; i++) if ($i ~ /^avg60=/) {sub("avg60=", "", $i); print int($i); exit}}' \
