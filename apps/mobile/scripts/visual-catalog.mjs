@@ -1429,15 +1429,16 @@ export function galleryHtml(view) {
         .join("");
       const sectionId = `scenario-section-${sectionIndex}`;
       return `
-    <section class="scenario-section" aria-labelledby="${sectionId}">
-      <div class="section-header">
+    <details class="scenario-section" open data-section-group="${escapeHtml(group)}" aria-labelledby="${sectionId}">
+      <summary class="section-header">
         <h2 class="section-title" id="${sectionId}">${escapeHtml(group)}</h2>
         <span class="section-count">${scenarios.length} ${
           scenarios.length === 1 ? "screen" : "screens"
         }</span>
-      </div>
+        <span class="section-chevron" aria-hidden="true"></span>
+      </summary>
       <div class="grid">${cards}</div>
-    </section>`;
+    </details>`;
     })
     .join("");
   const reportLinks = view.reports
@@ -1576,12 +1577,28 @@ export function galleryHtml(view) {
     .section-header {
       display: flex;
       align-items: baseline;
-      justify-content: space-between;
       gap: 16px;
       margin-bottom: 16px;
       border-bottom: 1px solid var(--border);
       padding-bottom: 10px;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
     }
+    .section-header::-webkit-details-marker { display: none; }
+    .section-count { margin-left: auto; }
+    .section-chevron {
+      flex: 0 0 auto;
+      align-self: center;
+      width: 8px;
+      height: 8px;
+      border-right: 1.5px solid var(--muted);
+      border-bottom: 1.5px solid var(--muted);
+      transform: rotate(45deg);
+      transition: transform .15s ease;
+    }
+    .scenario-section:not([open]) .section-chevron { transform: rotate(-45deg); }
+    .scenario-section:not([open]) .section-header { margin-bottom: 0; }
     .section-title {
       margin: 0;
       font-family: "Source Serif 4", Georgia, serif;
@@ -1954,6 +1971,18 @@ export function galleryHtml(view) {
         statusDetail.textContent = nextStatus.detail || "Fix the issue and save again.";
       }
     }
+    const collapsedGroups = new Set(
+      JSON.parse(localStorage.getItem("visual-collapsed") || "[]"),
+    );
+    document.querySelectorAll(".scenario-section").forEach((section) => {
+      const group = section.dataset.sectionGroup;
+      section.open = !collapsedGroups.has(group);
+      section.addEventListener("toggle", () => {
+        if (section.open) collapsedGroups.delete(group);
+        else collapsedGroups.add(group);
+        localStorage.setItem("visual-collapsed", JSON.stringify([...collapsedGroups]));
+      });
+    });
     const gentleToggle = document.querySelector("#gentle-toggle");
     gentleToggle.checked = localStorage.getItem("visual-gentle") !== "0";
     gentleToggle.addEventListener("change", () => {
