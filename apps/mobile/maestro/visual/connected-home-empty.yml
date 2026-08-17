@@ -38,7 +38,7 @@ tags:
     duration: 450
 - extendedWaitUntil:
     visible: "Today at a glance"
-    timeout: 30000
+    timeout: 60000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-dashboard

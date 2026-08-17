@@ -639,7 +639,11 @@ export async function stageMaestroShots(sourceDirectory, targetDirectory) {
   }
   await mkdir(targetDirectory, { recursive: true });
   for (const [name, entry] of newest) {
-    await copyFile(entry.file, path.join(targetDirectory, name));
+    // Temp file + rename, so the gallery's poll never reads a torn PNG mid-copy.
+    const target = path.join(targetDirectory, name);
+    const temp = `${target}.tmp-${process.pid}`;
+    await copyFile(entry.file, temp);
+    await rename(temp, target);
   }
   return {
     produced: new Set(newest.keys()),
@@ -656,6 +660,19 @@ async function runMaestro(manifest, tools, serial, variant) {
   await mkdir(maestroDirectory, { recursive: true });
 
   const flowPaths = manifest.flows.map((flow) => path.resolve(mobileRoot, flow));
+  // Stage produced artifacts into the shot registry every few seconds while Maestro runs, so the
+  // gallery fills live per screenshot instead of in one batch at the end; the final stage after
+  // the run stays the authoritative pass.
+  let stagingBusy = false;
+  const stagingTimer = setInterval(() => {
+    if (stagingBusy) return;
+    stagingBusy = true;
+    void stageMaestroShots(maestroDirectory, platformShotsDirectory(variant))
+      .catch(() => undefined)
+      .finally(() => {
+        stagingBusy = false;
+      });
+  }, 2000);
   let failure;
   try {
     await run(
@@ -676,6 +693,7 @@ async function runMaestro(manifest, tools, serial, variant) {
   } catch (error) {
     failure = flowFailureError(error);
   }
+  clearInterval(stagingTimer);
   // Stage even a failed run's artifacts: each is a valid capture, and the
   // scenarios the run never reached keep their previous shot files.
   const staged = await stageMaestroShots(

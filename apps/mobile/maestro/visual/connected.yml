@@ -45,11 +45,12 @@ tags:
     env:
       SCREENSHOT: agent-dashboard-empty.png
 
-# Enter via deep link: the tap path can open the Android sheet scrolled to its
-# first Compose switch (a product quirk tracked as issue #2105), and the deep
-# link lands at the top on both platforms.
+# Fresh-launch entry: opening the settings sheet over a live agent screen can
+# land it scrolled to its first Compose switch on Android (issue #2105); a
+# fresh launch into the deep link lands at the top on both platforms.
+- stopApp
 - openLink:
-    link: "vesta-dev://agent/aria/settings"
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - extendedWaitUntil:
     visible: "Natural chat pacing"
     timeout: 30000
