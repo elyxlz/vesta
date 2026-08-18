@@ -20,6 +20,14 @@ Only after step 1, and only if it still exists:
 
 The count must be 0.
 
+### 2b. Install gh if the box does not have it
+
+```bash
+command -v gh >/dev/null || (apt-get update && apt-get install -y --no-install-recommends gh); gh --version | head -1
+```
+
+The last line must print a `gh version` line. `upstream gh` runs that binary, so if the install fails, STOP, leave this migration unmarked, and report it to the user.
+
 ### 3. Reinstall the command under its new name
 
 ```bash
@@ -29,13 +37,21 @@ command -v upstream
 
 The last line must print a path under `~/.local/bin`. If it does not, STOP and leave this migration unmarked.
 
-### 4. Verify auth still works, by exit status only
+### 3b. Drop the stale name from the active skill list
 
 ```bash
-upstream --token-only >/dev/null && echo auth-ok
+~/agent/skills/skills-registry/scripts/skills-deactivate upstream-pr
 ```
 
-Never run `--token-only` bare: stdout persists into your event store. If this fails, the key is missing or unreadable; report it to the user, but still complete step 5, since the rename itself is done and the key problem predates it.
+`upstream-pr` matches no skill directory, so that entry activates nothing. The script reads the list first and prints `Skill 'upstream-pr' is not active.` when the name is already absent, so this is safe to run more than once. `upstream` is a default skill and activates on every boot, so nothing has to be added.
+
+### 4. Verify auth works, by exit status only
+
+```bash
+upstream token >/dev/null && echo auth-ok
+```
+
+Never run `token` bare: stdout persists into your event store. If this fails, the key may be missing or unreadable, or the GitHub API may be unreachable; report it to the user, but still complete step 5, since the steps above are done and an auth failure is separate from them.
 
 ### 5. Mark this migration applied
 
