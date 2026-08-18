@@ -128,6 +128,25 @@ def test_materialized_task_checkpoints_are_not_imported(tmp_path, monkeypatch):
     assert ids == {"leg00001"}
 
 
+def test_the_legacy_table_is_dropped_after_import(tmp_path, monkeypatch):
+    """Once copied, the source `reminders` table is dropped so the tasks store keeps no dead table."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: home))
+    _make_legacy_db(home)
+
+    db.default_data_dir().mkdir()
+    db.init_db(db.default_data_dir())
+    assert _reminder_count(db.default_data_dir()) == 1
+
+    conn = sqlite3.connect(home / ".tasks" / "tasks.db")
+    try:
+        row = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reminders'").fetchone()
+    finally:
+        conn.close()
+    assert row is None
+
+
 def test_a_failed_read_leaves_the_import_to_retry(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()

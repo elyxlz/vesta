@@ -57,7 +57,9 @@ def _import_legacy_reminders(conn: sqlite3.Connection, data_dir: Path):
     caller passed, so the import runs ONLY for the real store; without this guard every new database
     (a temp-directory test db included) would be seeded from a store that is not its own. The
     `legacy_import_done` marker makes it a no-op on every later boot, and INSERT OR IGNORE keeps a
-    re-run from duplicating rows. The tasks file is read-only, and its `task_id` column is dropped.
+    re-run from duplicating rows. The copy reads the tasks file read-only and drops its `task_id`
+    column; the vestigial reminders table is then dropped from the tasks store once the import
+    completes.
     """
     if get_meta(conn, _LEGACY_IMPORT_KEY) is not None:
         return
@@ -72,7 +74,26 @@ def _import_legacy_reminders(conn: sqlite3.Connection, data_dir: Path):
             # The marker stays unset, so the next init retries instead of losing the box's reminders.
             logger.warning("Failed to import legacy reminders: %s", e)
             return
+        # The copy is complete and the tasks daemon no longer reads its reminders table after the
+        # skill split, so drop it instead of leaving a dead table in the tasks store forever. A
+        # read-write connection, separate from the read-only copy above; a failure is non-fatal
+        # because the reminders now live in this store.
+        _drop_legacy_reminders_table(legacy_db)
     set_meta(conn, _LEGACY_IMPORT_KEY, datetime.now(UTC).isoformat())
+
+
+def _drop_legacy_reminders_table(legacy_db: Path):
+    """Drop the vestigial `reminders` table from the legacy tasks store after a completed import.
+
+    The tasks daemon no longer reads it after the skill split, so leaving it would keep a dead table
+    in the tasks store forever. Read-write, deliberately separate from the read-only copy; a failure
+    is non-fatal because the reminders already live in the reminders store."""
+    try:
+        with closing(sqlite3.connect(legacy_db)) as old_rw:
+            old_rw.execute("DROP TABLE IF EXISTS reminders")
+            old_rw.commit()
+    except sqlite3.Error as e:
+        logger.warning("Imported legacy reminders but could not drop the source table: %s", e)
 
 
 def _copy_legacy_rows(old_conn: sqlite3.Connection, conn: sqlite3.Connection):
