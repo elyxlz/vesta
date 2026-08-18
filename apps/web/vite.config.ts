@@ -90,7 +90,7 @@ export default defineConfig(({ command, mode }) => {
         {
           extends: true,
           test: {
-            include: ["src/**/*.test.ts"],
+            include: ["src/**/*.test.ts", "visual/harness/*.test.ts"],
             environment: "node",
           },
         },

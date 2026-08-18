@@ -8,12 +8,12 @@ export function AuthStep({
   authStart,
   startError,
   onCredentialsReady,
-  onCancel,
+  onBack,
 }: {
   authStart: AuthStartResult | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
-  onCancel: () => void;
+  onBack: () => void;
 }) {
   return (
     <div className="flex w-full flex-col items-center gap-3">
@@ -27,7 +27,7 @@ export function AuthStep({
             );
             onCredentialsReady(creds);
           }}
-          onCancel={onCancel}
+          onBack={onBack}
         />
       ) : startError ? (
         <p className="text-xs text-destructive text-center py-2">

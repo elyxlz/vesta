@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 )
 
 // The three account sources the agent chooses between with `--source`.
@@ -181,6 +183,22 @@ func canonicalConnectArgs(program string, opts connectOptions) []string {
 	return args
 }
 
+// resolveOpenerStdin swaps a "--opener -" for the stdin body, so an opener can
+// carry apostrophes and newlines untouched through a heredoc, the same `-`
+// convention `send --message -` uses. connect does not route through runOneShot,
+// so it resolves the sentinel here before the value reaches the daemon.
+func resolveOpenerStdin(opts *connectOptions) error {
+	if !opts.openerSet || opts.opener != "-" {
+		return nil
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	opts.opener = strings.TrimRight(string(data), "\r\n")
+	return nil
+}
+
 // runConnect is the agent's single WhatsApp setup verb. The agent states the account
 // source with --source (vesta-cloud, doubletick, or self-managed); the CLI validates that
 // the box environment can satisfy it and routes to the matching path, erring clearly
@@ -189,6 +207,9 @@ func canonicalConnectArgs(program string, opts connectOptions) []string {
 func runConnect() {
 	opts, err := parseConnectOptions("connect", os.Args[1:])
 	if err != nil {
+		failJSON("%s", err.Error())
+	}
+	if err := resolveOpenerStdin(&opts); err != nil {
 		failJSON("%s", err.Error())
 	}
 	route, err := resolveConnect(opts, managedConfigFromEnvAndState())
@@ -217,6 +238,9 @@ func dispatchConnectRoute(route connectRoute) {
 func runConnectAlias(name string, provision bool) {
 	opts, err := parseConnectOptions(name, os.Args[1:])
 	if err != nil {
+		failJSON("%s", err.Error())
+	}
+	if err := resolveOpenerStdin(&opts); err != nil {
 		failJSON("%s", err.Error())
 	}
 	os.Args = canonicalConnectArgs(os.Args[0], opts)

@@ -1,49 +1,49 @@
-import { useNavigate } from "react-router-dom";
-import { AnimatePresence, motion } from "motion/react";
-import { Button } from "@/components/ui/button";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Orb } from "@/components/Orb";
 import { useGateway } from "@/providers/GatewayProvider";
+import { fade, instant } from "@/lib/motion";
 import { buildPhaseMessage } from "@/api/agents";
 
-// One screen for the whole birth: the same mounted orb works (busy), dims on a
-// failure (off), and wakes up (alive), never remounting between phases.
+// One body for the whole birth: the same mounted orb works (busy), dims on a
+// failure (off), and wakes up (alive). On a failure the orb is joined by a
+// heading and the reason, so the screen explains itself; the retry button lives
+// in the shell.
 export function CreatingStep({
   agentName,
   done,
+  failed,
   error,
-  onRetry,
 }: {
   agentName: string;
   done: boolean;
-  error: string | null;
-  onRetry: () => void;
+  failed: boolean;
+  error?: string | null;
 }) {
-  const navigate = useNavigate();
   const { agents } = useGateway();
+  const reduced = useReducedMotion() ?? false;
   // The build phase rides the replica tree: vestad records it into shared state
   // and the roster carries it, so the status line follows the real create with
   // no separate poll.
   const phase =
     agents.find((agent) => agent.name === agentName)?.buildPhase ?? null;
 
-  const orbState = error !== null ? "off" : done ? "alive" : "busy";
+  const orbState = failed ? "off" : done ? "alive" : "busy";
 
   return (
-    <div className="flex flex-col items-center w-[260px] max-w-full px-4">
+    <div className="flex w-full flex-col items-center px-4">
       <Orb state={orbState} size={96} />
-      <div className="mt-3 flex flex-col items-center gap-1 text-center">
+      <div className="mt-3 flex flex-col items-center gap-1 text-center font-serif">
         {done ? (
           <h2 className="text-base font-semibold leading-tight">
             {agentName} is ready
           </h2>
-        ) : error !== null ? (
-          <p
-            role="status"
-            aria-live="polite"
-            className="text-xs text-destructive"
-          >
-            setup failed: {error}
-          </p>
+        ) : failed ? (
+          <>
+            <h2 className="text-base font-semibold leading-tight">
+              couldn&apos;t create {agentName}
+            </h2>
+            {error && <p className="text-xs text-destructive">{error}</p>}
+          </>
         ) : (
           <>
             <AnimatePresence mode="wait">
@@ -51,10 +51,7 @@ export function CreatingStep({
                 key={buildPhaseMessage(phase)}
                 role="status"
                 aria-live="polite"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15 }}
+                {...(reduced ? instant : fade)}
                 className="text-xs text-muted-foreground"
               >
                 {buildPhaseMessage(phase)}
@@ -66,21 +63,6 @@ export function CreatingStep({
           </>
         )}
       </div>
-      {done && (
-        <Button
-          className="mt-2 w-full"
-          onClick={() => {
-            void navigate(`/agent/${agentName}/chat`);
-          }}
-        >
-          say hi
-        </Button>
-      )}
-      {error !== null && (
-        <Button className="mt-2 w-full" onClick={onRetry}>
-          try again
-        </Button>
-      )}
     </div>
   );
 }

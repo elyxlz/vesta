@@ -229,6 +229,33 @@ func prepareAuthNotificationTest(t *testing.T) string {
 	return t.TempDir()
 }
 
+func TestFreshUnknownSourceUnpairedAsksToChooseSource(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+	// No credentials in the environment, none persisted, and no prior link: the
+	// daemon cannot know which source this first link uses, so the hint must ask
+	// the agent to choose rather than assert one it would then follow blindly.
+	if err := WriteUnpairedNotification(dir, "work"); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	if _, present := fields["requires_user_approval"]; present {
+		t.Fatal("a fresh first link must not be labeled a recovery requiring approval")
+	}
+	var recovery, command, message string
+	_ = json.Unmarshal(fields["recovery"], &recovery)
+	_ = json.Unmarshal(fields["next_command"], &command)
+	_ = json.Unmarshal(fields["message"], &message)
+	if recovery != "first_link" {
+		t.Fatalf("recovery = %q, want first_link", recovery)
+	}
+	if command != "whatsapp connect --source <vesta-cloud|doubletick|self-managed> --instance 'work'" {
+		t.Fatalf("next_command asserted a source it cannot determine: %q", command)
+	}
+	if !strings.Contains(message, "Choose the account source") {
+		t.Fatalf("message should tell the agent to choose the source, got %q", message)
+	}
+}
+
 func TestFreshManagedUnpairedCanConnectWithoutApproval(t *testing.T) {
 	dir := prepareAuthNotificationTest(t)
 	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")

@@ -38,6 +38,8 @@
     "mobile:visual:serve": "npm -w @vesta/mobile run visual:serve --",
     "mobile:visual:android": "npm -w @vesta/mobile run visual:android --",
     "mobile:visual:android:capture": "npm -w @vesta/mobile run visual:android:capture --",
-    "mobile:visual:android:serve": "npm -w @vesta/mobile run visual:android:serve --"
+    "mobile:visual:android:serve": "npm -w @vesta/mobile run visual:android:serve --",
+    "web:visual": "npm -w @vesta/web run visual",
+    "web:visual:capture": "npm -w @vesta/web run visual:capture"
   }
 }

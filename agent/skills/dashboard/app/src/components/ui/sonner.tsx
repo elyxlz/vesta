@@ -14,7 +14,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={theme as ToasterProps["theme"]}
-      className="toaster group"
+      // At sonner's 600px mobile breakpoint the toaster is width:100% anchored
+      // at the left offset, which runs off the right edge; width:auto makes its
+      // box symmetric between the offsets so a w-fit toast can center in it.
+      className="toaster group max-[600px]:![width:auto]"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,
@@ -27,12 +30,16 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-bg": "var(--popover)",
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
+          "--border-radius": "calc(infinity * 1px)",
+          "--width": "20rem",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
+          toast:
+            "cn-toast !w-fit !min-w-[14rem] !max-w-[min(20rem,calc(100vw-2rem))] !justify-center !gap-1 !px-3.5 !py-2.5 max-[600px]:mx-auto",
+          title: "!text-[13px] !font-medium",
+          description: "!text-xs",
         },
       }}
       {...props}

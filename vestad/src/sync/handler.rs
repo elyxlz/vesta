@@ -136,7 +136,8 @@ async fn settle_and_notify(state: SharedState, agent: String) {
         return;
     }
     // Best-effort: a stopped agent or write failure logs itself, never fatal.
-    if let Err(error) = crate::serve::drop_presence_notification(&state.docker, &agent, client).await {
+    let notification = crate::agent_notification::user_presence(client);
+    if let Err(error) = crate::agent_notification::drop(&state.docker, &agent, &notification).await {
         tracing::warn!(%agent, %error, "could not drop presence notification");
     }
 }

@@ -27,12 +27,7 @@ function agentRow(name: string, buildPhase: AgentRow["buildPhase"]): AgentRow {
 function renderCreating(agentName: string) {
   return render(
     <MemoryRouter>
-      <CreatingStep
-        agentName={agentName}
-        done={false}
-        error={null}
-        onRetry={() => undefined}
-      />
+      <CreatingStep agentName={agentName} done={false} failed={false} />
     </MemoryRouter>,
   );
 }
@@ -59,5 +54,21 @@ describe("CreatingStep", () => {
     roster = [];
     renderCreating("luna");
     expect(screen.getByText("setting things up...")).toBeTruthy();
+  });
+
+  it("shows a heading and the reason when the create failed", () => {
+    roster = [];
+    render(
+      <MemoryRouter>
+        <CreatingStep
+          agentName="luna"
+          done={false}
+          failed
+          error="gateway ran out of disk"
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("couldn't create luna")).toBeTruthy();
+    expect(screen.getByText("gateway ran out of disk")).toBeTruthy();
   });
 });

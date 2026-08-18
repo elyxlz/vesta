@@ -5595,7 +5595,13 @@ mod tests {
         // mkdir runs asynchronously after start; retry the drop until the dir exists.
         let mut file_name = None;
         for _ in 0..RENAME_NOTIF_DROP_TRIES {
-            match crate::serve::drop_rename_notification(&docker, &agent_name, "old-name").await {
+            match crate::agent_notification::drop(
+                &docker,
+                &agent_name,
+                &crate::agent_notification::rename("old-name", &agent_name),
+            )
+            .await
+            {
                 Ok(name) => {
                     file_name = Some(name);
                     break;
@@ -5649,10 +5655,10 @@ mod tests {
         // mkdir runs asynchronously after start; retry the drop until the dir exists.
         let mut file_name = None;
         for _ in 0..RENAME_NOTIF_DROP_TRIES {
-            match crate::serve::drop_presence_notification(
+            match crate::agent_notification::drop(
                 &docker,
                 &agent_name,
-                crate::types::ClientKind::Mobile,
+                &crate::agent_notification::user_presence(crate::types::ClientKind::Mobile),
             )
             .await
             {

@@ -14,6 +14,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 
+use crate::agent_notification::{fields, AgentNotification};
 use crate::device_registry::{DeviceContext, DevicePlace, DevicePosition, PositionReport};
 use crate::state::{err_response, ok_json, SharedState};
 
@@ -112,36 +113,24 @@ pub(crate) async fn report_device_context(state: &SharedState, device_id: &str, 
     }
     let now = crate::time_utils::now_epoch_secs();
     let device = state.device_registry.report_context(device_id, context.clone(), now)?;
-    let timestamp = match crate::time_utils::epoch_to_rfc3339(now) {
-        Ok(timestamp) => timestamp,
-        Err(error) => {
-            tracing::warn!(%error, "could not stamp user context notification");
-            return Some(());
-        }
-    };
     // Serving agents with a reported zone: the ones vestad holds a current picture of.
     let agent_zones = state.agent_status_cache.serving_timezones();
     if let Some(zone) = context.timezone.filter(|_| presence == UserPresence::AtDevice) {
         for change in state.user_context.timezone_changes(&zone, &agent_zones) {
-            let payload = timezone_notification_payload(&timestamp, &device, &zone, &change.agent_zone);
-            deliver(state, &change.agent, "user-timezone", &payload).await;
+            deliver(state, &change.agent, &user_timezone(&device, &zone, &change.agent_zone)).await;
         }
     }
     if let Some(PositionReport::At(position)) = context.position {
-        let payload = location_notification_payload(&timestamp, &device, &position);
+        let notification = user_location(&device, &position);
         for agent in state.user_context.location_changes(&position, &agent_zones) {
-            deliver(state, &agent, "user-location", &payload).await;
+            deliver(state, &agent, &notification).await;
         }
     }
     Some(())
 }
 
-/// Write one notification into an agent's intake. The file name carries the millisecond, so two
-/// devices reporting inside one second (every client replaying after a gateway restart) do not
-/// overwrite each other in the intake.
-async fn deliver(state: &SharedState, agent: &str, kind: &str, payload: &serde_json::Value) {
-    let file_name = format!("{kind}-{}.json", crate::time_utils::now_epoch_millis());
-    if let Err(error) = crate::serve::drop_notification(&state.docker, agent, &file_name, payload).await {
+async fn deliver(state: &SharedState, agent: &str, notification: &AgentNotification) {
+    if let Err(error) = crate::agent_notification::drop(&state.docker, agent, notification).await {
         tracing::warn!(%agent, %error, "could not drop user context notification");
     }
 }
@@ -170,27 +159,26 @@ pub(crate) async fn agent_devices_handler(State(state): State<SharedState>) -> J
     Json(serde_json::json!({ "devices": state.device_registry.snapshot() }))
 }
 
-/// The `user-timezone` notification. Pure so its shape is asserted without a container. Snoozed
-/// (`interrupt: false`): a zone change is worked through at the next idle point.
-pub(crate) fn timezone_notification_payload(timestamp: &str, device: &str, device_zone: &str, agent_zone: &str) -> serde_json::Value {
-    serde_json::json!({
-        "timestamp": timestamp,
-        "source": "vestad",
-        "type": "user-timezone",
-        "interrupt": false,
-        "device": device,
-        "device_timezone": device_zone,
-        "agent_timezone": agent_zone,
-        "message": format!(
-            "the user's device ({device}) reports timezone {device_zone}; your timezone is {agent_zone}. \
-             If the user has moved, update your timezone with the timezone skill."
-        ),
-    })
+/// The `user-timezone` notification. Snoozed: a zone change is worked through at the next idle point.
+pub(crate) fn user_timezone(device: &str, device_zone: &str, agent_zone: &str) -> AgentNotification {
+    AgentNotification {
+        kind: "user-timezone",
+        interrupt: false,
+        fields: fields(serde_json::json!({
+            "device": device,
+            "device_timezone": device_zone,
+            "agent_timezone": agent_zone,
+            "message": format!(
+                "the user's device ({device}) reports timezone {device_zone}; your timezone is {agent_zone}. \
+                 If the user has moved, update your timezone with the timezone skill."
+            ),
+        })),
+    }
 }
 
 /// The `user-location` notification: the macro place first, the coordinates after it. Every field
 /// is a scalar, since the agent renders notification fields as attribute text.
-pub(crate) fn location_notification_payload(timestamp: &str, device: &str, position: &DevicePosition) -> serde_json::Value {
+pub(crate) fn user_location(device: &str, position: &DevicePosition) -> AgentNotification {
     let place = position.place.as_ref().and_then(DevicePlace::macro_label);
     let coordinates = match position.accuracy_m {
         Some(accuracy) => format!("{:.4}, {:.4}, ±{accuracy:.0} m", position.latitude, position.longitude),
@@ -200,18 +188,18 @@ pub(crate) fn location_notification_payload(timestamp: &str, device: &str, posit
         Some(place) => format!("the user's device ({device}) is now in {place} ({coordinates})."),
         None => format!("the user's device ({device}) is now at {coordinates}, no place name known."),
     };
-    serde_json::json!({
-        "timestamp": timestamp,
-        "source": "vestad",
-        "type": "user-location",
-        "interrupt": false,
-        "device": device,
-        "place": place,
-        "latitude": position.latitude,
-        "longitude": position.longitude,
-        "accuracy_m": position.accuracy_m,
-        "message": message,
-    })
+    AgentNotification {
+        kind: "user-location",
+        interrupt: false,
+        fields: fields(serde_json::json!({
+            "device": device,
+            "place": place,
+            "latitude": position.latitude,
+            "longitude": position.longitude,
+            "accuracy_m": position.accuracy_m,
+            "message": message,
+        })),
+    }
 }
 
 /// Great-circle distance between two (latitude, longitude) points in degrees.
@@ -291,7 +279,7 @@ mod tests {
 
     #[test]
     fn timezone_payload_names_device_and_both_zones() {
-        let payload = timezone_notification_payload("2026-05-28T20:26:40Z", "Chrome on macOS", "Asia/Tokyo", "Europe/London");
+        let payload = user_timezone("Chrome on macOS", "Asia/Tokyo", "Europe/London").envelope(1_780_000_000).expect("payload");
         assert_eq!(payload["source"], "vestad");
         assert_eq!(payload["type"], "user-timezone");
         assert_eq!(payload["interrupt"], false);
@@ -305,14 +293,14 @@ mod tests {
     fn location_payload_leads_with_the_place_then_the_coordinates() {
         let mut position = at(35.6762, 139.6503, Some("Tokyo"));
         position.accuracy_m = Some(50.0);
-        let payload = location_notification_payload("2026-05-28T20:26:40Z", "Vesta Mobile on iOS", &position);
+        let payload = user_location("Vesta Mobile on iOS", &position).envelope(1_780_000_000).expect("payload");
         assert_eq!(payload["type"], "user-location");
         assert_eq!(payload["place"], "Tokyo, X");
         assert_eq!(payload["latitude"], 35.6762);
         assert_eq!(payload["accuracy_m"], 50.0);
         assert!(payload["position"].is_null(), "no nested objects: the agent renders fields as text");
         assert_eq!(payload["message"], "the user's device (Vesta Mobile on iOS) is now in Tokyo, X (35.6762, 139.6503, ±50 m).");
-        let bare = location_notification_payload("2026-05-28T20:26:40Z", "phone", &at(1.0, 2.0, None));
+        let bare = user_location("phone", &at(1.0, 2.0, None)).envelope(1_780_000_000).expect("payload");
         assert_eq!(bare["place"], serde_json::Value::Null);
         assert_eq!(bare["message"], "the user's device (phone) is now at 1.0000, 2.0000, no place name known.");
     }

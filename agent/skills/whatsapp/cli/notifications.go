@@ -303,43 +303,59 @@ func wasPreviouslyLinked(instance string) bool {
 	return st.OnboardedMSISDN != "" || !st.LinkedAt.IsZero() || st.AuthStatus == "logged_out" || st.ExitStatus != ""
 }
 
-func notificationSource(instance string) (string, string) {
+// notificationSource picks the account source for a reconnect hint. confident is
+// true when persisted state or the box environment determines the source; it is
+// false for the final catch-all, where the source is only a guess the caller must
+// not present as a settled fact on a first link.
+func notificationSource(instance string) (source string, configError string, confident bool) {
 	st := loadStateFromDisk(stateDataDirFor(instance))
 	cfg := notificationManagedConfig(instance)
 	switch st.AccountSource {
 	case sourceVestaCloud:
 		if cfg.isManagedVM() {
-			return sourceVestaCloud, ""
+			return sourceVestaCloud, "", true
 		}
 	case sourceDoubletick:
 		if cfg.isDirect() {
-			return sourceDoubletick, ""
+			return sourceDoubletick, "", true
 		}
 	case sourceSelfManaged:
 		if !cfg.isManagedVM() && !cfg.isDirect() && cfg.configError == "" {
-			return sourceSelfManaged, ""
+			return sourceSelfManaged, "", true
 		}
 	}
 	// Migration fallback follows the setup decision order. A managed VM uses its
 	// cloud entitlement even when stale direct credentials are also present.
 	if cfg.isManagedVM() {
-		return sourceVestaCloud, ""
+		return sourceVestaCloud, "", true
 	}
 	if cfg.isDirect() {
-		return sourceDoubletick, ""
+		return sourceDoubletick, "", true
 	}
 	if cfg.configError != "" {
-		return "", cfg.configError
+		return "", cfg.configError, false
 	}
-	return sourceSelfManaged, ""
+	return sourceSelfManaged, "", false
 }
 
 func connectCommand(instance string) string {
-	source, _ := notificationSource(instance)
+	source, _, _ := notificationSource(instance)
 	if source == "" {
 		return ""
 	}
 	command := "whatsapp connect --source " + source
+	if instance != "" {
+		command += " --instance " + quoteReplyArg(instance)
+	}
+	return command
+}
+
+// sourceChoiceCommand is the reconnect hint for a first link whose source the
+// daemon cannot determine (no credentials in its environment, none persisted
+// yet). It lists the choices for the agent to fill in from the source it sets up,
+// rather than asserting one guess the agent might follow into the wrong flow.
+func sourceChoiceCommand(instance string) string {
+	command := "whatsapp connect --source <vesta-cloud|doubletick|self-managed>"
 	if instance != "" {
 		command += " --instance " + quoteReplyArg(instance)
 	}
@@ -352,7 +368,7 @@ func connectCommand(instance string) string {
 // under the linking rule. A self-managed first link waits for user participation.
 func WriteUnpairedNotification(notifDir, instance string) error {
 	priorLink := wasPreviouslyLinked(instance)
-	source, configError := notificationSource(instance)
+	source, configError, confident := notificationSource(instance)
 	managed := source == sourceVestaCloud || source == sourceDoubletick
 	command := connectCommand(instance)
 	recovery := "first_link"
@@ -373,6 +389,13 @@ func WriteUnpairedNotification(notifDir, instance string) error {
 	}
 	if managed {
 		message += " The headless flow needs no phone or QR step."
+	}
+	if !priorLink && !managed && configError == "" && !confident {
+		// A first link whose source is undetermined: the daemon holds no
+		// credentials and none is persisted, so it must not assert one source.
+		// The agent fills in --source from the account it sets up.
+		command = sourceChoiceCommand(instance)
+		message = "WhatsApp daemon started without a paired device session. Choose the account source, then run the next_command with that --source filled in, when the user is ready."
 	}
 	n := authNotif{
 		Source:               "whatsapp",
@@ -395,7 +418,7 @@ func WriteLoggedOutNotification(notifDir, instance, reason string) error {
 	if reason != "" {
 		message += " (" + reason + ")"
 	}
-	source, configError := notificationSource(instance)
+	source, configError, _ := notificationSource(instance)
 	if configError != "" {
 		message += ". Reconnect is blocked because " + configError + ". Fix the operator-managed configuration outside chat, then ask the user for explicit approval before reconnecting. Do not retry-loop pairing."
 	} else if source == sourceVestaCloud || source == sourceDoubletick {

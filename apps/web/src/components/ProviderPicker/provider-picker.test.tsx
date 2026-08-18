@@ -136,12 +136,20 @@ describe("ProviderPicker defaults-only onboarding", () => {
     });
   });
 
-  it("still finishes a static-catalog provider with its defaults right after auth", () => {
+  it("walks a static-catalog provider through the model step, then finishes with default context", () => {
     const onDone = vi.fn();
     render(<ProviderPicker defaultsOnly onDone={onDone} />);
 
     fireEvent.click(screen.getByRole("button", { name: /ChatGPT/ }));
     fireEvent.click(screen.getByRole("button", { name: /finish openai auth/ }));
+
+    // A fixed catalog now picks a model in onboarding instead of skipping.
+    expect(onDone).not.toHaveBeenCalled();
+    expect(screen.getByText("pick a model")).toBeTruthy();
+
+    // The default model is preselected, so continue finishes with the default
+    // context window and skips ContextStep.
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
 
     expect(onDone).toHaveBeenCalledWith({
       kind: "openai",

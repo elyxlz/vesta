@@ -37,6 +37,8 @@ export type {
 } from "./protocol/tree"
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
 export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
+export { parseServerFrame } from "./protocol/parse"
+export type { ParsedFrame } from "./protocol/parse"
 export { selectDevices, devicesEqual } from "./tree/devices"
 export {
   gatewayOperationLabel,

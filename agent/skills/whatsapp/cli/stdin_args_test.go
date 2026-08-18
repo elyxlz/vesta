@@ -104,3 +104,27 @@ func TestResolveStdinArgsDoesNotMutateItsInput(t *testing.T) {
 		t.Fatalf("resolveStdinArgs aliased its input")
 	}
 }
+
+// connect bypasses runOneShot, so it resolves `--opener -` on its own path. An
+// opener with an apostrophe or newline must survive intact from the heredoc.
+func TestResolveOpenerStdinReadsHeredocBody(t *testing.T) {
+	opts := connectOptions{opener: "-", openerSet: true}
+	withStdin(t, "hey it's me\nlet's talk\n", func() {
+		if err := resolveOpenerStdin(&opts); err != nil {
+			t.Fatalf("resolveOpenerStdin: %v", err)
+		}
+	})
+	if opts.opener != "hey it's me\nlet's talk" {
+		t.Fatalf("opener = %q, want the stdin body with the trailing newline trimmed", opts.opener)
+	}
+}
+
+func TestResolveOpenerStdinLeavesALiteralOpenerAlone(t *testing.T) {
+	opts := connectOptions{opener: "hi there", openerSet: true}
+	if err := resolveOpenerStdin(&opts); err != nil {
+		t.Fatalf("resolveOpenerStdin: %v", err)
+	}
+	if opts.opener != "hi there" {
+		t.Fatalf("a literal opener must be left alone, got %q", opts.opener)
+	}
+}
