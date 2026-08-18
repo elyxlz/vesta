@@ -2,14 +2,16 @@
 
 import argparse
 import base64
+import json
 import os
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import jwt
-import requests
 
 # Config — hardcoded for the vesta-upstream GitHub App
 APP_ID = 2990557
@@ -39,19 +41,37 @@ def generate_jwt():
 
 def get_installation_token():
     token_jwt = generate_jwt()
-    resp = requests.post(
+    request = urllib.request.Request(
         f"{GITHUB_API}/app/installations/{INSTALLATION_ID}/access_tokens",
+        method="POST",
         headers={
             "Authorization": f"Bearer {token_jwt}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         },
-        timeout=30,
     )
-    if resp.status_code != 201:
-        print(f"Error getting token: {resp.status_code} {resp.text}", file=sys.stderr)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as resp:
+            return json.load(resp)["token"]
+    except urllib.error.HTTPError as err:
+        print(f"Error getting token: {err.code} {err.read().decode()}", file=sys.stderr)
         sys.exit(1)
-    return resp.json()["token"]
+
+
+def gh_env(token):
+    return {**os.environ, "GH_TOKEN": token, "GH_REPO": UPSTREAM_REPO}
+
+
+def gh_api(token, path, *, method="GET", fields=None):
+    """All REST traffic rides gh so auth handling has one owner. Returns (exit code, stdout)."""
+    cmd = ["gh", "api"]
+    if method != "GET":
+        cmd += ["-X", method]
+    cmd.append(path)
+    for key, value in (fields or {}).items():
+        cmd += ["-f", f"{key}={value}"]
+    result = subprocess.run(cmd, env=gh_env(token), capture_output=True, text=True, check=False)
+    return result.returncode, result.stdout
 
 
 def run(cmd, env=None):
@@ -103,28 +123,15 @@ def ensure_shared_history(base, env):
         sys.exit(1)
 
 
-def api_headers(token):
-    return {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-
 def pr_commit_authors(token, number):
     """(originator, all authors) for one PR, by commit author name. Every agent pushes through the
     same GitHub App, so `pull.user.login` is `vesta-upstream[bot]` on EVERY PR in the repo and
     identifies nobody. The commit author is the only field carrying which agent wrote it, and the
     FIRST commit's author is the one who opened the PR."""
-    resp = requests.get(
-        f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls/{number}/commits",
-        headers=api_headers(token),
-        params={"per_page": 100},
-        timeout=30,
-    )
-    if resp.status_code != 200:
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls/{number}/commits?per_page=100")
+    if code != 0:
         return None, set()
-    commits = resp.json()
+    commits = json.loads(out)
     if not commits:
         return None, set()
     return commits[0]["commit"]["author"]["name"], {c["commit"]["author"]["name"] for c in commits}
@@ -133,16 +140,11 @@ def pr_commit_authors(token, number):
 def list_my_prs(token, agent_name, state, limit):
     """Print the PRs this agent opened, and separately the ones it only pushed commits to."""
     me = f"{agent_name} (vesta)"
-    resp = requests.get(
-        f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls",
-        headers=api_headers(token),
-        params={"state": state, "per_page": 100, "sort": "created", "direction": "desc"},
-        timeout=30,
-    )
-    if resp.status_code != 200:
-        print(f"Error: {resp.status_code} {resp.text}", file=sys.stderr)
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?state={state}&per_page=100&sort=created&direction=desc")
+    if code != 0:
+        print(f"Error: gh api failed: {out}", file=sys.stderr)
         sys.exit(1)
-    candidates = resp.json()[:limit]
+    candidates = json.loads(out)[:limit]
     opened, touched, unreadable = [], [], []
     for pr in candidates:
         originator, authors = pr_commit_authors(token, pr["number"])
@@ -218,29 +220,24 @@ def warn_if_branch_belongs_to_another_agent(branch, base, agent_name, env):
 
 
 def create_pr(token, title, body, branch, base):
-    headers = api_headers(token)
-    resp = requests.post(
-        f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls",
-        headers=headers,
-        json={"title": title, "body": body, "head": branch, "base": base},
-        timeout=30,
+    code, out = gh_api(
+        token,
+        f"repos/{UPSTREAM_REPO}/pulls",
+        method="POST",
+        fields={"title": title, "body": body, "head": branch, "base": base},
     )
-
-    if resp.status_code == 201:
-        print(f"PR created: {resp.json()['html_url']}")
-    elif resp.status_code == 422 and "already exists" in resp.text.lower():
+    if code == 0:
+        print(f"PR created: {json.loads(out)['html_url']}")
+        return
+    if "already exists" in out.lower():
         print("PR already exists for this branch")
-        search = requests.get(
-            f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls",
-            headers=headers,
-            params={"head": f"{UPSTREAM_REPO.split('/', maxsplit=1)[0]}:{branch}", "base": base, "state": "open"},
-            timeout=30,
-        )
-        if search.status_code == 200 and search.json():
-            print(f"Existing PR: {search.json()[0]['html_url']}")
-    else:
-        print(f"Error: {resp.status_code} {resp.text}", file=sys.stderr)
-        sys.exit(1)
+        owner = UPSTREAM_REPO.split("/", maxsplit=1)[0]
+        search_code, search_out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?head={owner}:{branch}&base={base}&state=open")
+        if search_code == 0 and json.loads(search_out):
+            print(f"Existing PR: {json.loads(search_out)[0]['html_url']}")
+        return
+    print(f"Error: {out}", file=sys.stderr)
+    sys.exit(1)
 
 
 def main():
