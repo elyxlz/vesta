@@ -268,12 +268,22 @@ h1 {
   border-color: var(--accent);
   color: var(--text);
 }
+/* The label owns the row; the copy button overlays it, so a long platform name
+   never wraps and every slot's meta row is one line tall. */
 .shot-meta {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  min-height: 18px;
   margin-top: 6px;
+}
+.platform-tag { white-space: nowrap; }
+.shot-meta .copy-ref {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .card-head {
   display: flex;
