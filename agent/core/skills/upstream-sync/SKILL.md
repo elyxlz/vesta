@@ -12,7 +12,7 @@ fetched locally (no internet involved). When Vesta upgrades, the core you run ch
 (it is a read-only mount), and syncing brings the rest of your workspace up to the same
 version: merge the tag matching the version you now run, so you take every stock change
 without rewriting any of your commits. To contribute changes back to the Vesta project, see
-`~/agent/skills/upstream-pr/SKILL.md`.
+`~/agent/skills/upstream/SKILL.md`.
 
 ## Sync (after an upgrade, when the boot turn asks)
 

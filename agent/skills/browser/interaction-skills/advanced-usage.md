@@ -69,7 +69,7 @@ Xvfb to provision; headless is the stealthy default.
 ## Contribute back what you learn
 
 If you figured out something non-obvious about a site or mechanic, or wrote a broadly useful
-helper, contribute it upstream before you finish via the `upstream-pr` skill. Three kinds, in
+helper, contribute it upstream before you finish via the `upstream` skill. Three kinds, in
 order of frequency:
 
 1. **Domain skill** under `domain-skills/<host>/<topic>.md`. Private APIs, stable selectors,
@@ -85,4 +85,4 @@ locate the target instead), narration of the specific task you just did, or secr
 session tokens / personal credentials.
 
 Flow: edit locally (takes effect immediately via `uv tool install --editable`), verify, then use
-the `upstream-pr` skill to open a PR to `elyxlz/vesta`.
+the `upstream` skill to open a PR to `elyxlz/vesta`.
