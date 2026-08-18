@@ -35,6 +35,9 @@ export default defineConfig({
     ["./run-status-reporter.ts"],
   ],
   timeout: 60000,
+  // A cold worker's first paint can outlast the default 5 s under load; every
+  // settle is a poll, so a wider bound only slows a real failure.
+  expect: { timeout: 15000 },
   fullyParallel: true,
   // 12-core host; 8 keeps headroom. A gentle scan passes --workers=2.
   workers: 8,

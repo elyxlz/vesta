@@ -38,6 +38,14 @@ export async function installNativeStub(
 ): Promise<void> {
   await page.addInitScript(
     ({ connection, platform }) => {
+      // The app reads the user agent, not the bridge, for platform-specific
+      // chrome such as keybind glyphs, so a Windows shell needs a Windows UA.
+      if (platform === "win32") {
+        Object.defineProperty(navigator, "userAgent", {
+          get: () =>
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Electron/38.0.0 Safari/537.36",
+        });
+      }
       let stored: unknown = connection;
       const noop = (): void => undefined;
       const resolved = (): Promise<void> => Promise.resolve();

@@ -93,30 +93,13 @@ export async function loadRegistry(family) {
   return validateRegistry(manifest, family);
 }
 
-// The gallery composes every family into one page, so an id or a screenshot name
-// must be unique across families too, or one card would overwrite another.
+// Ids and screenshot names are unique within a family; across families the
+// same screen keeps the same id (shots live in per-platform directories, and
+// the gallery keys nothing on a family-wide id).
 export async function loadAllRegistries() {
   const registries = {};
-  const seenIds = new Map();
-  const seenShots = new Map();
   for (const family of Object.keys(FAMILIES)) {
     registries[family] = await loadRegistry(family);
-    for (const scenario of registries[family].scenarios) {
-      const idOwner = seenIds.get(scenario.id);
-      if (idOwner) {
-        throw new Error(
-          `Scenario id ${scenario.id} exists in both ${idOwner} and ${family}.`,
-        );
-      }
-      const shotOwner = seenShots.get(scenario.screenshot);
-      if (shotOwner) {
-        throw new Error(
-          `Screenshot ${scenario.screenshot} exists in both ${shotOwner} and ${family}.`,
-        );
-      }
-      seenIds.set(scenario.id, family);
-      seenShots.set(scenario.screenshot, family);
-    }
   }
   return registries;
 }

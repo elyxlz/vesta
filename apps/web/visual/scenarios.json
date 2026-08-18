@@ -144,6 +144,700 @@
       "title": "Change model, ChatGPT",
       "description": "The settings change-model dialog for a ChatGPT agent.",
       "group": "Agent settings"
+    },
+    {
+      "id": "home-loading",
+      "title": "Home, loading",
+      "description": "The roster skeleton before the gateway snapshot arrives.",
+      "group": "Home"
+    },
+    {
+      "id": "home-one-agent",
+      "title": "Home, one agent",
+      "description": "The carousel with a single alive agent.",
+      "group": "Home"
+    },
+    {
+      "id": "home-many-agents",
+      "title": "Home, many agents",
+      "description": "Six agents in the carousel with pagination dots, centred on the last used one.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-starting",
+      "title": "Card, starting",
+      "description": "An agent card while its container starts.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-setting-up",
+      "title": "Card, setting up",
+      "description": "An agent card while first-time setup runs.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-booting",
+      "title": "Card, booting",
+      "description": "An alive agent still inside its boot turns, shown as waking up.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-thinking",
+      "title": "Card, thinking",
+      "description": "An alive agent mid-turn.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-restarting",
+      "title": "Card, restarting",
+      "description": "An agent card during a restart.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-rebuilding",
+      "title": "Card, rebuilding",
+      "description": "An agent card while vestad rebuilds its container.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-stopped",
+      "title": "Card, stopped",
+      "description": "A user-stopped agent.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-dead",
+      "title": "Card, dead",
+      "description": "An agent whose container died.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-not-found",
+      "title": "Card, not found",
+      "description": "An agent whose container is missing.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-needs-sign-in",
+      "title": "Card, needs sign-in",
+      "description": "An agent whose provider credentials are gone.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-unprovisioned",
+      "title": "Card, unprovisioned",
+      "description": "An agent that was never set up.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-backing-up",
+      "title": "Card, backing up",
+      "description": "An agent with a backup operation in flight.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-restoring",
+      "title": "Card, restoring",
+      "description": "An agent being restored from a snapshot.",
+      "group": "Home"
+    },
+    {
+      "id": "home-card-start-failed",
+      "title": "Card, start failed",
+      "description": "The red failure line after a start request the gateway refused.",
+      "group": "Home"
+    },
+    {
+      "id": "home-update-available",
+      "title": "Home, update available",
+      "description": "The navbar update pill when a newer gateway release exists.",
+      "group": "Home"
+    },
+    {
+      "id": "update-snapshotting",
+      "title": "Update, backing up all",
+      "description": "The update screen while every agent is snapshotted.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "update-snapshotting-agent",
+      "title": "Update, backing up one",
+      "description": "The update screen naming the agent being snapshotted with progress.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "update-applying",
+      "title": "Update, installing",
+      "description": "The update screen while the binary is swapped.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "update-restarting",
+      "title": "Update, restarting",
+      "description": "The update screen while the gateway restarts.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "update-failed",
+      "title": "Update, failed",
+      "description": "The failed update with its error, retry, and dismiss.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "update-warnings",
+      "title": "Update, warnings",
+      "description": "A failed update that also carries warnings from the snapshot phase.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "gateway-restart-operation",
+      "title": "Gateway restart",
+      "description": "The operation screen for a plain gateway restart.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "updated-to",
+      "title": "Updated",
+      "description": "The notice shown once the gateway comes back on the new version.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "agent-dashboard-empty",
+      "title": "Dashboard, empty",
+      "description": "The desktop split with the empty dashboard beside chat.",
+      "group": "Agent",
+      "platforms": ["web", "desktop"]
+    },
+    {
+      "id": "agent-dashboard-unavailable",
+      "title": "Dashboard, unavailable",
+      "description": "The dashboard slot when the service key cannot be minted.",
+      "group": "Agent"
+    },
+    {
+      "id": "agent-dashboard-live",
+      "title": "Dashboard, live",
+      "description": "A dashboard page loaded in the frame.",
+      "group": "Agent"
+    },
+    {
+      "id": "agent-chat-collapsed",
+      "title": "Chat collapsed",
+      "description": "The dashboard alone after collapsing the chat panel.",
+      "group": "Agent",
+      "platforms": ["web", "desktop"]
+    },
+    {
+      "id": "agent-navbar-needs-auth",
+      "title": "Navbar, sign in",
+      "description": "The agent navbar offering sign in for an unauthenticated agent.",
+      "group": "Agent",
+      "platforms": ["web", "desktop"]
+    },
+    {
+      "id": "agent-navbar-restart-pending",
+      "title": "Navbar, restart to apply",
+      "description": "The restart-to-apply button after a model change.",
+      "group": "Agent"
+    },
+    {
+      "id": "agent-island-collapsed",
+      "title": "Island, collapsed",
+      "description": "The collapsed agent island with the status pill.",
+      "group": "Agent"
+    },
+    {
+      "id": "agent-island-error",
+      "title": "Island, error",
+      "description": "The island in its red failure state.",
+      "group": "Agent"
+    },
+    {
+      "id": "agent-island-expanded",
+      "title": "Island, expanded",
+      "description": "The expanded island with orb, status, and provider line.",
+      "group": "Agent"
+    },
+    {
+      "id": "agent-menu-desktop",
+      "title": "Agent menu",
+      "description": "The desktop agent actions dropdown.",
+      "group": "Agent",
+      "platforms": ["web", "desktop"]
+    },
+    {
+      "id": "agent-menu-stopped",
+      "title": "Agent menu, stopped",
+      "description": "The agent menu for a stopped agent, offering start.",
+      "group": "Agent"
+    },
+    {
+      "id": "agent-menu-mobile",
+      "title": "Agent drawer",
+      "description": "The narrow-screen agent actions drawer.",
+      "group": "Agent",
+      "platforms": ["web-narrow"]
+    },
+    {
+      "id": "agent-menu-debug-info",
+      "title": "Debug info",
+      "description": "The debug information dialog from advanced mode.",
+      "group": "Agent"
+    },
+    {
+      "id": "mobile-navbar-dashboard",
+      "title": "Mobile navbar, dashboard",
+      "description": "The narrow-screen bottom navbar on the dashboard tab.",
+      "group": "Agent",
+      "platforms": ["web-narrow"]
+    },
+    {
+      "id": "mobile-navbar-chat",
+      "title": "Mobile navbar, chat",
+      "description": "The narrow-screen bottom navbar on the chat tab.",
+      "group": "Agent",
+      "platforms": ["web-narrow"]
+    },
+    {
+      "id": "chat-history-skeleton",
+      "title": "Chat, loading",
+      "description": "The pulsing bubble skeleton before history loads.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-empty",
+      "title": "Chat, empty",
+      "description": "A fresh agent with no messages yet.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-needs-sign-in",
+      "title": "Chat, needs sign-in",
+      "description": "The chat when the agent has no provider credentials; composer disabled.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-populated",
+      "title": "Chat, conversation",
+      "description": "A conversation across two days with a reply quote.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-markdown",
+      "title": "Chat, rich reply",
+      "description": "A reply with heading, code block, table, list, and link.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-error-line",
+      "title": "Chat, error line",
+      "description": "The centred snag line after a failed turn.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-rate-limited",
+      "title": "Chat, rate limited",
+      "description": "The rate-limit line with its reset time.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-send-failed",
+      "title": "Chat, not sent",
+      "description": "A user bubble the gateway refused, offering retry.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-has-more",
+      "title": "Chat, older history",
+      "description": "The scroll-to-latest button after scrolling up in a long history.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-composer-typed",
+      "title": "Chat, composing",
+      "description": "Text typed in the composer with send enabled.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-mobile-fullscreen",
+      "title": "Chat, narrow",
+      "description": "The full-screen chat on a narrow viewport.",
+      "group": "Chat",
+      "platforms": ["web-narrow"]
+    },
+    {
+      "id": "logs-streaming",
+      "title": "Logs, waiting",
+      "description": "The console placeholder while the stream connects.",
+      "group": "Logs"
+    },
+    {
+      "id": "logs-lines",
+      "title": "Logs, lines",
+      "description": "Coloured log lines followed by the agent-stopped notice.",
+      "group": "Logs"
+    },
+    {
+      "id": "logs-reconnecting",
+      "title": "Logs, reconnecting",
+      "description": "The reconnecting notice after the stream errored.",
+      "group": "Logs"
+    },
+    {
+      "id": "settings-logs-tab",
+      "title": "Settings, logs tab",
+      "description": "The console inside the settings logs tab.",
+      "group": "Logs"
+    },
+    {
+      "id": "settings-general",
+      "title": "Settings, general",
+      "description": "The general tab with actions, provider, backups, and voice cards.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-provider-loading",
+      "title": "Provider, loading",
+      "description": "The provider card skeleton.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-provider-none",
+      "title": "Provider, not connected",
+      "description": "The provider card with no provider set up.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-provider-signed-out",
+      "title": "Provider, signed out",
+      "description": "The provider card after credentials expired.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-provider-claude",
+      "title": "Provider, Claude",
+      "description": "The provider card for a Claude Max account with usage meters.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-provider-openrouter",
+      "title": "Provider, OpenRouter",
+      "description": "The provider card for OpenRouter with credits.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-usage-loading",
+      "title": "Usage, loading",
+      "description": "The usage skeleton inside the provider card.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-usage-error",
+      "title": "Usage, error",
+      "description": "The usage failure line inside the provider card.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-model-claude",
+      "title": "Model, Claude",
+      "description": "The change-model dialog with the live Claude list.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-model-openrouter",
+      "title": "Model, OpenRouter",
+      "description": "The change-model dialog with the OpenRouter list.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-model-error",
+      "title": "Model, error",
+      "description": "The change-model dialog after the gateway refused the change.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-context-dialog",
+      "title": "Context window",
+      "description": "The change-context dialog with its presets.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-sign-out-dialog",
+      "title": "Sign out",
+      "description": "The sign-out confirmation.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-actions-stopped",
+      "title": "Actions, stopped",
+      "description": "The actions card for a stopped agent.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-actions-needs-auth",
+      "title": "Actions, needs sign-in",
+      "description": "The actions card offering sign in.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-backups-loading",
+      "title": "Backups card, loading",
+      "description": "The backups card skeleton.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-backups-off",
+      "title": "Backups card, off",
+      "description": "The backups card with automatic backups disabled.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-backups-dialog",
+      "title": "Backups",
+      "description": "The backups dialog listing snapshots.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-backups-dialog-empty",
+      "title": "Backups, empty",
+      "description": "The backups dialog with no snapshots yet.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-backups-dialog-error",
+      "title": "Backups, error",
+      "description": "The backups dialog after the list failed to load.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-voice-unconfigured",
+      "title": "Voice, unconfigured",
+      "description": "The voice cards when no speech provider is set up.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-voice-enabled",
+      "title": "Voice, enabled",
+      "description": "The voice cards configured and on, with usage.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-notifications-loading",
+      "title": "Notifications, loading",
+      "description": "The notifications tab skeleton.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-notifications-empty",
+      "title": "Notifications, empty",
+      "description": "The notifications tab with nothing received yet.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-notifications-error",
+      "title": "Notifications, error",
+      "description": "The notifications tab after the history failed.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-notifications-list",
+      "title": "Notifications, list",
+      "description": "Received notifications with an older page available.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-rules-empty",
+      "title": "Interrupt rules, empty",
+      "description": "The notification rules card with no rules.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-rules-list",
+      "title": "Interrupt rules, list",
+      "description": "Several interrupt rules across sources.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-rules-error",
+      "title": "Interrupt rules, error",
+      "description": "The rules card after the config failed to load.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-host-access-empty",
+      "title": "Host access, empty",
+      "description": "No shared host folders.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-host-access-list",
+      "title": "Host access, list",
+      "description": "Shared host folders with their modes.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-host-access-add",
+      "title": "Host access, add",
+      "description": "The add-folder form with suggestions.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-files-simple",
+      "title": "Files, simple",
+      "description": "The files tab in simple mode with abilities and memory.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-files-advanced",
+      "title": "Files, advanced",
+      "description": "The advanced file tree.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-files-editor",
+      "title": "Files, editor",
+      "description": "A file open in the editor.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "settings-files-error",
+      "title": "Files, error",
+      "description": "The files tab after the tree failed to load.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "app-settings",
+      "title": "App settings",
+      "description": "The full settings page with gateway setup.",
+      "group": "App settings"
+    },
+    {
+      "id": "app-settings-managed",
+      "title": "App settings, managed",
+      "description": "The settings page for a managed gateway with the account card.",
+      "group": "App settings"
+    },
+    {
+      "id": "app-settings-devices",
+      "title": "App settings, devices",
+      "description": "The devices card with present and last-seen devices.",
+      "group": "App settings"
+    },
+    {
+      "id": "app-settings-lan-tunnel",
+      "title": "App settings, LAN and tunnel",
+      "description": "Gateway setup with LAN exposed and a tunnel URL.",
+      "group": "App settings"
+    },
+    {
+      "id": "app-settings-check-updates",
+      "title": "Check for updates",
+      "description": "The check-for-updates control while checking.",
+      "group": "App settings"
+    },
+    {
+      "id": "app-settings-restart-dialog",
+      "title": "Restart gateway",
+      "description": "The gateway restart confirmation.",
+      "group": "App settings"
+    },
+    {
+      "id": "app-settings-gateway-logs",
+      "title": "Gateway logs",
+      "description": "The gateway logs viewer with lines.",
+      "group": "App settings"
+    },
+    {
+      "id": "whats-new-loading",
+      "title": "What's new, loading",
+      "description": "The release notes dialog while loading.",
+      "group": "App settings"
+    },
+    {
+      "id": "whats-new-error",
+      "title": "What's new, error",
+      "description": "The release notes dialog after the fetch failed.",
+      "group": "App settings"
+    },
+    {
+      "id": "whats-new-notes",
+      "title": "What's new",
+      "description": "The release notes dialog with two releases.",
+      "group": "App settings"
+    },
+    {
+      "id": "keybinds-windows",
+      "title": "Keybinds, Windows",
+      "description": "The keybinds section with Ctrl shortcuts on a Windows desktop.",
+      "group": "App settings",
+      "platforms": ["desktop"]
+    },
+    {
+      "id": "connect-form",
+      "title": "Connect",
+      "description": "The connect page with the link field.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-connecting",
+      "title": "Connect, connecting",
+      "description": "The connect page while the health check runs.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-error",
+      "title": "Connect, failed",
+      "description": "The connect page after the gateway could not be reached.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-managed-desktop",
+      "title": "Connect, hosted",
+      "description": "The desktop connect page offering the hosted account flow.",
+      "group": "Connect",
+      "platforms": ["desktop"]
+    },
+    {
+      "id": "callback-error",
+      "title": "Callback, missing code",
+      "description": "The OAuth callback page without a code.",
+      "group": "Connect"
+    },
+    {
+      "id": "disconnected-overlay",
+      "title": "Disconnected",
+      "description": "The overlay while the sync socket reconnects.",
+      "group": "Connect"
+    },
+    {
+      "id": "debug-page",
+      "title": "Debug page",
+      "description": "The internal orb and bubble gallery.",
+      "group": "Connect"
+    },
+    {
+      "id": "modal-provider-picker",
+      "title": "Switch provider",
+      "description": "The provider picker dialog from the agent menu.",
+      "group": "Agent modals"
+    },
+    {
+      "id": "modal-provider-submitting",
+      "title": "Switch provider, applying",
+      "description": "The progress bar while the new provider config applies.",
+      "group": "Agent modals"
+    },
+    {
+      "id": "modal-provider-error",
+      "title": "Switch provider, error",
+      "description": "The provider dialog after the gateway refused.",
+      "group": "Agent modals"
+    },
+    {
+      "id": "modal-delete-confirm",
+      "title": "Delete agent",
+      "description": "The delete confirmation dialog.",
+      "group": "Agent modals"
     }
   ]
 }
