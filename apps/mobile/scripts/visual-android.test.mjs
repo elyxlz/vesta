@@ -4,28 +4,29 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { parseArguments, stageMaestroShots } from "./visual-catalog-android.mjs";
+import { parseArguments, stageMaestroShots } from "./visual-android.mjs";
 
 describe("parseArguments", () => {
   it("captures on the dedicated AVD by default", () => {
     const options = parseArguments([]);
     expect(options.command).toBe("capture");
     expect(options.avd).toBe("vesta-visual");
-    expect(options.serve).toBe(true);
-    expect(options.port).toBe(4174);
+    expect(options.variant).toBe("android");
   });
 
-  it("accepts a specific adb device and a headless override", () => {
+  it("accepts a specific adb device, a visible emulator, and a variant", () => {
     const options = parseArguments([
       "capture",
       "--device",
       "emulator-5554",
       "--show-emulator",
-      "--no-serve",
+      "--variant",
+      "android-galaxy",
     ]);
     expect(options.device).toBe("emulator-5554");
     expect(options.showEmulator).toBe(true);
-    expect(options.serve).toBe(false);
+    expect(options.variant).toBe("android-galaxy");
+    expect(options.avd).toBe("vesta-visual-galaxy");
   });
 
   it("parses gentle mode off by default and on by flag", () => {
@@ -39,8 +40,8 @@ describe("parseArguments", () => {
     );
   });
 
-  it("rejects an unknown command", () => {
-    expect(() => parseArguments(["watch"])).toThrow("Unknown command: watch");
+  it("rejects a command other than capture", () => {
+    expect(() => parseArguments(["serve"])).toThrow("Unknown command: serve");
   });
 });
 
@@ -59,7 +60,7 @@ describe("stageMaestroShots", () => {
     await writeFile(path.join(target, "connect.png"), "old-shot");
     await writeFile(path.join(target, "untouched.png"), "kept");
 
-    const staged = await stageMaestroShots(source, target);
+    const staged = await stageMaestroShots(source, "android", base);
 
     expect(staged.produced).toEqual(new Set(["connect.png"]));
     expect(staged.duplicates).toEqual([]);
@@ -88,7 +89,7 @@ describe("stageMaestroShots", () => {
     await utimes(older, new Date(1000), new Date(1000));
     await utimes(newer, new Date(2000), new Date(2000));
 
-    const staged = await stageMaestroShots(source, target);
+    const staged = await stageMaestroShots(source, "android", base);
 
     expect(staged.produced).toEqual(new Set(["connect.png"]));
     expect(staged.duplicates).toEqual(["connect.png"]);
