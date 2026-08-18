@@ -14,7 +14,9 @@ const WINDOW_END_HOUR: i8 = 5;
 const SCAN_HORIZON_HOURS: i64 = 24;
 const SCAN_STEP_MINUTES: i64 = 15;
 /// Upper bound on the per-night open jitter: the effective window keeps at least 30 minutes,
-/// so an idle-gated poll and the closing poll both still fit before the fixed 5:00 close.
+/// so an idle-gated poll and the closing poll both still fit before the fixed 5:00 close. This
+/// must stay above `2 * SCAN_STEP_MINUTES`; raising the jitter cap or the poll step without the
+/// other can shrink the window below room for both polls.
 const WINDOW_JITTER_MINUTES: u64 = 30;
 
 /// The minute past 4:00 the window opens on `date`'s night, hashed (FNV-1a) from the zone-local
