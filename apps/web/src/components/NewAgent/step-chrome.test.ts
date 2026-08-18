@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stepChrome } from "./chrome";
+import { stepChrome } from "./step-chrome";
 
 describe("stepChrome", () => {
   it("gives the name step a heading and a continue action gated on validity", () => {
