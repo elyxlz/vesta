@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -82,4 +84,22 @@ describe("gentleSpawnPlan", () => {
       argumentsList: ["-c", "utility", "maestro", "test", "flow.yml"],
     });
   });
+});
+
+// Vitest resolves a missing named export to undefined, so only a real Node
+// import proves the runner modules link: this is what a scan spawns.
+describe("runner modules", () => {
+  it.each(["visual-runner.mjs", "visual-ios.mjs", "visual-android.mjs"])(
+    "%s links under Node ESM",
+    async (file) => {
+      const target = fileURLToPath(new URL(`./${file}`, import.meta.url));
+      const result = spawnSync(
+        process.execPath,
+        ["--input-type=module", "-e", `await import(${JSON.stringify(target)});`],
+        { encoding: "utf8" },
+      );
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+    },
+  );
 });
