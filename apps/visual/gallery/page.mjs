@@ -1,4 +1,4 @@
-import { escapeHtml, scanRowsHtml, sectionHtml } from "./view.mjs";
+import { escapeHtml, scanRowsHtml, sectionHtml, sideNavHtml } from "./view.mjs";
 
 // The stylesheet and the client script are static files the server serves under
 // /gallery/, so the browser caches both across the 500 ms polls.
@@ -41,7 +41,11 @@ export function galleryHtml(view) {
     </div>
     </div>
   </section>
-  <main>${sections}</main>
+  <div class="layout">
+    <nav class="side" aria-label="Sections">${sideNavHtml(view)}
+    </nav>
+    <main>${sections}</main>
+  </div>
   <dialog id="lightbox">
     <button aria-label="Close">×</button>
     <img alt="">

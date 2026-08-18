@@ -146,11 +146,53 @@ h1 {
 .shot[data-theme="dark"] { display: none; }
 body[data-theme="dark"] .card[data-themes~="dark"] .shot[data-theme="light"] { display: none; }
 body[data-theme="dark"] .shot[data-theme="dark"] { display: block; }
-main {
-  max-width: 1680px;
+.layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 28px;
+  max-width: 1900px;
   margin: 0 auto;
   padding: 8px 24px 64px;
 }
+main { min-width: 0; }
+/* The side navigation sticks under the scan bar and scrolls on its own. */
+.side {
+  position: sticky;
+  top: 62px;
+  align-self: start;
+  max-height: calc(100vh - 74px);
+  overflow-y: auto;
+  padding: 6px 4px 12px 0;
+  scrollbar-width: thin;
+}
+.side-family + .side-family { margin-top: 18px; }
+.side-family-title {
+  display: block;
+  margin: 0 0 6px 10px;
+  color: var(--faint);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  text-decoration: none;
+}
+.side-family-title:hover { color: var(--text); }
+.side-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 5px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+.side-link:hover { color: var(--text); background: var(--card); }
+.side-link.active { color: var(--gold); background: var(--gold-soft); }
+.side-count { color: var(--faint); font-size: 10px; }
+.side-link.active .side-count { color: var(--gold); }
+.scenario-section { scroll-margin-top: 66px; }
 .scenario-section + .scenario-section { margin-top: 48px; }
 .section-header {
   display: flex;
@@ -402,9 +444,11 @@ dialog button {
 @media (max-width: 720px) {
   header { grid-template-columns: 1fr; padding: 24px 16px 18px; }
   .meta { justify-content: flex-start; }
-  main {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
     padding: 4px 16px 48px;
   }
+  .side { display: none; }
   .scenario-section + .scenario-section { margin-top: 36px; }
   .grid {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
