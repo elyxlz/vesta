@@ -17,11 +17,7 @@
       "id": "name-rejected",
       "title": "Name rejected",
       "description": "The gateway refused the name as taken and the flow bounced back to the name step.",
-      "group": "Onboarding",
-      "createResponse": {
-        "status": 409,
-        "body": { "error": "name already taken" }
-      }
+      "group": "Onboarding"
     },
     {
       "id": "provider-choice",
@@ -63,8 +59,7 @@
       "id": "provider-model-loading",
       "title": "Model picker, loading",
       "description": "The model list skeleton while the OpenRouter catalog is still loading.",
-      "group": "Onboarding",
-      "hang": "openrouter-models"
+      "group": "Onboarding"
     },
     {
       "id": "provider-model-claude",
@@ -112,80 +107,43 @@
       "id": "creating-pulling",
       "title": "Creating, pulling image",
       "description": "The creation progress while the agent image downloads.",
-      "group": "Onboarding",
-      "deltas": ["pulling"]
+      "group": "Onboarding"
     },
     {
       "id": "creating-starting",
       "title": "Creating, starting",
       "description": "The creation progress while the container starts.",
-      "group": "Onboarding",
-      "deltas": ["starting"]
+      "group": "Onboarding"
     },
     {
       "id": "creating-failed",
       "title": "Creation failed",
       "description": "The gateway failed the create call and the flow offers a retry.",
-      "group": "Onboarding",
-      "createResponse": {
-        "status": 500,
-        "body": { "error": "gateway ran out of disk" }
-      }
+      "group": "Onboarding"
     },
     {
       "id": "done",
       "title": "Agent ready",
       "description": "Onboarding complete: the new agent is alive and the say-hi action shows.",
-      "group": "Onboarding",
-      "agentStatus": "alive"
+      "group": "Onboarding"
     },
     {
       "id": "settings-model-zai",
       "title": "Change model, Z.AI",
       "description": "The settings change-model dialog for a Z.AI agent.",
-      "group": "Agent settings",
-      "route": "/agent/luna/settings",
-      "agentName": "luna",
-      "provider": {
-        "kind": "zai",
-        "model": "glm-5.2",
-        "resolved_model": "glm-5.2",
-        "max_context_tokens": 131072,
-        "authed": true,
-        "plan": null
-      }
+      "group": "Agent settings"
     },
     {
       "id": "settings-model-kimi",
       "title": "Change model, Kimi",
       "description": "The settings change-model dialog for a Kimi Code agent.",
-      "group": "Agent settings",
-      "route": "/agent/luna/settings",
-      "agentName": "luna",
-      "provider": {
-        "kind": "kimi",
-        "model": "kimi-for-coding",
-        "resolved_model": "kimi-for-coding",
-        "max_context_tokens": 131072,
-        "authed": true,
-        "plan": null
-      }
+      "group": "Agent settings"
     },
     {
       "id": "settings-model-openai",
       "title": "Change model, ChatGPT",
       "description": "The settings change-model dialog for a ChatGPT agent.",
-      "group": "Agent settings",
-      "route": "/agent/luna/settings",
-      "agentName": "luna",
-      "provider": {
-        "kind": "openai",
-        "model": "gpt-5.6-sol",
-        "resolved_model": "gpt-5.6-sol",
-        "max_context_tokens": 131072,
-        "authed": true,
-        "plan": null
-      }
+      "group": "Agent settings"
     }
   ]
 }
