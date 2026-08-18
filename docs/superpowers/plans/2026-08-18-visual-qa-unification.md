@@ -703,7 +703,7 @@ describe("newerRunStatus", () => {
 describe("publishRunStatus", () => {
   it("writes the phase with its runner to the status file", async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "visual-status-"));
-    const target = path.join(base, "run-status.json");
+    const target = path.join(base, "run-status-<runner>.json");
     await publishRunStatus("capturing", { message: "Preparing", startedAt: "2026-08-18T10:00:00.000Z", runner: "web" }, target);
     const written = JSON.parse(await readFile(target, "utf8"));
     expect(written).toMatchObject({ state: "capturing", message: "Preparing", runner: "web", detail: "" });
@@ -728,7 +728,7 @@ import { atomicWriteFile, storeDirectory } from "./store.mjs";
 // each phase is written here and /status.json serves whichever of the server's own
 // state and the file is newer. A "capturing" entry a hard-killed run left behind goes
 // stale after the cutoff instead of showing a phantom run forever.
-export const runStatusPath = path.join(storeDirectory, "run-status.json");
+export const runStatusPath = path.join(storeDirectory, "run-status-<runner>.json");
 export const STALE_CAPTURING_MS = 45 * 60 * 1000;
 
 // The initial state carries the epoch, not boot time: a restarted server must not
@@ -2061,7 +2061,7 @@ Run: `cd apps && npm -w @vesta/mobile run lint && npm -w @vesta/mobile run check
 Expected: PASS.
 
 Run: `cd apps && npm -w @vesta/mobile run visual:ios:capture -- --gentle`
-Expected: the run completes, logs `Captured 49 iOS screenshots into the visual store.`, and `ls visual/.visual/shots/ios | wc -l` is 49 with fresh mtimes. `cat visual/.visual/run-status.json` shows `"runner":"ios"`.
+Expected: the run completes, logs `Captured 49 iOS screenshots into the visual store.`, and `ls visual/.visual/shots/ios | wc -l` is 49 with fresh mtimes. `cat visual/.visual/run-status-<runner>.json` shows `"runner":"ios"`.
 
 - [ ] **Step 9: Commit**
 
@@ -2769,7 +2769,7 @@ Expected: green. If `guards` flags a comment block over 8 lines in any new file,
 - [ ] **Step 2: Capture every runner through the gallery**
 
 Run (from `apps/`): `npm run visual:serve` in one terminal. In another: `curl -X POST http://127.0.0.1:4173/capture/web?gentle=1`, then `curl -X POST http://127.0.0.1:4173/capture/ios?gentle=1`, then `android` and `android-galaxy` (each 202; a second POST while running is 409). Watch `curl -s http://127.0.0.1:4173/status.json` show `"runner":"web"` then `"runner":"ios"`.
-Expected: `.visual/capture-<runner>.log` for each; `run-status.json` ends `"state":"ready"`.
+Expected: `.visual/capture-<runner>.log` for each; `run-status-<runner>.json` ends `"state":"ready"`.
 
 - [ ] **Step 3: Eyeball the gallery**
 
