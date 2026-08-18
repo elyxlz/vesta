@@ -41,6 +41,9 @@ A platform is one gallery slot: one capture target. A theme variant is its own p
 | `ios` | iOS | mobile | light | phone | `ios` |
 | `android` | Android | mobile | light | phone | `android` |
 | `android-galaxy` | Android · 3-button | mobile | light | phone | `android-galaxy` |
+| `ios-dark` | iOS · dark | mobile | dark | phone | `ios` |
+| `android-dark` | Android · dark | mobile | dark | phone | `android` |
+| `android-galaxy-dark` | Android · 3-button · dark | mobile | dark | phone | `android-galaxy` |
 | `web` | Web | web | light | browser | `web` |
 | `desktop` | Desktop | web | light | desktop-window | `web` |
 | `web-narrow` | Web · phone | web | light | phone-browser | `web` |
@@ -48,7 +51,7 @@ A platform is one gallery slot: one capture target. A theme variant is its own p
 | `desktop-dark` | Desktop · dark | web | dark | desktop-window | `web` |
 | `web-narrow-dark` | Web · phone · dark | web | dark | phone-browser | `web` |
 
-A runner is what a Scan button spawns: `npm -w <workspace> run <script>`. The Web runner fills all six web platforms in one Playwright run.
+A runner is what a Scan button spawns: `npm -w <workspace> run <script>`. Every runner drives each scenario once and captures both themes from that one drive: it takes the light shot, flips the OS appearance (`simctl ui appearance`, `cmd uimode night`, or Playwright's emulated color scheme, all of which the apps follow), waits for the picture to settle, takes the dark shot under the sibling platform, and flips back. `themedSibling(platform, theme)` in `platforms.mjs` names the pair: same runner, same frame, other theme.
 
 ## Architecture
 
@@ -122,8 +125,9 @@ Frames (the phone bezel, the browser tab bar, the desktop title bar) are gallery
 ## Gallery
 
 - Sections are `<Family> · <Group>`, for example "Mobile · Onboarding" and "Web · Onboarding", in registry order, mobile first. Click a header to collapse it; the choice persists.
-- A card is one scenario. Its slots are its family's platforms, shown one theme at a time: light by default. The Dark button in the scan bar flips every card that has dark captures to its dark platforms; the choice persists. A mobile card has no dark captures and stays as it is.
+- A card is one scenario. Its slots are its family's platforms, shown one theme at a time: light by default. The Dark button in the scan bar flips every card to its dark platforms; the choice persists.
 - Each slot draws its platform's frame: `phone`, `browser`, `desktop-window`, or `phone-browser`.
+- Every card has dark captures, so the Dark button flips mobile and web cards alike.
 - Scan rows: one per runner. Scan spawns the runner and the slots refresh as shots land. "Gentle scans" runs the Maestro runners with `--gentle` and the web runner with `--workers=2`.
 - Copy ref copies `visual-ref: <id> [<platform>]` plus the group, title, revision, and image URL, for pasting into a chat.
 - The runner reports link under `/reports/<runner>/report.html` when they exist.
@@ -133,7 +137,7 @@ Frames (the phone bezel, the browser tab bar, the desktop title bar) are gallery
 
 Mobile:
 
-1. Add a step to a flow in `apps/mobile/maestro/visual/`, wait on the visible state, then `takeScreenshot: <id>` and the `capture-screenshot.js` callback with `SCREENSHOT: <id>.png`.
+1. Add a step to a flow in `apps/mobile/maestro/visual/`, wait on the visible state, then `takeScreenshot: <id>` (the Maestro report artifact) and the `capture-screenshot.js` callback with `SCREENSHOT: <id>.png` (what writes the shot, on both platforms).
 2. Add the entry to `apps/mobile/visual/scenarios.json`.
 3. Run `npm run mobile:visual:capture` and inspect the gallery.
 

@@ -24,7 +24,7 @@ Two harnesses exist and share nothing:
 
 1. A new workspace package `apps/visual/` (`@vesta/visual`) owns the app-agnostic parts: the platform table, the registry contract, the shot store, run status, and the gallery. Each app keeps its own capture runner and writes into the shared store.
 2. Desktop is the web screens captured with a native-bridge stub, so the app takes its real desktop DOM path; the gallery paints the window chrome.
-3. Web cards carry six slots: `web`, `desktop`, `web-narrow` in light, and the same three in dark. A theme variant is its own platform id, the same way `android-galaxy` is.
+3. Every platform has a dark sibling (`ios-dark`, `android-dark`, `android-galaxy-dark`, `web-dark`, `desktop-dark`, `web-narrow-dark`). A theme variant is its own platform id, the same way `android-galaxy` is. A runner drives each scenario once and captures both themes from that drive by flipping the OS appearance in place (`simctl ui appearance`, `cmd uimode night`, Playwright `emulateMedia`), waiting for the picture to settle; there is no dark drive.
 4. The web registry takes the mobile shape: `scenarios.json` for card data and state, `drives.ts` for the closures.
 5. Watch mode is removed on every platform. Recapture is a Scan button or a capture command.
 6. Frames are gallery CSS, never baked into a PNG.

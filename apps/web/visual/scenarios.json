@@ -18,7 +18,10 @@
       "title": "Name rejected",
       "description": "The gateway refused the name as taken and the flow bounced back to the name step.",
       "group": "Onboarding",
-      "createResponse": { "status": 409, "body": { "error": "name already taken" } }
+      "createResponse": {
+        "status": 409,
+        "body": { "error": "name already taken" }
+      }
     },
     {
       "id": "provider-choice",
@@ -124,7 +127,10 @@
       "title": "Creation failed",
       "description": "The gateway failed the create call and the flow offers a retry.",
       "group": "Onboarding",
-      "createResponse": { "status": 500, "body": { "error": "gateway ran out of disk" } }
+      "createResponse": {
+        "status": 500,
+        "body": { "error": "gateway ran out of disk" }
+      }
     },
     {
       "id": "done",

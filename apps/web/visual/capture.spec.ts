@@ -1,6 +1,6 @@
-import { test } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import type { AgentStatus, BuildPhase } from "@vesta/core";
-import { PLATFORMS } from "@vesta/visual/platforms";
+import { PLATFORMS, themedSibling } from "@vesta/visual/platforms";
 import { loadRegistry } from "@vesta/visual/registry";
 import { putShot } from "@vesta/visual/store";
 import { DRIVES } from "./drives";
@@ -35,6 +35,17 @@ interface WebScenario {
 const registry = await loadRegistry("web");
 const scenarios = registry.scenarios as unknown as WebScenario[];
 
+async function shoot(
+  page: Page,
+  testInfo: TestInfo,
+  platform: string,
+  id: string,
+): Promise<void> {
+  const shot = testInfo.outputPath(`${id}--${platform}.png`);
+  await page.screenshot({ path: shot, animations: "disabled", caret: "hide" });
+  await putShot(platform, `${id}.png`, shot);
+}
+
 // The context runs with reducedMotion: "reduce", which the app treats as "no
 // animation at all", so a single screenshot after the settle assertion is the
 // final frame.
@@ -42,7 +53,7 @@ for (const scenario of scenarios) {
   test(scenario.id, async ({ page }, testInfo) => {
     const platform = PLATFORMS[testInfo.project.name as keyof typeof PLATFORMS];
     if (platform.frame === "desktop-window") await installNativeStub(page);
-    await seedStorage(page, platform.theme);
+    await seedStorage(page);
     await installSyncSocket(
       page,
       (scenario.deltas ?? []).map((phase) =>
@@ -64,8 +75,13 @@ for (const scenario of scenarios) {
     // Park the pointer so no card renders its hover state in the shot.
     await page.mouse.move(0, 0);
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
-    const shot = testInfo.outputPath(`${scenario.id}.png`);
-    await page.screenshot({ path: shot, animations: "disabled", caret: "hide" });
-    await putShot(testInfo.project.name, `${scenario.id}.png`, shot);
+    await shoot(page, testInfo, testInfo.project.name, scenario.id);
+    // The theme is "system", so flipping the emulated scheme is what the OS
+    // would do: the app re-themes in place and the dark shot needs no re-drive.
+    const dark = themedSibling(testInfo.project.name, "dark");
+    if (!dark) return;
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+    await shoot(page, testInfo, dark, scenario.id);
   });
 }

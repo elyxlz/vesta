@@ -10,15 +10,18 @@ const VIEWPORTS: Record<string, { width: number; height: number }> = {
   "phone-browser": NARROW,
 };
 
-// One project per web-family platform, named by its platform id, so the spec
-// writes each shot straight into the store under that id.
+// One project per light web platform, named by its platform id. Each test
+// drives the scenario once and captures both themes: the light shot under the
+// project's id, the dark one under its dark sibling.
 const projects = Object.entries(PLATFORMS)
-  .filter(([, platform]) => platform.family === "web")
+  .filter(
+    ([, platform]) => platform.family === "web" && platform.theme === "light",
+  )
   .map(([name, platform]) => ({
     name,
     use: {
       viewport: VIEWPORTS[platform.frame] ?? WEB,
-      colorScheme: platform.theme,
+      colorScheme: "light" as const,
     },
   }));
 

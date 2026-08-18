@@ -39,6 +39,9 @@ describe("galleryView", () => {
       "ios",
       "android",
       "android-galaxy",
+      "ios-dark",
+      "android-dark",
+      "android-galaxy-dark",
     ]);
     expect(web.scenarios[0].slots.map((slot) => slot.platform)).toEqual([
       "web",
@@ -115,8 +118,7 @@ describe("galleryHtml", () => {
     expect(html).toContain('data-section-group="Mobile · Home"');
     expect(html).toContain('data-family="web"');
     expect(html).toContain('style="--shots: 3"');
-    expect(html).toContain('<article class="card" data-themes="light">');
-    expect(html).toContain('<article class="card" data-themes="light dark">');
+    expect(html.match(/<article class="card" data-themes="light dark">/g)).toHaveLength(2);
   });
 
   it("tags every slot with its theme and offers the Dark toggle", () => {

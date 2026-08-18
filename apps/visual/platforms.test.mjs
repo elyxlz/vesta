@@ -6,6 +6,7 @@ import {
   platformFamily,
   platformsOfFamily,
   runnerOf,
+  themedSibling,
 } from "./platforms.mjs";
 
 describe("PLATFORMS", () => {
@@ -72,6 +73,9 @@ describe("lookups", () => {
       "ios",
       "android",
       "android-galaxy",
+      "ios-dark",
+      "android-dark",
+      "android-galaxy-dark",
     ]);
     expect(platformsOfFamily("web")).toEqual([
       "web",
@@ -86,5 +90,18 @@ describe("lookups", () => {
 
   it("rejects an unknown platform id", () => {
     expect(() => platformFamily("windows")).toThrow(/Unknown platform: windows/);
+  });
+
+  it("pairs a platform with its same-frame sibling in the other theme", () => {
+    expect(themedSibling("web", "dark")).toBe("web-dark");
+    expect(themedSibling("desktop", "dark")).toBe("desktop-dark");
+    expect(themedSibling("web-narrow-dark", "light")).toBe("web-narrow");
+    expect(themedSibling("ios", "dark")).toBe("ios-dark");
+    expect(themedSibling("android-galaxy", "dark")).toBe("android-galaxy-dark");
+    expect(themedSibling("android-dark", "light")).toBe("android");
+  });
+
+  it("is its own sibling in its own theme", () => {
+    expect(themedSibling("ios", "light")).toBe("ios");
   });
 });
