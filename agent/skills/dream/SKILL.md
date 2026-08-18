@@ -90,9 +90,9 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 ### 5. Upstream
 
-Read `upstream` and follow it. It can be a no-op; don't invent work to fill it.
+Read the `upstream` skill and follow it. It can be a no-op; don't invent work to fill it.
 
-**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make it; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream` gate 2). "Risky at 4am" and "needs a cleanup pass" are not blockers: a single-file change is CI-gated, and the cleanup is the filing work. The only real auth blocker is `upstream` itself failing; the channel works if `upstream --token-only >/dev/null` exits 0 (never run it bare: stdout is persisted into the event store, so that leaves a live token in your history). Then empty the queue's `## Open` to zero: spawn one subagent per open item (in parallel) to do the whole job (cleanup, lint/type checks, PR via `upstream`), and VERIFY each PR URL exists before marking it filed. The only item allowed to survive has a real, tested, external blocker (waiting on the user, a key, or genuine design work that's its own task), tagged with the exact unblock condition.
+**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make it; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream` gate 2). "Risky at 4am" and "needs a cleanup pass" are not blockers: a single-file change is CI-gated, and the cleanup is the filing work. The only real auth blocker is `upstream` itself failing; the channel works if `upstream token >/dev/null` exits 0 (never run it bare: stdout is persisted into the event store, so that leaves a live token in your history). Then empty the queue's `## Open` to zero: spawn one subagent per open item (in parallel) to do the whole job (cleanup, lint/type checks, PR via `upstream`), and VERIFY each PR URL exists before marking it filed. The only item allowed to survive has a real, tested, external blocker (waiting on the user, a key, or genuine design work that's its own task), tagged with the exact unblock condition.
 
 ### 6. Recurrence sweep
 
