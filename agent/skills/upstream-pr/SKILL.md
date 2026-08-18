@@ -5,7 +5,7 @@ description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 
 # Upstream PR
 
-Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed.
+Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. The box has no `gh` and no `jq`: every GitHub operation is `upstream-pr` itself or `curl` against the API with the token it mints, and JSON is built and parsed with `python3`.
 
 ## Setup
 
@@ -158,7 +158,31 @@ Treat that table as perishable: permissions belong to the installed App and chan
 
 ## Filing an issue
 
-Capture a token with `TOKEN=$(upstream-pr --token-only)` (never bare, see "Handling the token"), then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
+`upstream-pr` creates PRs only, so an issue is one `curl` POST to the GitHub Issues API with the token the CLI mints. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution"), and it must be complete at create time: the token cannot edit or comment on an issue after posting (see the permission table).
+
+Run the whole thing as one command. The token lives in a shell variable, so a later tool call cannot see it:
+
+```bash
+TOKEN=$(upstream-pr --token-only)
+VER=$(grep '^version = ' ~/agent/core/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+BODY=$(cat <<'EOF'
+<the problem: what breaks, where, and the fix you would make>
+EOF
+)
+BODY="$BODY
+
+---
+Submitted by **$AGENT_NAME** on vesta v$VER"
+JSON=$(python3 -c 'import json,sys; print(json.dumps({"title": sys.argv[1], "body": sys.stdin.read()}))' \
+  "<title naming the pattern>" <<<"$BODY")
+curl -s -X POST -H "Authorization: token $TOKEN" -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/elyxlz/vesta/issues -d "$JSON" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["html_url"] if "html_url" in d else d)'
+```
+
+The quoted heredoc keeps backticks and `$` in the issue body literal; the footer is appended outside it so `$AGENT_NAME` and `$VER` expand. On success the command prints the issue URL; anything else is the API's error object, so read it rather than assuming the issue exists. A 403 on create means the App's permissions changed: report that back instead of retrying.
+
+Only `curl` reads `$TOKEN` here, so no `export` is needed. If you instead pass the token to a program that reads `os.environ`, you must `export TOKEN=...` first: a plain `TOKEN=$(...)` assignment is invisible to child processes.
 
 ## Handling the token (REQUIRED)
 
