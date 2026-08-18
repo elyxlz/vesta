@@ -1,0 +1,144 @@
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+export const visualRoot = path.dirname(fileURLToPath(import.meta.url));
+export const appsRoot = path.resolve(visualRoot, "..");
+
+// The one owner of which capture targets exist. A platform is one gallery slot:
+// a theme variant is its own platform the same way the 3-button Android persona is.
+// Runner-only facts (an AVD, a viewport, a native stub) live in the runner, keyed by id.
+export const PLATFORMS = {
+  ios: {
+    label: "iOS",
+    family: "mobile",
+    theme: "light",
+    frame: "phone",
+    runner: "ios",
+  },
+  android: {
+    label: "Android",
+    family: "mobile",
+    theme: "light",
+    frame: "phone",
+    runner: "android",
+  },
+  "android-galaxy": {
+    label: "Android · 3-button",
+    family: "mobile",
+    theme: "light",
+    frame: "phone",
+    runner: "android-galaxy",
+  },
+  web: {
+    label: "Web",
+    family: "web",
+    theme: "light",
+    frame: "browser",
+    runner: "web",
+  },
+  desktop: {
+    label: "Desktop",
+    family: "web",
+    theme: "light",
+    frame: "desktop-window",
+    runner: "web",
+  },
+  "web-narrow": {
+    label: "Web · phone",
+    family: "web",
+    theme: "light",
+    frame: "phone-browser",
+    runner: "web",
+  },
+  "web-dark": {
+    label: "Web · dark",
+    family: "web",
+    theme: "dark",
+    frame: "browser",
+    runner: "web",
+  },
+  "desktop-dark": {
+    label: "Desktop · dark",
+    family: "web",
+    theme: "dark",
+    frame: "desktop-window",
+    runner: "web",
+  },
+  "web-narrow-dark": {
+    label: "Web · phone · dark",
+    family: "web",
+    theme: "dark",
+    frame: "phone-browser",
+    runner: "web",
+  },
+};
+
+// What a gallery Scan button (or `cli.mjs capture <runner>`) spawns from apps/:
+// `npm -w <workspace> run <script> -- [...args] [...gentleArgs]`. reportDirectory
+// is the runner's own HTML report, served by the gallery under /reports/<runner>/.
+export const RUNNERS = {
+  ios: {
+    label: "iOS",
+    workspace: "@vesta/mobile",
+    script: "visual:ios:capture",
+    args: [],
+    gentleArgs: ["--gentle"],
+    reportDirectory: path.join(appsRoot, "mobile/.visual/maestro"),
+  },
+  android: {
+    label: "Android",
+    workspace: "@vesta/mobile",
+    script: "visual:android:capture",
+    args: [],
+    gentleArgs: ["--gentle"],
+    reportDirectory: path.join(appsRoot, "mobile/.visual/android/maestro"),
+  },
+  "android-galaxy": {
+    label: "Android · 3-button",
+    workspace: "@vesta/mobile",
+    script: "visual:android:capture",
+    args: ["--variant", "android-galaxy"],
+    gentleArgs: ["--gentle"],
+    reportDirectory: path.join(
+      appsRoot,
+      "mobile/.visual/android-galaxy/maestro",
+    ),
+  },
+  web: {
+    label: "Web",
+    workspace: "@vesta/web",
+    script: "visual:capture",
+    args: [],
+    gentleArgs: ["--workers=2"],
+    reportDirectory: path.join(appsRoot, "web/.visual/report"),
+  },
+};
+
+export const FAMILIES = {
+  mobile: {
+    label: "Mobile",
+    registry: path.join(appsRoot, "mobile/visual/scenarios.json"),
+  },
+  web: {
+    label: "Web",
+    registry: path.join(appsRoot, "web/visual/scenarios.json"),
+  },
+};
+
+function requirePlatform(id) {
+  const platform = PLATFORMS[id];
+  if (!platform) throw new Error(`Unknown platform: ${id}`);
+  return platform;
+}
+
+export function platformFamily(id) {
+  return requirePlatform(id).family;
+}
+
+export function runnerOf(id) {
+  return requirePlatform(id).runner;
+}
+
+export function platformsOfFamily(family) {
+  return Object.keys(PLATFORMS).filter((id) => PLATFORMS[id].family === family);
+}
