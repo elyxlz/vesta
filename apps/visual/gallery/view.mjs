@@ -161,18 +161,49 @@ export function cardHtml(scenario) {
         </article>`;
 }
 
+export function sectionId(index) {
+  return `scenario-section-${index}`;
+}
+
 export function sectionHtml(section, index) {
-  const sectionId = `scenario-section-${index}`;
+  const id = sectionId(index);
   const count = section.scenarios.length;
   return `
-    <details class="scenario-section" open data-section-group="${escapeHtml(section.key)}" data-family="${section.family}" aria-labelledby="${sectionId}">
+    <details class="scenario-section" id="${id}" open data-section-group="${escapeHtml(section.key)}" data-family="${section.family}" aria-labelledby="${id}-title">
       <summary class="section-header">
-        <h2 class="section-title" id="${sectionId}">${escapeHtml(section.key)}</h2>
+        <h2 class="section-title" id="${id}-title">${escapeHtml(section.key)}</h2>
         <span class="section-count">${count} ${count === 1 ? "screen" : "screens"}</span>
         <span class="section-chevron" aria-hidden="true"></span>
       </summary>
       <div class="grid">${section.scenarios.map(cardHtml).join("")}</div>
     </details>`;
+}
+
+// The side navigation: one macro entry per family, its sections beneath, each
+// linking to the section it names.
+export function sideNavHtml(view) {
+  const families = new Map();
+  view.sections.forEach((section, index) => {
+    const entries = families.get(section.family) ?? { label: section.familyLabel, sections: [] };
+    entries.sections.push({ ...section, id: sectionId(index) });
+    families.set(section.family, entries);
+  });
+  return [...families.entries()]
+    .map(
+      ([family, entries]) => `
+      <div class="side-family" data-family="${family}">
+        <a class="side-family-title" href="#${entries.sections[0].id}">${escapeHtml(entries.label)}</a>${entries.sections
+          .map(
+            (section) => `
+        <a class="side-link" href="#${section.id}" data-section="${section.id}">
+          <span>${escapeHtml(section.group)}</span>
+          <span class="side-count">${section.scenarios.length}</span>
+        </a>`,
+          )
+          .join("")}
+      </div>`,
+    )
+    .join("");
 }
 
 export function scanRowsHtml() {

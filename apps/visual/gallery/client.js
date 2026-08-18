@@ -88,6 +88,36 @@ document.querySelectorAll(".scenario-section").forEach((section) => {
     localStorage.setItem("visual-collapsed", JSON.stringify([...collapsedGroups]));
   });
 });
+// A side link opens its section (a collapsed one would not scroll into view)
+// and the section in view marks its link.
+document.querySelectorAll(".side-link, .side-family-title").forEach((link) => {
+  link.addEventListener("click", () => {
+    const target = document.querySelector(link.getAttribute("href"));
+    if (target && !target.open) target.open = true;
+  });
+});
+const sideLinks = new Map(
+  [...document.querySelectorAll(".side-link")].map((link) => [link.dataset.section, link]),
+);
+const visibleSections = new Set();
+function markActiveSection() {
+  let first = null;
+  document.querySelectorAll(".scenario-section").forEach((section) => {
+    if (!first && visibleSections.has(section.id)) first = section.id;
+  });
+  sideLinks.forEach((link, id) => link.classList.toggle("active", id === first));
+}
+const sectionObserver = new IntersectionObserver(
+  (entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) visibleSections.add(entry.target.id);
+      else visibleSections.delete(entry.target.id);
+    });
+    markActiveSection();
+  },
+  { rootMargin: "-70px 0px -60% 0px" },
+);
+document.querySelectorAll(".scenario-section").forEach((section) => sectionObserver.observe(section));
 const themeToggle = document.querySelector("#theme-toggle");
 function applyTheme(dark) {
   document.body.dataset.theme = dark ? "dark" : "light";
