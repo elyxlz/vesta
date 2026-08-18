@@ -319,6 +319,38 @@ h1 {
 .frame-phone::before { top: 18%; height: 9%; }
 .frame-phone::after { top: 30%; height: 14%; }
 .frame-phone .device-screen { --frame-ratio: 603 / 1311; border-radius: 27px; }
+/* A Pixel-style Android body: even thin bezel, tighter corners, the buttons on
+   the right edge, and a punch-hole camera at the top of the screen. */
+.frame-android {
+  border: 1px solid #3f3f47;
+  border-radius: 24px;
+  padding: 4px;
+  background: linear-gradient(160deg, #2b2b31, #0a0a0d 45%, #1d1d22);
+  box-shadow: 0 18px 42px #0008, inset 0 0 0 1px #ffffff12;
+}
+.frame-android::before, .frame-android::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: #34343b;
+}
+.frame-android::before { top: 16%; height: 7%; }
+.frame-android::after { top: 26%; height: 12%; }
+.frame-android .punch-hole {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 1;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #08080a;
+  box-shadow: 0 0 0 1px #1a1a1e;
+  transform: translateX(-50%);
+}
+.frame-android .device-screen { --frame-ratio: 1080 / 2400; border-radius: 21px; }
 .frame-browser, .frame-desktop-window {
   overflow: hidden;
   border: 1px solid #3a3a42;

@@ -39,11 +39,11 @@ A platform is one gallery slot: one capture target. A theme variant is its own p
 | Id | Label | Family | Theme | Frame | Runner |
 | --- | --- | --- | --- | --- | --- |
 | `ios` | iOS | mobile | light | phone | `ios` |
-| `android` | Android | mobile | light | phone | `android` |
-| `android-galaxy` | Android · 3-button | mobile | light | phone | `android-galaxy` |
+| `android` | Android | mobile | light | android-phone | `android` |
+| `android-galaxy` | Android · 3-button | mobile | light | android-phone | `android-galaxy` |
 | `ios-dark` | iOS · dark | mobile | dark | phone | `ios` |
-| `android-dark` | Android · dark | mobile | dark | phone | `android` |
-| `android-galaxy-dark` | Android · 3-button · dark | mobile | dark | phone | `android-galaxy` |
+| `android-dark` | Android · dark | mobile | dark | android-phone | `android` |
+| `android-galaxy-dark` | Android · 3-button · dark | mobile | dark | android-phone | `android-galaxy` |
 | `web` | Web | web | light | browser | `web` |
 | `desktop` | Desktop | web | light | desktop-window | `web` |
 | `web-narrow` | Web · phone | web | light | phone-browser | `web` |
@@ -126,7 +126,7 @@ Frames (the phone bezel, the browser tab bar, the desktop title bar) are gallery
 
 - Sections are `<Family> · <Group>`, for example "Mobile · Onboarding" and "Web · Onboarding", in registry order, mobile first. Click a header to collapse it; the choice persists.
 - A card is one scenario. Its slots are its family's platforms, shown one theme at a time: light by default. The Dark button in the scan bar flips every card to its dark platforms; the choice persists.
-- Each slot draws its platform's frame: `phone`, `browser`, `desktop-window`, or `phone-browser`.
+- Each slot draws its platform's frame: `phone`, `android-phone`, `browser`, `desktop-window`, or `phone-browser`.
 - Every card has dark captures, so the Dark button flips mobile and web cards alike.
 - Scan cells: one per runner, sized to their content. Scan spawns the runner; while it runs, the cell shows the runner's phase and elapsed time in place of the last-scan stamp, the count restarts from this run's shots, and the runner's slots dim as "Refreshing" until replaced. A failed run shows its error in the cell. "Gentle" runs the Maestro runners with `--gentle` and the web runner with `--workers=2`.
 - Copy ref copies `visual-ref: <id> [<platform>]` plus the group, title, revision, and image URL, for pasting into a chat.

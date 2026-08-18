@@ -76,7 +76,7 @@ describe("galleryView", () => {
       frame: "phone",
       theme: "light",
     });
-    expect(android).toMatchObject({ state: "missing", note: "Not captured yet" });
+    expect(android).toMatchObject({ state: "missing", note: "Not captured yet", frame: "android-phone" });
   });
 
   it("marks a platform-excluded scenario apart from a missing shot", () => {
@@ -97,6 +97,8 @@ describe("frameHtml", () => {
     expect(frameHtml("phone-browser", "<i>s</i>")).toContain(
       'class="frame frame-phone frame-phone-browser"',
     );
+    expect(frameHtml("android-phone", "<i>s</i>")).toContain('class="frame frame-android"');
+    expect(frameHtml("android-phone", "<i>s</i>")).toContain('class="punch-hole"');
     expect(frameHtml("phone", "<i>s</i>")).toContain("<i>s</i>");
   });
 });

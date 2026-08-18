@@ -15,7 +15,13 @@ describe("PLATFORMS", () => {
       expect(id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
       expect(Object.keys(FAMILIES)).toContain(platform.family);
       expect(["light", "dark"]).toContain(platform.theme);
-      expect(["phone", "browser", "desktop-window", "phone-browser"]).toContain(
+      expect([
+        "phone",
+        "android-phone",
+        "browser",
+        "desktop-window",
+        "phone-browser",
+      ]).toContain(
         platform.frame,
       );
       expect(Object.keys(RUNNERS)).toContain(platform.runner);
