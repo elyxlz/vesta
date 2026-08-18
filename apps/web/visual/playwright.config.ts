@@ -1,17 +1,38 @@
 import { defineConfig } from "@playwright/test";
-import type { VisualOptions } from "./test-options";
+import { PLATFORMS } from "@vesta/visual/platforms";
 
-const DESKTOP = { width: 1280, height: 800 };
+const WEB = { width: 1280, height: 800 };
+const DESKTOP = { width: 1200, height: 750 };
 const NARROW = { width: 420, height: 900 };
+const VIEWPORTS: Record<string, { width: number; height: number }> = {
+  browser: WEB,
+  "desktop-window": DESKTOP,
+  "phone-browser": NARROW,
+};
 
-export default defineConfig<VisualOptions>({
+// One project per web-family platform, named by its platform id, so the spec
+// writes each shot straight into the store under that id.
+const projects = Object.entries(PLATFORMS)
+  .filter(([, platform]) => platform.family === "web")
+  .map(([name, platform]) => ({
+    name,
+    use: {
+      viewport: VIEWPORTS[platform.frame] ?? WEB,
+      colorScheme: platform.theme,
+    },
+  }));
+
+export default defineConfig({
   testDir: ".",
   testMatch: "capture.spec.ts",
-  globalSetup: "./global-setup.ts",
-  outputDir: "../.visual/web/artifacts",
+  outputDir: "../.visual/artifacts",
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "../.visual/report", open: "never" }],
+  ],
   timeout: 60000,
   fullyParallel: true,
-  // 12-core host; 8 keeps headroom. Override with --workers on a loaded box.
+  // 12-core host; 8 keeps headroom. A gentle scan passes --workers=2.
   workers: 8,
   webServer: {
     command: "npm run dev",
@@ -25,24 +46,5 @@ export default defineConfig<VisualOptions>({
     baseURL: "http://localhost:1430",
     contextOptions: { reducedMotion: "reduce" },
   },
-  // colorScheme mirrors the seeded app theme so surfaces that follow the OS
-  // scheme (the sonner toaster) render in the same theme as the page.
-  projects: [
-    {
-      name: "dark-desktop",
-      use: { viewport: DESKTOP, theme: "dark", colorScheme: "dark" },
-    },
-    {
-      name: "light-desktop",
-      use: { viewport: DESKTOP, theme: "light", colorScheme: "light" },
-    },
-    {
-      name: "dark-narrow",
-      use: { viewport: NARROW, theme: "dark", colorScheme: "dark" },
-    },
-    {
-      name: "light-narrow",
-      use: { viewport: NARROW, theme: "light", colorScheme: "light" },
-    },
-  ],
+  projects,
 });

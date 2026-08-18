@@ -18,8 +18,7 @@
     "format:check": "prettier --check .",
     "check": "tsc -b",
     "test": "vitest run",
-    "visual": "playwright test --config visual/playwright.config.ts && node visual/gallery.mjs --serve --open",
-    "visual:capture": "playwright test --config visual/playwright.config.ts && node visual/gallery.mjs"
+    "visual:capture": "playwright test --config visual/playwright.config.ts"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",

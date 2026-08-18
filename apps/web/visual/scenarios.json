@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "name-empty",
+      "title": "Name step, empty",
+      "description": "The first onboarding step before any name is typed; continue is disabled.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "name-valid",
+      "title": "Name step, valid",
+      "description": "A valid agent name typed; continue is enabled.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "name-rejected",
+      "title": "Name rejected",
+      "description": "The gateway refused the name as taken and the flow bounced back to the name step.",
+      "group": "Onboarding",
+      "createResponse": { "status": 409, "body": { "error": "name already taken" } }
+    },
+    {
+      "id": "provider-choice",
+      "title": "Provider choice",
+      "description": "The provider picker with every provider the manifest offers.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-key-entry",
+      "title": "Provider key entry",
+      "description": "The subscription key field for a key-backed provider (Z.AI).",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-oauth",
+      "title": "Claude sign-in",
+      "description": "The Claude OAuth step with the paste-code field.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-oauth-openai",
+      "title": "ChatGPT sign-in",
+      "description": "The ChatGPT device-code step showing the code to enter.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-key-kimi",
+      "title": "Kimi key entry",
+      "description": "The subscription key field for Kimi Code.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-model",
+      "title": "Model picker, OpenRouter",
+      "description": "The live OpenRouter model list after a key is accepted.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-model-loading",
+      "title": "Model picker, loading",
+      "description": "The model list skeleton while the OpenRouter catalog is still loading.",
+      "group": "Onboarding",
+      "hang": "openrouter-models"
+    },
+    {
+      "id": "provider-model-claude",
+      "title": "Model picker, Claude expanded",
+      "description": "The Claude picker with the floating aliases and the expanded live list.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-model-claude-collapsed",
+      "title": "Model picker, Claude collapsed",
+      "description": "The Claude picker showing only the aliases with the live list collapsed.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-model-zai",
+      "title": "Model picker, Z.AI",
+      "description": "The fixed Z.AI catalog.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-model-kimi",
+      "title": "Model picker, Kimi",
+      "description": "The fixed Kimi Code catalog.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "provider-model-openai",
+      "title": "Model picker, ChatGPT",
+      "description": "The fixed ChatGPT catalog after the device-code step.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "personality-default",
+      "title": "Personality, default",
+      "description": "The vibe picker with the default personality pressed.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "personality-selected",
+      "title": "Personality, selected",
+      "description": "The vibe picker after choosing a different personality.",
+      "group": "Onboarding"
+    },
+    {
+      "id": "creating-pulling",
+      "title": "Creating, pulling image",
+      "description": "The creation progress while the agent image downloads.",
+      "group": "Onboarding",
+      "deltas": ["pulling"]
+    },
+    {
+      "id": "creating-starting",
+      "title": "Creating, starting",
+      "description": "The creation progress while the container starts.",
+      "group": "Onboarding",
+      "deltas": ["starting"]
+    },
+    {
+      "id": "creating-failed",
+      "title": "Creation failed",
+      "description": "The gateway failed the create call and the flow offers a retry.",
+      "group": "Onboarding",
+      "createResponse": { "status": 500, "body": { "error": "gateway ran out of disk" } }
+    },
+    {
+      "id": "done",
+      "title": "Agent ready",
+      "description": "Onboarding complete: the new agent is alive and the say-hi action shows.",
+      "group": "Onboarding",
+      "agentStatus": "alive"
+    },
+    {
+      "id": "settings-model-zai",
+      "title": "Change model, Z.AI",
+      "description": "The settings change-model dialog for a Z.AI agent.",
+      "group": "Agent settings",
+      "route": "/agent/luna/settings",
+      "agentName": "luna",
+      "provider": {
+        "kind": "zai",
+        "model": "glm-5.2",
+        "resolved_model": "glm-5.2",
+        "max_context_tokens": 131072,
+        "authed": true,
+        "plan": null
+      }
+    },
+    {
+      "id": "settings-model-kimi",
+      "title": "Change model, Kimi",
+      "description": "The settings change-model dialog for a Kimi Code agent.",
+      "group": "Agent settings",
+      "route": "/agent/luna/settings",
+      "agentName": "luna",
+      "provider": {
+        "kind": "kimi",
+        "model": "kimi-for-coding",
+        "resolved_model": "kimi-for-coding",
+        "max_context_tokens": 131072,
+        "authed": true,
+        "plan": null
+      }
+    },
+    {
+      "id": "settings-model-openai",
+      "title": "Change model, ChatGPT",
+      "description": "The settings change-model dialog for a ChatGPT agent.",
+      "group": "Agent settings",
+      "route": "/agent/luna/settings",
+      "agentName": "luna",
+      "provider": {
+        "kind": "openai",
+        "model": "gpt-5.6-sol",
+        "resolved_model": "gpt-5.6-sol",
+        "max_context_tokens": 131072,
+        "authed": true,
+        "plan": null
+      }
+    }
+  ]
+}
