@@ -64,6 +64,7 @@ const ANDROID_BUILD_ABI = "arm64-v8a";
 const EMULATOR_BOOT_TIMEOUT_MS = 240_000;
 const EMULATOR_BOOT_POLL_MS = 2_000;
 const STATUS_BAR_CLOCK = "0941";
+const DISPLAY_CUTOUT_OVERLAY = "com.android.internal.display.cutout.emulation.tall";
 
 function usage() {
   console.log(`Usage:
@@ -363,6 +364,14 @@ async function normalizeEmulator(tools, serial, navOverlay) {
     ["shell", "cmd", "overlay", "enable-exclusive", navOverlay],
     { allowFailure: true },
   );
+  // A centred display cutout, so the status bar and content sit below the camera
+  // as on the device; the stock image has no cutout and would hug the corners.
+  await adb(
+    tools,
+    serial,
+    ["shell", "cmd", "overlay", "enable-exclusive", "--category", DISPLAY_CUTOUT_OVERLAY],
+    { allowFailure: true },
+  );
   await demoModeCommand(tools, serial, "enter");
   await demoModeCommand(tools, serial, "clock", ["-e", "hhmm", STATUS_BAR_CLOCK]);
   await demoModeCommand(tools, serial, "battery", [
@@ -401,6 +410,9 @@ async function normalizeEmulator(tools, serial, navOverlay) {
 
 async function restoreEmulator(tools, serial) {
   await demoModeCommand(tools, serial, "exit");
+  await adb(tools, serial, ["shell", "cmd", "overlay", "disable", DISPLAY_CUTOUT_OVERLAY], {
+    allowFailure: true,
+  });
 }
 
 async function isVisualAndroidProject(androidDirectory, appId) {
