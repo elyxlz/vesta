@@ -9,7 +9,7 @@ PIDFILE="$HOME/agent/data/daemons/dashboard.pid"
 PORTFILE="$HOME/agent/data/daemons/dashboard.port"
 LOG="$HOME/agent/logs/dashboard.log"
 USAGE="Usage: dashboard daemon <start|stop|restart|status>"
-READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-30}
+READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-120}
 STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
 # SIGTERM is the deliberate stop, and this is the point in the one budget at which a daemon that
 # has not honoured it is killed instead, leaving the remainder to reap it.

@@ -9,7 +9,14 @@ PIDFILE="$HOME/agent/data/daemons/file-host.pid"
 PORTFILE="$HOME/agent/data/daemons/file-host.port"
 LOG="$HOME/agent/logs/file-host.log"
 USAGE="Usage: file-host daemon <start|stop|restart|status>"
-READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-30}
+# 120, not 30. A readiness budget is a bet about disk speed, and startup is when that bet is worst:
+# every call cold, nothing in page cache, several daemons starting at once. A miss is not a retry.
+# `abandon` TERMs then KILLs a pid that `kill -0` just showed to be ALIVE, so a server that is
+# merely slow to come up is destroyed and the caller is handed an error that reads like a crash.
+# For this daemon that means every share link already handed out 404s until someone restarts
+# it. Raising the ceiling costs a healthy start nothing: it returns the moment the port
+# answers, in about a second.
+READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-120}
 STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
 # SIGTERM is the deliberate stop, and this is the point in the one budget at which a daemon that
 # has not honoured it is killed instead, leaving the remainder to reap it.

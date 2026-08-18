@@ -132,9 +132,9 @@ State lives in the same three places for every skill, under one name the daemon 
   `/proc` is unreadable. Read the pid as the first field rather than as the whole file, and read
   a record carrying a pid alone as trusted rather than as a mismatch.
 - log: `~/agent/logs/<name>.log`, appended, never truncated
-- budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start (default 30, and 300 for whatsapp and
-  telegram, which compile their CLI on the way up), `DAEMON_STOP_TIMEOUT_SECS` bounds a stop
-  (default 15)
+- budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start and each daemon owns its own default (120
+  for most, 300 for whatsapp and telegram, which compile their CLI on the way up), so set it per
+  daemon and never as one exported value; `DAEMON_STOP_TIMEOUT_SECS` bounds a stop (default 15)
 
 Boot empties the records directory before any daemon runs, because a pid written by the previous
 container can already belong to something else in the fresh pid space, which would read as live
