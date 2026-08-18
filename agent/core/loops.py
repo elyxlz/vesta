@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import datetime as dt
+import hashlib
 import json
 import pathlib as pl
 import time
@@ -483,6 +484,15 @@ def check_proactive_task(*, config: cfg.VestaConfig) -> None:
 
 
 DREAMER_CATCHUP_HOURS = 6
+DREAMER_JITTER_MINUTES = 60
+
+
+def _dream_delay(night: dt.date, *, config: cfg.VestaConfig) -> dt.timedelta:
+    """Per-night start delay inside the configured hour, hashed from (agent name, night): stable
+    across restarts and checks (a fresh random would keep moving the target), different each night
+    and per agent, so dream restarts across a host never land on the same minute."""
+    digest = hashlib.sha256(f"{config.agent_name}:{night.isoformat()}".encode()).digest()
+    return dt.timedelta(minutes=int.from_bytes(digest[:4], "big") % DREAMER_JITTER_MINUTES)
 
 
 def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
@@ -509,6 +519,8 @@ def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
     night_start = now.replace(minute=0, second=0, microsecond=0) - dt.timedelta(hours=hours_since_start)
     last = state.persisted.last_dreamer_run
     if last is not None and last >= night_start:
+        return
+    if now < night_start + _dream_delay(night_start.date(), config=config):
         return
     logger.dreamer("Nightly dreamer starting...")
     prompt = load_prompt("nightly_dream", config) or ""
