@@ -131,7 +131,7 @@ export function slotHtml(scenario, slot) {
     : `<span class="missing">${escapeHtml(slot.note)}</span>`;
   const screen = `<span class="device-screen"${ratio}>${content}</span>`;
   return `
-          <div class="shot" data-screenshot="${escapeHtml(scenario.screenshot)}" data-platform="${slot.platform}" data-state="${slot.state}" data-scenario-id="${escapeHtml(scenario.id)}" data-group="${escapeHtml(scenario.group)}" data-title="${escapeHtml(scenario.title)}" data-runner="${PLATFORMS[slot.platform].runner}">
+          <div class="shot" data-screenshot="${escapeHtml(scenario.screenshot)}" data-platform="${slot.platform}" data-state="${slot.state}" data-scenario-id="${escapeHtml(scenario.id)}" data-group="${escapeHtml(scenario.group)}" data-title="${escapeHtml(scenario.title)}" data-runner="${PLATFORMS[slot.platform].runner}" data-theme="${slot.theme}">
             <button class="preview"${captured ? ` data-image="${escapeHtml(image)}"` : ""} aria-label="Open ${escapeHtml(subject)}">${frameHtml(slot.frame, screen)}</button>
             <div class="shot-meta">
               <span class="platform-tag">${escapeHtml(slot.label)}</span>
@@ -140,10 +140,14 @@ export function slotHtml(scenario, slot) {
           </div>`;
 }
 
+// A card shows one theme at a time: the light slots by default, the dark ones
+// when the gallery's Dark toggle is on. Columns count one theme's slots.
 export function cardHtml(scenario) {
-  const columns = Math.min(scenario.slots.length, CARD_COLUMNS);
+  const themes = [...new Set(scenario.slots.map((slot) => slot.theme))];
+  const perTheme = scenario.slots.filter((slot) => slot.theme === themes[0]).length;
+  const columns = Math.min(perTheme, CARD_COLUMNS);
   return `
-        <article class="card">
+        <article class="card" data-themes="${themes.join(" ")}">
           <div class="shots" style="--shots: ${columns}">${scenario.slots
             .map((slot) => slotHtml(scenario, slot))
             .join("")}</div>

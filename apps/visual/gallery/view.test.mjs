@@ -111,10 +111,18 @@ describe("galleryHtml", () => {
     expect(html).toContain("abc1234 · dirty");
   });
 
-  it("renders sections with family and group, and cards with up to three columns", () => {
+  it("renders sections with family and group, and cards with one theme's columns", () => {
     expect(html).toContain('data-section-group="Mobile · Home"');
     expect(html).toContain('data-family="web"');
     expect(html).toContain('style="--shots: 3"');
+    expect(html).toContain('<article class="card" data-themes="light">');
+    expect(html).toContain('<article class="card" data-themes="light dark">');
+  });
+
+  it("tags every slot with its theme and offers the Dark toggle", () => {
+    expect(html).toContain('data-platform="web-dark" data-state="missing" data-scenario-id="name-empty"');
+    expect(html).toContain('data-runner="web" data-theme="dark"');
+    expect(html).toContain('id="theme-toggle"');
   });
 
   it("annotates each shot for the shots.json poll and copy references", () => {

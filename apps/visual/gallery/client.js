@@ -108,6 +108,17 @@ document.querySelectorAll(".scenario-section").forEach((section) => {
     localStorage.setItem("visual-collapsed", JSON.stringify([...collapsedGroups]));
   });
 });
+const themeToggle = document.querySelector("#theme-toggle");
+function applyTheme(dark) {
+  document.body.dataset.theme = dark ? "dark" : "light";
+  themeToggle.setAttribute("aria-pressed", dark ? "true" : "false");
+}
+applyTheme(localStorage.getItem("visual-theme") === "dark");
+themeToggle.addEventListener("click", () => {
+  const dark = document.body.dataset.theme !== "dark";
+  localStorage.setItem("visual-theme", dark ? "dark" : "light");
+  applyTheme(dark);
+});
 const gentleToggle = document.querySelector("#gentle-toggle");
 gentleToggle.checked = localStorage.getItem("visual-gentle") !== "0";
 gentleToggle.addEventListener("change", () => {

@@ -40,6 +40,7 @@ export function galleryHtml(view) {
       <input type="checkbox" id="gentle-toggle" checked>
       <span>Gentle scans</span>
     </label>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" title="Show every screen that has a dark capture in its dark theme.">Dark</button>
   </section>
   <main>${sections}</main>
   <dialog id="lightbox">

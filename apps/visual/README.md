@@ -122,7 +122,7 @@ Frames (the phone bezel, the browser tab bar, the desktop title bar) are gallery
 ## Gallery
 
 - Sections are `<Family> · <Group>`, for example "Mobile · Onboarding" and "Web · Onboarding", in registry order, mobile first. Click a header to collapse it; the choice persists.
-- A card is one scenario. Its slots are its family's platforms, three per row: a mobile card is one row, a web card is a light row over a dark row.
+- A card is one scenario. Its slots are its family's platforms, shown one theme at a time: light by default. The Dark button in the scan bar flips every card that has dark captures to its dark platforms; the choice persists. A mobile card has no dark captures and stays as it is.
 - Each slot draws its platform's frame: `phone`, `browser`, `desktop-window`, or `phone-browser`.
 - Scan rows: one per runner. Scan spawns the runner and the slots refresh as shots land. "Gentle scans" runs the Maestro runners with `--gentle` and the web runner with `--workers=2`.
 - Copy ref copies `visual-ref: <id> [<platform>]` plus the group, title, revision, and image URL, for pasting into a chat.
