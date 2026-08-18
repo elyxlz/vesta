@@ -2,6 +2,8 @@ import json
 
 from upstream_cli import cli
 
+SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
+
 
 def run_main(monkeypatch, argv):
     monkeypatch.setattr("sys.argv", ["upstream", *argv])
@@ -19,16 +21,18 @@ def test_bare_and_unknown_verbs_refuse_with_usage(monkeypatch, capsys):
 
 
 def test_passthrough_forwards_args_untouched_and_propagates_exit(monkeypatch, fake_gh):
-    record, _ = fake_gh
+    record, _, exit_code = fake_gh
+    exit_code.write_text("3")
     code = run_main(monkeypatch, ["gh", "pr", "view", "2116", "--json", "state"])
-    assert code == 0
+    assert code == 3
     seen = json.loads(record.read_text())
     assert seen["argv"] == ["pr", "view", "2116", "--json", "state"]
+    assert seen["env"]["GH_TOKEN"] == SENTINEL
     assert seen["env"]["GH_REPO"] == "elyxlz/vesta"
 
 
 def test_issue_create_validates_title_appends_footer(monkeypatch, fake_gh, capsys):
-    record, response = fake_gh
+    record, response, _ = fake_gh
     monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
     response.write_text(json.dumps({"html_url": "https://github.com/elyxlz/vesta/issues/1"}))
 
@@ -39,6 +43,12 @@ def test_issue_create_validates_title_appends_footer(monkeypatch, fake_gh, capsy
     seen = json.loads(record.read_text())
     body_field = next(a for a in seen["argv"] if a.startswith("body="))
     assert "Submitted by **tester** on vesta v9.9.9" in body_field
+
+
+def test_a_bodyless_create_carries_the_footer_alone():
+    """One footer owner for PRs and issues, so a bodyless create never opens with a bare rule."""
+    assert cli.body_with_attribution("", "tester", "9.9.9") == "---\nSubmitted by **tester** on vesta v9.9.9"
+    assert cli.body_with_attribution("why", "tester", "9.9.9") == "why\n\n---\nSubmitted by **tester** on vesta v9.9.9"
 
 
 def test_create_refuses_unsupported_gh_flags(monkeypatch, capsys):
@@ -56,13 +66,13 @@ def test_pr_create_takes_head_as_the_gh_spelling_of_branch(monkeypatch):
 
 
 def test_pr_list_without_mine_passes_through(monkeypatch, fake_gh):
-    record, _ = fake_gh
+    record, _, _ = fake_gh
     run_main(monkeypatch, ["gh", "pr", "list", "--state", "open"])
     assert json.loads(record.read_text())["argv"][0:2] == ["pr", "list"]
 
 
 def test_pr_list_mine_is_intercepted(monkeypatch, fake_gh, capsys):
-    record, response = fake_gh
+    record, response, _ = fake_gh
     monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
     response.write_text("[]")
     assert run_main(monkeypatch, ["gh", "pr", "list", "--mine"]) == 0

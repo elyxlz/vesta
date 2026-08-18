@@ -64,15 +64,32 @@ def gh_env(token):
     return {**os.environ, "GH_TOKEN": token, "GH_REPO": UPSTREAM_REPO}
 
 
+GH_MISSING = "Error: `gh` is not installed here, so this command cannot reach GitHub. Your environment provides it; report this to the user."
+
+
+def _run_gh(token, args, *, capture):
+    """Every gh spawn goes through here, so a missing binary fails once with a readable message."""
+    try:
+        return subprocess.run(["gh", *args], env=gh_env(token), capture_output=capture, text=capture, check=False)
+    except FileNotFoundError:
+        print(GH_MISSING, file=sys.stderr)
+        sys.exit(1)
+
+
 def gh_api(token, path, *, method="GET", fields=None):
-    """All REST traffic rides gh so auth handling has one owner. Returns (exit code, stdout)."""
-    cmd = ["gh", "api"]
+    """All REST traffic rides gh so auth handling has one owner. Returns (exit code, output).
+
+    A failure with an empty stdout returns stderr instead: gh prints an API error body to stdout,
+    but a transport or usage failure only reaches stderr, and callers print what they get."""
+    cmd = ["api"]
     if method != "GET":
         cmd += ["-X", method]
     cmd.append(path)
     for key, value in (fields or {}).items():
         cmd += ["-f", f"{key}={value}"]
-    result = subprocess.run(cmd, env=gh_env(token), capture_output=True, text=True, check=False)
+    result = _run_gh(token, cmd, capture=True)
+    if result.returncode != 0 and not result.stdout.strip():
+        return result.returncode, result.stderr
     return result.returncode, result.stdout
 
 
@@ -242,6 +259,12 @@ def create_pr(token, title, body, branch, base):
     sys.exit(1)
 
 
+def body_with_attribution(body, agent_name, vesta_version):
+    """Every PR and issue body carries the same footer, and an empty body carries it alone."""
+    attribution = f"\n\n---\nSubmitted by **{agent_name}** on vesta v{vesta_version}"
+    return f"{body}{attribution}" if body else attribution.lstrip()
+
+
 def submit_pr(args):
     token = get_installation_token()
     agent_name, vesta_version = resolve_agent_identity()
@@ -285,11 +308,7 @@ def submit_pr(args):
         sys.exit(1)
     print("Push ok")
 
-    # Append agent attribution to PR body
-    attribution = f"\n\n---\nSubmitted by **{agent_name}** on vesta v{vesta_version}"
-    body = f"{args.body}{attribution}" if args.body else attribution.lstrip()
-
-    create_pr(token, args.title, body, branch, args.base)
+    create_pr(token, args.title, body_with_attribution(args.body, agent_name, vesta_version), branch, args.base)
 
 
 USAGE = "usage: upstream gh <gh args> | upstream token"
@@ -344,7 +363,7 @@ def issue_create(rest):
     _refuse_bad_title(args.title)
     agent_name, vesta_version = resolve_agent_identity()
     token = get_installation_token()
-    body = f"{args.body}\n\n---\nSubmitted by **{agent_name}** on vesta v{vesta_version}"
+    body = body_with_attribution(args.body, agent_name, vesta_version)
     code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/issues", method="POST", fields={"title": args.title, "body": body})
     if code != 0:
         print(f"Error: {out}", file=sys.stderr)
@@ -384,7 +403,7 @@ def main():
     elif args[:2] == ["pr", "list"] and "--mine" in args:
         pr_list_mine(args[2:])
     else:
-        completed = subprocess.run(["gh", *args], env=gh_env(get_installation_token()), check=False)
+        completed = _run_gh(get_installation_token(), args, capture=False)
         sys.exit(completed.returncode)
 
 
