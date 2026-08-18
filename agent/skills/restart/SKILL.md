@@ -17,6 +17,8 @@ When a skill's setup gives you a daemon startup line, add it to `daemons.sh` you
 
 Every line runs, so a line that is not a working daemon command is reported as a failure on stderr, never silently skipped. A start is idempotent: a daemon already up answers `{"status":"already_running"}` and spawns nothing, so re-running cannot stack duplicates, which is what makes it safe for crash and timeout recovery to re-enter this skill. A start also returns only once its daemon is actually up, so the lines never race and need no sleep between them.
 
+A `FAILED` line is yours to handle before you move on. Run that one daemon's line from `daemons.sh` again yourself: a start can fail on transient host load and come up clean moments later, and the retry is safe because a failed start removes its own pid and port records. If the second attempt also fails, read `~/agent/logs/<name>.log`, find the cause, and tell the user which channel or capability is down until you fix it. A daemon left down fails silently from then on: messages land nowhere and reminders never fire.
+
 Three flags never appear on a line, because the command applies them itself: a port, a `--notifications-dir`, and a poll interval. Every other flag a skill's setup gives you stays on the line, because it is chosen for that daemon and the command cannot infer it. Whatsapp named instances are the case you will meet: one line per account, each keeping the `--instance <name>` and per-instance flags it was set up with.
 
 `daemons.sh` holds one `<skill> daemon start` per line, with `#` comment lines allowed. For example:
