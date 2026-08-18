@@ -192,12 +192,12 @@ main {
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 600px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 450px), 1fr));
   align-items: start;
   gap: 16px;
 }
 .scenario-section[data-family="web"] .grid {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 960px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 720px), 1fr));
 }
 .card { min-width: 0; }
 .shots {
