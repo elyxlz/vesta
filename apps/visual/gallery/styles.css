@@ -18,67 +18,7 @@ body {
   color: var(--text);
   font: 14px/1.45 Archivo, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px 32px;
-  max-width: 1680px;
-  margin: 0 auto;
-  padding: 32px 24px 22px;
-}
-h1 {
-  margin: 4px 0 5px;
-  font-family: "Source Serif 4", Georgia, serif;
-  font-weight: 600;
-  font-size: clamp(28px, 4vw, 42px);
-  line-height: 1;
-  letter-spacing: -.03em;
-}
-.meta {
-  display: flex;
-  max-width: 540px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-}
-.meta span, .report {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 5px 9px;
-  background: var(--card);
-  color: var(--faint);
-  text-decoration: none;
-  font-size: 10px;
-}
 .report:hover { color: var(--text); border-color: var(--gold); }
-/* The scan bar floats: it sticks to the top edge as the page scrolls, on the
-   same glass the status pill uses, so scans and toggles are always in reach. */
-.scan-bar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  padding: 10px 0;
-  background: rgba(12, 10, 8, 0.82);
-  border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-}
-.scan-bar-inner {
-  display: flex;
-  max-width: 1680px;
-  align-items: center;
-  gap: 10px;
-  margin: 0 auto;
-  padding: 0 24px;
-}
-.scan-grid {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
 .scan-row {
   display: inline-grid;
   grid-template-columns: auto auto auto auto;
@@ -108,12 +48,83 @@ h1 {
 }
 .scan-button:hover:not(:disabled) { border-color: var(--accent); }
 .scan-button:disabled { opacity: .55; cursor: default; }
-.scan-controls {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
+/* One theme at a time: dark slots hide until the toggle is on, and then a card
+   that has dark captures hides its light ones instead. */
+.shot[data-theme="dark"] { display: none; }
+body[data-theme="dark"] .card[data-themes~="dark"] .shot[data-theme="light"] { display: none; }
+body[data-theme="dark"] .shot[data-theme="dark"] { display: block; }
+/* One sidebar owns the controls and the navigation; the content scrolls beside it. */
+.layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 28px;
+  max-width: 1900px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
 }
+main { min-width: 0; padding-top: 24px; }
+.side {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 100vh;
+  overflow-y: auto;
+  padding: 24px 6px 24px 0;
+  scrollbar-width: thin;
+}
+h1 {
+  margin: 0;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-weight: 600;
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -.03em;
+}
+.meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.meta span, .report {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: var(--card);
+  color: var(--faint);
+  text-decoration: none;
+  font-size: 10px;
+}
+.report:hover { color: var(--text); border-color: var(--gold); }
+.scan-bar { display: flex; flex-direction: column; gap: 8px; }
+.scan-grid { display: flex; flex-direction: column; gap: 6px; }
+.scan-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 7px 8px 7px 12px;
+  background: var(--card);
+  color: var(--faint);
+  font-size: 11px;
+}
+.scan-runner { color: var(--text); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scan-progress { color: var(--accent); font-weight: 700; }
+.scan-last { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scan-row[data-state="failed"] .scan-last { color: #ff6467; }
+.scan-row[data-state="running"] .scan-last { color: var(--muted); }
+.scan-button {
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  padding: 3px 11px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 11px;
+  cursor: pointer;
+}
+.scan-button:hover:not(:disabled) { border-color: var(--accent); }
+.scan-button:disabled { opacity: .55; cursor: default; }
+.scan-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
 .gentle-toggle {
   display: flex;
   align-items: center;
@@ -125,15 +136,15 @@ h1 {
 }
 .gentle-toggle input { accent-color: var(--accent); }
 .theme-toggle {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 50%;
-  padding: 0;
+  border-radius: 999px;
+  padding: 3px 10px 3px 8px;
   background: var(--card);
   color: var(--muted);
+  font-size: 11px;
   cursor: pointer;
 }
 .theme-toggle[aria-pressed="true"] {
@@ -141,31 +152,8 @@ h1 {
   background: var(--gold-soft);
   color: var(--gold);
 }
-/* One theme at a time: dark slots hide until the toggle is on, and then a card
-   that has dark captures hides its light ones instead. */
-.shot[data-theme="dark"] { display: none; }
-body[data-theme="dark"] .card[data-themes~="dark"] .shot[data-theme="light"] { display: none; }
-body[data-theme="dark"] .shot[data-theme="dark"] { display: block; }
-.layout {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: 28px;
-  max-width: 1900px;
-  margin: 0 auto;
-  padding: 8px 24px 64px;
-}
-main { min-width: 0; }
-/* The side navigation sticks under the scan bar and scrolls on its own. */
-.side {
-  position: sticky;
-  top: 62px;
-  align-self: start;
-  max-height: calc(100vh - 74px);
-  overflow-y: auto;
-  padding: 6px 4px 12px 0;
-  scrollbar-width: thin;
-}
-.side-family + .side-family { margin-top: 18px; }
+.side-nav { border-top: 1px solid var(--border); padding-top: 14px; }
+.side-family + .side-family { margin-top: 16px; }
 .side-family-title {
   display: block;
   margin: 0 0 6px 10px;
@@ -192,7 +180,8 @@ main { min-width: 0; }
 .side-link.active { color: var(--gold); background: var(--gold-soft); }
 .side-count { color: var(--faint); font-size: 10px; }
 .side-link.active .side-count { color: var(--gold); }
-.scenario-section { scroll-margin-top: 66px; }
+.scenario-section { scroll-margin-top: 16px; }
+
 .scenario-section + .scenario-section { margin-top: 48px; }
 .section-header {
   display: flex;
@@ -442,13 +431,12 @@ dialog button {
 }
 [hidden] { display: none !important; }
 @media (max-width: 720px) {
-  header { grid-template-columns: 1fr; padding: 24px 16px 18px; }
-  .meta { justify-content: flex-start; }
   .layout {
     grid-template-columns: minmax(0, 1fr);
     padding: 4px 16px 48px;
   }
-  .side { display: none; }
+  .side { position: static; max-height: none; }
+  .side-nav { display: none; }
   .scenario-section + .scenario-section { margin-top: 36px; }
   .grid {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));

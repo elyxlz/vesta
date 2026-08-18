@@ -213,8 +213,8 @@ export function scanRowsHtml() {
       <div class="scan-row" data-runner="${runner}">
         <span class="scan-runner">${escapeHtml(definition.label)}</span>
         <span class="scan-progress"></span>
-        <span class="scan-last">never</span>
         <button class="scan-button" type="button">Scan</button>
+        <span class="scan-last">never</span>
       </div>`,
     )
     .join("");
