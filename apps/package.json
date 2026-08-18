@@ -5,7 +5,8 @@
     "web",
     "desktop",
     "core",
-    "mobile"
+    "mobile",
+    "visual"
   ],
   "overrides": {
     "react": "19.2.3",
