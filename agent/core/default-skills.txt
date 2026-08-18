@@ -20,7 +20,7 @@ vestad
 skills-registry
 tasks
 timezone
-upstream-pr
+upstream
 vesta-cloud
 voice
 what-day

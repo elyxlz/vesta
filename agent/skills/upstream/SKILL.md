@@ -1,16 +1,16 @@
 ---
-name: upstream-pr
+name: upstream
 description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 ---
 
-# Upstream PR
+# Upstream (CLI: upstream)
 
 Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed.
 
 ## Setup
 
 ```bash
-uv tool install --editable ~/agent/skills/upstream-pr/cli
+uv tool install --editable ~/agent/skills/upstream/cli
 ```
 
 ## Discovering what to file (run this every night, in the dream's Upstream phase)
@@ -53,7 +53,7 @@ Seven gates before opening a worktree.
 - Infrastructure or tooling improvements
 
 **2. Issue, PR, or both?**
-- You have a fix in the workspace (`~/agent/skills/`, prompts, MEMORY.md structure): **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `upstream-pr --body "...fixes #N"` is enough.
+- You have a fix in the workspace (`~/agent/skills/`, prompts, MEMORY.md structure): **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `upstream --body "...fixes #N"` is enough.
 - The problem lives in `agent/core/`: **issue only**, however sure you are of the fix. Core is mounted read-only, so you cannot apply or run a core change on your box, and an untested engine PR costs more review than a precise issue. Describe the cause, the exact file and line, and the fix you would make; a maintainer lands it.
 - You don't have a fix yet: **issue only**.
 
@@ -72,7 +72,7 @@ Every PR and every issue must carry the agent name and vesta version, so maintai
 - Agent name: `$AGENT_NAME`
 - Vesta version: read from `~/agent/core/pyproject.toml`
 
-`upstream-pr` automatically appends `Submitted by **<name>** on <version>` to PR bodies. For **issues**, append the same footer to the body yourself:
+`upstream` automatically appends `Submitted by **<name>** on <version>` to PR bodies. For **issues**, append the same footer to the body yourself:
 
 ```
 ---
@@ -91,7 +91,7 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
    git -C ~ worktree add /tmp/vesta-pr -b feature/<name> upstream/master
    ```
 
-   **The remote is `upstream`, and `~` may not have it yet.** A fresh box has no remotes at all: upstream sync's `fetch-upstream.sh` fetches the bind-mounted `/run/vesta-upstream/upstream.git` by path with explicit refspecs, so it never configures one, and `upstream` first appears when `upstream-pr` itself runs. So without the guard, `git -C ~ fetch upstream` on a box that has never opened a PR dies with `'upstream' does not appear to be a git repository`. The guard mirrors what `upstream-pr` does: `set-url` rewrites a stale URL (including one with a token embedded in it) back to the credential-free form, and when the remote is missing entirely, `add` creates it.
+   **The remote is `upstream`, and `~` may not have it yet.** A fresh box has no remotes at all: upstream sync's `fetch-upstream.sh` fetches the bind-mounted `/run/vesta-upstream/upstream.git` by path with explicit refspecs, so it never configures one, and `upstream` first appears when `upstream` itself runs. So without the guard, `git -C ~ fetch upstream` on a box that has never opened a PR dies with `'upstream' does not appear to be a git repository`. The guard mirrors what `upstream` does: `set-url` rewrites a stale URL (including one with a token embedded in it) back to the credential-free form, and when the remote is missing entirely, `add` creates it.
 
    Branch off `upstream/master` only, never `upstream/agent-upstream`: that ref is the standalone stock snapshot with no ancestry to master, and branching off it is the failure `ensure_shared_history` catches, a 422 "no history in common with master" at PR create.
 
@@ -103,14 +103,14 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
    ```bash
    cd /tmp/vesta-pr
    git add <files> && git commit -m "<description>"
-   upstream-pr --title "..." --body "..."
+   upstream --title "..." --body "..."
    ```
 
-5. **Wait for CI to pass.** Capture a token with `TOKEN=$(upstream-pr --token-only)` (never bare, see "Handling the token"), then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, and re-run `upstream-pr` to update the PR. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
+5. **Wait for CI to pass.** Capture a token with `TOKEN=$(upstream --token-only)` (never bare, see "Handling the token"), then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, and re-run `upstream` to update the PR. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
-   **To add a commit to a PR that is already open, re-run `upstream-pr` from the worktree.** Recreate it on the existing branch (`git -C ~ worktree add /tmp/vesta-pr <existing-branch>`), and before committing anything, fetch and rebase onto the branch's remote tip: the re-run force-pushes your local copy, so any commits a maintainer or sibling added to the branch since your last push are silently discarded unless you picked them up first. Then commit and run `upstream-pr --title "..." --body "..."` again: it force-pushes the branch and prints `PR already exists for this branch` rather than failing. Prefer this to opening a second PR for the same change.
+   **To add a commit to a PR that is already open, re-run `upstream` from the worktree.** Recreate it on the existing branch (`git -C ~ worktree add /tmp/vesta-pr <existing-branch>`), and before committing anything, fetch and rebase onto the branch's remote tip: the re-run force-pushes your local copy, so any commits a maintainer or sibling added to the branch since your last push are silently discarded unless you picked them up first. Then commit and run `upstream --title "..." --body "..."` again: it force-pushes the branch and prints `PR already exists for this branch` rather than failing. Prefer this to opening a second PR for the same change.
 
-   A bare `git push upstream <branch>` fails with `fatal: could not read Username for 'https://github.com'`, because the remote is deliberately credential-free. **Do not answer that by putting the token in the push URL.** The shell expands it, so a live token lands in argv, where any process on the box can read it off `ps`. `upstream-pr` keeps auth in the process environment for exactly this reason, pinned by `cli/tests/test_auth.py`, and it is already the authenticated path, so there is nothing to work around.
+   A bare `git push upstream <branch>` fails with `fatal: could not read Username for 'https://github.com'`, because the remote is deliberately credential-free. **Do not answer that by putting the token in the push URL.** The shell expands it, so a live token lands in argv, where any process on the box can read it off `ps`. `upstream` keeps auth in the process environment for exactly this reason, pinned by `cli/tests/test_auth.py`, and it is already the authenticated path, so there is nothing to work around.
 
 6. **Apply the same fix to your local tree and check it against the branch.** See "Apply the fix locally too" below.
 
@@ -158,23 +158,23 @@ Treat that table as perishable: permissions belong to the installed App and chan
 
 ## Filing an issue
 
-Capture a token with `TOKEN=$(upstream-pr --token-only)` (never bare, see "Handling the token"), then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
+Capture a token with `TOKEN=$(upstream --token-only)` (never bare, see "Handling the token"), then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
 
 ## Handling the token (REQUIRED)
 
-`--token-only` writes a **live** GitHub App installation token to stdout, and your runtime persists tool output into the event store. So a bare `upstream-pr --token-only` deposits a working credential into your own searchable history, where it outlives the request that needed it.
+`--token-only` writes a **live** GitHub App installation token to stdout, and your runtime persists tool output into the event store. So a bare `upstream --token-only` deposits a working credential into your own searchable history, where it outlives the request that needed it.
 
 Always capture it into a shell variable in the same command that uses it, so the value never reaches stdout:
 
 ```bash
-TOKEN=$(upstream-pr --token-only)
+TOKEN=$(upstream --token-only)
 curl -s -H "Authorization: token $TOKEN" https://api.github.com/repos/elyxlz/vesta/issues
 ```
 
 To check only that the auth channel works, test the exit status, never the value:
 
 ```bash
-upstream-pr --token-only >/dev/null && echo "auth ok"
+upstream --token-only >/dev/null && echo "auth ok"
 ```
 
 If a token does reach your history, scrub it: `~/agent/skills/dream/scripts/redact_secrets.sh` then `--scrub <event id>`.
@@ -188,8 +188,8 @@ while I was awake" is not evidence it is yours. The only field that carries auth
 **commit author**, `<agent-name> (vesta)`, and the FIRST commit's author is who opened it.
 
 ```bash
-upstream-pr --mine              # PRs you opened, and separately ones you only pushed commits to
-upstream-pr --mine --state all --limit 60
+upstream --mine              # PRs you opened, and separately ones you only pushed commits to
+upstream --mine --state all --limit 60
 ```
 
 Run this before a review sweep, before fixing CI on "your" PRs, and before pushing to any branch you
@@ -197,7 +197,7 @@ did not create in this session. Timing is not evidence: a PR that appeared while
 as likely to be a sibling's. When an author name does appear in a `git log` or `git show`, it is a
 fact to check, never a name to set as your own commit author.
 
-`upstream-pr` refuses to push to a remote branch whose commits are all somebody else's (another
+`upstream` refuses to push to a remote branch whose commits are all somebody else's (another
 agent's or a human's), since the push is a **force** push and would discard their work. It also
 refuses when the remote branch exists but cannot be read, rather than guessing; that refusal means
 the network or auth is broken, so wait and retry, and never reach for `--adopt` to get past it.
@@ -206,7 +206,7 @@ genuinely what you mean.
 
 The guard catches name collisions, not every overwrite: a branch you have commits on is yours to
 push, and the force push replaces the remote with your local copy. So before re-running
-`upstream-pr` on an existing branch, fetch and rebase onto its remote tip first; a maintainer or
+`upstream` on an existing branch, fetch and rebase onto its remote tip first; a maintainer or
 sibling may have pushed commits to it since your last push, and pushing without fetching silently
 discards those.
 
@@ -215,24 +215,24 @@ you touched it, and that they should revert freely. Never restate their evidence
 never "correct" a measurement with numbers from your own box; their box has different traffic,
 different accounts and different history, so your count is not a check on theirs.
 
-## upstream-pr reference
+## upstream reference
 
 ```bash
 # Create a PR (auto branch, base=master)
-upstream-pr --title "fix: ..." --body "..."
+upstream --title "fix: ..." --body "..."
 
 # Custom branch and base
-upstream-pr --title "..." --branch my-branch --base master
+upstream --title "..." --branch my-branch --base master
 
 # Which of these PRs are actually yours
-upstream-pr --mine
+upstream --mine
 
 # Take over a branch another agent started (force push, so this is deliberate)
-upstream-pr --title "..." --branch their-branch --adopt
+upstream --title "..." --branch their-branch --adopt
 
 # Short-lived GitHub API token (for issues, check-runs, PR status).
 # Always capture it, never run bare: stdout is persisted into the event store.
-TOKEN=$(upstream-pr --token-only)
+TOKEN=$(upstream --token-only)
 ```
 
 ## Running a skill's tests

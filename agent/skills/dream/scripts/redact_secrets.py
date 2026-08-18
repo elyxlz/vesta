@@ -119,7 +119,7 @@ PATTERNS = [
     # are deliberately excluded.
     r"[sr]k_(?:live|test)_[0-9a-zA-Z]{20,}",
     r"xox[bp]-[0-9A-Za-z-]+",
-    # GitHub App installation tokens are ghs_<installation-id>_<jwt> (the format `upstream-pr
+    # GitHub App installation tokens are ghs_<installation-id>_<jwt> (the format `upstream
     # --token-only` hands out), so the class allows underscores and dots: without them the match
     # dies at the first underscore and a truncated copy escapes entirely. The prefix class carries
     # all five token families (p personal, o OAuth, u user-to-server, s server-to-server, r

@@ -109,7 +109,7 @@ skill covers minting, revoking, and the link forms.
 Then read the `restart` skill and add the startup line yourself, the bare `<skill> daemon start`,
 to your restart daemons, so the daemon comes back after a container restart.
 
-Skills you build are yours until you file them: the `upstream-pr` skill contributes anything
+Skills you build are yours until you file them: the `upstream` skill contributes anything
 general back so every Vesta gets it.
 
 ## Notes
