@@ -41,6 +41,12 @@ const chatState: ChatState = seedTail(initialChatState(), {
       text: "Done. I prioritized the visual regressions first, then the demo notes and follow-ups.",
       ts: "2026-08-01T09:19:11.000Z",
     },
+    {
+      id: 105,
+      type: "user",
+      text: "> Done. I prioritized the visual regressions first, then the demo notes and follow-ups.\n\nPerfect, let's start with the visual regressions.",
+      ts: "2026-08-01T09:20:00.000Z",
+    },
   ],
   cursor: null,
 });
