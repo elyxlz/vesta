@@ -1,4 +1,4 @@
-The upstream skill lives at `~/agent/skills/upstream/` and its command is `upstream`. The GitHub App private key is an untracked per-box file, so a sync that moves the skill's tracked files leaves the key behind in the old directory. Every step reads disk state first, so this is safe to run more than once.
+The upstream skill lives at `~/agent/skills/upstream/` and its command is `upstream`. The GitHub App private key normally moves with the sync; a dirty checkout can leave it at the old path, so step 1 moves it if needed. Every step reads disk state first, so this is safe to run more than once.
 
 ### 1. Move the App private key if it is still at the old path
 
