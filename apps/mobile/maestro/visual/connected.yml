@@ -159,19 +159,24 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: new-agent.png
+# Dismissing is proven by the sheet's own copy going away: on Android the home
+# underneath stays visible to accessibility through the in-app sheet.
 - repeat:
     times: 3
     while:
-      notVisible: "Open aria"
+      visible: "Coming soon"
     commands:
       - swipe:
           start: "50%,45%"
           end: "50%,95%"
           duration: 500
       - extendedWaitUntil:
-          visible: "Open aria"
+          notVisible: "Coming soon"
           timeout: 5000
           optional: true
+- extendedWaitUntil:
+    notVisible: "Coming soon"
+    timeout: 5000
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 5000
