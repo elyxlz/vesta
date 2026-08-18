@@ -52,13 +52,26 @@ h1 {
   font-size: 10px;
 }
 .report:hover { color: var(--text); border-color: var(--gold); }
+/* The scan bar floats: it sticks to the top edge as the page scrolls, on the
+   same glass the status pill uses, so scans and toggles are always in reach. */
 .scan-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 10px 0;
+  background: rgba(12, 10, 8, 0.82);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.scan-bar-inner {
   display: flex;
   max-width: 1680px;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
   margin: 0 auto;
-  padding: 0 24px 10px;
+  padding: 0 24px;
 }
 .scan-row {
   display: flex;
@@ -219,37 +232,23 @@ main {
   gap: 8px;
 }
 .capture-status {
-  position: fixed;
-  top: 16px;
-  left: 50%;
-  z-index: 20;
   display: flex;
   max-width: min(92vw, 560px);
   align-items: center;
   gap: 11px;
+  margin-left: auto;
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 9px 14px 9px 10px;
-  background: #1b1916f2;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transform: translateX(-50%);
-  transition: opacity 160ms ease, transform 160ms ease;
-  backdrop-filter: blur(16px);
-}
-.capture-status[hidden] {
-  display: flex !important;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, -8px);
+  padding: 6px 14px 6px 8px;
+  background: var(--card);
 }
 .capture-status[data-state="error"] {
   border-color: #ff6467;
   background: #241413f2;
 }
 .status-spinner {
-  width: 25px;
-  height: 25px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
   border: 3px solid var(--gold-soft);
   border-top-color: var(--accent);
@@ -267,7 +266,7 @@ main {
 }
 .capture-status[data-state="error"] .status-spinner::before { content: "!"; }
 .status-copy { min-width: 0; }
-.status-title { display: block; font-size: 12px; line-height: 1.25; }
+.status-title { display: block; font-size: 11px; line-height: 1.25; }
 .status-detail {
   display: block;
   overflow: hidden;
