@@ -1,5 +1,5 @@
 [project]
-name = "upstream-pr"
+name = "upstream"
 version = "0.1.0"
 description = "Push contributions to the upstream vesta repo via the vesta-upstream GitHub App"
 requires-python = ">=3.11"
@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-upstream-pr = "upstream_pr_cli.cli:main"
+upstream = "upstream_cli.cli:main"
 
 [dependency-groups]
 dev = [
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/upstream_pr_cli"]
+packages = ["src/upstream_cli"]
 
 [build-system]
 requires = ["hatchling"]

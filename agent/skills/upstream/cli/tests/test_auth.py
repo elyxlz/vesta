@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-from upstream_pr_cli import cli
+from upstream_cli import cli
 
 SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
 # The host's own git config must not reach these repos: a user-level commit.gpgSign would sign
@@ -48,7 +48,7 @@ def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, mon
     monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
     # The ownership guard has its own tests below; unstubbed it would dial the real remote.
     monkeypatch.setattr(cli, "warn_if_branch_belongs_to_another_agent", lambda *a, **k: None)
-    monkeypatch.setattr(sys, "argv", ["upstream-pr", "--title", "t"])
+    monkeypatch.setattr(sys, "argv", ["upstream", "--title", "t"])
 
     pushed = {}
     real_run = cli.run
@@ -225,13 +225,13 @@ def _run_main_to_push(repo, monkeypatch, argv, guard_calls):
 
 def test_push_runs_the_ownership_guard(repo, monkeypatch):
     guard_calls = []
-    _run_main_to_push(repo, monkeypatch, ["upstream-pr", "--title", "t"], guard_calls)
+    _run_main_to_push(repo, monkeypatch, ["upstream", "--title", "t"], guard_calls)
     assert len(guard_calls) == 1
 
 
 def test_adopt_skips_the_ownership_guard(repo, monkeypatch):
     guard_calls = []
-    _run_main_to_push(repo, monkeypatch, ["upstream-pr", "--title", "t", "--adopt"], guard_calls)
+    _run_main_to_push(repo, monkeypatch, ["upstream", "--title", "t", "--adopt"], guard_calls)
     assert guard_calls == []
 
 

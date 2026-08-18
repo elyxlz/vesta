@@ -1,4 +1,4 @@
-"""Upstream PR tool — authenticates via GitHub App, pushes branch, creates PR."""
+"""Upstream tool — authenticates via GitHub App, pushes branch, creates PR."""
 
 import argparse
 import base64
@@ -89,7 +89,7 @@ def resolve_agent_identity():
 
 def ensure_shared_history(base, env):
     """Guard: HEAD must share history with the base branch, else PR-create fails 422 with a
-    cryptic "no history in common with master". This happens when upstream-pr is run from
+    cryptic "no history in common with master". This happens when upstream is run from
     the workspace branch (~), whose base is a standalone stock snapshot tag with no ancestry
     to real GitHub master, so pushing it force-pushes an unrelated root. Catch it here with
     an actionable message BEFORE we amend the commit author or push anything."""
@@ -98,7 +98,7 @@ def ensure_shared_history(base, env):
     if merge_base.returncode != 0 or not merge_base.stdout.strip():
         print(f"Error: HEAD shares no history with upstream/{base}.", file=sys.stderr)
         print("You are probably running from your workspace branch (~), whose base is a", file=sys.stderr)
-        print("standalone stock snapshot tag unrelated to real master. Run upstream-pr from", file=sys.stderr)
+        print("standalone stock snapshot tag unrelated to real master. Run upstream from", file=sys.stderr)
         print("your PR worktree (branch off FETCH_HEAD after fetching master), not from ~.", file=sys.stderr)
         sys.exit(1)
 

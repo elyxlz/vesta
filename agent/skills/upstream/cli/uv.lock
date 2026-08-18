@@ -343,7 +343,7 @@ wheels = [
 ]
 
 [[package]]
-name = "upstream-pr"
+name = "upstream"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
