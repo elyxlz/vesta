@@ -39,13 +39,6 @@ export function galleryHtml(view) {
         <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
       </button>
     </div>
-    <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
-      <span class="status-spinner" aria-hidden="true"></span>
-      <span class="status-copy">
-        <strong class="status-title">Capturing screenshots</strong>
-        <span class="status-detail">Starting…</span>
-      </span>
-    </div>
     </div>
   </section>
   <main>${sections}</main>

@@ -28,6 +28,8 @@ const projects = Object.entries(PLATFORMS)
 export default defineConfig({
   testDir: ".",
   testMatch: "capture.spec.ts",
+  globalSetup: "./run-status.ts",
+  globalTeardown: "./run-status-teardown.ts",
   outputDir: "../.visual/artifacts",
   reporter: [
     ["list"],

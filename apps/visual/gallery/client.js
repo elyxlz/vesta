@@ -76,26 +76,6 @@ dialog.querySelector("button").addEventListener("click", () => dialog.close());
 dialog.addEventListener("click", (event) => {
   if (event.target === dialog) dialog.close();
 });
-const status = document.querySelector("#capture-status");
-const statusTitle = status.querySelector(".status-title");
-const statusDetail = status.querySelector(".status-detail");
-function showCaptureStatus(nextStatus) {
-  const state = nextStatus?.state ?? "ready";
-  document.body.dataset.captureState = state;
-  status.dataset.state = state;
-  status.hidden = state === "ready";
-  if (state === "capturing") {
-    const elapsed = nextStatus.startedAt
-      ? Math.max(0, Math.round((Date.now() - Date.parse(nextStatus.startedAt)) / 1000))
-      : 0;
-    statusTitle.textContent = nextStatus.message || "Capturing screenshots";
-    const context = nextStatus.detail || "Working";
-    statusDetail.textContent = context + " · " + elapsed + "s";
-  } else if (state === "error") {
-    statusTitle.textContent = nextStatus.message || "Screenshot refresh failed";
-    statusDetail.textContent = nextStatus.detail || "Fix the issue and save again.";
-  }
-}
 const collapsedGroups = new Set(
   JSON.parse(localStorage.getItem("visual-collapsed") || "[]"),
 );
@@ -164,17 +144,32 @@ function applyShots(payload) {
     }
   });
 }
-function updateScanRows(payload, status) {
+function capturingStatus(statuses, runner) {
+  return statuses.find(
+    (entry) => entry.state === "capturing" && entry.runner === runner && entry.startedAt,
+  );
+}
+function errorStatus(statuses, runner) {
+  return statuses.find((entry) => entry.state === "error" && entry.runner === runner);
+}
+function stampText(mtimes) {
+  return mtimes.length
+    ? new Date(Math.max.apply(null, mtimes)).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "never";
+}
+// Each cell carries its runner's phase while it captures, its error after a
+// failure, and the last-scan stamp otherwise.
+function updateScanRows(payload, statuses) {
   document.querySelectorAll(".scan-row").forEach((row) => {
     const runner = row.dataset.runner;
     const run = (payload.runs || {})[runner];
-    const statusRun = Boolean(
-      status &&
-        status.state === "capturing" &&
-        status.runner === runner &&
-        status.startedAt,
-    );
-    const running = Boolean(run && run.running) || statusRun;
+    const status = capturingStatus(statuses, runner);
+    const running = Boolean(run && run.running) || Boolean(status);
     const button = row.querySelector(".scan-button");
     button.disabled = running;
     button.textContent = running ? "Scanning" : "Scan";
@@ -183,60 +178,46 @@ function updateScanRows(payload, status) {
     );
     // While a scan runs, count this run's replacements from zero; idle, count files on disk.
     const startedMs = running
-      ? Date.parse(
-          (run && run.startedAt) || (status && status.startedAt) || "",
-        )
+      ? Date.parse((run && run.startedAt) || (status && status.startedAt) || "")
       : 0;
     let have = 0;
     const mtimes = [];
     slots.forEach((slot) => {
-      const entry = (payload[slot.dataset.platform] || {})[
-        slot.dataset.screenshot
-      ];
+      const entry = (payload[slot.dataset.platform] || {})[slot.dataset.screenshot];
       if (!entry) return;
       mtimes.push(entry.mtime);
       if (!running || entry.mtime >= startedMs) have += 1;
     });
-    row.querySelector(".scan-progress").textContent =
-      have + "/" + slots.length;
-    const failed = Boolean(run && !running && run.exitCode);
-    row.dataset.state = failed ? "failed" : "ok";
-    row.querySelector(".scan-last").textContent = failed
-      ? "failed, see capture-" + runner + ".log"
-      : mtimes.length
-        ? new Date(Math.max.apply(null, mtimes)).toLocaleString([], {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : "never";
+    row.querySelector(".scan-progress").textContent = have + "/" + slots.length;
+    const failure = !running && (errorStatus(statuses, runner) || (run && run.exitCode ? { message: "failed", detail: "see capture-" + runner + ".log" } : null));
+    row.dataset.state = running ? "running" : failure ? "failed" : "ok";
+    const last = row.querySelector(".scan-last");
+    if (running && status) {
+      const elapsed = Math.max(0, Math.round((Date.now() - Date.parse(status.startedAt)) / 1000));
+      last.textContent = (status.message || "Capturing") + " · " + elapsed + "s";
+      last.title = status.detail || "";
+    } else if (failure) {
+      last.textContent = failure.message + (failure.detail ? ": " + failure.detail : "");
+      last.title = failure.detail || "";
+    } else {
+      last.textContent = stampText(mtimes);
+      last.title = "";
+    }
   });
 }
-function markRefreshing(status, payload) {
-  const capturing = Boolean(
-    status &&
-      status.state === "capturing" &&
-      status.runner &&
-      status.startedAt,
-  );
-  const startedMs = capturing ? Date.parse(status.startedAt) : 0;
+function markRefreshing(statuses, payload) {
   document.querySelectorAll(".shot").forEach((shot) => {
-    const applies =
-      capturing &&
-      shot.dataset.runner === status.runner &&
-      shot.dataset.state !== "excluded";
-    if (!applies) {
+    const status = capturingStatus(statuses, shot.dataset.runner);
+    if (!status || shot.dataset.state === "excluded") {
       shot.classList.remove("refreshing");
       return;
     }
-    const entry = (payload[shot.dataset.platform] || {})[
-      shot.dataset.screenshot
-    ];
+    const startedMs = Date.parse(status.startedAt);
+    const entry = (payload[shot.dataset.platform] || {})[shot.dataset.screenshot];
     shot.classList.toggle("refreshing", !(entry && entry.mtime >= startedMs));
   });
 }
-let lastStatus = null;
+let lastStatuses = [];
 window.setInterval(async () => {
   if (document.visibilityState === "hidden") return;
   try {
@@ -245,14 +226,13 @@ window.setInterval(async () => {
       fetch("shots.json", { cache: "no-store" }),
     ]);
     if (statusResponse.ok) {
-      lastStatus = await statusResponse.json();
-      showCaptureStatus(lastStatus);
+      lastStatuses = (await statusResponse.json()).statuses || [];
     }
     if (shotsResponse.ok) {
       const payload = await shotsResponse.json();
       applyShots(payload);
-      updateScanRows(payload, lastStatus);
-      markRefreshing(lastStatus, payload);
+      updateScanRows(payload, lastStatuses);
+      markRefreshing(lastStatuses, payload);
     }
   } catch {
     // The local server may be between restarts.
