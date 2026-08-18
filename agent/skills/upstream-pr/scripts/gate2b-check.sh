@@ -101,12 +101,23 @@ printf '%s\n' "$diff_out" | awk '
     # incident, so keying on the date alone needs this one carve-out or the check flags the
     # documentation it has no business rewriting, and a lint with noise in it is one you skim.
     is_example = (probe ~ /["=`]20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)
+    # Also exempt an ISO date that merely SITS inside a backticked span, e.g. a heading template
+    # like `## 2026-08-15 14:00: <what changed>`, where the character before the date is part of the
+    # example rather than the quote. Applied to the ISO form only: the textual month-name form
+    # stays strict, because that is how a dated incident actually gets written in prose.
+    if (!is_example && match(probe, /20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
+        if (substr(probe, 1, RSTART - 1) ~ /`/) is_example = 1
 
     why = ""
     # No \b anywhere below. mawk supports {n,m} intervals but NOT word boundaries, and silently
     # never matches a pattern containing one, so a rule written with \b leaves the script looking
     # like it ran while being unable to refuse. Keep every pattern boundary-free.
-    if (probe ~ /previously|used to|formerly|the old (default|value|wording|version|behaviour|behavior)/)
+    # The past-tense phrase below needs a following state verb. Unqualified it also matches an
+    # ordinary present-tense construction, a noun followed by the same two words and then an
+    # infinitive of purpose, which is not narration at all. That false positive is the exact noise
+    # this check argues against: a lint that fires on normal prose is one you learn to skim, and a
+    # skimmed lint gates nothing.
+    if (probe ~ /previously|used to (be|say|do|return|carry|have|live|print|read|write|mean|sit|hold|report|exit|call the)|formerly|the old (default|value|wording|version|behaviour|behavior)/)
         why = "narrates the previous design"
     else if (probe ~ /[0-9]+,[ ]*not[ ]+[0-9]+/)
         why = "narrates the previous default (\"X, not Y\")"

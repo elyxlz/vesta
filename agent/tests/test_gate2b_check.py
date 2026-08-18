@@ -107,3 +107,18 @@ def test_an_untracked_file_outside_agent_is_ignored(tmp_path):
     (r / "NOTES.md").write_text("Previously this returned the stock file.\n")
     p = subprocess.run([str(SCRIPT)], cwd=r, capture_output=True, text=True, check=False)
     assert p.returncode == 0
+
+
+def test_the_present_tense_used_to_idiom_is_not_flagged(tmp_path):
+    """ "the X used to <verb>" is ordinary prose, not narration of a prior design. Flagging it is the
+    exact noise that trains a reader to skim the lint, which gates nothing."""
+    assert add(repo(tmp_path), "d.py", "# The token used to authenticate the request is read from the header.") == 0
+
+
+def test_used_to_followed_by_a_state_verb_is_still_flagged(tmp_path):
+    assert add(repo(tmp_path), "d.py", "# This used to say the daemon was up.") == 1
+
+
+def test_a_dated_heading_template_in_backticks_is_not_flagged(tmp_path):
+    """A format template teaches the reader what to type; it does not date an incident."""
+    assert add(repo(tmp_path), "S.md", "Each block opens with a heading like `## 2026-08-15 14:00: <what changed>`.") == 0
