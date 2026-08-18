@@ -67,30 +67,39 @@ h1 {
 .scan-bar-inner {
   display: flex;
   max-width: 1680px;
-  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin: 0 auto;
   padding: 0 24px;
 }
+.scan-grid {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
 .scan-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 6px 8px 6px 14px;
+  padding: 3px 4px 3px 12px;
   background: var(--card);
   color: var(--faint);
   font-size: 11px;
+  white-space: nowrap;
 }
 .scan-runner { color: var(--text); font-weight: 700; }
 .scan-progress { color: var(--accent); font-weight: 700; }
+.scan-last { overflow: hidden; text-overflow: ellipsis; }
 .scan-row[data-state="failed"] .scan-last { color: #ff6467; }
 .scan-button {
   border: 1px solid var(--gold);
   border-radius: 999px;
-  padding: 4px 13px;
+  padding: 3px 11px;
   background: var(--gold-soft);
   color: var(--gold);
   font-size: 11px;
@@ -98,23 +107,32 @@ h1 {
 }
 .scan-button:hover:not(:disabled) { border-color: var(--accent); }
 .scan-button:disabled { opacity: .55; cursor: default; }
+.scan-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
 .gentle-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 5px;
+  font-size: 11px;
   color: var(--muted);
   cursor: pointer;
   user-select: none;
 }
 .gentle-toggle input { accent-color: var(--accent); }
 .theme-toggle {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 13px;
+  border-radius: 50%;
+  padding: 0;
   background: var(--card);
   color: var(--muted);
-  font-size: 11px;
   cursor: pointer;
 }
 .theme-toggle[aria-pressed="true"] {
@@ -233,13 +251,14 @@ main {
 }
 .capture-status {
   display: flex;
-  max-width: min(92vw, 560px);
+  flex: 0 1 auto;
+  max-width: 420px;
+  min-width: 0;
   align-items: center;
-  gap: 11px;
-  margin-left: auto;
+  gap: 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 6px 14px 6px 8px;
+  padding: 4px 12px 4px 6px;
   background: var(--card);
 }
 .capture-status[data-state="error"] {

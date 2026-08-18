@@ -176,17 +176,19 @@ export function sectionHtml(section, index) {
 }
 
 export function scanRowsHtml() {
-  return Object.entries(RUNNERS)
+  const cells = Object.entries(RUNNERS)
     .map(
       ([runner, definition]) => `
-    <div class="scan-row" data-runner="${runner}">
-      <span class="scan-runner">${escapeHtml(definition.label)}</span>
-      <span class="scan-last">last scan</span>
-      <span class="scan-progress"></span>
-      <button class="scan-button" type="button">Scan</button>
-    </div>`,
+      <div class="scan-row" data-runner="${runner}">
+        <span class="scan-runner">${escapeHtml(definition.label)}</span>
+        <span class="scan-progress"></span>
+        <span class="scan-last">never</span>
+        <button class="scan-button" type="button">Scan</button>
+      </div>`,
     )
     .join("");
+  return `<div class="scan-grid">${cells}
+    </div>`;
 }
 
 export async function composeGallery() {
