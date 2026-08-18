@@ -387,6 +387,16 @@ def pr_list_mine(rest):
     list_my_prs(get_installation_token(), agent_name, args.state, args.limit)
 
 
+GH_VERB_ALIASES = {"new": "create", "ls": "list"}
+
+
+def canonical_gh_args(args):
+    """gh's own verb aliases resolve here, so `issue new` cannot walk past the guarded create."""
+    if len(args) >= 2 and args[0] in ("pr", "issue") and args[1] in GH_VERB_ALIASES:
+        return [args[0], GH_VERB_ALIASES[args[1]], *args[2:]]
+    return args
+
+
 def main():
     argv = sys.argv[1:]
     if argv and argv[0] == "token":
@@ -395,7 +405,7 @@ def main():
     if not argv or argv[0] != "gh":
         print(USAGE, file=sys.stderr)
         sys.exit(2)
-    args = argv[1:]
+    args = canonical_gh_args(argv[1:])
     if args[:2] == ["pr", "create"]:
         pr_create(args[2:])
     elif args[:2] == ["issue", "create"]:

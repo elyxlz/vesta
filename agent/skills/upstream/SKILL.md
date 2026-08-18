@@ -16,6 +16,10 @@ upstream gh issue list
 upstream gh api repos/elyxlz/vesta/pulls/2116/files
 ```
 
+Search under-reports through this token: the App's permission set filters `/search/issues`
+results, so an empty search is a lower bound, never proof an issue does not exist; check a
+known number with `upstream gh issue view <n>`.
+
 Three calls are intercepted and carry extra behavior:
 
 - `upstream gh pr create --title T --body B [--head BR] [--base master] [--adopt]`:

@@ -65,6 +65,40 @@ def test_pr_create_takes_head_as_the_gh_spelling_of_branch(monkeypatch):
     assert seen["branch"] == "feature-x"
 
 
+def test_token_prints_the_installation_token_and_nothing_else(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "get_installation_token", lambda: SENTINEL)
+    assert run_main(monkeypatch, ["token"]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == f"{SENTINEL}\n"
+    assert printed.err == ""
+
+
+def test_issue_new_is_the_guarded_issue_create(monkeypatch, capsys):
+    """gh accepts `new` for `create`, so the alias must not carry an unvalidated title past here."""
+    assert run_main(monkeypatch, ["gh", "issue", "new", "--title", "Bad Title", "--body", "b"]) == 1
+    assert "type(scope)" in capsys.readouterr().err
+
+
+def test_pr_new_is_the_guarded_pr_create(monkeypatch, capsys):
+    assert run_main(monkeypatch, ["gh", "pr", "new", "--title", "fix(a): b", "--draft"]) == 2
+    assert "--draft" in capsys.readouterr().err
+
+
+def test_pr_ls_mine_is_intercepted(monkeypatch, fake_gh, capsys):
+    record, response, _ = fake_gh
+    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
+    response.write_text("[]")
+    assert run_main(monkeypatch, ["gh", "pr", "ls", "--mine"]) == 0
+    assert json.loads(record.read_text())["argv"][0] == "api"
+    assert "as tester (vesta)" in capsys.readouterr().out
+
+
+def test_a_canonicalized_alias_still_passes_through_when_it_is_not_intercepted(monkeypatch, fake_gh):
+    record, _, _ = fake_gh
+    run_main(monkeypatch, ["gh", "issue", "ls", "--state", "open"])
+    assert json.loads(record.read_text())["argv"] == ["issue", "list", "--state", "open"]
+
+
 def test_pr_list_without_mine_passes_through(monkeypatch, fake_gh):
     record, _, _ = fake_gh
     run_main(monkeypatch, ["gh", "pr", "list", "--state", "open"])
