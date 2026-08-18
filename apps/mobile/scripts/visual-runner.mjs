@@ -249,24 +249,6 @@ export async function assertHarnessBoundary() {
   }
 }
 
-export function createInactivityWatchdog(onTimeout, timeoutMs) {
-  let timer;
-  const cancel = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-  };
-  const reset = () => {
-    cancel();
-    timer = setTimeout(() => {
-      timer = undefined;
-      onTimeout();
-    }, timeoutMs);
-  };
-  reset();
-  return { cancel, reset };
-}
-
-
 // A shot is settled when two framebuffer grabs in a row are byte-identical.
 // The OS appearance flip re-renders the app with no signal a runner can await,
 // so stability of the picture itself is the signal, bounded by the budget.
@@ -313,7 +295,7 @@ async function readRequestJson(request) {
 
 // The screenshot bridge Maestro's runScript callback POSTs to, one route per
 // target (a simulator or an emulator). It owns the cycle bookkeeping (expected
-// names, seen names, the inactivity watchdog); the platform supplies capture(),
+// names, seen names); the platform supplies capture(),
 // an optional action() for host-side gestures, and an optional close().
 export async function startScreenshotBridge(targets, handlers) {
   let cycle;
@@ -352,16 +334,12 @@ export async function startScreenshotBridge(targets, handlers) {
       response.writeHead(204).end();
       if ([...cycle.expected].every((name) => cycle.seen.has(name))) {
         cycle.completed = true;
-        cycle.watchdog.cancel();
         cycle.resolve();
-      } else {
-        cycle.watchdog.reset();
       }
     } catch (error) {
       response.writeHead(500).end(error.message);
       if (cycle && !cycle.completed) {
         cycle.completed = true;
-        cycle.watchdog.cancel();
         cycle.reject(error);
       }
     }
@@ -380,7 +358,7 @@ export async function startScreenshotBridge(targets, handlers) {
 
   return {
     urls: targets.map((_target, index) => `${baseUrl}/__visual_capture/${index + 1}`),
-    async beginCycle(manifest, timeoutMs = 120_000) {
+    async beginCycle(manifest) {
       if (cycle && !cycle.completed) {
         throw new Error("A screenshot cycle is already active.");
       }
@@ -391,8 +369,8 @@ export async function startScreenshotBridge(targets, handlers) {
         resolveCycle = resolve;
         rejectCycle = reject;
       });
-      // The runner awaits completion only after Maestro exits, so a watchdog
-      // rejection before then must not surface as an unhandled rejection.
+      // The runner awaits completion only after Maestro exits, so a rejection
+      // before then (a failed capture) must not surface as an unhandled rejection.
       completion.catch(() => {});
       cycle = {
         completed: false,
@@ -400,19 +378,7 @@ export async function startScreenshotBridge(targets, handlers) {
         seen: new Set(),
         resolve: resolveCycle,
         reject: rejectCycle,
-        watchdog: null,
       };
-      cycle.watchdog = createInactivityWatchdog(() => {
-        if (cycle.completed) return;
-        cycle.completed = true;
-        cycle.reject(
-          new Error(
-            `Timed out waiting for screenshots: ${[...expected]
-              .filter((screenshot) => !cycle.seen.has(screenshot))
-              .join(", ")}`,
-          ),
-        );
-      }, timeoutMs);
       const startedCycle = cycle;
       return {
         completion,
@@ -420,7 +386,6 @@ export async function startScreenshotBridge(targets, handlers) {
         settle() {
           if (startedCycle.completed) return;
           startedCycle.completed = true;
-          startedCycle.watchdog.cancel();
           startedCycle.resolve();
         },
       };
@@ -428,13 +393,11 @@ export async function startScreenshotBridge(targets, handlers) {
     fail(error) {
       if (!cycle || cycle.completed) return;
       cycle.completed = true;
-      cycle.watchdog.cancel();
       cycle.reject(error);
     },
     async close() {
       if (cycle && !cycle.completed) {
         cycle.completed = true;
-        cycle.watchdog.cancel();
         cycle.reject(new Error("Screenshot bridge stopped."));
       }
       await new Promise((resolve) => server.close(resolve));

@@ -1,37 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   captureBothThemes,
-  createInactivityWatchdog,
   flowFailureError,
   gentleSpawnPlan,
   grabUntilStable,
   maestroFlowSummary,
   startScreenshotBridge,
 } from "./visual-runner.mjs";
-
-describe("createInactivityWatchdog", () => {
-  it("measures inactivity from the latest progress event", () => {
-    vi.useFakeTimers();
-    try {
-      const onTimeout = vi.fn();
-      const watchdog = createInactivityWatchdog(onTimeout, 1000);
-
-      vi.advanceTimersByTime(750);
-      watchdog.reset();
-      vi.advanceTimersByTime(750);
-      expect(onTimeout).not.toHaveBeenCalled();
-
-      vi.advanceTimersByTime(250);
-      expect(onTimeout).toHaveBeenCalledOnce();
-      watchdog.cancel();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
 
 describe("maestroFlowSummary", () => {
   it("folds sharded and unsharded result lines into pass/fail lists", () => {
@@ -156,20 +134,23 @@ describe("captureBothThemes", () => {
 });
 
 describe("startScreenshotBridge", () => {
-  it("keeps a watchdog rejection observable until the runner awaits the cycle", async () => {
+  it("keeps a failed capture's rejection observable until the runner awaits the cycle", async () => {
     const bridge = await startScreenshotBridge(["sim"], {
-      capture: () => Promise.resolve(),
+      capture: () => Promise.reject(new Error("screencap failed")),
     });
     try {
-      const cycle = await bridge.beginCycle(
-        { scenarios: [{ screenshot: "home.png" }] },
-        10,
-      );
-      // Nothing awaits the cycle while the watchdog fires, as when Maestro is still running.
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      await expect(cycle.completion).rejects.toThrow(
-        /Timed out waiting for screenshots: home.png/,
-      );
+      const cycle = await bridge.beginCycle({
+        scenarios: [{ screenshot: "home.png" }],
+      });
+      const response = await fetch(bridge.urls[0], {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ screenshot: "home.png" }),
+      });
+      expect(response.status).toBe(500);
+      // Nothing awaits the cycle while the capture fails, as when Maestro is still running.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await expect(cycle.completion).rejects.toThrow(/screencap failed/);
     } finally {
       await bridge.close();
     }
