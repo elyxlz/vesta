@@ -115,7 +115,7 @@ const sectionObserver = new IntersectionObserver(
     });
     markActiveSection();
   },
-  { rootMargin: "-70px 0px -60% 0px" },
+  { rootMargin: "-10px 0px -60% 0px" },
 );
 document.querySelectorAll(".scenario-section").forEach((section) => sectionObserver.observe(section));
 const themeToggle = document.querySelector("#theme-toggle");

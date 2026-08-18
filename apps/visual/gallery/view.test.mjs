@@ -142,7 +142,7 @@ describe("galleryHtml", () => {
   });
 
   it("renders a side navigation with a macro entry per family and a link per section", () => {
-    expect(html).toContain('<nav class="side" aria-label="Sections">');
+    expect(html).toContain('<nav class="side" aria-label="Gallery">');
     expect(html).toContain('<div class="side-family" data-family="mobile">');
     expect(html).toContain('<div class="side-family" data-family="web">');
     expect(html).toContain('href="#scenario-section-0" data-section="scenario-section-0"');
