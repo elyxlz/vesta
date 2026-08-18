@@ -164,7 +164,7 @@ describe("platform filtering", () => {
 });
 
 describe("loadRegistry and loadAllRegistries", () => {
-  it("loads both shipped registries and finds no cross-family collision", async () => {
+  it("loads both shipped registries", async () => {
     const all = await loadAllRegistries();
     expect(all.mobile.family).toBe("mobile");
     expect(all.web.family).toBe("web");

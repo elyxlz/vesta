@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { loadRegistry } from "@vesta/visual/registry";
 import { SCENARIOS } from "./drives";
 
+const GROUPS = [
+  "Onboarding",
+  "Home",
+  "Gateway update",
+  "Agent",
+  "Chat",
+  "Logs",
+  "Agent settings",
+  "App settings",
+  "Connect",
+  "Agent modals",
+];
+
 describe("web visual registry", () => {
   it("has exactly one drive per registered scenario", async () => {
     const registry = await loadRegistry("web");
@@ -14,7 +27,7 @@ describe("web visual registry", () => {
     for (const scenario of registry.scenarios) {
       expect(scenario.title.length).toBeGreaterThan(0);
       expect(scenario.description.length).toBeGreaterThan(0);
-      expect(["Onboarding", "Agent settings"]).toContain(scenario.group);
+      expect(GROUPS).toContain(scenario.group);
     }
   });
 });
