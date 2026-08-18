@@ -17,11 +17,16 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 
+import { loadRegistry, scenariosForPlatform } from "@vesta/visual/registry";
+import { publishRunStatus } from "@vesta/visual/run-status";
+import { putShot, shotDriftWarning } from "@vesta/visual/store";
 import {
   androidMaestroDirectoryOf,
   androidVariants,
   androidVisualDirectory,
-  platformShotsDirectory,
+  metroConfigPath,
+} from "./visual-ios.mjs";
+import {
   assertHarnessBoundary,
   atomicWriteFile,
   exists,
@@ -29,15 +34,11 @@ import {
   flowFailureError,
   gentleSpawnPlan,
   jsBundleCurrent,
-  recordJsBundle,
-  loadManifest,
   nativeInputFingerprint,
-  publishRunStatus,
+  recordJsBundle,
   run,
-  serveCatalog,
   setGentleMode,
-  shotDriftWarning,
-} from "./visual-catalog.mjs";
+} from "./visual-runner.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDirectory, "..");
@@ -55,9 +56,7 @@ const nativeTransactionStatePath = path.join(
   nativeTransactionDirectory,
   "state.json",
 );
-const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
 const DEFAULT_VARIANT = "android";
-const DEFAULT_GALLERY_PORT = 4174;
 const ANDROID_BUILD_ABI = "arm64-v8a";
 const EMULATOR_BOOT_TIMEOUT_MS = 240_000;
 const EMULATOR_BOOT_POLL_MS = 2_000;
@@ -65,12 +64,7 @@ const STATUS_BAR_CLOCK = "0941";
 
 function usage() {
   console.log(`Usage:
-  npm run visual:android -- [options]
-  npm run visual:android:serve -- [options]
-
-Commands:
-  capture       Build, capture, and refresh the unified catalog (default)
-  serve         Serve the unified iOS + Android catalog
+  npm run visual:android:capture -- [options]
 
 Options:
   --variant <key>     Android variant to capture: ${Object.keys(androidVariants).join(", ")}
@@ -82,9 +76,6 @@ Options:
   --clean-native      Regenerate the cached native Android project
   --gentle            Run build, emulator, and Maestro at utility QoS:
                       slower, but the machine stays responsive
-  --no-serve          Capture without starting the gallery server
-  --no-open           Do not open the gallery in a browser
-  --port <number>     Gallery port (default: ${DEFAULT_GALLERY_PORT})
   --help              Show this help
 `);
 }
@@ -104,9 +95,6 @@ export function parseArguments(values) {
     skipBuild: false,
     cleanNative: false,
     gentle: false,
-    serve: true,
-    open: true,
-    port: DEFAULT_GALLERY_PORT,
   };
 
   for (let index = 0; index < argumentsCopy.length; index += 1) {
@@ -131,34 +119,19 @@ export function parseArguments(values) {
       options.gentle = true;
       continue;
     }
-    if (argument === "--no-serve") {
-      options.serve = false;
-      continue;
-    }
-    if (argument === "--no-open") {
-      options.open = false;
-      continue;
-    }
-    if (["--avd", "--device", "--port", "--variant"].includes(argument)) {
+    if (["--avd", "--device", "--variant"].includes(argument)) {
       const value = argumentsCopy[index + 1];
       if (!value) throw new Error(`${argument} requires a value.`);
       index += 1;
       if (argument === "--avd") options.avd = value;
       if (argument === "--variant") options.variant = value;
       if (argument === "--device") options.device = value;
-      if (argument === "--port") {
-        const port = Number(value);
-        if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-          throw new Error(`Invalid port: ${value}`);
-        }
-        options.port = port;
-      }
       continue;
     }
     throw new Error(`Unknown argument: ${argument}`);
   }
 
-  if (!["capture", "serve"].includes(command)) {
+  if (command !== "capture") {
     throw new Error(`Unknown command: ${command}`);
   }
   if (options.skipBuild && options.cleanNative) {
@@ -621,7 +594,11 @@ async function requireInstalledApp(tools, serial, appId) {
 // takeScreenshot/ directory under the test output; stage them into the shot
 // registry by name, replacing per file. Duplicate names across flows keep the
 // newest artifact and are reported for the drift warning.
-export async function stageMaestroShots(sourceDirectory, targetDirectory) {
+export async function stageMaestroShots(
+  sourceDirectory,
+  platform,
+  baseDirectory = undefined,
+) {
   const newest = new Map();
   for (const file of await filesBelow(sourceDirectory)) {
     if (!file.endsWith(".png")) continue;
@@ -637,13 +614,8 @@ export async function stageMaestroShots(sourceDirectory, targetDirectory) {
       current.duplicate = true;
     }
   }
-  await mkdir(targetDirectory, { recursive: true });
   for (const [name, entry] of newest) {
-    // Temp file + rename, so the gallery's poll never reads a torn PNG mid-copy.
-    const target = path.join(targetDirectory, name);
-    const temp = `${target}.tmp-${process.pid}`;
-    await copyFile(entry.file, temp);
-    await rename(temp, target);
+    await putShot(platform, name, entry.file, baseDirectory);
   }
   return {
     produced: new Set(newest.keys()),
@@ -667,7 +639,7 @@ async function runMaestro(manifest, tools, serial, variant) {
   const stagingTimer = setInterval(() => {
     if (stagingBusy) return;
     stagingBusy = true;
-    void stageMaestroShots(maestroDirectory, platformShotsDirectory(variant))
+    void stageMaestroShots(maestroDirectory, variant)
       .catch(() => undefined)
       .finally(() => {
         stagingBusy = false;
@@ -696,10 +668,7 @@ async function runMaestro(manifest, tools, serial, variant) {
   clearInterval(stagingTimer);
   // Stage even a failed run's artifacts: each is a valid capture, and the
   // scenarios the run never reached keep their previous shot files.
-  const staged = await stageMaestroShots(
-    maestroDirectory,
-    platformShotsDirectory(variant),
-  );
+  const staged = await stageMaestroShots(maestroDirectory, variant);
   if (failure) throw failure;
   return staged;
 }
@@ -708,9 +677,10 @@ async function capture(options) {
   const startedAt = new Date().toISOString();
   const variant = options.variant;
   const phase = (message) =>
-    publishRunStatus("capturing", { message, startedAt, platform: variant });
+    publishRunStatus("capturing", { message, startedAt, runner: variant });
   await assertHarnessBoundary();
-  const manifest = await loadManifest("android");
+  const registry = await loadRegistry("mobile");
+  const manifest = { ...registry, scenarios: scenariosForPlatform(registry, variant) };
   const tools = await requireCaptureTools();
   await mkdir(androidVisualDirectory, { recursive: true });
   await phase(`Preparing the ${androidVariants[variant].label} emulator`);
@@ -750,7 +720,7 @@ async function capture(options) {
       variant,
     );
     const warning = [
-      shotDriftWarning(produced, manifest),
+      shotDriftWarning(produced, manifest.scenarios),
       duplicates.length > 0
         ? `duplicate across flows: ${duplicates.join(", ")}`
         : "",
@@ -759,36 +729,29 @@ async function capture(options) {
       .join("; ");
     if (warning) console.warn(`\nShot registry drift: ${warning}`);
     console.log(
-      `\nCaptured ${produced.size} ${androidVariants[variant].label} screenshots into .visual/shots/${variant}.`,
+      `\nCaptured ${produced.size} ${androidVariants[variant].label} screenshots into the visual store.`,
     );
     await publishRunStatus("ready", {
       message: `Captured ${produced.size} ${androidVariants[variant].label} screenshots`,
       detail: warning,
-      platform: variant,
+      runner: variant,
     });
   } catch (error) {
     await publishRunStatus("error", {
       message: `${androidVariants[variant].label} capture failed`,
       detail: error instanceof Error ? error.message : String(error),
-      platform: variant,
+      runner: variant,
     });
     throw error;
   } finally {
     await restoreEmulator(tools, serial);
   }
 
-  if (options.serve) {
-    await serveCatalog(options.port, options.open);
-  }
 }
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   setGentleMode(options.gentle);
-  if (options.command === "serve") {
-    await serveCatalog(options.port, options.open);
-    return;
-  }
   await capture(options);
 }
 
@@ -798,7 +761,7 @@ const isDirectRun =
 
 if (isDirectRun) {
   main().catch((error) => {
-    console.error(`\n${error.message}`);
+    console.error(`\nAndroid visual capture failed: ${error.message}`);
     process.exit(1);
   });
 }
