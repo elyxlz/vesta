@@ -45,6 +45,33 @@ def format_email_list(emails: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
+def agent_authored(event: dict[str, Any]) -> bool:
+    """Did the agent create this event, rather than the user?
+
+    The category is the reliable answer and only exists on events created after it was introduced.
+    Every event predating it is unstamped, and those are precisely the ones old enough to have been
+    forgotten and re-read as though the user had written them: the case that motivated this was a
+    six-week-old block whose end date was taken for the user's travel plan, and it was two days out.
+
+    Backfilling categories would mean writing to every historical event, so instead the signatures
+    the agent already leaves in bodies are recognised: its authorship line, and the hedges it writes
+    when saving something it merely found ("via <someone> (IG)", "tickets likely needed"). A bare
+    mention of the agent's name is deliberately NOT a tell, or an event ABOUT the project would be
+    misread as one written by it.
+    """
+    import re
+
+    if AGENT_EVENT_CATEGORY in (event["categories"] if "categories" in event else []):
+        return True
+    body = str(event["body"]["content"] if "body" in event and "content" in event["body"] else event.get("bodyPreview") or "")
+    tells = (
+        rf"\badded by {AGENT_EVENT_CATEGORY}\b",
+        r"\bvia [^,.\n]{1,30}\(ig\)",
+        r"\btickets likely needed\b",
+    )
+    return any(re.search(t, body, re.IGNORECASE) for t in tells)
+
+
 def format_calendar_event_list(events: list[dict[str, Any]]) -> str:
     """One line per event: start  end  subject  location  id.
 
@@ -57,7 +84,7 @@ def format_calendar_event_list(events: list[dict[str, Any]]) -> str:
         return "(no events)"
     rows = []
     for e in events:
-        agent_made = AGENT_EVENT_CATEGORY in (e["categories"] if "categories" in e else [])
+        agent_made = agent_authored(e)
         subject = f"[{AGENT_EVENT_CATEGORY}] {_pick(e, 'subject')}" if agent_made else _pick(e, "subject")
         rows.append(
             f"{_trunc(_pick(e, 'start', 'dateTime'), 20)}\t"
