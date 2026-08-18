@@ -490,7 +490,7 @@ def maybe_send_digest(config: Config, notif_dir: Path, *, now: datetime | None =
 DUE_TYPE = "task_due"
 
 DUE_NOW_MESSAGE = (
-    'Task "{subject}" ({task_id}) is due now. Decide immediately: do it and run `tasks done {task_id}`, '
+    'Task "{subject}" is due now. Decide immediately: do it and run `tasks done {task_id}`, '
     "or postpone it (`tasks postpone {task_id} --in-days N`), or tell the user you are dropping it and run "
     "`tasks delete {task_id}`. Never leave a task sitting overdue."
 )
