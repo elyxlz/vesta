@@ -95,9 +95,9 @@ The registry's `flows` list is split across the two simulators with `--shard-spl
 
 Visual builds replace app-level Reanimated transitions with instant values, force Expo Router stack transitions to `animation: "none"`, and inject `UIView.setAnimationsEnabled(false)` into the generated visual-only iOS AppDelegate. This disables both navigation and UIKit transitions without changing the production native project or application source. Native sheets still assert their settled content before capture because iOS can resize a detent after its content first becomes accessible.
 
-### 5. Write shots and warn on drift
+### 5. Write shots in both themes and warn on drift
 
-Each flow step calls `capture-screenshot.js`, which POSTs to a local bridge (`CAPTURE_URL_1` and `CAPTURE_URL_2`, one per shard). The bridge takes the framebuffer with `simctl io screenshot` and writes it into the store with `putShot("ios", name, file)`, replacing that scenario's previous shot. After the run, the runner compares the produced names against the registry and warns, on the console and in the run status, about missing or unexpected names; drift never fails the run. Maestro's own report lands at `mobile/.visual/maestro/report.html`, which the gallery links as "iOS report".
+Each flow step calls `capture-screenshot.js`, which POSTs to a local bridge (`CAPTURE_URL_1` and `CAPTURE_URL_2`, one per shard; the bridge itself is shared with the Android runner in `scripts/visual-runner.mjs`). On each callback the bridge grabs the framebuffer with `simctl io screenshot` and writes it with `putShot("ios", name, image)`, then flips the simulator to `appearance dark`, waits until two consecutive grabs are byte-identical, writes the dark grab under `ios-dark`, and flips back to light before answering, so the flow continues where it was. The app follows the system appearance (`userInterfaceStyle: "automatic"`, theme preference `system`), so no second drive is needed. After the run, the runner compares the produced names against the registry and warns about missing or unexpected names; drift never fails the run. Maestro's own report lands at `mobile/.visual/maestro/report.html`, which the gallery links as "iOS report".
 
 ## Why scenario groups use separate launches
 
@@ -139,14 +139,14 @@ For future modal groups, prefer a fresh launch with deterministic initial data o
 - One dedicated emulator per variant instead of two simulator shards. The runner reuses a booted AVD or boots it headless, and leaves it running. Create the AVDs once in Android Studio or with `avdmanager`. `--show-emulator` boots with a window for interactive diagnosis.
 - `--variant android` (default) runs gesture navigation; `--variant android-galaxy` runs its own AVD with the classic 3-button bar, so every screen is exercised with a visible bottom navigation bar and its status bar insets. Each variant is its own platform in the store and the gallery.
 - The build is a release APK through the generated visual Gradle project, so the visual JavaScript bundle is embedded. The project is cached at `.visual/native/android` with the same fingerprint inputs as iOS and swapped in and out of `android/` transactionally; production prebuilds are restored untouched. There is no separate fast-rebundle path: JavaScript changes go through the incremental Gradle build.
-- Screenshots come from Maestro's own `takeScreenshot` framebuffer capture. The iOS bridge callback is an inert no-op on Android; the software keyboard renders inside the framebuffer.
+- Screenshots come from the same bridge as iOS: `capture-screenshot.js` POSTs to `CAPTURE_URL`, and the runner grabs the framebuffer with `adb exec-out screencap -p`, writes it under the variant, flips night mode with `cmd uimode night yes`, waits for the picture to settle, writes the dark grab under `<variant>-dark`, and flips back. The Activity declares `uiMode` in `configChanges`, so the flip re-themes in place. Maestro's `takeScreenshot` stays as the report artifact. The software keyboard renders inside the framebuffer, so the keyboard action is a no-op here.
 - The status bar is normalized through Android demo mode (9:41, full wifi, full battery, no notifications) and animations are disabled with the global animation scales, mirroring the iOS status-bar override and animation hooks.
-- While Maestro runs, each `takeScreenshot` artifact is staged into the store every few seconds through `putShot(variant, name, file)`, so the gallery fills live; a final pass after the run is authoritative and runs even on failure. The runner warns about names that drift from the registry and about a name duplicated across flows.
+- The runner warns about names that drift from the registry.
 - The Maestro report lands at `mobile/.visual/<variant>/maestro/report.html` (`mobile/.visual/android/maestro/` for the default variant), which the gallery links as "Android report" and "Android · 3-button report".
 
 ## Platform-aware scenarios
 
-An entry in `visual/scenarios.json` accepts an optional `platforms` array naming any of `ios`, `android`, `android-galaxy`. A scenario marked `"platforms": ["ios"]` is not expected from an Android capture, and the gallery renders its Android slots with an explicit "iOS only" note. The flows skip those captures through `runFlow` blocks conditioned on `when: platform`, so one flow file drives both platforms. No shipped scenario is platform-restricted today.
+An entry in `visual/scenarios.json` accepts an optional `platforms` array naming any mobile platform (`ios`, `android`, `android-galaxy`, and their `-dark` siblings). A scenario marked `"platforms": ["ios"]` is not expected from an Android capture, and the gallery renders its Android slots with an explicit "iOS only" note. The flows skip those captures through `runFlow` blocks conditioned on `when: platform`, so one flow file drives both platforms. No shipped scenario is platform-restricted today.
 
 The privacy gates and relock states capture on both platforms; on Android they present full screen through `SheetGateScreen` instead of a form sheet, and the unlock label carries the platform authentication name, so the flows match it by the "Unlock" prefix. The sheet close control is addressable by its accessibility label on both platforms, so the flows wait on and tap "Close settings" / "Close scanner" without platform blocks.
 
@@ -176,7 +176,7 @@ Every screenshot needs both commands:
       SCREENSHOT: example-state.png
 ```
 
-`takeScreenshot` creates the Maestro artifact the Android runner stages. The script notifies the iOS bridge, which writes the iOS shot. Omitting either command breaks one platform's capture.
+`takeScreenshot` keeps the Maestro report artifact. The script notifies the bridge, which writes the shot in both themes on both platforms. Omit the callback and no shot is written.
 
 ### 3. Register the scenario
 

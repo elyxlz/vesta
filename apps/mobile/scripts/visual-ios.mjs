@@ -23,7 +23,7 @@ import {
   activeShardCount,
   assertHarnessBoundary,
   atomicWriteFile,
-  createInactivityWatchdog,
+  captureBothThemes,
   exists,
   filesBelow,
   flowFailureError,
@@ -34,6 +34,7 @@ import {
   recordJsBundle,
   run,
   setGentleMode,
+  startScreenshotBridge,
   visualDirectory,
 } from "./visual-runner.mjs";
 
@@ -767,7 +768,7 @@ async function runMaestro(manifest, simulators, tools) {
   const flowPaths = manifest.flows.map((flow) =>
     path.resolve(mobileRoot, flow),
   );
-  const bridge = await startScreenshotBridge(simulators);
+  const bridge = await startIosBridge(simulators);
   const cycle = await bridge.beginCycle(manifest);
   try {
     await run(
@@ -929,16 +930,6 @@ async function capture(options) {
   }
 }
 
-async function readRequestJson(request) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > 4096) throw new Error("Screenshot request is too large.");
-    chunks.push(chunk);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-}
 
 const simulatorApplication =
   "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator";
@@ -1010,155 +1001,49 @@ async function showSimulatorSoftwareKeyboard(udid) {
   );
 }
 
-async function startScreenshotBridge(simulators) {
-  let cycle;
+// simctl writes only to a file, so a grab is a temp file read back as a Buffer.
+async function grabSimulatorScreen(udid) {
+  const temporary = path.join(os.tmpdir(), `vesta-visual-${process.pid}-${udid}.png`);
+  await run("xcrun", ["simctl", "io", udid, "screenshot", "--type=png", temporary], {
+    capture: true,
+    quiet: true,
+  });
+  const image = await readFile(temporary);
+  await rm(temporary, { force: true });
+  return image;
+}
+
+// The shared bridge with the iOS handlers: a simctl framebuffer grab in both
+// appearances, and the hidden Simulator host for the real software keyboard.
+async function startIosBridge(simulators) {
   const createdKeyboardHostPids = new Set();
-  const routes = new Map(
-    simulators.map((simulator, index) => [
-      `/__visual_capture/${index + 1}`,
-      simulator,
-    ]),
-  );
-  const server = createServer(async (request, response) => {
-    const pathname = new URL(
-      request.url ?? "/",
-      "http://127.0.0.1",
-    ).pathname;
-    const simulator = routes.get(pathname);
-    if (request.method !== "POST" || !simulator) {
-      response.writeHead(404).end("Not found");
-      return;
-    }
-    try {
-      const payload = await readRequestJson(request);
-      if (payload.action === "show-software-keyboard") {
-        const host = await showSimulatorSoftwareKeyboard(simulator.udid);
-        if (host.created) createdKeyboardHostPids.add(host.pid);
-        response.writeHead(204).end();
-        return;
-      }
-      if (!cycle) {
-        response.writeHead(204).end();
-        return;
-      }
-      if (cycle.completed) throw new Error("No screenshot cycle is active.");
-      const screenshot = payload.screenshot;
-      if (
-        typeof screenshot !== "string" ||
-        path.basename(screenshot) !== screenshot ||
-        !screenshot.endsWith(".png")
-      ) {
-        throw new Error(`Invalid screenshot name: ${screenshot}`);
-      }
-      const temporary = path.join(
-        os.tmpdir(),
-        `vesta-visual-${process.pid}-${screenshot}`,
-      );
-      await run(
-        "xcrun",
-        ["simctl", "io", simulator.udid, "screenshot", "--type=png", temporary],
-        { capture: true, quiet: true },
-      );
-      await putShot("ios", screenshot, temporary);
-      await rm(temporary, { force: true });
-      cycle.seen.add(screenshot);
-      response.writeHead(204).end();
-      if ([...cycle.expected].every((name) => cycle.seen.has(name))) {
-        cycle.completed = true;
-        cycle.watchdog.cancel();
-        cycle.resolve();
-      } else {
-        cycle.watchdog.reset();
-      }
-    } catch (error) {
-      response.writeHead(500).end(error.message);
-      if (cycle && !cycle.completed) {
-        cycle.completed = true;
-        cycle.watchdog.cancel();
-        cycle.reject(error);
-      }
-    }
-  });
-
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    server.close();
-    throw new Error("Could not start the local screenshot bridge.");
-  }
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-
-  return {
-    urls: simulators.map(
-      (_simulator, index) => `${baseUrl}/__visual_capture/${index + 1}`,
-    ),
-    async beginCycle(manifest, timeoutMs = 120_000) {
-      if (cycle && !cycle.completed) {
-        throw new Error("A screenshot cycle is already active.");
-      }
-      const expected = new Set(
-        manifest.scenarios.map((scenario) => scenario.screenshot),
-      );
-      let resolveCycle;
-      let rejectCycle;
-      const completion = new Promise((resolve, reject) => {
-        resolveCycle = resolve;
-        rejectCycle = reject;
-      });
-      cycle = {
-        completed: false,
-        expected,
-        seen: new Set(),
-        resolve: resolveCycle,
-        reject: rejectCycle,
-        watchdog: null,
-      };
-      cycle.watchdog = createInactivityWatchdog(() => {
-        if (cycle.completed) return;
-        cycle.completed = true;
-        cycle.reject(
-          new Error(
-            `Timed out waiting for screenshots: ${[...expected]
-              .filter((screenshot) => !cycle.seen.has(screenshot))
-              .join(", ")}`,
+  return startScreenshotBridge(simulators, {
+    capture: (simulator, screenshot) =>
+      captureBothThemes({
+        platform: "ios",
+        name: screenshot,
+        grab: () => grabSimulatorScreen(simulator.udid),
+        setDark: (dark) =>
+          run(
+            "xcrun",
+            ["simctl", "ui", simulator.udid, "appearance", dark ? "dark" : "light"],
+            { capture: true, quiet: true },
           ),
-        );
-      }, timeoutMs);
-      const startedCycle = cycle;
-      return {
-        completion,
-        seen: startedCycle.seen,
-        settle() {
-          if (startedCycle.completed) return;
-          startedCycle.completed = true;
-          startedCycle.watchdog.cancel();
-          startedCycle.resolve();
-        },
-      };
+        store: putShot,
+      }),
+    action: async (simulator, action) => {
+      if (action !== "show-software-keyboard") return;
+      const host = await showSimulatorSoftwareKeyboard(simulator.udid);
+      if (host.created) createdKeyboardHostPids.add(host.pid);
     },
-    fail(error) {
-      if (!cycle || cycle.completed) return;
-      cycle.completed = true;
-      cycle.watchdog.cancel();
-      cycle.reject(error);
-    },
-    async close() {
-      if (cycle && !cycle.completed) {
-        cycle.completed = true;
-        cycle.watchdog.cancel();
-        cycle.reject(new Error("Screenshot bridge stopped."));
-      }
-      await new Promise((resolve) => server.close(resolve));
+    close: () => {
       for (const pid of createdKeyboardHostPids) {
         try {
           process.kill(pid, "SIGTERM");
         } catch {}
       }
     },
-  };
+  });
 }
 
 function reportShotDrift(seen, manifest) {

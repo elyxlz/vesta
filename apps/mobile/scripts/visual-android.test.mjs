@@ -1,10 +1,6 @@
-import { mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
-import { mkdtemp } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { parseArguments, stageMaestroShots } from "./visual-android.mjs";
+import { parseArguments } from "./visual-android.mjs";
 
 describe("parseArguments", () => {
   it("captures on the dedicated AVD by default", () => {
@@ -42,59 +38,5 @@ describe("parseArguments", () => {
 
   it("rejects a command other than capture", () => {
     expect(() => parseArguments(["serve"])).toThrow("Unknown command: serve");
-  });
-});
-
-describe("stageMaestroShots", () => {
-  it("stages takeScreenshot artifacts into the shots directory by name", async () => {
-    const base = await mkdtemp(path.join(os.tmpdir(), "visual-stage-"));
-    const source = path.join(base, "maestro");
-    const target = path.join(base, "shots/android");
-    await mkdir(path.join(source, "flow-a/takeScreenshot"), { recursive: true });
-    await mkdir(target, { recursive: true });
-    await writeFile(
-      path.join(source, "flow-a/takeScreenshot/connect.png"),
-      "new-shot",
-    );
-    await writeFile(path.join(source, "flow-a/stray.png"), "not-an-artifact");
-    await writeFile(path.join(target, "connect.png"), "old-shot");
-    await writeFile(path.join(target, "untouched.png"), "kept");
-
-    const staged = await stageMaestroShots(source, "android", base);
-
-    expect(staged.produced).toEqual(new Set(["connect.png"]));
-    expect(staged.duplicates).toEqual([]);
-    expect(await readFile(path.join(target, "connect.png"), "utf8")).toBe(
-      "new-shot",
-    );
-    expect(await readFile(path.join(target, "untouched.png"), "utf8")).toBe(
-      "kept",
-    );
-    expect((await readdir(target)).sort()).toEqual([
-      "connect.png",
-      "untouched.png",
-    ]);
-  });
-
-  it("keeps the newest artifact for a name duplicated across flows", async () => {
-    const base = await mkdtemp(path.join(os.tmpdir(), "visual-stage-"));
-    const source = path.join(base, "maestro");
-    const target = path.join(base, "shots/android");
-    const older = path.join(source, "flow-a/takeScreenshot/connect.png");
-    const newer = path.join(source, "flow-b/takeScreenshot/connect.png");
-    await mkdir(path.dirname(older), { recursive: true });
-    await mkdir(path.dirname(newer), { recursive: true });
-    await writeFile(older, "older-shot");
-    await writeFile(newer, "newer-shot");
-    await utimes(older, new Date(1000), new Date(1000));
-    await utimes(newer, new Date(2000), new Date(2000));
-
-    const staged = await stageMaestroShots(source, "android", base);
-
-    expect(staged.produced).toEqual(new Set(["connect.png"]));
-    expect(staged.duplicates).toEqual(["connect.png"]);
-    expect(await readFile(path.join(target, "connect.png"), "utf8")).toBe(
-      "newer-shot",
-    );
   });
 });

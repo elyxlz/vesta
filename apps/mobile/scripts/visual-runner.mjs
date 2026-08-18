@@ -2,10 +2,12 @@
 // boundary check, and Maestro result parsing. Both mobile runners import from
 // here; neither imports from the other for these.
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { themedSibling } from "@vesta/visual/platforms";
 import { atomicWriteFile } from "@vesta/visual/store";
 
 export { atomicWriteFile };
@@ -257,3 +259,176 @@ export function createInactivityWatchdog(onTimeout, timeoutMs) {
   return { cancel, reset };
 }
 
+
+// A shot is settled when two framebuffer grabs in a row are byte-identical.
+// The OS appearance flip re-renders the app with no signal a runner can await,
+// so stability of the picture itself is the signal, bounded by the budget.
+export const SETTLE_POLL_MS = 120;
+export const SETTLE_TIMEOUT_MS = 8_000;
+
+export async function grabUntilStable(grab, options = {}) {
+  const pollMs = options.pollMs ?? SETTLE_POLL_MS;
+  const timeoutMs = options.timeoutMs ?? SETTLE_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  let previous = await grab();
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const current = await grab();
+    if (current.equals(previous)) return current;
+    previous = current;
+  }
+  return previous;
+}
+
+// One drive, both themes: shoot the light platform now, flip the OS appearance,
+// shoot the dark sibling once the picture settles, then flip back and wait for
+// the light picture to settle so the flow continues where it was.
+export async function captureBothThemes({ platform, name, grab, setDark, store }) {
+  await store(platform, name, await grab());
+  const dark = themedSibling(platform, "dark");
+  if (!dark) return;
+  await setDark(true);
+  await store(dark, name, await grabUntilStable(grab));
+  await setDark(false);
+  await grabUntilStable(grab);
+}
+
+async function readRequestJson(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 4096) throw new Error("Screenshot request is too large.");
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+// The screenshot bridge Maestro's runScript callback POSTs to, one route per
+// target (a simulator or an emulator). It owns the cycle bookkeeping (expected
+// names, seen names, the inactivity watchdog); the platform supplies capture(),
+// an optional action() for host-side gestures, and an optional close().
+export async function startScreenshotBridge(targets, handlers) {
+  let cycle;
+  const routes = new Map(
+    targets.map((target, index) => [`/__visual_capture/${index + 1}`, target]),
+  );
+  const server = createServer(async (request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    const target = routes.get(pathname);
+    if (request.method !== "POST" || !target) {
+      response.writeHead(404).end("Not found");
+      return;
+    }
+    try {
+      const payload = await readRequestJson(request);
+      if (typeof payload.action === "string") {
+        if (handlers.action) await handlers.action(target, payload.action);
+        response.writeHead(204).end();
+        return;
+      }
+      if (!cycle) {
+        response.writeHead(204).end();
+        return;
+      }
+      if (cycle.completed) throw new Error("No screenshot cycle is active.");
+      const screenshot = payload.screenshot;
+      if (
+        typeof screenshot !== "string" ||
+        path.basename(screenshot) !== screenshot ||
+        !screenshot.endsWith(".png")
+      ) {
+        throw new Error(`Invalid screenshot name: ${screenshot}`);
+      }
+      await handlers.capture(target, screenshot);
+      cycle.seen.add(screenshot);
+      response.writeHead(204).end();
+      if ([...cycle.expected].every((name) => cycle.seen.has(name))) {
+        cycle.completed = true;
+        cycle.watchdog.cancel();
+        cycle.resolve();
+      } else {
+        cycle.watchdog.reset();
+      }
+    } catch (error) {
+      response.writeHead(500).end(error.message);
+      if (cycle && !cycle.completed) {
+        cycle.completed = true;
+        cycle.watchdog.cancel();
+        cycle.reject(error);
+      }
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Could not start the local screenshot bridge.");
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  return {
+    urls: targets.map((_target, index) => `${baseUrl}/__visual_capture/${index + 1}`),
+    async beginCycle(manifest, timeoutMs = 120_000) {
+      if (cycle && !cycle.completed) {
+        throw new Error("A screenshot cycle is already active.");
+      }
+      const expected = new Set(manifest.scenarios.map((scenario) => scenario.screenshot));
+      let resolveCycle;
+      let rejectCycle;
+      const completion = new Promise((resolve, reject) => {
+        resolveCycle = resolve;
+        rejectCycle = reject;
+      });
+      cycle = {
+        completed: false,
+        expected,
+        seen: new Set(),
+        resolve: resolveCycle,
+        reject: rejectCycle,
+        watchdog: null,
+      };
+      cycle.watchdog = createInactivityWatchdog(() => {
+        if (cycle.completed) return;
+        cycle.completed = true;
+        cycle.reject(
+          new Error(
+            `Timed out waiting for screenshots: ${[...expected]
+              .filter((screenshot) => !cycle.seen.has(screenshot))
+              .join(", ")}`,
+          ),
+        );
+      }, timeoutMs);
+      const startedCycle = cycle;
+      return {
+        completion,
+        seen: startedCycle.seen,
+        settle() {
+          if (startedCycle.completed) return;
+          startedCycle.completed = true;
+          startedCycle.watchdog.cancel();
+          startedCycle.resolve();
+        },
+      };
+    },
+    fail(error) {
+      if (!cycle || cycle.completed) return;
+      cycle.completed = true;
+      cycle.watchdog.cancel();
+      cycle.reject(error);
+    },
+    async close() {
+      if (cycle && !cycle.completed) {
+        cycle.completed = true;
+        cycle.watchdog.cancel();
+        cycle.reject(new Error("Screenshot bridge stopped."));
+      }
+      await new Promise((resolve) => server.close(resolve));
+      if (handlers.close) await handlers.close();
+    },
+  };
+}
