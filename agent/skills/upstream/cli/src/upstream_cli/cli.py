@@ -1,4 +1,4 @@
-"""Upstream tool — authenticates via GitHub App, pushes branch, creates PR."""
+"""Upstream tool: mints GitHub App auth and runs gh against the upstream vesta repo."""
 
 import argparse
 import base64
@@ -12,6 +12,8 @@ import urllib.request
 from pathlib import Path
 
 import jwt
+
+from upstream_cli.titles import title_errors, title_warnings
 
 # Config — hardcoded for the vesta-upstream GitHub App
 APP_ID = 2990557
@@ -240,33 +242,8 @@ def create_pr(token, title, body, branch, base):
     sys.exit(1)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Submit PR to upstream vesta repo")
-    parser.add_argument("--title", help="PR title")
-    parser.add_argument("--body", default="", help="PR body")
-    parser.add_argument("--branch", default=None, help="Remote branch name (default: current branch)")
-    parser.add_argument("--base", default="master", help="Base branch (default: master)")
-    parser.add_argument("--token-only", action="store_true", help="Just print an installation token")
-    parser.add_argument("--mine", action="store_true", help="List the PRs this agent actually wrote")
-    parser.add_argument("--state", default="open", help="With --mine: open, closed or all (default: open)")
-    parser.add_argument("--limit", type=int, default=40, help="With --mine: how many recent PRs to check")
-    parser.add_argument("--adopt", action="store_true", help="Allow pushing to a branch another agent started")
-    args = parser.parse_args()
-
+def submit_pr(args):
     token = get_installation_token()
-
-    if args.token_only:
-        print(token)
-        return
-
-    if args.mine:
-        agent_name, _ = resolve_agent_identity()
-        list_my_prs(token, agent_name, args.state, args.limit)
-        return
-
-    if not args.title:
-        parser.error("--title is required when creating a PR")
-
     agent_name, vesta_version = resolve_agent_identity()
     author_name = f"{agent_name} (vesta)"
     author_email = f"{agent_name}@vesta.noreply"
@@ -313,6 +290,102 @@ def main():
     body = f"{args.body}{attribution}" if args.body else attribution.lstrip()
 
     create_pr(token, args.title, body, branch, args.base)
+
+
+USAGE = "usage: upstream gh <gh args> | upstream token"
+CREATE_UNSUPPORTED_HELP = (
+    "supported create flags: --title --body --head/--branch --base --adopt (pr), --title --body (issue). "
+    "Other gh create flags are not carried by the guarded create."
+)
+
+
+def _intercept_parser(supported):
+    parser = argparse.ArgumentParser(prog="upstream gh", add_help=False)
+    for flag, kwargs in supported.items():
+        parser.add_argument(flag, **kwargs)
+    return parser
+
+
+def _refuse_bad_title(title):
+    errors = title_errors(title)
+    if errors:
+        for error in errors:
+            print(f"Error: {error}", file=sys.stderr)
+        sys.exit(1)
+    for warning in title_warnings(title):
+        print(f"Warning: {warning}", file=sys.stderr)
+
+
+def pr_create(rest):
+    parser = _intercept_parser(
+        {
+            "--title": {"required": True},
+            "--body": {"default": ""},
+            "--head": {"dest": "branch", "default": None},
+            "--branch": {"dest": "branch", "default": None},
+            "--base": {"default": "master"},
+            "--adopt": {"action": "store_true"},
+        }
+    )
+    args, unknown = parser.parse_known_args(rest)
+    if unknown:
+        print(f"Error: unsupported flag(s) {' '.join(unknown)}. {CREATE_UNSUPPORTED_HELP}", file=sys.stderr)
+        sys.exit(2)
+    _refuse_bad_title(args.title)
+    submit_pr(args)
+
+
+def issue_create(rest):
+    parser = _intercept_parser({"--title": {"required": True}, "--body": {"default": ""}})
+    args, unknown = parser.parse_known_args(rest)
+    if unknown:
+        print(f"Error: unsupported flag(s) {' '.join(unknown)}. {CREATE_UNSUPPORTED_HELP}", file=sys.stderr)
+        sys.exit(2)
+    _refuse_bad_title(args.title)
+    agent_name, vesta_version = resolve_agent_identity()
+    token = get_installation_token()
+    body = f"{args.body}\n\n---\nSubmitted by **{agent_name}** on vesta v{vesta_version}"
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/issues", method="POST", fields={"title": args.title, "body": body})
+    if code != 0:
+        print(f"Error: {out}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Issue created: {json.loads(out)['html_url']}")
+
+
+def pr_list_mine(rest):
+    parser = _intercept_parser(
+        {
+            "--mine": {"action": "store_true"},
+            "--state": {"default": "open"},
+            "--limit": {"type": int, "default": 40},
+        }
+    )
+    args, unknown = parser.parse_known_args(rest)
+    if unknown:
+        print(f"Error: unsupported flag(s) with --mine: {' '.join(unknown)}", file=sys.stderr)
+        sys.exit(2)
+    agent_name, _ = resolve_agent_identity()
+    list_my_prs(get_installation_token(), agent_name, args.state, args.limit)
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv and argv[0] == "token":
+        print(get_installation_token())
+        return
+    if not argv or argv[0] != "gh":
+        print(USAGE, file=sys.stderr)
+        sys.exit(2)
+    args = argv[1:]
+    if args[:2] == ["pr", "create"]:
+        pr_create(args[2:])
+    elif args[:2] == ["issue", "create"]:
+        issue_create(args[2:])
+    elif args[:2] == ["pr", "list"] and "--mine" in args:
+        pr_list_mine(args[2:])
+    else:
+        completed = subprocess.run(["gh", *args], env=gh_env(get_installation_token()), check=False)
+        sys.exit(completed.returncode)
 
 
 if __name__ == "__main__":
