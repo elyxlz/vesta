@@ -2787,3 +2787,17 @@ git push origin epic/apps
 gh pr checks 2126 --watch
 ```
 Expected: `Apps · visual`, `Apps · web`, `Apps · mobile`, `merge-gate-ci` all pass.
+
+---
+
+## Amendments made during execution
+
+Recorded here so the plan matches what shipped; the spec carries the same amendments.
+
+1. **Gallery theme presentation.** The card grid does not wrap light over dark. Every slot carries `data-theme` and every card `data-themes`; a **Dark** toggle in the scan bar sets `body[data-theme]` and CSS hides the off-theme slots, so one theme shows at a time and the toggle flips every card in place. Persisted in `localStorage["visual-theme"]`.
+2. **One drive, both themes.** Every platform has a dark sibling, including mobile (`ios-dark`, `android-dark`, `android-galaxy-dark`). `themedSibling(id, theme)` in `platforms.mjs` pairs by runner and frame. Runners drive each scenario once and take both shots: the web runner seeds theme `system`, shoots, `page.emulateMedia({colorScheme:"dark"})`, waits for `html.dark`, shoots the sibling (three Playwright projects, not six); the mobile runners shoot, flip `simctl ui appearance dark` / `cmd uimode night yes`, wait until two framebuffer grabs are identical (`grabUntilStable`), shoot the sibling, and flip back (`captureBothThemes` in `visual-runner.mjs`).
+3. **One bridge for both mobile runners.** `startScreenshotBridge(targets, handlers)` lives in `visual-runner.mjs`; iOS supplies the simctl grab and the keyboard action, Android supplies the `adb exec-out screencap` grab. `stageMaestroShots` and its tests are gone; Maestro `takeScreenshot` remains only as the report artifact.
+4. **`putShot` accepts a Buffer or a path.** Still the one writer, same temp-and-rename.
+5. **`--clean-native` on iOS also removes `derived-data`**, because Xcode's module cache pins absolute paths and a moved checkout otherwise fails with `xcodebuild exited with 65`.
+6. **A real Node ESM link test** (`visual-runner.test.mjs`, "runner modules") imports each runner in a child `node`, because vitest resolves a missing named export to `undefined` and would not catch it.
+7. **`fix(web)`: `NewAgent/chrome.ts` renamed to `step-chrome.ts`** (pre-existing on master from #2060, collides with `Chrome/` on macOS and broke both tsc and the vite dev server on the onboarding page). Approved by Emilio as its own commit in this PR.
