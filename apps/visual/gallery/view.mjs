@@ -116,8 +116,8 @@ export function frameHtml(frame, screenHtml) {
   if (frame === "phone-browser") {
     return `<span class="frame frame-phone frame-phone-browser"><span class="browser-bar compact"><span class="address"></span></span>${screenHtml}</span>`;
   }
-  if (frame === "android-phone") {
-    return `<span class="frame frame-android"><span class="punch-hole"></span>${screenHtml}</span>`;
+  if (frame === "pixel" || frame === "galaxy") {
+    return `<span class="frame frame-android frame-${frame}"><span class="punch-hole"></span>${screenHtml}</span>`;
   }
   return `<span class="frame frame-phone">${screenHtml}</span>`;
 }

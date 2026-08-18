@@ -16,7 +16,8 @@ export type FamilyId = "mobile" | "web";
 export type Theme = "light" | "dark";
 export type Frame =
   | "phone"
-  | "android-phone"
+  | "pixel"
+  | "galaxy"
   | "browser"
   | "desktop-window"
   | "phone-browser";
