@@ -78,7 +78,7 @@ const nativeTransactionStatePath = path.join(
   nativeTransactionDirectory,
   "state.json",
 );
-const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
+export const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
 const expoRouterEntryPath = path.resolve(
   mobileRoot,
   "../node_modules/expo-router/entry.js",
