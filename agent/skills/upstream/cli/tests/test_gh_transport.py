@@ -4,7 +4,7 @@ import subprocess
 import pytest
 from upstream_cli import cli
 
-SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
+from tests.conftest import SENTINEL
 
 
 def test_gh_env_injects_token_and_repo():

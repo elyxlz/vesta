@@ -7,7 +7,8 @@ import sys
 import pytest
 from upstream_cli import cli
 
-SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
+from tests.conftest import AGENT_IDENTITY, SENTINEL
+
 # The host's own git config must not reach these repos: a user-level commit.gpgSign would sign
 # every fixture commit, and fail wherever no key is available.
 HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
@@ -41,15 +42,18 @@ def test_git_auth_env_keeps_the_token_out_of_the_key_and_only_base64_in_the_valu
     assert base64.b64decode(header.split("Basic ")[1]).decode() == f"x-access-token:{SENTINEL}"
 
 
-def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, monkeypatch):
+def _run_main_to_push(repo, monkeypatch, argv):
+    """Drive `main()` up to the push, swallowing it. Returns what the push saw and every call the
+    ownership guard took, so a test can assert on either without restubbing main()'s whole surface."""
     monkeypatch.chdir(repo)
     monkeypatch.setattr(cli, "get_installation_token", lambda: SENTINEL)
     monkeypatch.setattr(cli, "ensure_shared_history", lambda base, env: None)
     monkeypatch.setattr(cli, "create_pr", lambda *a, **k: None)
-    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
+    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: AGENT_IDENTITY)
     # The ownership guard has its own tests below; unstubbed it would dial the real remote.
-    monkeypatch.setattr(cli, "warn_if_branch_belongs_to_another_agent", lambda *a, **k: None)
-    monkeypatch.setattr(sys, "argv", ["upstream", "gh", "pr", "create", "--title", "fix(test): t"])
+    guard_calls = []
+    monkeypatch.setattr(cli, "warn_if_branch_belongs_to_another_agent", lambda *a: guard_calls.append(a))
+    monkeypatch.setattr(sys, "argv", argv)
 
     pushed = {}
     real_run = cli.run
@@ -63,6 +67,11 @@ def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, mon
 
     monkeypatch.setattr(cli, "run", fake_run)
     cli.main()
+    return pushed, guard_calls
+
+
+def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, monkeypatch):
+    pushed, _ = _run_main_to_push(repo, monkeypatch, ["upstream", "gh", "pr", "create", "--title", "fix(test): t"])
 
     config = (repo / ".git" / "config").read_text()
     assert SENTINEL not in config
@@ -195,34 +204,14 @@ def test_guard_reads_ownership_from_a_real_local_remote(remote_with_their_branch
     assert leftover.stdout == ""
 
 
-def _run_main_to_push(repo, monkeypatch, argv, guard_calls):
-    monkeypatch.chdir(repo)
-    monkeypatch.setattr(cli, "get_installation_token", lambda: SENTINEL)
-    monkeypatch.setattr(cli, "ensure_shared_history", lambda base, env: None)
-    monkeypatch.setattr(cli, "create_pr", lambda *a, **k: None)
-    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
-    monkeypatch.setattr(cli, "warn_if_branch_belongs_to_another_agent", lambda *a: guard_calls.append(a))
-    monkeypatch.setattr(sys, "argv", argv)
-    real_run = cli.run
-
-    def fake_run(cmd, env=None):
-        if cmd[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-        return real_run(cmd, env=env)
-
-    monkeypatch.setattr(cli, "run", fake_run)
-    cli.main()
-
-
 def test_push_runs_the_ownership_guard(repo, monkeypatch):
-    guard_calls = []
-    _run_main_to_push(repo, monkeypatch, ["upstream", "gh", "pr", "create", "--title", "fix(test): t"], guard_calls)
+    _, guard_calls = _run_main_to_push(repo, monkeypatch, ["upstream", "gh", "pr", "create", "--title", "fix(test): t"])
     assert len(guard_calls) == 1
 
 
 def test_adopt_skips_the_ownership_guard(repo, monkeypatch):
-    guard_calls = []
-    _run_main_to_push(repo, monkeypatch, ["upstream", "gh", "pr", "create", "--title", "fix(test): t", "--adopt"], guard_calls)
+    argv = ["upstream", "gh", "pr", "create", "--title", "fix(test): t", "--adopt"]
+    _, guard_calls = _run_main_to_push(repo, monkeypatch, argv)
     assert guard_calls == []
 
 

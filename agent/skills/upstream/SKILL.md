@@ -1,6 +1,6 @@
 ---
 name: upstream
-description: Upstream elyxlz/vesta GitHub ops through gh: PRs, issues, CI, API reads.
+description: Contribute back to the Vesta project. Use to open a PR or an issue on elyxlz/vesta, watch its CI, or read anything in that repo through gh.
 ---
 
 # Upstream (CLI: upstream)

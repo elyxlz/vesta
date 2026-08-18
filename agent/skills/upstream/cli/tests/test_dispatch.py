@@ -1,8 +1,9 @@
 import json
 
+import pytest
 from upstream_cli import cli
 
-SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
+from tests.conftest import SENTINEL
 
 
 def run_main(monkeypatch, argv):
@@ -31,9 +32,8 @@ def test_passthrough_forwards_args_untouched_and_propagates_exit(monkeypatch, fa
     assert seen["env"]["GH_REPO"] == "elyxlz/vesta"
 
 
-def test_issue_create_validates_title_appends_footer(monkeypatch, fake_gh, capsys):
+def test_issue_create_validates_title_appends_footer(monkeypatch, fake_gh, agent_identity, capsys):
     record, response, _ = fake_gh
-    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
     response.write_text(json.dumps({"html_url": "https://github.com/elyxlz/vesta/issues/1"}))
 
     assert run_main(monkeypatch, ["gh", "issue", "create", "--title", "Bad Title", "--body", "b"]) == 1
@@ -84,15 +84,6 @@ def test_pr_new_is_the_guarded_pr_create(monkeypatch, capsys):
     assert "--draft" in capsys.readouterr().err
 
 
-def test_pr_ls_mine_is_intercepted(monkeypatch, fake_gh, capsys):
-    record, response, _ = fake_gh
-    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
-    response.write_text("[]")
-    assert run_main(monkeypatch, ["gh", "pr", "ls", "--mine"]) == 0
-    assert json.loads(record.read_text())["argv"][0] == "api"
-    assert "as tester (vesta)" in capsys.readouterr().out
-
-
 def test_a_canonicalized_alias_still_passes_through_when_it_is_not_intercepted(monkeypatch, fake_gh):
     record, _, _ = fake_gh
     run_main(monkeypatch, ["gh", "issue", "ls", "--state", "open"])
@@ -105,10 +96,10 @@ def test_pr_list_without_mine_passes_through(monkeypatch, fake_gh):
     assert json.loads(record.read_text())["argv"][0:2] == ["pr", "list"]
 
 
-def test_pr_list_mine_is_intercepted(monkeypatch, fake_gh, capsys):
+@pytest.mark.parametrize("verb", ["list", "ls"])
+def test_pr_list_mine_is_intercepted_under_either_spelling(monkeypatch, fake_gh, agent_identity, capsys, verb):
     record, response, _ = fake_gh
-    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: ("tester", "9.9.9"))
     response.write_text("[]")
-    assert run_main(monkeypatch, ["gh", "pr", "list", "--mine"]) == 0
+    assert run_main(monkeypatch, ["gh", "pr", verb, "--mine"]) == 0
     assert json.loads(record.read_text())["argv"][0] == "api"
     assert "as tester (vesta)" in capsys.readouterr().out

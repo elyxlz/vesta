@@ -10,12 +10,13 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import quote
 
 import jwt
 
 from upstream_cli.titles import title_errors, title_warnings
 
-# Config — hardcoded for the vesta-upstream GitHub App
+# Config: hardcoded for the vesta-upstream GitHub App
 APP_ID = 2990557
 INSTALLATION_ID = 113559773
 UPSTREAM_REPO = "elyxlz/vesta"
@@ -60,7 +61,7 @@ def get_installation_token():
         sys.exit(1)
 
 
-def gh_env(token):
+def gh_env(token) -> dict[str, str]:
     return {**os.environ, "GH_TOKEN": token, "GH_REPO": UPSTREAM_REPO}
 
 
@@ -76,7 +77,7 @@ def _run_gh(token, args, *, capture):
         sys.exit(1)
 
 
-def gh_api(token, path, *, method="GET", fields=None):
+def gh_api(token, path, *, method="GET", fields=None) -> tuple[int, str]:
     """All REST traffic rides gh so auth handling has one owner. Returns (exit code, output).
 
     A failure with an empty stdout returns stderr instead: gh prints an API error body to stdout,
@@ -142,6 +143,12 @@ def ensure_shared_history(base, env):
         sys.exit(1)
 
 
+def commit_author_name(agent_name) -> str:
+    """The one spelling of a commit author. It is written on the push and read back to decide both
+    "is this PR mine" and "is this branch someone else's", so a second spelling would fail open."""
+    return f"{agent_name} (vesta)"
+
+
 def pr_commit_authors(token, number):
     """(originator, all authors) for one PR, by commit author name. Every agent pushes through the
     same GitHub App, so `pull.user.login` is `vesta-upstream[bot]` on EVERY PR in the repo and
@@ -158,8 +165,9 @@ def pr_commit_authors(token, number):
 
 def list_my_prs(token, agent_name, state, limit):
     """Print the PRs this agent opened, and separately the ones it only pushed commits to."""
-    me = f"{agent_name} (vesta)"
-    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?state={state}&per_page=100&sort=created&direction=desc")
+    me = commit_author_name(agent_name)
+    query = f"state={quote(state)}&per_page={min(limit, 100)}&sort=created&direction=desc"
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?{query}")
     if code != 0:
         print(f"Error: gh api failed: {out}", file=sys.stderr)
         sys.exit(1)
@@ -230,7 +238,7 @@ def warn_if_branch_belongs_to_another_agent(branch, base, agent_name, env):
     authors = branch_authors_ahead_of_base(branch, base, env)
     if authors is None:
         return
-    me = f"{agent_name} (vesta)"
+    me = commit_author_name(agent_name)
     if authors and me not in authors:
         print(f"Error: remote branch '{branch}' carries commits by {', '.join(sorted(authors))}.", file=sys.stderr)
         print("That is someone else's in-flight work and this push is a FORCE push.", file=sys.stderr)
@@ -251,15 +259,17 @@ def create_pr(token, title, body, branch, base):
     if "already exists" in out.lower():
         print("PR already exists for this branch")
         owner = UPSTREAM_REPO.split("/", maxsplit=1)[0]
-        search_code, search_out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?head={owner}:{branch}&base={base}&state=open")
-        if search_code == 0 and json.loads(search_out):
-            print(f"Existing PR: {json.loads(search_out)[0]['html_url']}")
+        query = f"head={quote(f'{owner}:{branch}')}&base={quote(base)}&state=open"
+        search_code, search_out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?{query}")
+        existing = json.loads(search_out) if search_code == 0 else []
+        if existing:
+            print(f"Existing PR: {existing[0]['html_url']}")
         return
     print(f"Error: {out}", file=sys.stderr)
     sys.exit(1)
 
 
-def body_with_attribution(body, agent_name, vesta_version):
+def body_with_attribution(body, agent_name, vesta_version) -> str:
     """Every PR and issue body carries the same footer, and an empty body carries it alone."""
     attribution = f"\n\n---\nSubmitted by **{agent_name}** on vesta v{vesta_version}"
     return f"{body}{attribution}" if body else attribution.lstrip()
@@ -268,7 +278,7 @@ def body_with_attribution(body, agent_name, vesta_version):
 def submit_pr(args):
     token = get_installation_token()
     agent_name, vesta_version = resolve_agent_identity()
-    author_name = f"{agent_name} (vesta)"
+    author_name = commit_author_name(agent_name)
     author_email = f"{agent_name}@vesta.noreply"
 
     # Get current branch
@@ -313,16 +323,22 @@ def submit_pr(args):
 
 USAGE = "usage: upstream gh <gh args> | upstream token"
 CREATE_UNSUPPORTED_HELP = (
-    "supported create flags: --title --body --head/--branch --base --adopt (pr), --title --body (issue). "
+    "supported create flags: --title --body --head --base --adopt (pr), --title --body (issue). "
     "Other gh create flags are not carried by the guarded create."
 )
+MINE_UNSUPPORTED_HELP = "supported flags with --mine: --state --limit."
 
 
-def _intercept_parser(supported):
+def _parse_intercepted(supported, rest, unsupported_help):
+    """One refusal for every intercepted call, so an unsupported flag is never silently dropped."""
     parser = argparse.ArgumentParser(prog="upstream gh", add_help=False)
     for flag, kwargs in supported.items():
         parser.add_argument(flag, **kwargs)
-    return parser
+    args, unknown = parser.parse_known_args(rest)
+    if unknown:
+        print(f"Error: unsupported flag(s) {' '.join(unknown)}. {unsupported_help}", file=sys.stderr)
+        sys.exit(2)
+    return args
 
 
 def _refuse_bad_title(title):
@@ -336,30 +352,26 @@ def _refuse_bad_title(title):
 
 
 def pr_create(rest):
-    parser = _intercept_parser(
+    args = _parse_intercepted(
         {
             "--title": {"required": True},
             "--body": {"default": ""},
             "--head": {"dest": "branch", "default": None},
+            # LEGACY(remove-when: no agent box still runs a vesta release older than the one that
+            # renamed this command to `upstream`): `--branch` is the pre-rename spelling of `--head`.
             "--branch": {"dest": "branch", "default": None},
             "--base": {"default": "master"},
             "--adopt": {"action": "store_true"},
-        }
+        },
+        rest,
+        CREATE_UNSUPPORTED_HELP,
     )
-    args, unknown = parser.parse_known_args(rest)
-    if unknown:
-        print(f"Error: unsupported flag(s) {' '.join(unknown)}. {CREATE_UNSUPPORTED_HELP}", file=sys.stderr)
-        sys.exit(2)
     _refuse_bad_title(args.title)
     submit_pr(args)
 
 
 def issue_create(rest):
-    parser = _intercept_parser({"--title": {"required": True}, "--body": {"default": ""}})
-    args, unknown = parser.parse_known_args(rest)
-    if unknown:
-        print(f"Error: unsupported flag(s) {' '.join(unknown)}. {CREATE_UNSUPPORTED_HELP}", file=sys.stderr)
-        sys.exit(2)
+    args = _parse_intercepted({"--title": {"required": True}, "--body": {"default": ""}}, rest, CREATE_UNSUPPORTED_HELP)
     _refuse_bad_title(args.title)
     agent_name, vesta_version = resolve_agent_identity()
     token = get_installation_token()
@@ -372,17 +384,15 @@ def issue_create(rest):
 
 
 def pr_list_mine(rest):
-    parser = _intercept_parser(
+    args = _parse_intercepted(
         {
             "--mine": {"action": "store_true"},
             "--state": {"default": "open"},
             "--limit": {"type": int, "default": 40},
-        }
+        },
+        rest,
+        MINE_UNSUPPORTED_HELP,
     )
-    args, unknown = parser.parse_known_args(rest)
-    if unknown:
-        print(f"Error: unsupported flag(s) with --mine: {' '.join(unknown)}", file=sys.stderr)
-        sys.exit(2)
     agent_name, _ = resolve_agent_identity()
     list_my_prs(get_installation_token(), agent_name, args.state, args.limit)
 
@@ -390,8 +400,8 @@ def pr_list_mine(rest):
 GH_VERB_ALIASES = {"new": "create", "ls": "list"}
 
 
-def canonical_gh_args(args):
-    """gh's own verb aliases resolve here, so `issue new` cannot walk past the guarded create."""
+def canonical_gh_args(args) -> list[str]:
+    """Normalize gh's own verb aliases, so the guarded verbs match however the call spells them."""
     if len(args) >= 2 and args[0] in ("pr", "issue") and args[1] in GH_VERB_ALIASES:
         return [args[0], GH_VERB_ALIASES[args[1]], *args[2:]]
     return args

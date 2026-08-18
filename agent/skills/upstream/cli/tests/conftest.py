@@ -4,7 +4,16 @@ import stat
 import pytest
 from upstream_cli import cli
 
+# One owner: the suite asserts this exact token never reaches argv or .git/config, so a second
+# copy could drift out of the assertions while they still pass.
 SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
+AGENT_IDENTITY = ("tester", "9.9.9")
+
+
+@pytest.fixture
+def agent_identity(monkeypatch):
+    monkeypatch.setattr(cli, "resolve_agent_identity", lambda: AGENT_IDENTITY)
+    return AGENT_IDENTITY
 
 
 @pytest.fixture
