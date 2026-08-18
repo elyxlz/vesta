@@ -17,7 +17,7 @@ def _add_task_due_in(config: Config, subject: str, delta: timedelta) -> dict:
 
 
 def _reminder_notifications(notif_dir: Path) -> list[dict]:
-    return [json.loads(p.read_text()) for p in sorted(notif_dir.glob("*.json")) if json.loads(p.read_text())["type"] == "reminder"]
+    return [json.loads(p.read_text()) for p in sorted(notif_dir.glob("*.json")) if json.loads(p.read_text())["type"] == "task_due"]
 
 
 # ---------------------------------------------------------------------------

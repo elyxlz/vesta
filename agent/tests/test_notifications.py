@@ -266,7 +266,7 @@ def test_format_for_display_strips_timestamp_microseconds():
         {
             "timestamp": "2025-01-01T12:34:56.123456+00:00",
             "source": "tasks",
-            "type": "reminder",
+            "type": "task_due",
             "message": "ping",
         }
     )
