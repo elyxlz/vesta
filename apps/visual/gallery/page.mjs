@@ -19,13 +19,6 @@ export function galleryHtml(view) {
   <link rel="stylesheet" href="gallery/styles.css">
 </head>
 <body data-revision="${escapeHtml(view.git.revision)}">
-  <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
-    <span class="status-spinner" aria-hidden="true"></span>
-    <span class="status-copy">
-      <strong class="status-title">Capturing screenshots</strong>
-      <span class="status-detail">Starting…</span>
-    </span>
-  </div>
   <header>
     <div>
       <h1>Vesta Apps QA</h1>
@@ -35,12 +28,21 @@ export function galleryHtml(view) {
       ${reportLinks}
     </div>
   </header>
-  <section class="scan-bar" aria-label="Capture runs">${scanRowsHtml()}
+  <section class="scan-bar" aria-label="Capture runs">
+    <div class="scan-bar-inner">${scanRowsHtml()}
     <label class="gentle-toggle" title="Capture at background priority with fewer workers: slower, but the machine stays responsive.">
       <input type="checkbox" id="gentle-toggle" checked>
       <span>Gentle scans</span>
     </label>
-    <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" title="Show every screen that has a dark capture in its dark theme.">Dark</button>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" title="Show every screen in its dark theme.">Dark</button>
+    <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
+      <span class="status-spinner" aria-hidden="true"></span>
+      <span class="status-copy">
+        <strong class="status-title">Capturing screenshots</strong>
+        <span class="status-detail">Starting…</span>
+      </span>
+    </div>
+    </div>
   </section>
   <main>${sections}</main>
   <dialog id="lightbox">
