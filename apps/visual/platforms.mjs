@@ -19,14 +19,14 @@ export const PLATFORMS = {
     label: "Android",
     family: "mobile",
     theme: "light",
-    frame: "phone",
+    frame: "android-phone",
     runner: "android",
   },
   "android-galaxy": {
     label: "Android · 3-button",
     family: "mobile",
     theme: "light",
-    frame: "phone",
+    frame: "android-phone",
     runner: "android-galaxy",
   },
   "ios-dark": {
@@ -40,14 +40,14 @@ export const PLATFORMS = {
     label: "Android · dark",
     family: "mobile",
     theme: "dark",
-    frame: "phone",
+    frame: "android-phone",
     runner: "android",
   },
   "android-galaxy-dark": {
     label: "Android · 3-button · dark",
     family: "mobile",
     theme: "dark",
-    frame: "phone",
+    frame: "android-phone",
     runner: "android-galaxy",
   },
   web: {

@@ -14,7 +14,12 @@ export type PlatformId =
 export type RunnerId = "ios" | "android" | "android-galaxy" | "web";
 export type FamilyId = "mobile" | "web";
 export type Theme = "light" | "dark";
-export type Frame = "phone" | "browser" | "desktop-window" | "phone-browser";
+export type Frame =
+  | "phone"
+  | "android-phone"
+  | "browser"
+  | "desktop-window"
+  | "phone-browser";
 
 export interface PlatformDefinition {
   label: string;
