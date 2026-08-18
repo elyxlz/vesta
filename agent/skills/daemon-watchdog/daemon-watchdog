@@ -80,6 +80,7 @@ CRASHLOOP_THROTTLE_SECS = int(os.environ.get("WATCHDOG_CRASHLOOP_THROTTLE_SECS",
 STATUS_TIMEOUT_SECS = int(os.environ.get("WATCHDOG_STATUS_TIMEOUT_SECS", "20"))
 START_TIMEOUT_SECS = int(os.environ.get("WATCHDOG_START_TIMEOUT_SECS", "60"))
 USAGE = f"Usage: {NAME} <daemon start|daemon stop|daemon restart|daemon status|check>"
+HELP_FORMS = ((), ("-h",), ("--help",), ("help",), ("daemon",), ("daemon", "help"))
 
 
 def now():
@@ -145,12 +146,52 @@ def unlisted_daemons(lines):
             if f.stem not in listed and pid_of(f) is not None]
 
 
+def _claim(pid):
+    try:
+        record = os.open(PIDFILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(record, "w") as handle:
+        handle.write(_record(pid))
+    return True
+
+
+def _claim_start():
+    """Take the pid record exclusively BEFORE spawning, so two concurrent starts cannot both spawn.
+
+    Checking liveness and then spawning is a read followed by a write with a gap in between, and two
+    starts racing through that gap both see nothing running and both stack a daemon. The claim closes
+    it: the loser finds the record already held and answers already_running.
+
+    A record no process stands behind is cleared and taken over. None means this start owns the
+    record; anything else is this start's whole answer.
+    """
+    if _claim(os.getpid()):
+        return None
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if live_pid() is not None:
+            print(json.dumps({"status": "already_running"}))
+            return 0
+        if not PIDFILE.exists():
+            break
+        time.sleep(0.3)
+    PIDFILE.unlink(missing_ok=True)
+    if _claim(os.getpid()):
+        return None
+    print(json.dumps({"error": f"another {NAME} start holds {PIDFILE}"}), file=sys.stderr)
+    return 1
+
+
 def _start():
     if live_pid() is not None:
         print(json.dumps({"status": "already_running"}))
         return 0
     DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
     LOG.parent.mkdir(parents=True, exist_ok=True)
+    claimed = _claim_start()
+    if claimed is not None:
+        return claimed
     with LOG.open("ab") as log:
         child = subprocess.Popen(
             [sys.executable, os.path.abspath(__file__), "loop"],
@@ -176,10 +217,11 @@ def _start():
     return 0
 
 
-def _stop():
+def _stop(quiet=False):
     pid = live_pid()
     if pid is None:
-        print(json.dumps({"status": "already_stopped"}))
+        if not quiet:
+            print(json.dumps({"status": "already_stopped"}))
         return 0
     with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGTERM)
@@ -191,7 +233,8 @@ def _stop():
             os.kill(pid, signal.SIGKILL)
         time.sleep(0.5)
     PIDFILE.unlink(missing_ok=True)
-    print(json.dumps({"status": "stopped"}))
+    if not quiet:
+        print(json.dumps({"status": "stopped"}))
     return 0
 
 
@@ -507,13 +550,16 @@ def main(argv):
         if action == "status":
             return _status()
         if action == "restart":
-            _stop()
+            _stop(quiet=True)
             return _start()
     if len(argv) >= 2 and argv[1] == "loop":
         return loop()
     if len(argv) >= 2 and argv[1] == "check":
         findings = one_pass(quiet=False)
         return 1 if any(f[2] for f in findings) else 0
+    if tuple(argv[1:]) in HELP_FORMS:
+        print(USAGE)
+        return 0
     print(USAGE, file=sys.stderr)
     return 1
 

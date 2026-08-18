@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 
-WD = str(pathlib.Path(__file__).with_name("watchdog"))
+WD = str(pathlib.Path(__file__).with_name("daemon-watchdog"))
 TMP = pathlib.Path("/tmp/wd-test")
 
 

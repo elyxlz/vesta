@@ -163,6 +163,12 @@ def _rig_ssh(home: pl.Path, bin_dir: pl.Path) -> None:
 
 SKILLS = [
     Daemon(
+        command=[str(SKILLS_DIR / "daemon-watchdog/daemon-watchdog")],
+        name="daemon-watchdog",
+        serves_port=False,
+        emits_daemon_died=False,
+    ),
+    Daemon(
         command=[str(SKILLS_DIR / "file-host/file-host")],
         name="file-host",
         serves_port=True,

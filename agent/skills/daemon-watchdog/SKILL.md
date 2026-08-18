@@ -54,13 +54,15 @@ The notification carries which happened, because they are different situations:
 
 ## The trust model, which is the point
 
-**A watchdog that dies looks exactly like a quiet night.** No notifications either way. That is the
-same shape as a forecaster that cannot speak and a guard nothing invokes, both of which this box has
-shipped and had to catch later. So every pass stamps `~/agent/data/daemon-watchdog.beat` whether or
-not anything was wrong, and `reality_check.sh` REDs when that stamp goes stale.
+**A watchdog that dies looks exactly like a quiet night.** No notifications either way, which is the
+same shape as a guard nothing invokes. So every pass stamps `~/agent/data/daemon-watchdog.beat`
+whether or not anything was wrong, and `daemon-watchdog daemon status` reports `last_pass`.
 
-Silence from this thing is only worth trusting because something else is proving it is still alive.
-Never read "no watchdog notifications" as "the daemons are fine" without checking `last_pass`.
+**That stamp is only worth anything if something outside this daemon reads it, and nothing in this
+repo does yet.** Until a periodic check REDs on a stale stamp, this daemon's own death is
+undetected, so its silence is not evidence of anything. Wiring that consumer is the work this skill
+still needs; until then, read `last_pass` yourself and never take "no watchdog notifications" to
+mean "the daemons are fine".
 
 ## Testing it
 
