@@ -319,15 +319,11 @@ h1 {
 .frame-phone::before { top: 18%; height: 9%; }
 .frame-phone::after { top: 30%; height: 14%; }
 .frame-phone .device-screen { --frame-ratio: 603 / 1311; border-radius: 27px; }
-/* A Pixel-style Android body: even thin bezel, the buttons on the right edge,
-   and a punch-hole camera at the top of the screen. The emulator draws a
-   rectangular display with the status bar flush to its corners, so the screen
-   corners stay tight enough that nothing the OS drew is clipped. */
+/* Android bodies. The emulator draws a rectangular display with the status bar
+   flush to its corners, so the screen corners stay tight enough that nothing
+   the OS drew is clipped; the body carries the device identity. */
 .frame-android {
   border: 1px solid #3f3f47;
-  border-radius: 14px;
-  padding: 4px;
-  background: linear-gradient(160deg, #2b2b31, #0a0a0d 45%, #1d1d22);
   box-shadow: 0 18px 42px #0008, inset 0 0 0 1px #ffffff12;
 }
 .frame-android::before, .frame-android::after {
@@ -338,21 +334,38 @@ h1 {
   border-radius: 0 2px 2px 0;
   background: #34343b;
 }
-.frame-android::before { top: 16%; height: 7%; }
-.frame-android::after { top: 26%; height: 12%; }
 .frame-android .punch-hole {
   position: absolute;
-  top: 12px;
   left: 50%;
   z-index: 1;
-  width: 8px;
-  height: 8px;
   border-radius: 50%;
   background: #08080a;
   box-shadow: 0 0 0 1px #1a1a1e;
   transform: translateX(-50%);
 }
 .frame-android .device-screen { --frame-ratio: 1080 / 2400; border-radius: 6px; }
+/* Pixel: a softer graphite body, a slightly deeper bezel, rounder corners, the
+   power key above the volume rocker, a larger camera hole. */
+.frame-pixel {
+  border-radius: 20px;
+  padding: 5px;
+  background: linear-gradient(160deg, #2e2e34, #0b0b0e 45%, #202026);
+}
+.frame-pixel::before { top: 17%; height: 6%; }
+.frame-pixel::after { top: 25%; height: 12%; }
+.frame-pixel .punch-hole { top: 12px; width: 8px; height: 8px; }
+/* Galaxy: phantom black with a metallic edge, a razor bezel, squarer corners,
+   the volume rocker above the power key, a smaller camera hole. */
+.frame-galaxy {
+  border-radius: 13px;
+  border-color: #55555e;
+  padding: 3px;
+  background: linear-gradient(160deg, #1b1b1f, #050507 50%, #17171b);
+}
+.frame-galaxy::before { top: 14%; height: 12%; }
+.frame-galaxy::after { top: 28%; height: 6%; }
+.frame-galaxy .punch-hole { top: 9px; width: 6px; height: 6px; }
+.frame-galaxy .device-screen { border-radius: 4px; }
 .frame-browser, .frame-desktop-window {
   overflow: hidden;
   border: 1px solid #3a3a42;

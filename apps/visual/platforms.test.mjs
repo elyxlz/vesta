@@ -17,7 +17,8 @@ describe("PLATFORMS", () => {
       expect(["light", "dark"]).toContain(platform.theme);
       expect([
         "phone",
-        "android-phone",
+        "pixel",
+        "galaxy",
         "browser",
         "desktop-window",
         "phone-browser",
