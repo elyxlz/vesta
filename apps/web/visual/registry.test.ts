@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { loadRegistry } from "@vesta/visual/registry";
-import { DRIVES } from "./drives";
+import { SCENARIOS } from "./drives";
 
 describe("web visual registry", () => {
   it("has exactly one drive per registered scenario", async () => {
     const registry = await loadRegistry("web");
     const ids = registry.scenarios.map((scenario) => scenario.id).sort();
-    expect(ids).toEqual(Object.keys(DRIVES).sort());
+    expect(ids).toEqual(Object.keys(SCENARIOS).sort());
   });
 
   it("carries a title, description, and group for every card", async () => {

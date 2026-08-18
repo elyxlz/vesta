@@ -1,11 +1,32 @@
 import { expect, type Page } from "@playwright/test";
-import { AGENT } from "./harness/http-fixtures";
+import {
+  AGENT,
+  providerRoute,
+  type ProviderInfoFixture,
+  type RouteFixture,
+} from "../harness/http-fixtures";
+import type { Scenario } from "../harness/scenario-state";
+import {
+  agentDelta,
+  aliveAgentNode,
+  startingAgent,
+} from "../harness/sync-fixtures";
 
-// The imperative half of a web scenario: how to reach the state and how to know it
-// settled. The card data and the fixture state live in scenarios.json, keyed by id.
-export interface Drive {
-  drive: (page: Page) => Promise<void>;
-  settle: (page: Page) => Promise<void>;
+function createFailure(status: number, error: string): RouteFixture {
+  return { path: "/agents", method: "POST", status, json: { error } };
+}
+function keyedProvider(
+  kind: ProviderInfoFixture["kind"],
+  model: string,
+): ProviderInfoFixture {
+  return {
+    kind,
+    model,
+    resolved_model: model,
+    max_context_tokens: 131072,
+    authed: true,
+    plan: null,
+  };
 }
 
 async function fillName(page: Page, name: string): Promise<void> {
@@ -48,8 +69,16 @@ async function toClaudeModel(page: Page): Promise<void> {
   await page.getByPlaceholder("paste code here").fill("visual-code");
   await page.getByRole("button", { name: "continue" }).click();
 }
-function settingsModel(visibleLabel: string): Drive {
+function settingsModel(
+  provider: ProviderInfoFixture,
+  visibleLabel: string,
+): Scenario {
   return {
+    state: {
+      route: `/agent/${AGENT}/settings`,
+      sync: { agents: { [AGENT]: aliveAgentNode() } },
+      routes: [providerRoute(provider)],
+    },
     drive: async (page) => {
       await page.getByRole("button", { name: "change model" }).click();
     },
@@ -59,7 +88,7 @@ function settingsModel(visibleLabel: string): Drive {
   };
 }
 
-export const DRIVES: Record<string, Drive> = {
+export const ONBOARDING: Record<string, Scenario> = {
   "name-empty": {
     drive: () => Promise.resolve(),
     settle: async (page) => {
@@ -78,6 +107,7 @@ export const DRIVES: Record<string, Drive> = {
     },
   },
   "name-rejected": {
+    state: { routes: [createFailure(409, "name already taken")] },
     drive: toCreating,
     settle: async (page) => {
       await expect(page.getByText("name already taken")).toBeVisible();
@@ -133,6 +163,9 @@ export const DRIVES: Record<string, Drive> = {
     },
   },
   "provider-model-loading": {
+    state: {
+      routes: [{ path: "/providers/openrouter/models/top", hang: true }],
+    },
     drive: (page) =>
       toKeyedModel(page, "OpenRouter", "sk-or-v1-...", "sk-or-v1-visual"),
     settle: async (page) => {
@@ -222,6 +255,9 @@ export const DRIVES: Record<string, Drive> = {
     },
   },
   "creating-pulling": {
+    state: {
+      sync: { deltas: [agentDelta(AGENT, startingAgent("pulling"))] },
+    },
     drive: toCreating,
     settle: async (page) => {
       await expect(
@@ -230,12 +266,16 @@ export const DRIVES: Record<string, Drive> = {
     },
   },
   "creating-starting": {
+    state: {
+      sync: { deltas: [agentDelta(AGENT, startingAgent("starting"))] },
+    },
     drive: toCreating,
     settle: async (page) => {
       await expect(page.getByText("starting up...")).toBeVisible();
     },
   },
   "creating-failed": {
+    state: { routes: [createFailure(500, "gateway ran out of disk")] },
     drive: toCreating,
     settle: async (page) => {
       await expect(page.getByText("gateway ran out of disk")).toBeVisible();
@@ -245,13 +285,27 @@ export const DRIVES: Record<string, Drive> = {
     },
   },
   done: {
+    state: {
+      routes: [
+        { path: `/agents/${AGENT}`, method: "GET", json: { status: "alive" } },
+      ],
+    },
     drive: toCreating,
     settle: async (page) => {
       await expect(page.getByText(`${AGENT} is ready`)).toBeVisible();
       await expect(page.getByRole("button", { name: "say hi" })).toBeVisible();
     },
   },
-  "settings-model-zai": settingsModel("GLM 5 Turbo"),
-  "settings-model-kimi": settingsModel("Coding Highspeed"),
-  "settings-model-openai": settingsModel("GPT 5.6 Terra"),
+  "settings-model-zai": settingsModel(
+    keyedProvider("zai", "glm-5.2"),
+    "GLM 5 Turbo",
+  ),
+  "settings-model-kimi": settingsModel(
+    keyedProvider("kimi", "kimi-for-coding"),
+    "Coding Highspeed",
+  ),
+  "settings-model-openai": settingsModel(
+    keyedProvider("openai", "gpt-5.6-sol"),
+    "GPT 5.6 Terra",
+  ),
 };

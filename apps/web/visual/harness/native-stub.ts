@@ -29,37 +29,46 @@ declare global {
 }
 
 // Defines window.vestaNative before app code runs, so the app takes its real
-// desktop path (.desktop, .vibrancy, data-platform="macos", titlebar inset).
-// Every method is inert; the store starts with the saved visual connection,
-// which is where the desktop bridge reads it from.
-export async function installNativeStub(page: Page): Promise<void> {
-  await page.addInitScript((connection) => {
-    let stored: unknown = connection;
-    const noop = (): void => undefined;
-    const resolved = (): Promise<void> => Promise.resolve();
-    window.vestaNative = {
-      platform: "darwin",
-      focusWindow: resolved,
-      setTheme: noop,
-      openExternal: resolved,
-      storeRead: () => Promise.resolve(stored),
-      storeWrite: (value: unknown) => {
-        stored = value;
-        return Promise.resolve();
-      },
-      storeClear: () => {
-        stored = null;
-        return Promise.resolve();
-      },
-      oauthStart: () => Promise.resolve(0),
-      onOauthCallback: () => noop,
-      oauthCancel: resolved,
-      onWindowFocus: () => noop,
-      windowMinimize: resolved,
-      windowToggleMaximize: resolved,
-      windowClose: resolved,
-      windowIsMaximized: () => Promise.resolve(false),
-      onWindowMaximizedChange: () => noop,
-    };
-  }, VISUAL_CONNECTION);
+// desktop path (.desktop, .vibrancy, data-platform, titlebar inset or custom
+// window controls). Every method is inert; the store starts with the saved
+// visual connection, which is where the desktop bridge reads it from.
+export async function installNativeStub(
+  page: Page,
+  options: { platform?: "darwin" | "win32"; connection?: boolean } = {},
+): Promise<void> {
+  await page.addInitScript(
+    ({ connection, platform }) => {
+      let stored: unknown = connection;
+      const noop = (): void => undefined;
+      const resolved = (): Promise<void> => Promise.resolve();
+      window.vestaNative = {
+        platform,
+        focusWindow: resolved,
+        setTheme: noop,
+        openExternal: resolved,
+        storeRead: () => Promise.resolve(stored),
+        storeWrite: (value: unknown) => {
+          stored = value;
+          return Promise.resolve();
+        },
+        storeClear: () => {
+          stored = null;
+          return Promise.resolve();
+        },
+        oauthStart: () => Promise.resolve(0),
+        onOauthCallback: () => noop,
+        oauthCancel: resolved,
+        onWindowFocus: () => noop,
+        windowMinimize: resolved,
+        windowToggleMaximize: resolved,
+        windowClose: resolved,
+        windowIsMaximized: () => Promise.resolve(false),
+        onWindowMaximizedChange: () => noop,
+      };
+    },
+    {
+      connection: options.connection === false ? null : VISUAL_CONNECTION,
+      platform: options.platform ?? "darwin",
+    },
+  );
 }
