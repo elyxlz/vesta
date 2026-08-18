@@ -33,14 +33,11 @@
     "mobile:ios": "npm -w @vesta/mobile run ios --",
     "mobile:android": "npm -w @vesta/mobile run android --",
     "mobile:check": "npm -w @vesta/mobile run check",
-    "mobile:visual": "npm -w @vesta/mobile run visual:ios --",
     "mobile:visual:capture": "npm -w @vesta/mobile run visual:ios:capture --",
-    "mobile:visual:watch": "npm -w @vesta/mobile run visual:watch --",
-    "mobile:visual:serve": "npm -w @vesta/mobile run visual:serve --",
-    "mobile:visual:android": "npm -w @vesta/mobile run visual:android --",
     "mobile:visual:android:capture": "npm -w @vesta/mobile run visual:android:capture --",
-    "mobile:visual:android:serve": "npm -w @vesta/mobile run visual:android:serve --",
-    "web:visual": "npm -w @vesta/web run visual",
-    "web:visual:capture": "npm -w @vesta/web run visual:capture"
+    "web:visual:capture": "npm -w @vesta/web run visual:capture --",
+    "visual": "npm -w @vesta/visual run serve",
+    "visual:serve": "npm -w @vesta/visual run serve -- --no-open",
+    "visual:capture": "npm -w @vesta/visual run capture --"
   }
 }
