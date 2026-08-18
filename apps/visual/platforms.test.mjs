@@ -22,7 +22,7 @@ describe("PLATFORMS", () => {
     }
   });
 
-  it("orders each family light before dark so a card wraps light row over dark row", () => {
+  it("orders each family light before dark so a card shows its light slots by default", () => {
     for (const family of Object.keys(FAMILIES)) {
       const themes = platformsOfFamily(family).map(
         (platform) => PLATFORMS[platform].theme,
