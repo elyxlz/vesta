@@ -476,7 +476,7 @@ def maybe_send_digest(config: Config, notif_dir: Path, *, now: datetime | None =
     if message is None:
         return False
 
-    write_notification(notif_dir, DIGEST_TYPE, message=message)
+    write_notification(notif_dir, DIGEST_TYPE, interrupt=False, message=message)
     with closing(db.get_db(config.data_dir)) as conn:
         db.set_meta(conn, _DIGEST_META_KEY, now.isoformat())
         conn.commit()
