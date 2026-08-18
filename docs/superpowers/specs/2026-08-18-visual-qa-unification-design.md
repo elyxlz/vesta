@@ -50,7 +50,7 @@ apps/visual/
   platforms.test.mjs  registry.test.mjs  store.test.mjs  gallery/view.test.mjs  gallery/server.test.mjs
   README.md                    the one architecture doc
   .agents/skills/visual-qa/SKILL.md + agents/openai.yaml
-  .visual/                     gitignored: shots/<platform>/<id>.png, run-status.json, capture-<runner>.log
+  .visual/                     gitignored: shots/<platform>/<id>.png, run-status-<runner>.json, capture-<runner>.log
 ```
 
 `platforms.mjs` is the single owner of which platforms exist:
@@ -134,7 +134,7 @@ Both `scenarios.json` files validate against one contract in `registry.mjs`:
 
 ## Store
 
-`apps/visual/.visual/shots/<platform>/<screenshot>.png`, one directory per platform id. `putShot(platform, name, sourcePath)` is the only writer: copy to `<name>.tmp-<pid>`, then `rename`, so the polling gallery never reads a torn PNG. Today's Android staging becomes this one owner; iOS `simctl` output and Playwright screenshots route through it too. `shotDriftWarning()` compares a runner's produced set to `scenariosForPlatform()` and warns; it never fails a run. `run-status.json` and `capture-<runner>.log` sit beside `shots/`.
+`apps/visual/.visual/shots/<platform>/<screenshot>.png`, one directory per platform id. `putShot(platform, name, sourcePath)` is the only writer: copy to `<name>.tmp-<pid>`, then `rename`, so the polling gallery never reads a torn PNG. Today's Android staging becomes this one owner; iOS `simctl` output and Playwright screenshots route through it too. `shotDriftWarning()` compares a runner's produced set to `scenariosForPlatform()` and warns; it never fails a run. `run-status-<runner>.json` and `capture-<runner>.log` sit beside `shots/`.
 
 Existing shots migrate once: `mv apps/mobile/.visual/shots/* apps/visual/.visual/shots/`. No recapture.
 

@@ -65,7 +65,7 @@ Ownership:
 | `visual/cli.mjs` | `serve` and `capture <runner>` |
 | `mobile/visual/scenarios.json`, `mobile/maestro/visual/`, `mobile/visual/harness/`, `mobile/scripts/visual-*.mjs` | The mobile family |
 | `web/visual/scenarios.json`, `web/visual/drives.ts`, `web/visual/harness/`, `web/visual/capture.spec.ts` | The web family |
-| `visual/.visual/` | Ignored: `shots/`, `run-status.json`, `capture-<runner>.log` |
+| `visual/.visual/` | Ignored: `shots/`, `run-status-<runner>.json`, `capture-<runner>.log` |
 
 Platforms: `ios`, `android`, `android-galaxy` and their `-dark` siblings (mobile family); `web`, `desktop`, `web-narrow` and their `-dark` siblings (web family). Runners: `ios`, `android`, `android-galaxy`, `web`. A theme variant is its own platform. Every runner drives a scenario once and captures both themes by flipping the OS appearance in place (`captureBothThemes` in the mobile runners, `page.emulateMedia` in the web runner), so never add a dark drive or a dark flow.
 
@@ -159,7 +159,7 @@ Use the gallery's status pill first, then:
 
 ```text
 visual/.visual/capture-<runner>.log
-visual/.visual/run-status.json
+visual/.visual/run-status-<runner>.json
 mobile/.visual/maestro/report.html                     (iOS)
 mobile/.visual/<variant>/maestro/report.html           (Android)
 web/.visual/report/index.html                          (web)
