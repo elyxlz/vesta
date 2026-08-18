@@ -5,7 +5,11 @@ import { FieldDescription } from "@/components/ui/field";
 import { fade, floatTransition, instant, textSwap } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { glassAction } from "../glass";
-import type { ChromeAction, ChromeActionKind, ChromeHeading } from "../step-chrome";
+import type {
+  ChromeAction,
+  ChromeActionKind,
+  ChromeHeading,
+} from "../step-chrome";
 
 // Persistent shell around the swapping step body: one mounted heading and one
 // mounted layout-animated action button, so a step change morphs them in place
