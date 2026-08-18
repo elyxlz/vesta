@@ -1,31 +1,41 @@
-# Web visual harness
+# Web visual runner
 
-Deterministic screenshots of production web views, the web counterpart of the mobile visual QA system. The untouched app renders at the real route on the plain vite dev server; determinism is injected at the network boundary by Playwright: storage seeds (connection, theme), a mocked `/sync` WebSocket speaking typed fixture frames, and a route table for the HTTP paths the flow touches. The fixture frames are validated by the production parser in `harness/fixtures.test.ts`, which runs inside the normal vitest suite, so protocol drift fails loudly.
+Runner details for the web family. The system, the gallery, and the registry contract are documented in `../../visual/README.md`.
+
+## How a capture runs
+
+The untouched app renders at its real route on the plain vite dev server (`HTTPS=false`, port 1430). Determinism is injected at the network boundary by Playwright:
+
+- `harness/storage.ts` seeds the connection and the theme in `localStorage`.
+- `harness/sync-fixtures.ts` answers the `/sync` WebSocket with typed fixture frames.
+- `harness/http-fixtures.ts` routes the HTTP paths the flow touches.
+- `harness/native-stub.ts` defines `window.vestaNative` for the `desktop` platforms, so the app takes its real desktop path (`.desktop`, `.vibrancy`, the title-bar inset). Every method is inert.
+
+`capture.spec.ts` loads `scenarios.json` through `@vesta/visual/registry`, runs one test per scenario, and writes each shot into the store with `putShot`.
+
+## Projects
+
+One Playwright project per web platform, named by its id: `web` and `web-dark` at 1280x800, `desktop` and `desktop-dark` at 1200x750 with the native stub, `web-narrow` and `web-narrow-dark` at 420x900. `colorScheme` follows the platform's theme so OS-scheme surfaces (the toaster) match the page.
 
 ## Commands
 
-Run from `apps/`:
+From `apps/`:
 
 ```sh
-npm run web:visual            # capture everything, build the gallery, serve + open it
-npm run web:visual:capture    # capture + build the gallery, then exit
+npm run web:visual:capture                          # all six platforms
+npm run web:visual:capture -- --project desktop-dark
+npm run web:visual:capture -- --workers=2           # what a gentle scan passes
 ```
 
-One matrix cell while iterating, from `apps/web/`:
+Install the browser once: `npx playwright install chromium` in `apps/web`. The HTML report is written to `apps/web/.visual/report/`; the gallery links it as "Web report".
 
-```sh
-npx playwright test --config visual/playwright.config.ts --project dark-desktop
-```
+## Boundary
 
-Output: `apps/web/.visual/web/` (gitignored), one PNG per scenario per project (`<scenario>--<project>.png`) plus `index.html`, the contact-sheet gallery. Serve an existing catalog without capturing: `node visual/gallery.mjs --serve`.
+Nothing under `src/` changes for capture. No scenario flags, no capture env checks, no bot-only test ids. Selectors are visible text and roles. Every scenario waits on a `settle` assertion, never a bare sleep.
 
-## Boundary rule
+## Add a scenario
 
-Nothing under `src/` changes for capture. No scenario flags, no capture env checks, no bot-only test ids. Selectors use visible text and existing roles; every scenario waits on a settle assertion, never a bare sleep. Production views remain the rendered implementation; only infrastructure answers are fixtures.
-
-## Adding a scenario
-
-1. Add an entry to `scenarios.ts`: unique kebab-case `id`, `drive(page)` walking the public UI, `settle(page)` asserting the visible state being captured. Reuse the drive helpers.
-2. If the state needs different network answers, extend `harness/http-fixtures.ts` (HTTP) or pass roster deltas built with `harness/sync-fixtures.ts` helpers. Keep values fixed and visually meaningful.
-3. Keep `harness/fixtures.test.ts` green; extend it when adding new frame builders.
-4. Run the single-project capture, then the full matrix, and eyeball the gallery pixels, not just the pass result.
+1. Add the entry to `scenarios.json`: `id`, `title`, `description`, `group`, plus the state the fixtures need (`route`, `agentStatus`, `createResponse`, `deltas`, `hang`, `agentName`, `provider`).
+2. Add `drive` and `settle` under the same id in `drives.ts`.
+3. Extend `http-fixtures.ts` or `sync-fixtures.ts` if the flow touches a new endpoint. Keep `harness/fixtures.test.ts` and `registry.test.ts` green.
+4. Run one project, then the full matrix, and inspect the pixels in the gallery.
