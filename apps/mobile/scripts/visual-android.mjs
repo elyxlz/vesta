@@ -3,7 +3,8 @@
 // iOS runner on one dedicated Android emulator and replaces the Android shot
 // files the shared gallery composes from.
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import {
   copyFile,
@@ -11,7 +12,6 @@ import {
   readFile,
   rename,
   rm,
-  stat,
 } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -29,8 +29,8 @@ import {
 import {
   assertHarnessBoundary,
   atomicWriteFile,
+  captureBothThemes,
   exists,
-  filesBelow,
   flowFailureError,
   gentleSpawnPlan,
   jsBundleCurrent,
@@ -38,6 +38,7 @@ import {
   recordJsBundle,
   run,
   setGentleMode,
+  startScreenshotBridge,
 } from "./visual-runner.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +58,8 @@ const nativeTransactionStatePath = path.join(
   "state.json",
 );
 const DEFAULT_VARIANT = "android";
+const SCREENCAP_MAX_BYTES = 64 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
 const ANDROID_BUILD_ABI = "arm64-v8a";
 const EMULATOR_BOOT_TIMEOUT_MS = 240_000;
 const EMULATOR_BOOT_POLL_MS = 2_000;
@@ -590,40 +593,32 @@ async function requireInstalledApp(tools, serial, appId) {
   }
 }
 
-// Maestro's suite mode writes each takeScreenshot artifact into its flow's
-// takeScreenshot/ directory under the test output; stage them into the shot
-// registry by name, replacing per file. Duplicate names across flows keep the
-// newest artifact and are reported for the drift warning.
-export async function stageMaestroShots(
-  sourceDirectory,
-  platform,
-  baseDirectory = undefined,
-) {
-  const newest = new Map();
-  for (const file of await filesBelow(sourceDirectory)) {
-    if (!file.endsWith(".png")) continue;
-    if (path.basename(path.dirname(file)) !== "takeScreenshot") continue;
-    const name = path.basename(file);
-    const modified = (await stat(file)).mtimeMs;
-    const current = newest.get(name);
-    if (!current) {
-      newest.set(name, { file, modified, duplicate: false });
-    } else if (modified > current.modified) {
-      newest.set(name, { file, modified, duplicate: true });
-    } else {
-      current.duplicate = true;
-    }
-  }
-  for (const [name, entry] of newest) {
-    await putShot(platform, name, entry.file, baseDirectory);
-  }
-  return {
-    produced: new Set(newest.keys()),
-    duplicates: [...newest]
-      .filter(([, entry]) => entry.duplicate)
-      .map(([name]) => name)
-      .sort(),
-  };
+// adb streams the framebuffer PNG on stdout, so the grab is a binary exec.
+async function grabEmulatorScreen(tools, serial) {
+  const { stdout } = await execFileAsync(
+    tools.adb,
+    ["-s", serial, "exec-out", "screencap", "-p"],
+    { encoding: "buffer", maxBuffer: SCREENCAP_MAX_BYTES },
+  );
+  return stdout;
+}
+
+// The shared bridge with the Android handlers: a screencap grab in both night
+// modes. The keyboard renders inside the framebuffer, so there is no action.
+function startAndroidBridge(tools, serial, variant) {
+  return startScreenshotBridge([serial], {
+    capture: (target, screenshot) =>
+      captureBothThemes({
+        platform: variant,
+        name: screenshot,
+        grab: () => grabEmulatorScreen(tools, target),
+        setDark: (dark) =>
+          adb(tools, target, ["shell", "cmd", "uimode", "night", dark ? "yes" : "no"], {
+            quiet: true,
+          }),
+        store: putShot,
+      }),
+  });
 }
 
 async function runMaestro(manifest, tools, serial, variant) {
@@ -632,20 +627,8 @@ async function runMaestro(manifest, tools, serial, variant) {
   await mkdir(maestroDirectory, { recursive: true });
 
   const flowPaths = manifest.flows.map((flow) => path.resolve(mobileRoot, flow));
-  // Stage produced artifacts into the shot registry every few seconds while Maestro runs, so the
-  // gallery fills live per screenshot instead of in one batch at the end; the final stage after
-  // the run stays the authoritative pass.
-  let stagingBusy = false;
-  const stagingTimer = setInterval(() => {
-    if (stagingBusy) return;
-    stagingBusy = true;
-    void stageMaestroShots(maestroDirectory, variant)
-      .catch(() => undefined)
-      .finally(() => {
-        stagingBusy = false;
-      });
-  }, 2000);
-  let failure;
+  const bridge = await startAndroidBridge(tools, serial, variant);
+  const cycle = await bridge.beginCycle(manifest);
   try {
     await run(
       tools.maestro,
@@ -655,6 +638,8 @@ async function runMaestro(manifest, tools, serial, variant) {
         ...flowPaths,
         "-e",
         `APP_ID=${manifest.appId}`,
+        "-e",
+        `CAPTURE_URL=${bridge.urls[0]}`,
         `--test-output-dir=${maestroDirectory}`,
         "--format=HTML",
         `--output=${path.join(maestroDirectory, "report.html")}`,
@@ -662,15 +647,19 @@ async function runMaestro(manifest, tools, serial, variant) {
       ],
       { cwd: maestroDirectory, env: tools.environment, tee: true },
     );
+    // Maestro exited, so every bridge callback has been served; a scenario
+    // whose callback never fired is registry drift to warn about, not a hang.
+    cycle.settle();
+    await cycle.completion;
   } catch (error) {
-    failure = flowFailureError(error);
+    const failure = flowFailureError(error);
+    bridge.fail(failure);
+    await cycle.completion.catch(() => {});
+    throw failure;
+  } finally {
+    await bridge.close();
   }
-  clearInterval(stagingTimer);
-  // Stage even a failed run's artifacts: each is a valid capture, and the
-  // scenarios the run never reached keep their previous shot files.
-  const staged = await stageMaestroShots(maestroDirectory, variant);
-  if (failure) throw failure;
-  return staged;
+  return cycle.seen;
 }
 
 async function capture(options) {
@@ -713,20 +702,8 @@ async function capture(options) {
     await phase(
       `Running ${manifest.flows.length} flows on the Android emulator`,
     );
-    const { produced, duplicates } = await runMaestro(
-      manifest,
-      tools,
-      serial,
-      variant,
-    );
-    const warning = [
-      shotDriftWarning(produced, manifest.scenarios),
-      duplicates.length > 0
-        ? `duplicate across flows: ${duplicates.join(", ")}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("; ");
+    const produced = await runMaestro(manifest, tools, serial, variant);
+    const warning = shotDriftWarning(produced, manifest.scenarios);
     if (warning) console.warn(`\nShot registry drift: ${warning}`);
     console.log(
       `\nCaptured ${produced.size} ${androidVariants[variant].label} screenshots into the visual store.`,

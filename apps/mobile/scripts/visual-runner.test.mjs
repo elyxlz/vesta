@@ -3,9 +3,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  captureBothThemes,
   createInactivityWatchdog,
   flowFailureError,
   gentleSpawnPlan,
+  grabUntilStable,
   maestroFlowSummary,
 } from "./visual-runner.mjs";
 
@@ -102,4 +104,52 @@ describe("runner modules", () => {
       expect(result.status).toBe(0);
     },
   );
+});
+
+describe("grabUntilStable", () => {
+  it("returns the first grab that repeats, polling until then", async () => {
+    const frames = ["a", "b", "b", "c"].map((text) => Buffer.from(text));
+    let calls = 0;
+    const grab = () => Promise.resolve(frames[Math.min(calls++, frames.length - 1)]);
+    const stable = await grabUntilStable(grab, { pollMs: 1 });
+    expect(stable.toString()).toBe("b");
+    expect(calls).toBe(3);
+  });
+
+  it("gives up with the last grab when the picture never settles", async () => {
+    let calls = 0;
+    const grab = () => Promise.resolve(Buffer.from(String(calls++)));
+    const last = await grabUntilStable(grab, { pollMs: 1, timeoutMs: 20 });
+    expect(Number(last.toString())).toBeGreaterThan(1);
+    expect(Number(last.toString())).toBe(calls - 1);
+  });
+});
+
+describe("captureBothThemes", () => {
+  it("stores the light shot, flips dark, stores the sibling, and flips back", async () => {
+    const events = [];
+    let dark = false;
+    const grab = () => Promise.resolve(Buffer.from(dark ? "dark" : "light"));
+    await captureBothThemes({
+      platform: "ios",
+      name: "home.png",
+      grab,
+      setDark: (value) => {
+        dark = value;
+        events.push(`dark=${value}`);
+        return Promise.resolve();
+      },
+      store: (platform, name, image) => {
+        events.push(`${platform}:${name}:${image.toString()}`);
+        return Promise.resolve();
+      },
+    });
+    expect(events).toEqual([
+      "ios:home.png:light",
+      "dark=true",
+      "ios-dark:home.png:dark",
+      "dark=false",
+    ]);
+    expect(dark).toBe(false);
+  });
 });
