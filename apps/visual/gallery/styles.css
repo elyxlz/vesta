@@ -155,6 +155,11 @@ main {
   align-items: start;
   gap: 10px;
 }
+/* A web row is two landscape frames and one phone-width frame; sizing the phone
+   column at ~0.3 of a landscape column keeps all three the same height. */
+.scenario-section[data-family="web"] .shots {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.32fr);
+}
 .shot { position: relative; min-width: 0; }
 .platform-tag {
   color: var(--muted);
