@@ -3,9 +3,7 @@ import {
   FAMILIES,
   PLATFORMS,
   RUNNERS,
-  platformFamily,
   platformsOfFamily,
-  runnerOf,
   themedSibling,
 } from "./platforms.mjs";
 
@@ -70,12 +68,16 @@ describe("RUNNERS", () => {
       gentleArgs: ["--workers=2"],
     });
   });
+
+  it("names each runner's report entry page: Maestro report.html, Playwright index.html", () => {
+    expect(RUNNERS.ios.reportFile).toBe("report.html");
+    expect(RUNNERS.android.reportFile).toBe("report.html");
+    expect(RUNNERS.web.reportFile).toBe("index.html");
+  });
 });
 
 describe("lookups", () => {
-  it("resolves family, platforms, and runner by id", () => {
-    expect(platformFamily("android-galaxy")).toBe("mobile");
-    expect(platformFamily("desktop-dark")).toBe("web");
+  it("lists a family's platforms in table order", () => {
     expect(platformsOfFamily("mobile")).toEqual([
       "ios",
       "android",
@@ -92,11 +94,10 @@ describe("lookups", () => {
       "desktop-dark",
       "web-narrow-dark",
     ]);
-    expect(runnerOf("web-narrow-dark")).toBe("web");
   });
 
   it("rejects an unknown platform id", () => {
-    expect(() => platformFamily("windows")).toThrow(/Unknown platform: windows/);
+    expect(() => themedSibling("windows", "dark")).toThrow(/Unknown platform: windows/);
   });
 
   it("pairs a platform with its same-frame sibling in the other theme", () => {

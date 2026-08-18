@@ -9,6 +9,7 @@ import {
   gentleSpawnPlan,
   grabUntilStable,
   maestroFlowSummary,
+  startScreenshotBridge,
 } from "./visual-runner.mjs";
 
 describe("createInactivityWatchdog", () => {
@@ -151,5 +152,26 @@ describe("captureBothThemes", () => {
       "dark=false",
     ]);
     expect(dark).toBe(false);
+  });
+});
+
+describe("startScreenshotBridge", () => {
+  it("keeps a watchdog rejection observable until the runner awaits the cycle", async () => {
+    const bridge = await startScreenshotBridge(["sim"], {
+      capture: () => Promise.resolve(),
+    });
+    try {
+      const cycle = await bridge.beginCycle(
+        { scenarios: [{ screenshot: "home.png" }] },
+        10,
+      );
+      // Nothing awaits the cycle while the watchdog fires, as when Maestro is still running.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await expect(cycle.completion).rejects.toThrow(
+        /Timed out waiting for screenshots: home.png/,
+      );
+    } finally {
+      await bridge.close();
+    }
   });
 });

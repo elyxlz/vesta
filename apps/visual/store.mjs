@@ -1,8 +1,8 @@
 import {
   copyFile,
   mkdir,
+  open,
   readdir,
-  readFile,
   rename,
   stat,
   writeFile,
@@ -61,34 +61,48 @@ export async function shotEntries(baseDirectory = storeDirectory) {
   const entries = Object.fromEntries(
     platforms.map((platform) => [platform, {}]),
   );
-  for (const platform of platforms) {
-    const directory = path.join(baseDirectory, "shots", platform);
-    const names = await readdir(directory).catch(() => []);
-    for (const name of names) {
-      if (!name.endsWith(".png")) continue;
-      try {
-        const mtime = Math.round(
-          (await stat(path.join(directory, name))).mtimeMs,
-        );
-        entries[platform][name] = { src: `shots/${platform}/${name}`, mtime };
-      } catch {
-        continue;
-      }
-    }
-  }
+  await Promise.all(
+    platforms.map(async (platform) => {
+      const directory = path.join(baseDirectory, "shots", platform);
+      const names = (await readdir(directory).catch(() => [])).filter((name) =>
+        name.endsWith(".png"),
+      );
+      await Promise.all(
+        names.map(async (name) => {
+          // A shot replaced between readdir and stat is simply absent this tick.
+          const info = await stat(path.join(directory, name)).catch(() => null);
+          if (!info) return;
+          entries[platform][name] = {
+            src: `shots/${platform}/${name}`,
+            mtime: Math.round(info.mtimeMs),
+          };
+        }),
+      );
+    }),
+  );
   return entries;
 }
 
+// Reads only the 24-byte header (signature + IHDR), never the whole image.
+const PNG_HEADER_BYTES = 24;
+
 export async function pngSize(filePath) {
-  const file = await readFile(filePath);
+  const file = await open(filePath, "r");
+  const header = Buffer.alloc(PNG_HEADER_BYTES);
+  let bytesRead;
+  try {
+    ({ bytesRead } = await file.read(header, 0, PNG_HEADER_BYTES, 0));
+  } finally {
+    await file.close();
+  }
   if (
-    file.length < 24 ||
-    file.toString("ascii", 1, 4) !== "PNG" ||
-    file.toString("ascii", 12, 16) !== "IHDR"
+    bytesRead < PNG_HEADER_BYTES ||
+    header.toString("ascii", 1, 4) !== "PNG" ||
+    header.toString("ascii", 12, 16) !== "IHDR"
   ) {
     return null;
   }
-  return { width: file.readUInt32BE(16), height: file.readUInt32BE(20) };
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 }
 
 // A scan warns about registry drift instead of refusing: the shot files it

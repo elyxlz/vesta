@@ -235,9 +235,8 @@ function AgentPages() {
       const state = event.nativeEvent.pageScrollState;
       if (state === "dragging") {
         void KeyboardController.dismiss().catch(() => undefined);
-        const index = pages.indexOf(activePageKey);
         markVisited(
-          [pages[index - 1], pages[index + 1]].filter(
+          [pages[activePage - 1], pages[activePage + 1]].filter(
             (page): page is AgentPageKey => page !== undefined,
           ),
         );
@@ -248,7 +247,7 @@ function AgentPages() {
         showTabs();
       }
     },
-    [activePageKey, hideTabs, markVisited, pages, showTabs],
+    [activePage, hideTabs, markVisited, pages, showTabs],
   );
 
   const onPageSelected = useCallback(
@@ -274,9 +273,9 @@ function AgentPages() {
       const target = pages[page];
       // Mount every page the animated jump slides across, or an unvisited
       // intermediate pane renders blank mid-flight.
-      const current = pages.indexOf(activePageKey);
-      const [first, last] = current <= page ? [current, page] : [page, current];
-      markVisited(pages.slice(Math.max(first, 0), last + 1));
+      const [first, last] =
+        activePage <= page ? [activePage, page] : [page, activePage];
+      markVisited(pages.slice(first, last + 1));
       if (target && target !== hapticPageKey.current) {
         hapticPageKey.current = target;
         void Haptics.selectionAsync().catch(() => undefined);
@@ -284,7 +283,7 @@ function AgentPages() {
       showTabs();
       pager.current?.setPage(page);
     },
-    [activePageKey, markVisited, pages, showTabs],
+    [activePage, markVisited, pages, showTabs],
   );
 
   return (

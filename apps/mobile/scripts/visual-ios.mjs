@@ -27,6 +27,7 @@ import {
   filesBelow,
   flowFailureError,
   jsBundleCurrent,
+  metroConfigPath,
   mobileRoot,
   nativeAnimationHookPath,
   nativeInputFingerprint,
@@ -37,31 +38,6 @@ import {
   visualDirectory,
 } from "./visual-runner.mjs";
 
-
-export const androidVisualDirectory = path.join(visualDirectory, "android");
-// The Android runner captures one variant per run: the same build and flows on a different
-// emulator persona. The galaxy variant runs classic 3-button navigation, so every screen is
-// exercised with a visible bottom navigation bar and its status bar insets.
-export const androidVariants = {
-  android: {
-    avd: "vesta-visual",
-    label: "Android",
-    navOverlay: "com.android.internal.systemui.navbar.gestural",
-  },
-  "android-galaxy": {
-    avd: "vesta-visual-galaxy",
-    label: "Android \u00b7 3-button",
-    navOverlay: "com.android.internal.systemui.navbar.threebutton",
-  },
-};
-export function androidWorkDirectory(variant) {
-  return variant === "android"
-    ? androidVisualDirectory
-    : path.join(visualDirectory, variant);
-}
-export function androidMaestroDirectoryOf(variant) {
-  return path.join(androidWorkDirectory(variant), "maestro");
-}
 const maestroDirectory = path.join(visualDirectory, "maestro");
 const derivedDataDirectory = path.join(visualDirectory, "derived-data");
 const bundleDirectory = path.join(visualDirectory, "bundle");
@@ -78,7 +54,6 @@ const nativeTransactionStatePath = path.join(
   nativeTransactionDirectory,
   "state.json",
 );
-export const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
 const expoRouterEntryPath = path.resolve(
   mobileRoot,
   "../node_modules/expo-router/entry.js",
@@ -793,7 +768,7 @@ async function runMaestro(manifest, simulators, tools) {
         "-e",
         `CAPTURE_URL_1=${bridge.urls[0]}`,
         "-e",
-        `CAPTURE_URL_2=${bridge.urls[1]}`,
+        `CAPTURE_URL_2=${bridge.urls[1] ?? ""}`,
         `--test-output-dir=${maestroDirectory}`,
         "--format=HTML",
         `--output=${path.join(maestroDirectory, "report.html")}`,

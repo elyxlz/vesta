@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import { mkdir } from "node:fs/promises";
 import { RUNNERS } from "./platforms.mjs";
-import { storeDirectory } from "./store.mjs";
 import { serveCatalog, spawnCapture } from "./gallery/server.mjs";
 
 const DEFAULT_PORT = 4173;
@@ -17,7 +15,8 @@ Runners: ${Object.keys(RUNNERS).join(", ")}
 }
 
 function parseArguments(values) {
-  const [command = "serve", ...rest] = values;
+  const [command, ...rest] =
+    values[0] === undefined || values[0].startsWith("-") ? ["serve", ...values] : values;
   const options = {
     command,
     port: DEFAULT_PORT,
@@ -57,7 +56,6 @@ function parseArguments(values) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  await mkdir(storeDirectory, { recursive: true });
   if (options.command === "serve") {
     await serveCatalog(options.port, options.open);
     return;

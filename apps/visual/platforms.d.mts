@@ -36,6 +36,7 @@ export interface RunnerDefinition {
   args: string[];
   gentleArgs: string[];
   reportDirectory: string;
+  reportFile: string;
 }
 export interface FamilyDefinition {
   label: string;
@@ -47,7 +48,5 @@ export const appsRoot: string;
 export const PLATFORMS: Record<PlatformId, PlatformDefinition>;
 export const RUNNERS: Record<RunnerId, RunnerDefinition>;
 export const FAMILIES: Record<FamilyId, FamilyDefinition>;
-export function platformFamily(id: string): FamilyId;
-export function runnerOf(id: string): RunnerId;
 export function platformsOfFamily(family: FamilyId): PlatformId[];
 export function themedSibling(id: string, theme: Theme): PlatformId | null;

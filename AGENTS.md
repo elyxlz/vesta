@@ -115,6 +115,7 @@ apps/core/    # @vesta/core, the shared client controller (protocol, replica, tr
 apps/web/     # React + TypeScript SPA (@vesta/web)
 apps/desktop/ # Electron wrapper (macOS/Windows/Linux)
 apps/mobile/  # Expo/React Native app (@vesta/mobile)
+apps/visual/  # @vesta/visual, the shared visual QA harness (platform table, shot store, gallery)
 agent/skills/ + agent/core/skills/  # skills (SKILL.md + scripts)
 ```
 
@@ -127,10 +128,11 @@ CI runs these exact subcommands, so passing locally means passing CI. Run from t
 ./check.sh guards         # repo-wide ruff + format, convention guards (lint escapes, comment length, import cycles), shellcheck, uv.lock, design-token + dashboard-sync freshness, web base-path
 ./check.sh vestad         # cargo clippy -p vestad -D warnings + cargo test -p vestad --bins (unit tests only; the Docker/live suites also live in this package)
 ./check.sh vestad-docker  # vestad #[ignore] Docker tests (needs Docker + agent image)
-./check.sh web            # chains app-core, app-web, app-desktop, app-mobile
+./check.sh web            # chains app-core, app-web, app-desktop, app-visual, app-mobile
 ./check.sh app-core       # @vesta/core lint + format + tsc + vitest (its own CI job)
 ./check.sh app-web        # design-token sync check + @vesta/web lint + format + tsc + vitest
 ./check.sh app-desktop    # @vesta/desktop lint + tsc + vitest
+./check.sh app-visual     # @vesta/visual lint + vitest (the shared visual QA gallery and store)
 ./check.sh app-mobile     # Expo dep validation + @vesta/mobile lint + tsc + vitest + clean-prebuild verify
 ./check.sh whatsapp       # whatsapp Go CLI lint + build + test
 ./check.sh telegram       # telegram Go CLI lint + build + test
@@ -266,7 +268,7 @@ A skill's command reaches PATH exactly one of two ways. A `cli/` uv-project (an 
 
 ## CI
 
-`ci.yml` runs shared validation on pushes to `master` and PRs, path-filtered on PRs. `release-pipeline.yml` is triggered only by a published prerelease, calls the same reusable CI workflow, then runs the live gate and publishing jobs, so PRs do not show irrelevant skipped release checks. Check jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. The frontend runs as four per-app jobs (`test-app-core`, `test-app-web`, `test-app-desktop`, `test-app-mobile`), each gated on its dependency closure (web needs core, desktop needs core + web, mobile needs core) in the job `if:`, not in the per-app path filters. Checks include version sync across sources, workflow syntax, dependency review, ruff, ty, cargo clippy, pytest, `uv.lock` freshness, the three communication-channel suites (`comms-checks`: the whatsapp/telegram Go CLIs plus app-chat), the `install.ps1` PowerShell check (`check-windows`), and native mobile compiles (iOS and Android) when native inputs change. `build-vestad` cross-builds the static musl binaries the release pipeline publishes. Mobile PRs validate every EAS workflow against Expo's public schema without authenticating or queuing a cloud build. Electron packages are unsigned on PRs; every non-PR run, including master pushes, signs and notarizes. The single required branch-protection check is `merge-gate-ci`. `security.yml` runs a four-language CodeQL matrix on PRs, master, and weekly, outside the merge gate.
+`ci.yml` runs shared validation on pushes to `master` and PRs, path-filtered on PRs. `release-pipeline.yml` is triggered only by a published prerelease, calls the same reusable CI workflow, then runs the live gate and publishing jobs, so PRs do not show irrelevant skipped release checks. Check jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. The frontend runs as five per-app jobs (`test-app-core`, `test-app-web`, `test-app-desktop`, `test-app-visual`, `test-app-mobile`), each gated on its dependency closure (web needs core + visual, desktop needs core + web, mobile needs core + visual) in the job `if:`, not in the per-app path filters. Checks include version sync across sources, workflow syntax, dependency review, ruff, ty, cargo clippy, pytest, `uv.lock` freshness, the three communication-channel suites (`comms-checks`: the whatsapp/telegram Go CLIs plus app-chat), the `install.ps1` PowerShell check (`check-windows`), and native mobile compiles (iOS and Android) when native inputs change. `build-vestad` cross-builds the static musl binaries the release pipeline publishes. Mobile PRs validate every EAS workflow against Expo's public schema without authenticating or queuing a cloud build. Electron packages are unsigned on PRs; every non-PR run, including master pushes, signs and notarizes. The single required branch-protection check is `merge-gate-ci`. `security.yml` runs a four-language CodeQL matrix on PRs, master, and weekly, outside the merge gate.
 
 One CI toggle is currently off and changes what artifacts exist: `BUILD_MAC_UNIVERSAL` is false, so macOS builds are Apple Silicon only. `BUILD_ANDROID` is true, so the native mobile compile covers both iOS and Android.
 

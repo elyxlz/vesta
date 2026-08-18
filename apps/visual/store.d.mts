@@ -13,7 +13,15 @@ export function putShot(
 ): Promise<void>;
 export function shotEntries(
   baseDirectory?: string,
-): Promise<Record<string, Record<string, { src: string; mtime: number }>>>;
+): Promise<
+  Record<
+    string,
+    Record<
+      string,
+      { src: string; mtime: number; size?: { width: number; height: number } | null }
+    >
+  >
+>;
 export function pngSize(
   filePath: string,
 ): Promise<{ width: number; height: number } | null>;
