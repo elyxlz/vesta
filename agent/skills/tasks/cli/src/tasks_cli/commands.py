@@ -417,12 +417,12 @@ _DIGEST_META_KEY = "last_digest_at"
 
 _OVERDUE_HEADER = (
     "Overdue tasks. Resolve every one right now: do it and `tasks done <id>`, or postpone it "
-    "(`tasks postpone <id> --in-days N`), or tell the user you are dropping it and `tasks delete <id>`. "
+    "(`tasks postpone <id> --in-days N`), or delete it if stale (`tasks delete <id>`). "
     "Never leave a task sitting overdue."
 )
 _STALE_HEADER = (
     "Stale tasks, pending 2+ weeks with no due date. Give each a deadline (`tasks postpone <id> --in-days N`), "
-    "do it now, drop it with the user's knowledge, or, when it is undated on purpose because someone else drives "
+    "do it now, delete it if stale, or, when it is undated on purpose because someone else drives "
     "it or it is a genuine someday, park it with `tasks update <id> --backburner`: it stays pending and stays in "
     "`tasks list` marked [parked], it just stops being listed here. Never invent a deadline to buy silence."
 )
@@ -491,8 +491,8 @@ DUE_TYPE = "task_due"
 
 DUE_NOW_MESSAGE = (
     'Task "{subject}" is due now. Decide immediately: do it and run `tasks done {task_id}`, '
-    "or postpone it (`tasks postpone {task_id} --in-days N`), or tell the user you are dropping it and run "
-    "`tasks delete {task_id}`. Never leave a task sitting overdue."
+    "or postpone it (`tasks postpone {task_id} --in-days N`), or delete it if stale "
+    "(`tasks delete {task_id}`). Never leave a task sitting overdue."
 )
 
 LEAD_TIME_MESSAGE = "Task due in {label}: {subject}"
