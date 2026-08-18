@@ -417,12 +417,12 @@ _DIGEST_META_KEY = "last_digest_at"
 
 _OVERDUE_HEADER = (
     "Overdue tasks. Resolve every one right now: do it and `tasks done <id>`, or postpone it "
-    "(`tasks postpone <id> --in-days N`), or tell the user you are dropping it and `tasks delete <id>`. "
+    "(`tasks postpone <id> --in-days N`), or delete it if stale (`tasks delete <id>`). "
     "Never leave a task sitting overdue."
 )
 _STALE_HEADER = (
     "Stale tasks, pending 2+ weeks with no due date. Give each a deadline (`tasks postpone <id> --in-days N`), "
-    "do it now, drop it with the user's knowledge, or, when it is undated on purpose because someone else drives "
+    "do it now, delete it if stale, or, when it is undated on purpose because someone else drives "
     "it or it is a genuine someday, park it with `tasks update <id> --backburner`: it stays pending and stays in "
     "`tasks list` marked [parked], it just stops being listed here. Never invent a deadline to buy silence."
 )
@@ -476,7 +476,7 @@ def maybe_send_digest(config: Config, notif_dir: Path, *, now: datetime | None =
     if message is None:
         return False
 
-    write_notification(notif_dir, DIGEST_TYPE, message=message)
+    write_notification(notif_dir, DIGEST_TYPE, interrupt=False, message=message)
     with closing(db.get_db(config.data_dir)) as conn:
         db.set_meta(conn, _DIGEST_META_KEY, now.isoformat())
         conn.commit()
@@ -487,10 +487,12 @@ def maybe_send_digest(config: Config, notif_dir: Path, *, now: datetime | None =
 # Due-date checkpoints (computed, never stored)
 # ---------------------------------------------------------------------------
 
+DUE_TYPE = "task_due"
+
 DUE_NOW_MESSAGE = (
-    'Task "{subject}" ({task_id}) is due now. Decide immediately: do it and run `tasks done {task_id}`, '
-    "or postpone it (`tasks postpone {task_id} --in-days N`), or tell the user you are dropping it and run "
-    "`tasks delete {task_id}`. Never leave a task sitting overdue."
+    'Task "{subject}" is due now. Decide immediately: do it and run `tasks done {task_id}`, '
+    "or postpone it (`tasks postpone {task_id} --in-days N`), or delete it if stale "
+    "(`tasks delete {task_id}`). Never leave a task sitting overdue."
 )
 
 LEAD_TIME_MESSAGE = "Task due in {label}: {subject}"
@@ -552,7 +554,7 @@ def fire_due_checkpoints(config: Config, notif_dir: Path, *, now: datetime | Non
                 message = DUE_NOW_MESSAGE.format(subject=row["subject"], task_id=row["id"])
             else:
                 message = LEAD_TIME_MESSAGE.format(label=label, subject=row["subject"])
-            write_notification(notif_dir, "reminder", message=message, task_id=row["id"])
+            write_notification(notif_dir, DUE_TYPE, message=message, task_id=row["id"])
             conn.execute("UPDATE tasks SET checkpoint_fired_through = ? WHERE id = ?", (now.isoformat(), row["id"]))
             fired += 1
         conn.commit()

@@ -99,6 +99,7 @@ def test_digest_emits_at_most_once_per_day(tmp_config: Config, tmp_path: Path):
     assert len(files) == 2
     payload = json.loads(files[0].read_text())
     assert payload["type"] == "task_digest"
+    assert payload["interrupt"] is False, "the digest is a daily sweep, so it must snooze, not interrupt"
     assert overdue["id"] in payload["message"]
 
 
