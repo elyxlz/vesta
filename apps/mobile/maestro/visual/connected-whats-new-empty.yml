@@ -40,6 +40,8 @@ tags:
     timeout: 10000
     speed: 40
     visibilityPercentage: 100
+    centerElement: true
+
 - tapOn:
     text: "^Notification rules,.*"
 - extendedWaitUntil:
@@ -68,6 +70,8 @@ tags:
     timeout: 10000
     speed: 40
     visibilityPercentage: 100
+    centerElement: true
+
 - tapOn:
     text: "^Host access,.*"
 - extendedWaitUntil:
@@ -96,6 +100,8 @@ tags:
     timeout: 10000
     speed: 40
     visibilityPercentage: 100
+    centerElement: true
+
 - tapOn:
     text: "^Files,.*"
 - extendedWaitUntil:

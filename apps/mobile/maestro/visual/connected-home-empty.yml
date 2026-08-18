@@ -32,15 +32,25 @@ tags:
 - extendedWaitUntil:
     visible: "Done. I prioritized the visual regressions first.*"
     timeout: 10000
-- swipe:
-    start: "85%,50%"
-    end: "15%,50%"
-    duration: 450
 # The dashboard renders in a WebView whose inner text Android does not expose to
 # the accessibility tree; the harness reveals this native marker on WebView load.
+# An emulator can drop a swipe, so the page gesture retries until the marker shows.
+- repeat:
+    times: 3
+    while:
+      notVisible: "Dashboard ready"
+    commands:
+      - swipe:
+          start: "85%,50%"
+          end: "15%,50%"
+          duration: 450
+      - extendedWaitUntil:
+          visible: "Dashboard ready"
+          timeout: 20000
+          optional: true
 - extendedWaitUntil:
     visible: "Dashboard ready"
-    timeout: 60000
+    timeout: 20000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-dashboard
@@ -84,13 +94,22 @@ tags:
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
-- swipe:
-    start: "85%,50%"
-    end: "15%,50%"
-    duration: 450
+- repeat:
+    times: 3
+    while:
+      notVisible: "Open nova"
+    commands:
+      - swipe:
+          start: "85%,50%"
+          end: "15%,50%"
+          duration: 450
+      - extendedWaitUntil:
+          visible: "Open nova"
+          timeout: 5000
+          optional: true
 - extendedWaitUntil:
     visible: "Open nova"
-    timeout: 10000
+    timeout: 5000
 - tapOn: "Open nova"
 - extendedWaitUntil:
     visible: "Start a conversation"

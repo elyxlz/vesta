@@ -110,6 +110,8 @@ tags:
     timeout: 10000
     speed: 40
     visibilityPercentage: 100
+    centerElement: true
+
 - tapOn:
     text: "^Manage backups,.*"
 - extendedWaitUntil:
