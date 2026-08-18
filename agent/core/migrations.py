@@ -15,6 +15,12 @@ records it in `state.json`. If the agent never calls the tool — rate limit,
 crash, hallucinated success — the migration runs again on the next boot.
 Migration prompts must therefore be idempotent.
 
+A migration that renames or removes a command must sweep recurring reminder
+bodies as well as the source tree. A recurring reminder's message is an
+instruction the agent follows when it fires, so it is executable prose that no
+grep of `~/agent` can reach: it lives in the reminders store, and a stale command
+in one surfaces only when it fires, which is the worst moment to discover it.
+
 Fresh agents skip migrations entirely: on first start we mark every shipping
 migration as applied without running it. Migrations only exist to converge
 legacy state. Future migrations added in later images are not pre-marked, so
