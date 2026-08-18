@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""Watch the box's daemons from OUTSIDE the agent loop, and speak only when one is down.
+
+WHY THIS EXISTS
+The hourly proactive tick's first job is daemon liveness, and waking the whole agent is the expensive
+way to run a cheap check.
+
+It also could not answer the question it was being used to answer. 78 minutes after this watchdog
+started on 15 Aug it caught the dashboard down after 2h46m of uptime, with every other daemon alive
+from the same boot and no boot in between: a genuine silent death, cleanly observed for the first
+time. Earlier the same morning I had concluded from a start count (41 boots against 44 recorded
+starts) that no such deaths existed. **A start count can only rule out death-AND-restart cycles.** A
+death nobody restarts adds no start and writes nothing to the daemon's own log, so it was invisible
+to every record that existed before this file. Hence the deaths ledger below.
+
+Measured on this box, a tick whose entire output was "green, holding" still re-read
+~465k cached tokens at ~$0.24, and seven overnight ticks cost $1.73 to produce about forty words.
+The lever is not "do less inside a tick", it is "did the tick need to run at all".
+
+So the liveness half moves here: a plain loop in its own process that notifies only when something
+is actually down. A healthy night writes nothing and wakes nobody, which is the entire point.
+
+WHAT IT DOES WHEN A DAEMON IS DOWN
+It restarts it, then says so. Restarting is not a side quest: a start is idempotent, it is exactly
+what the restart skill does, and a watchdog that reports a dead daemon while leaving it dead has
+converted an outage into an outage plus a notification. The notification then carries whether the
+restart worked, because those are different situations: one is a blip worth knowing about, the other
+needs hands.
+
+THE FAILURE MODE THIS MUST NOT HAVE
+A watchdog that dies looks exactly like a quiet night: no notifications either way. That is the same
+shape as a forecaster that cannot speak and a guard nothing invokes, which this box has now shipped
+twice. So every pass stamps HEARTBEAT whether or not anything was wrong, and `reality_check.sh`
+reads that stamp. Silence is only trustworthy when something else is proving the silent thing is
+still alive.
+
+THROTTLE
+A daemon that stays down is re-reported on THROTTLE_SECS, not every pass, and the state clears when
+it recovers, so a still-broken thing keeps nagging while a fixed one goes quiet on its own.
+"""
+
+import contextlib
+import json
+import os
+import pathlib as pl
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta, UTC
+
+NAME = "daemon-watchdog"
+HOME = pl.Path.home()
+DAEMONS_DIR = pl.Path(os.environ.get("WATCHDOG_DAEMONS_DIR") or HOME / "agent/data/daemons")
+PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
+LOG = HOME / "agent/logs" / f"{NAME}.log"
+# All of them are overridable so a pass can be exercised against a synthetic broken daemon without
+# killing a real one. A monitor that can only be tested by breaking production gets tested once,
+# optimistically, and its failure path ships unproven; and the healthy path is the one that must not
+# be trusted on inspection, because a monitor that cannot fire prints exactly what a healthy box does.
+NOTIFY_DIR = pl.Path(os.environ.get("WATCHDOG_NOTIFY_DIR") or HOME / "agent/notifications")
+STATE = pl.Path(os.environ.get("WATCHDOG_STATE") or HOME / "agent/data/daemon-watchdog-state.json")
+DEATHS = pl.Path(os.environ.get("WATCHDOG_DEATHS") or HOME / "agent/data/daemon-deaths.tsv")
+HEARTBEAT = pl.Path(os.environ.get("WATCHDOG_HEARTBEAT") or HOME / "agent/data/daemon-watchdog.beat")
+LIST = pl.Path(os.environ.get("WATCHDOG_LIST") or HOME / "agent/skills/restart/daemons.sh")
+
+INTERVAL_SECS = int(os.environ.get("WATCHDOG_INTERVAL_SECS", "120"))
+THROTTLE_SECS = int(os.environ.get("WATCHDOG_THROTTLE_SECS", str(6 * 3600)))
+# A daemon that dies, gets restarted, and dies again is not a blip, and quietly restarting it
+# forever is the exact failure the dashboard investigation warned about: an endless restart loop
+# looks like a healthy service to everything except the log nobody reads. Past this many deaths in
+# CRASHLOOP_WINDOW_SECS, keep restarting (a running service still beats none, and for a messaging
+# daemon the difference is the user reaching me at all) but escalate to an INTERRUPTING notification
+# on a short throttle, so a hard failure cannot hide behind a working restart.
+CRASHLOOP_DEATHS = int(os.environ.get("WATCHDOG_CRASHLOOP_DEATHS", "3"))
+CRASHLOOP_WINDOW_SECS = int(os.environ.get("WATCHDOG_CRASHLOOP_WINDOW_SECS", "3600"))
+CRASHLOOP_THROTTLE_SECS = int(os.environ.get("WATCHDOG_CRASHLOOP_THROTTLE_SECS", "1800"))
+# Overridable so the hang path can be tested in seconds rather than minutes. The hang is the
+# failure that actually happened, so it must be exercised, not reasoned about.
+STATUS_TIMEOUT_SECS = int(os.environ.get("WATCHDOG_STATUS_TIMEOUT_SECS", "20"))
+START_TIMEOUT_SECS = int(os.environ.get("WATCHDOG_START_TIMEOUT_SECS", "60"))
+USAGE = f"Usage: {NAME} <daemon start|daemon stop|daemon restart|daemon status|check>"
+
+
+def now():
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# --- daemon lifecycle (portless; see tasks_cli/daemon.py for the ported original) ----------------
+
+def _starttime(pid):
+    """Field 22 of /proc/<pid>/stat. (pid, starttime) is a stable identity: a recycled pid cannot
+    share the original's start time, so a renumbered pid namespace cannot make a dead daemon read
+    as alive."""
+    try:
+        stat = pl.Path(f"/proc/{pid}/stat").read_text()
+        return int(stat[stat.rindex(")") + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _record(pid):
+    started = _starttime(pid)
+    return f"{pid} {started}" if started is not None else str(pid)
+
+
+def pid_of(pidfile):
+    """The live pid recorded in `pidfile`, or None if it is absent, stale or recycled."""
+    try:
+        record = pidfile.read_text().split()
+        pid = int(record[0])
+        os.kill(pid, 0)
+    except (OSError, IndexError, ValueError, ProcessLookupError, PermissionError):
+        return None
+    if len(record) > 1 and record[1].isdigit():
+        current = _starttime(pid)
+        if current is not None and current != int(record[1]):
+            return None
+    return pid
+
+
+def live_pid():
+    return pid_of(PIDFILE)
+
+
+def unlisted_daemons(lines):
+    """Daemons that are RUNNING but absent from the list: they work now and die at the next restart.
+
+    The empty-list alarm covers a list that lost everything; this covers one that lost a line. It
+    needs evidence from outside the list, because every other probe on this box derives its expected
+    set from the same file it is auditing, so a list short by one reads as a smaller healthy box and
+    every light stays green. The pidfile store is that evidence: `<skill> daemon start` writes it and
+    reads no list to do so.
+
+    A daemon retired on purpose is stopped as well as unlisted, so its pid is dead and this stays
+    quiet. That is what keeps it from being a high-water mark on the count, which would cry wolf on
+    every deliberate removal and pin the box to whatever it happened to be running once.
+    """
+    listed = {ln.split()[0] for ln in lines if ln.split()} | {NAME}
+    try:
+        entries = sorted(DAEMONS_DIR.glob("*.pid"))
+    except OSError:
+        return []
+    return [f.stem for f in entries
+            if f.stem not in listed and pid_of(f) is not None]
+
+
+def _start():
+    if live_pid() is not None:
+        print(json.dumps({"status": "already_running"}))
+        return 0
+    DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("ab") as log:
+        child = subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "loop"],
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            start_new_session=True, stdout=log, stderr=log,
+        )
+    PIDFILE.write_text(_record(child.pid))
+    # A start returns only once the loop has proved it runs, so the caller's next line can trust it.
+    # Waiting on a heartbeat rather than on the process existing is the difference between "it was
+    # spawned" and "it works": a loop that crashes on its first pass still spawns fine.
+    deadline = time.monotonic() + 15
+    before = HEARTBEAT.read_text() if HEARTBEAT.exists() else ""
+    while time.monotonic() < deadline:
+        if child.poll() is not None:
+            PIDFILE.unlink(missing_ok=True)
+            print(json.dumps({"error": f"{NAME} exited during startup; see {LOG}"}), file=sys.stderr)
+            return 1
+        if HEARTBEAT.exists() and HEARTBEAT.read_text() != before:
+            print(json.dumps({"status": "started"}))
+            return 0
+        time.sleep(0.3)
+    print(json.dumps({"status": "started", "note": "no heartbeat yet"}))
+    return 0
+
+
+def _stop():
+    pid = live_pid()
+    if pid is None:
+        print(json.dumps({"status": "already_stopped"}))
+        return 0
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and live_pid() is not None:
+        time.sleep(0.3)
+    if live_pid() is not None:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+        time.sleep(0.5)
+    PIDFILE.unlink(missing_ok=True)
+    print(json.dumps({"status": "stopped"}))
+    return 0
+
+
+def _status():
+    beat = HEARTBEAT.read_text().strip() if HEARTBEAT.exists() else None
+    print(json.dumps({"running": live_pid() is not None, "port": None, "last_pass": beat}))
+    return 0
+
+
+# --- the check itself ----------------------------------------------------------------------------
+
+def daemon_lines():
+    """The daemon list, read from disk every pass.
+
+    Never cached and never retyped: the whole reason this file exists rather than a block inside a
+    skill is that a snapshot can lag the disk by a line, and the daemon on the missing line is then
+    the one nobody watches.
+    """
+    try:
+        raw = LIST.read_text()
+    except OSError:
+        return []
+    out = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Never watch itself. It cannot catch its own death anyway (a dead loop asks nothing), and
+        # the self-check has a real failure mode: if the pid record went missing while the loop
+        # lived, the loop would read itself as down and "restart" itself into a second loop. Its
+        # liveness is proven from outside, by the heartbeat reality_check.sh reads.
+        if line.split()[0] == NAME:
+            continue
+        out.append(line)
+    return out
+
+
+def _run(cmd, timeout):
+    """Run a shell command with a timeout that actually holds. Returns (rc, output); rc None on timeout.
+
+    `subprocess.run(timeout=...)` is NOT enough here, and this cost the watchdog its sight within
+    three hours of shipping. It kills only the direct `sh -c` child, then keeps reading the pipes to
+    EOF; any grandchild that inherited those write ends keeps them open, so the read blocks forever
+    and the whole sweep stops. Found live: the watchdog sat in poll_schedule_timeout on fds 3 and 5
+    for six minutes with a chain of `dashboard daemon start` processes beneath it, while the daemon
+    it was meant to be watching stayed dead and the heartbeat went stale.
+
+    So the child gets its own session and the whole GROUP is killed on timeout, which closes the
+    write ends no matter how deep the chain went. A daemon that started successfully is not at risk:
+    the start scripts `setsid` their server precisely so it leaves this group, which is what makes
+    killing the group safe.
+    """
+    proc = subprocess.Popen(["sh", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            start_new_session=True, text=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, out or ""
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        try:
+            out, _ = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            out = ""
+        return None, out or ""
+
+
+def status_of(line):
+    """(name, running, detail). `running` is None when the daemon cannot be asked at all.
+
+    None is deliberately not False. A line with no status verb, or a command that is missing, is an
+    unmeasured daemon, and reporting an unmeasured thing as down produces a restart loop against
+    something that was never broken.
+    """
+    name = line.split()[0]
+    if " daemon start" not in line:
+        return name, None, "no status verb to ask"
+    query = line.replace(" daemon start", " daemon status", 1)
+    rc, text = _run(query, STATUS_TIMEOUT_SECS)
+    if rc is None:
+        # A status call that hangs is a daemon that cannot answer, which is a finding, not a
+        # measurement failure. But do not restart on it: a hung status says nothing about the
+        # process, and restarting on no information is how a healthy daemon gets replaced.
+        return name, None, f"status hung, killed after {STATUS_TIMEOUT_SECS}s"
+    if rc in (126, 127):
+        # 127 is "command not found", 126 is "found but not executable". Both mean the daemon could
+        # not be ASKED, which this function's contract says is None, not False. Reporting False here
+        # calls a live daemon DOWN, and the restart that follows cannot work either, because it
+        # needs the same command that is missing.
+        return name, None, f"cannot be asked, exit {rc}: {text.strip()[:200]}"
+    if rc != 0:
+        return name, False, f"status exited {rc}: {text.strip()[:200]}"
+    try:
+        # Tolerate a daemon that prints more than the object (whatsapp prints a nested blob).
+        start = text.index("{")
+        parsed = json.loads(text[start:text.rindex("}") + 1])
+    except (ValueError, json.JSONDecodeError):
+        return name, None, f"status was not JSON: {text.strip()[:200]}"
+    if isinstance(parsed.get("running"), bool):
+        return name, parsed["running"], text.strip()[:200]
+    # whatsapp answers with an auth/connection blob rather than a `running` flag.
+    blob = json.dumps(parsed)
+    if '"authenticated"' in blob or '"connected": true' in blob:
+        return name, True, text.strip()[:200]
+    return name, None, f"no running flag in status: {text.strip()[:200]}"
+
+
+def restart(line):
+    rc, out = _run(line, START_TIMEOUT_SECS)
+    if rc is None:
+        return False, f"start hung and was killed after {START_TIMEOUT_SECS}s"
+    return rc == 0, out.strip()[:200]
+
+
+def notify(message, interrupt, extra=None, kind="daemon_down"):
+    """`kind` sets both the payload type and the filename, so a reader can tell them apart.
+
+    Not everything this watchdog reports is a daemon being down, and typing it that way is a lie the
+    notification rules then act on. "Nothing could be asked" is the opposite of knowing they are
+    down, and the two must not arrive under the same type.
+    """
+    NOTIFY_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source": "daemon-watchdog",
+        "type": kind,
+        "message": message,
+        "interrupt": interrupt,
+        "timestamp": now(),
+    }
+    if extra:
+        payload.update(extra)
+    stamp = int(time.time() * 1_000_000)
+    path = NOTIFY_DIR / f"{stamp}-daemon-watchdog-{kind}.json"
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
+def load_state():
+    try:
+        return json.loads(STATE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state):
+    with contextlib.suppress(OSError):
+        STATE.write_text(json.dumps(state, indent=2))
+
+
+def one_pass(quiet=True):
+    """One sweep. Returns the list of findings; writes a notification only for a fresh or
+    throttle-expired problem."""
+    state = load_state()
+    lines = daemon_lines()
+    findings = []
+    unmeasured = []
+
+    # A list that is PRESENT and yields nothing has been truncated or made unreadable: a watchdog
+    # watching nothing. A list that is ABSENT is a box that has registered no daemons yet, which the
+    # restart skill treats as a normal state ("create the file if it does not exist"), so alarming on
+    # it would make this daemon cry wolf forever on any box that has not set one up. The dangerous
+    # version of an absent list, daemons running with nothing registered to bring them back, is not
+    # silent either way: the unlisted check below sees it from the pidfile store, which is evidence
+    # this file cannot fake.
+    if not lines and LIST.exists():
+        findings.append(("(none)", "no daemon lines to watch", True))
+        if _due(state, "(none)"):
+            notify(f"daemon-watchdog has no daemons to watch: {LIST} exists but is empty or "
+                   "unreadable, so nothing on this box is being watched at all",
+                   True, kind="daemon_list_empty")
+            state["(none)"] = time.time()
+    for line in lines:
+        name, running, detail = status_of(line)
+        if running is True:
+            # Remember when it was last seen alive, so the NEXT death has a bounded time and a
+            # measurable uptime instead of only a discovery timestamp.
+            state.setdefault("_alive", {})[name] = now()
+            if name in state:
+                # Recovered. Clearing the entry is what stops the nagging without anyone deciding to.
+                del state[name]
+            continue
+        if running is None:
+            findings.append((name, f"unmeasured: {detail}", False))
+            unmeasured.append(name)
+            continue
+        # Record the death BEFORE restarting, while the evidence is still true. Sweeps are every
+        # INTERVAL_SECS, so "last seen alive" bounds the death to that window, and the gap between
+        # the previous restart and this death is the uptime that survived. A silent death leaves no
+        # other trace: it does not appear in the daemon's own log, and it does not even show up as
+        # an extra start unless something restarts it, which is exactly how sixteen days of these
+        # stayed invisible to a count of startup banners.
+        seen = state.get("_alive", {}).get(name)
+        with contextlib.suppress(OSError):
+            with DEATHS.open("a") as fh:
+                fh.write(f"{now()}\t{name}\t{seen or 'unknown'}\t{detail[:120]}\n")
+        ok, out = restart(line)
+        deaths = recent_deaths(name)
+        findings.append((name, f"DOWN ({detail}); restart {'ok' if ok else 'FAILED'}: {out}"
+                               + (f"; {deaths} deaths in the last hour" if deaths >= CRASHLOOP_DEATHS else ""),
+                         not ok or deaths >= CRASHLOOP_DEATHS))
+        if ok and deaths >= CRASHLOOP_DEATHS:
+            # Its own throttle key, so a crash loop is not silenced by the ordinary
+            # one-notification-per-6h rule that a single death sets.
+            if _due(state, f"{name}!loop", CRASHLOOP_THROTTLE_SECS):
+                notify(f"{name} daemon is in a CRASH LOOP: {deaths} deaths in the last hour, each "
+                       f"restarted successfully. Restarting is holding the service up and hiding a "
+                       f"real fault. Deaths are logged in {DEATHS}.",
+                       True, {"daemon": name, "recovered": True, "crash_loop": True, "deaths": deaths})
+                state[f"{name}!loop"] = time.time()
+        elif _due(state, name):
+            if ok:
+                notify(f"{name} daemon was down and has been restarted. It died on its own; "
+                       f"nothing asked it to stop. Status said: {detail}",
+                       False, {"daemon": name, "recovered": True})
+            else:
+                notify(f"{name} daemon is DOWN and would not restart: {out}. "
+                       "Nothing else will tell you, and if this is a messaging daemon "
+                       "the user cannot reach you at all.",
+                       True, {"daemon": name, "recovered": False})
+            state[name] = time.time()
+
+    # Every daemon unmeasured is not many small problems, it is one big one: the CLI layer itself
+    # is gone, so nothing can be asked and nothing can be restarted either. Silence here would be
+    # worse than a wrong alarm, because an unmeasured daemon writes no notification at all.
+    # Same reasoning as the empty-list alarm above, different cause.
+    if lines and len(unmeasured) == len(lines) and _due(state, "(unaskable)"):
+        notify(f"daemon-watchdog cannot ASK any of its {len(lines)} daemons: "
+               f"{', '.join(unmeasured)}. They may all be fine; this says the commands are missing "
+               "or unrunnable, not that the daemons are down. Restarting cannot work either, since "
+               "it needs the same commands. Check PATH and the CLI installs before anything else.",
+               True, {"unaskable": len(unmeasured)}, kind="daemons_unaskable")
+        state["(unaskable)"] = time.time()
+
+    # Suppressed when the list is present-but-empty, because that alarm already said it better.
+    unlisted = [] if (not lines and LIST.exists()) else unlisted_daemons(lines)
+    if unlisted and _due(state, "(unlisted)"):
+        findings.append(("(unlisted)", f"running but unlisted: {', '.join(unlisted)}", True))
+        notify(f"{len(unlisted)} daemon(s) are running but absent from {LIST}: "
+               f"{', '.join(unlisted)}. Nothing is wrong right now, which is the problem: they work "
+               "until the next restart and then never come back, because the restart skill starts "
+               "only what that file lists. Add the line, or stop them if they are meant to be gone.",
+               False, {"unlisted": unlisted}, kind="daemons_unlisted")
+        state["(unlisted)"] = time.time()
+
+    save_state(state)
+    with contextlib.suppress(OSError):
+        HEARTBEAT.write_text(now() + "\n")
+    if not quiet:
+        if findings:
+            for name, detail, _ in findings:
+                print(f"CHECK {name}: {detail}")
+        else:
+            print(f"all {len(lines)} daemons running (checked {now()})")
+    return findings
+
+
+def _due(state, key, throttle=THROTTLE_SECS):
+    last = state.get(key)
+    return last is None or (time.time() - last) > throttle
+
+
+def recent_deaths(name):
+    """How many times this daemon has died inside the crash-loop window, from the ledger on disk.
+
+    Read from the file rather than kept in memory, so a watchdog restart does not reset the count
+    and hand a crash-looping daemon a clean record.
+    """
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=CRASHLOOP_WINDOW_SECS)
+    count = 0
+    try:
+        for line in DEATHS.read_text().splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2 or parts[1] != name:
+                continue
+            try:
+                when = datetime.strptime(parts[0], "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                continue
+            if when >= cutoff:
+                count += 1
+    except OSError:
+        return 0
+    return count
+
+
+def loop():
+    running = {"go": True}
+
+    def bye(*_):
+        running["go"] = False
+
+    signal.signal(signal.SIGTERM, bye)
+    signal.signal(signal.SIGINT, bye)
+    while running["go"]:
+        try:
+            one_pass()
+        except Exception as exc:                                  # never let one bad pass end the watch
+            print(f"{now()} pass failed: {exc}", flush=True)
+        for _ in range(INTERVAL_SECS):
+            if not running["go"]:
+                break
+            time.sleep(1)
+    return 0
+
+
+def main(argv):
+    if len(argv) >= 3 and argv[1] == "daemon":
+        action = argv[2]
+        if action == "start":
+            return _start()
+        if action == "stop":
+            return _stop()
+        if action == "status":
+            return _status()
+        if action == "restart":
+            _stop()
+            return _start()
+    if len(argv) >= 2 and argv[1] == "loop":
+        return loop()
+    if len(argv) >= 2 and argv[1] == "check":
+        findings = one_pass(quiet=False)
+        return 1 if any(f[2] for f in findings) else 0
+    print(USAGE, file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
