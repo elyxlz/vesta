@@ -495,27 +495,36 @@ async function withGeneratedAndroid(appId, callback) {
 
   let reusable = false;
   let result;
+  let failure;
   try {
     if (hadAndroid) await rename(androidDirectory, savedAndroidDirectory);
     if (hadCachedAndroid) await rename(nativeAndroidDirectory, androidDirectory);
     result = await callback(androidDirectory, hadCachedAndroid);
     reusable = true;
-  } finally {
-    let cleanupError;
-    try {
-      if (await exists(androidDirectory)) {
-        if (reusable) await moveVisualAndroidToCache(androidDirectory);
-        else await rm(androidDirectory, { recursive: true, force: true });
-      }
-      if (await exists(savedAndroidDirectory)) {
-        await rename(savedAndroidDirectory, androidDirectory);
-      }
-      await rm(nativeTransactionDirectory, { recursive: true, force: true });
-    } catch (error) {
-      cleanupError = error;
-    }
-    if (cleanupError) throw cleanupError;
+  } catch (error) {
+    failure = error;
   }
+  let cleanupError;
+  try {
+    if (await exists(androidDirectory)) {
+      if (reusable) await moveVisualAndroidToCache(androidDirectory);
+      else await rm(androidDirectory, { recursive: true, force: true });
+    }
+    if (await exists(savedAndroidDirectory)) {
+      await rename(savedAndroidDirectory, androidDirectory);
+    }
+    await rm(nativeTransactionDirectory, { recursive: true, force: true });
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (cleanupError && failure) {
+    throw new AggregateError(
+      [failure, cleanupError],
+      "The visual native build failed and its cleanup failed too.",
+    );
+  }
+  if (cleanupError) throw cleanupError;
+  if (failure) throw failure;
   return result;
 }
 

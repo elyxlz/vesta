@@ -96,6 +96,7 @@ h1 {
 .scan-progress { color: var(--accent); font-weight: 700; }
 .scan-last { overflow: hidden; text-overflow: ellipsis; }
 .scan-row[data-state="failed"] .scan-last { color: #ff6467; }
+.scan-row[data-state="running"] .scan-last { color: var(--muted); }
 .scan-button {
   border: 1px solid var(--gold);
   border-radius: 999px;
@@ -249,53 +250,6 @@ main {
   justify-content: space-between;
   gap: 8px;
 }
-.capture-status {
-  display: flex;
-  flex: 0 1 auto;
-  max-width: 420px;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 12px 4px 6px;
-  background: var(--card);
-}
-.capture-status[data-state="error"] {
-  border-color: #ff6467;
-  background: #241413f2;
-}
-.status-spinner {
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  border: 3px solid var(--gold-soft);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: status-spin .8s linear infinite;
-}
-.capture-status[data-state="error"] .status-spinner {
-  display: grid;
-  border: 0;
-  background: #ff6467;
-  color: #26211a;
-  font-weight: 900;
-  place-items: center;
-  animation: none;
-}
-.capture-status[data-state="error"] .status-spinner::before { content: "!"; }
-.status-copy { min-width: 0; }
-.status-title { display: block; font-size: 11px; line-height: 1.25; }
-.status-detail {
-  display: block;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-@keyframes status-spin { to { transform: rotate(360deg); } }
 .preview {
   display: block;
   width: 100%;

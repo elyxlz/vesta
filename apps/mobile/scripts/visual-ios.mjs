@@ -3,7 +3,6 @@
 // two simulator shards, and writes each shot into the shared visual store.
 
 import { existsSync } from "node:fs";
-import { createServer } from "node:http";
 import {
   copyFile,
   mkdir,
@@ -508,6 +507,7 @@ async function withGeneratedIos(callback) {
 
   let reusable = false;
   let result;
+  let failure;
   let interruptedSignal;
   const recordInterruption = (signal) => {
     interruptedSignal ??= signal;
@@ -523,50 +523,58 @@ async function withGeneratedIos(callback) {
     if (hadCachedIos) await rename(nativeIosDirectory, iosDirectory);
     result = await callback(iosDirectory, hadCachedIos);
     reusable = !interruptedSignal;
-  } finally {
-    const savedIosExists = await exists(savedIosDirectory);
-    const ownsCurrentIos = savedIosExists || !hadIos;
-    let visualHandled = !ownsCurrentIos || !(await exists(iosDirectory));
-    let cleanupError;
-    try {
-      if (!visualHandled) {
-        if (reusable) await moveVisualIosToCache(iosDirectory);
-        else await rm(iosDirectory, { recursive: true, force: true });
+  } catch (error) {
+    failure = error;
+  }
+  const savedIosExists = await exists(savedIosDirectory);
+  const ownsCurrentIos = savedIosExists || !hadIos;
+  let visualHandled = !ownsCurrentIos || !(await exists(iosDirectory));
+  let cleanupError;
+  try {
+    if (!visualHandled) {
+      if (reusable) await moveVisualIosToCache(iosDirectory);
+      else await rm(iosDirectory, { recursive: true, force: true });
+      visualHandled = true;
+    }
+  } catch (error) {
+    cleanupError = error;
+  }
+
+  let originalRestored = !savedIosExists;
+  try {
+    if (savedIosExists) {
+      if (await exists(iosDirectory)) {
+        const recoveryDirectory = path.join(
+          path.dirname(nativeIosDirectory),
+          `recovered-ios-${Date.now()}-${process.pid}`,
+        );
+        await rename(iosDirectory, recoveryDirectory);
         visualHandled = true;
       }
-    } catch (error) {
-      cleanupError = error;
+      await rename(savedIosDirectory, iosDirectory);
+      originalRestored = true;
     }
-
-    let originalRestored = !savedIosExists;
-    try {
-      if (savedIosExists) {
-        if (await exists(iosDirectory)) {
-          const recoveryDirectory = path.join(
-            path.dirname(nativeIosDirectory),
-            `recovered-ios-${Date.now()}-${process.pid}`,
-          );
-          await rename(iosDirectory, recoveryDirectory);
-          visualHandled = true;
-        }
-        await rename(savedIosDirectory, iosDirectory);
-        originalRestored = true;
-      }
-    } catch (error) {
-      cleanupError = cleanupError
-        ? new AggregateError(
-            [cleanupError, error],
-            "Could not restore the production ios/ directory.",
-          )
-        : error;
-    }
-    if (visualHandled && originalRestored) {
-      await rm(nativeTransactionDirectory, { recursive: true, force: true });
-    }
-    process.removeListener("SIGINT", onSigint);
-    process.removeListener("SIGTERM", onSigterm);
-    if (cleanupError) throw cleanupError;
+  } catch (error) {
+    cleanupError = cleanupError
+      ? new AggregateError(
+          [cleanupError, error],
+          "Could not restore the production ios/ directory.",
+        )
+      : error;
   }
+  if (visualHandled && originalRestored) {
+    await rm(nativeTransactionDirectory, { recursive: true, force: true });
+  }
+  process.removeListener("SIGINT", onSigint);
+  process.removeListener("SIGTERM", onSigterm);
+  if (cleanupError && failure) {
+    throw new AggregateError(
+      [failure, cleanupError],
+      "The visual native build failed and its cleanup failed too.",
+    );
+  }
+  if (cleanupError) throw cleanupError;
+  if (failure) throw failure;
 
   if (interruptedSignal) {
     throw new Error(`Visual native build interrupted by ${interruptedSignal}.`);
@@ -1040,7 +1048,9 @@ async function startIosBridge(simulators) {
       for (const pid of createdKeyboardHostPids) {
         try {
           process.kill(pid, "SIGTERM");
-        } catch {}
+        } catch {
+          // The keyboard host already exited; nothing to stop.
+        }
       }
     },
   });
