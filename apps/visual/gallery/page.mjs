@@ -1,0 +1,52 @@
+import { escapeHtml, scanRowsHtml, sectionHtml } from "./view.mjs";
+
+// The stylesheet and the client script are static files the server serves under
+// /gallery/, so the browser caches both across the 500 ms polls.
+export function galleryHtml(view) {
+  const sections = view.sections.map(sectionHtml).join("");
+  const reportLinks = view.reports
+    .map(
+      (link) =>
+        `<a class="report" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`,
+    )
+    .join("\n      ");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vesta Apps QA</title>
+  <link rel="stylesheet" href="gallery/styles.css">
+</head>
+<body data-revision="${escapeHtml(view.git.revision)}">
+  <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
+    <span class="status-spinner" aria-hidden="true"></span>
+    <span class="status-copy">
+      <strong class="status-title">Capturing screenshots</strong>
+      <span class="status-detail">Starting…</span>
+    </span>
+  </div>
+  <header>
+    <div>
+      <h1>Vesta Apps QA</h1>
+    </div>
+    <div class="meta">
+      <span>${escapeHtml(view.git.revision)}${view.git.dirty ? " · dirty" : ""}</span>
+      ${reportLinks}
+    </div>
+  </header>
+  <section class="scan-bar" aria-label="Capture runs">${scanRowsHtml()}
+    <label class="gentle-toggle" title="Capture at background priority with fewer workers: slower, but the machine stays responsive.">
+      <input type="checkbox" id="gentle-toggle" checked>
+      <span>Gentle scans</span>
+    </label>
+  </section>
+  <main>${sections}</main>
+  <dialog id="lightbox">
+    <button aria-label="Close">×</button>
+    <img alt="">
+  </dialog>
+  <script src="gallery/client.js"></script>
+</body>
+</html>`;
+}
