@@ -29,6 +29,27 @@ export const PLATFORMS = {
     frame: "phone",
     runner: "android-galaxy",
   },
+  "ios-dark": {
+    label: "iOS · dark",
+    family: "mobile",
+    theme: "dark",
+    frame: "phone",
+    runner: "ios",
+  },
+  "android-dark": {
+    label: "Android · dark",
+    family: "mobile",
+    theme: "dark",
+    frame: "phone",
+    runner: "android",
+  },
+  "android-galaxy-dark": {
+    label: "Android · 3-button · dark",
+    family: "mobile",
+    theme: "dark",
+    frame: "phone",
+    runner: "android-galaxy",
+  },
   web: {
     label: "Web",
     family: "web",
@@ -141,4 +162,17 @@ export function runnerOf(id) {
 
 export function platformsOfFamily(family) {
   return Object.keys(PLATFORMS).filter((id) => PLATFORMS[id].family === family);
+}
+
+// The same runner and frame in another theme, or null when there is none: a
+// runner flips the OS appearance in place and captures both from one drive.
+export function themedSibling(id, theme) {
+  const platform = requirePlatform(id);
+  const match = Object.entries(PLATFORMS).find(
+    ([, candidate]) =>
+      candidate.runner === platform.runner &&
+      candidate.frame === platform.frame &&
+      candidate.theme === theme,
+  );
+  return match ? match[0] : null;
 }

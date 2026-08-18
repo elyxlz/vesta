@@ -8,7 +8,7 @@ export function atomicWriteFile(target: string, contents: string): Promise<void>
 export function putShot(
   platform: string,
   name: string,
-  sourcePath: string,
+  source: string | Buffer,
   baseDirectory?: string,
 ): Promise<void>;
 export function shotEntries(

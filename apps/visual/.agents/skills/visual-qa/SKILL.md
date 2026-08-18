@@ -67,7 +67,7 @@ Ownership:
 | `web/visual/scenarios.json`, `web/visual/drives.ts`, `web/visual/harness/`, `web/visual/capture.spec.ts` | The web family |
 | `visual/.visual/` | Ignored: `shots/`, `run-status.json`, `capture-<runner>.log` |
 
-Platforms: `ios`, `android`, `android-galaxy` (mobile family); `web`, `desktop`, `web-narrow` and their `-dark` variants (web family). Runners: `ios`, `android`, `android-galaxy`, `web`. A theme variant is its own platform. The Web runner fills all six web platforms in one Playwright run.
+Platforms: `ios`, `android`, `android-galaxy` and their `-dark` siblings (mobile family); `web`, `desktop`, `web-narrow` and their `-dark` siblings (web family). Runners: `ios`, `android`, `android-galaxy`, `web`. A theme variant is its own platform. Every runner drives a scenario once and captures both themes by flipping the OS appearance in place (`captureBothThemes` in the mobile runners, `page.emulateMedia` in the web runner), so never add a dark drive or a dark flow.
 
 There is no watch mode. Recapture is a Scan button in the gallery or `npm run visual:capture -- <runner>`.
 
@@ -108,7 +108,7 @@ Mobile: add commands to the right `mobile/maestro/visual/*.yml`. Wait on the sta
       SCREENSHOT: example-state.png
 ```
 
-Both commands are required: `takeScreenshot` feeds the Android runner, the callback feeds the iOS bridge. For a real focused keyboard use the bridge action `ACTION: show-software-keyboard` before capture; never draw a fake keyboard.
+Both commands are required: `takeScreenshot` keeps the Maestro report artifact, the callback is what writes the shot (both themes, both platforms). For a real focused keyboard use the bridge action `ACTION: show-software-keyboard` before capture; never draw a fake keyboard.
 
 Web: add `drive` and `settle` under the scenario id in `web/visual/drives.ts`. `settle` is an assertion on the captured state, never a bare sleep.
 

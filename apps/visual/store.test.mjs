@@ -47,6 +47,16 @@ describe("putShot", () => {
     ).toBe(true);
   });
 
+  it("writes a Buffer through the same temp-and-rename path", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-store-"));
+    await putShot("ios-dark", "home.png", pngHeader(3, 4), base);
+    const target = path.join(base, "shots", "ios-dark");
+    expect(await readdir(target)).toEqual(["home.png"]);
+    expect(
+      (await readFile(path.join(target, "home.png"))).equals(pngHeader(3, 4)),
+    ).toBe(true);
+  });
+
   it("rejects a name that is not a bare .png filename", async () => {
     await expect(putShot("ios", "../home.png", "/dev/null")).rejects.toThrow(
       /Invalid shot name/,
@@ -88,10 +98,13 @@ describe("shotEntries", () => {
     );
     expect(Object.keys(entries).sort()).toEqual([
       "android",
+      "android-dark",
       "android-galaxy",
+      "android-galaxy-dark",
       "desktop",
       "desktop-dark",
       "ios",
+      "ios-dark",
       "web",
       "web-dark",
       "web-narrow",

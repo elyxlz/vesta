@@ -2,6 +2,9 @@ export type PlatformId =
   | "ios"
   | "android"
   | "android-galaxy"
+  | "ios-dark"
+  | "android-dark"
+  | "android-galaxy-dark"
   | "web"
   | "desktop"
   | "web-narrow"
@@ -41,3 +44,4 @@ export const FAMILIES: Record<FamilyId, FamilyDefinition>;
 export function platformFamily(id: string): FamilyId;
 export function runnerOf(id: string): RunnerId;
 export function platformsOfFamily(family: FamilyId): PlatformId[];
+export function themedSibling(id: string, theme: Theme): PlatformId | null;

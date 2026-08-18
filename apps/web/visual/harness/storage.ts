@@ -12,16 +12,13 @@ export const VISUAL_CONNECTION = {
   expiresAt: FAR_FUTURE_MS,
 };
 
-export async function seedStorage(
-  page: Page,
-  theme: "dark" | "light",
-): Promise<void> {
-  await page.addInitScript(
-    ({ pickedTheme, connection }) => {
-      localStorage.setItem("vesta-connection", JSON.stringify(connection));
-      localStorage.setItem("theme", pickedTheme);
-      sessionStorage.removeItem("vesta:onboarding");
-    },
-    { pickedTheme: theme, connection: VISUAL_CONNECTION },
-  );
+// The theme is seeded as "system" so the page follows the emulated color
+// scheme: the runner captures light, flips the scheme, and captures dark from
+// the same driven page.
+export async function seedStorage(page: Page): Promise<void> {
+  await page.addInitScript((connection) => {
+    localStorage.setItem("vesta-connection", JSON.stringify(connection));
+    localStorage.setItem("theme", "system");
+    sessionStorage.removeItem("vesta:onboarding");
+  }, VISUAL_CONNECTION);
 }

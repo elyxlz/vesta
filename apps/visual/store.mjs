@@ -30,12 +30,12 @@ export async function atomicWriteFile(target, contents) {
   await rename(temporary, target);
 }
 
-// The only writer of shot files: copy to a temp name in the target directory, then
-// rename, so the gallery's poll never reads a torn PNG.
+// The only writer of shot files: write (a Buffer) or copy (a path) to a temp name
+// in the target directory, then rename, so the gallery's poll never reads a torn PNG.
 export async function putShot(
   platform,
   name,
-  sourcePath,
+  source,
   baseDirectory = storeDirectory,
 ) {
   if (
@@ -49,7 +49,8 @@ export async function putShot(
   await mkdir(directory, { recursive: true });
   const target = path.join(directory, name);
   const temporary = `${target}.tmp-${process.pid}`;
-  await copyFile(sourcePath, temporary);
+  if (Buffer.isBuffer(source)) await writeFile(temporary, source);
+  else await copyFile(source, temporary);
   await rename(temporary, target);
 }
 
