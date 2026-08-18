@@ -30,11 +30,15 @@ export function galleryHtml(view) {
   </header>
   <section class="scan-bar" aria-label="Capture runs">
     <div class="scan-bar-inner">${scanRowsHtml()}
-    <label class="gentle-toggle" title="Capture at background priority with fewer workers: slower, but the machine stays responsive.">
-      <input type="checkbox" id="gentle-toggle" checked>
-      <span>Gentle scans</span>
-    </label>
-    <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" title="Show every screen in its dark theme.">Dark</button>
+    <div class="scan-controls">
+      <label class="gentle-toggle" title="Capture at background priority with fewer workers: slower, but the machine stays responsive.">
+        <input type="checkbox" id="gentle-toggle" checked>
+        <span>Gentle</span>
+      </label>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" aria-label="Dark theme" title="Show every screen in its dark theme.">
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+      </button>
+    </div>
     <div class="capture-status" id="capture-status" data-state="ready" role="status" aria-live="polite" hidden>
       <span class="status-spinner" aria-hidden="true"></span>
       <span class="status-copy">

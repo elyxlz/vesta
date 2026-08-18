@@ -202,11 +202,15 @@ function updateScanRows(payload, status) {
     const failed = Boolean(run && !running && run.exitCode);
     row.dataset.state = failed ? "failed" : "ok";
     row.querySelector(".scan-last").textContent = failed
-      ? "last scan failed, see capture-" + runner + ".log"
-      : "last scan " +
-        (mtimes.length
-          ? new Date(Math.max.apply(null, mtimes)).toLocaleString()
-          : "never");
+      ? "failed, see capture-" + runner + ".log"
+      : mtimes.length
+        ? new Date(Math.max.apply(null, mtimes)).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "never";
   });
 }
 function markRefreshing(status, payload) {
