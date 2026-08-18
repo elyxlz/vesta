@@ -72,6 +72,17 @@ grep -rn 'tasks remind' ~/agent/MEMORY.md ~/agent/skills --exclude-dir=cli --exc
 
 Rewrite each hit in place. `tasks remind "..." <flags>` becomes `reminders create "..." <flags>`; `tasks remind list|snooze|update|delete` becomes `reminders list|snooze|update|delete`. A `--task <id>` flag has no equivalent: drop it and name the task in the message instead. No hits means nothing to do.
 
+Then sweep the reminders themselves, because the grep above cannot see them:
+
+```bash
+reminders list --json | grep -i 'tasks remind'
+```
+
+A recurring reminder's message is an instruction you act on when it fires, so a message spelling the
+old command is a break exactly like a script is, except it lives in sqlite rather than the source
+tree and surfaces only at fire time, in a hurry. Rewrite any hit with `reminders update <id>
+--message '...'`, applying the same substitutions. No hits means nothing to do.
+
 ### 9. Mark this migration applied
 
 Call `mark_migration_applied` with `name="2026-08-reminders-skill-split"`.
