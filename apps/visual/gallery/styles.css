@@ -319,11 +319,13 @@ h1 {
 .frame-phone::before { top: 18%; height: 9%; }
 .frame-phone::after { top: 30%; height: 14%; }
 .frame-phone .device-screen { --frame-ratio: 603 / 1311; border-radius: 27px; }
-/* A Pixel-style Android body: even thin bezel, tighter corners, the buttons on
-   the right edge, and a punch-hole camera at the top of the screen. */
+/* A Pixel-style Android body: even thin bezel, the buttons on the right edge,
+   and a punch-hole camera at the top of the screen. The emulator draws a
+   rectangular display with the status bar flush to its corners, so the screen
+   corners stay tight enough that nothing the OS drew is clipped. */
 .frame-android {
   border: 1px solid #3f3f47;
-  border-radius: 24px;
+  border-radius: 14px;
   padding: 4px;
   background: linear-gradient(160deg, #2b2b31, #0a0a0d 45%, #1d1d22);
   box-shadow: 0 18px 42px #0008, inset 0 0 0 1px #ffffff12;
@@ -350,7 +352,7 @@ h1 {
   box-shadow: 0 0 0 1px #1a1a1e;
   transform: translateX(-50%);
 }
-.frame-android .device-screen { --frame-ratio: 1080 / 2400; border-radius: 21px; }
+.frame-android .device-screen { --frame-ratio: 1080 / 2400; border-radius: 6px; }
 .frame-browser, .frame-desktop-window {
   overflow: hidden;
   border: 1px solid #3a3a42;
