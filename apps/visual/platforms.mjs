@@ -96,7 +96,8 @@ export const PLATFORMS = {
 
 // What a gallery Scan button (or `cli.mjs capture <runner>`) spawns from apps/:
 // `npm -w <workspace> run <script> -- [...args] [...gentleArgs]`. reportDirectory
-// is the runner's own HTML report, served by the gallery under /reports/<runner>/.
+// holds the runner's own HTML report, served by the gallery under /reports/<runner>/,
+// and reportFile names its entry page (Maestro writes report.html, Playwright index.html).
 export const RUNNERS = {
   ios: {
     label: "iOS",
@@ -105,6 +106,7 @@ export const RUNNERS = {
     args: [],
     gentleArgs: ["--gentle"],
     reportDirectory: path.join(appsRoot, "mobile/.visual/maestro"),
+    reportFile: "report.html",
   },
   android: {
     label: "Android",
@@ -113,6 +115,7 @@ export const RUNNERS = {
     args: [],
     gentleArgs: ["--gentle"],
     reportDirectory: path.join(appsRoot, "mobile/.visual/android/maestro"),
+    reportFile: "report.html",
   },
   "android-galaxy": {
     label: "Android · 3-button",
@@ -124,6 +127,7 @@ export const RUNNERS = {
       appsRoot,
       "mobile/.visual/android-galaxy/maestro",
     ),
+    reportFile: "report.html",
   },
   web: {
     label: "Web",
@@ -132,6 +136,7 @@ export const RUNNERS = {
     args: [],
     gentleArgs: ["--workers=2"],
     reportDirectory: path.join(appsRoot, "web/.visual/report"),
+    reportFile: "index.html",
   },
 };
 
@@ -150,14 +155,6 @@ function requirePlatform(id) {
   const platform = PLATFORMS[id];
   if (!platform) throw new Error(`Unknown platform: ${id}`);
   return platform;
-}
-
-export function platformFamily(id) {
-  return requirePlatform(id).family;
-}
-
-export function runnerOf(id) {
-  return requirePlatform(id).runner;
 }
 
 export function platformsOfFamily(family) {

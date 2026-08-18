@@ -11,7 +11,7 @@
     "ios": "VESTA_APP_VARIANT=development VESTA_LOCAL_IOS_NO_PUSH=1 expo run:ios",
     "android": "VESTA_APP_VARIANT=development expo run:android",
     "prebuild": "expo prebuild",
-    "lint": "expo lint src app scripts visual",
+    "lint": "expo lint .",
     "check": "tsc --noEmit",
     "test": "vitest run",
     "visual:ios:capture": "node ./scripts/visual-ios.mjs capture",
@@ -74,6 +74,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/react": "~19.2.2",
+    "@vesta/visual": "*",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.1",
     "eslint-import-resolver-typescript": "^4.4.5",

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -29,9 +29,15 @@ export function safeStaticPath(pathname, baseDirectory) {
   return target;
 }
 
+// RUNNERS is a plain object, so a bare `RUNNERS[name]` lookup would accept
+// prototype keys ("constructor") from the URL.
+export function isRunner(name) {
+  return Object.hasOwn(RUNNERS, name);
+}
+
 export function captureCommand(runner, gentle) {
+  if (!isRunner(runner)) throw new Error(`Unknown runner: ${runner}`);
   const definition = RUNNERS[runner];
-  if (!definition) throw new Error(`Unknown runner: ${runner}`);
   return {
     command: "npm",
     argumentsList: [
@@ -51,6 +57,7 @@ export function captureCommand(runner, gentle) {
 // serving while it runs and a crash cannot take the server down.
 export function spawnCapture(runner, gentle) {
   const plan = captureCommand(runner, gentle);
+  mkdirSync(storeDirectory, { recursive: true });
   const logFile = openSync(
     path.join(storeDirectory, `capture-${runner}.log`),
     "w",
@@ -117,7 +124,7 @@ function createCaptureRuns() {
   return { runs, start };
 }
 
-async function handleRequest(request, response, captureRuns) {
+async function routeRequest(request, response, captureRuns) {
   const url = new URL(request.url ?? "/", "http://localhost");
   const pathname = decodeURIComponent(url.pathname);
   const [, head, second, ...rest] = pathname.split("/");
@@ -129,7 +136,7 @@ async function handleRequest(request, response, captureRuns) {
     sendJson(response, 200, { ...(await shotEntries()), runs: captureRuns.runs });
     return;
   }
-  if (head === "capture" && RUNNERS[second]) {
+  if (head === "capture" && isRunner(second)) {
     if (request.method !== "POST") {
       response.writeHead(405).end("POST required");
       return;
@@ -162,7 +169,7 @@ async function handleRequest(request, response, captureRuns) {
     return;
   }
   const baseDirectory =
-    head === "reports" && RUNNERS[second]
+    head === "reports" && isRunner(second)
       ? RUNNERS[second].reportDirectory
       : storeDirectory;
   const relative = baseDirectory === storeDirectory ? pathname : `/${rest.join("/")}`;
@@ -174,11 +181,21 @@ async function handleRequest(request, response, captureRuns) {
   await sendFile(response, target);
 }
 
+// A throw inside the async router (a malformed %-escape, a runner spawn that
+// fails) answers 500 instead of surfacing as an unhandled rejection that would
+// take the whole gallery down.
+export function handleRequest(request, response, captureRuns) {
+  return routeRequest(request, response, captureRuns).catch((error) => {
+    if (!response.headersSent) response.writeHead(500);
+    response.end(`Gallery request failed: ${error.message}`);
+  });
+}
+
 export async function serveCatalog(port, shouldOpen) {
   const captureRuns = createCaptureRuns();
-  const server = createServer((request, response) =>
-    handleRequest(request, response, captureRuns),
-  );
+  const server = createServer((request, response) => {
+    void handleRequest(request, response, captureRuns);
+  });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", resolve);

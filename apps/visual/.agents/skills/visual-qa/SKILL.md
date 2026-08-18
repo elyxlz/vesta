@@ -148,7 +148,7 @@ npm run visual:serve                             # serve without opening
 npm run visual:capture -- ios|android|android-galaxy|web [--gentle]
 npm run mobile:visual:capture -- --device "iPhone 17"
 npm run mobile:visual:android:capture -- --variant android-galaxy
-npm run web:visual:capture -- --project web-dark
+npm run web:visual:capture -- --project desktop   # a light project; its dark sibling is captured in the same drive
 ```
 
 Runner options: `--skip-build` (reuse the installed app when nothing changed), `--clean-native` (regenerate the native cache), `--show-simulator` / `--show-emulator` (interactive diagnosis), `--gentle` (background priority, one shard).

@@ -25,7 +25,7 @@ npm run visual:capture -- web --gentle
 # Or call a runner directly with its own options.
 npm run mobile:visual:capture -- --device "iPhone 17"
 npm run mobile:visual:android:capture -- --variant android-galaxy
-npm run web:visual:capture -- --project web-dark
+npm run web:visual:capture -- --project desktop   # a light project; its dark sibling is captured in the same drive
 ```
 
 The web runner needs Playwright's browser once: `npx playwright install chromium` in `apps/web`.
@@ -130,7 +130,7 @@ Frames (the phone bezel, the browser tab bar, the desktop title bar) are gallery
 - Every card has dark captures, so the Dark button flips mobile and web cards alike.
 - Scan cells: one per runner, sized to their content. Scan spawns the runner; while it runs, the cell shows the runner's phase and elapsed time in place of the last-scan stamp, the count restarts from this run's shots, and the runner's slots dim as "Refreshing" until replaced. A failed run shows its error in the cell. "Gentle" runs the Maestro runners with `--gentle` and the web runner with `--workers=2`.
 - Copy ref copies `visual-ref: <id> [<platform>]` plus the group, title, revision, and image URL, for pasting into a chat.
-- The runner reports link under `/reports/<runner>/report.html` when they exist.
+- The runner reports link under `/reports/<runner>/<reportFile>` (Maestro's `report.html`, Playwright's `index.html`) when they exist.
 - Routes: `/`, `/shots.json`, `/status.json`, `POST /capture/<runner>?gentle=0|1`, `/gallery/*`, `/reports/<runner>/*`, and static files under the store.
 
 ## Add a scenario

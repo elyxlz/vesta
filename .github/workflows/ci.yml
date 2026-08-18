@@ -103,7 +103,6 @@ jobs:
               - 'check.sh'
             web:
               - 'apps/web/**'
-              - 'apps/visual/**'
               - 'apps/package.json'
               - 'apps/package-lock.json'
               - 'design/**'
@@ -127,7 +126,6 @@ jobs:
               - 'check.sh'
             mobile:
               - 'apps/mobile/**'
-              - 'apps/visual/**'
               - 'apps/package.json'
               - 'apps/package-lock.json'
               - '.github/workflows/ci.yml'
@@ -393,6 +391,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.visual == 'true' ||
       needs.detect-changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -468,6 +467,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.visual == 'true' ||
       needs.detect-changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15

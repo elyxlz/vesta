@@ -1,7 +1,50 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { captureCommand, safeStaticPath } from "./server.mjs";
+import {
+  captureCommand,
+  handleRequest,
+  isRunner,
+  safeStaticPath,
+} from "./server.mjs";
 import { appsRoot } from "../platforms.mjs";
+
+function fakeResponse() {
+  const response = {
+    status: null,
+    body: "",
+    headersSent: false,
+    writeHead(status) {
+      response.status = status;
+      response.headersSent = true;
+      return response;
+    },
+    end(body = "") {
+      response.body += body;
+      return response;
+    },
+  };
+  return response;
+}
+
+describe("handleRequest", () => {
+  it("answers 500 to a malformed escape instead of rejecting", async () => {
+    const response = fakeResponse();
+    await handleRequest({ url: "/%", method: "GET" }, response, { runs: {} });
+    expect(response.status).toBe(500);
+    expect(response.body).toMatch(/URI malformed/);
+  });
+  it("refuses a prototype key as a runner name", async () => {
+    expect(isRunner("constructor")).toBe(false);
+    expect(isRunner("web")).toBe(true);
+    const response = fakeResponse();
+    await handleRequest(
+      { url: "/reports/constructor/index.html", method: "GET" },
+      response,
+      { runs: {} },
+    );
+    expect(response.status).toBe(404);
+  });
+});
 
 describe("safeStaticPath", () => {
   it("maps a pathname under the base directory and refuses traversal", () => {

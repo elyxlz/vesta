@@ -231,20 +231,22 @@ export async function composeGallery() {
     (registry) => registry.scenarios,
   );
   const shots = await shotEntries();
-  for (const platform of Object.keys(shots)) {
-    for (const entry of Object.values(shots[platform])) {
-      entry.size = await pngSize(path.join(storeDirectory, entry.src)).catch(
-        () => null,
-      );
-    }
-  }
+  await Promise.all(
+    Object.values(shots)
+      .flatMap((platformShots) => Object.values(platformShots))
+      .map(async (entry) => {
+        entry.size = await pngSize(path.join(storeDirectory, entry.src)).catch(
+          () => null,
+        );
+      }),
+  );
   const reports = Object.entries(RUNNERS)
     .filter(([, definition]) =>
-      existsSync(path.join(definition.reportDirectory, "report.html")),
+      existsSync(path.join(definition.reportDirectory, definition.reportFile)),
     )
     .map(([runner, definition]) => ({
       label: `${definition.label} report`,
-      href: `reports/${runner}/report.html`,
+      href: `reports/${runner}/${definition.reportFile}`,
     }));
   return galleryView(scenarios, shots, { git: await gitMetadata(), reports });
 }

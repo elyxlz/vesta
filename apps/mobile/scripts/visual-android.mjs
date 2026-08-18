@@ -21,12 +21,6 @@ import { loadRegistry, scenariosForPlatform } from "@vesta/visual/registry";
 import { publishRunStatus } from "@vesta/visual/run-status";
 import { putShot, shotDriftWarning } from "@vesta/visual/store";
 import {
-  androidMaestroDirectoryOf,
-  androidVariants,
-  androidVisualDirectory,
-  metroConfigPath,
-} from "./visual-ios.mjs";
-import {
   assertHarnessBoundary,
   atomicWriteFile,
   captureBothThemes,
@@ -34,15 +28,38 @@ import {
   flowFailureError,
   gentleSpawnPlan,
   jsBundleCurrent,
+  metroConfigPath,
   nativeInputFingerprint,
   recordJsBundle,
   run,
   setGentleMode,
   startScreenshotBridge,
+  visualDirectory,
 } from "./visual-runner.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(scriptDirectory, "..");
+const androidVisualDirectory = path.join(visualDirectory, "android");
+// One variant per run: the same build and flows on a different emulator persona. The galaxy
+// variant runs classic 3-button navigation, so every screen is exercised with a visible bottom
+// navigation bar and its status bar insets.
+export const androidVariants = {
+  android: {
+    avd: "vesta-visual",
+    label: "Android",
+    navOverlay: "com.android.internal.systemui.navbar.gestural",
+  },
+  "android-galaxy": {
+    avd: "vesta-visual-galaxy",
+    label: "Android \u00b7 3-button",
+    navOverlay: "com.android.internal.systemui.navbar.threebutton",
+  },
+};
+function androidMaestroDirectoryOf(variant) {
+  const workDirectory =
+    variant === "android" ? androidVisualDirectory : path.join(visualDirectory, variant);
+  return path.join(workDirectory, "maestro");
+}
 const apkPath = path.join(androidVisualDirectory, "apk/app-release.apk");
 const nativeAndroidDirectory = path.join(mobileRoot, ".visual/native/android");
 const androidFingerprintPath = path.join(
@@ -693,14 +710,17 @@ async function capture(options) {
   const manifest = { ...registry, scenarios: scenariosForPlatform(registry, variant) };
   const tools = await requireCaptureTools();
   await mkdir(androidVisualDirectory, { recursive: true });
-  await phase(`Preparing the ${androidVariants[variant].label} emulator`);
-  const serial = await prepareEmulator(tools, options);
-  const avdName = options.device
-    ? await avdNameOf(tools, serial)
-    : options.avd;
-  console.log(`\nUsing Android emulator ${serial} (${avdName}).`);
-  await normalizeEmulator(tools, serial, androidVariants[variant].navOverlay);
+  // Everything after the first "capturing" phase publishes its outcome, so an
+  // emulator that fails to boot never leaves the gallery on a phantom scan.
+  let serial = "";
   try {
+    await phase(`Preparing the ${androidVariants[variant].label} emulator`);
+    serial = await prepareEmulator(tools, options);
+    const avdName = options.device
+      ? await avdNameOf(tools, serial)
+      : options.avd;
+    console.log(`\nUsing Android emulator ${serial} (${avdName}).`);
+    await normalizeEmulator(tools, serial, androidVariants[variant].navOverlay);
     await phase(
       options.skipBuild
         ? "Checking the installed Android visual app"
@@ -742,9 +762,8 @@ async function capture(options) {
     });
     throw error;
   } finally {
-    await restoreEmulator(tools, serial);
+    if (serial) await restoreEmulator(tools, serial);
   }
-
 }
 
 async function main() {

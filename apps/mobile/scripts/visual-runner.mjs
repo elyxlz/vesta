@@ -1,6 +1,6 @@
 // Mobile-shared runner helpers: process spawning, fingerprints, the harness
 // boundary check, and Maestro result parsing. Both mobile runners import from
-// here; neither imports from the other for these.
+// here; neither imports from the other.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
@@ -14,12 +14,16 @@ export { atomicWriteFile };
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 export const mobileRoot = path.resolve(scriptDirectory, "..");
+// The npm workspace root: its lockfile is the one that pins every dependency.
+export const appsRoot = path.resolve(mobileRoot, "..");
 export const repositoryRoot = path.resolve(mobileRoot, "../..");
 export const visualDirectory = path.join(mobileRoot, ".visual");
 export const nativeAnimationHookPath = path.join(
   mobileRoot,
   "visual/harness/disable-ios-animations.swift",
 );
+// The Metro config both runners bundle the harness with.
+export const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
 
 const shardCount = 2;
 // Gentle mode trades wall time for machine responsiveness: one simulator shard instead of two,
@@ -154,8 +158,8 @@ function nativeInputTargets() {
   return [
     path.join(mobileRoot, "app.config.ts"),
     path.join(mobileRoot, "package.json"),
-    path.join(repositoryRoot, "package.json"),
-    path.join(repositoryRoot, "package-lock.json"),
+    path.join(appsRoot, "package.json"),
+    path.join(appsRoot, "package-lock.json"),
     path.join(mobileRoot, "plugins"),
     path.join(mobileRoot, "modules"),
     path.join(mobileRoot, "src/theme/native-config.generated.json"),
@@ -171,8 +175,9 @@ export async function nativeInputFingerprint() {
 
 // The JavaScript bundle's inputs: when their fingerprint matches the one recorded at the last
 // successful install for a target, the export/install phase is skipped and a scan goes straight
-// to its flows. Flow and fixture edits count (the harness ships in the bundle); Maestro yml does
-// not, since it never enters the bundle.
+// to its flows. Flow and fixture edits count (the harness ships in the bundle), and so does
+// @vesta/core, which the bundle carries from source; Maestro yml does not, since it never
+// enters the bundle.
 function jsInputTargets() {
   return [
     path.join(mobileRoot, "app"),
@@ -181,7 +186,9 @@ function jsInputTargets() {
     path.join(mobileRoot, "assets"),
     path.join(mobileRoot, "app.config.ts"),
     path.join(mobileRoot, "package.json"),
-    path.join(repositoryRoot, "package-lock.json"),
+    path.join(appsRoot, "core/src"),
+    path.join(appsRoot, "core/package.json"),
+    path.join(appsRoot, "package-lock.json"),
   ];
 }
 
@@ -384,6 +391,9 @@ export async function startScreenshotBridge(targets, handlers) {
         resolveCycle = resolve;
         rejectCycle = reject;
       });
+      // The runner awaits completion only after Maestro exits, so a watchdog
+      // rejection before then must not surface as an unhandled rejection.
+      completion.catch(() => {});
       cycle = {
         completed: false,
         expected,
