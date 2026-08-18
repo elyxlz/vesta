@@ -38,7 +38,14 @@ def _budget(name: str, default: int) -> int:
     return int(os.environ[name]) if name in os.environ else default
 
 
-READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
+# 120, not 30. A readiness budget is a bet about disk speed, and boot is when that bet is worst:
+# every call cold, nothing in page cache, several daemons starting at once. A miss is not a retry.
+# `_abandon` TERMs then KILLs a child that `child.poll()` just showed to be ALIVE, so a daemon that
+# is merely slow to import is destroyed and the caller is handed an error that reads like a crash.
+# For this daemon that means inbound mail stops arriving as a notification, so a message is
+# not late, it is never seen. Raising the ceiling costs a healthy start nothing: it returns
+# the moment the port answers, in about a second.
+READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 120)
 STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
 
 
