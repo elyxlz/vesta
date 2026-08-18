@@ -22,7 +22,8 @@ Three calls are intercepted and carry extra behavior:
   validates the title, refuses to force-push a branch whose commits are all another
   agent's (`--adopt` takes it over deliberately), pushes with auth in env, appends the
   attribution footer (`Submitted by **<agent>** on vesta v<version>`), then creates the
-  PR or updates the existing one for the branch.
+  PR, or force-pushes the branch of the existing one, whose title and body stay as first
+  filed (edit those with `upstream gh pr edit`).
 - `upstream gh issue create --title T --body B`: validates the title, appends the same
   footer, creates the issue. The App cannot comment on or edit an issue after posting
   (403), so the body must be complete at create time.
