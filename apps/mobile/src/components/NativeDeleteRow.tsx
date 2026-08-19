@@ -1,4 +1,4 @@
-import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeDeleteRowProps } from "./NativeDeleteRow.types";
 
@@ -12,7 +12,7 @@ export function NativeDeleteRow({
   disabled = false,
   onDelete,
 }: NativeDeleteRowProps) {
-  const isAndroid = Platform.OS === "android";
+  const isAndroid = process.env.EXPO_OS === "android";
   return (
     <View style={containerStyle}>
       {children}

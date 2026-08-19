@@ -12,3 +12,5 @@ mobile/android/
 mobile/modules/*/android/build/
 mobile/coverage/
 mobile/.visual/
+web/.visual/
+visual/.visual/

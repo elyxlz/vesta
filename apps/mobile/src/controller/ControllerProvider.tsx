@@ -15,6 +15,10 @@ import { buildController } from "./build-controller";
 import { deviceIdentity } from "./device-identity";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
+import {
+  latchedGatewayBehind,
+  type GatewayBehindLatch,
+} from "./gateway-update-gate-model";
 import { createAppStateForegroundSignal } from "./foreground-signal";
 import {
   useOptionalControllerReplica,
@@ -67,6 +71,16 @@ function ConnectedController({ children }: { children: ReactNode }) {
     };
   }, []);
   const syncState = useOptionalControllerSyncState(controller);
+  // Derived during render: the previous render's latch is the carried state, and the model
+  // (latchedGatewayBehind) owns the decision.
+  const [behindLatch, setBehindLatch] = useState<GatewayBehindLatch>({
+    key: connectionKey,
+    behind: false,
+  });
+  const gatewayBehind = latchedGatewayBehind(behindLatch, connectionKey, syncState);
+  if (behindLatch.key !== connectionKey || behindLatch.behind !== gatewayBehind) {
+    setBehindLatch({ key: connectionKey, behind: gatewayBehind });
+  }
   // A gateway update takes the app back to home for as long as it runs: every agent may be
   // mid-backup and the gateway is about to restart, so home renders the update and only settings
   // stays reachable beside it.
@@ -158,7 +172,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
         {syncState === "app_behind" ? (
           <AppBehindScreen />
         ) : (
-          <GatewayUpdateGate blocked={syncState === "gateway_behind"}>
+          <GatewayUpdateGate blocked={gatewayBehind}>
             {children}
           </GatewayUpdateGate>
         )}

@@ -1,0 +1,201 @@
+appId: ${APP_ID}
+name: Connect states
+tags:
+  - visual
+  - connect
+---
+- clearState
+- openLink:
+    link: "vesta-dev://connect-actions?visualPrivacy=unlocked&visualRecentGateways=none&visualDelay=60000"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: '.*Connect with Vesta Cloud.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: connect-actions-no-recent
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: connect-actions-no-recent.png
+- tapOn:
+    text: 'Connect with Vesta Cloud'
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: cloud-sign-in-connecting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: cloud-sign-in-connecting.png
+- stopApp
+- openLink:
+    link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- extendedWaitUntil:
+    visible: '.*Paste your connection link.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Paste your connection link.*'
+- inputText: "https://studio.vesta.run/#k=abc123"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- extendedWaitUntil:
+    visible: '.*Show connection link.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: connect-link-filled
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: connect-link-filled.png
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - repeat:
+          times: 3
+          while:
+            notVisible: '.*Hide connection link.*'
+          commands:
+            - tapOn:
+                text: '.*Show connection link.*'
+            - extendedWaitUntil:
+                visible: '.*Hide connection link.*'
+                timeout: 4000
+                optional: true
+      - extendedWaitUntil:
+          visible: '.*Hide connection link.*'
+          timeout: 10000
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - takeScreenshot: connect-link-revealed
+      - runScript:
+          file: capture-screenshot.js
+          env:
+            SCREENSHOT: connect-link-revealed.png
+- tapOn:
+    text: 'Connect'
+- extendedWaitUntil:
+    visible: '.*Could not reach this Vesta gateway.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: connect-link-unreachable
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: connect-link-unreachable.png
+- stopApp
+- openLink:
+    link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- extendedWaitUntil:
+    visible: '.*Paste your connection link.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Paste your connection link.*'
+- inputText: "https://studio.vesta.run/"
+- tapOn:
+    text: 'Connect'
+- extendedWaitUntil:
+    visible: '.*This connection link has no key.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: connect-link-no-key
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: connect-link-no-key.png
+- stopApp
+- openLink:
+    link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- extendedWaitUntil:
+    visible: '.*Paste your connection link.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Paste your connection link.*'
+- inputText: "http://studio.local/#k=abc"
+- tapOn:
+    text: 'Connect'
+- extendedWaitUntil:
+    visible: '.*trusted HTTPS tunnel.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: connect-link-http
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: connect-link-http.png
+- stopApp
+- openLink:
+    link: "vesta-dev://connect-link?visualPrivacy=unlocked&visualDelay=60000"
+- extendedWaitUntil:
+    visible: '.*Paste your connection link.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Paste your connection link.*'
+- inputText: "https://studio.vesta.run/#k=abc123"
+- tapOn:
+    text: 'Connect'
+- extendedWaitUntil:
+    visible: '.*Connecting.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: connect-link-connecting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: connect-link-connecting.png
+- stopApp
+- openLink:
+    link: "vesta-dev://connect?visualPrivacy=unlocked&link=https%3A%2F%2Fstudio.vesta.run%2F%23k%3Dabc123"
+- extendedWaitUntil:
+    visible: '.*Clear connection link.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: connect-prefilled-link
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: connect-prefilled-link.png
+- stopApp
+- openLink:
+    link: "vesta-dev://recent-gateways?visualPrivacy=unlocked"
+- extendedWaitUntil:
+    visible: '.*home\.vesta\.run.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Clear all gateways.*'
+- extendedWaitUntil:
+    visible: '.*Clear all.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: recent-gateways-clear-confirm
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: recent-gateways-clear-confirm.png
+- tapOn:
+    text: 'Clear all'
+- extendedWaitUntil:
+    visible: '.*No saved gateways.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: recent-gateways-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: recent-gateways-empty.png

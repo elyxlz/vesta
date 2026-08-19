@@ -12,10 +12,9 @@ const privacyProviderConsumers = new Set([
   path.join(mobileRoot, "src/privacy/privacy-sheet.tsx"),
 ]);
 const settingsRoute = path.join(mobileRoot, "app/settings.tsx");
-const chatSocketHook = path.join(mobileRoot, "src/chat/useAgentSocket.ts");
-const chatHoldProviderFixture = path.resolve(
+const agentHoldsProviderFixture = path.resolve(
   __dirname,
-  "harness/chat-hold-provider.tsx",
+  "harness/agent-holds-provider.tsx",
 );
 const harnessModules = new Map([
   [
@@ -55,8 +54,8 @@ const harnessModules = new Map([
     path.resolve(__dirname, "harness/controller-provider.tsx"),
   ],
   [
-    "@/chat/ChatHoldProvider",
-    chatHoldProviderFixture,
+    "@/holds/AgentHoldsProvider",
+    agentHoldsProviderFixture,
   ],
   [
     "@/agent/agent-log-stream",
@@ -71,6 +70,14 @@ const harnessModules = new Map([
     path.resolve(__dirname, "harness/reanimated.js"),
   ],
   [
+    "expo-web-browser",
+    path.resolve(__dirname, "harness/web-browser.ts"),
+  ],
+  [
+    "@/controller/rn-socket",
+    path.resolve(__dirname, "harness/rn-socket.ts"),
+  ],
+  [
     "expo-router/stack",
     path.resolve(__dirname, "harness/stack.js"),
   ],
@@ -83,12 +90,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     privacyProviderConsumers.has(context.originModulePath)
   ) {
     return { type: "sourceFile", filePath: privacyProviderFixture };
-  }
-  if (
-    moduleName === "./ChatHoldProvider" &&
-    context.originModulePath === chatSocketHook
-  ) {
-    return { type: "sourceFile", filePath: chatHoldProviderFixture };
   }
   if (moduleName === "@/api/endpoints" && context.originModulePath === settingsRoute) {
     return {

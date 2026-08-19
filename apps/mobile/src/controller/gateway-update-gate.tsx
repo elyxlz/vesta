@@ -2,7 +2,8 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { useRouter, useSegments, type Href } from "expo-router";
 import { BlockingSheetGateView } from "@/components/blocking-sheet-gate-view";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
-import { gatewayUpdateGateNavigationAction } from "./gateway-update-gate-model";
+import { useGatewayOperation } from "./gateway-operation-context";
+import { gatewayUpdateGateDecision } from "./gateway-update-gate-model";
 
 const GATEWAY_UPDATE_ROUTE = "/gateway-update" as Href;
 const ROOT_ROUTE = "/" as Href;
@@ -34,9 +35,11 @@ export function GatewayUpdateGate({
   const privacyRouteActive = activeRoute === "privacy";
   const gatewayUpdateRouteActive = activeRoute === "gateway-update";
   const privacyBlocked = usePrivacyBlocked();
-  const gatewayUpdateBlocked = blocked && !privacyBlocked;
-  const action = gatewayUpdateGateNavigationAction({
+  const { operation } = useGatewayOperation();
+  const operationRunning = operation !== null;
+  const { action, backdropBlocked } = gatewayUpdateGateDecision({
     blocked,
+    operationRunning,
     privacyBlocked,
     privacyRouteActive,
     gatewayUpdateRouteActive,
@@ -53,9 +56,11 @@ export function GatewayUpdateGate({
       return;
     }
 
-    if (action === "dismiss") {
+    if (action === "dismiss" || action === "dismiss-home") {
       presentationPending.current = false;
-      if (router.canGoBack()) {
+      if (action === "dismiss-home") {
+        router.dismissTo(ROOT_ROUTE);
+      } else if (router.canGoBack()) {
         router.back();
       } else {
         router.replace(ROOT_ROUTE);
@@ -74,7 +79,7 @@ export function GatewayUpdateGate({
 
   return (
     <BlockingSheetGateView
-      blocked={gatewayUpdateBlocked}
+      blocked={backdropBlocked}
       presented={gatewayUpdateRouteActive}
       estimatedSheetHeight={ESTIMATED_GATEWAY_UPDATE_SHEET_HEIGHT}
     >

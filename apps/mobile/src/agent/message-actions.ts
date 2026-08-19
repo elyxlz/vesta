@@ -1,3 +1,8 @@
+export interface ReplyTarget {
+  text: string;
+  sender: string;
+}
+
 export type MessageActionId =
   | "reply"
   | "copy"

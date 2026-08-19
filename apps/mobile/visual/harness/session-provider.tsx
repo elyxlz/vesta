@@ -1,6 +1,6 @@
 import { createContext, use, useMemo, type ReactNode } from "react";
-import * as Linking from "expo-linking";
-import type { NotificationEvent } from "@vesta/core";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { NotificationEvent, ProviderInfoWire } from "@vesta/core";
 import { createApiClient } from "../../src/api/client";
 import type { ApiClient } from "../../src/api/client";
 import type {
@@ -18,12 +18,30 @@ import {
   SessionProvider as ProductionSessionProvider,
   useSession as useProductionSession,
 } from "../../src/session/SessionProvider";
+import {
+  WHATS_NEW_LAST_SEEN_KEY,
+  visualDelay,
+  visualSwitch,
+} from "./launch-query";
 
 type SessionValue = ReturnType<typeof useProductionSession>;
 
-const launchUrl = Linking.getLinkingURL();
-const query = launchUrl === null ? {} : Linking.parse(launchUrl).queryParams;
-const startsConnected = query?.visualSession === "connected";
+// Seeded at import, ahead of the auto-open effect's read: AsyncStorage runs
+// its calls in order, so the marker is in place by the time it is checked.
+const whatsNewSeen = visualSwitch("visualWhatsNewSeen");
+if (whatsNewSeen !== null) {
+  void AsyncStorage.setItem(WHATS_NEW_LAST_SEEN_KEY, whatsNewSeen);
+}
+
+const startsConnected = visualSwitch("visualSession") === "connected";
+// visualProvider selects aria's provider state: the signed-in Claude default,
+// `none` (no provider yet), `unauthenticated` (Claude, credentials gone),
+// `openai`, or `openrouter` (a key provider with credits).
+const providerVariant = visualSwitch("visualProvider");
+const voiceUnconfigured = visualSwitch("visualVoice") === "unconfigured";
+// visualApi=error makes every agent read fail, which is how each section's
+// error state is captured; one launch per section.
+const apiFails = visualSwitch("visualApi") === "error";
 export const visualConnection: ConnectionConfig = {
   url: "https://home.vesta.run",
   accessToken: "visual-access-token",
@@ -31,7 +49,7 @@ export const visualConnection: ConnectionConfig = {
   expiresAt: Date.UTC(2030, 0, 1),
   hosted: true,
 };
-const notifications: NotificationEvent[] = [
+export const notifications: NotificationEvent[] = [
   {
     id: 401,
     type: "notification",
@@ -137,6 +155,14 @@ const manifest: Manifest = {
       default_model: "gpt-5.2",
       context: { default: 128_000, max: 128_000, presets: [] },
     },
+    openrouter: {
+      display: "OpenRouter",
+      order: 3,
+      auth_kind: "api_key",
+      models: "live",
+      default_model: null,
+      context: { default: 200_000, max: 200_000, presets: [] },
+    },
   },
 };
 const usage: Usage = {
@@ -152,6 +178,60 @@ const usage: Usage = {
     organization: "Ada's Organization",
     created_at: "2023-07-18T19:44:58Z",
   },
+};
+const openRouterUsage: Usage = {
+  meters: [],
+  credits: { used: 12.4, limit: 50 },
+  account: null,
+};
+const claudeProvider: ProviderInfoWire = {
+  kind: "claude",
+  model: "claude-sonnet-4-5",
+  max_context_tokens: 200_000,
+  authed: true,
+  plan: "Max",
+};
+const providers: Record<string, ProviderInfoWire> = {
+  none: { authed: false },
+  unauthenticated: {
+    kind: "claude",
+    model: "claude-sonnet-4-5",
+    max_context_tokens: 200_000,
+    authed: false,
+    plan: null,
+  },
+  openai: {
+    kind: "openai",
+    model: "gpt-5.2",
+    max_context_tokens: 128_000,
+    authed: true,
+    plan: "Plus",
+  },
+  openrouter: {
+    kind: "openrouter",
+    model: "anthropic/claude-sonnet-4-5",
+    max_context_tokens: 200_000,
+    authed: true,
+    plan: null,
+  },
+};
+const provider: ProviderInfoWire =
+  (providerVariant === null ? undefined : providers[providerVariant]) ??
+  claudeProvider;
+const oauthStart = {
+  auth_url: "https://claude.ai/oauth/authorize?visual-fixture",
+  session_id: "visual-oauth-session",
+};
+const openAIOAuthStart = {
+  auth_url: "https://chatgpt.com/device?visual-fixture",
+  user_code: "WDJB-MJHT",
+  session_id: "visual-openai-session",
+};
+const unconfiguredVoice: VoiceStatus = {
+  configured: false,
+  provider: null,
+  enabled: false,
+  settings: [],
 };
 const notificationRules: NotificationInterruptRule[] = [
   {
@@ -185,14 +265,14 @@ const backups: BackupInfo[] = [
     id: "visual-backup-1",
     agent_name: "aria",
     backup_type: "manual",
-    created_at: "2026-08-01T08:45:00.000Z",
+    created_at: "20260801-084500",
     size: 18_874_368,
   },
   {
     id: "visual-backup-2",
     agent_name: "aria",
     backup_type: "automatic",
-    created_at: "2026-07-31T03:00:00.000Z",
+    created_at: "20260731-030000",
     size: 17_825_792,
   },
 ];
@@ -270,6 +350,84 @@ Ada prefers concise updates with decisions and blockers called out clearly.
 };
 const FixtureContext = createContext<SessionValue | null>(null);
 
+// nova is the agent with nothing yet: no notifications, rules, backups,
+// mounts, or files, so opening nova's sections renders every empty state.
+function isNova(path: string): boolean {
+  return path.startsWith("/agents/nova/");
+}
+
+function fixtureFor(path: string): unknown {
+  if (path === "/manifest") return manifest;
+  // A started update keeps the sheet's spinner up, which is the state the
+  // gateway-update-in-progress scenario captures.
+  if (path === "/gateway/update") return { started: true };
+  if (path === "/providers/claude/oauth/start") return oauthStart;
+  if (path === "/providers/openai/oauth/start") return openAIOAuthStart;
+  if (path === "/providers/claude/oauth/complete") {
+    return { credentials: "visual-claude-credentials" };
+  }
+  if (path === "/providers/openai/oauth/complete") {
+    return { credentials: "visual-openai-credentials" };
+  }
+  if (path.startsWith("/providers/openrouter/models/top")) {
+    return [
+      {
+        slug: "anthropic/claude-sonnet-4-5",
+        label: "Claude Sonnet 4.5",
+        author: "Anthropic",
+      },
+      { slug: "openai/gpt-5.2", label: "GPT-5.2", author: "OpenAI" },
+      { slug: "moonshotai/kimi-k2", label: "Kimi K2", author: "MoonshotAI" },
+    ];
+  }
+  if (path === "/host/folders") {
+    return {
+      folders: [
+        "/Users/ada/Desktop",
+        "/Users/ada/Downloads",
+        "/Users/ada/Projects",
+      ],
+    };
+  }
+  if (apiFails && path.startsWith("/agents/")) {
+    throw new Error("The gateway did not answer.");
+  }
+  if (path.endsWith("/provider")) return provider;
+  if (path.endsWith("/usage")) {
+    if (!provider.authed) return { meters: [], credits: null, account: null };
+    return provider.kind === "openrouter" ? openRouterUsage : usage;
+  }
+  if (path.endsWith("/config")) {
+    return { notification_rules: isNova(path) ? [] : notificationRules };
+  }
+  if (path.endsWith("/mounts")) {
+    return { mounts: isNova(path) ? [] : mounts, restart_required: false };
+  }
+  if (path.endsWith("/settings/backup")) {
+    return {
+      enabled: true,
+      retention: { periodic: 2, pre_update_versions: 2 },
+      has_override: false,
+    };
+  }
+  if (path.endsWith("/backups")) return isNova(path) ? [] : backups;
+  if (path.includes("/voice/stt/status")) {
+    return voiceUnconfigured ? unconfiguredVoice : voiceStatuses.stt;
+  }
+  if (path.includes("/voice/tts/status")) {
+    return voiceUnconfigured ? unconfiguredVoice : voiceStatuses.tts;
+  }
+  if (path.includes("/history?channel=notifications")) {
+    return { events: isNova(path) ? [] : notifications, cursor: null };
+  }
+  if (path.endsWith("/tree")) {
+    const entries = isNova(path) ? [] : fileTree;
+    return { tree: entries.map((entry) => entry.path), entries };
+  }
+  if (path.includes("/file?")) return memoryFile;
+  throw new Error(`No visual API fixture is registered for ${path}`);
+}
+
 function createVisualApi(): ApiClient {
   const base = createApiClient({
     getConnection: () => visualConnection,
@@ -278,56 +436,14 @@ function createVisualApi(): ApiClient {
   });
   return {
     ...base,
-    request: async () => new Response(null, { status: 204 }),
+    request: async () => {
+      await visualDelay();
+      if (apiFails) throw new Error("The gateway did not answer.");
+      return new Response(null, { status: 204 });
+    },
     json: async <ResponseBody,>(path: string): Promise<ResponseBody> => {
-      if (path === "/manifest") return manifest as ResponseBody;
-      if (path.endsWith("/provider")) {
-        return {
-          kind: "claude",
-          model: "claude-sonnet-4-5",
-          max_context_tokens: 200_000,
-          authed: true,
-          plan: "Max",
-        } as ResponseBody;
-      }
-      if (path.endsWith("/usage")) return usage as ResponseBody;
-      if (path.endsWith("/config")) {
-        return { notification_rules: notificationRules } as ResponseBody;
-      }
-      if (path.endsWith("/mounts")) {
-        return { mounts, restart_required: false } as ResponseBody;
-      }
-      if (path === "/host/folders") {
-        return {
-          folders: [
-            "/Users/ada/Desktop",
-            "/Users/ada/Downloads",
-            "/Users/ada/Projects",
-          ],
-        } as ResponseBody;
-      }
-      if (path.endsWith("/settings/backup")) {
-        return {
-          enabled: true,
-          retention: { periodic: 2, pre_update_versions: 2 },
-          has_override: false,
-        } as ResponseBody;
-      }
-      if (path.endsWith("/backups")) return backups as ResponseBody;
-      if (path.includes("/voice/stt/status")) {
-        return voiceStatuses.stt as ResponseBody;
-      }
-      if (path.includes("/voice/tts/status")) {
-        return voiceStatuses.tts as ResponseBody;
-      }
-      if (path.includes("/history?channel=notifications")) {
-        return { events: notifications, cursor: null } as ResponseBody;
-      }
-      if (path.endsWith("/tree")) {
-        return { tree: fileTree.map((entry) => entry.path), entries: fileTree } as ResponseBody;
-      }
-      if (path.includes("/file?")) return memoryFile as ResponseBody;
-      throw new Error(`No visual API fixture is registered for ${path}`);
+      await visualDelay();
+      return fixtureFor(path) as ResponseBody;
     },
     serviceKeys: {
       get: async () => "visual-dashboard-key",

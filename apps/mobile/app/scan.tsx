@@ -100,7 +100,8 @@ function ScanContent() {
 
   return (
     <>
-      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      {/* Black behind the camera: the white finder chrome must read while the feed starts. */}
+      <View style={[styles.screen, styles.cameraBackdrop]}>
         <CameraView
           style={StyleSheet.absoluteFill}
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
@@ -131,6 +132,7 @@ function ScanContent() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  cameraBackdrop: { backgroundColor: "#000" },
   androidChrome: { position: "absolute", top: 0, left: 0, right: 0 },
   overlay: { flex: 1, justifyContent: "center", alignItems: "center" },
   finder: {

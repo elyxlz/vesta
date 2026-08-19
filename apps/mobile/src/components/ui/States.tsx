@@ -43,7 +43,7 @@ export function ErrorState({
   const { colors } = usePreferences();
   return (
     <View style={styles.state}>
-      <Text family="heading" style={[styles.title, { color: colors.danger }]}>Something went wrong</Text>
+      <Text family="heading" style={[styles.title, { color: colors.text }]}>Something went wrong</Text>
       <Text style={[styles.detail, { color: colors.secondaryText }]}>{message}</Text>
       {retry ? <Button onPress={retry}>Try again</Button> : null}
     </View>

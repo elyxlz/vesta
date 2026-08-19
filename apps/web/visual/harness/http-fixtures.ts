@@ -1,11 +1,8 @@
 import type { Page } from "@playwright/test";
-import type {
-  AgentStatus,
-  ProviderContextPolicy,
-  ProviderManifest,
-} from "@vesta/core";
+import type { ProviderContextPolicy, ProviderManifest } from "@vesta/core";
 
 export const AGENT = "luna";
+export const GATEWAY_ORIGIN = "http://vestad.local";
 
 // Small DTO duplicated on this side of the seam (the src Manifest type lives in
 // the app tsconfig project): GET /manifest is the provider catalog plus the
@@ -199,12 +196,25 @@ export const CLAUDE_MODELS = [
   { slug: "claude-haiku-4-5", label: "Claude Haiku 4.5", author: "Anthropic" },
 ];
 
-// An endpoint the scenario wants to leave pending, to capture a loading state.
-export type HangEndpoint = "openrouter-models";
+// One gateway answer: an exact pathname on the gateway origin (or a full
+// https:// URL for an external host), optionally narrowed to a method and to
+// query params that must be present. `hang` leaves the request pending, which
+// is how a loading state is held for the shot. `body` is raw (an SSE stream);
+// `json` is the common case.
+export interface RouteFixture {
+  path: string;
+  method?: string;
+  query?: Record<string, string>;
+  status?: number;
+  json?: unknown;
+  body?: string;
+  contentType?: string;
+  hang?: boolean;
+}
 
 // The GET /provider shape the settings card reads (a subset of the wire type).
 export interface ProviderInfoFixture {
-  kind: "zai" | "kimi" | "openai";
+  kind: "claude" | "openrouter" | "zai" | "kimi" | "openai";
   model: string | null;
   resolved_model: string | null;
   max_context_tokens: number | null;
@@ -212,65 +222,75 @@ export interface ProviderInfoFixture {
   plan: string | null;
 }
 
-export interface GatewayMockOptions {
-  agentStatus: AgentStatus;
-  createResponse: { status: number; body: { error: string } } | null;
-  hang?: HangEndpoint;
-  provider?: ProviderInfoFixture;
+export function providerRoute(provider: ProviderInfoFixture): RouteFixture {
+  return { path: `/agents/${AGENT}/provider`, method: "GET", json: provider };
 }
 
-// Later-registered routes win in Playwright, so the hermetic catch-all for the
-// fake gateway origin goes first and the specific answers override it.
+// The answers every scenario starts from: a hermetic catch-all for the gateway
+// origin, the onboarding catalog and OAuth handshakes, and an agent that is
+// still starting. A scenario's own routes are registered after these, and
+// Playwright hands a request to the last matching handler, so they win.
+const BASE_ROUTES: RouteFixture[] = [
+  { path: "/manifest", json: MANIFEST },
+  { path: "/providers/openrouter/models/top", json: OPENROUTER_MODELS },
+  { path: "/providers/claude/oauth/start", json: OAUTH_START },
+  { path: "/providers/openai/oauth/start", json: OPENAI_OAUTH_START },
+  { path: "/providers/claude/oauth/complete", json: OAUTH_CREDENTIALS },
+  {
+    path: "/providers/openai/oauth/complete",
+    json: { credentials: "visual-openai-credentials" },
+  },
+  { path: "/providers/claude/models", json: CLAUDE_MODELS },
+  { path: "/providers/openrouter/validate-key", json: {} },
+  { path: `/agents/${AGENT}`, method: "GET", json: { status: "starting" } },
+];
+
+function matches(fixture: RouteFixture): (url: URL) => boolean {
+  const external = fixture.path.startsWith("https://");
+  const target = external ? new URL(fixture.path) : null;
+  return (url) => {
+    if (target) {
+      if (url.origin !== target.origin || url.pathname !== target.pathname) {
+        return false;
+      }
+    } else if (url.origin !== GATEWAY_ORIGIN || url.pathname !== fixture.path) {
+      return false;
+    }
+    if (!fixture.query) return true;
+    return Object.entries(fixture.query).every(
+      ([key, value]) => url.searchParams.get(key) === value,
+    );
+  };
+}
+
+async function installRoute(page: Page, fixture: RouteFixture): Promise<void> {
+  await page.route(matches(fixture), (route) => {
+    if (fixture.method && route.request().method() !== fixture.method) {
+      return route.fallback();
+    }
+    if (fixture.hang) return;
+    if (fixture.body !== undefined) {
+      return route.fulfill({
+        status: fixture.status ?? 200,
+        contentType: fixture.contentType ?? "text/plain",
+        body: fixture.body,
+      });
+    }
+    return route.fulfill({
+      status: fixture.status ?? 200,
+      json: fixture.json ?? {},
+    });
+  });
+}
+
 export async function installGatewayMocks(
   page: Page,
-  opts: GatewayMockOptions,
+  routes: RouteFixture[],
 ): Promise<void> {
-  await page.route("**://vestad.local/**", (route) =>
+  await page.route(`${GATEWAY_ORIGIN}/**`, (route) =>
     route.fulfill({ json: {} }),
   );
-  await page.route("**/manifest", (route) => route.fulfill({ json: MANIFEST }));
-  // A hung route is left pending (never fulfilled), so the consumer stays in
-  // its loading state for the shot.
-  await page.route("**/providers/openrouter/models/top", (route) => {
-    if (opts.hang === "openrouter-models") return;
-    return route.fulfill({ json: OPENROUTER_MODELS });
-  });
-  await page.route("**/providers/claude/oauth/start", (route) =>
-    route.fulfill({ json: OAUTH_START }),
-  );
-  await page.route("**/providers/openai/oauth/start", (route) =>
-    route.fulfill({ json: OPENAI_OAUTH_START }),
-  );
-  await page.route("**/providers/claude/oauth/complete", (route) =>
-    route.fulfill({ json: OAUTH_CREDENTIALS }),
-  );
-  await page.route("**/providers/openai/oauth/complete", (route) =>
-    route.fulfill({ json: { credentials: "visual-openai-credentials" } }),
-  );
-  await page.route("**/providers/claude/models", (route) =>
-    route.fulfill({ json: CLAUDE_MODELS }),
-  );
-  await page.route("**/providers/openrouter/validate-key", (route) =>
-    route.fulfill({ json: {} }),
-  );
-  await page.route(`**/agents/${AGENT}`, (route) =>
-    route.fulfill({ json: { status: opts.agentStatus } }),
-  );
-  await page.route("**/agents", (route) => {
-    const failure = opts.createResponse;
-    if (failure !== null) {
-      return route.fulfill({ status: failure.status, json: failure.body });
-    }
-    return route.fulfill({ json: {} });
-  });
-  // The settings provider card reads GET /provider; other methods (PATCH on a
-  // model change) fall through to the catch-all.
-  const provider = opts.provider;
-  if (provider) {
-    await page.route("**/agents/*/provider", (route) =>
-      route.request().method() === "GET"
-        ? route.fulfill({ json: provider })
-        : route.fulfill({ json: {} }),
-    );
+  for (const fixture of [...BASE_ROUTES, ...routes]) {
+    await installRoute(page, fixture);
   }
 }

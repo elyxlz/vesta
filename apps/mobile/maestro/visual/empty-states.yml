@@ -1,0 +1,210 @@
+appId: ${APP_ID}
+name: Empty and error states
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://agent/nova/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: '.*No notifications yet\..*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-notifications-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notifications-empty.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/nova/details/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*No rules yet.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-notification-rules-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notification-rules-empty.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/nova/details/host-access?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*No folders shared.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-host-access-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-host-access-empty.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/nova/details/backups?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*No backups yet.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-backups-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-backups-empty.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/nova/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*No skills installed.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-files-missing
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-files-missing.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/forge/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualLogs=empty"
+- extendedWaitUntil:
+    visible: '.*Waiting for logs.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-logs-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-logs-empty.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualLogs=error"
+- extendedWaitUntil:
+    visible: '.*stream closed.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-logs-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-logs-error.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
+- extendedWaitUntil:
+    visible: '.*Waiting for logs.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-logs-offline
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-logs-offline.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDashboard=error"
+- extendedWaitUntil:
+    visible: '.*visual regressions.*'
+    timeout: 30000
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*Dashboard unavailable.*'
+    commands:
+      - swipe:
+          start: "85%,25%"
+          end: "15%,25%"
+          duration: 180
+      - extendedWaitUntil:
+          visible: '.*Dashboard unavailable.*'
+          timeout: 4000
+          optional: true
+- extendedWaitUntil:
+    visible: '.*Dashboard unavailable.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-dashboard-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-dashboard-error.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/forge?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Waiting for agent.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-loading
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-loading.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualApi=error"
+- extendedWaitUntil:
+    visible: '.*Something went wrong.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-notification-rules-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notification-rules-error.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualApi=error"
+- extendedWaitUntil:
+    visible: '.*Something went wrong.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-files-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-files-error.png
+- stopApp
+- openLink:
+    link: "vesta-dev://debug?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
+- extendedWaitUntil:
+    visible: '.*Reachable.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: diagnostics-offline
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: diagnostics-offline.png
+- stopApp
+- openLink:
+    link: "vesta-dev://debug?visualPrivacy=unlocked&visualSession=connected&visualRoster=empty"
+- extendedWaitUntil:
+    visible: '.*Agents.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: diagnostics-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: diagnostics-empty.png

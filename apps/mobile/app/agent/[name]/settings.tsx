@@ -10,21 +10,17 @@ import {
   stopAgent,
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
+import { sectionTitle } from "@/agent/settings/sections-model";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
-import { SheetChrome } from "@/components/sheet-chrome";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormSection, SwitchRow } from "@/components/ui/Form";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-
-// Android keeps the simple critical controls and hides the complex
-// sections (provider sign-in, voice, rules, files, host access, restores).
-const SHOWS_ADVANCED_SECTIONS = process.env.EXPO_OS === "ios";
 
 function AgentSettingsContent() {
   const router = useRouter();
@@ -78,16 +74,14 @@ function AgentSettingsContent() {
       <FormSection
         title="Agent"
         actions={
-          SHOWS_ADVANCED_SECTIONS ? (
-            <>
-              <Button pill variant="card" onPress={() => open("provider")}>
-                Provider and model
-              </Button>
-              <Button pill variant="card" onPress={() => open("voice")}>
-                Voice
-              </Button>
-            </>
-          ) : undefined
+          <>
+            <Button pill variant="card" onPress={() => open("provider")}>
+              {sectionTitle("provider")}
+            </Button>
+            <Button pill variant="card" onPress={() => open("voice")}>
+              {sectionTitle("voice")}
+            </Button>
+          </>
         }
       >
         <SwitchRow
@@ -103,33 +97,7 @@ function AgentSettingsContent() {
       <FormSection
         title="Attention"
         actions={
-          SHOWS_ADVANCED_SECTIONS ? (
-            <>
-              <ButtonGroup>
-                <Button
-                  variant="cardGrouped"
-                  onPress={() => openPage("notifications")}
-                >
-                  Notifications
-                </Button>
-                <Button
-                  variant="cardGrouped"
-                  onPress={() => open("notifications")}
-                >
-                  Notification rules
-                </Button>
-              </ButtonGroup>
-              <Button pill variant="card" onPress={() => openPage("logs")}>
-                Logs
-              </Button>
-              <Button pill variant="card" onPress={() => open("files")}>
-                Files
-              </Button>
-              <Button pill variant="card" onPress={() => open("host-access")}>
-                Host access
-              </Button>
-            </>
-          ) : (
+          <>
             <ButtonGroup>
               <Button
                 variant="cardGrouped"
@@ -137,41 +105,41 @@ function AgentSettingsContent() {
               >
                 Notifications
               </Button>
-              <Button variant="cardGrouped" onPress={() => openPage("logs")}>
-                Logs
+              <Button
+                variant="cardGrouped"
+                onPress={() => open("notifications")}
+              >
+                {sectionTitle("notifications")}
               </Button>
             </ButtonGroup>
-          )
+            <Button pill variant="card" onPress={() => openPage("logs")}>
+              Logs
+            </Button>
+            <Button pill variant="card" onPress={() => open("files")}>
+              {sectionTitle("files")}
+            </Button>
+            <Button pill variant="card" onPress={() => open("host-access")}>
+              {sectionTitle("host-access")}
+            </Button>
+          </>
         }
       />
       <FormSection
         title="Backups"
         actions={
-          SHOWS_ADVANCED_SECTIONS ? (
-            <ButtonGroup>
-              <Button variant="cardGrouped" onPress={() => open("backups")}>
-                Manage backups
-              </Button>
-              <Button
-                variant="cardGrouped"
-                disabled={action.isPending}
-                loading={action.isPending && action.variables === "backup"}
-                onPress={() => action.mutate("backup")}
-              >
-                Back up now
-              </Button>
-            </ButtonGroup>
-          ) : (
+          <ButtonGroup>
+            <Button variant="cardGrouped" onPress={() => open("backups")}>
+              Manage backups
+            </Button>
             <Button
-              pill
-              variant="card"
+              variant="cardGrouped"
               disabled={action.isPending}
               loading={action.isPending && action.variables === "backup"}
               onPress={() => action.mutate("backup")}
             >
               Back up now
             </Button>
-          )
+          </ButtonGroup>
         }
       />
       <FormSection
@@ -238,7 +206,6 @@ export default function AgentSettingsScreen() {
   return (
     <>
       <NativeSheetCloseButton accessibilityLabel="Close agent settings" />
-      <SheetChrome title="Settings" closeLabel="Close agent settings" />
       <AgentSettingsContent />
     </>
   );

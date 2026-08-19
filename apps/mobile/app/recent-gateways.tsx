@@ -29,10 +29,6 @@ type ConnectionAttempt =
       message: string;
     };
 
-export default function RecentGatewaysScreen() {
-  return <RecentGatewaysContent />;
-}
-
 function gatewayName(gateway: RecentGateway): string {
   return new URL(gateway.url).host;
 }
@@ -49,7 +45,7 @@ function lastConnectedLabel(timestamp: number): string {
   return `${day} at ${time}`;
 }
 
-function RecentGatewaysContent() {
+export default function RecentGatewaysScreen() {
   const {
     recentGateways,
     connectRecentGateway,
@@ -167,7 +163,11 @@ function RecentGatewaysContent() {
           style={styles.connectionState}
         >
           {connectionAttempt.status === "connecting" ? (
-            <LoadingSpinner size="large" color={colors.interactive} />
+            <LoadingSpinner
+              size="large"
+              color={colors.interactive}
+              style={styles.connectionSpinner}
+            />
           ) : (
             <View
               style={[
@@ -191,17 +191,17 @@ function RecentGatewaysContent() {
                 ? `Connecting to ${gatewayName(connectionAttempt.gateway)}`
                 : `Couldn’t connect to ${gatewayName(connectionAttempt.gateway)}`}
             </Text>
-            <Text
-              selectable={connectionAttempt.status === "error"}
-              style={[
-                styles.connectionStateDetail,
-                { color: colors.secondaryText },
-              ]}
-            >
-              {connectionAttempt.status === "connecting"
-                ? "Using saved connection…"
-                : connectionAttempt.message}
-            </Text>
+            {connectionAttempt.status === "error" ? (
+              <Text
+                selectable
+                style={[
+                  styles.connectionStateDetail,
+                  { color: colors.secondaryText },
+                ]}
+              >
+                {connectionAttempt.message}
+              </Text>
+            ) : null}
           </View>
           {connectionAttempt.status === "error" ? (
             <View style={styles.connectionStateActions}>
@@ -348,6 +348,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 18,
   },
+  connectionSpinner: { transform: [{ scale: 0.75 }] },
   connectionStateIcon: {
     width: 56,
     height: 56,
