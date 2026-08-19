@@ -88,6 +88,8 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 **When the fix is a check, a detector, a threshold, or a monitor, also simulate the HEALTHY case.** Replaying the failure it was built for only proves it fires. Ask literally: what does this print when everything is fine? If the answer is "the last bad value", "nothing, so the previous reading stands", or "I cannot tell the difference", the check is a high-water mark that pins you to a stale state, and it looks healthy the whole time because it still returns a plausible number.
 
+And simulate the AMBIGUOUS-HEALTHY case: the detector's own probe returns empty, times out, or errors while the target is actually FINE (a slow status call under host contention, a piped exit code, a broken flag). A detector that treats its own probe failure as a target failure fires wrong on a healthy system, which is worse than not firing. This is the "empty result is unverified" rule turned inward on your own detectors, and it is a repeat offender: a monitor false-fired and a watchdog false-restarted a healthy daemon in separate passes, both because an empty/timed-out probe read as "down". The ambiguous path must fall back to a reliable signal (a cheap pgrep, a log mtime) or fail-safe to NO action, never to the failure branch.
+
 ### 5. Upstream
 
 Read the `upstream` skill and follow it. It can be a no-op; don't invent work to fill it.
