@@ -1,0 +1,64 @@
+appId: ${APP_ID}
+name: Live states
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Message aria"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-connected
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-connected.png
+- tapOn:
+    text: "Message aria"
+- inputText: "Can you also book the room?"
+- extendedWaitUntil:
+    visible: "Send message"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-connected-draft
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-connected-draft.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualLive=typing"
+- extendedWaitUntil:
+    visible: "aria is typing"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-typing
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-typing.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualLive=pending"
+- extendedWaitUntil:
+    visible: "pending"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-notifications-pending
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notifications-pending.png

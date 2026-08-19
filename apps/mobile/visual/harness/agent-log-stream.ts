@@ -1,5 +1,10 @@
 import type { SseHandle, StreamEvent } from "@vesta/core";
 import type { ApiClient } from "../../src/api/client";
+import { visualSwitch } from "./launch-query";
+
+// visualLogs=empty streams nothing (the waiting state); visualLogs=error
+// reports a failed stream after the first lines.
+const logsVariant = visualSwitch("visualLogs");
 
 // A realistic boot tail: enough lines to overflow the viewport, streamed one per tick the way
 // readSse delivers a replay, so the list's fill-on-burst behavior is exercised. The newest line
@@ -33,9 +38,18 @@ export function openAgentLogStream(
   _reconnect: boolean,
   onEvent: (event: StreamEvent) => void,
 ): SseHandle {
-  const timers = lines.map((text, index) =>
+  const streamed = logsVariant === "empty" ? [] : lines;
+  const timers = streamed.map((text, index) =>
     setTimeout(() => onEvent({ kind: "line", text }), index * 12),
   );
+  if (logsVariant === "error") {
+    timers.push(
+      setTimeout(
+        () => onEvent({ kind: "error", message: "error: stream closed" }),
+        streamed.length * 12 + 20,
+      ),
+    );
+  }
   return {
     cancel: () => {
       for (const timer of timers) clearTimeout(timer);

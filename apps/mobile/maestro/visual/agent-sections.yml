@@ -1,0 +1,298 @@
+appId: ${APP_ID}
+name: Agent sections
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://agent/aria/details/general?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: '.*Gateway state.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-general
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-general.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/voice?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualVoice=unconfigured"
+- extendedWaitUntil:
+    visible: '.*Needs configuration.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-voice-unconfigured
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-voice-unconfigured.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/voice?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Language.*'
+    timeout: 30000
+- tapOn:
+    text: '^Language,.*'
+- extendedWaitUntil:
+    visible: '.*Language used for live transcription.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-voice-select
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-voice-select.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Priority rules.*'
+    timeout: 30000
+- tapOn:
+    text: 'Delete rule'
+- extendedWaitUntil:
+    visible: '.*Delete rule\?.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-notification-rules-delete
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notification-rules-delete.png
+- tapOn:
+    text: 'Cancel'
+- scrollUntilVisible:
+    element:
+      text: '.*Sender contains.*'
+    direction: DOWN
+    timeout: 15000
+    speed: 40
+    visibilityPercentage: 60
+    centerElement: true
+- tapOn:
+    text: '.*Sender contains.*'
+- inputText: "Maya"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-notification-rules-composer
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notification-rules-composer.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Advanced view.*'
+    timeout: 30000
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "^0$"
+          rightOf:
+            text: '.*Advanced view.*'
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          rightOf:
+            text: '.*Advanced view.*'
+          above:
+            text: '.*Who aria is.*'
+- extendedWaitUntil:
+    visible: '.*File browser.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-files-advanced
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-files-advanced.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Abilities.*'
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*, calendar,.*'
+    direction: DOWN
+    timeout: 15000
+    speed: 40
+    visibilityPercentage: 60
+    centerElement: true
+- tapOn:
+    text: '.*, calendar,.*'
+- extendedWaitUntil:
+    visible: '.*events\.md.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-files-skill-expanded
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-files-skill-expanded.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Dreams.*'
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*2026-08-01 at 03:00.*'
+    direction: DOWN
+    timeout: 15000
+    speed: 40
+    visibilityPercentage: 60
+    centerElement: true
+- tapOn:
+    text: '.*2026-08-01 at 03:00.*'
+- extendedWaitUntil:
+    visible: '.*Contents of.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-file-dream
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-file-dream.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Memory.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Memory.*'
+- extendedWaitUntil:
+    visible: '.*Contents of MEMORY\.md.*'
+    timeout: 10000
+- tapOn:
+    text: '.*Contents of MEMORY\.md.*'
+- inputText: "Ship the visual catalog. "
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- extendedWaitUntil:
+    visible: '.*Revert.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-file-changed
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-file-changed.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/host-access?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Add a folder.*'
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: '.*Add a folder.*'
+    direction: DOWN
+    timeout: 15000
+    speed: 40
+    visibilityPercentage: 60
+    centerElement: true
+- tapOn:
+    text: '.*Add a folder.*'
+- extendedWaitUntil:
+    visible: '.*Host path.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-host-access-add
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-host-access-add.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/host-access?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Remove access.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Remove access.*'
+- extendedWaitUntil:
+    visible: '.*Remove folder access\?.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-host-access-remove
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-host-access-remove.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/backups?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Back up now.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Back up now.*'
+- extendedWaitUntil:
+    visible: '.*Back up now\?.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-backups-backup-alert
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-backups-backup-alert.png
+- tapOn:
+    text: 'Cancel'
+- tapOn:
+    text: '^Restore.*'
+- extendedWaitUntil:
+    visible: '.*Restore.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-backups-restore-alert
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-backups-restore-alert.png
+- tapOn:
+    text: 'Cancel'
+- tapOn:
+    text: '^Delete.*'
+- extendedWaitUntil:
+    visible: '.*Delete.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-backups-delete-alert
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-backups-delete-alert.png

@@ -8,7 +8,17 @@
     "maestro/visual/connected-whats-new-error.yml",
     "maestro/visual/connect.yml",
     "maestro/visual/connected-whats-new-empty.yml",
-    "maestro/visual/connected-home-empty.yml"
+    "maestro/visual/connected-home-empty.yml",
+    "maestro/visual/agent-states.yml",
+    "maestro/visual/provider-states.yml",
+    "maestro/visual/agent-sections.yml",
+    "maestro/visual/empty-states.yml",
+    "maestro/visual/chat-states.yml",
+    "maestro/visual/connect-states.yml",
+    "maestro/visual/privacy-states.yml",
+    "maestro/visual/settings-states.yml",
+    "maestro/visual/gateway-update-states.yml",
+    "maestro/visual/live-states.yml"
   ],
   "scenarios": [
     {
@@ -335,24 +345,660 @@
     },
     {
       "id": "whats-new",
-      "title": "What\u2019s new",
+      "title": "What’s new",
       "description": "Deterministic release notes available to the connected gateway version.",
-      "group": "What\u2019s new",
+      "group": "What’s new",
       "screenshot": "whats-new.png"
     },
     {
       "id": "whats-new-empty",
       "title": "No release notes",
       "description": "Empty release-note state when nothing new applies to this gateway.",
-      "group": "What\u2019s new",
+      "group": "What’s new",
       "screenshot": "whats-new-empty.png"
     },
     {
       "id": "whats-new-error",
       "title": "Release notes unavailable",
       "description": "Recoverable error state when release notes cannot be loaded.",
-      "group": "What\u2019s new",
+      "group": "What’s new",
       "screenshot": "whats-new-error.png"
+    },
+    {
+      "id": "agent-chat-connected",
+      "title": "Chat, connected",
+      "description": "The chat with a live gateway: composer enabled and addressed to the agent.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-connected-draft",
+      "title": "Chat, connected draft",
+      "description": "A typed draft with the send button armed.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-typing",
+      "title": "Chat, typing",
+      "description": "The typing indicator while a paced reply streams in.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-notifications-pending",
+      "title": "Notifications, pending",
+      "description": "Received notifications with pending ones highlighted.",
+      "group": "Agent"
+    },
+    {
+      "id": "home-agent-starting",
+      "title": "Home, agent starting",
+      "description": "The first carousel card while the agent's container starts.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-setting-up",
+      "title": "Home, agent setting up",
+      "description": "The card while first-time setup runs.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-booting",
+      "title": "Home, agent booting",
+      "description": "An alive agent still inside its boot turns.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-thinking",
+      "title": "Home, agent thinking",
+      "description": "An alive agent mid-turn.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-restarting",
+      "title": "Home, agent restarting",
+      "description": "The card during a restart.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-rebuilding",
+      "title": "Home, agent rebuilding",
+      "description": "The card while vestad rebuilds the container.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-stopped",
+      "title": "Home, agent stopped",
+      "description": "A user-stopped agent on the first page.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-dead",
+      "title": "Home, agent dead",
+      "description": "An agent whose container died.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-not-found",
+      "title": "Home, agent not found",
+      "description": "An agent whose container is missing.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-not-authenticated",
+      "title": "Home, agent needs sign-in",
+      "description": "An agent whose provider credentials are gone.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-unprovisioned",
+      "title": "Home, agent unprovisioned",
+      "description": "An agent that was never set up.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-backing-up",
+      "title": "Home, agent backing up",
+      "description": "An agent with a backup in flight.",
+      "group": "Agent states"
+    },
+    {
+      "id": "home-agent-restoring",
+      "title": "Home, agent restoring",
+      "description": "An agent being restored from a snapshot.",
+      "group": "Agent states"
+    },
+    {
+      "id": "agent-settings-stopped",
+      "title": "Agent settings, stopped",
+      "description": "The settings sheet for a stopped agent, offering start.",
+      "group": "Agent states"
+    },
+    {
+      "id": "agent-settings-needs-auth",
+      "title": "Agent settings, needs sign-in",
+      "description": "The settings sheet for an agent whose credentials are gone.",
+      "group": "Agent states"
+    },
+    {
+      "id": "agent-settings-thinking",
+      "title": "Agent settings, thinking",
+      "description": "The identity card with the thinking badge.",
+      "group": "Agent states"
+    },
+    {
+      "id": "agent-backups-busy",
+      "title": "Backups, busy",
+      "description": "The backups section while a backup runs, controls disabled.",
+      "group": "Agent states"
+    },
+    {
+      "id": "agent-provider-none",
+      "title": "Provider, none",
+      "description": "The provider section with no provider set up and the provider chooser.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-key-entry",
+      "title": "Provider, key entry",
+      "description": "The API key field for a key-backed provider.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-openai-code",
+      "title": "Provider, OpenAI code",
+      "description": "The one-time code and finish button of the OpenAI sign-in.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-needs-auth",
+      "title": "Provider, needs sign-in",
+      "description": "A Claude provider whose credentials expired, offering sign in.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-oauth-code",
+      "title": "Provider, Claude code",
+      "description": "The authorization code field after the browser sign-in.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-credits",
+      "title": "Provider, credits",
+      "description": "An OpenRouter provider with its credit balance.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-openai",
+      "title": "Provider, OpenAI",
+      "description": "A signed-in ChatGPT provider.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-choose-model",
+      "title": "Provider, choose model",
+      "description": "The model picker.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-context-picker",
+      "title": "Provider, context window",
+      "description": "The context window presets.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-sign-out-confirm",
+      "title": "Provider, sign out",
+      "description": "The sign-out confirmation.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-loading",
+      "title": "Provider, loading",
+      "description": "The provider section while it loads.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-provider-error",
+      "title": "Provider, error",
+      "description": "The provider section after the gateway failed to answer.",
+      "group": "Provider"
+    },
+    {
+      "id": "agent-general",
+      "title": "General section",
+      "description": "The agent's identity hero with status rows.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-voice-unconfigured",
+      "title": "Voice, unconfigured",
+      "description": "The voice section with no speech provider set up.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-voice-select",
+      "title": "Voice, language picker",
+      "description": "The language selection alert.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-notification-rules-delete",
+      "title": "Interrupt rules, delete",
+      "description": "The delete rule confirmation.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-notification-rules-composer",
+      "title": "Interrupt rules, composer",
+      "description": "The new-rule composer with fields filled.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-files-advanced",
+      "title": "Files, advanced",
+      "description": "The advanced file browser listing every path.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-files-skill-expanded",
+      "title": "Files, ability expanded",
+      "description": "An ability expanded to its files.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-file-dream",
+      "title": "File, dream",
+      "description": "A nightly dream file open in the viewer.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-file-changed",
+      "title": "File, edited",
+      "description": "An edited file with revert and save enabled.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-host-access-add",
+      "title": "Host access, add folder",
+      "description": "The add-folder form with suggestions.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-host-access-remove",
+      "title": "Host access, remove",
+      "description": "The remove-access confirmation.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-backups-backup-alert",
+      "title": "Backups, back up now",
+      "description": "The back-up-now confirmation.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-backups-restore-alert",
+      "title": "Backups, restore",
+      "description": "The restore confirmation.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-backups-delete-alert",
+      "title": "Backups, delete",
+      "description": "The delete snapshot confirmation.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-notifications-empty",
+      "title": "Notifications, empty",
+      "description": "The notifications page with nothing received.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-notification-rules-empty",
+      "title": "Interrupt rules, empty",
+      "description": "The rules section with no rules.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-host-access-empty",
+      "title": "Host access, empty",
+      "description": "No shared host folders.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-backups-empty",
+      "title": "Backups, empty",
+      "description": "No snapshots yet.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-files-missing",
+      "title": "Files, missing",
+      "description": "The files section when memory, constitution, dreams, and skills are absent.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-logs-empty",
+      "title": "Logs, empty",
+      "description": "The logs page before any line arrives.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-logs-error",
+      "title": "Logs, error",
+      "description": "The logs page after the stream failed.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-logs-offline",
+      "title": "Logs, offline",
+      "description": "The logs page while the gateway is unreachable.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-dashboard-error",
+      "title": "Dashboard, error",
+      "description": "The dashboard page when the frame fails to load.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-chat-loading",
+      "title": "Chat, loading",
+      "description": "The chat skeleton before history loads.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-notification-rules-error",
+      "title": "Interrupt rules, error",
+      "description": "The rules section after the config failed to load.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-files-error",
+      "title": "Files, error",
+      "description": "The files section after the tree failed to load.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "diagnostics-offline",
+      "title": "Diagnostics, offline",
+      "description": "The diagnostics page while the gateway is unreachable.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "diagnostics-empty",
+      "title": "Diagnostics, no agents",
+      "description": "The diagnostics page with an empty roster.",
+      "group": "Empty and error states"
+    },
+    {
+      "id": "agent-chat-delivery",
+      "title": "Chat, delivery states",
+      "description": "A bubble still sending and one the gateway refused.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-errors",
+      "title": "Chat, error lines",
+      "description": "The snag and rate-limit lines.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-markdown",
+      "title": "Chat, rich reply",
+      "description": "A reply with heading, code block, list, and link.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-scrolled",
+      "title": "Chat, scrolled up",
+      "description": "Older history with date headers and the scroll-to-latest control.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-voice-button",
+      "title": "Chat, voice button",
+      "description": "The composer with the microphone when voice is configured.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-draft",
+      "title": "Chat, draft",
+      "description": "A typed draft in the composer.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-pager-notifications",
+      "title": "Pager, notifications page",
+      "description": "Notifications as a swipe page beside chat.",
+      "group": "Chat",
+      "platforms": [
+        "ios",
+        "ios-dark"
+      ]
+    },
+    {
+      "id": "agent-pager-logs",
+      "title": "Pager, logs page",
+      "description": "Logs as a swipe page beside chat.",
+      "group": "Chat",
+      "platforms": [
+        "ios",
+        "ios-dark"
+      ]
+    },
+    {
+      "id": "connect-actions-no-recent",
+      "title": "Connect actions, no recent",
+      "description": "The connect sheet with no saved gateways.",
+      "group": "Connect"
+    },
+    {
+      "id": "cloud-sign-in-connecting",
+      "title": "Cloud sign-in, connecting",
+      "description": "The hosted sign-in button while it connects.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-link-filled",
+      "title": "Connect link, filled",
+      "description": "A pasted link, masked, with clear and reveal controls.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-link-revealed",
+      "title": "Connect link, revealed",
+      "description": "The pasted link shown in clear text.",
+      "group": "Connect",
+      "platforms": [
+        "ios",
+        "ios-dark"
+      ]
+    },
+    {
+      "id": "connect-link-unreachable",
+      "title": "Connect link, unreachable",
+      "description": "The toast after a well-formed link could not be reached.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-link-no-key",
+      "title": "Connect link, no key",
+      "description": "The validation message for a link without a key.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-link-http",
+      "title": "Connect link, http",
+      "description": "The validation message for a non-HTTPS link.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-link-connecting",
+      "title": "Connect link, connecting",
+      "description": "The connect button while the gateway is contacted.",
+      "group": "Connect"
+    },
+    {
+      "id": "connect-prefilled-link",
+      "title": "Connect, prefilled",
+      "description": "The link screen opened with a link from a universal link.",
+      "group": "Connect"
+    },
+    {
+      "id": "recent-gateways-clear-confirm",
+      "title": "Recent gateways, clear all",
+      "description": "The clear-all confirmation.",
+      "group": "Connect"
+    },
+    {
+      "id": "recent-gateways-empty",
+      "title": "Recent gateways, empty",
+      "description": "The list after every gateway was forgotten.",
+      "group": "Connect"
+    },
+    {
+      "id": "privacy-opening",
+      "title": "Privacy, opening",
+      "description": "The launch splash held while privacy settings load.",
+      "group": "Privacy"
+    },
+    {
+      "id": "privacy-locked-connected",
+      "title": "Privacy, locked over home",
+      "description": "The lock sheet over the connected home.",
+      "group": "Privacy"
+    },
+    {
+      "id": "settings-app-lock-off",
+      "title": "Settings, app lock off",
+      "description": "The privacy rows with App Lock turned off.",
+      "group": "Privacy"
+    },
+    {
+      "id": "settings-channel-picker",
+      "title": "Settings, release channel",
+      "description": "The release channel picker.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-restart-confirm",
+      "title": "Settings, restart gateway",
+      "description": "The gateway restart confirmation.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-disconnect-confirm",
+      "title": "Settings, disconnect",
+      "description": "The disconnect confirmation.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-update-checked",
+      "title": "Settings, update checked",
+      "description": "The check-for-updates control after a check found nothing.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-update-check-error",
+      "title": "Settings, update check failed",
+      "description": "The retry control and toast after a failed check.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-gateway-offline",
+      "title": "Settings, gateway offline",
+      "description": "Gateway controls disabled while reconnecting.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-tunnel-unavailable",
+      "title": "Settings, no tunnel",
+      "description": "The gateway section reporting no public tunnel.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-account-managed",
+      "title": "Settings, managed account",
+      "description": "The account section of a managed gateway.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-no-devices",
+      "title": "Settings, no devices",
+      "description": "The settings sheet without a devices section.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-device-position",
+      "title": "Settings, device position",
+      "description": "A device row carrying its reported place.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-notifications-off",
+      "title": "Settings, notifications off",
+      "description": "Notification rows disabled after turning notifications off.",
+      "group": "App settings"
+    },
+    {
+      "id": "settings-light-forced",
+      "title": "Settings, light forced",
+      "description": "Appearance pinned to light, so the dark pass keeps the light UI.",
+      "group": "App settings"
+    },
+    {
+      "id": "whats-new-loading",
+      "title": "What's new, loading",
+      "description": "The release notes sheet while notes load.",
+      "group": "App settings"
+    },
+    {
+      "id": "whats-new-auto-open",
+      "title": "What's new, auto-opened",
+      "description": "The release notes sheet opened on its own after an update.",
+      "group": "App settings"
+    },
+    {
+      "id": "whats-new-beta",
+      "title": "What's new, beta channel",
+      "description": "Release notes including a prerelease on the beta channel.",
+      "group": "App settings"
+    },
+    {
+      "id": "gateway-update-disconnect-confirm",
+      "title": "Gateway update, disconnect",
+      "description": "The disconnect confirmation on the required-update sheet.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "gateway-update-applying",
+      "title": "Gateway update, installing",
+      "description": "The update screen while the binary is swapped.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "gateway-update-snapshotting-all",
+      "title": "Gateway update, backing up all",
+      "description": "The snapshot phase with no per-agent count.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "gateway-update-restarting",
+      "title": "Gateway update, restarting",
+      "description": "The update screen while the gateway restarts.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "gateway-update-failed-generic",
+      "title": "Gateway update, failed",
+      "description": "A failed update with no error detail, showing the generic copy.",
+      "group": "Gateway update"
+    },
+    {
+      "id": "gateway-update-with-settings",
+      "title": "Gateway update, settings open",
+      "description": "App settings reachable over the update screen.",
+      "group": "Gateway update"
     }
   ]
 }
