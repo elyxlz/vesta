@@ -36,8 +36,6 @@ class DriftError(RuntimeError):
 @dataclass
 class SearchFilters:
     min_rating: float | None = None
-    open_now: bool = False
-    max_price: int | None = None
     category: str | None = None
     radius_km: float | None = None
     sort: str | None = None  # "distance" | "rating"
@@ -111,10 +109,6 @@ def _apply_filters(places: list[Place], filters: SearchFilters, *, near_latlng: 
     out = places
     if filters.min_rating is not None:
         out = [p for p in out if p.rating is not None and p.rating >= filters.min_rating]
-    if filters.open_now:
-        out = [p for p in out if p.open_now is not False]  # drop known-closed; keep unknown
-    if filters.max_price is not None:
-        out = [p for p in out if p.category is not None]  # price index not mapped; keep all with data
     if filters.category is not None:
         needle = filters.category.lower()
         out = [p for p in out if p.category is not None and needle in p.category.lower()]

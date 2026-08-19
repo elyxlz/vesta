@@ -16,13 +16,13 @@ Set the user's locale and country so results and formatting match where they are
 ## Find places
 
 ```bash
-maps search "frozen yogurt" --near "Alghero" --open-now --sort rating --limit 5
+maps search "frozen yogurt" --near "Alghero" --min-rating 4.4 --sort rating --limit 5
 ```
 
-Each result carries `name`, `address`, `lat`/`lng`, `place_id`, `cid`, `category`, `website`,
-and a `links` block with a `place_url` (opens the exact place) and a `directions_url`. Filter
-with `--min-rating`, `--open-now`, `--max-price`, `--category`, `--radius-km` (against `--near`),
-and `--sort distance|rating`. `--near` takes an address or `lat,lng`.
+Each result carries `name`, `address`, `lat`/`lng`, `place_id`, `cid`, `rating`, `category`,
+`website`, and a `links` block with a `place_url` (opens the exact place) and a `directions_url`.
+Filter with `--min-rating`, `--category`, `--radius-km` (against `--near`), and
+`--sort distance|rating`. `--near` takes an address or `lat,lng`.
 
 Send the user the `place_url` for a single pick. It opens the exact place on the web and the
 Maps app on a phone.

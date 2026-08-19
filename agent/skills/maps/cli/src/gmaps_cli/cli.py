@@ -38,8 +38,6 @@ def _place_json(place: Place) -> dict[str, object]:
 def _cmd_search(args: argparse.Namespace) -> int:
     filters = SearchFilters(
         min_rating=args.min_rating,
-        open_now=args.open_now,
-        max_price=args.max_price,
         category=args.category,
         radius_km=args.radius_km,
         sort=args.sort,
@@ -57,7 +55,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
             "query": args.query,
             "returned": len(places),
             "results": [_place_json(p) for p in places],
-            "note": "Details: `maps show <cid>`. Route: `maps route --stops <json>`. Tighten: --min-rating/--category/--open-now/--sort.",
+            "note": "Route: `maps route --stops <json>`. Tighten: --min-rating/--category/--radius-km/--sort.",
         }
     )
     return 0
@@ -130,8 +128,6 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("query")
     s.add_argument("--near")
     s.add_argument("--min-rating", type=float, dest="min_rating")
-    s.add_argument("--open-now", action="store_true", dest="open_now")
-    s.add_argument("--max-price", type=int, dest="max_price")
     s.add_argument("--category")
     s.add_argument("--radius-km", type=float, dest="radius_km")
     s.add_argument("--sort", choices=("distance", "rating"))
