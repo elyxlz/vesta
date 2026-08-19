@@ -41,9 +41,9 @@ tags:
       notVisible: "Dashboard ready"
     commands:
       - swipe:
-          start: "85%,50%"
-          end: "15%,50%"
-          duration: 450
+          start: "85%,25%"
+          end: "15%,25%"
+          duration: 180
       - extendedWaitUntil:
           visible: "Dashboard ready"
           timeout: 20000
@@ -100,9 +100,9 @@ tags:
       notVisible: "Open nova"
     commands:
       - swipe:
-          start: "85%,50%"
-          end: "15%,50%"
-          duration: 450
+          start: "85%,25%"
+          end: "15%,25%"
+          duration: 180
       - extendedWaitUntil:
           visible: "Open nova"
           timeout: 5000

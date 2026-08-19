@@ -6,19 +6,14 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import {
-  copyFile,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 
 import { loadRegistry, scenariosForPlatform } from "@vesta/visual/registry";
 import { publishRunStatus } from "@vesta/visual/run-status";
+import { captureAllRequested } from "@vesta/visual/fingerprint";
 import { putShot, shotDriftWarning } from "@vesta/visual/store";
 import {
   assertHarnessBoundary,
@@ -30,6 +25,8 @@ import {
   jsBundleCurrent,
   metroConfigPath,
   nativeInputFingerprint,
+  planFlows,
+  printPlan,
   recordJsBundle,
   run,
   setGentleMode,
@@ -57,7 +54,9 @@ export const androidVariants = {
 };
 function androidMaestroDirectoryOf(variant) {
   const workDirectory =
-    variant === "android" ? androidVisualDirectory : path.join(visualDirectory, variant);
+    variant === "android"
+      ? androidVisualDirectory
+      : path.join(visualDirectory, variant);
   return path.join(workDirectory, "maestro");
 }
 const apkPath = path.join(androidVisualDirectory, "apk/app-release.apk");
@@ -81,13 +80,19 @@ const ANDROID_BUILD_ABI = "arm64-v8a";
 const EMULATOR_BOOT_TIMEOUT_MS = 240_000;
 const EMULATOR_BOOT_POLL_MS = 2_000;
 const STATUS_BAR_CLOCK = "0941";
-const DISPLAY_CUTOUT_OVERLAY = "com.android.internal.display.cutout.emulation.tall";
+const DISPLAY_CUTOUT_OVERLAY =
+  "com.android.internal.display.cutout.emulation.tall";
 
 function usage() {
   console.log(`Usage:
   npm run visual:android:capture -- [options]
 
+Commands:
+  capture             Take the shots whose inputs changed (default)
+  plan                Print which flows a capture would run, as JSON
+
 Options:
+  --all               Retake every shot, changed or not
   --variant <key>     Android variant to capture: ${Object.keys(androidVariants).join(", ")}
                       (default: ${DEFAULT_VARIANT}; the galaxy variant runs 3-button navigation)
   --avd <name>        Emulator AVD to boot or reuse (default: the variant's AVD)
@@ -140,6 +145,10 @@ export function parseArguments(values) {
       options.gentle = true;
       continue;
     }
+    if (argument === "--all") {
+      options.all = true;
+      continue;
+    }
     if (["--avd", "--device", "--variant"].includes(argument)) {
       const value = argumentsCopy[index + 1];
       if (!value) throw new Error(`${argument} requires a value.`);
@@ -152,7 +161,7 @@ export function parseArguments(values) {
     throw new Error(`Unknown argument: ${argument}`);
   }
 
-  if (command !== "capture") {
+  if (command !== "capture" && command !== "plan") {
     throw new Error(`Unknown command: ${command}`);
   }
   if (options.skipBuild && options.cleanNative) {
@@ -369,7 +378,14 @@ async function normalizeEmulator(tools, serial, navOverlay) {
     ["global", "sysui_demo_allowed", "1"],
   ];
   for (const [namespace, key, value] of settings) {
-    await adb(tools, serial, ["shell", "settings", "put", namespace, key, value]);
+    await adb(tools, serial, [
+      "shell",
+      "settings",
+      "put",
+      namespace,
+      key,
+      value,
+    ]);
   }
   await adb(tools, serial, ["shell", "cmd", "uimode", "night", "no"], {
     allowFailure: true,
@@ -386,11 +402,22 @@ async function normalizeEmulator(tools, serial, navOverlay) {
   await adb(
     tools,
     serial,
-    ["shell", "cmd", "overlay", "enable-exclusive", "--category", DISPLAY_CUTOUT_OVERLAY],
+    [
+      "shell",
+      "cmd",
+      "overlay",
+      "enable-exclusive",
+      "--category",
+      DISPLAY_CUTOUT_OVERLAY,
+    ],
     { allowFailure: true },
   );
   await demoModeCommand(tools, serial, "enter");
-  await demoModeCommand(tools, serial, "clock", ["-e", "hhmm", STATUS_BAR_CLOCK]);
+  await demoModeCommand(tools, serial, "clock", [
+    "-e",
+    "hhmm",
+    STATUS_BAR_CLOCK,
+  ]);
   await demoModeCommand(tools, serial, "battery", [
     "-e",
     "level",
@@ -427,9 +454,14 @@ async function normalizeEmulator(tools, serial, navOverlay) {
 
 async function restoreEmulator(tools, serial) {
   await demoModeCommand(tools, serial, "exit");
-  await adb(tools, serial, ["shell", "cmd", "overlay", "disable", DISPLAY_CUTOUT_OVERLAY], {
-    allowFailure: true,
-  });
+  await adb(
+    tools,
+    serial,
+    ["shell", "cmd", "overlay", "disable", DISPLAY_CUTOUT_OVERLAY],
+    {
+      allowFailure: true,
+    },
+  );
 }
 
 async function isVisualAndroidProject(androidDirectory, appId) {
@@ -483,7 +515,10 @@ async function recoverGeneratedAndroidSwap(appId) {
       console.log(
         "\nRecovered the production android/ directory from an interrupted visual build.",
       );
-    } else if (state?.hadAndroid === false && (await exists(androidDirectory))) {
+    } else if (
+      state?.hadAndroid === false &&
+      (await exists(androidDirectory))
+    ) {
       await moveVisualAndroidToCache(androidDirectory);
     }
     await rm(nativeTransactionDirectory, { recursive: true, force: true });
@@ -527,7 +562,8 @@ async function withGeneratedAndroid(appId, callback) {
   let failure;
   try {
     if (hadAndroid) await rename(androidDirectory, savedAndroidDirectory);
-    if (hadCachedAndroid) await rename(nativeAndroidDirectory, androidDirectory);
+    if (hadCachedAndroid)
+      await rename(nativeAndroidDirectory, androidDirectory);
     result = await callback(androidDirectory, hadCachedAndroid);
     reusable = true;
   } catch (error) {
@@ -570,7 +606,9 @@ async function buildAndInstall(tools, serial, appId, options) {
     currentNativeFingerprint !== cachedNativeFingerprint &&
     (await exists(nativeAndroidDirectory))
   ) {
-    console.log("\nNative inputs changed; regenerating the visual Android cache.");
+    console.log(
+      "\nNative inputs changed; regenerating the visual Android cache.",
+    );
     await rm(nativeAndroidDirectory, { recursive: true, force: true });
   }
   const visualEnvironment = {
@@ -580,39 +618,52 @@ async function buildAndInstall(tools, serial, appId, options) {
     VESTA_APP_BUNDLE_ID: appId,
   };
 
-  await withGeneratedAndroid(appId, async (androidDirectory, hadCachedAndroid) => {
-    if (!hadCachedAndroid) {
-      await run("npx", ["expo", "prebuild", "--clean", "--platform", "android"], {
-        env: { ...tools.environment, ...visualEnvironment },
-      });
-    }
-    await run(
-      path.join(androidDirectory, "gradlew"),
-      [
-        ":app:assembleRelease",
-        `-PreactNativeArchitectures=${ANDROID_BUILD_ABI}`,
-        "--console=plain",
-      ],
-      { cwd: androidDirectory, env: { ...tools.environment, ...visualEnvironment } },
-    );
-    const builtApk = path.join(
-      androidDirectory,
-      "app/build/outputs/apk/release/app-release.apk",
-    );
-    const metadataPath = path.join(
-      androidDirectory,
-      "app/build/outputs/apk/release/output-metadata.json",
-    );
-    const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
-    if (metadata.applicationId !== appId) {
-      throw new Error(
-        `The built APK carries ${metadata.applicationId}, expected ${appId}.`,
+  await withGeneratedAndroid(
+    appId,
+    async (androidDirectory, hadCachedAndroid) => {
+      if (!hadCachedAndroid) {
+        await run(
+          "npx",
+          ["expo", "prebuild", "--clean", "--platform", "android"],
+          {
+            env: { ...tools.environment, ...visualEnvironment },
+          },
+        );
+      }
+      await run(
+        path.join(androidDirectory, "gradlew"),
+        [
+          ":app:assembleRelease",
+          `-PreactNativeArchitectures=${ANDROID_BUILD_ABI}`,
+          "--console=plain",
+        ],
+        {
+          cwd: androidDirectory,
+          env: { ...tools.environment, ...visualEnvironment },
+        },
       );
-    }
-    await mkdir(path.dirname(apkPath), { recursive: true });
-    await copyFile(builtApk, apkPath);
-  });
-  await atomicWriteFile(androidFingerprintPath, `${currentNativeFingerprint}\n`);
+      const builtApk = path.join(
+        androidDirectory,
+        "app/build/outputs/apk/release/app-release.apk",
+      );
+      const metadataPath = path.join(
+        androidDirectory,
+        "app/build/outputs/apk/release/output-metadata.json",
+      );
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+      if (metadata.applicationId !== appId) {
+        throw new Error(
+          `The built APK carries ${metadata.applicationId}, expected ${appId}.`,
+        );
+      }
+      await mkdir(path.dirname(apkPath), { recursive: true });
+      await copyFile(builtApk, apkPath);
+    },
+  );
+  await atomicWriteFile(
+    androidFingerprintPath,
+    `${currentNativeFingerprint}\n`,
+  );
   await adb(tools, serial, ["install", "-r", apkPath], { capture: false });
 }
 
@@ -643,29 +694,37 @@ async function grabEmulatorScreen(tools, serial) {
 
 // The shared bridge with the Android handlers: a screencap grab in both night
 // modes. The keyboard renders inside the framebuffer, so there is no action.
-function startAndroidBridge(tools, serial, variant) {
+function startAndroidBridge(tools, serial, variant, records) {
   return startScreenshotBridge([serial], {
     capture: (target, screenshot) =>
       captureBothThemes({
         platform: variant,
         name: screenshot,
+        record: records.get(screenshot),
         grab: () => grabEmulatorScreen(tools, target),
         setDark: (dark) =>
-          adb(tools, target, ["shell", "cmd", "uimode", "night", dark ? "yes" : "no"], {
-            quiet: true,
-          }),
+          adb(
+            tools,
+            target,
+            ["shell", "cmd", "uimode", "night", dark ? "yes" : "no"],
+            {
+              quiet: true,
+            },
+          ),
         store: putShot,
       }),
   });
 }
 
-async function runMaestro(manifest, tools, serial, variant) {
+async function runMaestro(manifest, tools, serial, variant, records) {
   const maestroDirectory = androidMaestroDirectoryOf(variant);
   await rm(maestroDirectory, { recursive: true, force: true });
   await mkdir(maestroDirectory, { recursive: true });
 
-  const flowPaths = manifest.flows.map((flow) => path.resolve(mobileRoot, flow));
-  const bridge = await startAndroidBridge(tools, serial, variant);
+  const flowPaths = manifest.flows.map((flow) =>
+    path.resolve(mobileRoot, flow),
+  );
+  const bridge = await startAndroidBridge(tools, serial, variant, records);
   const cycle = await bridge.beginCycle(manifest);
   try {
     await run(
@@ -700,6 +759,15 @@ async function runMaestro(manifest, tools, serial, variant) {
   return cycle.seen;
 }
 
+// The files that shape how a shot is taken, on top of the app sources a flow
+// reaches: a change here retakes every shot.
+const androidMechanics = [
+  path.join(mobileRoot, "maestro/visual/capture-screenshot.js"),
+  path.join(mobileRoot, "scripts/visual-runner.mjs"),
+  path.join(mobileRoot, "scripts/visual-sources.mjs"),
+  path.join(mobileRoot, "scripts/visual-android.mjs"),
+];
+
 async function capture(options) {
   const startedAt = new Date().toISOString();
   const variant = options.variant;
@@ -707,7 +775,10 @@ async function capture(options) {
     publishRunStatus("capturing", { message, startedAt, runner: variant });
   await assertHarnessBoundary();
   const registry = await loadRegistry("mobile");
-  const manifest = { ...registry, scenarios: scenariosForPlatform(registry, variant) };
+  const manifest = {
+    ...registry,
+    scenarios: scenariosForPlatform(registry, variant),
+  };
   const tools = await requireCaptureTools();
   await mkdir(androidVisualDirectory, { recursive: true });
   // Everything after the first "capturing" phase publishes its outcome, so an
@@ -740,11 +811,34 @@ async function capture(options) {
       await buildAndInstall(tools, serial, manifest.appId, options);
       await recordJsBundle(variant);
     }
+    await phase("Planning the Android flows");
+    const plan = await planFlows(manifest, {
+      platform: variant,
+      metroPlatform: "android",
+      mechanics: androidMechanics,
+      extras: [await nativeInputFingerprint()],
+      captureAll: options.all || captureAllRequested(),
+    });
+    if (plan.skipped.length > 0) {
+      console.log(
+        `\nSkipping ${plan.skipped.length} unchanged flow(s): ${plan.skipped
+          .map((flow) => path.basename(flow))
+          .join(", ")}`,
+      );
+    }
+    const planned = {
+      ...manifest,
+      flows: plan.flows,
+      scenarios: plan.scenarios,
+    };
     await phase(
-      `Running ${manifest.flows.length} flows on the Android emulator`,
+      `Running ${planned.flows.length} flows on the Android emulator`,
     );
-    const produced = await runMaestro(manifest, tools, serial, variant);
-    const warning = shotDriftWarning(produced, manifest.scenarios);
+    const produced =
+      planned.flows.length === 0
+        ? new Set()
+        : await runMaestro(planned, tools, serial, variant, plan.records);
+    const warning = shotDriftWarning(produced, planned.scenarios);
     if (warning) console.warn(`\nShot registry drift: ${warning}`);
     console.log(
       `\nCaptured ${produced.size} ${androidVariants[variant].label} screenshots into the visual store.`,
@@ -766,9 +860,31 @@ async function capture(options) {
   }
 }
 
+async function plan(options) {
+  const registry = await loadRegistry("mobile");
+  const manifest = {
+    ...registry,
+    scenarios: scenariosForPlatform(registry, options.variant),
+  };
+  printPlan(
+    options.variant,
+    await planFlows(manifest, {
+      platform: options.variant,
+      metroPlatform: "android",
+      mechanics: androidMechanics,
+      extras: [await nativeInputFingerprint()],
+      captureAll: options.all || captureAllRequested(),
+    }),
+  );
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   setGentleMode(options.gentle);
+  if (options.command === "plan") {
+    await plan(options);
+    return;
+  }
   await capture(options);
 }
 

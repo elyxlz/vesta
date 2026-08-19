@@ -21,7 +21,7 @@ body {
 .report:hover { color: var(--text); border-color: var(--gold); }
 .scan-row {
   display: inline-grid;
-  grid-template-columns: auto auto auto auto;
+  grid-template-columns: auto auto auto;
   align-items: center;
   gap: 8px;
   border: 1px solid var(--border);
@@ -124,7 +124,8 @@ h1 {
 }
 .scan-button:hover:not(:disabled) { border-color: var(--accent); }
 .scan-button:disabled { opacity: .55; cursor: default; }
-.scan-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
+.scan-controls { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
+.scan-open { flex: 1; text-align: center; padding: 6px 12px; font-weight: 700; }
 .gentle-toggle {
   display: flex;
   align-items: center;
@@ -473,7 +474,7 @@ dialog {
 }
 dialog::backdrop { background: #000b; backdrop-filter: blur(8px); }
 dialog img { width: 100%; height: 100%; object-fit: contain; }
-dialog button {
+#lightbox button {
   position: absolute;
   top: 14px;
   right: 14px;
@@ -486,6 +487,78 @@ dialog button {
   font-size: 20px;
   cursor: pointer;
 }
+/* The plan dialog: header, the runner list, footer; the dialog fits its
+   content and only the list scrolls. */
+.plan-dialog {
+  width: min(92vw, 560px);
+  height: fit-content;
+  max-height: 86vh;
+  background: var(--card);
+  color: var(--text);
+  overflow: hidden;
+}
+.plan { display: flex; flex-direction: column; max-height: 86vh; margin: 0; }
+.plan-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.plan-header h2 { margin: 0 0 4px; font-size: 16px; }
+.plan-note { margin: 0; color: var(--muted); font-size: 12px; }
+.plan-close {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.plan-close:hover { color: var(--text); border-color: var(--accent); }
+.plan-runners { display: flex; flex-direction: column; gap: 8px; padding: 14px 22px; overflow: auto; min-height: 0; }
+.plan-runner {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+.plan-runner > label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.plan-runner .plan-label { font-weight: 700; }
+.plan-runner .plan-count { margin-left: auto; color: var(--muted); font-size: 12px; }
+.plan-runner[data-stale="0"] .plan-count { color: var(--faint); }
+.plan-runner .plan-error { color: #ff6467; font-size: 12px; }
+.plan-runner details { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.plan-runner summary { cursor: pointer; }
+.plan-runner ul { margin: 6px 0 0; padding-left: 18px; max-height: 30vh; overflow: auto; }
+.plan-runner li { margin: 2px 0; }
+.plan-runner li .plan-shots { color: var(--faint); }
+.plan-runner li .plan-reason { color: var(--faint); font-size: 11px; }
+.plan-skeleton .plan-label { color: var(--muted); }
+.plan-skeleton-box,
+.plan-skeleton-bar {
+  display: inline-block;
+  border-radius: 4px;
+  background: var(--border);
+  animation: refreshing-pulse 1.2s ease-in-out infinite;
+}
+.plan-skeleton-box { width: 13px; height: 13px; border-radius: 3px; }
+.plan-skeleton-bar { width: 92px; height: 10px; }
+.plan-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--border);
+}
+.plan-options { display: flex; align-items: center; gap: 14px; }
+.plan-dialog .scan-button { font-size: 12px; padding: 6px 18px; font-weight: 700; }
 [hidden] { display: none !important; }
 @media (max-width: 720px) {
   .layout {

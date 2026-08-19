@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
@@ -22,7 +22,8 @@ const mimeTypes = new Map([
 ]);
 
 export function safeStaticPath(pathname, baseDirectory) {
-  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const relative =
+    pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const target = path.resolve(baseDirectory, relative);
   const relation = path.relative(baseDirectory, target);
   if (relation.startsWith("..") || path.isAbsolute(relation)) return null;
@@ -35,7 +36,10 @@ export function isRunner(name) {
   return Object.hasOwn(RUNNERS, name);
 }
 
-export function captureCommand(runner, gentle) {
+// `all` retakes every shot; otherwise each runner skips the shots whose
+// inputs have not changed since they were taken. The flag travels as an env
+// var, the one carrier both the Playwright and the Maestro runners read.
+export function captureCommand(runner, gentle, all = false) {
   if (!isRunner(runner)) throw new Error(`Unknown runner: ${runner}`);
   const definition = RUNNERS[runner];
   return {
@@ -50,13 +54,74 @@ export function captureCommand(runner, gentle) {
       ...(gentle ? definition.gentleArgs : []),
     ],
     cwd: appsRoot,
+    env: all ? { ...process.env, VISUAL_CAPTURE_ALL: "1" } : process.env,
   };
+}
+
+// A runner's plan: the units (flows or scenarios) a capture would retake,
+// answered on stdout as the last line of JSON by the runner's own plan command,
+// so the gallery and the capture decide freshness with one code path each.
+const PLAN_TIMEOUT_MS = 120_000;
+
+export function planCommand(runner, all = false) {
+  if (!isRunner(runner)) throw new Error(`Unknown runner: ${runner}`);
+  const { plan } = RUNNERS[runner];
+  return {
+    command: "node",
+    argumentsList: [plan.script, ...plan.args],
+    cwd: path.join(appsRoot, plan.directory),
+    env: all ? { ...process.env, VISUAL_CAPTURE_ALL: "1" } : process.env,
+  };
+}
+
+export function parsePlanOutput(stdout) {
+  const lines = stdout.trim().split("\n").filter(Boolean);
+  const last = lines[lines.length - 1];
+  if (!last) throw new Error("the plan command printed nothing");
+  const plan = JSON.parse(last);
+  if (!Array.isArray(plan.units)) throw new Error("the plan carries no units");
+  return plan;
+}
+
+function runPlan(runner, all) {
+  const command = planCommand(runner, all);
+  return new Promise((resolve) => {
+    execFile(
+      command.command,
+      command.argumentsList,
+      {
+        cwd: command.cwd,
+        env: command.env,
+        timeout: PLAN_TIMEOUT_MS,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        try {
+          if (error && !stdout.trim())
+            throw new Error(stderr.trim() || error.message);
+          resolve(parsePlanOutput(stdout));
+        } catch (failure) {
+          resolve({ runner, units: [], error: failure.message });
+        }
+      },
+    );
+  });
+}
+
+export async function collectPlans(all) {
+  const entries = await Promise.all(
+    Object.keys(RUNNERS).map(async (runner) => [
+      runner,
+      await runPlan(runner, all),
+    ]),
+  );
+  return Object.fromEntries(entries);
 }
 
 // A capture is its own detached child, logged to the store, so the gallery keeps
 // serving while it runs and a crash cannot take the server down.
-export function spawnCapture(runner, gentle) {
-  const plan = captureCommand(runner, gentle);
+export function spawnCapture(runner, gentle, all) {
+  const plan = captureCommand(runner, gentle, all);
   mkdirSync(storeDirectory, { recursive: true });
   const logFile = openSync(
     path.join(storeDirectory, `capture-${runner}.log`),
@@ -64,7 +129,7 @@ export function spawnCapture(runner, gentle) {
   );
   const child = spawn(plan.command, plan.argumentsList, {
     cwd: plan.cwd,
-    env: process.env,
+    env: plan.env,
     stdio: ["ignore", logFile, logFile],
   });
   closeSync(logFile);
@@ -96,13 +161,18 @@ function sendJson(response, status, payload) {
 }
 
 function createCaptureRuns() {
-  const idleRun = { running: false, startedAt: null, finishedAt: null, exitCode: null };
+  const idleRun = {
+    running: false,
+    startedAt: null,
+    finishedAt: null,
+    exitCode: null,
+  };
   const runs = Object.fromEntries(
     Object.keys(RUNNERS).map((runner) => [runner, { ...idleRun }]),
   );
-  const start = (runner, gentle) => {
+  const start = (runner, gentle, all) => {
     if (runs[runner].running) return false;
-    const child = spawnCapture(runner, gentle);
+    const child = spawnCapture(runner, gentle, all);
     runs[runner] = {
       running: true,
       startedAt: new Date().toISOString(),
@@ -132,8 +202,16 @@ async function routeRequest(request, response, captureRuns) {
     sendJson(response, 200, await currentRunStatus());
     return;
   }
+  if (pathname === "/plan.json") {
+    const all = url.searchParams.get("all") === "1";
+    sendJson(response, 200, { plans: await collectPlans(all) });
+    return;
+  }
   if (pathname === "/shots.json") {
-    sendJson(response, 200, { ...(await shotEntries()), runs: captureRuns.runs });
+    sendJson(response, 200, {
+      ...(await shotEntries()),
+      runs: captureRuns.runs,
+    });
     return;
   }
   if (head === "capture" && isRunner(second)) {
@@ -142,7 +220,8 @@ async function routeRequest(request, response, captureRuns) {
       return;
     }
     const gentle = url.searchParams.get("gentle") !== "0";
-    const started = captureRuns.start(second, gentle);
+    const all = url.searchParams.get("all") === "1";
+    const started = captureRuns.start(second, gentle, all);
     sendJson(response, started ? 202 : 409, {
       started,
       run: captureRuns.runs[second],
@@ -164,7 +243,11 @@ async function routeRequest(request, response, captureRuns) {
     }
     return;
   }
-  if (head === "gallery" && galleryAssets.includes(second) && rest.length === 0) {
+  if (
+    head === "gallery" &&
+    galleryAssets.includes(second) &&
+    rest.length === 0
+  ) {
     await sendFile(response, path.join(galleryDirectory, second));
     return;
   }
@@ -172,7 +255,8 @@ async function routeRequest(request, response, captureRuns) {
     head === "reports" && isRunner(second)
       ? RUNNERS[second].reportDirectory
       : storeDirectory;
-  const relative = baseDirectory === storeDirectory ? pathname : `/${rest.join("/")}`;
+  const relative =
+    baseDirectory === storeDirectory ? pathname : `/${rest.join("/")}`;
   const target = safeStaticPath(relative, baseDirectory);
   if (!target) {
     response.writeHead(403).end("Forbidden");

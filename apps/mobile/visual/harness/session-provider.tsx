@@ -371,7 +371,11 @@ function fixtureFor(path: string): unknown {
   }
   if (path.startsWith("/providers/openrouter/models/top")) {
     return [
-      { slug: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", author: "Anthropic" },
+      {
+        slug: "anthropic/claude-sonnet-4-5",
+        label: "Claude Sonnet 4.5",
+        author: "Anthropic",
+      },
       { slug: "openai/gpt-5.2", label: "GPT-5.2", author: "OpenAI" },
       { slug: "moonshotai/kimi-k2", label: "Kimi K2", author: "MoonshotAI" },
     ];

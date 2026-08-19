@@ -52,7 +52,14 @@ function slotFor(scenario, platform, shots) {
   }
   const entry = (shots[platform] ?? {})[scenario.screenshot];
   if (!entry) {
-    return { platform, label, frame, theme, state: "missing", note: "Not captured yet" };
+    return {
+      platform,
+      label,
+      frame,
+      theme,
+      state: "missing",
+      note: "Not captured yet",
+    };
   }
   return {
     platform,
@@ -147,7 +154,9 @@ export function slotHtml(scenario, slot) {
 // when the gallery's Dark toggle is on. Columns count one theme's slots.
 export function cardHtml(scenario) {
   const themes = [...new Set(scenario.slots.map((slot) => slot.theme))];
-  const perTheme = scenario.slots.filter((slot) => slot.theme === themes[0]).length;
+  const perTheme = scenario.slots.filter(
+    (slot) => slot.theme === themes[0],
+  ).length;
   const columns = Math.min(perTheme, CARD_COLUMNS);
   return `
         <article class="card" data-themes="${themes.join(" ")}">
@@ -187,7 +196,10 @@ export function sectionHtml(section, index) {
 export function sideNavHtml(view) {
   const families = new Map();
   view.sections.forEach((section, index) => {
-    const entries = families.get(section.family) ?? { label: section.familyLabel, sections: [] };
+    const entries = families.get(section.family) ?? {
+      label: section.familyLabel,
+      sections: [],
+    };
     entries.sections.push({ ...section, id: sectionId(index) });
     families.set(section.family, entries);
   });
@@ -216,7 +228,6 @@ export function scanRowsHtml() {
       <div class="scan-row" data-runner="${runner}">
         <span class="scan-runner">${escapeHtml(definition.label)}</span>
         <span class="scan-progress"></span>
-        <button class="scan-button" type="button">Scan</button>
         <span class="scan-last">never</span>
       </div>`,
     )

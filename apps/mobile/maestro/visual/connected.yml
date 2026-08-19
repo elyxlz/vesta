@@ -38,9 +38,9 @@ tags:
       notVisible: "Your dashboard"
     commands:
       - swipe:
-          start: "85%,50%"
-          end: "15%,50%"
-          duration: 450
+          start: "85%,25%"
+          end: "15%,25%"
+          duration: 180
       - extendedWaitUntil:
           visible: "Your dashboard"
           timeout: 5000

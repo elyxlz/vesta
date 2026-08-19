@@ -58,11 +58,11 @@ tags:
 - swipe:
     start: "50%,30%"
     end: "50%,80%"
-    duration: 500
+    duration: 250
 - swipe:
     start: "50%,30%"
     end: "50%,80%"
-    duration: 500
+    duration: 250
 - extendedWaitUntil:
     visible: '.*Status check.*'
     timeout: 10000
@@ -152,18 +152,18 @@ tags:
           visible: '.*visual regressions.*'
           timeout: 10000
       - swipe:
-          start: "90%,50%"
-          end: "10%,50%"
-          duration: 500
+          start: "90%,25%"
+          end: "10%,25%"
+          duration: 180
       - repeat:
           times: 3
           while:
             notVisible: '.*Design review.*'
           commands:
             - swipe:
-                start: "90%,50%"
-                end: "10%,50%"
-                duration: 500
+                start: "90%,25%"
+                end: "10%,25%"
+                duration: 180
             - extendedWaitUntil:
                 visible: '.*Design review.*'
                 timeout: 4000
@@ -184,9 +184,9 @@ tags:
             notVisible: '.*gateway sync ready.*'
           commands:
             - swipe:
-                start: "90%,50%"
-                end: "10%,50%"
-                duration: 500
+                start: "90%,25%"
+                end: "10%,25%"
+                duration: 180
             - extendedWaitUntil:
                 visible: '.*gateway sync ready.*'
                 timeout: 4000

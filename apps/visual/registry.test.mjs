@@ -38,7 +38,11 @@ describe("validateRegistry", () => {
       {
         version: 1,
         scenarios: [
-          scenario({ screenshot: "start.png", route: "/new", agentStatus: "alive" }),
+          scenario({
+            screenshot: "start.png",
+            route: "/new",
+            agentStatus: "alive",
+          }),
         ],
       },
       "web",
@@ -148,9 +152,9 @@ describe("platform filtering", () => {
       },
       "web",
     );
-    expect(scenariosForPlatform(registry, "web").map((entry) => entry.id)).toEqual(
-      ["home"],
-    );
+    expect(
+      scenariosForPlatform(registry, "web").map((entry) => entry.id),
+    ).toEqual(["home"]);
     expect(
       scenariosForPlatform(registry, "web-narrow").map((entry) => entry.id),
     ).toEqual(["home", "phone-only"]);

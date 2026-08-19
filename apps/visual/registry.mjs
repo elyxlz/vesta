@@ -46,7 +46,9 @@ function validateScenario(entry, family, familyPlatforms, ids, screenshots) {
 
 function validateFlows(manifest, flowRoot) {
   if (!Array.isArray(manifest.flows) || manifest.flows.length === 0) {
-    throw new Error("The mobile visual registry must define at least one flow.");
+    throw new Error(
+      "The mobile visual registry must define at least one flow.",
+    );
   }
   if (typeof manifest.appId !== "string" || !manifest.appId) {
     throw new Error("The mobile visual registry must define appId.");
@@ -89,7 +91,9 @@ export function validateRegistry(manifest, family, options = {}) {
 
 export async function loadRegistry(family) {
   if (!FAMILIES[family]) throw new Error(`Unknown family: ${family}`);
-  const manifest = JSON.parse(await readFile(FAMILIES[family].registry, "utf8"));
+  const manifest = JSON.parse(
+    await readFile(FAMILIES[family].registry, "utf8"),
+  );
   return validateRegistry(manifest, family);
 }
 

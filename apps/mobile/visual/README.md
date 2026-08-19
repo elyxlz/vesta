@@ -175,6 +175,10 @@ For future modal groups, prefer a fresh launch with deterministic initial data o
 - The runner warns about names that drift from the registry.
 - The Maestro report lands at `mobile/.visual/<variant>/maestro/report.html` (`mobile/.visual/android/maestro/` for the default variant), which the gallery links as "Android report" and "Android · 3-button report".
 
+## Only what changed
+
+A capture plans before it runs (`planFlows` in `scripts/visual-runner.mjs`): for each flow it computes the sources its routes reach in Metro's dependency graph (`scripts/visual-sources.mjs`), fingerprints them with the flow text, the capture mechanics, the native inputs, and the flow's cards, and skips the flow when every shot it takes on the platform already carries that fingerprint in both themes. The bridge writes the record beside each shot it takes. `plan` prints the decision as JSON; `--all` retakes everything. The shared rules live in `apps/visual/README.md`.
+
 ## Platform-aware scenarios
 
 An entry in `visual/scenarios.json` accepts an optional `platforms` array naming any mobile platform (`ios`, `android`, `android-galaxy`, and their `-dark` siblings). A scenario marked `"platforms": ["ios"]` is not expected from an Android capture, and the gallery renders its Android slots with an explicit "iOS only" note. The flows skip those captures through `runFlow` blocks conditioned on `when: platform`, so one flow file drives both platforms. Three shipped scenarios are iOS only (`connect-link-revealed`, `agent-pager-notifications`, `agent-pager-logs`): the reveal toggle after a capture and the Compose switches inside the agent settings sheet do not take Maestro's tap on Android.

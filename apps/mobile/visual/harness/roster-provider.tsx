@@ -102,7 +102,8 @@ const allDevices: DeviceInfo[] = [
     location: "Lisbon, Portugal",
     timezone: "Europe/Lisbon",
     position: devicesVariant === "position" ? phonePosition : null,
-    positionAt: devicesVariant === "position" ? "2026-08-01T09:19:00.000Z" : null,
+    positionAt:
+      devicesVariant === "position" ? "2026-08-01T09:19:00.000Z" : null,
   },
   {
     id: "visual-web",
@@ -117,8 +118,7 @@ const allDevices: DeviceInfo[] = [
     positionAt: null,
   },
 ];
-export const fixtureDevices =
-  devicesVariant === "none" ? [] : allDevices;
+export const fixtureDevices = devicesVariant === "none" ? [] : allDevices;
 const fixture: RosterValue = {
   agents: startsLoading ? [] : fixtureAgents,
   agentsReady: !startsLoading,

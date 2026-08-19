@@ -3,17 +3,20 @@ import path from "node:path";
 import { atomicWriteFile, storeDirectory } from "./store.mjs";
 
 // Each runner is its own process, so each publishes its own phase file and the
-// gallery reads them all: two runners never overwrite each other's status. A
-// "capturing" entry a hard-killed run left behind goes stale after the cutoff
-// instead of showing a phantom run forever.
-export const STALE_CAPTURING_MS = 45 * 60 * 1000;
+// gallery reads them all: two runners never overwrite each other's status. The
+// file carries the runner's pid, so a "capturing" entry whose process is gone
+// (a hard-killed run) reads as stopped the moment the gallery looks.
 const STATUS_FILE = /^run-status-([a-z-]+)\.json$/;
 
 export function runStatusPath(runner, directory = storeDirectory) {
   return path.join(directory, `run-status-${runner}.json`);
 }
 
-export async function publishRunStatus(state, options, directory = storeDirectory) {
+export async function publishRunStatus(
+  state,
+  options,
+  directory = storeDirectory,
+) {
   if (!options.runner) throw new Error("A run status needs its runner.");
   const status = {
     state,
@@ -22,17 +25,38 @@ export async function publishRunStatus(state, options, directory = storeDirector
     detail: options.detail ?? "",
     startedAt: options.startedAt ?? null,
     updatedAt: new Date().toISOString(),
+    pid: process.pid,
   };
-  await atomicWriteFile(runStatusPath(options.runner, directory), `${JSON.stringify(status)}\n`);
+  await atomicWriteFile(
+    runStatusPath(options.runner, directory),
+    `${JSON.stringify(status)}\n`,
+  );
 }
 
-// Drops stale capturing entries and orders newest first.
-export function liveStatuses(statuses, now) {
+export function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+// A capturing entry whose runner process is gone becomes the error it is;
+// entries are ordered newest first.
+export function liveStatuses(statuses, isAlive = processAlive) {
   return statuses
-    .filter(
-      (status) =>
-        status?.updatedAt &&
-        !(status.state === "capturing" && now - Date.parse(status.updatedAt) > STALE_CAPTURING_MS),
+    .filter((status) => status?.updatedAt)
+    .map((status) =>
+      status.state === "capturing" &&
+      !(typeof status.pid === "number" && isAlive(status.pid))
+        ? {
+            ...status,
+            state: "error",
+            message: `${status.runner} capture stopped`,
+            detail: "The runner exited before it finished.",
+          }
+        : status,
     )
     .sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1));
 }
@@ -47,5 +71,5 @@ export async function currentRunStatus(directory = storeDirectory) {
       .catch(() => null);
     if (parsed) statuses.push(parsed);
   }
-  return { statuses: liveStatuses(statuses, Date.now()) };
+  return { statuses: liveStatuses(statuses) };
 }

@@ -7,8 +7,15 @@ import { createHash } from "node:crypto";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { fingerprintInputs, staleReasons } from "@vesta/visual/fingerprint";
 import { themedSibling } from "@vesta/visual/platforms";
-import { atomicWriteFile } from "@vesta/visual/store";
+import {
+  atomicWriteFile,
+  putShotRecord,
+  readShotRecord,
+  shotIsFresh,
+} from "@vesta/visual/store";
+import { flowSources, metroModuleGraph } from "./visual-sources.mjs";
 
 export { atomicWriteFile };
 
@@ -272,14 +279,99 @@ export async function grabUntilStable(grab, options = {}) {
 // One drive, both themes: shoot the light platform now, flip the OS appearance,
 // shoot the dark sibling once the picture settles, then flip back and wait for
 // the light picture to settle so the flow continues where it was.
-export async function captureBothThemes({ platform, name, grab, setDark, store }) {
+// Both themes of one shot, then its freshness record when the plan carries one.
+export async function captureBothThemes({
+  platform,
+  name,
+  grab,
+  setDark,
+  store,
+  record,
+}) {
   await store(platform, name, await grab());
   const dark = themedSibling(platform, "dark");
-  if (!dark) return;
-  await setDark(true);
-  await store(dark, name, await grabUntilStable(grab));
-  await setDark(false);
-  await grabUntilStable(grab);
+  if (dark) {
+    await setDark(true);
+    await store(dark, name, await grabUntilStable(grab));
+    await setDark(false);
+    await grabUntilStable(grab);
+  }
+  if (record) await putShotRecord(platform, name, record);
+}
+
+// Which flows a scan must run: a flow is fresh, and skipped, when every shot it
+// takes on this platform exists in both themes with the fingerprint of the
+// flow's current inputs (the sources reachable from its routes in Metro's
+// graph, the flow text, the capture mechanics, the native inputs, its cards).
+// `captureAll` retakes everything. The plan carries each shot's record so the
+// bridge writes it beside the shot it takes.
+export async function planFlows(manifest, options) {
+  const { platform, metroPlatform, mechanics, extras, captureAll } = options;
+  const graph = await metroModuleGraph(
+    mobileRoot,
+    metroConfigPath,
+    metroPlatform,
+  );
+  const appDirectory = path.join(mobileRoot, "app");
+  const byShot = new Map(
+    manifest.scenarios.map((scenario) => [scenario.screenshot, scenario]),
+  );
+  const platforms = [platform, themedSibling(platform, "dark")].filter(Boolean);
+  const records = new Map();
+  const runShots = new Set();
+  const flows = [];
+  const skipped = [];
+  const units = [];
+  for (const flow of manifest.flows) {
+    const flowPath = path.resolve(mobileRoot, flow);
+    const { shots, sources } = await flowSources(flowPath, appDirectory, graph);
+    const expected = shots.filter((shot) => byShot.has(shot));
+    if (expected.length === 0) continue;
+    const cards = expected.map((shot) => JSON.stringify(byShot.get(shot)));
+    const record = await fingerprintInputs(
+      [...sources, flowPath, ...mechanics],
+      [...extras, ...cards],
+    );
+    // Why the flow is stale: shots never recorded, and the files that moved
+    // since the last record (read from the first shot that has one).
+    const missing = [];
+    let previous = null;
+    let stale = captureAll;
+    for (const shot of expected) {
+      const recorded = await readShotRecord(platform, shot);
+      if (!recorded) missing.push(shot);
+      previous ??= recorded;
+      if (!(await shotIsFresh(platforms, shot, record.fingerprint)))
+        stale = true;
+    }
+    const fresh = !stale;
+    units.push({
+      name: path.basename(flow),
+      shots: expected,
+      stale,
+      reasons: stale
+        ? { ...staleReasons(previous ?? {}, record), missing }
+        : null,
+    });
+    if (fresh) {
+      skipped.push(flow);
+      continue;
+    }
+    flows.push(flow);
+    for (const shot of expected) {
+      records.set(shot, record);
+      runShots.add(shot);
+    }
+  }
+  const scenarios = manifest.scenarios.filter((scenario) =>
+    runShots.has(scenario.screenshot),
+  );
+  return { flows, skipped, records, scenarios, units };
+}
+
+// The plan as the gallery shows it before a scan: one line of JSON on stdout.
+export function printPlan(runner, plan) {
+  process.stdout.write(`${JSON.stringify({ runner, units: plan.units })}\n`);
 }
 
 async function readRequestJson(request) {
@@ -355,12 +447,16 @@ export async function startScreenshotBridge(targets, handlers) {
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   return {
-    urls: targets.map((_target, index) => `${baseUrl}/__visual_capture/${index + 1}`),
+    urls: targets.map(
+      (_target, index) => `${baseUrl}/__visual_capture/${index + 1}`,
+    ),
     async beginCycle(manifest) {
       if (cycle && !cycle.completed) {
         throw new Error("A screenshot cycle is already active.");
       }
-      const expected = new Set(manifest.scenarios.map((scenario) => scenario.screenshot));
+      const expected = new Set(
+        manifest.scenarios.map((scenario) => scenario.screenshot),
+      );
       let resolveCycle;
       let rejectCycle;
       const completion = new Promise((resolve, reject) => {

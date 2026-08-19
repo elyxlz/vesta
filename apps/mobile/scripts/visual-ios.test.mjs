@@ -49,7 +49,10 @@ describe("visual Metro agent fixtures", () => {
       "../visual/harness/agent-holds-provider.tsx",
     );
 
-    for (const origin of ["../app/_layout.tsx", "../src/chat/useAgentSocket.ts"]) {
+    for (const origin of [
+      "../app/_layout.tsx",
+      "../src/chat/useAgentSocket.ts",
+    ]) {
       expect(
         config.resolver.resolveRequest(
           {

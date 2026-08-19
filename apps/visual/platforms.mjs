@@ -105,6 +105,11 @@ export const RUNNERS = {
     script: "visual:ios:capture",
     args: [],
     gentleArgs: ["--gentle"],
+    plan: {
+      directory: "mobile",
+      script: "scripts/visual-ios.mjs",
+      args: ["plan"],
+    },
     reportDirectory: path.join(appsRoot, "mobile/.visual/maestro"),
     reportFile: "report.html",
   },
@@ -114,6 +119,11 @@ export const RUNNERS = {
     script: "visual:android:capture",
     args: [],
     gentleArgs: ["--gentle"],
+    plan: {
+      directory: "mobile",
+      script: "scripts/visual-android.mjs",
+      args: ["plan", "--variant", "android"],
+    },
     reportDirectory: path.join(appsRoot, "mobile/.visual/android/maestro"),
     reportFile: "report.html",
   },
@@ -123,6 +133,11 @@ export const RUNNERS = {
     script: "visual:android:capture",
     args: ["--variant", "android-galaxy"],
     gentleArgs: ["--gentle"],
+    plan: {
+      directory: "mobile",
+      script: "scripts/visual-android.mjs",
+      args: ["plan", "--variant", "android-galaxy"],
+    },
     reportDirectory: path.join(
       appsRoot,
       "mobile/.visual/android-galaxy/maestro",
@@ -135,6 +150,7 @@ export const RUNNERS = {
     script: "visual:capture",
     args: [],
     gentleArgs: ["--workers=2"],
+    plan: { directory: "web", script: "visual/plan.mjs", args: [] },
     reportDirectory: path.join(appsRoot, "web/.visual/report"),
     reportFile: "index.html",
   },

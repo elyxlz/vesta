@@ -27,7 +27,11 @@ const shots = {
     },
   },
   web: {
-    "name-empty.png": { src: "shots/web/name-empty.png", mtime: 2000, size: null },
+    "name-empty.png": {
+      src: "shots/web/name-empty.png",
+      mtime: 2000,
+      size: null,
+    },
   },
 };
 
@@ -76,7 +80,11 @@ describe("galleryView", () => {
       frame: "phone",
       theme: "light",
     });
-    expect(android).toMatchObject({ state: "missing", note: "Not captured yet", frame: "pixel" });
+    expect(android).toMatchObject({
+      state: "missing",
+      note: "Not captured yet",
+      frame: "pixel",
+    });
   });
 
   it("marks a platform-excluded scenario apart from a missing shot", () => {
@@ -89,7 +97,9 @@ describe("galleryView", () => {
 
 describe("frameHtml", () => {
   it("wraps the screen in the chrome its frame names", () => {
-    expect(frameHtml("phone", "<i>s</i>")).toContain('class="frame frame-phone"');
+    expect(frameHtml("phone", "<i>s</i>")).toContain(
+      'class="frame frame-phone"',
+    );
     expect(frameHtml("browser", "<i>s</i>")).toContain('class="browser-bar"');
     expect(frameHtml("desktop-window", "<i>s</i>")).toContain(
       'class="titlebar"',
@@ -97,8 +107,12 @@ describe("frameHtml", () => {
     expect(frameHtml("phone-browser", "<i>s</i>")).toContain(
       'class="frame frame-phone frame-phone-browser"',
     );
-    expect(frameHtml("pixel", "<i>s</i>")).toContain('class="frame frame-android frame-pixel"');
-    expect(frameHtml("galaxy", "<i>s</i>")).toContain('class="frame frame-android frame-galaxy"');
+    expect(frameHtml("pixel", "<i>s</i>")).toContain(
+      'class="frame frame-android frame-pixel"',
+    );
+    expect(frameHtml("galaxy", "<i>s</i>")).toContain(
+      'class="frame frame-android frame-galaxy"',
+    );
     expect(frameHtml("pixel", "<i>s</i>")).toContain('class="punch-hole"');
     expect(frameHtml("phone", "<i>s</i>")).toContain("<i>s</i>");
   });
@@ -121,11 +135,15 @@ describe("galleryHtml", () => {
     expect(html).toContain('data-section-group="Mobile · Home"');
     expect(html).toContain('data-family="web"');
     expect(html).toContain('style="--shots: 3"');
-    expect(html.match(/<article class="card" data-themes="light dark">/g)).toHaveLength(2);
+    expect(
+      html.match(/<article class="card" data-themes="light dark">/g),
+    ).toHaveLength(2);
   });
 
   it("tags every slot with its theme and offers the Dark toggle", () => {
-    expect(html).toContain('data-platform="web-dark" data-state="missing" data-scenario-id="name-empty"');
+    expect(html).toContain(
+      'data-platform="web-dark" data-state="missing" data-scenario-id="name-empty"',
+    );
     expect(html).toContain('data-runner="web" data-theme="dark"');
     expect(html).toContain('id="theme-toggle"');
   });
@@ -148,8 +166,12 @@ describe("galleryHtml", () => {
     expect(html).toContain('<nav class="side" aria-label="Gallery">');
     expect(html).toContain('<div class="side-family" data-family="mobile">');
     expect(html).toContain('<div class="side-family" data-family="web">');
-    expect(html).toContain('href="#scenario-section-0" data-section="scenario-section-0"');
-    expect(html).toContain('<details class="scenario-section" id="scenario-section-1"');
+    expect(html).toContain(
+      'href="#scenario-section-0" data-section="scenario-section-0"',
+    );
+    expect(html).toContain(
+      '<details class="scenario-section" id="scenario-section-1"',
+    );
   });
 
   it("links the runner reports it was given and the static assets", () => {

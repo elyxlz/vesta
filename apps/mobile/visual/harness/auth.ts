@@ -1,9 +1,7 @@
 import type { ConnectionConfig } from "@/api/types";
 import { visualDelay } from "./launch-query";
 
-export async function signInWithVestaAccount(): Promise<
-  ConnectionConfig | null
-> {
+export async function signInWithVestaAccount(): Promise<ConnectionConfig | null> {
   await new Promise((resolve) => setTimeout(resolve, 4_000));
   await visualDelay();
   throw new Error("Sign-in failed");

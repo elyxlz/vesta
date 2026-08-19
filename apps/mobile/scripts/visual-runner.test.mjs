@@ -15,7 +15,7 @@ describe("maestroFlowSummary", () => {
   it("folds sharded and unsharded result lines into pass/fail lists", () => {
     const output = [
       "[shard 2] [Passed] Connected app screens (1m 16s)",
-      "[shard 1] [Failed] Recent gateways and reconnection (33s) (Assertion is false: \"Try again\" is visible)",
+      '[shard 1] [Failed] Recent gateways and reconnection (33s) (Assertion is false: "Try again" is visible)',
       "[Passed] Gateway update screens (27m 7s)",
       "[Failed] Connected home empty state (1m 39s)",
       "Waiting for flows to complete...",
@@ -52,15 +52,20 @@ describe("gentleSpawnPlan", () => {
   it.each([
     ["off", false, "darwin", "xcodebuild", ["build"]],
     ["non-darwin", true, "linux", "gradle", ["assembleRelease"]],
-  ])("passes commands through when %s", (_name, gentle, platform, command, args) => {
-    expect(gentleSpawnPlan(command, args, gentle, platform)).toEqual({
-      command,
-      argumentsList: args,
-    });
-  });
+  ])(
+    "passes commands through when %s",
+    (_name, gentle, platform, command, args) => {
+      expect(gentleSpawnPlan(command, args, gentle, platform)).toEqual({
+        command,
+        argumentsList: args,
+      });
+    },
+  );
 
   it("wraps the command at utility QoS when gentle on macOS", () => {
-    expect(gentleSpawnPlan("maestro", ["test", "flow.yml"], true, "darwin")).toEqual({
+    expect(
+      gentleSpawnPlan("maestro", ["test", "flow.yml"], true, "darwin"),
+    ).toEqual({
       command: "taskpolicy",
       argumentsList: ["-c", "utility", "maestro", "test", "flow.yml"],
     });
@@ -76,7 +81,11 @@ describe("runner modules", () => {
       const target = fileURLToPath(new URL(`./${file}`, import.meta.url));
       const result = spawnSync(
         process.execPath,
-        ["--input-type=module", "-e", `await import(${JSON.stringify(target)});`],
+        [
+          "--input-type=module",
+          "-e",
+          `await import(${JSON.stringify(target)});`,
+        ],
         { encoding: "utf8" },
       );
       expect(result.stderr).toBe("");
@@ -89,7 +98,8 @@ describe("grabUntilStable", () => {
   it("returns the first grab that repeats, polling until then", async () => {
     const frames = ["a", "b", "b", "c"].map((text) => Buffer.from(text));
     let calls = 0;
-    const grab = () => Promise.resolve(frames[Math.min(calls++, frames.length - 1)]);
+    const grab = () =>
+      Promise.resolve(frames[Math.min(calls++, frames.length - 1)]);
     const stable = await grabUntilStable(grab, { pollMs: 1 });
     expect(stable.toString()).toBe("b");
     expect(calls).toBe(3);
