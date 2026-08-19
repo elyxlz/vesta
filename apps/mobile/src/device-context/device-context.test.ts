@@ -23,7 +23,6 @@ const location = vi.hoisted(() => ({
     city: string | null;
     region: string | null;
     country: string | null;
-    timezone?: string | null;
   }[],
   calls: [] as string[],
 }));
@@ -54,6 +53,10 @@ vi.mock("expo-location", () => ({
 
 const tokyo = {
   coords: { latitude: 35.6762, longitude: 139.6503, accuracy: 50 },
+};
+
+const sardinia = {
+  coords: { latitude: 39.2238, longitude: 9.1217, accuracy: 20 },
 };
 
 describe("toDevicePosition", () => {
@@ -166,41 +169,39 @@ describe("readDeviceContext", () => {
     expect(location.calls).toEqual(["last"]);
   });
 
-  it("prefers the zone the fix geocodes to over the device's own (roaming)", async () => {
-    // The OS clock is pinned to Asia/Tokyo, but the fix is in Sardinia.
+  it("reports the zone the fix falls in, not the device's own (roaming)", async () => {
+    // The OS clock is pinned to Asia/Tokyo (a UK SIM would pin London), but the fix is in Sardinia.
+    location.current = sardinia;
     location.geocoded = [
-      {
-        city: "Cagliari",
-        region: "Sardinia",
-        country: "Italy",
-        timezone: "Europe/Rome",
-      },
+      { city: "Cagliari", region: "Sardinia", country: "Italy" },
     ];
     await expect(
       readDeviceContext({ shareLocation: true, mode: "foreground" }),
     ).resolves.toEqual({
       timezone: "Europe/Rome",
       position: {
-        latitude: 35.6762,
-        longitude: 139.6503,
-        accuracyM: 50,
+        latitude: 39.2238,
+        longitude: 9.1217,
+        accuracyM: 20,
         place: { city: "Cagliari", region: "Sardinia", country: "Italy" },
       },
     });
   });
 
-  it("falls back to the device's zone when the fix geocodes without one (Android)", async () => {
-    location.geocoded = [
-      {
-        city: "Cagliari",
-        region: "Sardinia",
-        country: "Italy",
-        timezone: null,
-      },
-    ];
+  it("reports the zone the fix falls in even when the place cannot be geocoded (offline)", async () => {
+    location.current = sardinia;
+    location.geocoded = [];
     await expect(
       readDeviceContext({ shareLocation: true, mode: "foreground" }),
-    ).resolves.toMatchObject({ timezone: "Asia/Tokyo" });
+    ).resolves.toEqual({
+      timezone: "Europe/Rome",
+      position: {
+        latitude: 39.2238,
+        longitude: 9.1217,
+        accuracyM: 20,
+        place: null,
+      },
+    });
   });
 
   it("reports the zone alone when location is not granted or no fix exists", async () => {
