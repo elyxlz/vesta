@@ -78,7 +78,10 @@ describe("shotEntries", () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "visual-store-"));
     await mkdir(path.join(base, "shots", "ios"), { recursive: true });
     await mkdir(path.join(base, "shots", "web-dark"), { recursive: true });
-    await writeFile(path.join(base, "shots", "ios", "home.png"), pngHeader(1, 2));
+    await writeFile(
+      path.join(base, "shots", "ios", "home.png"),
+      pngHeader(1, 2),
+    );
     await writeFile(path.join(base, "shots", "ios", "notes.txt"), "ignored");
     await writeFile(
       path.join(base, "shots", "web-dark", "done.png"),

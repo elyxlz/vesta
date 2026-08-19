@@ -170,11 +170,12 @@ export const HOME: Record<string, Scenario> = {
       await page.getByText("start", { exact: true }).click();
       await page.getByRole("button", { name: "home", exact: true }).click();
     },
+    // The island on the page being left can still carry the same line for a
+    // frame, so the assertion is the card's own copy of it.
     settle: async (page) => {
-      await expect(page.getByText(START_REFUSED)).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: `open ${AGENT}` }),
-      ).toBeVisible();
+      const card = page.getByRole("button", { name: `open ${AGENT}` });
+      await expect(card).toBeVisible();
+      await expect(card.getByText(START_REFUSED)).toBeVisible();
     },
   },
   "home-update-available": {

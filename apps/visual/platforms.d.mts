@@ -35,6 +35,7 @@ export interface RunnerDefinition {
   script: string;
   args: string[];
   gentleArgs: string[];
+  plan: { directory: string; script: string; args: string[] };
   reportDirectory: string;
   reportFile: string;
 }

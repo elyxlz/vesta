@@ -72,13 +72,25 @@ apps/mobile/visual + scripts/visual-*.mjs     apps/web/visual
 | --- | --- |
 | `apps/visual/platforms.mjs` | The platform, runner, and family tables |
 | `apps/visual/registry.mjs` | The scenario contract: load and validate a `scenarios.json` |
-| `apps/visual/store.mjs` | Shot store paths, `putShot`, the shot index, the drift warning |
+| `apps/visual/store.mjs` | Shot store paths, `putShot`, the freshness record beside each shot, the shot index, the drift warning |
+| `apps/visual/fingerprint.mjs` | The fingerprint over a shot's source files and inputs, and the `--all` / `VISUAL_CAPTURE_ALL` switch |
 | `apps/visual/run-status.mjs` | The capture phase file the gallery polls |
 | `apps/visual/gallery/` | The server, the page model, the HTML, the styles, the client script |
 | `apps/visual/cli.mjs` | `serve` and `capture <runner>` |
 | `apps/mobile/visual/`, `apps/mobile/scripts/visual-*.mjs` | The mobile registry, fixtures, flows, and the iOS and Android runners |
 | `apps/web/visual/` | The web registry, drives, fixtures, and the Playwright runner |
-| `apps/visual/.visual/` | Generated, ignored: `shots/`, `run-status-<runner>.json`, `capture-<runner>.log` |
+| `apps/visual/.visual/` | Generated, ignored: `shots/` (each `<id>.png` with its `<id>.fp` record), `run-status-<runner>.json`, `capture-<runner>.log` |
+
+## Freshness
+
+A scan retakes a shot only when something it depends on changed since it was taken. Beside every light shot the store keeps `<id>.fp`: the fingerprint of the shot's inputs and the list of source files it covers. A runner recomputes the fingerprint over those files' current contents plus the scenario's own inputs and skips the shot when it matches and both themes exist.
+
+- **Web**: the source set is what the page executed during the capture, from Playwright's JS coverage. Vite serves modules unbundled, so each coverage entry names a file; a module counts when one of its functions ran (a component rendered, a helper was called), which is what separates screens, since the router loads every page module at startup. Vite's Fast Refresh plumbing is ignored. Always-on inputs: the harness, `capture.spec.ts`, `playwright.config.ts`, `index.html`, `vite.config.ts`, the global CSS, the lockfile, the scenario's drives file, and its card (`apps/web/visual/freshness-inputs.mjs`).
+- **Mobile**: the unit is a flow file, and its source set is the transitive import closure, in Metro's own dependency graph for the platform (built with the visual Metro config, so aliases, platform variants, and the harness substitutions resolve as in the bundle), of the route files the flow deep-links into plus every `_layout.tsx` on the way (`apps/mobile/scripts/visual-sources.mjs`). Always-on inputs: the flow text, `capture-screenshot.js`, the runner scripts, the native input fingerprint, and the flow's cards. A flow is skipped when every shot it takes on the platform is fresh.
+- `plan` (`node scripts/visual-ios.mjs plan`, `node scripts/visual-android.mjs plan --variant <v>`, `node visual/plan.mjs` in web) prints the decision as JSON without capturing; the gallery's Scan dialog shows it.
+- `--all` on a runner, or the dialog's "Everything", retakes every shot; `VISUAL_CAPTURE_ALL=1` is the carrier.
+
+A change under the app that the screen does not reach does not retake it; a change the static or runtime view cannot see (a dynamic `require`, a value read through a global) is the one blind spot, and "Everything" covers it.
 
 ## Registry contract
 
@@ -128,10 +140,11 @@ Frames (the phone bezel, the browser tab bar, the desktop title bar) are gallery
 - A card is one scenario. Its slots are its family's platforms, shown one theme at a time: light by default. The Dark button in the scan bar flips every card to its dark platforms; the choice persists.
 - Each slot draws its platform's frame: `phone` (iPhone), `pixel`, `galaxy`, `browser`, `desktop-window`, or `phone-browser`.
 - Every card has dark captures, so the Dark button flips mobile and web cards alike.
-- Scan cells: one per runner, sized to their content. Scan spawns the runner; while it runs, the cell shows the runner's phase and elapsed time in place of the last-scan stamp, the count restarts from this run's shots, and the runner's slots dim as "Refreshing" until replaced. A failed run shows its error in the cell. "Gentle" runs the Maestro runners with `--gentle` and the web runner with `--workers=2`.
+- Scan cells: one per runner, sized to their content. While a runner runs, its cell shows the phase and elapsed time in place of the last-scan stamp, the count restarts from this run's shots, and the runner's slots dim as "Refreshing" until replaced. A failed run shows its error in the cell.
+- Scan…: one button opens the plan dialog, which asks every runner what a scan would retake (`/plan.json`) and lists it per platform: the stale flows or scenarios, with their shots and projects. Check the platforms to run and Start; "Everything" retakes every shot instead. "Gentle" runs the Maestro runners with `--gentle` and the web runner with `--workers=2`.
 - Copy ref copies `visual-ref: <id> [<platform>]` plus the group, title, revision, and image URL, for pasting into a chat.
 - The runner reports link under `/reports/<runner>/<reportFile>` (Maestro's `report.html`, Playwright's `index.html`) when they exist.
-- Routes: `/`, `/shots.json`, `/status.json`, `POST /capture/<runner>?gentle=0|1`, `/gallery/*`, `/reports/<runner>/*`, and static files under the store.
+- Routes: `/`, `/shots.json`, `/status.json`, `/plan.json?all=0|1`, `POST /capture/<runner>?gentle=0|1&all=0|1`, `/gallery/*`, `/reports/<runner>/*`, and static files under the store.
 
 ## Add a scenario
 

@@ -1,9 +1,20 @@
 import { expect, test, type Page } from "@playwright/test";
+import { captureAllRequested } from "@vesta/visual/fingerprint";
 import { PLATFORMS, themedSibling } from "@vesta/visual/platforms";
 import { loadRegistry, scenarioOnPlatform } from "@vesta/visual/registry";
-import { putShot } from "@vesta/visual/store";
+import {
+  putShot,
+  putShotRecord,
+  readShotRecord,
+  shotIsFresh,
+} from "@vesta/visual/store";
 import { SCENARIOS } from "./drives";
 import { installChatSocket } from "./harness/chat-fixtures";
+import {
+  coverageSources,
+  scenarioInputs,
+  shotFingerprint,
+} from "./harness/freshness";
 import { installGatewayMocks } from "./harness/http-fixtures";
 import { installNativeStub } from "./harness/native-stub";
 import { FIXED_TIME, type ScenarioState } from "./harness/scenario-state";
@@ -11,6 +22,7 @@ import { seedStorage } from "./harness/storage";
 import { installSyncSocket } from "./harness/sync-fixtures";
 
 const registry = await loadRegistry("web");
+const captureAll = captureAllRequested();
 
 // The store is the only copy: putShot takes the screenshot buffer straight from
 // the page, and the registry's screenshot name is the file the gallery reads.
@@ -62,8 +74,31 @@ for (const scenario of registry.scenarios) {
     const platform = PLATFORMS[testInfo.project.name as keyof typeof PLATFORMS];
     const definition = SCENARIOS[scenario.id];
     if (!definition) throw new Error(`No drive registered for ${scenario.id}`);
+    const dark = themedSibling(testInfo.project.name, "dark");
+    const darkWanted = dark !== null && scenarioOnPlatform(scenario, dark);
+    const shotPlatforms = darkWanted
+      ? [testInfo.project.name, dark]
+      : [testInfo.project.name];
+    // A shot whose executed sources and inputs hash as they did last time is
+    // fresh and skipped; --all (VISUAL_CAPTURE_ALL=1) retakes everything.
+    const inputs = await scenarioInputs(scenario.id, scenario);
+    const record = captureAll
+      ? null
+      : await readShotRecord(testInfo.project.name, scenario.screenshot);
+    if (record) {
+      const previous = await shotFingerprint(record.sources, inputs);
+      test.skip(
+        await shotIsFresh(
+          shotPlatforms,
+          scenario.screenshot,
+          previous.fingerprint,
+        ),
+        "unchanged since the last capture",
+      );
+    }
     const state = definition.state ?? {};
     await installState(page, state, platform.frame === "desktop-window");
+    await page.coverage.startJSCoverage({ resetOnNavigation: false });
     await page.goto(state.route ?? "/new");
     await definition.drive(page);
     await definition.settle(page);
@@ -73,10 +108,17 @@ for (const scenario of registry.scenarios) {
     await shoot(page, testInfo.project.name, scenario.screenshot);
     // The theme is "system", so flipping the emulated scheme is what the OS
     // would do: the app re-themes in place and the dark shot needs no re-drive.
-    const dark = themedSibling(testInfo.project.name, "dark");
-    if (!dark || !scenarioOnPlatform(scenario, dark)) return;
-    await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
-    await shoot(page, dark, scenario.screenshot);
+    if (darkWanted) {
+      await page.emulateMedia({ colorScheme: "dark" });
+      await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+      await shoot(page, dark, scenario.screenshot);
+    }
+    const coverage = await page.coverage.stopJSCoverage();
+    const executed = coverageSources(coverage);
+    await putShotRecord(
+      testInfo.project.name,
+      scenario.screenshot,
+      await shotFingerprint(executed, inputs),
+    );
   });
 }

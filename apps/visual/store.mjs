@@ -2,6 +2,7 @@ import {
   copyFile,
   mkdir,
   open,
+  readFile,
   readdir,
   rename,
   stat,
@@ -15,7 +16,10 @@ import { PLATFORMS, visualRoot } from "./platforms.mjs";
 export const storeDirectory = path.join(visualRoot, ".visual");
 export const shotsDirectory = path.join(storeDirectory, "shots");
 
-export function platformShotsDirectory(platform, baseDirectory = storeDirectory) {
+export function platformShotsDirectory(
+  platform,
+  baseDirectory = storeDirectory,
+) {
   if (!PLATFORMS[platform]) throw new Error(`Unknown platform: ${platform}`);
   return path.join(baseDirectory, "shots", platform);
 }
@@ -117,4 +121,69 @@ export function shotDriftWarning(producedNames, scenarios) {
   if (missing.length > 0) parts.push(`missing: ${missing.join(", ")}`);
   if (unexpected.length > 0) parts.push(`unexpected: ${unexpected.join(", ")}`);
   return parts.join("; ");
+}
+
+// Beside every light shot sits its freshness record: the fingerprint of the
+// inputs that produced it and the source files the fingerprint covers. A
+// scan recaptures a shot only when that fingerprint no longer matches.
+export function shotRecordPath(platform, name, baseDirectory = storeDirectory) {
+  return path.join(
+    platformShotsDirectory(platform, baseDirectory),
+    name.replace(/\.png$/, ".fp"),
+  );
+}
+
+export async function putShotRecord(
+  platform,
+  name,
+  record,
+  baseDirectory = storeDirectory,
+) {
+  await atomicWriteFile(
+    shotRecordPath(platform, name, baseDirectory),
+    `${JSON.stringify(record)}\n`,
+  );
+}
+
+export async function readShotRecord(
+  platform,
+  name,
+  baseDirectory = storeDirectory,
+) {
+  try {
+    const text = await readFile(
+      shotRecordPath(platform, name, baseDirectory),
+      "utf8",
+    );
+    const record = JSON.parse(text);
+    return typeof record.fingerprint === "string" &&
+      Array.isArray(record.sources)
+      ? record
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Fresh means the light shot's record carries this fingerprint and every
+// listed platform holds the shot file: a missing dark sibling recaptures both.
+export async function shotIsFresh(
+  platforms,
+  name,
+  fingerprint,
+  baseDirectory = storeDirectory,
+) {
+  const [light] = platforms;
+  const record = await readShotRecord(light, name, baseDirectory);
+  if (!record || record.fingerprint !== fingerprint) return false;
+  for (const platform of platforms) {
+    try {
+      await stat(
+        path.join(platformShotsDirectory(platform, baseDirectory), name),
+      );
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }

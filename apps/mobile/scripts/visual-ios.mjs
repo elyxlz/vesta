@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadRegistry, scenariosForPlatform } from "@vesta/visual/registry";
 import { publishRunStatus } from "@vesta/visual/run-status";
+import { captureAllRequested } from "@vesta/visual/fingerprint";
 import { putShot, shotDriftWarning } from "@vesta/visual/store";
 import {
   activeShardCount,
@@ -31,6 +32,8 @@ import {
   mobileRoot,
   nativeAnimationHookPath,
   nativeInputFingerprint,
+  planFlows,
+  printPlan,
   recordJsBundle,
   run,
   setGentleMode,
@@ -63,7 +66,12 @@ function usage() {
   console.log(`Usage:
   npm run visual:ios:capture -- [options]
 
+Commands:
+  capture                  Take the shots whose inputs changed (default)
+  plan                     Print which flows a capture would run, as JSON
+
 Options:
+  --all                    Retake every shot, changed or not
   --device <name-or-udid>  Simulator to use
   --show-simulator         Open Simulator.app while capturing
   --skip-build             Skip even the fast JavaScript rebundle
@@ -111,6 +119,10 @@ function parseArguments(values) {
       options.gentle = true;
       continue;
     }
+    if (argument === "--all") {
+      options.all = true;
+      continue;
+    }
     if (argument === "--device") {
       const value = argumentsCopy[index + 1];
       if (!value) throw new Error(`${argument} requires a value.`);
@@ -121,7 +133,7 @@ function parseArguments(values) {
     throw new Error(`Unknown argument: ${argument}`);
   }
 
-  if (command !== "capture") {
+  if (command !== "capture" && command !== "plan") {
     throw new Error(`Unknown command: ${command}`);
   }
   if (options.skipBuild && options.cleanNative) {
@@ -130,10 +142,11 @@ function parseArguments(values) {
   return options;
 }
 
-
 async function requireCaptureTools() {
   if (process.platform !== "darwin") {
-    throw new Error("The first visual catalog runner currently requires macOS.");
+    throw new Error(
+      "The first visual catalog runner currently requires macOS.",
+    );
   }
   await run("xcrun", ["--find", "simctl"], { capture: true });
   const maestroCandidates = [
@@ -141,9 +154,7 @@ async function requireCaptureTools() {
     "/opt/homebrew/bin/maestro",
     "/usr/local/bin/maestro",
   ];
-  const maestro = maestroCandidates.find((candidate) =>
-    existsSync(candidate),
-  );
+  const maestro = maestroCandidates.find((candidate) => existsSync(candidate));
   if (!maestro) {
     throw new Error(
       "Maestro CLI is required. Install it with:\n" +
@@ -206,7 +217,9 @@ function chooseSimulator(devices, requested) {
       device.name.toLowerCase().includes(requested.toLowerCase()),
     );
     if (partial.length === 1) return partial[0];
-    throw new Error(`No unique available iPhone simulator matches "${requested}".`);
+    throw new Error(
+      `No unique available iPhone simulator matches "${requested}".`,
+    );
   }
 
   const preferred = phones
@@ -233,8 +246,7 @@ async function prepareSimulators(requested, showSimulator) {
   const simulators = [];
 
   for (let index = 1; index <= activeShardCount(); index += 1) {
-    const name =
-      `Vesta Visual ${index} — ${template.name} (${template.runtimeName})`;
+    const name = `Vesta Visual ${index} — ${template.name} (${template.runtimeName})`;
     const namedDevices = devices.filter((device) => device.name === name);
     const existing = namedDevices.find(
       (device) =>
@@ -271,23 +283,15 @@ async function prepareSimulators(requested, showSimulator) {
 
   await Promise.all(
     simulators.map((simulator) =>
-      run(
-        "xcrun",
-        ["simctl", "bootstatus", simulator.udid, "-b"],
-        { capture: true },
-      ),
+      run("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"], {
+        capture: true,
+      }),
     ),
   );
   if (showSimulator) {
     await run(
       "open",
-      [
-        "-a",
-        "Simulator",
-        "--args",
-        "-CurrentDeviceUDID",
-        simulators[0].udid,
-      ],
+      ["-a", "Simulator", "--args", "-CurrentDeviceUDID", simulators[0].udid],
       { allowFailure: true },
     );
   }
@@ -413,10 +417,7 @@ async function recoverGeneratedIosSwap() {
     } catch {
       state = null;
     }
-    if (
-      state?.pid !== process.pid &&
-      processIsRunning(Number(state?.pid))
-    ) {
+    if (state?.pid !== process.pid && processIsRunning(Number(state?.pid))) {
       throw new Error(
         `Another visual native build is active (PID ${state.pid}).`,
       );
@@ -428,7 +429,9 @@ async function recoverGeneratedIosSwap() {
         await moveVisualIosToCache(iosDirectory);
       }
       await rename(savedIosDirectory, iosDirectory);
-      console.log("\nRecovered the production ios/ directory from an interrupted visual build.");
+      console.log(
+        "\nRecovered the production ios/ directory from an interrupted visual build.",
+      );
     } else if (state?.hadIos === false && (await exists(iosDirectory))) {
       await moveVisualIosToCache(iosDirectory);
     }
@@ -459,7 +462,9 @@ async function recoverGeneratedIosSwap() {
     if (await exists(iosDirectory)) await moveVisualIosToCache(iosDirectory);
     await rename(path.join(recoverable[0], "ios"), iosDirectory);
     await rm(recoverable[0], { recursive: true, force: true });
-    console.log("\nRecovered the production ios/ directory from a legacy visual build backup.");
+    console.log(
+      "\nRecovered the production ios/ directory from a legacy visual build backup.",
+    );
   }
 }
 
@@ -671,11 +676,9 @@ async function buildAndInstall(simulators, appId) {
   } else {
     await withGeneratedIos(async (iosDirectory, hadCachedIos) => {
       if (!hadCachedIos) {
-        await run(
-          "npx",
-          ["expo", "prebuild", "--clean", "--platform", "ios"],
-          { env: visualEnvironment },
-        );
+        await run("npx", ["expo", "prebuild", "--clean", "--platform", "ios"], {
+          env: visualEnvironment,
+        });
       }
       await installVisualNativeHooks(iosDirectory);
       const workspace = await onlyEntryWithExtension(
@@ -713,20 +716,17 @@ async function buildAndInstall(simulators, appId) {
   }
   await Promise.all(
     simulators.map((simulator) =>
-      run(
-        "xcrun",
-        ["simctl", "terminate", simulator.udid, appId],
-        { capture: true, allowFailure: true },
-      ),
+      run("xcrun", ["simctl", "terminate", simulator.udid, appId], {
+        capture: true,
+        allowFailure: true,
+      }),
     ),
   );
   await Promise.all(
     simulators.map((simulator) =>
-      run(
-        "xcrun",
-        ["simctl", "install", simulator.udid, app],
-        { capture: true },
-      ),
+      run("xcrun", ["simctl", "install", simulator.udid, app], {
+        capture: true,
+      }),
     ),
   );
 }
@@ -744,14 +744,14 @@ async function requireInstalledApp(udid, appId) {
   }
 }
 
-async function runMaestro(manifest, simulators, tools) {
+async function runMaestro(manifest, simulators, tools, records) {
   await rm(maestroDirectory, { recursive: true, force: true });
   await mkdir(maestroDirectory, { recursive: true });
 
   const flowPaths = manifest.flows.map((flow) =>
     path.resolve(mobileRoot, flow),
   );
-  const bridge = await startIosBridge(simulators);
+  const bridge = await startIosBridge(simulators, records);
   const cycle = await bridge.beginCycle(manifest);
   try {
     await run(
@@ -791,12 +791,14 @@ async function runMaestro(manifest, simulators, tools) {
   return cycle.seen;
 }
 
-
 async function prepareCaptureSession(options) {
   await recoverGeneratedIosSwap();
   await assertHarnessBoundary();
   const registry = await loadRegistry("mobile");
-  const manifest = { ...registry, scenarios: scenariosForPlatform(registry, "ios") };
+  const manifest = {
+    ...registry,
+    scenarios: scenariosForPlatform(registry, "ios"),
+  };
   const tools = await requireCaptureTools();
   await mkdir(visualDirectory, { recursive: true });
   const simulators = await prepareSimulators(
@@ -825,7 +827,10 @@ async function prepareCaptureSession(options) {
 async function runCaptureIteration(options, session, onPhase = async () => {}) {
   await assertHarnessBoundary();
   const registry = await loadRegistry("mobile");
-  const manifest = { ...registry, scenarios: scenariosForPlatform(registry, "ios") };
+  const manifest = {
+    ...registry,
+    scenarios: scenariosForPlatform(registry, "ios"),
+  };
   if (manifest.appId !== session.appId) {
     throw new Error(
       "The visual appId changed. Restart the capture command before continuing.",
@@ -837,11 +842,47 @@ async function runCaptureIteration(options, session, onPhase = async () => {}) {
       : "Bundling and installing the visual app",
   );
   await installVisualApp(options, session, manifest);
+  await onPhase("Planning the iOS flows");
+  const plan = await planFlows(manifest, {
+    platform: "ios",
+    metroPlatform: "ios",
+    mechanics: iosMechanics,
+    extras: [await nativeInputFingerprint()],
+    captureAll: options.all || captureAllRequested(),
+  });
+  reportPlan(plan);
+  if (plan.flows.length === 0) return { produced: new Set(), warning: "" };
+  const planned = { ...manifest, flows: plan.flows, scenarios: plan.scenarios };
   await onPhase(
-    `Running ${manifest.flows.length} flows on ${session.simulators.length} simulator shard(s)`,
+    `Running ${planned.flows.length} flows on ${session.simulators.length} simulator shard(s)`,
   );
-  const produced = await runMaestro(manifest, session.simulators, session.tools);
-  return { produced, warning: reportShotDrift(produced, manifest) };
+  const produced = await runMaestro(
+    planned,
+    session.simulators,
+    session.tools,
+    plan.records,
+  );
+  return { produced, warning: reportShotDrift(produced, planned) };
+}
+
+// The files that shape how a shot is taken, on top of the app sources a flow
+// reaches: a change here retakes every shot.
+const iosMechanics = [
+  path.join(mobileRoot, "maestro/visual/capture-screenshot.js"),
+  path.join(mobileRoot, "scripts/visual-runner.mjs"),
+  path.join(mobileRoot, "scripts/visual-sources.mjs"),
+  path.join(mobileRoot, "scripts/visual-ios.mjs"),
+];
+
+function reportPlan(plan) {
+  if (plan.skipped.length > 0) {
+    console.log(
+      `\nSkipping ${plan.skipped.length} unchanged flow(s): ${plan.skipped
+        .map((flow) => path.basename(flow))
+        .join(", ")}`,
+    );
+  }
+  if (plan.flows.length === 0) console.log("\nEvery iOS shot is up to date.");
 }
 
 async function installVisualApp(options, session, manifest) {
@@ -912,7 +953,6 @@ async function capture(options) {
     throw error;
   }
 }
-
 
 const simulatorApplication =
   "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator";
@@ -986,11 +1026,18 @@ async function showSimulatorSoftwareKeyboard(udid) {
 
 // simctl writes only to a file, so a grab is a temp file read back as a Buffer.
 async function grabSimulatorScreen(udid) {
-  const temporary = path.join(os.tmpdir(), `vesta-visual-${process.pid}-${udid}.png`);
-  await run("xcrun", ["simctl", "io", udid, "screenshot", "--type=png", temporary], {
-    capture: true,
-    quiet: true,
-  });
+  const temporary = path.join(
+    os.tmpdir(),
+    `vesta-visual-${process.pid}-${udid}.png`,
+  );
+  await run(
+    "xcrun",
+    ["simctl", "io", udid, "screenshot", "--type=png", temporary],
+    {
+      capture: true,
+      quiet: true,
+    },
+  );
   const image = await readFile(temporary);
   await rm(temporary, { force: true });
   return image;
@@ -998,18 +1045,25 @@ async function grabSimulatorScreen(udid) {
 
 // The shared bridge with the iOS handlers: a simctl framebuffer grab in both
 // appearances, and the hidden Simulator host for the real software keyboard.
-async function startIosBridge(simulators) {
+async function startIosBridge(simulators, records) {
   const createdKeyboardHostPids = new Set();
   return startScreenshotBridge(simulators, {
     capture: (simulator, screenshot) =>
       captureBothThemes({
         platform: "ios",
         name: screenshot,
+        record: records.get(screenshot),
         grab: () => grabSimulatorScreen(simulator.udid),
         setDark: (dark) =>
           run(
             "xcrun",
-            ["simctl", "ui", simulator.udid, "appearance", dark ? "dark" : "light"],
+            [
+              "simctl",
+              "ui",
+              simulator.udid,
+              "appearance",
+              dark ? "dark" : "light",
+            ],
             { capture: true, quiet: true },
           ),
         store: putShot,
@@ -1038,9 +1092,31 @@ function reportShotDrift(seen, manifest) {
   return warning;
 }
 
+async function plan(options) {
+  const registry = await loadRegistry("mobile");
+  const manifest = {
+    ...registry,
+    scenarios: scenariosForPlatform(registry, "ios"),
+  };
+  printPlan(
+    "ios",
+    await planFlows(manifest, {
+      platform: "ios",
+      metroPlatform: "ios",
+      mechanics: iosMechanics,
+      extras: [await nativeInputFingerprint()],
+      captureAll: options.all || captureAllRequested(),
+    }),
+  );
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   setGentleMode(options.gentle);
+  if (options.command === "plan") {
+    await plan(options);
+    return;
+  }
   await capture(options);
 }
 

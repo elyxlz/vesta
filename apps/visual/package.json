@@ -20,6 +20,10 @@
     "./run-status": {
       "types": "./run-status.d.mts",
       "default": "./run-status.mjs"
+    },
+    "./fingerprint": {
+      "types": "./fingerprint.d.mts",
+      "default": "./fingerprint.mjs"
     }
   },
   "scripts": {

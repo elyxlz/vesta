@@ -53,8 +53,11 @@ document.querySelectorAll(".copy-ref").forEach((copyButton) => {
   copyButton.addEventListener("click", () => {
     const shot = copyButton.closest(".shot");
     void copyWithFeedback(copyButton, [
-      "visual-ref: " + shot.dataset.scenarioId +
-        " [" + shot.dataset.platform + "]",
+      "visual-ref: " +
+        shot.dataset.scenarioId +
+        " [" +
+        shot.dataset.platform +
+        "]",
       ...refHeader(shot),
       "image: " + shotImage(shot),
     ]);
@@ -66,9 +69,7 @@ document.querySelectorAll(".copy-card").forEach((copyButton) => {
     void copyWithFeedback(copyButton, [
       "visual-ref: " + shots[0].dataset.scenarioId,
       ...refHeader(shots[0]),
-      ...shots.map(
-        (shot) => shot.dataset.platform + ": " + shotImage(shot),
-      ),
+      ...shots.map((shot) => shot.dataset.platform + ": " + shotImage(shot)),
     ]);
   });
 });
@@ -85,7 +86,10 @@ document.querySelectorAll(".scenario-section").forEach((section) => {
   section.addEventListener("toggle", () => {
     if (section.open) collapsedGroups.delete(group);
     else collapsedGroups.add(group);
-    localStorage.setItem("visual-collapsed", JSON.stringify([...collapsedGroups]));
+    localStorage.setItem(
+      "visual-collapsed",
+      JSON.stringify([...collapsedGroups]),
+    );
   });
 });
 // A side link opens its section (a collapsed one would not scroll into view)
@@ -97,7 +101,10 @@ document.querySelectorAll(".side-link, .side-family-title").forEach((link) => {
   });
 });
 const sideLinks = new Map(
-  [...document.querySelectorAll(".side-link")].map((link) => [link.dataset.section, link]),
+  [...document.querySelectorAll(".side-link")].map((link) => [
+    link.dataset.section,
+    link,
+  ]),
 );
 const visibleSections = new Set();
 function markActiveSection() {
@@ -105,7 +112,9 @@ function markActiveSection() {
   document.querySelectorAll(".scenario-section").forEach((section) => {
     if (!first && visibleSections.has(section.id)) first = section.id;
   });
-  sideLinks.forEach((link, id) => link.classList.toggle("active", id === first));
+  sideLinks.forEach((link, id) =>
+    link.classList.toggle("active", id === first),
+  );
 }
 const sectionObserver = new IntersectionObserver(
   (entries) => {
@@ -117,7 +126,9 @@ const sectionObserver = new IntersectionObserver(
   },
   { rootMargin: "-10px 0px -60% 0px" },
 );
-document.querySelectorAll(".scenario-section").forEach((section) => sectionObserver.observe(section));
+document
+  .querySelectorAll(".scenario-section")
+  .forEach((section) => sectionObserver.observe(section));
 const themeToggle = document.querySelector("#theme-toggle");
 function applyTheme(dark) {
   document.body.dataset.theme = dark ? "dark" : "light";
@@ -134,19 +145,210 @@ gentleToggle.checked = localStorage.getItem("visual-gentle") !== "0";
 gentleToggle.addEventListener("change", () => {
   localStorage.setItem("visual-gentle", gentleToggle.checked ? "1" : "0");
 });
-document.querySelectorAll(".scan-row .scan-button").forEach((button) => {
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    const runner = button.closest(".scan-row").dataset.runner;
-    const gentle = gentleToggle.checked ? "1" : "0";
-    try {
-      await fetch("capture/" + runner + "?gentle=" + gentle, {
-        method: "POST",
-      });
-    } catch {
-      button.disabled = false;
-    }
+// One Scan button: the plan dialog asks every runner what a scan would retake
+// and starts the chosen runners from there.
+const planDialog = document.querySelector("#plan-dialog");
+const planRunners = document.querySelector("#plan-runners");
+const planNote = document.querySelector("#plan-note");
+const planAll = document.querySelector("#plan-all");
+const planStart = document.querySelector("#plan-start");
+const runnerLabels = {};
+document.querySelectorAll(".scan-row").forEach((row) => {
+  runnerLabels[row.dataset.runner] =
+    row.querySelector(".scan-runner").textContent;
+});
+let planRequest = 0;
+
+// Why a unit is stale, in one short line: the files that moved (a few named,
+// the rest counted), shots never taken, a changed scenario, or a record from
+// before per-file hashes.
+function reasonLine(reasons) {
+  if (!reasons) return "";
+  const parts = [];
+  const moved = reasons.changed.concat(
+    reasons.added.map((f) => "+" + f),
+    reasons.removed.map((f) => "-" + f),
+  );
+  if (moved.length) {
+    const shown = moved
+      .slice(0, 3)
+      .map((f) => f.replace(/^(mobile|web|core)\/src\//, ""));
+    parts.push(
+      "changed: " +
+        shown.join(", ") +
+        (moved.length > 3 ? " +" + (moved.length - 3) + " more" : ""),
+    );
+  }
+  if (reasons.extras) parts.push("scenario changed");
+  if (reasons.missing && reasons.missing.length)
+    parts.push(
+      reasons.missing.length === 1 && moved.length === 0 && !reasons.extras
+        ? "never taken"
+        : reasons.missing.length + " never taken",
+    );
+  if (reasons.unknown) parts.push("record predates file hashes");
+  return parts.length
+    ? '<div class="plan-reason">' + escapeText(parts.join(" · ")) + "</div>"
+    : "";
+}
+
+function unitLine(unit) {
+  const where =
+    unit.platforms && unit.platforms.length
+      ? " · " + unit.platforms.join(", ")
+      : "";
+  const shots =
+    unit.shots.length === 1 && unit.shots[0] === unit.name + ".png"
+      ? ""
+      : " " +
+        unit.shots.length +
+        " shot" +
+        (unit.shots.length === 1 ? "" : "s");
+  return (
+    "<li>" +
+    escapeText(unit.name) +
+    '<span class="plan-shots">' +
+    escapeText(shots + where) +
+    "</span>" +
+    reasonLine(unit.reasons) +
+    "</li>"
+  );
+}
+
+function escapeText(text) {
+  return String(text).replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+  );
+}
+
+function renderPlans(plans) {
+  planRunners.innerHTML = Object.entries(plans)
+    .map(([runner, plan]) => {
+      const stale = plan.units.filter((unit) => unit.stale);
+      const running =
+        document.querySelector('.scan-row[data-runner="' + runner + '"]')
+          .dataset.state === "running";
+      const checked = stale.length > 0 && !running ? "checked" : "";
+      const disabled = running || stale.length === 0 ? "disabled" : "";
+      const count = plan.error
+        ? "plan failed"
+        : running
+          ? "scanning now"
+          : stale.length === 0
+            ? "up to date"
+            : stale.length + " of " + plan.units.length + " to retake";
+      const list = stale.length
+        ? "<details><summary>" +
+          stale.length +
+          " stale</summary><ul>" +
+          stale.map(unitLine).join("") +
+          "</ul></details>"
+        : "";
+      const error = plan.error
+        ? '<div class="plan-error">' + escapeText(plan.error) + "</div>"
+        : "";
+      return (
+        '<div class="plan-runner" data-runner="' +
+        runner +
+        '" data-stale="' +
+        stale.length +
+        '">' +
+        '<label><input type="checkbox" ' +
+        checked +
+        " " +
+        disabled +
+        '><span class="plan-label">' +
+        escapeText(runnerLabels[runner] || runner) +
+        '</span><span class="plan-count">' +
+        count +
+        "</span></label>" +
+        error +
+        list +
+        "</div>"
+      );
+    })
+    .join("");
+  planStart.disabled = !planRunners.querySelector("input:checked");
+  planRunners.querySelectorAll("input").forEach((input) => {
+    input.addEventListener("change", () => {
+      planStart.disabled = !planRunners.querySelector("input:checked");
+    });
   });
+}
+
+// One placeholder row per runner while the plan is computed, so the dialog
+// keeps its shape and shows which platforms are being asked.
+function renderPlanSkeleton() {
+  planRunners.innerHTML = Object.entries(runnerLabels)
+    .map(
+      ([runner, label]) =>
+        '<div class="plan-runner plan-skeleton" data-runner="' +
+        runner +
+        '" aria-busy="true">' +
+        '<label><span class="plan-skeleton-box"></span><span class="plan-label">' +
+        escapeText(label) +
+        '</span><span class="plan-count plan-skeleton-bar"></span></label>' +
+        "</div>",
+    )
+    .join("");
+}
+
+async function loadPlan() {
+  const request = ++planRequest;
+  planStart.disabled = true;
+  renderPlanSkeleton();
+  planNote.textContent = planAll.checked
+    ? "Everything will be retaken."
+    : "Checking what changed…";
+  try {
+    const response = await fetch(
+      "plan.json?all=" + (planAll.checked ? "1" : "0"),
+    );
+    const payload = await response.json();
+    if (request !== planRequest) return;
+    renderPlans(payload.plans || {});
+    const total = Object.values(payload.plans || {}).reduce(
+      (sum, plan) => sum + plan.units.filter((unit) => unit.stale).length,
+      0,
+    );
+    planNote.textContent = planAll.checked
+      ? "Every shot on the checked platforms will be retaken."
+      : total === 0
+        ? "Every shot is up to date."
+        : "Only the stale shots are retaken; the rest keep their current capture.";
+  } catch (error) {
+    if (request !== planRequest) return;
+    planNote.textContent = "Could not plan: " + error.message;
+  }
+}
+
+document.querySelector("#scan-open").addEventListener("click", () => {
+  planDialog.showModal();
+  loadPlan();
+});
+planAll.addEventListener("change", loadPlan);
+document
+  .querySelector("#plan-cancel")
+  .addEventListener("click", () => planDialog.close());
+planDialog.addEventListener("click", (event) => {
+  if (event.target === planDialog) planDialog.close();
+});
+planStart.addEventListener("click", async () => {
+  const runners = [...planRunners.querySelectorAll(".plan-runner")]
+    .filter((row) => row.querySelector("input").checked)
+    .map((row) => row.dataset.runner);
+  planStart.disabled = true;
+  const gentle = gentleToggle.checked ? "1" : "0";
+  const all = planAll.checked ? "1" : "0";
+  await Promise.all(
+    runners.map((runner) =>
+      fetch("capture/" + runner + "?gentle=" + gentle + "&all=" + all, {
+        method: "POST",
+      }).catch(() => undefined),
+    ),
+  );
+  planDialog.close();
 });
 function applyShots(payload) {
   document.querySelectorAll(".shot[data-screenshot]").forEach((shot) => {
@@ -176,11 +378,14 @@ function applyShots(payload) {
 }
 function capturingStatus(statuses, runner) {
   return statuses.find(
-    (entry) => entry.state === "capturing" && entry.runner === runner && entry.startedAt,
+    (entry) =>
+      entry.state === "capturing" && entry.runner === runner && entry.startedAt,
   );
 }
 function errorStatus(statuses, runner) {
-  return statuses.find((entry) => entry.state === "error" && entry.runner === runner);
+  return statuses.find(
+    (entry) => entry.state === "error" && entry.runner === runner,
+  );
 }
 function stampText(mtimes) {
   return mtimes.length
@@ -200,9 +405,6 @@ function updateScanRows(payload, statuses) {
     const run = (payload.runs || {})[runner];
     const status = capturingStatus(statuses, runner);
     const running = Boolean(run && run.running) || Boolean(status);
-    const button = row.querySelector(".scan-button");
-    button.disabled = running;
-    button.textContent = running ? "Scanning" : "Scan";
     const slots = document.querySelectorAll(
       '.shot[data-runner="' + runner + '"]:not([data-state="excluded"])',
     );
@@ -213,21 +415,33 @@ function updateScanRows(payload, statuses) {
     let have = 0;
     const mtimes = [];
     slots.forEach((slot) => {
-      const entry = (payload[slot.dataset.platform] || {})[slot.dataset.screenshot];
+      const entry = (payload[slot.dataset.platform] || {})[
+        slot.dataset.screenshot
+      ];
       if (!entry) return;
       mtimes.push(entry.mtime);
       if (!running || entry.mtime >= startedMs) have += 1;
     });
     row.querySelector(".scan-progress").textContent = have + "/" + slots.length;
-    const failure = !running && (errorStatus(statuses, runner) || (run && run.exitCode ? { message: "failed", detail: "see capture-" + runner + ".log" } : null));
+    const failure =
+      !running &&
+      (errorStatus(statuses, runner) ||
+        (run && run.exitCode
+          ? { message: "failed", detail: "see capture-" + runner + ".log" }
+          : null));
     row.dataset.state = running ? "running" : failure ? "failed" : "ok";
     const last = row.querySelector(".scan-last");
     if (running && status) {
-      const elapsed = Math.max(0, Math.round((Date.now() - Date.parse(status.startedAt)) / 1000));
-      last.textContent = (status.message || "Capturing") + " · " + elapsed + "s";
+      const elapsed = Math.max(
+        0,
+        Math.round((Date.now() - Date.parse(status.startedAt)) / 1000),
+      );
+      last.textContent =
+        (status.message || "Capturing") + " · " + elapsed + "s";
       last.title = status.detail || "";
     } else if (failure) {
-      last.textContent = failure.message + (failure.detail ? ": " + failure.detail : "");
+      last.textContent =
+        failure.message + (failure.detail ? ": " + failure.detail : "");
       last.title = failure.detail || "";
     } else {
       last.textContent = stampText(mtimes);
@@ -243,7 +457,9 @@ function markRefreshing(statuses, payload) {
       return;
     }
     const startedMs = Date.parse(status.startedAt);
-    const entry = (payload[shot.dataset.platform] || {})[shot.dataset.screenshot];
+    const entry = (payload[shot.dataset.platform] || {})[
+      shot.dataset.screenshot
+    ];
     shot.classList.toggle("refreshing", !(entry && entry.mtime >= startedMs));
   });
 }

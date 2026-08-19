@@ -188,7 +188,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - scrollUntilVisible:
     element:
       text: '.*Start agent.*'

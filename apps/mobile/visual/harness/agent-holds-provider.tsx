@@ -23,36 +23,36 @@ export { useAgentHolds } from "../../src/holds/AgentHoldsProvider";
 // the scroll-to-bottom control and date headers).
 const chatVariant = visualSwitch("visualChat");
 const conversation: ChatMessage[] = [
-    {
-      id: 101,
-      type: "user",
-      text: "What should I focus on before tomorrow's product review?",
-      ts: "2026-08-01T09:18:00.000Z",
-    },
-    {
-      id: 102,
-      type: "chat",
-      text: "The onboarding polish and mobile QA gaps are the two items most likely to unblock the review.",
-      ts: "2026-08-01T09:18:14.000Z",
-    },
-    {
-      id: 103,
-      type: "user",
-      text: "Turn that into a short checklist.",
-      ts: "2026-08-01T09:19:00.000Z",
-    },
-    {
-      id: 104,
-      type: "chat",
-      text: "Done. I prioritized the visual regressions first, then the demo notes and follow-ups.",
-      ts: "2026-08-01T09:19:11.000Z",
-    },
-    {
-      id: 105,
-      type: "user",
-      text: "> Done. I prioritized the visual regressions first, then the demo notes and follow-ups.\n\nPerfect, let's start with the visual regressions.",
-      ts: "2026-08-01T09:20:00.000Z",
-    },
+  {
+    id: 101,
+    type: "user",
+    text: "What should I focus on before tomorrow's product review?",
+    ts: "2026-08-01T09:18:00.000Z",
+  },
+  {
+    id: 102,
+    type: "chat",
+    text: "The onboarding polish and mobile QA gaps are the two items most likely to unblock the review.",
+    ts: "2026-08-01T09:18:14.000Z",
+  },
+  {
+    id: 103,
+    type: "user",
+    text: "Turn that into a short checklist.",
+    ts: "2026-08-01T09:19:00.000Z",
+  },
+  {
+    id: 104,
+    type: "chat",
+    text: "Done. I prioritized the visual regressions first, then the demo notes and follow-ups.",
+    ts: "2026-08-01T09:19:11.000Z",
+  },
+  {
+    id: 105,
+    type: "user",
+    text: "> Done. I prioritized the visual regressions first, then the demo notes and follow-ups.\n\nPerfect, let's start with the visual regressions.",
+    ts: "2026-08-01T09:20:00.000Z",
+  },
 ];
 const deliveryTail: ChatMessage[] = [
   {

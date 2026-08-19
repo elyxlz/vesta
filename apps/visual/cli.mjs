@@ -16,7 +16,9 @@ Runners: ${Object.keys(RUNNERS).join(", ")}
 
 function parseArguments(values) {
   const [command, ...rest] =
-    values[0] === undefined || values[0].startsWith("-") ? ["serve", ...values] : values;
+    values[0] === undefined || values[0].startsWith("-")
+      ? ["serve", ...values]
+      : values;
   const options = {
     command,
     port: DEFAULT_PORT,

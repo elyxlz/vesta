@@ -19,7 +19,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:
@@ -54,7 +54,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:
@@ -89,7 +89,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - swipe:
     start: "50%,85%"
     end: "50%,25%"
@@ -126,7 +126,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:
@@ -161,7 +161,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:
@@ -196,7 +196,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:
@@ -226,7 +226,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:
@@ -256,7 +256,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - swipe:
     start: "50%,85%"
     end: "50%,25%"
@@ -288,7 +288,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - swipe:
     start: "50%,85%"
     end: "50%,25%"
@@ -320,7 +320,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:
@@ -353,7 +353,7 @@ tags:
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
-    duration: 500
+    duration: 250
 - repeat:
     times: 3
     while:

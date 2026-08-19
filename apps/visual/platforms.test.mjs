@@ -20,9 +20,7 @@ describe("PLATFORMS", () => {
         "browser",
         "desktop-window",
         "phone-browser",
-      ]).toContain(
-        platform.frame,
-      );
+      ]).toContain(platform.frame);
       expect(Object.keys(RUNNERS)).toContain(platform.runner);
       expect(platform.label).toBeTruthy();
     }
@@ -97,7 +95,9 @@ describe("lookups", () => {
   });
 
   it("rejects an unknown platform id", () => {
-    expect(() => themedSibling("windows", "dark")).toThrow(/Unknown platform: windows/);
+    expect(() => themedSibling("windows", "dark")).toThrow(
+      /Unknown platform: windows/,
+    );
   });
 
   it("pairs a platform with its same-frame sibling in the other theme", () => {
