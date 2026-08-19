@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import * as Linking from "expo-linking";
+import { visualDelay, visualSwitch } from "./launch-query";
 
 interface PrivacyValue {
   appLockEnabled: boolean;
@@ -29,10 +29,10 @@ const initializationMessage =
   "Vesta could not safely load your privacy settings.";
 const unlockMessage =
   "Device authentication is temporarily locked. Unlock your device and try again.";
-const launchUrl = Linking.getLinkingURL();
-const startsUnlocked =
-  launchUrl !== null &&
-  Linking.parse(launchUrl).queryParams?.visualPrivacy === "unlocked";
+const privacyVariant = visualSwitch("visualPrivacy");
+const startsUnlocked = privacyVariant === "unlocked";
+// `opening` never hydrates, which holds the "Opening Vesta" splash sheet.
+const neverHydrates = privacyVariant === "opening";
 
 export function PrivacyProvider({ children }: { children: ReactNode }) {
   const [locked, setLocked] = useState(!startsUnlocked);
@@ -55,6 +55,7 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
   const unlock = useCallback(async (): Promise<boolean> => {
     setAuthenticating(true);
     await new Promise((resolve) => setTimeout(resolve, 300));
+    await visualDelay();
     setAuthenticating(false);
     unlockAttempts.current += 1;
     if (unlockAttempts.current > 1) setUnlockError(unlockMessage);
@@ -65,7 +66,7 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
     () => ({
       appLockEnabled: true,
       hideAppSwitcherPreview: true,
-      hydrated: true,
+      hydrated: !neverHydrates,
       locked,
       authenticating,
       authenticationName:

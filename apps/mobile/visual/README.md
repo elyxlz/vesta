@@ -128,7 +128,38 @@ The fresh visual launch uses the existing development scheme:
 vesta-dev://connect?visualPrivacy=unlocked
 ```
 
-Only modules under `visual/harness/` interpret the visual query parameters. The production controllers and routes are unchanged. The flows also handle iOS's one-time confirmation for opening a custom scheme.
+Only modules under `visual/harness/` interpret the visual query parameters (`visual/harness/launch-query.ts` reads them once). The production controllers and routes are unchanged. The flows also handle iOS's one-time confirmation for opening a custom scheme.
+
+| Switch | Values | Effect |
+| --- | --- | --- |
+| `visualPrivacy` | `unlocked`, `opening` | Starts unlocked; `opening` never hydrates, so the launch splash holds. Absent: locked with an initialization error. |
+| `visualSession` | `connected` | Session fixture with the stub API client. |
+| `visualRoster` | `empty`, `loading` | Roster variants; absent: aria, nova, forge. |
+| `visualAgent` | any `AgentStatus`, `booting`, `thinking`, `backing_up`, `restoring` | Puts aria into that state. |
+| `visualDashboard` | `loaded`, `error` | aria's dashboard service, rendering the fixture page or a failed load. |
+| `visualServices` | `voice` | Registers a voice service on aria (microphone in the composer). |
+| `visualReachable` | `offline` | Gateway unreachable. |
+| `visualManaged` | `true` | Managed gateway (account section). |
+| `visualDevices` | `none`, `position` | No devices, or the phone carrying a reported place. |
+| `visualChannel` | `beta` | Beta release channel (prerelease notes visible). |
+| `visualGatewayUpdate` | `available`, `required` | Update pill, or the blocking update sheet. |
+| `visualGatewayOperation` | `snapshotting`, `snapshotting-all`, `applying`, `update-restarting`, `failed`, `failed-generic`, `restarting` | One gateway operation per launch. |
+| `visualGatewayUpdated` | a version | The "updated to" notice. |
+| `visualSyncState` | `app_behind` | The app-behind screen. |
+| `visualSync` | `open` | A controller whose sync socket reads as open (enabled composer, live edges). |
+| `visualLive` | `typing`, `pending` | With `visualSync=open`: a paced reply stream, or pending notifications on aria. |
+| `visualChat` | `delivery`, `errors`, `markdown`, `long` | aria's transcript variant. |
+| `visualProvider` | `none`, `unauthenticated`, `openai`, `openrouter` | aria's provider state; absent: signed-in Claude. |
+| `visualVoice` | `unconfigured` | No speech providers. |
+| `visualApi` | `error` | Every agent read fails (error states). |
+| `visualDelay` | milliseconds | Holds pending answers (loading and in-flight states). |
+| `visualLogs` | `empty`, `error` | The log stream variant. |
+| `visualReleaseNotes` | `empty`, `error` | Release notes variant. |
+| `visualWhatsNewSeen` | a version | Seeds the last-seen marker so the release notes auto-open. |
+| `visualRecentGateways` | `none` | No saved gateways. |
+| `visualTunnel` | `unavailable` | No public tunnel. |
+
+nova is the agent with nothing yet (no notifications, rules, backups, mounts, or files), so its sections render the empty states; forge has no chat hold, so it renders the loading skeleton.
 
 For future modal groups, prefer a fresh launch with deterministic initial data over navigating backward through several native sheets.
 
@@ -146,7 +177,7 @@ For future modal groups, prefer a fresh launch with deterministic initial data o
 
 ## Platform-aware scenarios
 
-An entry in `visual/scenarios.json` accepts an optional `platforms` array naming any mobile platform (`ios`, `android`, `android-galaxy`, and their `-dark` siblings). A scenario marked `"platforms": ["ios"]` is not expected from an Android capture, and the gallery renders its Android slots with an explicit "iOS only" note. The flows skip those captures through `runFlow` blocks conditioned on `when: platform`, so one flow file drives both platforms. No shipped scenario is platform-restricted today.
+An entry in `visual/scenarios.json` accepts an optional `platforms` array naming any mobile platform (`ios`, `android`, `android-galaxy`, and their `-dark` siblings). A scenario marked `"platforms": ["ios"]` is not expected from an Android capture, and the gallery renders its Android slots with an explicit "iOS only" note. The flows skip those captures through `runFlow` blocks conditioned on `when: platform`, so one flow file drives both platforms. Three shipped scenarios are iOS only (`connect-link-revealed`, `agent-pager-notifications`, `agent-pager-logs`): the reveal toggle after a capture and the Compose switches inside the agent settings sheet do not take Maestro's tap on Android.
 
 The privacy gates and relock states capture on both platforms; on Android they present full screen through `SheetGateScreen` instead of a form sheet, and the unlock label carries the platform authentication name, so the flows match it by the "Unlock" prefix. The sheet close control is addressable by its accessibility label on both platforms, so the flows wait on and tap "Close settings" / "Close scanner" without platform blocks.
 

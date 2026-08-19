@@ -70,6 +70,14 @@ const harnessModules = new Map([
     path.resolve(__dirname, "harness/reanimated.js"),
   ],
   [
+    "expo-web-browser",
+    path.resolve(__dirname, "harness/web-browser.ts"),
+  ],
+  [
+    "@/controller/rn-socket",
+    path.resolve(__dirname, "harness/rn-socket.ts"),
+  ],
+  [
     "expo-router/stack",
     path.resolve(__dirname, "harness/stack.js"),
   ],

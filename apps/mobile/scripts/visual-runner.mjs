@@ -337,11 +337,9 @@ export async function startScreenshotBridge(targets, handlers) {
         cycle.resolve();
       }
     } catch (error) {
+      // The failing flow reports the message; the cycle stays open so every
+      // other flow's shots still land.
       response.writeHead(500).end(error.message);
-      if (cycle && !cycle.completed) {
-        cycle.completed = true;
-        cycle.reject(error);
-      }
     }
   });
 

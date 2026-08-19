@@ -1,9 +1,14 @@
-import { forwardRef, useState, type ComponentProps } from "react";
+import { forwardRef, useEffect, useState, type ComponentProps } from "react";
 import { StyleSheet, Text } from "react-native";
+import type { WebViewErrorEvent } from "react-native-webview/lib/WebViewTypes";
 import {
   DashboardWebView as ProductionDashboardWebView,
   type DashboardWebViewHandle,
 } from "../../src/components/DashboardWebView";
+import { visualSwitch } from "./launch-query";
+
+// visualDashboard=error reports a failed load instead of the fixture page.
+const dashboardFails = visualSwitch("visualDashboard") === "error";
 
 export type { DashboardWebViewHandle } from "../../src/components/DashboardWebView";
 
@@ -95,9 +100,29 @@ function dashboardDocument(dark: boolean): string {
 export const DashboardWebView = forwardRef<
   DashboardWebViewHandle,
   DashboardWebViewProps
->(function VisualDashboardWebView({ dark, source, onLoad, ...props }, forwardedRef) {
+>(function VisualDashboardWebView(
+  { dark, source, onLoad, onError, ...props },
+  forwardedRef,
+) {
   const baseUrl = "uri" in source ? source.uri : "https://home.vesta.run/";
   const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!dashboardFails || !onError) return;
+    onError({
+      nativeEvent: {
+        url: baseUrl,
+        description: "The dashboard did not answer.",
+        code: -1009,
+        domain: "NSURLErrorDomain",
+        loading: false,
+        title: "",
+        canGoBack: false,
+        canGoForward: false,
+        lockIdentifier: 0,
+      },
+    } as WebViewErrorEvent);
+  }, [baseUrl, onError]);
+  if (dashboardFails) return null;
   return (
     <>
       <ProductionDashboardWebView

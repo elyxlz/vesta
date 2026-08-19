@@ -134,23 +134,34 @@ describe("captureBothThemes", () => {
 });
 
 describe("startScreenshotBridge", () => {
-  it("keeps a failed capture's rejection observable until the runner awaits the cycle", async () => {
+  it("answers a failed capture with its message and keeps serving the cycle", async () => {
+    let attempts = 0;
     const bridge = await startScreenshotBridge(["sim"], {
-      capture: () => Promise.reject(new Error("screencap failed")),
+      capture: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new Error("screencap failed"))
+          : Promise.resolve();
+      },
     });
     try {
       const cycle = await bridge.beginCycle({
-        scenarios: [{ screenshot: "home.png" }],
+        scenarios: [{ screenshot: "home.png" }, { screenshot: "chat.png" }],
       });
-      const response = await fetch(bridge.urls[0], {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ screenshot: "home.png" }),
-      });
-      expect(response.status).toBe(500);
-      // Nothing awaits the cycle while the capture fails, as when Maestro is still running.
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      await expect(cycle.completion).rejects.toThrow(/screencap failed/);
+      const post = (screenshot) =>
+        fetch(bridge.urls[0], {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ screenshot }),
+        });
+      const failed = await post("home.png");
+      expect(failed.status).toBe(500);
+      expect(await failed.text()).toBe("screencap failed");
+      const served = await post("chat.png");
+      expect(served.status).toBe(204);
+      cycle.settle();
+      await expect(cycle.completion).resolves.toBeUndefined();
+      expect([...cycle.seen]).toEqual(["chat.png"]);
     } finally {
       await bridge.close();
     }
