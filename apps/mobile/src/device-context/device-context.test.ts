@@ -23,6 +23,7 @@ const location = vi.hoisted(() => ({
     city: string | null;
     region: string | null;
     country: string | null;
+    timezone?: string | null;
   }[],
   calls: [] as string[],
 }));
@@ -163,6 +164,43 @@ describe("readDeviceContext", () => {
     location.calls = [];
     await readDeviceContext({ shareLocation: true, mode: "background" });
     expect(location.calls).toEqual(["last"]);
+  });
+
+  it("prefers the zone the fix geocodes to over the device's own (roaming)", async () => {
+    // The OS clock is pinned to Asia/Tokyo, but the fix is in Sardinia.
+    location.geocoded = [
+      {
+        city: "Cagliari",
+        region: "Sardinia",
+        country: "Italy",
+        timezone: "Europe/Rome",
+      },
+    ];
+    await expect(
+      readDeviceContext({ shareLocation: true, mode: "foreground" }),
+    ).resolves.toEqual({
+      timezone: "Europe/Rome",
+      position: {
+        latitude: 35.6762,
+        longitude: 139.6503,
+        accuracyM: 50,
+        place: { city: "Cagliari", region: "Sardinia", country: "Italy" },
+      },
+    });
+  });
+
+  it("falls back to the device's zone when the fix geocodes without one (Android)", async () => {
+    location.geocoded = [
+      {
+        city: "Cagliari",
+        region: "Sardinia",
+        country: "Italy",
+        timezone: null,
+      },
+    ];
+    await expect(
+      readDeviceContext({ shareLocation: true, mode: "foreground" }),
+    ).resolves.toMatchObject({ timezone: "Asia/Tokyo" });
   });
 
   it("reports the zone alone when location is not granted or no fix exists", async () => {

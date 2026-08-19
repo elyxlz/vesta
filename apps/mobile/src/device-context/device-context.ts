@@ -81,11 +81,17 @@ async function readFix(
   }).catch(() => null);
 }
 
-// The position, or undefined when the user has not granted location, no fix is available, or the
-// read fails: a report then carries the zone alone. Reverse geocoding is best-effort.
+// The position plus the zone the OS geocoder derives from the fix (iOS only; null on Android or at
+// sea), or undefined when the user has not granted location, no fix is available, or the read
+// fails: a report then carries the device's own zone alone. Reverse geocoding is best-effort.
+interface LocatedContext {
+  position: DevicePosition;
+  fixTimezone: string | null;
+}
+
 async function readDevicePosition(
   mode: PositionMode,
-): Promise<DevicePosition | undefined> {
+): Promise<LocatedContext | undefined> {
   const permission = await Location.getForegroundPermissionsAsync().catch(
     () => null,
   );
@@ -97,26 +103,31 @@ async function readDevicePosition(
     latitude,
     longitude,
   }).catch(() => []);
-  return toDevicePosition(
-    { latitude, longitude, accuracy },
-    geocoded[0] ?? null,
-  );
+  const row = geocoded[0] ?? null;
+  return {
+    position: toDevicePosition({ latitude, longitude, accuracy }, row),
+    fixTimezone: row?.timezone ?? null,
+  };
 }
 
 // With sharing off the report carries `position: null`, which retracts the position the gateway
 // holds for this device; with sharing on but no fix, the field is absent and the stored one stands.
+// The zone from the fix wins over the device's own: while roaming, iOS holds the SIM home network's
+// zone (London on a UK SIM in Sardinia), but the geocoded fix carries the zone the user is in.
 export async function readDeviceContext(input: {
   shareLocation: boolean;
   mode: PositionMode;
 }): Promise<DeviceContext> {
   const context: DeviceContext = {};
-  const timezone = deviceTimezone();
-  if (timezone !== undefined) context.timezone = timezone;
   if (!input.shareLocation) {
+    const timezone = deviceTimezone();
+    if (timezone !== undefined) context.timezone = timezone;
     context.position = null;
     return context;
   }
-  const position = await readDevicePosition(input.mode);
-  if (position !== undefined) context.position = position;
+  const located = await readDevicePosition(input.mode);
+  const timezone = located?.fixTimezone ?? deviceTimezone();
+  if (timezone !== undefined && timezone !== null) context.timezone = timezone;
+  if (located !== undefined) context.position = located.position;
   return context;
 }
