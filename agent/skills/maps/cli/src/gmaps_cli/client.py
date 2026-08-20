@@ -16,7 +16,7 @@ import httpx
 from .directions import build_pb, parse_directions
 from .itinerary import haversine_km, lay_out, nearest_neighbour, parse_duration_min
 from .links import Stop, route_url
-from .models import DirectionsLeg, ItineraryStop, Place, PlaceDetail
+from .models import DirectionsLeg, Itinerary, ItineraryLeg, ItineraryStop, Place, PlaceDetail
 from .parse import parse_search
 from .pb import build_search_pb, extract_session_token, strip_envelope
 from .place import build_place_pb, build_reverse_pb, parse_place, parse_reverse
@@ -60,7 +60,7 @@ def _client(locale: str) -> httpx.Client:
 def _get(client: httpx.Client, url: str) -> str:
     time.sleep(REQUEST_DELAY_S)
     resp = client.get(url)
-    if "consent.google.com" in str(resp.url) or resp.status_code == 429:
+    if resp.url.host == "consent.google.com" or resp.status_code == 429:
         raise BlockedError(f"blocked ({resp.status_code}) at {resp.url}")
     return resp.text
 
@@ -135,7 +135,7 @@ def itinerary(
     optimize: bool,
     locale: str,
     country: str,
-) -> dict[str, object]:
+) -> Itinerary:
     stops = [show(cid, locale=locale, country=country) for cid in cids]
     if any(s.lat is None or s.lng is None for s in stops):
         raise ValueError("every stop needs coordinates; one place returned none")
@@ -147,16 +147,14 @@ def itinerary(
     legs = [directions(coords[i], coords[i + 1], mode=mode, locale=locale, country=country) for i in range(len(stops) - 1)]
     leg_minutes = [parse_duration_min(leg.duration_text) for leg in legs]
     slots = lay_out(leg_minutes, start=start, dwell_min=dwell_min, count=len(stops))
-    itinerary_stops = [
-        ItineraryStop(place=stop, arrive=arrive, leave=leave, open_at_slot=None) for stop, (arrive, leave) in zip(stops, slots, strict=True)
-    ]
+    itinerary_stops = [ItineraryStop(place=stop, arrive=arrive, leave=leave) for stop, (arrive, leave) in zip(stops, slots, strict=True)]
     route_stops = [Stop(name=s.name, lat=lat, lng=lng, place_id=s.place_id) for s, (lat, lng) in zip(stops, coords, strict=True)]
-    return {
-        "stops": [s.to_json() for s in itinerary_stops],
-        "legs": [{"from": stops[i].name, "to": stops[i + 1].name, "mode": mode, "duration": legs[i].duration_text} for i in range(len(legs))],
-        "route_url": route_url(route_stops, mode=mode) if len(route_stops) >= 2 else None,
-        "total_minutes": sum(leg_minutes) + dwell_min * len(stops),
-    }
+    return Itinerary(
+        stops=itinerary_stops,
+        legs=[ItineraryLeg(origin=stops[i].name, dest=stops[i + 1].name, mode=mode, duration=legs[i].duration_text) for i in range(len(legs))],
+        route_url=route_url(route_stops, mode=mode),
+        total_minutes=sum(leg_minutes) + dwell_min * len(stops),
+    )
 
 
 def _near_latlng(near: str | None) -> tuple[float, float] | None:
