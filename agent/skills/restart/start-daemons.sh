@@ -44,8 +44,16 @@ fi
 # and the fix for those two is not the same. No daemon log here carries a timestamp, so without
 # this a hung run leaves no record of where it was. An unmatched BEGIN names the line in flight.
 # Truncated each run, flushed per line.
-TRACE="$HOME/agent/data/daemons/start-progress.log"
+#
+# The path is NOT under data/daemons/. Boot empties that directory of every non-dir file before any
+# daemon runs, so a trace written there survives its own run and is then destroyed by the next boot.
+# That is precisely the wrong lifetime: the failure this exists for is a hang, a hang ends in a
+# runtime timeout and a restart, and the restart's boot would erase the evidence before it is read.
+# One previous generation is kept for the same reason, so a crash-restart leaves the hung run's
+# trace intact in .prev while the new run writes a fresh one.
+TRACE="$HOME/agent/data/daemon-start-progress.log"
 mkdir -p "$(dirname "$TRACE")"
+[ -f "$TRACE" ] && mv -f "$TRACE" "$TRACE.prev"
 : > "$TRACE"
 trace() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$TRACE"; }
 trace "RUN start-daemons.sh (${#lines[@]} lines)"
