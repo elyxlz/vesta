@@ -1,8 +1,9 @@
 """The `pb` protobuf-in-a-query-param plumbing for the search RPC.
 
 Search takes two GETs: fetch the search page for a per-session token, then call the search RPC
-with that token slotted into a captured `pb` template. When Google changes the template these
-helpers are where it is re-pinned (recapture with the dev harness under `tools/`).
+with that token slotted into a captured `pb` template (`search_pb.txt`). When Google changes the
+template, re-pin it here: read a fresh `pb` from a live Maps search request, replace the query
+and token in it with the `{QUERY}` and `{TOKEN}` slots, and overwrite `search_pb.txt`.
 """
 
 from __future__ import annotations

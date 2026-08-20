@@ -1,28 +1,33 @@
-"""Parsers over Google's positional response arrays.
+"""Parser over Google's positional search array.
 
-Google's arrays are positional and undocumented, so these extract the fields whose positions are
-pinned by the dev captures and leave the rest null. The place-record walk anchors on the ftid
-(one per place) and reads the name, address, and coordinates that sit beside it.
+Google's arrays are positional and undocumented, so this extracts the fields whose positions are
+pinned by the dev captures and leaves the rest null. The walk anchors each place on its ftid (one
+per place) and reads the name, address, coordinates, and rating that sit beside it.
 """
 
 from __future__ import annotations
 
-import json
 import re
 
 from .links import cid_from_ftid, directions_url, place_url
-from .models import DirectionsLeg, Links, Place, Step
-from .pb import strip_envelope
+from .models import Links, Place
 
 _FTID_RE = re.compile(r"^0x[0-9a-f]+:0x[0-9a-f]+$")
 _FTID_RE_ANY = re.compile(r"0x[0-9a-f]+:0x[0-9a-f]+")
 _ADDR_RE = re.compile(r".+,.+\d.+")  # a street-ish string: has commas and a digit
 _PLACE_ID_RE = re.compile(r"^ChIJ[\w-]{10,}$")
-_DUR_TEXT_RE = re.compile(r"^\d+\s*(?:hr|h|min)(?:\s*\d+\s*min)?$")
-_DIST_TEXT_RE = re.compile(r"^[\d.,]+\s*(?:km|m|mi)$")
-_STEP_RE = re.compile(r"^(?:Head|Turn|Continue|Take|Keep|Merge|Exit|Walk|Board|Get off|Ride|Destination|Slight|Sharp|Roundabout|At )")
-_TIME_RE = re.compile(r"^\d{1,2}:\d{2}(?:\s?[AP]M)?$")
-_TRANSIT_RE = re.compile(r"^(?:Bus|Subway|Underground|Train|Tram|Light rail|DLR|Overground|Metro|Rail)$")
+_LAT_MAX, _LNG_MAX = 90.0, 180.0
+
+
+def _is_coord_triple(node: list[object]) -> bool:
+    """A [_, lng, lat] point: element 1 and 2 are floats in valid geographic range."""
+    return (
+        len(node) >= 3
+        and isinstance(node[1], float)
+        and isinstance(node[2], float)
+        and -_LNG_MAX <= node[1] <= _LNG_MAX
+        and -_LAT_MAX <= node[2] <= _LAT_MAX
+    )
 
 
 def _strings(node: object) -> list[str]:
@@ -40,16 +45,10 @@ def _strings(node: object) -> list[str]:
 
 
 def _first_coord(node: object) -> tuple[float, float] | None:
-    """Find a [_, lng, lat] float triple (Google's order) anywhere in the subtree."""
     if isinstance(node, list):
-        if (
-            len(node) >= 3
-            and isinstance(node[1], float)
-            and isinstance(node[2], float)
-            and -180.0 <= node[1] <= 180.0
-            and -90.0 <= node[2] <= 90.0
-        ):
-            return (node[2], node[1])
+        lng, lat = node[1] if len(node) >= 3 else None, node[2] if len(node) >= 3 else None
+        if isinstance(lng, float) and isinstance(lat, float) and -_LNG_MAX <= lng <= _LNG_MAX and -_LAT_MAX <= lat <= _LAT_MAX:
+            return (lat, lng)
         for child in node:
             found = _first_coord(child)
             if found is not None:
@@ -57,35 +56,61 @@ def _first_coord(node: object) -> tuple[float, float] | None:
     return None
 
 
-def _place_records(feed: object) -> list[list[object]]:
-    """Smallest list subtrees that hold exactly one ftid and an address string: one per place."""
-    records: list[list[object]] = []
-
-    def walk(node: object) -> None:
-        if not isinstance(node, list):
-            return
-        blob = json.dumps(node, ensure_ascii=False)
-        ftids = _FTID_RE_ANY.findall(blob)
-        if len(set(ftids)) == 1 and any(_ADDR_RE.match(s) for s in _strings(node)):
-            records.append(node)
-            return  # do not descend: this is the tightest record
-        for child in node:
-            walk(child)
-
-    walk(feed)
-    return records
-
-
 def _first_rating(node: object) -> float | None:
-    """The star rating is the one float in [1.0, 5.0] in a record (coordinates fall outside it)."""
-    if isinstance(node, float):
-        return node if 1.0 <= node <= 5.0 else None
+    """The star rating is a bare float in [1.0, 5.0]. Coordinate triples are skipped, since a real
+    longitude or latitude can also fall in that band and must never be read as a rating.
+    """
     if isinstance(node, list):
+        if _is_coord_triple(node):
+            return None
         for child in node:
             found = _first_rating(child)
             if found is not None:
                 return found
+    elif isinstance(node, float) and 1.0 <= node <= 5.0:
+        return node
     return None
+
+
+def _place_records(feed: object) -> list[list[object]]:
+    """The tightest subtrees holding exactly one ftid and an address string: one per place.
+
+    Annotate every list node once (ftid count + whether it holds an address), then descend only
+    until a node isolates a single place, so the search feed is walked in linear time.
+    """
+    ftids: dict[int, frozenset[str]] = {}
+    has_address: dict[int, bool] = {}
+
+    def annotate(node: object) -> tuple[frozenset[str], bool]:
+        if isinstance(node, str):
+            return (frozenset(_FTID_RE_ANY.findall(node)), bool(_ADDR_RE.match(node)))
+        if isinstance(node, list):
+            found: set[str] = set()
+            address = False
+            for child in node:
+                child_ftids, child_address = annotate(child)
+                found |= child_ftids
+                address = address or child_address
+            ftids[id(node)] = frozenset(found)
+            has_address[id(node)] = address
+            return (frozenset(found), address)
+        return (frozenset(), False)
+
+    annotate(feed)
+
+    records: list[list[object]] = []
+
+    def select(node: object) -> None:
+        if not isinstance(node, list):
+            return
+        if len(ftids[id(node)]) == 1 and has_address[id(node)]:
+            records.append(node)
+            return
+        for child in node:
+            select(child)
+
+    select(feed)
+    return records
 
 
 def _is_web(url: str) -> bool:
@@ -136,37 +161,3 @@ def parse_search(feed: object) -> list[Place]:
             )
         )
     return places
-
-
-def _clean_step(text: str) -> str:
-    return re.sub(r"</?b>", "", text).strip()
-
-
-def parse_directions(raw_body: str, mode: str) -> DirectionsLeg:
-    clean = strip_envelope(raw_body)
-    data = json.loads(clean)
-    strings = _strings(data)
-    dur_text = next((s for s in strings if _DUR_TEXT_RE.match(s)), None)
-    dist_text = next((s for s in strings if _DIST_TEXT_RE.match(s)), None)
-    steps: list[Step] = [Step(instruction=_clean_step(text)) for text in strings if _STEP_RE.match(text) and len(text) < 120]
-    if mode == "transit":
-        line = next((s for s in strings if _TRANSIT_RE.match(s)), None)
-        times = [s for s in strings if _TIME_RE.match(s)]
-        if line is not None or times:
-            steps.insert(
-                0,
-                Step(
-                    instruction="transit",
-                    line=line,
-                    departure=times[0] if times else None,
-                    arrival=times[-1] if times else None,
-                ),
-            )
-    return DirectionsLeg(
-        mode=mode,
-        duration_s=None,
-        distance_m=None,
-        duration_text=dur_text,
-        distance_text=dist_text,
-        steps=steps,
-    )

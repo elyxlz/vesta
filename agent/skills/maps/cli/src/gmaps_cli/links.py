@@ -1,4 +1,4 @@
-"""Pure Google Maps link builders and the SAPISIDHASH signer. No network.
+"""Pure Google Maps link builders. No network.
 
 Links are the durable, shareable output. The `cid` (Google's numeric place id) opens the exact
 place; a `place_id` (ChIJ...) passed alongside a name renders a named stop rather than a dropped
@@ -7,11 +7,9 @@ pin. Coordinates alone drop a pin, so a route uses place_ids when it has them.
 
 from __future__ import annotations
 
-import hashlib
 import urllib.parse
 from dataclasses import dataclass
 
-MAPS_ORIGIN = "https://www.google.com"
 TRAVEL_MODES = ("driving", "transit", "walking", "bicycling")
 
 
@@ -76,13 +74,3 @@ def route_url(stops: list[Stop], *, mode: str = "driving") -> str:
         if all(s.place_id is not None for s in mids):
             params["waypoint_place_ids"] = "|".join(s.place_id for s in mids if s.place_id)
     return "https://www.google.com/maps/dir/?" + urllib.parse.urlencode(params, safe="|")
-
-
-def sapisidhash(sapisid: str, ts: int, origin: str = MAPS_ORIGIN) -> str:
-    """Google's cookie-auth signature: `<ts>_<sha1("<ts> <SAPISID> <origin>")>`.
-
-    Used only by the authenticated saved-lists path; the shipped anonymous scope never calls it.
-    """
-    payload = f"{ts} {sapisid} {origin}"
-    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()
-    return f"{ts}_{digest}"

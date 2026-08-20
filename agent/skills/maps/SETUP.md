@@ -30,5 +30,6 @@ own values for results and formatting that match where they are.
 ## When results stop coming back
 
 Google changes its internal response shape from time to time. If `maps doctor` reports a drift
-(a known-good query returns nothing), the response templates need re-capturing. The dev capture
-harness lives under `cli/tools/`.
+(a known-good query returns nothing), the search `pb` template needs re-capturing: read a fresh
+`pb` from a live Maps search request and update `cli/src/gmaps_cli/search_pb.txt` (the header of
+`pb.py` describes the exact steps).

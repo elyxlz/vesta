@@ -4,7 +4,6 @@ from gmaps_cli.links import (
     directions_url,
     place_url,
     route_url,
-    sapisidhash,
 )
 
 
@@ -51,13 +50,3 @@ def test_route_url_needs_two_stops():
     except ValueError:
         return
     raise AssertionError("expected ValueError for single stop")
-
-
-def test_sapisidhash_deterministic_and_shaped():
-    h1 = sapisidhash("SID", 1_700_000_000)
-    h2 = sapisidhash("SID", 1_700_000_000)
-    assert h1 == h2
-    ts, digest = h1.split("_")
-    assert ts == "1700000000"
-    assert len(digest) == 40
-    assert sapisidhash("SID", 1_700_000_001) != h1

@@ -120,11 +120,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="maps", description="Google Maps for vesta")
-    parser.add_argument("--locale", default="en-US")
-    parser.add_argument("--country", default="us")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("search", help="find places")
+    # Shared as a parent parser so `--locale`/`--country` work after the subcommand, the shape an
+    # agent naturally types (`maps search "..." --locale it-IT`).
+    locale = argparse.ArgumentParser(add_help=False)
+    locale.add_argument("--locale", default="en-US")
+    locale.add_argument("--country", default="us")
+
+    s = sub.add_parser("search", help="find places", parents=[locale])
     s.add_argument("query")
     s.add_argument("--near")
     s.add_argument("--min-rating", type=float, dest="min_rating")
@@ -145,11 +149,11 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument("--mode", default="driving", choices=("driving", "transit", "walking", "bicycling"))
     r.set_defaults(func=_cmd_route)
 
-    g = sub.add_parser("geocode", help="address -> coords")
+    g = sub.add_parser("geocode", help="address -> coords", parents=[locale])
     g.add_argument("address")
     g.set_defaults(func=_cmd_geocode)
 
-    doc = sub.add_parser("doctor", help="drift canary / health check")
+    doc = sub.add_parser("doctor", help="drift canary / health check", parents=[locale])
     doc.set_defaults(func=_cmd_doctor)
     return parser
 

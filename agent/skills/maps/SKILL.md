@@ -21,8 +21,9 @@ maps search "frozen yogurt" --near "Alghero" --min-rating 4.4 --sort rating --li
 
 Each result carries `name`, `address`, `lat`/`lng`, `place_id`, `cid`, `rating`, `category`,
 `website`, and a `links` block with a `place_url` (opens the exact place) and a `directions_url`.
-Filter with `--min-rating`, `--category`, `--radius-km` (against `--near`), and
-`--sort distance|rating`. `--near` takes an address or `lat,lng`.
+Filter with `--min-rating`, `--category`, and `--sort rating`. `--near` takes an address or
+`lat,lng`. `--radius-km` and `--sort distance` measure from `--near`, so they need it as
+`lat,lng` (a coordinate, not a place name).
 
 Send the user the `place_url` for a single pick. It opens the exact place on the web and the
 Maps app on a phone.

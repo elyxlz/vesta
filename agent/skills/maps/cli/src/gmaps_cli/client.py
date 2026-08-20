@@ -73,6 +73,9 @@ def _search_feed(client: httpx.Client, query: str, *, lang: str, country: str) -
 
 
 def search(query: str, *, near: str | None, filters: SearchFilters, locale: str, country: str) -> list[Place]:
+    near_latlng = _near_latlng(near)
+    if (filters.radius_km is not None or filters.sort == "distance") and near_latlng is None:
+        raise ValueError("--radius-km and --sort distance need --near as lat,lng")
     lang = locale.split("-", maxsplit=1)[0]
     with _client(locale) as client:
         full_query = f"{query} {near}" if near else query
@@ -83,7 +86,7 @@ def search(query: str, *, near: str | None, filters: SearchFilters, locale: str,
             canary = parse_search(_search_feed(client, CANARY_QUERY, lang=lang, country=country))
             if not canary:
                 raise DriftError("search returned nothing and the canary is empty; recapture the pb template")
-        return _apply_filters(places, filters, near_latlng=_near_latlng(near))
+        return _apply_filters(places, filters, near_latlng=near_latlng)
 
 
 def _near_latlng(near: str | None) -> tuple[float, float] | None:
