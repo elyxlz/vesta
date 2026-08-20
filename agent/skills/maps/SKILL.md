@@ -9,9 +9,10 @@ Find places on Google Maps and hand the user a link that opens the exact place, 
 opens the whole trip. You refer to a place across commands by its `cid` (a durable Google id).
 
 `search`, `show`, and `itinerary` print a human table by default; add `--json` (or
-`--json-pretty`) to read a result programmatically. The other commands always print JSON. Set
-the user's locale and country so results and formatting match where they are:
-`maps --locale it-IT --country it search ...`.
+`--json-pretty`) to read a result programmatically. The other commands always print JSON.
+`--country` defaults from the box's timezone, so results and formatting already match where the
+user lives; pass it only for a query about another country. Set `--locale` when the user's
+language is not English: `maps --locale it-IT search ...`.
 
 ## Find places
 
@@ -25,7 +26,8 @@ answer at request time; null when the place publishes no hours), and a `links` b
 opens the exact place; `directions_url` is a ready directions link). The table shows each
 result's `cid`, which you pass to `show` or `directions`, and marks a currently closed place.
 Filter with `--min-rating`, `--category`, and `--sort rating`.
-`--near` takes an address or `lat,lng`; `--radius-km` and `--sort distance` measure from `--near`,
+`--near` takes an address or `lat,lng`; a coordinate centres the search on that point, so pass
+the user's position when you have it. `--radius-km` and `--sort distance` measure from `--near`,
 so they need it as `lat,lng` (a coordinate, not a place name).
 
 Send the user the `place_url` for a single pick. It opens the exact place on the web and the

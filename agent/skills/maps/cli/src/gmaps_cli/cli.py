@@ -18,6 +18,7 @@ from . import cache
 from .client import DOCTOR_ANCHOR_NAME, BlockedError, DriftError, SearchFilters, directions, doctor, itinerary, reverse, search, show
 from .format import format_itinerary, format_place_detail, format_search_table
 from .links import Stop, directions_url, route_url, transit_time_url
+from .region import default_country
 
 
 def _emit(payload: dict[str, object]) -> None:
@@ -228,7 +229,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # agent naturally types (`maps search "..." --locale it-IT`).
     locale = argparse.ArgumentParser(add_help=False)
     locale.add_argument("--locale", default="en-US")
-    locale.add_argument("--country", default="us")
+    locale.add_argument("--country", default=None)
 
     s = sub.add_parser("search", help="find places", parents=[locale])
     s.add_argument("query")
@@ -286,6 +287,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
+    if "country" in vars(args) and args.country is None:
+        args.country = default_country()
     try:
         result: int = args.func(args)
         return result

@@ -73,11 +73,11 @@ def _get(client: httpx.Client, url: str) -> str:
     return resp.text
 
 
-def _search_feed(client: httpx.Client, query: str, *, lang: str, country: str) -> object:
+def _search_feed(client: httpx.Client, query: str, *, lang: str, country: str, near_latlng: tuple[float, float] | None = None) -> object:
     quoted = urllib.parse.quote(query)
     page = _get(client, f"https://www.google.com/maps/search/{quoted}?hl={lang}&gl={country}")
     token = extract_session_token(page)
-    pb = build_search_pb(query, token)
+    pb = build_search_pb(query, token, near=near_latlng)
     # The `q` param is load-bearing: without it Google serves the HTML page, not the map RPC.
     raw = _get(client, f"https://www.google.com/search?tbm=map&authuser=0&hl={lang}&gl={country}&q={quoted}&pb={pb}")
     return json.loads(strip_envelope(raw))
@@ -89,8 +89,9 @@ def search(query: str, *, near: str | None, filters: SearchFilters, locale: str,
         raise ValueError("--radius-km and --sort distance need --near as lat,lng")
     lang = locale.split("-", maxsplit=1)[0]
     with _client(locale) as client:
-        full_query = f"{query} {near}" if near else query
-        feed = _search_feed(client, full_query, lang=lang, country=country)
+        # A coordinate `--near` rides the pb as a viewport; only a place name is worth query text.
+        full_query = f"{query} {near}" if near and near_latlng is None else query
+        feed = _search_feed(client, full_query, lang=lang, country=country, near_latlng=near_latlng)
         places = parse_search(feed)
         if not places:
             # Drift canary: a known-good query that comes back empty means the schema moved.

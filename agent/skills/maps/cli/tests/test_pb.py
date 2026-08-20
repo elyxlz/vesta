@@ -23,3 +23,16 @@ def test_build_search_pb_slots_query_and_token():
     assert "1sTOK123" in pb
     assert "{QUERY}" not in pb
     assert "{TOKEN}" not in pb
+
+
+def test_build_search_pb_near_prepends_viewport():
+    pb = build_search_pb("gelato", "TOK123", near=(40.5589, 8.3138))
+    assert pb.startswith("!4m12!1m3!1d")
+    assert "!2d8.3138!3d40.5589" in pb
+    assert "1sgelato" in pb
+    assert "1sTOK123" in pb
+
+
+def test_build_search_pb_without_near_has_no_viewport():
+    pb = build_search_pb("gelato", "TOK123")
+    assert not pb.startswith("!4m")

@@ -90,6 +90,16 @@ def extract_session_token(page_html: str) -> str:
     return match.group(1)
 
 
-def build_search_pb(query: str, token: str) -> str:
+# The viewport block Google reads as "search this area"; the RPC ranks results inside it even
+# when `gl=` names another country. Scale 3000 biases to roughly a town and its surroundings.
+_VIEWPORT_SCALE = 3000
+_VIEWPORT_TEMPLATE = "!4m12!1m3!1d{scale}!2d{lng}!3d{lat}!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1"
+
+
+def build_search_pb(query: str, token: str, near: tuple[float, float] | None = None) -> str:
     template = _TEMPLATE_PATH.read_text(encoding="utf-8").strip()
-    return template.replace("{QUERY}", urllib.parse.quote(query)).replace("{TOKEN}", token)
+    pb = template.replace("{QUERY}", urllib.parse.quote(query)).replace("{TOKEN}", token)
+    if near is None:
+        return pb
+    lat, lng = near
+    return _VIEWPORT_TEMPLATE.format(scale=_VIEWPORT_SCALE, lng=lng, lat=lat) + pb
