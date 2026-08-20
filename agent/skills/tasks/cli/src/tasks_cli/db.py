@@ -332,30 +332,40 @@ def _migrate_v7_to_v8(conn: sqlite3.Connection):
     A rung the user rewrote carries auto_generated = 0 and survives as the plain reminder it
     became. checkpoint_fired_through starts at now so an in-flight ladder continues from here
     instead of refiring rungs the deleted rows already delivered."""
-    conn.execute("ALTER TABLE tasks ADD COLUMN checkpoint_fired_through TEXT")
-    conn.execute("UPDATE tasks SET checkpoint_fired_through = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now') WHERE due_date IS NOT NULL")
-    conn.execute("DELETE FROM reminders WHERE auto_generated = 1")
-    conn.execute("""
-        CREATE TABLE reminders_v8 (
-            id TEXT PRIMARY KEY,
-            task_id TEXT,
-            message TEXT NOT NULL,
-            schedule_type TEXT,
-            scheduled_time TEXT,
-            completed INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            trigger_data TEXT,
-            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-        )
-    """)
-    conn.execute("""
-        INSERT INTO reminders_v8 (id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data)
-        SELECT id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data FROM reminders
-    """)
-    conn.execute("DROP TABLE reminders")
-    conn.execute("ALTER TABLE reminders_v8 RENAME TO reminders")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_task_id ON reminders(task_id)")
+    # Idempotent: a box whose tasks.db already reached this shape (e.g. a fork that carried the
+    # column before the stock numbering did) must not crash on a re-run. Guard each structural step
+    # by what is actually on disk, not by the schema-version counter alone.
+    task_cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+    if "checkpoint_fired_through" not in task_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN checkpoint_fired_through TEXT")
+    conn.execute(
+        "UPDATE tasks SET checkpoint_fired_through = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now') "
+        "WHERE due_date IS NOT NULL AND checkpoint_fired_through IS NULL"
+    )
+    reminder_cols = [r[1] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()]
+    if "auto_generated" in reminder_cols:
+        conn.execute("DELETE FROM reminders WHERE auto_generated = 1")
+        conn.execute("""
+            CREATE TABLE reminders_v8 (
+                id TEXT PRIMARY KEY,
+                task_id TEXT,
+                message TEXT NOT NULL,
+                schedule_type TEXT,
+                scheduled_time TEXT,
+                completed INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                trigger_data TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            INSERT INTO reminders_v8 (id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data)
+            SELECT id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data FROM reminders
+        """)
+        conn.execute("DROP TABLE reminders")
+        conn.execute("ALTER TABLE reminders_v8 RENAME TO reminders")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_task_id ON reminders(task_id)")
     logger.info("Migrated schema v7 -> v8")
 
 
