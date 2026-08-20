@@ -159,8 +159,6 @@ function parseDevice(value: unknown): DeviceInfo | null {
   if (!DEVICE_KINDS.includes(kind as DeviceKind)) return null
   const descriptor = device.descriptor === null ? null : str(device.descriptor)
   if (descriptor === null && device.descriptor !== null) return null
-  const location = device.location == null ? null : str(device.location)
-  if (location === null && device.location != null) return null
   const timezone = nullableStr(device.timezone)
   const positionAt = nullableStr(device.positionAt)
   if (timezone === undefined || positionAt === undefined) return null
@@ -173,7 +171,6 @@ function parseDevice(value: unknown): DeviceInfo | null {
     present,
     lastSeen,
     pushEnabled,
-    location,
     timezone,
     position,
     positionAt,

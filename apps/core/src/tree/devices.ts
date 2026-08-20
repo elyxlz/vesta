@@ -18,7 +18,6 @@ export function devicesEqual(a: DeviceInfo[], b: DeviceInfo[]): boolean {
       other.present === device.present &&
       other.lastSeen === device.lastSeen &&
       other.pushEnabled === device.pushEnabled &&
-      other.location === device.location &&
       other.timezone === device.timezone &&
       other.positionAt === device.positionAt &&
       positionEqual(other.position, device.position)

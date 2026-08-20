@@ -57,7 +57,6 @@ describe("reduceDelta", () => {
           present: true,
           lastSeen: "2026-01-01T00:00:00Z",
           pushEnabled: true,
-          location: null,
           timezone: null,
           position: null,
           positionAt: null,

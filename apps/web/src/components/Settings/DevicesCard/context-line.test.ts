@@ -10,7 +10,6 @@ function device(overrides: Partial<DeviceInfo>): DeviceInfo {
     present: true,
     lastSeen: "2026-01-01T00:00:00Z",
     pushEnabled: true,
-    location: null,
     timezone: null,
     position: null,
     positionAt: null,
@@ -19,11 +18,10 @@ function device(overrides: Partial<DeviceInfo>): DeviceInfo {
 }
 
 describe("contextLine", () => {
-  it("prefers the reported place, then the zone", () => {
+  it("joins the reported place and the zone", () => {
     expect(
       contextLine(
         device({
-          location: "London, United Kingdom",
           timezone: "Asia/Tokyo",
           position: {
             latitude: 35.6,
@@ -36,9 +34,9 @@ describe("contextLine", () => {
     ).toBe("Tokyo, Japan · Asia/Tokyo");
   });
 
-  it("falls back to the gateway's IP location and hides an empty line", () => {
-    expect(contextLine(device({ location: "London, United Kingdom" }))).toBe(
-      "London, United Kingdom",
+  it("shows the zone alone and hides an empty line", () => {
+    expect(contextLine(device({ timezone: "Europe/Rome" }))).toBe(
+      "Europe/Rome",
     );
     expect(contextLine(device({}))).toBeNull();
   });

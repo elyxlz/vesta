@@ -112,10 +112,10 @@ export interface DevicePosition {
 
 // One device in the gateway-global registry: identity plus whether it currently holds a live /sync
 // connection, or when it last did. The push token is never on the wire; `pushEnabled` is the only
-// push signal. `descriptor` is null until a device connects and names itself. `location` is a coarse
-// "City, Country" the gateway resolves from the connection, null until resolved. `timezone` and
-// `position` are what the device itself reported (its IANA zone; on mobile with the user's opt-in,
-// its position), `positionAt` the instant of the report that last changed it; null until reported.
+// push signal. `descriptor` is null until a device connects and names itself. `timezone` and
+// `position` are what the device itself reported (its IANA zone; with the user's opt-in, its
+// position and place), `positionAt` the instant of the report that last changed it; null until
+// reported.
 export interface DeviceInfo {
   id: string
   kind: DeviceKind
@@ -123,7 +123,6 @@ export interface DeviceInfo {
   present: boolean
   lastSeen: string
   pushEnabled: boolean
-  location: string | null
   timezone: string | null
   position: DevicePosition | null
   positionAt: string | null

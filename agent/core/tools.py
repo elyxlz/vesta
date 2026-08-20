@@ -158,12 +158,9 @@ def _user_context_tools() -> list[tp.Any]:
     @tool(
         "user_devices",
         "Where the user is, from their own devices: each phone, browser, and desktop app with the IANA `timezone` "
-        "it reports and, for a phone that shares its location, its GPS `position` and `place`. Each device also has "
-        "`location`, a coarse city the gateway guesses from its connection IP; roaming or a VPN can put that IP in "
-        "the wrong city or country, so trust a device's GPS `place` over its `location` whenever both are present, "
-        "and read `location` as a weak hint, not a fix. Use it before scheduling something time-bound and after a "
-        "`user-timezone` or `user-location` notification. The freshest report is the best guess; `present` marks a "
-        "device connected now.",
+        "it reports and, for a device that shares its location, its GPS `position` and `place`. Use it before "
+        "scheduling something time-bound and after a `user-timezone` or `user-location` notification. The freshest "
+        "report is the best guess; `present` marks a device connected now.",
         {},
     )
     async def user_devices(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:

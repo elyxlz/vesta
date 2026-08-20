@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::ops::ControlFlow;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, RawQuery, State};
+use axum::extract::{RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
@@ -32,69 +31,11 @@ pub(crate) async fn sync_ws_handler(
     State(state): State<SharedState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> Response {
     // auth_middleware already validated the connect token; capture it to derive the reauth deadline.
     let token = connect_token(&headers, raw_query.as_deref());
-    let client_ip = client_ip(&headers, Some(peer));
-    ws.on_upgrade(move |socket| sync_session(state, socket, token, client_ip))
-}
-
-const CF_CONNECTING_IP: &str = "cf-connecting-ip";
-const X_FORWARDED_FOR: &str = "x-forwarded-for";
-
-/// The best client IP for geo: the cloudflared tunnel's CF-Connecting-IP, else the first
-/// X-Forwarded-For hop, else the direct peer address.
-fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<IpAddr> {
-    if let Some(ip) = header_ip(headers, CF_CONNECTING_IP) {
-        return Some(ip);
-    }
-    if let Some(value) = headers.get(X_FORWARDED_FOR).and_then(|value| value.to_str().ok()) {
-        if let Some(first) = value.split(',').next() {
-            if let Ok(ip) = first.trim().parse::<IpAddr>() {
-                return Some(ip);
-            }
-        }
-    }
-    peer.map(|peer| peer.ip())
-}
-
-fn header_ip(headers: &HeaderMap, name: &str) -> Option<IpAddr> {
-    headers.get(name)?.to_str().ok()?.trim().parse().ok()
-}
-
-/// Whether an IP is a routable public address worth a geo lookup.
-fn is_routable(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            !v4.is_loopback() && !v4.is_private() && !v4.is_link_local() && !v4.is_unspecified() && !v4.is_broadcast()
-        }
-        IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_unspecified() && !is_unique_local(v6) && !is_link_local(v6),
-    }
-}
-
-fn is_unique_local(ip: Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xfe00) == 0xfc00
-}
-
-fn is_link_local(ip: Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xffc0) == 0xfe80
-}
-
-/// If the IP is public and the device needs a location, spawn one background ipwho.is lookup and
-/// store the result. The connect path never blocks on the network.
-fn resolve_location(state: &SharedState, device_id: String, ip: IpAddr) {
-    if !is_routable(ip) || !state.device_registry.note_ip(&device_id, ip) {
-        return;
-    }
-    let registry = state.device_registry.clone();
-    let client = state.http_client.clone();
-    tokio::spawn(async move {
-        if let Some(location) = crate::geoip::lookup(&client, ip).await {
-            registry.set_location(&device_id, ip, location);
-        }
-    });
+    ws.on_upgrade(move |socket| sync_session(state, socket, token))
 }
 
 /// The connect token, from either `Authorization: Bearer` or `?token=` (browser WS connects cannot
@@ -142,7 +83,7 @@ async fn settle_and_notify(state: SharedState, agent: String) {
     }
 }
 
-async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>, client_ip: Option<IpAddr>) {
+async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>) {
     let (mut tx, mut rx) = socket.split();
 
     // Register this connection's presence and a RAII guard that clears it on every break path, then
@@ -271,12 +212,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::ClientContext(mut ctx)) => {
                         if let Some(device_id) = ctx.device_id.clone() {
-                            let newly = device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
-                            if newly {
-                                if let Some(ip) = client_ip {
-                                    resolve_location(&state, device_id.clone(), ip);
-                                }
-                            }
+                            device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
                             let context = std::mem::take(&mut ctx.context);
                             if !context.is_empty() {
                                 // The user is at a focused device; an unfocused frame or a resync
@@ -763,35 +699,6 @@ mod tests {
         assert_eq!(connect_token(&headers, None).as_deref(), Some("abc"));
         assert_eq!(connect_token(&HeaderMap::new(), Some("x=1&token=q2&y=3")).as_deref(), Some("q2"));
         assert_eq!(connect_token(&HeaderMap::new(), None), None);
-    }
-
-    #[test]
-    fn client_ip_prefers_cf_connecting_ip() {
-        let mut headers = HeaderMap::new();
-        headers.insert("cf-connecting-ip", "203.0.113.7".parse().expect("header"));
-        headers.insert("x-forwarded-for", "198.51.100.2, 10.0.0.1".parse().expect("header"));
-        let peer: SocketAddr = "127.0.0.1:9000".parse().expect("peer");
-        assert_eq!(client_ip(&headers, Some(peer)).map(|ip| ip.to_string()).as_deref(), Some("203.0.113.7"));
-    }
-
-    #[test]
-    fn client_ip_falls_back_to_forwarded_then_peer() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "198.51.100.2, 10.0.0.1".parse().expect("header"));
-        let peer: SocketAddr = "8.8.8.8:9000".parse().expect("peer");
-        assert_eq!(client_ip(&headers, Some(peer)).map(|ip| ip.to_string()).as_deref(), Some("198.51.100.2"));
-        assert_eq!(client_ip(&HeaderMap::new(), Some(peer)).map(|ip| ip.to_string()).as_deref(), Some("8.8.8.8"));
-        assert_eq!(client_ip(&HeaderMap::new(), None), None);
-    }
-
-    #[test]
-    fn is_routable_rejects_local_and_private() {
-        for private in ["127.0.0.1", "10.0.0.5", "192.168.1.4", "169.254.0.1", "::1", "fe80::1", "fc00::1"] {
-            assert!(!is_routable(private.parse().expect("ip")), "{private} should be non-routable");
-        }
-        for public in ["203.0.113.7", "8.8.8.8", "2606:4700:4700::1111"] {
-            assert!(is_routable(public.parse().expect("ip")), "{public} should be routable");
-        }
     }
 
     #[test]
