@@ -72,6 +72,12 @@ part; leave the personal remainder local.
 
 ## Before filing (REQUIRED)
 
+**"Nothing in the repo does X" is a claim about `master` unless you checked the open
+branches.** The natural check greps a workspace cut from master while the thing you are
+describing sits in an open PR, often your own. Run `git branch -r --contains <sha>`, or
+read the PR's own file list, before calling a path dead. "Dead code" and "dead until
+that other PR lands" are opposite verdicts.
+
 - **Does it already exist?** `grep -rn` the codebase for the mechanism first, by feature
   name across all skills and core. Improve the existing one; never add a second.
 - **Your box is a stale snapshot.** Any claim about what upstream does must be checked
@@ -108,7 +114,10 @@ master ancestry; the shared-history guard catches it). Wait for CI green
 remote tip, since the push is a force push. A bare `git push upstream` has no credentials
 by design; the wrapper is the authenticated path. Keep the worktree until the local apply
 below is verified, then `git -C ~ worktree remove /tmp/vesta-pr`. Report a PR done only
-when every check is green.
+when every check is green. **"None failed" is not green.** Count conclusions, not
+failures: anything not `completed` is still outstanding, and `skipped`, `cancelled`,
+`timed_out` and `action_required` are all completed without being a pass. Say "N green, M
+still running" until they land. A `skipped` job you expected to run is its own finding.
 
 ## Apply the fix locally too
 
@@ -120,14 +129,31 @@ your local file; a `-` line may be your user's personalization, which stays):
 git -C ~ diff --no-index ~/agent/skills/<skill>/<path> /tmp/vesta-pr/agent/skills/<skill>/<path>
 ```
 
-Never `cp` the whole file over your local one. Finish with the skill's own tests
-(`cd ~/agent/skills/<name>/cli && uv run pytest`) and the ruff pass below.
+Never `cp` the whole file over your local one. **Commit or stash your tree first.** Local
+edits live in the working tree until something commits them, so a clobbered edit that was
+never committed exists in no git object at all, and `git -C ~ show HEAD:<path>` then
+returns the stock file and exits 0, which reads exactly like a successful recovery.
+
+Finish with the skill's own tests (`cd ~/agent/skills/<name>/cli && uv run pytest`) and the
+ruff pass below.
 
 ## Formatting before pushing
 
 Run `./check.sh guards` IN THE WORKTREE: it is ruff plus repo conventions (lint escapes,
 comment-length cap of 8 lines, import cycles, shellcheck). Format Python from `~/agent`
 so the pinned ruff and config match CI: `cd ~/agent && ruff format <path> && ruff check <path>`.
+
+**Always pass `--frozen` when running the engine's tests.** A bare `uv run --project core
+pytest` re-resolves dependencies and rewrites `agent/core/uv.lock` to today's PyPI, and that
+churn rides silently into your next `git add`. Omit it only when updating the lock is the
+point.
+
+**On a contended host, do not run the full `./check.sh agent` suite locally.** It is
+disk-bound, can sit for tens of minutes, and an agent that backgrounds it and yields parks
+forever. Run the single test file you touched and let CI gate the suite; check
+`/sys/fs/cgroup/io.pressure` before calling a hang a bug. Removing a worktree does not stop
+such a run, so TERM it by exact verified pid.
+
 Markdown under `agent/` must contain no em or en dashes:
 `grep -rnP '\x{2014}|\x{2013}' <paths>` must be empty; instruct subagents about this up
 front, since models reach for those dashes by default.
