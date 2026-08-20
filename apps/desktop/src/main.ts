@@ -1,5 +1,6 @@
 import { BrowserWindow, Menu, app, ipcMain, nativeTheme, shell } from "electron";
 import path from "node:path";
+import { readNativeGeolocation } from "./geolocation";
 import { cancelLoopback, startLoopback } from "./oauth-loopback";
 import { clearConnection, readConnection, writeConnection } from "./store";
 import { createMainWindow, registerAppScheme, showMainWindow } from "./window";
@@ -62,6 +63,7 @@ if (!gotLock) {
     ipcMain.handle("oauth:cancel", (_event, port: unknown) => {
       if (typeof port === "number") cancelLoopback(port);
     });
+    ipcMain.handle("geolocation:read", () => readNativeGeolocation());
   };
 
   app.on("second-instance", () => {

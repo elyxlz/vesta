@@ -59,8 +59,9 @@ describe("browser bridge", () => {
     expect(open).toHaveBeenCalledWith("https://vesta.run", "_blank");
   });
 
-  it("has no oauth loopback", () => {
+  it("has no oauth loopback and no native geolocation", () => {
     expect(createBrowserBridge().oauthLoopback).toBeNull();
+    expect(createBrowserBridge().readGeolocation).toBeNull();
   });
 });
 
@@ -80,6 +81,7 @@ describe("electron bridge", () => {
       oauthStart: vi.fn(() => Promise.resolve(4242)),
       onOauthCallback: vi.fn(() => noopUnsubscribe),
       oauthCancel: vi.fn(() => Promise.resolve()),
+      readGeolocation: vi.fn(() => Promise.resolve<unknown>(null)),
       onWindowFocus: vi.fn(() => noopUnsubscribe),
       windowMinimize: vi.fn(() => Promise.resolve()),
       windowToggleMaximize: vi.fn(() => Promise.resolve()),
@@ -123,6 +125,34 @@ describe("electron bridge", () => {
   it("exposes the oauth loopback", async () => {
     const bridge = createElectronBridge(fakeApi());
     expect(await bridge.oauthLoopback?.start()).toBe(4242);
+  });
+
+  it("parses the native geolocation answer at the boundary", async () => {
+    const good = fakeApi({
+      readGeolocation: vi.fn(() =>
+        Promise.resolve<unknown>({
+          latitude: 39.2238,
+          longitude: 9.1217,
+          accuracyM: 25,
+        }),
+      ),
+    });
+    expect(await createElectronBridge(good).readGeolocation?.()).toEqual({
+      latitude: 39.2238,
+      longitude: 9.1217,
+      accuracyM: 25,
+    });
+    const malformed = fakeApi({
+      readGeolocation: vi.fn(() =>
+        Promise.resolve<unknown>({ latitude: "39", longitude: 9 }),
+      ),
+    });
+    expect(
+      await createElectronBridge(malformed).readGeolocation?.(),
+    ).toBeNull();
+    expect(
+      await createElectronBridge(fakeApi()).readGeolocation?.(),
+    ).toBeNull();
   });
 
   it("routes theme and focus calls to the preload api", async () => {

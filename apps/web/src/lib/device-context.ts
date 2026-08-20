@@ -1,5 +1,6 @@
 import tzlookup from "tz-lookup";
 import type { DeviceContext } from "@vesta/core";
+import { native } from "@/lib/native";
 
 // What this browser (or the desktop app around it) reports about itself: its zone always, and, with
 // the user's opt-in and a geolocation grant, its position and the zone that position falls in. A
@@ -25,9 +26,13 @@ function zoneAt(latitude: number, longitude: number): string {
   }
 }
 
-// A fix, or null when geolocation is unavailable, denied, or slow: the report then carries the OS
-// zone alone. The browser prompt is raised by this call itself, so the opt-in toggle is what gates it.
-function readFix(): Promise<GeolocationPosition | null> {
+interface Fix {
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+}
+
+function browserFix(): Promise<Fix | null> {
   if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
     return Promise.resolve(null);
   }
@@ -35,7 +40,8 @@ function readFix(): Promise<GeolocationPosition | null> {
   return new Promise((resolve) => {
     geolocation.getCurrentPosition(
       (fix) => {
-        resolve(fix);
+        const { latitude, longitude, accuracy } = fix.coords;
+        resolve({ latitude, longitude, accuracy });
       },
       () => {
         resolve(null);
@@ -45,10 +51,27 @@ function readFix(): Promise<GeolocationPosition | null> {
   });
 }
 
+// A fix, or null when geolocation is unavailable, denied, or slow: the report then carries the OS
+// zone alone. In the desktop app the main process resolves through the OS provider first (WinRT on
+// Windows, GeoClue2 on Linux); a null answer (macOS, no provider, refused) falls through to the
+// renderer's own geolocation, whose prompt this call itself raises, so the opt-in toggle gates both.
+async function readFix(): Promise<Fix | null> {
+  if (native.readGeolocation) {
+    const fix = await native.readGeolocation().catch(() => null);
+    if (fix) {
+      return {
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        accuracy: fix.accuracyM,
+      };
+    }
+  }
+  return browserFix();
+}
+
 // With sharing off the report carries `position: null`, which retracts any position the gateway
 // holds for this device; with sharing on but no fix, the position is absent and the stored one
-// stands. The browser has no offline reverse geocoder, so the position names no place; the gateway's
-// coarse IP city is the only place hint for a browser or desktop device.
+// stands. The browser has no offline reverse geocoder, so the position names no place.
 export async function readBrowserDeviceContext(
   shareLocation: boolean,
 ): Promise<DeviceContext> {
@@ -57,7 +80,7 @@ export async function readBrowserDeviceContext(
   }
   const fix = await readFix();
   if (fix === null) return { timezone: osTimezone() };
-  const { latitude, longitude, accuracy } = fix.coords;
+  const { latitude, longitude, accuracy } = fix;
   return {
     timezone: zoneAt(latitude, longitude),
     position: { latitude, longitude, accuracyM: accuracy, place: null },
