@@ -1,3 +1,4 @@
+import { getCalendars } from "expo-localization";
 import * as Location from "expo-location";
 import tzlookup from "tz-lookup";
 import type { DeviceContext, DevicePlace, DevicePosition } from "@vesta/core";
@@ -22,9 +23,16 @@ interface Fix {
   accuracy: number | null;
 }
 
+// Read live on every call: expo-localization asks the OS, so a zone change lands on the next report.
+// iOS keeps this zone correct from the network and location, so it is the fallback when no fix is in
+// hand, and it is never held above a fix, which is the more precise source.
+function deviceTimezone(): string | undefined {
+  return getCalendars()[0]?.timeZone ?? undefined;
+}
+
 // The IANA zone the fix falls in, from an embedded offline boundary table: deterministic, network
-// free, and identical on both platforms, so the reported zone is the one the user stands in and
-// never the SIM's home zone. `null` only for coordinates the table rejects, which a real fix is not.
+// free, and identical on both platforms, so the reported zone is the one the user stands in. `null`
+// only for coordinates the table rejects, which a real fix is not.
 function zoneAt(latitude: number, longitude: number): string | null {
   try {
     return tzlookup(latitude, longitude);
@@ -119,23 +127,24 @@ async function readDevicePosition(
   };
 }
 
-// The zone is named only by the fix, never by the OS clock: while roaming, iOS holds the SIM home
-// network's zone (London on a UK SIM in Sardinia), so a report that cannot see a fix names no zone
-// at all and the gateway keeps its last real one, rather than hearing a wrong one. With sharing off
-// the report carries `position: null`, which retracts the position the gateway holds for this
-// device; with sharing on but no fix, both fields are absent and the stored values stand.
+// The zone the fix falls in wins over the device's own, which covers the rare case of an OS clock
+// that lags the user's travel; with no fix the OS zone is the fallback, so the phone always names a
+// zone. With sharing off the report carries `position: null`, which retracts the position the
+// gateway holds for this device, and names the OS zone alone.
 export async function readDeviceContext(input: {
   shareLocation: boolean;
   mode: PositionMode;
 }): Promise<DeviceContext> {
   const context: DeviceContext = {};
   if (!input.shareLocation) {
+    const timezone = deviceTimezone();
+    if (timezone !== undefined) context.timezone = timezone;
     context.position = null;
     return context;
   }
   const located = await readDevicePosition(input.mode);
-  if (located === undefined) return context;
-  if (located.zone !== null) context.timezone = located.zone;
-  context.position = located.position;
+  const timezone = located?.zone ?? deviceTimezone();
+  if (timezone !== undefined && timezone !== null) context.timezone = timezone;
+  if (located !== undefined) context.position = located.position;
   return context;
 }
