@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   captureBothThemes,
+  isNativeSource,
   flowFailureError,
   gentleSpawnPlan,
   grabUntilStable,
@@ -140,6 +141,23 @@ describe("captureBothThemes", () => {
       "dark=false",
     ]);
     expect(dark).toBe(false);
+  });
+});
+
+describe("isNativeSource", () => {
+  it("keeps sources and drops build outputs", () => {
+    expect(
+      isNativeSource("/apps/mobile/modules/vesta-share/src/index.ts"),
+    ).toBe(true);
+    expect(
+      isNativeSource("/apps/mobile/modules/vesta-share/android/build/x.bin"),
+    ).toBe(false);
+    expect(
+      isNativeSource("/apps/mobile/modules/vesta-share/android/.gradle/y"),
+    ).toBe(false);
+    expect(
+      isNativeSource("/apps/mobile/modules/vesta-share/ios/DerivedData/z"),
+    ).toBe(false);
   });
 });
 
