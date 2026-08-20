@@ -27,6 +27,14 @@ REQUEST_DELAY_S = 0.8
 REQUEST_TIMEOUT_S = 30.0
 CANARY_QUERY = "coffee"
 
+# The doctor's fixed anchor: a landmark whose identity will not change.
+DOCTOR_ANCHOR_QUERY = "Buckingham Palace London"
+DOCTOR_ANCHOR_NAME = "Buckingham Palace"
+DOCTOR_ANCHOR_CID = 731461058599387815
+DOCTOR_ANCHOR_COORD = (51.501364, -0.14189)
+DOCTOR_ORIGIN = (51.508039, -0.128069)  # Trafalgar Square, a fixed origin near the anchor
+DOCTOR_TRANSIT_LEAD_S = 3600
+
 
 class BlockedError(RuntimeError):
     """Google returned a consent wall or challenge rather than data."""
@@ -158,6 +166,51 @@ def itinerary(
         route_url=route_url(route_stops, mode=mode),
         total_minutes=sum(leg_minutes) + dwell_min * len(stops),
     )
+
+
+def doctor(*, locale: str, country: str) -> dict[str, str]:
+    """One check per RPC template against the fixed anchor: "ok" or the failure text per check.
+
+    The checks are independent, so one drifted template does not hide the state of the others.
+    A consent wall (`BlockedError`) still raises: blocked is temporary, not drift.
+    """
+
+    def probe_search() -> str | None:
+        places = search(DOCTOR_ANCHOR_QUERY, near=None, filters=SearchFilters(limit=5), locale=locale, country=country)
+        return None if any(p.cid == DOCTOR_ANCHOR_CID for p in places) else f"anchor cid missing from {len(places)} results"
+
+    def probe_place() -> str | None:
+        detail = show(DOCTOR_ANCHOR_CID, locale=locale, country=country)
+        return None if DOCTOR_ANCHOR_NAME in detail.name and detail.lat is not None else f"unexpected detail: {detail.name!r}"
+
+    def probe_directions() -> str | None:
+        leg = directions(DOCTOR_ORIGIN, DOCTOR_ANCHOR_COORD, mode="walking", locale=locale, country=country)
+        return None if leg.duration_text else "no duration in the walking leg"
+
+    def probe_transit() -> str | None:
+        epoch = int(time.time()) + DOCTOR_TRANSIT_LEAD_S
+        leg = directions(DOCTOR_ORIGIN, DOCTOR_ANCHOR_COORD, mode="transit", locale=locale, country=country, time_kind="depart", epoch=epoch)
+        return None if leg.duration_text else "no duration in the timed transit leg"
+
+    def probe_reverse() -> str | None:
+        label = reverse(*DOCTOR_ANCHOR_COORD, locale=locale, country=country)
+        return None if label else "no label for the anchor coordinate"
+
+    probes = {
+        "search": probe_search,
+        "place": probe_place,
+        "directions": probe_directions,
+        "transit": probe_transit,
+        "reverse": probe_reverse,
+    }
+    checks: dict[str, str] = {}
+    for check_name, probe in probes.items():
+        try:
+            failure = probe()
+        except (httpx.HTTPError, DriftError, ValueError, KeyError, TypeError) as exc:
+            failure = str(exc) or exc.__class__.__name__
+        checks[check_name] = failure if failure is not None else "ok"
+    return checks
 
 
 def _near_latlng(near: str | None) -> tuple[float, float] | None:

@@ -95,7 +95,7 @@ travel. Save the plan and its `route_url` in the trip file (below).
 ```bash
 maps geocode "Piazza Porta Terra, Alghero"   # address -> coords + place_id
 maps reverse 41.9028,12.4964                  # coords -> Google's label for the point
-maps doctor                                   # health check: is the search RPC responding
+maps doctor                                   # health check: one probe per RPC, exit 0 when all pass
 ```
 
 `reverse` returns a street address when the point is near a building, otherwise a Plus Code for

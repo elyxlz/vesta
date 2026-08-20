@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from gmaps_cli.parse import _first_rating, parse_search
+from gmaps_cli.parse import parse_search
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -26,8 +26,15 @@ def test_parse_search_returns_places():
     assert oops.links.place_url == "https://maps.google.com/?cid=8865181299500082525"
 
 
-def test_rating_skips_coordinate_band_floats():
-    # A Paris-like coordinate (lng 2.35, lat 48.85) sits in the rating band but must be skipped.
-    record = [[None, 2.35, 48.85], 4.6]
-    assert _first_rating(record) == 4.6
-    assert _first_rating([[None, 2.35, 48.85]]) is None
+def test_parse_search_reads_a_single_entity_answer():
+    # A famous-landmark query gets one entity back, not a list feed; the proto walk finds it too.
+    feed = json.loads((FIXTURES / "search_entity_palace.json").read_text(encoding="utf-8"))
+    places = parse_search(feed)
+    assert len(places) == 1
+    palace = places[0]
+    assert palace.name == "Buckingham Palace"
+    assert palace.cid == 731461058599387815
+    assert palace.place_id == "ChIJtV5bzSAFdkgRpwLZFPWrJgo"
+    assert palace.review_count is not None and palace.review_count > 100_000
+    assert 51.4 < palace.lat < 51.6
+    assert -0.2 < palace.lng < -0.1

@@ -2,8 +2,8 @@
 
 The request rides a captured `pb` template (`place_pb.txt`) with a `{CID_HEX}` slot (the place's
 cid in hex). Google does not validate the session token in that `pb`, so the template carries a
-fixed placeholder. The response carries the fields mapped below; those it does not carry (full
-weekly hours, review text) stay null.
+fixed placeholder. The response holds the place proto at element 6, read via `proto.py`; fields
+it does not carry (full weekly hours, review text) stay null.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 from . import proto
 from .links import Stop, directions_url, place_url
 from .models import Links, PlaceDetail
-from .pb import is_web_url, json_strings, strip_envelope
+from .pb import json_strings, strip_envelope
 
 _TEMPLATE_PATH = Path(__file__).with_name("place_pb.txt")
 _REVERSE_TEMPLATE_PATH = Path(__file__).with_name("reverse_pb.txt")
@@ -25,7 +25,6 @@ _REVERSE_LABEL_RE = re.compile(r'"([^"\[\]{}:]{8,90})"')
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _PLACE_ID_RE = re.compile(r"^ChIJ[\w-]{10,}$")
 _RANGE_RE = re.compile(r"^\d{1,2}\S*\s?(?:am|pm|AM|PM).+")
-_FTID_RE = re.compile(r"0x[0-9a-f]{6,}:0x[0-9a-f]{6,}")
 _PHOTO_RE = re.compile(r"^https://lh\d\.googleusercontent\.com/")
 
 
@@ -50,53 +49,6 @@ def parse_reverse(raw_body: str) -> str | None:
     return max(candidates, key=len) if candidates else None
 
 
-def _floats(node: object) -> list[float]:
-    out: list[float] = []
-
-    def walk(value: object) -> None:
-        if isinstance(value, float):
-            out.append(value)
-        elif isinstance(value, list):
-            for child in value:
-                walk(child)
-
-    walk(node)
-    return out
-
-
-_E7 = 10_000_000
-
-
-def _first_coord_e7(node: object) -> tuple[float, float] | None:
-    """Coordinates are stored as a [lat_e7, lng_e7] integer pair (degrees * 1e7)."""
-    if isinstance(node, list):
-        if (
-            len(node) == 2
-            and isinstance(node[0], int)
-            and isinstance(node[1], int)
-            and not isinstance(node[0], bool)
-            and abs(node[0]) <= 90 * _E7
-            and abs(node[1]) <= 180 * _E7
-            and abs(node[0]) >= _E7
-        ):
-            return (node[0] / _E7, node[1] / _E7)
-        for child in node:
-            found = _first_coord_e7(child)
-            if found is not None:
-                return found
-    return None
-
-
-def _str_at(node: object, *path: int) -> str | None:
-    """Follow a fixed index path; return the string there, or None if absent/not a string."""
-    current: object = node
-    for index in path:
-        if not isinstance(current, list) or not -len(current) <= index < len(current):
-            return None
-        current = current[index]
-    return current if isinstance(current, str) else None
-
-
 def _today_hours(strings: list[str]) -> str | None:
     for i, text in enumerate(strings):
         if text in _DAYS:
@@ -106,38 +58,29 @@ def _today_hours(strings: list[str]) -> str | None:
 
 
 def parse_place(raw_body: str, cid: int) -> PlaceDetail:
-    clean = strip_envelope(raw_body)
-    data = json.loads(clean)
-    strings = json_strings(data)
-    # Name and address sit at pinned positions in the place-data section (data[6]).
-    name = _str_at(data, 6, 11) or ""
-    address = _str_at(data, 6, 39)
-    place_id = next((s for s in strings if _PLACE_ID_RE.match(s)), None)
-    ftid_match = _FTID_RE.search(clean)
-    ftid = ftid_match.group(0) if ftid_match is not None else None
+    data = json.loads(strip_envelope(raw_body))
     raw_proto = data[6] if isinstance(data, list) and len(data) > 6 else None
     place_proto = raw_proto if isinstance(raw_proto, list) else None
-    website = next((s for s in strings if is_web_url(s)), None)
-    photos = [s for s in strings if _PHOTO_RE.match(s)][:3]
-    category = next((m.group(1).replace("_", " ") for m in (re.match(r"gcid:(\w+)", s) for s in strings) if m), None)
-    rating = next((f for f in _floats(data) if 1.0 <= f <= 5.0), None)
-    coord = _first_coord_e7(data)
+    strings = json_strings(data)
+    name = proto.name(place_proto) or ""
+    coord = proto.coords(place_proto)
     lat, lng = coord if coord is not None else (None, None)
+    place_id = next((s for s in strings if _PLACE_ID_RE.match(s)), None)
     return PlaceDetail(
         name=name,
         cid=cid,
         place_id=place_id,
-        ftid=ftid,
-        address=address,
+        ftid=proto.ftid(place_proto),
+        address=proto.address(place_proto),
         lat=lat,
         lng=lng,
-        rating=rating,
-        category=category,
+        rating=proto.rating(place_proto),
+        category=proto.category(place_proto),
         phone=proto.phone(place_proto),
-        website=website,
+        website=proto.website(place_proto),
         hours_today=_today_hours(strings),
         open_intervals=proto.open_intervals(place_proto),
-        photos=photos,
+        photos=[s for s in strings if _PHOTO_RE.match(s)][:3],
         links=Links(
             place_url=place_url(cid),
             directions_url=(directions_url(Stop(name=name, lat=lat or 0.0, lng=lng or 0.0, place_id=place_id)) if name else place_url(cid)),

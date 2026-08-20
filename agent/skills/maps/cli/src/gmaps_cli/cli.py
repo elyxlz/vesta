@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from . import cache
-from .client import BlockedError, DriftError, SearchFilters, directions, itinerary, reverse, search, show
+from .client import DOCTOR_ANCHOR_NAME, BlockedError, DriftError, SearchFilters, directions, doctor, itinerary, reverse, search, show
 from .format import format_itinerary, format_place_detail, format_search_table
 from .links import Stop, directions_url, route_url, transit_time_url
 
@@ -213,9 +213,11 @@ def _cmd_reverse(args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
-    places = search("coffee", near=None, filters=SearchFilters(limit=3), locale=args.locale, country=args.country)
-    _emit({"status": "ok", "sample_results": len(places), "note": "search RPC responding"})
-    return 0
+    checks = doctor(locale=args.locale, country=args.country)
+    ok = all(value == "ok" for value in checks.values())
+    note = "one check per RPC template" if ok else "a failing check names a drifted template; SETUP.md has the recapture steps"
+    _emit({"status": "ok" if ok else "failing", "anchor": DOCTOR_ANCHOR_NAME, "checks": checks, "note": note})
+    return 0 if ok else 1
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -276,7 +278,7 @@ def _build_parser() -> argparse.ArgumentParser:
     rev.add_argument("coords", help="lat,lng")
     rev.set_defaults(func=_cmd_reverse)
 
-    doc = sub.add_parser("doctor", help="drift canary / health check", parents=[locale])
+    doc = sub.add_parser("doctor", help="health check: one probe per RPC template", parents=[locale])
     doc.set_defaults(func=_cmd_doctor)
     return parser
 

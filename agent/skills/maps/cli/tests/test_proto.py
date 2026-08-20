@@ -1,4 +1,4 @@
-from gmaps_cli.proto import find_proto, open_intervals, open_now, phone, review_count
+from gmaps_cli.proto import is_proto, open_intervals, open_now, phone, review_count
 
 FTID = "0x12dcf1f90bb8a3c3:0x7b07736c1223655d"
 
@@ -13,11 +13,12 @@ def _proto(*, state: object = 2, entries: object = None) -> list[object]:
     return proto
 
 
-def test_find_proto_locates_the_ftid_array():
-    proto = _proto()
-    record: list[object] = [["preamble"], proto]
-    assert find_proto(record) is proto
-    assert find_proto([["no", "ftid", "here"]]) is None
+def test_is_proto_requires_ftid_and_name():
+    assert is_proto(_proto()) is True
+    assert is_proto(["no", "ftid", "here"]) is False
+    missing_name = _proto()
+    missing_name[11] = None
+    assert is_proto(missing_name) is False
 
 
 def test_review_count_and_phone_read_pinned_positions():

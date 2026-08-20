@@ -19,7 +19,9 @@ maps --help
 maps doctor
 ```
 
-`maps doctor` runs a known-good query and reports whether the search RPC is responding.
+`maps doctor` probes every RPC once against a fixed landmark (Buckingham Palace) and reports
+each check: `search`, `place`, `directions`, `transit` (a timed departure), and `reverse`. It
+exits 0 when all pass and 1 with the failing checks named otherwise.
 
 ## How it works
 
@@ -35,7 +37,10 @@ only stable identity and is safe to delete anytime; set `GMAPS_CACHE_DIR` to rel
 
 ## When results stop coming back
 
-Google changes its internal response shape from time to time. If `maps doctor` reports a drift
-(a known-good query returns nothing), the search `pb` template needs re-capturing: read a fresh
-`pb` from a live Maps search request and update `cli/src/gmaps_cli/search_pb.txt` (the header of
-`pb.py` describes the exact steps).
+Google changes its internal request and response shapes from time to time. A failing `maps
+doctor` check names the `pb` template to re-capture: `search` -> `search_pb.txt`, `place` ->
+`place_pb.txt`, `directions` -> `directions_pb.txt`, `transit` -> `transit_pb.txt`, `reverse` ->
+`reverse_pb.txt`, all under `cli/src/gmaps_cli/`. Read a fresh `pb` from the matching live Maps
+request and update the template (the header of `pb.py` describes the exact steps). If a
+template is current but fields come back null, the response shape moved instead: re-pin the
+positions in `proto.py`.
