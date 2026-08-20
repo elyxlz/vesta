@@ -73,3 +73,19 @@ class DirectionsLeg:
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass
+class ItineraryStop:
+    place: PlaceDetail
+    arrive: str
+    leave: str
+    open_at_slot: bool | None
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "place": self.place.to_json(),
+            "arrive": self.arrive,
+            "leave": self.leave,
+            "open_at_slot": self.open_at_slot,
+        }

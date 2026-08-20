@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 
-from .client import BlockedError, DriftError, SearchFilters, directions, search, show
+from .client import BlockedError, DriftError, SearchFilters, directions, itinerary, search, show
 from .links import Stop, directions_url, route_url
 from .models import Place
 
@@ -109,6 +109,24 @@ def _cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_itinerary(args: argparse.Namespace) -> int:
+    cids = [int(part) for part in args.stops.split(",") if part]
+    if len(cids) < 2:
+        return _fail("--stops needs at least two cids, comma-separated")
+    plan = itinerary(
+        cids,
+        mode=args.mode,
+        start=args.start,
+        dwell_min=args.dwell,
+        optimize=args.optimize,
+        locale=args.locale,
+        country=args.country,
+    )
+    plan["note"] = "One route_url opens the whole day in Maps. open_at_slot is null until hours land."
+    _emit(plan)
+    return 0
+
+
 def _cmd_geocode(args: argparse.Namespace) -> int:
     places = search(
         args.address,
@@ -165,6 +183,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sh = sub.add_parser("show", help="full detail for one place by cid", parents=[locale])
     sh.add_argument("cid", help="the place's numeric cid (from a search result)")
     sh.set_defaults(func=_cmd_show)
+
+    it = sub.add_parser("itinerary", help="scheduled multi-stop day plan", parents=[locale])
+    it.add_argument("--stops", required=True, help="comma-separated cids in order")
+    it.add_argument("--mode", default="walking", choices=("driving", "transit", "walking", "bicycling"))
+    it.add_argument("--start", default="10:00", help="start time HH:MM")
+    it.add_argument("--dwell", type=int, default=30, help="minutes spent at each stop")
+    it.add_argument("--optimize", action="store_true", help="reorder stops to cut travel")
+    it.set_defaults(func=_cmd_itinerary)
 
     g = sub.add_parser("geocode", help="address -> coords", parents=[locale])
     g.add_argument("address")

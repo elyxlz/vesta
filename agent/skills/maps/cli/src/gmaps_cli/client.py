@@ -15,7 +15,9 @@ from dataclasses import dataclass
 import httpx
 
 from .directions import build_directions_pb, parse_directions
-from .models import DirectionsLeg, Place, PlaceDetail
+from .itinerary import lay_out, nearest_neighbour, parse_duration_min
+from .links import Stop, route_url
+from .models import DirectionsLeg, ItineraryStop, Place, PlaceDetail
 from .parse import parse_search
 from .pb import build_search_pb, extract_session_token, strip_envelope
 from .place import build_place_pb, parse_place
@@ -112,6 +114,39 @@ def directions(
     with _client(locale) as client:
         raw = _get(client, f"https://www.google.com/maps/preview/directions?authuser=0&hl={lang}&gl={country}&pb={pb}")
     return parse_directions(raw, mode)
+
+
+def itinerary(
+    cids: list[int],
+    *,
+    mode: str,
+    start: str,
+    dwell_min: int,
+    optimize: bool,
+    locale: str,
+    country: str,
+) -> dict[str, object]:
+    stops = [show(cid, locale=locale, country=country) for cid in cids]
+    if any(s.lat is None or s.lng is None for s in stops):
+        raise ValueError("every stop needs coordinates; one place returned none")
+    coords = [(s.lat, s.lng) for s in stops if s.lat is not None and s.lng is not None]
+    if optimize:
+        order = nearest_neighbour(coords)
+        stops = [stops[i] for i in order]
+        coords = [coords[i] for i in order]
+    legs = [directions(coords[i], coords[i + 1], mode=mode, locale=locale, country=country) for i in range(len(stops) - 1)]
+    leg_minutes = [parse_duration_min(leg.duration_text) for leg in legs]
+    slots = lay_out(leg_minutes, start=start, dwell_min=dwell_min, count=len(stops))
+    itinerary_stops = [
+        ItineraryStop(place=stop, arrive=arrive, leave=leave, open_at_slot=None) for stop, (arrive, leave) in zip(stops, slots, strict=True)
+    ]
+    route_stops = [Stop(name=s.name, lat=lat, lng=lng, place_id=s.place_id) for s, (lat, lng) in zip(stops, coords, strict=True)]
+    return {
+        "stops": [s.to_json() for s in itinerary_stops],
+        "legs": [{"from": stops[i].name, "to": stops[i + 1].name, "mode": mode, "duration": legs[i].duration_text} for i in range(len(legs))],
+        "route_url": route_url(route_stops, mode=mode) if len(route_stops) >= 2 else None,
+        "total_minutes": sum(leg_minutes) + dwell_min * len(stops),
+    }
 
 
 def _near_latlng(near: str | None) -> tuple[float, float] | None:
