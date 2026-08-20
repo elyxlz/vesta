@@ -15,9 +15,10 @@ from dataclasses import dataclass
 import httpx
 
 from .directions import build_directions_pb, parse_directions
-from .models import DirectionsLeg, Place
+from .models import DirectionsLeg, Place, PlaceDetail
 from .parse import parse_search
 from .pb import build_search_pb, extract_session_token, strip_envelope
+from .place import build_place_pb, parse_place
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
 CONSENT_COOKIE = "CONSENT=YES+cb.20210328-17-p0.en+FX+678; SOCS=CAI"
@@ -88,6 +89,14 @@ def search(query: str, *, near: str | None, filters: SearchFilters, locale: str,
             if not canary:
                 raise DriftError("search returned nothing and the canary is empty; recapture the pb template")
         return _apply_filters(places, filters, near_latlng=near_latlng)
+
+
+def show(cid: int, *, locale: str, country: str) -> PlaceDetail:
+    lang = locale.split("-", maxsplit=1)[0]
+    pb = build_place_pb(cid)
+    with _client(locale) as client:
+        raw = _get(client, f"https://www.google.com/maps/preview/place?authuser=0&hl={lang}&gl={country}&pb={pb}")
+    return parse_place(raw, cid)
 
 
 def directions(

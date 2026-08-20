@@ -21,6 +21,7 @@ packages = ["src/gmaps_cli"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/gmaps_cli/search_pb.txt" = "gmaps_cli/search_pb.txt"
 "src/gmaps_cli/directions_pb.txt" = "gmaps_cli/directions_pb.txt"
+"src/gmaps_cli/place_pb.txt" = "gmaps_cli/place_pb.txt"
 
 [build-system]
 requires = ["hatchling"]

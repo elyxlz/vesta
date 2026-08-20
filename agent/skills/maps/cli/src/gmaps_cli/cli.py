@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 
-from .client import BlockedError, DriftError, SearchFilters, directions, search
+from .client import BlockedError, DriftError, SearchFilters, directions, search, show
 from .links import Stop, directions_url, route_url
 from .models import Place
 
@@ -101,6 +101,14 @@ def _cmd_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_show(args: argparse.Namespace) -> int:
+    detail = show(int(args.cid), locale=args.locale, country=args.country)
+    payload = detail.to_json()
+    payload["note"] = "Directions: `maps directions <lat>,<lng> --steps`. Route: `maps route`."
+    _emit(payload)
+    return 0
+
+
 def _cmd_geocode(args: argparse.Namespace) -> int:
     places = search(
         args.address,
@@ -153,6 +161,10 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument("--stops", required=True, help="JSON array of {name, lat, lng, place_id?}")
     r.add_argument("--mode", default="driving", choices=("driving", "transit", "walking", "bicycling"))
     r.set_defaults(func=_cmd_route)
+
+    sh = sub.add_parser("show", help="full detail for one place by cid", parents=[locale])
+    sh.add_argument("cid", help="the place's numeric cid (from a search result)")
+    sh.set_defaults(func=_cmd_show)
 
     g = sub.add_parser("geocode", help="address -> coords", parents=[locale])
     g.add_argument("address")

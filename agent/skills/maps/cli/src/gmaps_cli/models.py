@@ -37,6 +37,26 @@ class Place:
 
 
 @dataclass
+class PlaceDetail:
+    name: str
+    cid: int
+    place_id: str | None
+    address: str | None
+    lat: float | None
+    lng: float | None
+    rating: float | None
+    category: str | None
+    phone: str | None
+    website: str | None
+    hours_today: str | None
+    photos: list[str] = field(default_factory=list)
+    links: Links | None = None
+
+    def to_json(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass
 class Step:
     instruction: str
     line: str | None = None
