@@ -41,6 +41,7 @@ class PlaceDetail:
     name: str
     cid: int
     place_id: str | None
+    ftid: str | None
     address: str | None
     lat: float | None
     lng: float | None

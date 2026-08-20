@@ -12,15 +12,17 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_directions_emits_named_link_json():
-    to = json.dumps({"name": "Canary Wharf, London", "place_id": "ChIJcanary", "lat": 51.5054, "lng": -0.0235})
-    proc = _run(["directions", "--to", to, "--mode", "walking"])
+def test_directions_by_cid_uses_cached_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("GMAPS_CACHE_DIR", str(tmp_path))
+    from gmaps_cli import cache
+
+    cache.put(cid=8865181299500082525, name="Canary Wharf", lat=51.5054, lng=-0.0235, ftid="0x1:0x2", place_id="ChIJcanary")
+    proc = _run(["directions", "--to", "8865181299500082525", "--mode", "walking"])
     assert proc.returncode == 0
     out = json.loads(proc.stdout)
     assert out["mode"] == "walking"
     assert "travelmode=walking" in out["directions_url"]
     assert "destination_place_id=ChIJcanary" in out["directions_url"]  # exact place, not a pin
-    assert "note" in out
 
 
 def test_route_named_multistop_link():

@@ -25,6 +25,7 @@ _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Su
 _PLACE_ID_RE = re.compile(r"^ChIJ[\w-]{10,}$")
 _PHONE_RE = re.compile(r"^\+[\d][\d ]{6,}$")
 _RANGE_RE = re.compile(r"^\d{1,2}\S*\s?(?:am|pm|AM|PM).+")
+_FTID_RE = re.compile(r"0x[0-9a-f]{6,}:0x[0-9a-f]{6,}")
 _PHOTO_RE = re.compile(r"^https://lh\d\.googleusercontent\.com/")
 
 
@@ -125,12 +126,15 @@ def _today_hours(strings: list[str]) -> str | None:
 
 
 def parse_place(raw_body: str, cid: int) -> PlaceDetail:
-    data = json.loads(strip_envelope(raw_body))
+    clean = strip_envelope(raw_body)
+    data = json.loads(clean)
     strings = _strings(data)
     # Name and address sit at pinned positions in the place-data section (data[6]).
     name = _str_at(data, 6, 11) or ""
     address = _str_at(data, 6, 39)
     place_id = next((s for s in strings if _PLACE_ID_RE.match(s)), None)
+    ftid_match = _FTID_RE.search(clean)
+    ftid = ftid_match.group(0) if ftid_match is not None else None
     phone = next((s for s in strings if _PHONE_RE.match(s)), None)
     website = next((s for s in strings if _is_web(s)), None)
     photos = [s for s in strings if _PHOTO_RE.match(s)][:3]
@@ -142,6 +146,7 @@ def parse_place(raw_body: str, cid: int) -> PlaceDetail:
         name=name,
         cid=cid,
         place_id=place_id,
+        ftid=ftid,
         address=address,
         lat=lat,
         lng=lng,

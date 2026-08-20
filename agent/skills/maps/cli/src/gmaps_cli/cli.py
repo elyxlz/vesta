@@ -12,7 +12,9 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from . import cache
 from .client import BlockedError, DriftError, SearchFilters, directions, itinerary, reverse, search, show
+from .format import format_itinerary, format_place_detail, format_search_table
 from .links import Stop, directions_url, route_url, transit_time_url
 from .models import Place
 
@@ -26,6 +28,20 @@ def _fail(message: str) -> int:
     json.dump({"error": message}, sys.stderr, ensure_ascii=False)
     sys.stderr.write("\n")
     return 1
+
+
+def _note(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _add_json_flags(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--json", action="store_true", help="compact JSON instead of a table")
+    group.add_argument("--json-pretty", action="store_true", dest="json_pretty", help="indented JSON instead of a table")
+
+
+def _emit_json(payload: object, args: argparse.Namespace) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2 if args.json_pretty else None))
 
 
 def _coord(text: str) -> tuple[float, float]:
@@ -66,31 +82,29 @@ def _cmd_search(args: argparse.Namespace) -> int:
         locale=args.locale,
         country=args.country,
     )
-    _emit(
-        {
-            "query": args.query,
-            "returned": len(places),
-            "results": [_place_json(p) for p in places],
-            "note": "Route: `maps route --stops <json>`. Tighten: --min-rating/--category/--radius-km/--sort.",
-        }
-    )
+    for place in places:
+        cache.put(cid=place.cid, name=place.name, lat=place.lat, lng=place.lng, ftid=place.ftid, place_id=place.place_id)
+    if args.json or args.json_pretty:
+        _emit_json({"query": args.query, "returned": len(places), "results": [_place_json(p) for p in places]}, args)
+    else:
+        print(format_search_table(places))
+        _note("Details: `maps show <cid>`. Directions: `maps directions --to <cid>`. Tighten: --min-rating/--category/--sort.")
     return 0
 
 
-def _place_arg(text: str) -> Stop:
-    obj = json.loads(text)
-    if not isinstance(obj, dict) or "name" not in obj:
-        raise ValueError('place must be JSON like {"name":..,"place_id":..,"ftid":..,"lat":..,"lng":..}')
-    lat = float(obj["lat"]) if "lat" in obj else 0.0
-    lng = float(obj["lng"]) if "lng" in obj else 0.0
-    place_id = str(obj["place_id"]) if "place_id" in obj else None
-    ftid = str(obj["ftid"]) if "ftid" in obj else None
-    return Stop(name=str(obj["name"]), lat=lat, lng=lng, place_id=place_id, ftid=ftid)
+def _resolve(cid: int, locale: str, country: str) -> Stop:
+    """A place's identity from the cache (free) or a place-detail fetch (then cached)."""
+    cached = cache.get(cid)
+    if cached is not None:
+        return cached
+    detail = show(cid, locale=locale, country=country)
+    cache.put(cid=detail.cid, name=detail.name, lat=detail.lat or 0.0, lng=detail.lng or 0.0, ftid=detail.ftid, place_id=detail.place_id)
+    return Stop(name=detail.name, lat=detail.lat or 0.0, lng=detail.lng or 0.0, place_id=detail.place_id, ftid=detail.ftid)
 
 
 def _cmd_directions(args: argparse.Namespace) -> int:
-    dest = _place_arg(args.to)
-    origin = _place_arg(args.from_place) if args.from_place else None
+    dest = _resolve(int(args.to), args.locale, args.country)
+    origin = _resolve(int(args.from_cid), args.locale, args.country) if args.from_cid else None
     payload: dict[str, object] = {
         "directions_url": directions_url(dest, origin=origin, mode=args.mode),
         "mode": args.mode,
@@ -148,9 +162,12 @@ def _cmd_route(args: argparse.Namespace) -> int:
 
 def _cmd_show(args: argparse.Namespace) -> int:
     detail = show(int(args.cid), locale=args.locale, country=args.country)
-    payload = detail.to_json()
-    payload["note"] = "Directions: `maps directions --to '<this place json>'`. Route: `maps route`."
-    _emit(payload)
+    cache.put(cid=detail.cid, name=detail.name, lat=detail.lat or 0.0, lng=detail.lng or 0.0, ftid=detail.ftid, place_id=detail.place_id)
+    if args.json or args.json_pretty:
+        _emit_json(detail.to_json(), args)
+    else:
+        print(format_place_detail(detail))
+        _note(f"Directions: `maps directions --to {detail.cid}`.")
     return 0
 
 
@@ -167,8 +184,11 @@ def _cmd_itinerary(args: argparse.Namespace) -> int:
         locale=args.locale,
         country=args.country,
     )
-    plan["note"] = "One route_url opens the whole day in Maps. open_at_slot is null until hours land."
-    _emit(plan)
+    if args.json or args.json_pretty:
+        _emit_json(plan, args)
+    else:
+        print(format_itinerary(plan))
+        _note("One route_url opens the whole day in Maps. open_at_slot is null until hours land.")
     return 0
 
 
@@ -219,13 +239,14 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--radius-km", type=float, dest="radius_km")
     s.add_argument("--sort", choices=("distance", "rating"))
     s.add_argument("--limit", type=int, default=20)
+    _add_json_flags(s)
     s.set_defaults(func=_cmd_search)
 
     d = sub.add_parser("directions", help="build a directions deep link", parents=[locale])
-    d.add_argument("--to", required=True, help="destination place as JSON {name, place_id?, ftid?, lat?, lng?} from search")
-    d.add_argument("--from", dest="from_place", help="origin place as the same JSON (default: live location)")
+    d.add_argument("--to", required=True, help="destination cid (from a search result)")
+    d.add_argument("--from", dest="from_cid", help="origin cid (default: the phone's live location)")
     d.add_argument("--mode", default="driving", choices=("driving", "transit", "walking", "bicycling"))
-    d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps (needs --from with lat/lng)")
+    d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps (needs --from)")
     d.add_argument("--depart", help="transit: depart at HH:MM")
     d.add_argument("--arrive", help="transit: arrive by HH:MM")
     d.add_argument("--tz", default="UTC", help="IANA timezone for --depart/--arrive (e.g. Europe/Rome)")
@@ -238,6 +259,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sh = sub.add_parser("show", help="full detail for one place by cid", parents=[locale])
     sh.add_argument("cid", help="the place's numeric cid (from a search result)")
+    _add_json_flags(sh)
     sh.set_defaults(func=_cmd_show)
 
     it = sub.add_parser("itinerary", help="scheduled multi-stop day plan", parents=[locale])
@@ -246,6 +268,7 @@ def _build_parser() -> argparse.ArgumentParser:
     it.add_argument("--start", default="10:00", help="start time HH:MM")
     it.add_argument("--dwell", type=int, default=30, help="minutes spent at each stop")
     it.add_argument("--optimize", action="store_true", help="reorder stops to cut travel")
+    _add_json_flags(it)
     it.set_defaults(func=_cmd_itinerary)
 
     g = sub.add_parser("geocode", help="address -> coords", parents=[locale])

@@ -17,6 +17,7 @@ def test_parse_place_extracts_detail():
     place = parse_place(body, OOPS_CID)
     assert place.name == "Alghero Gelateria Oops"
     assert place.place_id == "ChIJw6O4C_nx3BIRXWUjEmxzB3s"
+    assert place.ftid == "0x12dcf1f90bb8a3c3:0x7b07736c1223655d"
     assert place.phone == "+39 079 966 3707"
     assert place.rating == 4.7
     assert place.website is not None and "facebook" in place.website
