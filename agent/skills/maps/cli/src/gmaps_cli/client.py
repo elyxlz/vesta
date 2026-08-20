@@ -7,7 +7,6 @@ one GET per mode. Parsing lives in `parse.py`; this module is the IO edge.
 from __future__ import annotations
 
 import json
-import math
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -15,7 +14,7 @@ from dataclasses import dataclass
 import httpx
 
 from .directions import build_directions_pb, parse_directions
-from .itinerary import lay_out, nearest_neighbour, parse_duration_min
+from .itinerary import haversine_km, lay_out, nearest_neighbour, parse_duration_min
 from .links import Stop, route_url
 from .models import DirectionsLeg, ItineraryStop, Place, PlaceDetail
 from .parse import parse_search
@@ -161,13 +160,6 @@ def _near_latlng(near: str | None) -> tuple[float, float] | None:
     return None
 
 
-def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
-    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
-    dlat, dlon = lat2 - lat1, lon2 - lon1
-    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
-    return 2 * 6371.0 * math.asin(math.sqrt(h))
-
-
 def _apply_filters(places: list[Place], filters: SearchFilters, *, near_latlng: tuple[float, float] | None) -> list[Place]:
     out = places
     if filters.min_rating is not None:
@@ -176,9 +168,9 @@ def _apply_filters(places: list[Place], filters: SearchFilters, *, near_latlng: 
         needle = filters.category.lower()
         out = [p for p in out if p.category is not None and needle in p.category.lower()]
     if filters.radius_km is not None and near_latlng is not None:
-        out = [p for p in out if _haversine_km(near_latlng, (p.lat, p.lng)) <= filters.radius_km]
+        out = [p for p in out if haversine_km(near_latlng, (p.lat, p.lng)) <= filters.radius_km]
     if filters.sort == "rating":
         out = sorted(out, key=lambda p: p.rating or 0.0, reverse=True)
     elif filters.sort == "distance" and near_latlng is not None:
-        out = sorted(out, key=lambda p: _haversine_km(near_latlng, (p.lat, p.lng)))
+        out = sorted(out, key=lambda p: haversine_km(near_latlng, (p.lat, p.lng)))
     return out[: filters.limit]
