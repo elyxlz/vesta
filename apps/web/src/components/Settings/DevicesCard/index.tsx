@@ -12,6 +12,7 @@ import {
 import { MenuSection } from "@/components/ui/menu-section";
 import { Switch } from "@/components/ui/switch";
 import { useGateway } from "@/providers/GatewayProvider";
+import { useShareLocation } from "@/stores/use-share-location";
 import { contextLine } from "./context-line";
 
 function kindIcon(kind: DeviceKind): ReactNode {
@@ -76,7 +77,7 @@ function UserContextToggle() {
       <FieldContent>
         <FieldLabel className="text-sm">share device context</FieldLabel>
         <FieldDescription>
-          tell your agents each device&apos;s timezone and, when a phone shares
+          tell your agents each device&apos;s timezone and, when a device shares
           it, its location, so they follow your travel; switching off stops the
           reports and forgets what was stored
         </FieldDescription>
@@ -88,6 +89,32 @@ function UserContextToggle() {
           void onChange(checked);
         }}
       />
+    </Field>
+  );
+}
+
+// This device's own opt-in to share its precise location, on top of the gateway-wide switch above.
+// Turning it on makes this browser (or the desktop app) ask for a geolocation fix, which the OS
+// prompts for; off reports only the timezone and retracts any stored position.
+function LocationToggle() {
+  const enabled = useShareLocation((s) => s.enabled);
+  const setEnabled = useShareLocation((s) => s.setEnabled);
+
+  return (
+    <Field
+      orientation="horizontal"
+      className="mt-3 items-center justify-between"
+    >
+      <FieldContent>
+        <FieldLabel className="text-sm">
+          share this device&apos;s location
+        </FieldLabel>
+        <FieldDescription>
+          let your agents see where this device is, from its precise location;
+          your browser asks permission the first time
+        </FieldDescription>
+      </FieldContent>
+      <Switch checked={enabled} onCheckedChange={setEnabled} />
     </Field>
   );
 }
@@ -133,6 +160,7 @@ export function DevicesCard() {
             ))}
           </div>
           <UserContextToggle />
+          <LocationToggle />
         </MenuSection>
       </CardContent>
     </Card>

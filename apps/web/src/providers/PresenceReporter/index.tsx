@@ -1,6 +1,8 @@
 import { useContext, useEffect, useState } from "react";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { useWindowFocus } from "@/hooks/use-window-focus";
+import { readBrowserDeviceContext } from "@/lib/device-context";
+import { useShareLocation } from "@/stores/use-share-location";
 import { router } from "@/router";
 
 // The agent whose page is open, from the router's matched `agent/:name` param, or null off it. Read
@@ -13,6 +15,7 @@ function currentAgent(): string | null {
 export function PresenceReporter() {
   const controller = useContext(ControllerContext);
   const focused = useWindowFocus();
+  const shareLocation = useShareLocation((s) => s.enabled);
   const [agent, setAgent] = useState<string | null>(() => currentAgent());
 
   useEffect(() => {
@@ -29,11 +32,16 @@ export function PresenceReporter() {
 
   useEffect(() => {
     if (!controller || !focused) return;
-    // Read on each focus edge, so a device that changed zone reports it as soon as the user is back.
-    controller.reportDeviceContext({
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // Read on each focus edge (and when the location opt-in changes), so a device that changed zone
+    // or turned sharing on or off reports it as soon as the user is back.
+    let cancelled = false;
+    void readBrowserDeviceContext(shareLocation).then((context) => {
+      if (!cancelled) controller.reportDeviceContext(context);
     });
-  }, [controller, focused]);
+    return () => {
+      cancelled = true;
+    };
+  }, [controller, focused, shareLocation]);
 
   useEffect(() => {
     if (!controller) return;
