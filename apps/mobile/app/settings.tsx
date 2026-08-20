@@ -333,7 +333,7 @@ export default function SettingsScreen() {
           />
           <SwitchRow
             label="Share device location"
-            detail="Tell your agents where this phone is, place and coordinates, so plans and reminders follow your travel. Allow location always to keep sharing while the app is closed. Your timezone is always shared."
+            detail="Tell your agents where this phone is, place and coordinates, so plans and reminders follow your travel. Allow location always to keep sharing while the app is closed. Off forgets what this phone shared. Your timezone is always shared."
             value={preferences.shareLocation}
             onValueChange={(value) => void changeShareLocation(value)}
           />

@@ -11,3 +11,15 @@ export async function requestLocationSharing(): Promise<boolean> {
   await Location.requestBackgroundPermissionsAsync();
   return true;
 }
+
+// A phone that has never been asked is asked on its first shared foreground read, so the
+// default-on preference shares location out of the box; a phone that already answered (granted or
+// refused) keeps its answer, with the OS Settings as the place to change it. Never called from the
+// background poll, which cannot raise a prompt.
+export async function requestLocationIfUndecided(): Promise<void> {
+  const permission = await Location.getForegroundPermissionsAsync().catch(
+    () => null,
+  );
+  if (permission?.status !== Location.PermissionStatus.UNDETERMINED) return;
+  await requestLocationSharing();
+}

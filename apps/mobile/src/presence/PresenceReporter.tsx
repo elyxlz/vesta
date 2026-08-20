@@ -4,6 +4,7 @@ import { useGlobalSearchParams, useSegments } from "expo-router";
 import { ControllerContext } from "@/controller/context";
 import { registerBackgroundReport } from "@/device-context/background-report";
 import { readDeviceContext } from "@/device-context/device-context";
+import { requestLocationIfUndecided } from "@/device-context/location-consent";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 function isFocused(state: AppStateStatus): boolean {
@@ -42,16 +43,25 @@ export function PresenceReporter() {
   // The closed-app poll reports the same context over HTTP; registering is idempotent.
   useEffect(() => {
     registerBackgroundReport().catch((cause: unknown) => {
-      console.warn("Could not register the background device context report:", cause);
+      console.warn(
+        "Could not register the background device context report:",
+        cause,
+      );
     });
   }, []);
 
   // On each foreground edge, read the phone's zone (and position, when shared) fresh and report it,
-  // so a device that travelled reports as soon as the user opens the app.
+  // so a device that travelled reports as soon as the user opens the app. A shared read on a phone
+  // the OS has never asked raises the location prompt first, which is what makes the default-on
+  // preference share location out of the box.
   useEffect(() => {
     if (!controller || !active) return;
     let current = true;
-    readDeviceContext({ shareLocation, mode: "foreground" })
+    const read = async () => {
+      if (shareLocation) await requestLocationIfUndecided();
+      return readDeviceContext({ shareLocation, mode: "foreground" });
+    };
+    read()
       .then((context) => {
         if (current) controller.reportDeviceContext(context);
       })

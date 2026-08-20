@@ -13,15 +13,19 @@ describe("preference persistence", () => {
     expect(initialPreferences.naturalChatPacingByAgent).toEqual({});
     expect(initialPreferences.showNotificationsPage).toBe(false);
     expect(initialPreferences.showLogsPage).toBe(false);
-    expect(initialPreferences.shareLocation).toBe(false);
+    expect(initialPreferences.shareLocation).toBe(true);
   });
 
-  it("restores the location opt-in and defaults it off", () => {
-    expect(readStoredPreferences(JSON.stringify({ shareLocation: true }))).toMatchObject({
-      shareLocation: true,
-    });
-    expect(readStoredPreferences(JSON.stringify({ theme: "dark" }))).toMatchObject({
+  it("restores the location switch and defaults it on", () => {
+    expect(
+      readStoredPreferences(JSON.stringify({ shareLocation: false })),
+    ).toMatchObject({
       shareLocation: false,
+    });
+    expect(
+      readStoredPreferences(JSON.stringify({ theme: "dark" })),
+    ).toMatchObject({
+      shareLocation: true,
     });
   });
 

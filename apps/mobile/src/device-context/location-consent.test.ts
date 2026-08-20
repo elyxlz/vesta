@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { requestLocationSharing } from "./location-consent";
+import {
+  requestLocationIfUndecided,
+  requestLocationSharing,
+} from "./location-consent";
 
 const os = vi.hoisted(() => ({
   foregroundGranted: true,
+  status: "undetermined",
   calls: [] as string[],
 }));
 vi.mock("expo-location", () => ({
+  PermissionStatus: {
+    UNDETERMINED: "undetermined",
+    GRANTED: "granted",
+    DENIED: "denied",
+  },
   requestForegroundPermissionsAsync: () => {
     os.calls.push("foreground");
     return Promise.resolve({ granted: os.foregroundGranted });
@@ -14,6 +23,7 @@ vi.mock("expo-location", () => ({
     os.calls.push("background");
     return Promise.resolve({ granted: false });
   },
+  getForegroundPermissionsAsync: () => Promise.resolve({ status: os.status }),
 }));
 
 describe("requestLocationSharing", () => {
@@ -31,5 +41,27 @@ describe("requestLocationSharing", () => {
     os.foregroundGranted = false;
     await expect(requestLocationSharing()).resolves.toBe(false);
     expect(os.calls).toEqual(["foreground"]);
+  });
+});
+
+describe("requestLocationIfUndecided", () => {
+  beforeEach(() => {
+    os.calls = [];
+    os.foregroundGranted = true;
+  });
+
+  it("asks only a phone the OS has never asked", async () => {
+    os.status = "undetermined";
+    await requestLocationIfUndecided();
+    expect(os.calls).toEqual(["foreground", "background"]);
+  });
+
+  it("keeps a phone's earlier answer, granted or refused", async () => {
+    for (const status of ["granted", "denied"]) {
+      os.status = status;
+      os.calls = [];
+      await requestLocationIfUndecided();
+      expect(os.calls).toEqual([]);
+    }
   });
 });

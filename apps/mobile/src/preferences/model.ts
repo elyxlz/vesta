@@ -14,7 +14,8 @@ export interface PreferencesState {
   pushStatusChanges: boolean;
   notificationPreviews: boolean;
   // Report the phone's position (and the place the OS geocodes for it) to the gateway, so the
-  // agents learn where the user is. Off until the user opts in.
+  // agents learn where the user is. On by default; the OS location grant is the consent, and the
+  // Privacy toggle is the per-device off switch (off retracts the stored position).
   shareLocation: boolean;
 }
 
@@ -28,7 +29,7 @@ export const initialPreferences: PreferencesState = {
   pushChatReplies: true,
   pushStatusChanges: true,
   notificationPreviews: false,
-  shareLocation: false,
+  shareLocation: true,
 };
 
 function isThemePreference(value: unknown): value is ThemePreference {
@@ -96,7 +97,7 @@ export function readStoredPreferences(value: string | null): PreferencesState {
           ? parsed.notificationPreviews
           : false,
       shareLocation:
-        typeof parsed.shareLocation === "boolean" ? parsed.shareLocation : false,
+        typeof parsed.shareLocation === "boolean" ? parsed.shareLocation : true,
     };
   } catch {
     return initialPreferences;
