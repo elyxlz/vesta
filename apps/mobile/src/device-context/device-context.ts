@@ -1,4 +1,3 @@
-import { getCalendars } from "expo-localization";
 import * as Location from "expo-location";
 import tzlookup from "tz-lookup";
 import type { DeviceContext, DevicePlace, DevicePosition } from "@vesta/core";
@@ -21,13 +20,6 @@ interface Fix {
   latitude: number;
   longitude: number;
   accuracy: number | null;
-}
-
-// Read live on every call: expo-localization asks the OS, so a zone change lands on the next report.
-// The OS zone is only the fallback for when there is no fix: while roaming, iOS holds the SIM home
-// network's zone, so it is not trusted whenever a fix can name the zone directly.
-function deviceTimezone(): string | undefined {
-  return getCalendars()[0]?.timeZone ?? undefined;
 }
 
 // The IANA zone the fix falls in, from an embedded offline boundary table: deterministic, network
@@ -127,24 +119,23 @@ async function readDevicePosition(
   };
 }
 
-// With sharing off the report carries `position: null`, which retracts the position the gateway
-// holds for this device; with sharing on but no fix, the field is absent and the stored one stands.
-// The zone the fix falls in wins over the device's own: while roaming, iOS holds the SIM home
-// network's zone (London on a UK SIM in Sardinia), but the fix names the zone the user is in.
+// The zone is named only by the fix, never by the OS clock: while roaming, iOS holds the SIM home
+// network's zone (London on a UK SIM in Sardinia), so a report that cannot see a fix names no zone
+// at all and the gateway keeps its last real one, rather than hearing a wrong one. With sharing off
+// the report carries `position: null`, which retracts the position the gateway holds for this
+// device; with sharing on but no fix, both fields are absent and the stored values stand.
 export async function readDeviceContext(input: {
   shareLocation: boolean;
   mode: PositionMode;
 }): Promise<DeviceContext> {
   const context: DeviceContext = {};
   if (!input.shareLocation) {
-    const timezone = deviceTimezone();
-    if (timezone !== undefined) context.timezone = timezone;
     context.position = null;
     return context;
   }
   const located = await readDevicePosition(input.mode);
-  const timezone = located?.zone ?? deviceTimezone();
-  if (timezone !== undefined && timezone !== null) context.timezone = timezone;
-  if (located !== undefined) context.position = located.position;
+  if (located === undefined) return context;
+  if (located.zone !== null) context.timezone = located.zone;
+  context.position = located.position;
   return context;
 }

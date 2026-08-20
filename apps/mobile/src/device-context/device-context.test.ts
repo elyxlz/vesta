@@ -26,9 +26,6 @@ const location = vi.hoisted(() => ({
   }[],
   calls: [] as string[],
 }));
-vi.mock("expo-localization", () => ({
-  getCalendars: () => [{ timeZone: "Asia/Tokyo" }],
-}));
 vi.mock("expo-location", () => ({
   Accuracy: { Low: 1, Balanced: 3 },
   getForegroundPermissionsAsync: () =>
@@ -98,17 +95,14 @@ describe("readDeviceContext", () => {
     location.calls = [];
   });
 
-  it("retracts the position when location is not shared", async () => {
+  it("retracts the position and names no zone when location is not shared", async () => {
     await expect(
       readDeviceContext({ shareLocation: false, mode: "foreground" }),
-    ).resolves.toEqual({
-      timezone: "Asia/Tokyo",
-      position: null,
-    });
+    ).resolves.toEqual({ position: null });
     expect(location.calls).toEqual([]);
   });
 
-  it("gives up on a fresh fix that never arrives and reports the zone alone", async () => {
+  it("names no zone when a fresh fix never arrives, rather than the OS clock", async () => {
     vi.useFakeTimers();
     try {
       location.pending = true;
@@ -117,7 +111,7 @@ describe("readDeviceContext", () => {
         mode: "foreground",
       });
       await vi.advanceTimersByTimeAsync(FRESH_FIX_TIMEOUT_MS);
-      await expect(report).resolves.toEqual({ timezone: "Asia/Tokyo" });
+      await expect(report).resolves.toEqual({});
     } finally {
       location.pending = false;
       vi.useRealTimers();
@@ -140,12 +134,12 @@ describe("readDeviceContext", () => {
     expect(location.lastOptions).toEqual({ maxAge: LAST_KNOWN_FIX_MAX_AGE_MS });
   });
 
-  it("reports the zone alone when the permission read itself fails", async () => {
+  it("names no zone when the permission read itself fails", async () => {
     location.permissionThrows = true;
     try {
       await expect(
         readDeviceContext({ shareLocation: true, mode: "foreground" }),
-      ).resolves.toEqual({ timezone: "Asia/Tokyo" });
+      ).resolves.toEqual({});
     } finally {
       location.permissionThrows = false;
     }
@@ -204,19 +198,15 @@ describe("readDeviceContext", () => {
     });
   });
 
-  it("reports the zone alone when location is not granted or no fix exists", async () => {
+  it("names nothing when location is not granted or no fix exists", async () => {
     location.granted = false;
     await expect(
       readDeviceContext({ shareLocation: true, mode: "foreground" }),
-    ).resolves.toEqual({
-      timezone: "Asia/Tokyo",
-    });
+    ).resolves.toEqual({});
     location.granted = true;
     location.last = null;
     await expect(
       readDeviceContext({ shareLocation: true, mode: "background" }),
-    ).resolves.toEqual({
-      timezone: "Asia/Tokyo",
-    });
+    ).resolves.toEqual({});
   });
 });
