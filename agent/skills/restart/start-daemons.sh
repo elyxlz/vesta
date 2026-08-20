@@ -38,19 +38,11 @@ fi
 # express "raise the floor, never lower anyone's own default", because it does not know each
 # daemon's default. The budget belongs to each daemon, next to the constant it overrides.
 
-# A per-line BEGIN/END trace, timestamped, written before each start and after it returns.
-#
-# A blocked daemon start and a hang in the harness's tool layer look identical from the outside,
-# and the fix for those two is not the same. No daemon log here carries a timestamp, so without
-# this a hung run leaves no record of where it was. An unmatched BEGIN names the line in flight.
-# Truncated each run, flushed per line.
-#
-# The path is NOT under data/daemons/. Boot empties that directory of every non-dir file before any
-# daemon runs, so a trace written there survives its own run and is then destroyed by the next boot.
-# That is precisely the wrong lifetime: the failure this exists for is a hang, a hang ends in a
-# runtime timeout and a restart, and the restart's boot would erase the evidence before it is read.
-# One previous generation is kept for the same reason, so a crash-restart leaves the hung run's
-# trace intact in .prev while the new run writes a fresh one.
+# A per-line BEGIN/END trace: a blocked daemon start and a hang in the harness's tool layer look
+# identical from outside, and no daemon log here is timestamped. An unmatched BEGIN names the line
+# in flight. NOT under data/daemons/: boot empties that directory before any daemon runs, so a
+# trace there is destroyed by the restart that follows the very hang it exists to attribute. One
+# previous generation is kept so a crash-restart leaves the hung run's trace in .prev.
 TRACE="$HOME/agent/data/daemon-start-progress.log"
 mkdir -p "$(dirname "$TRACE")"
 [ -f "$TRACE" ] && mv -f "$TRACE" "$TRACE.prev"
