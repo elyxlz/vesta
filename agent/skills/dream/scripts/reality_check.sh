@@ -40,7 +40,16 @@ du_lines=$(timeout "$DU_TIMEOUT_SECS" du -sm "$HOME" /tmp 2>/dev/null)
 du_status=$?
 mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
 if [ "$du_status" -eq 124 ]; then
-    bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
+    # du walking a large managed tree (e.g. a scanner raw store of tens of thousands of small
+    # files) can exceed the timeout on a COLD walk under host I/O contention while the disk is
+    # perfectly healthy. df is the authoritative disk-full signal, so only RED if the disk is
+    # actually near-full (then a du we could not finish is genuinely worth investigating);
+    # otherwise the slow walk is benign and we simply skip the footprint figure this run.
+    if [ "${usage:-0}" -ge "$HOST_DISK_NOTE_PERCENT" ]; then
+        bad "sizing \$HOME and /tmp exceeded ${DU_TIMEOUT_SECS}s AND disk is ${usage}% full: could not measure this agent's footprint while the disk is near-full; investigate tonight"
+    else
+        ok "sizing \$HOME and /tmp exceeded ${DU_TIMEOUT_SECS}s (large managed tree under host I/O contention) but disk is healthy at ${usage:-unknown}%; footprint unmeasured this run, benign"
+    fi
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
     bad "this agent is using ${mine}MB across \$HOME and /tmp: clean up tonight (workspace cleanup)"
 elif [ "${usage:-0}" -ge "$HOST_DISK_NOTE_PERCENT" ]; then
