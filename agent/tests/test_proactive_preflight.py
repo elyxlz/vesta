@@ -283,9 +283,9 @@ def test_a_status_verb_reading_stdin_does_not_eat_the_rest_of_the_list(tmp_path)
     # The loop is fed by a heredoc, so a status verb that reads stdin consumes the remaining lines
     # and they go unchecked with the script still green.
     home = _home(tmp_path, "alpha daemon start\nbravo daemon start\ncharlie daemon start\n")
-    _shim(home, "alpha", 'cat >/dev/null\necho \'{"running": true}\'')
+    _shim(home, "alpha", "cat >/dev/null\necho '{\"running\": true}'")
     for name in ("bravo", "charlie"):
-        _shim(home, name, 'echo \'{"running": true}\'')
+        _shim(home, name, "echo '{\"running\": true}'")
 
     run = _run(home, port=free_port(), body=json.dumps(CLAUDE_PAYLOAD))
 
