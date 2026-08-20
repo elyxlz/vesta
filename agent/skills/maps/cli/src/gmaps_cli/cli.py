@@ -9,9 +9,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .client import BlockedError, DriftError, SearchFilters, directions, itinerary, reverse, search, show
-from .links import Stop, directions_url, route_url
+from .links import Stop, directions_url, route_url, transit_time_url
 from .models import Place
 
 
@@ -29,6 +31,20 @@ def _fail(message: str) -> int:
 def _coord(text: str) -> tuple[float, float]:
     lat, lng = text.split(",")
     return (float(lat), float(lng))
+
+
+def _next_epoch(hhmm: str, tz_name: str) -> int:
+    """Unix epoch for the next occurrence of HH:MM in the given IANA timezone."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"unknown timezone: {tz_name!r}") from exc
+    hour, minute = (int(part) for part in hhmm.split(":"))
+    now = datetime.now(tz)
+    when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if when < now:
+        when += timedelta(days=1)
+    return int(when.timestamp())
 
 
 def _place_json(place: Place) -> dict[str, object]:
@@ -69,11 +85,22 @@ def _cmd_directions(args: argparse.Namespace) -> int:
         "mode": args.mode,
         "note": "Opens Maps with the route; origin omitted uses the phone's live location.",
     }
-    if args.steps:
+    if args.depart and args.arrive:
+        return _fail("use either --depart or --arrive, not both")
+    time_kind = "depart" if args.depart else "arrive" if args.arrive else None
+    when = args.depart or args.arrive
+    if time_kind is not None and args.mode != "transit":
+        return _fail("--depart and --arrive apply to --mode transit")
+    if args.steps or time_kind is not None:
         if origin is None:
-            return _fail("directions --steps needs --from as lat,lng to measure the route")
-        leg = directions(origin, dest, mode=args.mode, locale=args.locale, country=args.country)
+            return _fail("directions --steps/--depart/--arrive need --from as lat,lng")
+        epoch = _next_epoch(when, args.tz) if when is not None else None
+        leg = directions(origin, dest, mode=args.mode, locale=args.locale, country=args.country, time_kind=time_kind, epoch=epoch)
         payload["leg"] = leg.to_json()
+        if time_kind is not None and epoch is not None:
+            payload[time_kind] = {"time": when, "tz": args.tz}
+            # The openable link carries the time; the api=1 link above cannot.
+            payload["directions_url"] = transit_time_url(dest, origin, kind=time_kind, epoch=epoch)
     _emit(payload)
     return 0
 
@@ -181,6 +208,9 @@ def _build_parser() -> argparse.ArgumentParser:
     d.add_argument("--from", dest="origin", help="origin as lat,lng (default: live location)")
     d.add_argument("--mode", default="driving", choices=("driving", "transit", "walking", "bicycling"))
     d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps (needs --from)")
+    d.add_argument("--depart", help="transit: depart at HH:MM (needs --from)")
+    d.add_argument("--arrive", help="transit: arrive by HH:MM (needs --from)")
+    d.add_argument("--tz", default="UTC", help="IANA timezone for --depart/--arrive (e.g. Europe/Rome)")
     d.set_defaults(func=_cmd_directions)
 
     r = sub.add_parser("route", help="build a multi-stop route link")

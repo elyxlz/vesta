@@ -47,8 +47,16 @@ maps directions 40.5748,8.317 --from 40.559,8.319 --mode transit --steps
 
 `--mode` is `driving`, `transit`, `walking`, or `bicycling`. Omit `--from` so the phone uses the
 user's current location. Add `--steps` (with `--from`) to also fetch the trip: duration,
-distance, turn-by-turn steps, and for transit the departure and arrival times. Tell the user the
-duration and, for transit, the line and times; send them the `directions_url` to open it.
+distance, and turn-by-turn steps. Tell the user the duration; send them the `directions_url` to
+open it.
+
+For transit, `--depart HH:MM` or `--arrive HH:MM` (with `--from` and `--tz`) fetch the route for
+that time, so the duration reflects the schedule then. Pass the user's timezone as `--tz` (e.g.
+`Europe/Rome`), and give the time in that zone.
+
+```bash
+maps directions 40.5748,8.317 --from 40.559,8.319 --mode transit --arrive 09:00 --tz Europe/Rome
+```
 
 ## A multi-stop route
 

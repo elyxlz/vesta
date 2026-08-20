@@ -74,3 +74,15 @@ def route_url(stops: list[Stop], *, mode: str = "driving") -> str:
         if all(s.place_id is not None for s in mids):
             params["waypoint_place_ids"] = "|".join(s.place_id for s in mids if s.place_id)
     return "https://www.google.com/maps/dir/?" + urllib.parse.urlencode(params, safe="|")
+
+
+def transit_time_url(dest: tuple[float, float], origin: tuple[float, float], *, kind: str, epoch: int) -> str:
+    """A /maps/dir/ link that opens transit directions with a depart-at or arrive-by time set.
+
+    The time rides the `data=` param as `!8j<epoch>`; `6e0` = depart at, `6e1` = arrive by.
+    """
+    if kind not in ("depart", "arrive"):
+        raise ValueError(f"kind must be 'depart' or 'arrive', got {kind!r}")
+    when = "6e0" if kind == "depart" else "6e1"
+    origin_str, dest_str = _latlng(*origin), _latlng(*dest)
+    return f"https://www.google.com/maps/dir/{origin_str}/{dest_str}/data=!4m6!4m5!2m3!{when}!7e2!8j{epoch}!3e3"

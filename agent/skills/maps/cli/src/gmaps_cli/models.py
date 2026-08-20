@@ -60,8 +60,6 @@ class PlaceDetail:
 class Step:
     instruction: str
     line: str | None = None
-    departure: str | None = None
-    arrival: str | None = None
 
 
 @dataclass

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .directions import build_directions_pb, parse_directions
+from .directions import build_pb, parse_directions
 from .itinerary import haversine_km, lay_out, nearest_neighbour, parse_duration_min
 from .links import Stop, route_url
 from .models import DirectionsLeg, ItineraryStop, Place, PlaceDetail
@@ -116,9 +116,11 @@ def directions(
     mode: str,
     locale: str,
     country: str,
+    time_kind: str | None = None,
+    epoch: int | None = None,
 ) -> DirectionsLeg:
     lang = locale.split("-", maxsplit=1)[0]
-    pb = build_directions_pb(origin, dest, mode)
+    pb = build_pb(origin, dest, mode, time_kind=time_kind, epoch=epoch)
     with _client(locale) as client:
         raw = _get(client, f"https://www.google.com/maps/preview/directions?authuser=0&hl={lang}&gl={country}&pb={pb}")
     return parse_directions(raw, mode)

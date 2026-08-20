@@ -4,6 +4,7 @@ from gmaps_cli.links import (
     directions_url,
     place_url,
     route_url,
+    transit_time_url,
 )
 
 
@@ -42,6 +43,14 @@ def test_route_url_named_stops():
     assert "destination_place_id=ChIJk2" in url
     assert "waypoints=ReGelato" in url
     assert "waypoint_place_ids=ChIJre" in url
+
+
+def test_transit_time_url_depart_and_arrive():
+    depart = transit_time_url((41.89, 12.49), (41.90, 12.50), kind="depart", epoch=1787299200)
+    assert "/maps/dir/41.9,12.5/41.89,12.49/data=" in depart
+    assert "!6e0!7e2!8j1787299200!3e3" in depart
+    arrive = transit_time_url((41.89, 12.49), (41.90, 12.50), kind="arrive", epoch=1787299200)
+    assert "!6e1!7e2!8j1787299200!3e3" in arrive
 
 
 def test_route_url_needs_two_stops():

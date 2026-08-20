@@ -65,8 +65,9 @@ maps directions <work lat,lng> --from <home lat,lng> --mode transit --steps
 
 The link sets the travel mode; it cannot force one specific line or road. So when the user
 prefers a line ("the Victoria line") or a road, set the mode, read the `--steps` result (it
-carries the line and the departure and arrival times), and tell them which line and time the
-route uses. Record the preference so you apply it next time.
+carries the duration and the line), and tell them the trip. For a commute at a set time, add
+`--depart HH:MM` or `--arrive HH:MM` with the user's `--tz` so the duration reflects the
+schedule. Record the preference so you apply it next time.
 
 ## Two rules that prevent the common mistakes
 
