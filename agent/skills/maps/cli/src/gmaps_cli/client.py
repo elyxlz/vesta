@@ -14,7 +14,8 @@ from dataclasses import dataclass
 
 import httpx
 
-from .models import Place
+from .directions import build_directions_pb, parse_directions
+from .models import DirectionsLeg, Place
 from .parse import parse_search
 from .pb import build_search_pb, extract_session_token, strip_envelope
 
@@ -87,6 +88,21 @@ def search(query: str, *, near: str | None, filters: SearchFilters, locale: str,
             if not canary:
                 raise DriftError("search returned nothing and the canary is empty; recapture the pb template")
         return _apply_filters(places, filters, near_latlng=near_latlng)
+
+
+def directions(
+    origin: tuple[float, float],
+    dest: tuple[float, float],
+    *,
+    mode: str,
+    locale: str,
+    country: str,
+) -> DirectionsLeg:
+    lang = locale.split("-", maxsplit=1)[0]
+    pb = build_directions_pb(origin, dest, mode)
+    with _client(locale) as client:
+        raw = _get(client, f"https://www.google.com/maps/preview/directions?authuser=0&hl={lang}&gl={country}&pb={pb}")
+    return parse_directions(raw, mode)
 
 
 def _near_latlng(near: str | None) -> tuple[float, float] | None:

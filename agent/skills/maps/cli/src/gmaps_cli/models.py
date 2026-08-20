@@ -1,4 +1,4 @@
-"""Typed models for places.
+"""Typed models for places and directions.
 
 Fields not yet mapped out of Google's positional response arrays are typed Optional and emitted
 as null rather than guessed, so a consumer never reads a fabricated value.
@@ -6,7 +6,7 @@ as null rather than guessed, so a consumer never reads a fabricated value.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 
 @dataclass
@@ -31,6 +31,25 @@ class Place:
     website: str | None = None
     open_now: bool | None = None
     links: Links | None = None
+
+    def to_json(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass
+class Step:
+    instruction: str
+    line: str | None = None
+    departure: str | None = None
+    arrival: str | None = None
+
+
+@dataclass
+class DirectionsLeg:
+    mode: str
+    duration_text: str | None
+    distance_text: str | None
+    steps: list[Step] = field(default_factory=list)
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)

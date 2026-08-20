@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 
-from .client import BlockedError, DriftError, SearchFilters, search
+from .client import BlockedError, DriftError, SearchFilters, directions, search
 from .links import Stop, directions_url, route_url
 from .models import Place
 
@@ -64,13 +64,17 @@ def _cmd_search(args: argparse.Namespace) -> int:
 def _cmd_directions(args: argparse.Namespace) -> int:
     dest = _coord(args.dest)
     origin = _coord(args.origin) if args.origin else None
-    _emit(
-        {
-            "directions_url": directions_url(dest, origin=origin, mode=args.mode),
-            "mode": args.mode,
-            "note": "Opens Maps with the route; origin omitted uses the phone's live location.",
-        }
-    )
+    payload: dict[str, object] = {
+        "directions_url": directions_url(dest, origin=origin, mode=args.mode),
+        "mode": args.mode,
+        "note": "Opens Maps with the route; origin omitted uses the phone's live location.",
+    }
+    if args.steps:
+        if origin is None:
+            return _fail("directions --steps needs --from as lat,lng to measure the route")
+        leg = directions(origin, dest, mode=args.mode, locale=args.locale, country=args.country)
+        payload["leg"] = leg.to_json()
+    _emit(payload)
     return 0
 
 
@@ -138,10 +142,11 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--limit", type=int, default=20)
     s.set_defaults(func=_cmd_search)
 
-    d = sub.add_parser("directions", help="build a directions deep link")
+    d = sub.add_parser("directions", help="build a directions deep link", parents=[locale])
     d.add_argument("dest", help="destination as lat,lng")
     d.add_argument("--from", dest="origin", help="origin as lat,lng (default: live location)")
     d.add_argument("--mode", default="driving", choices=("driving", "transit", "walking", "bicycling"))
+    d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps (needs --from)")
     d.set_defaults(func=_cmd_directions)
 
     r = sub.add_parser("route", help="build a multi-stop route link")
