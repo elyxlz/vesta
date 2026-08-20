@@ -28,15 +28,27 @@ Filter with `--min-rating`, `--category`, and `--sort rating`. `--near` takes an
 Send the user the `place_url` for a single pick. It opens the exact place on the web and the
 Maps app on a phone.
 
+## Full detail for one place
+
+```bash
+maps show 8865181299500082525          # the cid from a search result
+```
+
+Returns name, address, coordinates, place_id, rating, category, phone, website, today's hours,
+and photo links for one place. Use it to answer "what's the number", "is it far", "what does it
+look like" about a place you already found.
+
 ## Directions
 
 ```bash
-maps directions 40.5748,8.317 --mode walking          # to a place, from live location
-maps directions 40.5748,8.317 --from 40.559,8.319 --mode transit
+maps directions 40.5748,8.317 --mode walking          # a deep link, from live location
+maps directions 40.5748,8.317 --from 40.559,8.319 --mode transit --steps
 ```
 
 `--mode` is `driving`, `transit`, `walking`, or `bicycling`. Omit `--from` so the phone uses the
-user's current location.
+user's current location. Add `--steps` (with `--from`) to also fetch the trip: duration,
+distance, turn-by-turn steps, and for transit the departure and arrival times. Tell the user the
+duration and, for transit, the line and times; send them the `directions_url` to open it.
 
 ## A multi-stop route
 
@@ -49,6 +61,17 @@ maps route --mode walking --stops '[
 
 Pass each stop's `place_id` (from a prior `search`) so the stops render as named places, not
 dropped pins. One `route_url` comes back that opens the whole ordered route.
+
+## A scheduled day plan
+
+```bash
+maps itinerary --stops 8865181299500082525,1122517333730123385 --mode walking --start 21:00 --dwell 20
+```
+
+Give it the stops' cids in order. It returns each stop with an arrive and leave time (from
+`--start` and `--dwell` minutes per stop), the travel time for each leg, a total, and one
+`route_url` that opens the whole day. Add `--optimize` to reorder the stops for less travel. Save
+the plan and its `route_url` in the trip file (below).
 
 ## Other
 

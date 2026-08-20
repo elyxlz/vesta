@@ -60,13 +60,13 @@ Set the mode you know they prefer:
 
 ```bash
 # preferences: home->work = transit
-maps directions <work lat,lng> --from <home lat,lng> --mode transit
+maps directions <work lat,lng> --from <home lat,lng> --mode transit --steps
 ```
 
 The link sets the travel mode; it cannot force one specific line or road. So when the user
-prefers a line ("the Victoria line") or a road, set the mode and tell them which line or road
-the route should use, and let them confirm in the app. Record the preference so you apply it
-next time.
+prefers a line ("the Victoria line") or a road, set the mode, read the `--steps` result (it
+carries the line and the departure and arrival times), and tell them which line and time the
+route uses. Record the preference so you apply it next time.
 
 ## Two rules that prevent the common mistakes
 
