@@ -22,6 +22,7 @@ def test_parse_place_extracts_detail():
     assert place.rating == 4.7
     assert place.website is not None and "facebook" in place.website
     assert place.hours_today is not None
+    assert place.open_intervals == [(660, 1440)]  # 11 am-12 am
     assert place.lat is not None and 40.5 < place.lat < 40.6
     assert place.lng is not None and 8.3 < place.lng < 8.35
     assert place.links is not None

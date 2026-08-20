@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import httpx
 
 from .directions import build_pb, parse_directions
-from .itinerary import haversine_km, lay_out, nearest_neighbour, parse_duration_min
+from .itinerary import haversine_km, lay_out, nearest_neighbour, open_at_slot, parse_duration_min
 from .links import Stop, route_url
 from .models import DirectionsLeg, Itinerary, ItineraryLeg, ItineraryStop, Place, PlaceDetail
 from .parse import parse_search
@@ -147,7 +147,10 @@ def itinerary(
     legs = [directions(coords[i], coords[i + 1], mode=mode, locale=locale, country=country) for i in range(len(stops) - 1)]
     leg_minutes = [parse_duration_min(leg.duration_text) for leg in legs]
     slots = lay_out(leg_minutes, start=start, dwell_min=dwell_min, count=len(stops))
-    itinerary_stops = [ItineraryStop(place=stop, arrive=arrive, leave=leave) for stop, (arrive, leave) in zip(stops, slots, strict=True)]
+    itinerary_stops = [
+        ItineraryStop(place=stop, arrive=arrive, leave=leave, open_at_slot=open_at_slot(stop.open_intervals, arrive, leave))
+        for stop, (arrive, leave) in zip(stops, slots, strict=True)
+    ]
     route_stops = [Stop(name=s.name, lat=lat, lng=lng, place_id=s.place_id) for s, (lat, lng) in zip(stops, coords, strict=True)]
     return Itinerary(
         stops=itinerary_stops,

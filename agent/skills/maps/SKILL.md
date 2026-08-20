@@ -20,9 +20,11 @@ maps search "frozen yogurt" --near "Alghero" --min-rating 4.4 --sort rating --js
 ```
 
 The `--json` output is a list of results, each with `name`, `address`, `lat`/`lng`, `place_id`,
-`cid`, `ftid`, `rating`, `category`, `website`, and a `links` block (`place_url` opens the exact
-place; `directions_url` is a ready directions link). The table shows each result's `cid`, which
-you pass to `show` or `directions`. Filter with `--min-rating`, `--category`, and `--sort rating`.
+`cid`, `ftid`, `rating`, `review_count`, `category`, `phone`, `website`, `open_now` (Google's
+answer at request time; null when the place publishes no hours), and a `links` block (`place_url`
+opens the exact place; `directions_url` is a ready directions link). The table shows each
+result's `cid`, which you pass to `show` or `directions`, and marks a currently closed place.
+Filter with `--min-rating`, `--category`, and `--sort rating`.
 `--near` takes an address or `lat,lng`; `--radius-km` and `--sort distance` measure from `--near`,
 so they need it as `lat,lng` (a coordinate, not a place name).
 
@@ -83,8 +85,10 @@ maps itinerary --stops 8865181299500082525,1122517333730123385 --mode walking --
 
 Give it the stops' cids in order. It returns each stop with an arrive and leave time (from
 `--start` and `--dwell` minutes per stop), the travel time for each leg, a total, and one
-`route_url` that opens the whole day. Add `--optimize` to reorder the stops for less travel. Save
-the plan and its `route_url` in the trip file (below).
+`route_url` that opens the whole day. Each stop carries `open_at_slot`: false flags a stop whose
+slot falls outside today's opening hours, so shift `--start` or reorder before you send the plan
+(null means the place publishes no hours). Add `--optimize` to reorder the stops for less
+travel. Save the plan and its `route_url` in the trip file (below).
 
 ## Other
 

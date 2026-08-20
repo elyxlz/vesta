@@ -12,6 +12,7 @@ import json
 import re
 from pathlib import Path
 
+from . import proto
 from .links import Stop, directions_url, place_url
 from .models import Links, PlaceDetail
 from .pb import is_web_url, json_strings, strip_envelope
@@ -23,7 +24,6 @@ _REVERSE_TEMPLATE_PATH = Path(__file__).with_name("reverse_pb.txt")
 _REVERSE_LABEL_RE = re.compile(r'"([^"\[\]{}:]{8,90})"')
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _PLACE_ID_RE = re.compile(r"^ChIJ[\w-]{10,}$")
-_PHONE_RE = re.compile(r"^\+[\d][\d ]{6,}$")
 _RANGE_RE = re.compile(r"^\d{1,2}\S*\s?(?:am|pm|AM|PM).+")
 _FTID_RE = re.compile(r"0x[0-9a-f]{6,}:0x[0-9a-f]{6,}")
 _PHOTO_RE = re.compile(r"^https://lh\d\.googleusercontent\.com/")
@@ -115,7 +115,8 @@ def parse_place(raw_body: str, cid: int) -> PlaceDetail:
     place_id = next((s for s in strings if _PLACE_ID_RE.match(s)), None)
     ftid_match = _FTID_RE.search(clean)
     ftid = ftid_match.group(0) if ftid_match is not None else None
-    phone = next((s for s in strings if _PHONE_RE.match(s)), None)
+    raw_proto = data[6] if isinstance(data, list) and len(data) > 6 else None
+    place_proto = raw_proto if isinstance(raw_proto, list) else None
     website = next((s for s in strings if is_web_url(s)), None)
     photos = [s for s in strings if _PHOTO_RE.match(s)][:3]
     category = next((m.group(1).replace("_", " ") for m in (re.match(r"gcid:(\w+)", s) for s in strings) if m), None)
@@ -132,9 +133,10 @@ def parse_place(raw_body: str, cid: int) -> PlaceDetail:
         lng=lng,
         rating=rating,
         category=category,
-        phone=phone,
+        phone=proto.phone(place_proto),
         website=website,
         hours_today=_today_hours(strings),
+        open_intervals=proto.open_intervals(place_proto),
         photos=photos,
         links=Links(
             place_url=place_url(cid),

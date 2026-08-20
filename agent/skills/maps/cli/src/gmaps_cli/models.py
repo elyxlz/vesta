@@ -25,8 +25,11 @@ class Place:
     place_id: str | None
     address: str | None
     rating: float | None = None
+    review_count: int | None = None
     category: str | None = None
+    phone: str | None = None
     website: str | None = None
+    open_now: bool | None = None
     links: Links | None = None
 
     def to_json(self) -> dict[str, object]:
@@ -47,6 +50,7 @@ class PlaceDetail:
     phone: str | None
     website: str | None
     hours_today: str | None
+    open_intervals: list[tuple[int, int]] = field(default_factory=list)  # today, minutes since midnight
     photos: list[str] = field(default_factory=list)
     links: Links | None = None
 
@@ -76,6 +80,7 @@ class ItineraryStop:
     place: PlaceDetail
     arrive: str
     leave: str
+    open_at_slot: bool | None
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)

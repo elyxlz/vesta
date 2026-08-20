@@ -16,6 +16,9 @@ def test_parse_search_returns_places():
     assert oops.cid == 8865181299500082525
     assert oops.ftid == "0x12dcf1f90bb8a3c3:0x7b07736c1223655d"
     assert oops.rating == 4.7
+    assert oops.review_count == 416
+    assert oops.phone == "+39 079 966 3707"
+    assert oops.open_now is True
     assert oops.category is not None
     assert 40.5 < oops.lat < 40.6
     assert 8.3 < oops.lng < 8.35

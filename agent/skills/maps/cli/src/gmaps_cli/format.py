@@ -20,8 +20,10 @@ def format_search_table(places: list[Place]) -> str:
     rows = []
     for i, place in enumerate(places, 1):
         rating = f"{place.rating:>3}" if place.rating is not None else "  -"
+        count = f"({place.review_count})" if place.review_count is not None else ""
+        closed = "  closed now" if place.open_now is False else ""
         name, category, address = _clip(place.name, 34), _clip(place.category, 16), _clip(place.address, 30)
-        rows.append(f"{i:2}. {name:<34} {rating}  {category:<16} {address:<30}  cid:{place.cid}")
+        rows.append(f"{i:2}. {name:<34} {rating} {count:<7} {category:<16} {address:<30}  cid:{place.cid}{closed}")
     return "\n".join(rows)
 
 
@@ -41,7 +43,10 @@ def format_place_detail(place: PlaceDetail) -> str:
 
 
 def format_itinerary(plan: Itinerary) -> str:
-    lines = [f"  {stop.arrive}-{stop.leave}  {stop.place.name}" for stop in plan.stops]
+    lines = [
+        f"  {stop.arrive}-{stop.leave}  {stop.place.name}" + ("  (closed at this time)" if stop.open_at_slot is False else "")
+        for stop in plan.stops
+    ]
     lines.append(f"  total: {plan.total_minutes} min")
     lines.append(f"  route: {plan.route_url}")
     return "\n".join(lines)

@@ -10,6 +10,7 @@ import math
 import re
 
 _HMS_RE = re.compile(r"(?:(\d+)\s*(?:h|hr))?\s*(?:(\d+)\s*min)?")
+_DAY_MIN = 24 * 60
 
 
 def parse_duration_min(text: str | None) -> int:
@@ -44,6 +45,19 @@ def nearest_neighbour(coords: list[tuple[float, float]]) -> list[int]:
         unvisited.discard(nxt)
         current = nxt
     return order
+
+
+def open_at_slot(intervals: list[tuple[int, int]], arrive: str, leave: str) -> bool | None:
+    """Whether the whole arrive..leave slot falls inside one of today's open intervals (minutes
+    since midnight, ends past 1440 wrapping midnight); None when the place published no hours."""
+    if not intervals:
+        return None
+    start, end = _to_min(arrive), _to_min(leave)
+    if end < start:
+        end += _DAY_MIN
+    # The shifted pair matches an after-midnight slot against an interval that wraps midnight.
+    slots = ((start, end), (start + _DAY_MIN, end + _DAY_MIN))
+    return any(opens <= slot_start and slot_end <= closes for opens, closes in intervals for slot_start, slot_end in slots)
 
 
 def _to_min(hhmm: str) -> int:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from . import proto
 from .links import Stop, cid_from_ftid, directions_url, place_url
 from .models import Links, Place
 from .pb import is_web_url, json_strings
@@ -126,6 +127,7 @@ def parse_search(feed: object) -> list[Place]:
         place_id = next((s for s in strings if _PLACE_ID_RE.match(s)), None)
         cid = cid_from_ftid(ftid)
         lat, lng = coord
+        place_proto = proto.find_proto(record)
         places.append(
             Place(
                 name=name,
@@ -136,8 +138,11 @@ def parse_search(feed: object) -> list[Place]:
                 place_id=place_id,
                 address=address,
                 rating=_first_rating(record),
+                review_count=proto.review_count(place_proto),
                 category=category,
+                phone=proto.phone(place_proto),
                 website=website,
+                open_now=proto.open_now(place_proto),
                 links=Links(
                     place_url=place_url(cid),
                     directions_url=directions_url(Stop(name=name, lat=lat, lng=lng, place_id=place_id, ftid=ftid)),
