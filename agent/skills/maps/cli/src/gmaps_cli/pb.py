@@ -4,6 +4,9 @@ Search takes two GETs: fetch the search page for a per-session token, then call 
 with that token slotted into a captured `pb` template (`search_pb.txt`). When Google changes the
 template, re-pin it here: read a fresh `pb` from a live Maps search request, replace the query
 and token in it with the `{QUERY}` and `{TOKEN}` slots, and overwrite `search_pb.txt`.
+
+The response-side helpers every parser shares (`strip_envelope`, `json_strings`, `is_web_url`)
+also live here.
 """
 
 from __future__ import annotations
@@ -22,6 +25,29 @@ def strip_envelope(raw: str) -> str:
     """Google prefixes RPC JSON with `)]}'` to defeat JSON hijacking. Drop it before parsing."""
     body = raw.removeprefix(ENVELOPE_PREFIX)
     return body.lstrip("\n")
+
+
+def json_strings(node: object) -> list[str]:
+    """Every string anywhere in a nested response array, in document order."""
+    out: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, str):
+            out.append(value)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(node)
+    return out
+
+
+_NON_WEBSITE_HOSTS = ("google", "gstatic", "ggpht", "schema.org", "lh3", "lh4", "lh5")
+
+
+def is_web_url(url: str) -> bool:
+    """A place's own website: an http(s) URL not on one of Google's own hosts."""
+    return url.startswith(("http://", "https://")) and not any(host in url for host in _NON_WEBSITE_HOSTS)
 
 
 def _full_array(html: str, marker: str) -> str:

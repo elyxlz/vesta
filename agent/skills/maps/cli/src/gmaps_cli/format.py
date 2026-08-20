@@ -6,7 +6,7 @@ Each search row shows the `cid`, which is how the agent references a place in a 
 
 from __future__ import annotations
 
-from .models import Place, PlaceDetail
+from .models import Itinerary, Place, PlaceDetail
 
 
 def _clip(text: str | None, width: int) -> str:
@@ -40,15 +40,8 @@ def format_place_detail(place: PlaceDetail) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def format_itinerary(plan: dict[str, object]) -> str:
-    stops = plan["stops"]
-    lines = []
-    if isinstance(stops, list):
-        for stop in stops:
-            if isinstance(stop, dict):
-                place = stop["place"]
-                name = place["name"] if isinstance(place, dict) else "?"
-                lines.append(f"  {stop['arrive']}-{stop['leave']}  {name}")
-    lines.append(f"  total: {plan['total_minutes']} min")
-    lines.append(f"  route: {plan['route_url']}")
+def format_itinerary(plan: Itinerary) -> str:
+    lines = [f"  {stop.arrive}-{stop.leave}  {stop.place.name}" for stop in plan.stops]
+    lines.append(f"  total: {plan.total_minutes} min")
+    lines.append(f"  route: {plan.route_url}")
     return "\n".join(lines)

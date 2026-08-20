@@ -1,4 +1,4 @@
-"""`maps` command dispatch. JSON on stdout; errors as {"error": ...} on stderr, non-zero exit.
+"""`maps` command dispatch. Tables or JSON on stdout; errors as {"error": ...} on stderr, non-zero exit.
 
 Stateless: every command takes durable Google ids or coordinates and stores nothing. The agent
 keeps its own working set (trip files); see SKILL.md.
@@ -12,11 +12,12 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
+
 from . import cache
 from .client import BlockedError, DriftError, SearchFilters, directions, itinerary, reverse, search, show
 from .format import format_itinerary, format_place_detail, format_search_table
 from .links import Stop, directions_url, route_url, transit_time_url
-from .models import Place
 
 
 def _emit(payload: dict[str, object]) -> None:
@@ -63,10 +64,6 @@ def _next_epoch(hhmm: str, tz_name: str) -> int:
     return int(when.timestamp())
 
 
-def _place_json(place: Place) -> dict[str, object]:
-    return place.to_json()
-
-
 def _cmd_search(args: argparse.Namespace) -> int:
     filters = SearchFilters(
         min_rating=args.min_rating,
@@ -85,7 +82,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
     for place in places:
         cache.put(cid=place.cid, name=place.name, lat=place.lat, lng=place.lng, ftid=place.ftid, place_id=place.place_id)
     if args.json or args.json_pretty:
-        _emit_json({"query": args.query, "returned": len(places), "results": [_place_json(p) for p in places]}, args)
+        _emit_json({"query": args.query, "returned": len(places), "results": [p.to_json() for p in places]}, args)
     else:
         print(format_search_table(places))
         _note("Details: `maps show <cid>`. Directions: `maps directions --to <cid>`. Tighten: --min-rating/--category/--sort.")
@@ -103,22 +100,22 @@ def _resolve(cid: int, locale: str, country: str) -> Stop:
 
 
 def _cmd_directions(args: argparse.Namespace) -> int:
+    if args.depart and args.arrive:
+        return _fail("use either --depart or --arrive, not both")
+    time_kind = "depart" if args.depart else "arrive" if args.arrive else None
+    if time_kind is not None and args.mode != "transit":
+        return _fail("--depart and --arrive apply to --mode transit")
     dest = _resolve(int(args.to), args.locale, args.country)
     origin = _resolve(int(args.from_cid), args.locale, args.country) if args.from_cid else None
     payload: dict[str, object] = {
         "directions_url": directions_url(dest, origin=origin, mode=args.mode),
         "mode": args.mode,
-        "note": "Opens Maps at the exact places (by place_id); omit --from to start from the phone.",
+        "note": "Opens Maps at the exact places; omit --from to start from the phone.",
     }
-    if args.depart and args.arrive:
-        return _fail("use either --depart or --arrive, not both")
-    time_kind = "depart" if args.depart else "arrive" if args.arrive else None
     when = args.depart or args.arrive
-    if time_kind is not None and args.mode != "transit":
-        return _fail("--depart and --arrive apply to --mode transit")
     if args.steps or time_kind is not None:
         if origin is None:
-            return _fail("--steps/--depart/--arrive need --from (with lat/lng in the place JSON)")
+            return _fail("--steps/--depart/--arrive need --from (an origin cid)")
         epoch = _next_epoch(when, args.tz) if when is not None else None
         leg = directions(
             (origin.lat, origin.lng),
@@ -185,10 +182,10 @@ def _cmd_itinerary(args: argparse.Namespace) -> int:
         country=args.country,
     )
     if args.json or args.json_pretty:
-        _emit_json(plan, args)
+        _emit_json(plan.to_json(), args)
     else:
         print(format_itinerary(plan))
-        _note("One route_url opens the whole day in Maps. open_at_slot is null until hours land.")
+        _note("One route_url opens the whole day in Maps.")
     return 0
 
 
@@ -294,7 +291,9 @@ def main() -> int:
         return _fail(f"maps schema drifted, recapture the pb template: {exc}")
     except BlockedError as exc:
         return _fail(f"temporarily blocked by Google, try later: {exc}")
-    except (ValueError, KeyError) as exc:
+    except httpx.HTTPError as exc:
+        return _fail(f"network error: {exc}")
+    except (ValueError, KeyError, TypeError) as exc:
         return _fail(str(exc))
 
 

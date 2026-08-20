@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 from .models import DirectionsLeg, Step
-from .pb import strip_envelope
+from .pb import json_strings, strip_envelope
 
 _DIR_TEMPLATE = Path(__file__).with_name("directions_pb.txt")
 _TRANSIT_TEMPLATE = Path(__file__).with_name("transit_pb.txt")
@@ -59,27 +59,13 @@ def build_pb(
     return template
 
 
-def _strings(node: object) -> list[str]:
-    out: list[str] = []
-
-    def walk(value: object) -> None:
-        if isinstance(value, str):
-            out.append(value)
-        elif isinstance(value, list):
-            for child in value:
-                walk(child)
-
-    walk(node)
-    return out
-
-
 def _clean(text: str) -> str:
     return re.sub(r"</?b>", "", text).strip()
 
 
 def parse_directions(raw_body: str, mode: str) -> DirectionsLeg:
     data = json.loads(strip_envelope(raw_body))
-    strings = _strings(data)
+    strings = json_strings(data)
     # The first duration/distance string is the recommended route's total.
     duration_text = next((s for s in strings if _DUR_TEXT_RE.match(s)), None)
     distance_text = next((s for s in strings if _DIST_TEXT_RE.match(s)), None)

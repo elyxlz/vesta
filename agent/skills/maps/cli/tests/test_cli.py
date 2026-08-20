@@ -45,3 +45,27 @@ def test_error_goes_to_stderr_nonzero():
     assert proc.stdout.strip() == ""
     err = json.loads(proc.stderr)
     assert "error" in err
+
+
+def test_route_non_object_stops_is_json_error():
+    proc = _run(["route", "--stops", "[1, 2]"])
+    assert proc.returncode != 0
+    assert proc.stdout.strip() == ""
+    err = json.loads(proc.stderr)
+    assert "error" in err
+
+
+def test_network_error_is_json_error(monkeypatch, capsys):
+    import httpx
+    from gmaps_cli import cli
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise httpx.ConnectError("dns down")
+
+    monkeypatch.setattr(cli, "search", boom)
+    monkeypatch.setattr(sys, "argv", ["maps", "search", "coffee"])
+    assert cli.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ""
+    err = json.loads(captured.err)
+    assert "network error" in err["error"]

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .links import Stop, directions_url, place_url
 from .models import Links, PlaceDetail
-from .pb import strip_envelope
+from .pb import is_web_url, json_strings, strip_envelope
 
 _TEMPLATE_PATH = Path(__file__).with_name("place_pb.txt")
 _REVERSE_TEMPLATE_PATH = Path(__file__).with_name("reverse_pb.txt")
@@ -48,20 +48,6 @@ def parse_reverse(raw_body: str) -> str | None:
         if s.count(", ") >= 1 and re.search(r"[A-Za-z]{4}", s) and not s.startswith(("0x", "http", "gcid", "/g/"))
     ]
     return max(candidates, key=len) if candidates else None
-
-
-def _strings(node: object) -> list[str]:
-    out: list[str] = []
-
-    def walk(value: object) -> None:
-        if isinstance(value, str):
-            out.append(value)
-        elif isinstance(value, list):
-            for child in value:
-                walk(child)
-
-    walk(node)
-    return out
 
 
 def _floats(node: object) -> list[float]:
@@ -111,12 +97,6 @@ def _str_at(node: object, *path: int) -> str | None:
     return current if isinstance(current, str) else None
 
 
-def _is_web(url: str) -> bool:
-    return url.startswith(("http://", "https://")) and not any(
-        host in url for host in ("google", "gstatic", "ggpht", "schema.org", "lh3", "lh4", "lh5")
-    )
-
-
 def _today_hours(strings: list[str]) -> str | None:
     for i, text in enumerate(strings):
         if text in _DAYS:
@@ -128,7 +108,7 @@ def _today_hours(strings: list[str]) -> str | None:
 def parse_place(raw_body: str, cid: int) -> PlaceDetail:
     clean = strip_envelope(raw_body)
     data = json.loads(clean)
-    strings = _strings(data)
+    strings = json_strings(data)
     # Name and address sit at pinned positions in the place-data section (data[6]).
     name = _str_at(data, 6, 11) or ""
     address = _str_at(data, 6, 39)
@@ -136,7 +116,7 @@ def parse_place(raw_body: str, cid: int) -> PlaceDetail:
     ftid_match = _FTID_RE.search(clean)
     ftid = ftid_match.group(0) if ftid_match is not None else None
     phone = next((s for s in strings if _PHONE_RE.match(s)), None)
-    website = next((s for s in strings if _is_web(s)), None)
+    website = next((s for s in strings if is_web_url(s)), None)
     photos = [s for s in strings if _PHOTO_RE.match(s)][:3]
     category = next((m.group(1).replace("_", " ") for m in (re.match(r"gcid:(\w+)", s) for s in strings) if m), None)
     rating = next((f for f in _floats(data) if 1.0 <= f <= 5.0), None)

@@ -11,6 +11,7 @@ import re
 
 from .links import Stop, cid_from_ftid, directions_url, place_url
 from .models import Links, Place
+from .pb import is_web_url, json_strings
 
 _FTID_RE = re.compile(r"^0x[0-9a-f]+:0x[0-9a-f]+$")
 _FTID_RE_ANY = re.compile(r"0x[0-9a-f]+:0x[0-9a-f]+")
@@ -28,20 +29,6 @@ def _is_coord_triple(node: list[object]) -> bool:
         and -_LNG_MAX <= node[1] <= _LNG_MAX
         and -_LAT_MAX <= node[2] <= _LAT_MAX
     )
-
-
-def _strings(node: object) -> list[str]:
-    out: list[str] = []
-
-    def walk(value: object) -> None:
-        if isinstance(value, str):
-            out.append(value)
-        elif isinstance(value, list):
-            for child in value:
-                walk(child)
-
-    walk(node)
-    return out
 
 
 def _first_coord(node: object) -> tuple[float, float] | None:
@@ -113,18 +100,12 @@ def _place_records(feed: object) -> list[list[object]]:
     return records
 
 
-def _is_web(url: str) -> bool:
-    return url.startswith(("http://", "https://")) and not any(
-        host in url for host in ("google", "gstatic", "ggpht", "schema.org", "lh3", "lh4", "lh5")
-    )
-
-
 def parse_search(feed: object) -> list[Place]:
     """Each place record is anchored on its ftid: name is the next string, categories follow."""
     places: list[Place] = []
     seen: set[str] = set()
     for record in _place_records(feed):
-        strings = _strings(record)
+        strings = json_strings(record)
         ftid_index = next((i for i, s in enumerate(strings) if _FTID_RE.match(s)), None)
         if ftid_index is None or ftid_index + 1 >= len(strings):
             continue
@@ -141,7 +122,7 @@ def parse_search(feed: object) -> list[Place]:
         category = strings[ftid_index + 2] if ftid_index + 2 < len(strings) else None
         if category is not None and (category == name or _ADDR_RE.match(category)):
             category = None
-        website = next((s for s in strings if _is_web(s)), None)
+        website = next((s for s in strings if is_web_url(s)), None)
         place_id = next((s for s in strings if _PLACE_ID_RE.match(s)), None)
         cid = cid_from_ftid(ftid)
         lat, lng = coord
