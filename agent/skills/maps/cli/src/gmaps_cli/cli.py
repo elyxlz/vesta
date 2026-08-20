@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 
-from .client import BlockedError, DriftError, SearchFilters, directions, itinerary, search, show
+from .client import BlockedError, DriftError, SearchFilters, directions, itinerary, reverse, search, show
 from .links import Stop, directions_url, route_url
 from .models import Place
 
@@ -142,6 +142,14 @@ def _cmd_geocode(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reverse(args: argparse.Namespace) -> int:
+    lat, lng = _coord(args.coords)
+    address = reverse(lat, lng, locale=args.locale, country=args.country)
+    note = "Google's label for the point: a street address near a building, else a Plus Code."
+    _emit({"lat": lat, "lng": lng, "address": address, "note": note})
+    return 0
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     places = search("coffee", near=None, filters=SearchFilters(limit=3), locale=args.locale, country=args.country)
     _emit({"status": "ok", "sample_results": len(places), "note": "search RPC responding"})
@@ -195,6 +203,10 @@ def _build_parser() -> argparse.ArgumentParser:
     g = sub.add_parser("geocode", help="address -> coords", parents=[locale])
     g.add_argument("address")
     g.set_defaults(func=_cmd_geocode)
+
+    rev = sub.add_parser("reverse", help="coords -> label", parents=[locale])
+    rev.add_argument("coords", help="lat,lng")
+    rev.set_defaults(func=_cmd_reverse)
 
     doc = sub.add_parser("doctor", help="drift canary / health check", parents=[locale])
     doc.set_defaults(func=_cmd_doctor)

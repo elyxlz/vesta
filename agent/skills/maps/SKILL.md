@@ -77,8 +77,12 @@ the plan and its `route_url` in the trip file (below).
 
 ```bash
 maps geocode "Piazza Porta Terra, Alghero"   # address -> coords + place_id
+maps reverse 41.9028,12.4964                  # coords -> Google's label for the point
 maps doctor                                   # health check: is the search RPC responding
 ```
+
+`reverse` returns a street address when the point is near a building, otherwise a Plus Code for
+open ground.
 
 ## Keep track of a plan in a trip file
 

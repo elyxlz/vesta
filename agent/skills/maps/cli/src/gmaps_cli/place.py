@@ -17,6 +17,10 @@ from .models import Links, PlaceDetail
 from .pb import strip_envelope
 
 _TEMPLATE_PATH = Path(__file__).with_name("place_pb.txt")
+_REVERSE_TEMPLATE_PATH = Path(__file__).with_name("reverse_pb.txt")
+# A reverse label is a street address ("Via Roma, 5, Rome, Italy") or a Plus Code
+# ("WF3W+4HC Rome, ...") for open ground; both have a comma and letters.
+_REVERSE_LABEL_RE = re.compile(r'"([^"\[\]{}:]{8,90})"')
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _PLACE_ID_RE = re.compile(r"^ChIJ[\w-]{10,}$")
 _PHONE_RE = re.compile(r"^\+[\d][\d ]{6,}$")
@@ -27,6 +31,22 @@ _PHOTO_RE = re.compile(r"^https://lh\d\.googleusercontent\.com/")
 def build_place_pb(cid: int) -> str:
     template = _TEMPLATE_PATH.read_text(encoding="utf-8").strip()
     return template.replace("{CID_HEX}", format(cid, "x"))
+
+
+def build_reverse_pb(lat: float, lng: float) -> str:
+    template = _REVERSE_TEMPLATE_PATH.read_text(encoding="utf-8").strip()
+    return template.replace("{COORDS}", f"{lat},{lng}")
+
+
+def parse_reverse(raw_body: str) -> str | None:
+    """The reverse-geocoded label for a coordinate: the longest street-address or Plus-Code string."""
+    clean = strip_envelope(raw_body)
+    candidates = [
+        s
+        for s in _REVERSE_LABEL_RE.findall(clean)
+        if s.count(", ") >= 1 and re.search(r"[A-Za-z]{4}", s) and not s.startswith(("0x", "http", "gcid", "/g/"))
+    ]
+    return max(candidates, key=len) if candidates else None
 
 
 def _strings(node: object) -> list[str]:

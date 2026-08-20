@@ -19,7 +19,7 @@ from .links import Stop, route_url
 from .models import DirectionsLeg, ItineraryStop, Place, PlaceDetail
 from .parse import parse_search
 from .pb import build_search_pb, extract_session_token, strip_envelope
-from .place import build_place_pb, parse_place
+from .place import build_place_pb, build_reverse_pb, parse_place, parse_reverse
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
 CONSENT_COOKIE = "CONSENT=YES+cb.20210328-17-p0.en+FX+678; SOCS=CAI"
@@ -98,6 +98,15 @@ def show(cid: int, *, locale: str, country: str) -> PlaceDetail:
     with _client(locale) as client:
         raw = _get(client, f"https://www.google.com/maps/preview/place?authuser=0&hl={lang}&gl={country}&pb={pb}")
     return parse_place(raw, cid)
+
+
+def reverse(lat: float, lng: float, *, locale: str, country: str) -> str | None:
+    lang = locale.split("-", maxsplit=1)[0]
+    pb = build_reverse_pb(lat, lng)
+    quoted = urllib.parse.quote(f"{lat},{lng}")
+    with _client(locale) as client:
+        raw = _get(client, f"https://www.google.com/maps/preview/place?authuser=0&hl={lang}&gl={country}&q={quoted}&pb={pb}")
+    return parse_reverse(raw)
 
 
 def directions(

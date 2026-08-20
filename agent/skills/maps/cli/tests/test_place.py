@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from gmaps_cli.place import build_place_pb, parse_place
+from gmaps_cli.place import build_place_pb, build_reverse_pb, parse_place, parse_reverse
 
 FIXTURES = Path(__file__).parent / "fixtures"
 OOPS_CID = 8865181299500082525
@@ -25,3 +25,16 @@ def test_parse_place_extracts_detail():
     assert place.lng is not None and 8.3 < place.lng < 8.35
     assert place.links is not None
     assert place.links.place_url == "https://maps.google.com/?cid=8865181299500082525"
+
+
+def test_build_reverse_pb_slots_coords():
+    pb = build_reverse_pb(41.9028, 12.4964)
+    assert "41.9028,12.4964" in pb
+    assert "{COORDS}" not in pb
+
+
+def test_parse_reverse_returns_label():
+    body = (FIXTURES / "reverse_rome.txt").read_text(encoding="utf-8")
+    label = parse_reverse(body)
+    assert label is not None
+    assert "Rome" in label

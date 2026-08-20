@@ -22,6 +22,7 @@ packages = ["src/gmaps_cli"]
 "src/gmaps_cli/search_pb.txt" = "gmaps_cli/search_pb.txt"
 "src/gmaps_cli/directions_pb.txt" = "gmaps_cli/directions_pb.txt"
 "src/gmaps_cli/place_pb.txt" = "gmaps_cli/place_pb.txt"
+"src/gmaps_cli/reverse_pb.txt" = "gmaps_cli/reverse_pb.txt"
 
 [build-system]
 requires = ["hatchling"]
