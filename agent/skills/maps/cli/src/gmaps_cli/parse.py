@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from .links import cid_from_ftid, directions_url, place_url
+from .links import Stop, cid_from_ftid, directions_url, place_url
 from .models import Links, Place
 
 _FTID_RE = re.compile(r"^0x[0-9a-f]+:0x[0-9a-f]+$")
@@ -157,7 +157,10 @@ def parse_search(feed: object) -> list[Place]:
                 rating=_first_rating(record),
                 category=category,
                 website=website,
-                links=Links(place_url=place_url(cid), directions_url=directions_url(name)),
+                links=Links(
+                    place_url=place_url(cid),
+                    directions_url=directions_url(Stop(name=name, lat=lat, lng=lng, place_id=place_id, ftid=ftid)),
+                ),
             )
         )
     return places

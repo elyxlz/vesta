@@ -77,11 +77,24 @@ def _cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def _place_arg(text: str) -> Stop:
+    obj = json.loads(text)
+    if not isinstance(obj, dict) or "name" not in obj:
+        raise ValueError('place must be JSON like {"name":..,"place_id":..,"ftid":..,"lat":..,"lng":..}')
+    lat = float(obj["lat"]) if "lat" in obj else 0.0
+    lng = float(obj["lng"]) if "lng" in obj else 0.0
+    place_id = str(obj["place_id"]) if "place_id" in obj else None
+    ftid = str(obj["ftid"]) if "ftid" in obj else None
+    return Stop(name=str(obj["name"]), lat=lat, lng=lng, place_id=place_id, ftid=ftid)
+
+
 def _cmd_directions(args: argparse.Namespace) -> int:
+    dest = _place_arg(args.to)
+    origin = _place_arg(args.from_place) if args.from_place else None
     payload: dict[str, object] = {
-        "directions_url": directions_url(args.to, origin_name=args.from_name, mode=args.mode),
+        "directions_url": directions_url(dest, origin=origin, mode=args.mode),
         "mode": args.mode,
-        "note": "Opens Maps with named places; omit --from to start from the phone's location.",
+        "note": "Opens Maps at the exact places (by place_id); omit --from to start from the phone.",
     }
     if args.depart and args.arrive:
         return _fail("use either --depart or --arrive, not both")
@@ -90,18 +103,22 @@ def _cmd_directions(args: argparse.Namespace) -> int:
     if time_kind is not None and args.mode != "transit":
         return _fail("--depart and --arrive apply to --mode transit")
     if args.steps or time_kind is not None:
-        if args.to_at is None or args.from_at is None:
-            return _fail("--steps/--depart/--arrive need --to-at and --from-at as lat,lng")
+        if origin is None:
+            return _fail("--steps/--depart/--arrive need --from (with lat/lng in the place JSON)")
         epoch = _next_epoch(when, args.tz) if when is not None else None
         leg = directions(
-            _coord(args.from_at), _coord(args.to_at), mode=args.mode, locale=args.locale, country=args.country, time_kind=time_kind, epoch=epoch
+            (origin.lat, origin.lng),
+            (dest.lat, dest.lng),
+            mode=args.mode,
+            locale=args.locale,
+            country=args.country,
+            time_kind=time_kind,
+            epoch=epoch,
         )
         payload["leg"] = leg.to_json()
         if time_kind is not None and epoch is not None:
-            if args.from_name is None:
-                return _fail("--depart/--arrive need --from as a place name for the link")
             payload[time_kind] = {"time": when, "tz": args.tz}
-            payload["directions_url"] = transit_time_url(args.to, args.from_name, kind=time_kind, epoch=epoch)
+            payload["directions_url"] = transit_time_url(dest, origin, kind=time_kind, epoch=epoch)
     _emit(payload)
     return 0
 
@@ -132,7 +149,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
 def _cmd_show(args: argparse.Namespace) -> int:
     detail = show(int(args.cid), locale=args.locale, country=args.country)
     payload = detail.to_json()
-    payload["note"] = "Directions: `maps directions <lat>,<lng> --steps`. Route: `maps route`."
+    payload["note"] = "Directions: `maps directions --to '<this place json>'`. Route: `maps route`."
     _emit(payload)
     return 0
 
@@ -205,12 +222,10 @@ def _build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=_cmd_search)
 
     d = sub.add_parser("directions", help="build a directions deep link", parents=[locale])
-    d.add_argument("to", help="destination place name (the link shows this named place)")
-    d.add_argument("--from", dest="from_name", help="origin place name (default: live location)")
-    d.add_argument("--to-at", dest="to_at", help="destination lat,lng (for --steps/--depart/--arrive)")
-    d.add_argument("--from-at", dest="from_at", help="origin lat,lng (for --steps/--depart/--arrive)")
+    d.add_argument("--to", required=True, help="destination place as JSON {name, place_id?, ftid?, lat?, lng?} from search")
+    d.add_argument("--from", dest="from_place", help="origin place as the same JSON (default: live location)")
     d.add_argument("--mode", default="driving", choices=("driving", "transit", "walking", "bicycling"))
-    d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps")
+    d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps (needs --from with lat/lng)")
     d.add_argument("--depart", help="transit: depart at HH:MM")
     d.add_argument("--arrive", help="transit: arrive by HH:MM")
     d.add_argument("--tz", default="UTC", help="IANA timezone for --depart/--arrive (e.g. Europe/Rome)")

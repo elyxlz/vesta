@@ -12,7 +12,7 @@ import json
 import re
 from pathlib import Path
 
-from .links import directions_url, place_url
+from .links import Stop, directions_url, place_url
 from .models import Links, PlaceDetail
 from .pb import strip_envelope
 
@@ -153,6 +153,6 @@ def parse_place(raw_body: str, cid: int) -> PlaceDetail:
         photos=photos,
         links=Links(
             place_url=place_url(cid),
-            directions_url=directions_url(name) if name else place_url(cid),
+            directions_url=(directions_url(Stop(name=name, lat=lat or 0.0, lng=lng or 0.0, place_id=place_id)) if name else place_url(cid)),
         ),
     )

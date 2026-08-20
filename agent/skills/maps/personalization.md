@@ -59,8 +59,8 @@ while an airport run is a car. Record it per route: home to work = transit; airp
 Set the mode you know they prefer:
 
 ```bash
-# preferences: home->work = transit
-maps directions <work lat,lng> --from <home lat,lng> --mode transit --steps
+# preferences: home->work = transit; home and work stored with their place objects
+maps directions --to '<work place json>' --from '<home place json>' --mode transit --steps
 ```
 
 The link sets the travel mode; it cannot force one specific line or road. So when the user

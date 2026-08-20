@@ -13,12 +13,13 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def test_directions_emits_named_link_json():
-    proc = _run(["directions", "Canary Wharf, London", "--mode", "walking"])
+    to = json.dumps({"name": "Canary Wharf, London", "place_id": "ChIJcanary", "lat": 51.5054, "lng": -0.0235})
+    proc = _run(["directions", "--to", to, "--mode", "walking"])
     assert proc.returncode == 0
     out = json.loads(proc.stdout)
     assert out["mode"] == "walking"
     assert "travelmode=walking" in out["directions_url"]
-    assert "Canary" in out["directions_url"]  # named destination, not coordinates
+    assert "destination_place_id=ChIJcanary" in out["directions_url"]  # exact place, not a pin
     assert "note" in out
 
 

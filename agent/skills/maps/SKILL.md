@@ -40,27 +40,27 @@ look like" about a place you already found.
 
 ## Directions
 
+First `search` for the place, pick the right result, then pass that whole result object (it
+carries `name`, `place_id`, `ftid`, `lat`, `lng`) to `--to`. The link is addressed by
+`place_id`, so it opens the exact place, never a dropped pin and never the wrong branch.
+
 ```bash
-maps directions "Gelateria oops!, Alghero" --mode walking     # link from live location
-maps directions "Canary Wharf, London" --from "King's Cross, London" \
-  --to-at 51.5054,-0.0235 --from-at 51.5308,-0.1238 --mode transit --steps
+maps directions --to '{"name":"Canary Wharf, London","place_id":"ChIJ...","ftid":"0x..:0x..","lat":51.5054,"lng":-0.0235}'
 ```
 
-The destination and `--from` are place NAMES, so the link opens named places, never dropped
-pins. `--mode` is `driving`, `transit`, `walking`, or `bicycling`. Omit `--from` so the phone
-uses the user's current location. Add `--steps` to also fetch the trip (duration, distance,
-turn-by-turn steps); `--steps` needs `--to-at` and `--from-at` as `lat,lng` (the coordinates
-from a prior `search`, used to measure the route). Tell the user the duration; send the
-`directions_url`.
+`--mode` is `driving`, `transit`, `walking`, or `bicycling`. Omit `--from` so the phone uses the
+user's current location; pass `--from` as the same place JSON to fix the start. Add `--steps`
+(with `--from`) to also fetch the trip: duration, distance, and turn-by-turn steps. Tell the user
+the duration; send the `directions_url`.
 
-For transit, `--depart HH:MM` or `--arrive HH:MM` (with `--from`, `--to-at`, `--from-at`, and
-`--tz`) fetch the route for that time, so the duration reflects the schedule, and the returned
-`directions_url` opens Maps with the time preset. Pass the user's timezone as `--tz` (e.g.
-`Europe/Rome`).
+For transit, `--depart HH:MM` or `--arrive HH:MM` (with `--from` and `--tz`) fetch the route for
+that time, so the duration reflects the schedule, and the returned `directions_url` opens Maps
+with the time preset. Pass the user's timezone as `--tz` (e.g. `Europe/Rome`).
 
 ```bash
-maps directions "Colosseum, Rome" --from "Roma Termini" \
-  --to-at 41.8902,12.4922 --from-at 41.9009,12.5029 --mode transit --arrive 09:00 --tz Europe/Rome
+maps directions --mode transit --arrive 09:00 --tz Europe/Rome \
+  --to '{"name":"Colosseum, Rome","place_id":"ChIJ...","ftid":"0x..:0x..","lat":41.8902,"lng":12.4922}' \
+  --from '{"name":"Roma Termini","place_id":"ChIJ...","ftid":"0x..:0x..","lat":41.9009,"lng":12.5029}'
 ```
 
 ## A multi-stop route

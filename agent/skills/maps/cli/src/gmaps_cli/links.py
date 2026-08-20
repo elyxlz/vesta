@@ -19,6 +19,7 @@ class Stop:
     lat: float
     lng: float
     place_id: str | None = None
+    ftid: str | None = None
 
 
 def cid_from_ftid(ftid: str) -> int:
@@ -33,13 +34,21 @@ def place_url(cid: int) -> str:
     return f"https://maps.google.com/?cid={cid}"
 
 
-def directions_url(dest_name: str, *, origin_name: str | None = None, mode: str = "driving") -> str:
-    """A directions link addressed by place name, so Maps shows named places, not dropped pins."""
+def directions_url(dest: Stop, *, origin: Stop | None = None, mode: str = "driving") -> str:
+    """A directions link addressed by place_id where available (exact), name otherwise.
+
+    The name is the display fallback; the place_id pins the exact place, so a shared name never
+    resolves to the wrong branch.
+    """
     if mode not in TRAVEL_MODES:
         raise ValueError(f"unknown travel mode: {mode!r}")
-    params: dict[str, str] = {"api": "1", "destination": dest_name, "travelmode": mode}
-    if origin_name is not None:
-        params["origin"] = origin_name
+    params: dict[str, str] = {"api": "1", "destination": dest.name, "travelmode": mode}
+    if dest.place_id is not None:
+        params["destination_place_id"] = dest.place_id
+    if origin is not None:
+        params["origin"] = origin.name
+        if origin.place_id is not None:
+            params["origin_place_id"] = origin.place_id
     return "https://www.google.com/maps/dir/?" + urllib.parse.urlencode(params)
 
 
@@ -68,14 +77,24 @@ def route_url(stops: list[Stop], *, mode: str = "driving") -> str:
     return "https://www.google.com/maps/dir/?" + urllib.parse.urlencode(params, safe="|")
 
 
-def transit_time_url(dest_name: str, origin_name: str, *, kind: str, epoch: int) -> str:
+def _exact_endpoint(stop: Stop) -> str:
+    """The data= block pinning one endpoint by ftid + coordinates."""
+    return f"!1m5!1m1!1s{stop.ftid}!2m2!1d{stop.lng}!2d{stop.lat}"
+
+
+def transit_time_url(dest: Stop, origin: Stop, *, kind: str, epoch: int) -> str:
     """A /maps/dir/ link opening transit directions with a depart-at or arrive-by time set.
 
-    Addressed by place name (so no dropped pins). The time rides the `data=` param as
-    `!8j<epoch>`; `6e0` = depart at, `6e1` = arrive by.
+    Pins each endpoint by ftid + coordinates when known (exact), else by name in the path (Maps
+    geocodes it). The time rides the `data=` param as `!8j<epoch>`; `6e0` = depart, `6e1` = arrive.
     """
     if kind not in ("depart", "arrive"):
         raise ValueError(f"kind must be 'depart' or 'arrive', got {kind!r}")
     when = "6e0" if kind == "depart" else "6e1"
-    origin_q, dest_q = urllib.parse.quote(origin_name), urllib.parse.quote(dest_name)
-    return f"https://www.google.com/maps/dir/{origin_q}/{dest_q}/data=!4m6!4m5!2m3!{when}!7e2!8j{epoch}!3e3"
+    origin_q, dest_q = urllib.parse.quote(origin.name), urllib.parse.quote(dest.name)
+    time_block = f"!2m3!{when}!7e2!8j{epoch}!3e3"
+    if origin.ftid is not None and dest.ftid is not None:
+        data = f"!4m18!4m17{_exact_endpoint(origin)}{_exact_endpoint(dest)}{time_block}"
+    else:
+        data = f"!4m6!4m5{time_block}"
+    return f"https://www.google.com/maps/dir/{origin_q}/{dest_q}/data={data}"
