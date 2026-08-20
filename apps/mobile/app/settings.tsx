@@ -25,10 +25,7 @@ import { OptionPicker } from "@/components/option-picker";
 import type { OptionPickerOption } from "@/components/option-picker.types";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
-import {
-  locationUndecided,
-  requestLocationSharing,
-} from "@/device-context/location-consent";
+import { requestLocationSharing } from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
   usePreferences,
@@ -129,9 +126,7 @@ export default function SettingsScreen() {
   });
   const gatewaySettings = useMutation({
     mutationFn: (
-      patch: Partial<
-        Pick<GatewaySettings, "auto_update" | "user_context" | "channel">
-      >,
+      patch: Partial<Pick<GatewaySettings, "auto_update" | "channel">>,
     ) => updateGatewaySettings(session.api, patch),
     onMutate: async (patch) => {
       await queryClient.cancelQueries({ queryKey: gatewayQueryKey });
@@ -211,21 +206,6 @@ export default function SettingsScreen() {
         return;
       }
       await preferences.update({ shareLocation: enabled });
-    } catch (error) {
-      showError(error, "Location sharing is unavailable");
-    }
-  };
-
-  // The gateway-wide switch, plus this phone's part: a phone that has never been asked about
-  // location is asked now and starts sharing when it agrees; a phone that already answered keeps
-  // its answer (its Privacy toggle is the place to change it).
-  const changeUserContext = async (enabled: boolean) => {
-    gatewaySettings.mutate({ user_context: enabled });
-    if (!enabled || preferences.shareLocation) return;
-    try {
-      if ((await locationUndecided()) && (await requestLocationSharing())) {
-        await preferences.update({ shareLocation: true });
-      }
     } catch (error) {
       showError(error, "Location sharing is unavailable");
     }
@@ -496,13 +476,6 @@ export default function SettingsScreen() {
                 }
               />
             ))}
-            <SwitchRow
-              label="Share device context"
-              detail="Tell your agents each device's timezone and, when a phone shares it, its location, so they follow your travel. Off stops the reports and forgets what was stored."
-              value={gateway.data?.settings.user_context ?? false}
-              disabled={gatewayControlsDisabled}
-              onValueChange={(value) => void changeUserContext(value)}
-            />
           </FormSection>
         ) : null}
 
