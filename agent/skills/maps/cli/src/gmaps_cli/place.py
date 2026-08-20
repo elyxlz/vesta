@@ -153,6 +153,6 @@ def parse_place(raw_body: str, cid: int) -> PlaceDetail:
         photos=photos,
         links=Links(
             place_url=place_url(cid),
-            directions_url=directions_url((lat, lng)) if lat is not None and lng is not None else place_url(cid),
+            directions_url=directions_url(name) if name else place_url(cid),
         ),
     )

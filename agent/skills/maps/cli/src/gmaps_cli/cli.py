@@ -78,12 +78,10 @@ def _cmd_search(args: argparse.Namespace) -> int:
 
 
 def _cmd_directions(args: argparse.Namespace) -> int:
-    dest = _coord(args.dest)
-    origin = _coord(args.origin) if args.origin else None
     payload: dict[str, object] = {
-        "directions_url": directions_url(dest, origin=origin, mode=args.mode),
+        "directions_url": directions_url(args.to, origin_name=args.from_name, mode=args.mode),
         "mode": args.mode,
-        "note": "Opens Maps with the route; origin omitted uses the phone's live location.",
+        "note": "Opens Maps with named places; omit --from to start from the phone's location.",
     }
     if args.depart and args.arrive:
         return _fail("use either --depart or --arrive, not both")
@@ -92,15 +90,18 @@ def _cmd_directions(args: argparse.Namespace) -> int:
     if time_kind is not None and args.mode != "transit":
         return _fail("--depart and --arrive apply to --mode transit")
     if args.steps or time_kind is not None:
-        if origin is None:
-            return _fail("directions --steps/--depart/--arrive need --from as lat,lng")
+        if args.to_at is None or args.from_at is None:
+            return _fail("--steps/--depart/--arrive need --to-at and --from-at as lat,lng")
         epoch = _next_epoch(when, args.tz) if when is not None else None
-        leg = directions(origin, dest, mode=args.mode, locale=args.locale, country=args.country, time_kind=time_kind, epoch=epoch)
+        leg = directions(
+            _coord(args.from_at), _coord(args.to_at), mode=args.mode, locale=args.locale, country=args.country, time_kind=time_kind, epoch=epoch
+        )
         payload["leg"] = leg.to_json()
         if time_kind is not None and epoch is not None:
+            if args.from_name is None:
+                return _fail("--depart/--arrive need --from as a place name for the link")
             payload[time_kind] = {"time": when, "tz": args.tz}
-            # The openable link carries the time; the api=1 link above cannot.
-            payload["directions_url"] = transit_time_url(dest, origin, kind=time_kind, epoch=epoch)
+            payload["directions_url"] = transit_time_url(args.to, args.from_name, kind=time_kind, epoch=epoch)
     _emit(payload)
     return 0
 
@@ -204,12 +205,14 @@ def _build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=_cmd_search)
 
     d = sub.add_parser("directions", help="build a directions deep link", parents=[locale])
-    d.add_argument("dest", help="destination as lat,lng")
-    d.add_argument("--from", dest="origin", help="origin as lat,lng (default: live location)")
+    d.add_argument("to", help="destination place name (the link shows this named place)")
+    d.add_argument("--from", dest="from_name", help="origin place name (default: live location)")
+    d.add_argument("--to-at", dest="to_at", help="destination lat,lng (for --steps/--depart/--arrive)")
+    d.add_argument("--from-at", dest="from_at", help="origin lat,lng (for --steps/--depart/--arrive)")
     d.add_argument("--mode", default="driving", choices=("driving", "transit", "walking", "bicycling"))
-    d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps (needs --from)")
-    d.add_argument("--depart", help="transit: depart at HH:MM (needs --from)")
-    d.add_argument("--arrive", help="transit: arrive by HH:MM (needs --from)")
+    d.add_argument("--steps", action="store_true", help="also fetch duration and turn-by-turn steps")
+    d.add_argument("--depart", help="transit: depart at HH:MM")
+    d.add_argument("--arrive", help="transit: arrive by HH:MM")
     d.add_argument("--tz", default="UTC", help="IANA timezone for --depart/--arrive (e.g. Europe/Rome)")
     d.set_defaults(func=_cmd_directions)
 

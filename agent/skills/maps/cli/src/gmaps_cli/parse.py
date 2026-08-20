@@ -157,7 +157,7 @@ def parse_search(feed: object) -> list[Place]:
                 rating=_first_rating(record),
                 category=category,
                 website=website,
-                links=Links(place_url=place_url(cid), directions_url=directions_url((lat, lng))),
+                links=Links(place_url=place_url(cid), directions_url=directions_url(name)),
             )
         )
     return places

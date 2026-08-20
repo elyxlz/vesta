@@ -33,21 +33,13 @@ def place_url(cid: int) -> str:
     return f"https://maps.google.com/?cid={cid}"
 
 
-def _latlng(lat: float, lng: float) -> str:
-    return f"{lat},{lng}"
-
-
-def directions_url(
-    dest: tuple[float, float],
-    *,
-    origin: tuple[float, float] | None = None,
-    mode: str = "driving",
-) -> str:
+def directions_url(dest_name: str, *, origin_name: str | None = None, mode: str = "driving") -> str:
+    """A directions link addressed by place name, so Maps shows named places, not dropped pins."""
     if mode not in TRAVEL_MODES:
         raise ValueError(f"unknown travel mode: {mode!r}")
-    params: dict[str, str] = {"api": "1", "destination": _latlng(*dest), "travelmode": mode}
-    if origin is not None:
-        params["origin"] = _latlng(*origin)
+    params: dict[str, str] = {"api": "1", "destination": dest_name, "travelmode": mode}
+    if origin_name is not None:
+        params["origin"] = origin_name
     return "https://www.google.com/maps/dir/?" + urllib.parse.urlencode(params)
 
 
@@ -76,13 +68,14 @@ def route_url(stops: list[Stop], *, mode: str = "driving") -> str:
     return "https://www.google.com/maps/dir/?" + urllib.parse.urlencode(params, safe="|")
 
 
-def transit_time_url(dest: tuple[float, float], origin: tuple[float, float], *, kind: str, epoch: int) -> str:
-    """A /maps/dir/ link that opens transit directions with a depart-at or arrive-by time set.
+def transit_time_url(dest_name: str, origin_name: str, *, kind: str, epoch: int) -> str:
+    """A /maps/dir/ link opening transit directions with a depart-at or arrive-by time set.
 
-    The time rides the `data=` param as `!8j<epoch>`; `6e0` = depart at, `6e1` = arrive by.
+    Addressed by place name (so no dropped pins). The time rides the `data=` param as
+    `!8j<epoch>`; `6e0` = depart at, `6e1` = arrive by.
     """
     if kind not in ("depart", "arrive"):
         raise ValueError(f"kind must be 'depart' or 'arrive', got {kind!r}")
     when = "6e0" if kind == "depart" else "6e1"
-    origin_str, dest_str = _latlng(*origin), _latlng(*dest)
-    return f"https://www.google.com/maps/dir/{origin_str}/{dest_str}/data=!4m6!4m5!2m3!{when}!7e2!8j{epoch}!3e3"
+    origin_q, dest_q = urllib.parse.quote(origin_name), urllib.parse.quote(dest_name)
+    return f"https://www.google.com/maps/dir/{origin_q}/{dest_q}/data=!4m6!4m5!2m3!{when}!7e2!8j{epoch}!3e3"

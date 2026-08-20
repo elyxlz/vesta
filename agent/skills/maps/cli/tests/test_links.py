@@ -16,17 +16,17 @@ def test_place_url():
     assert place_url(8865181299500082525) == "https://maps.google.com/?cid=8865181299500082525"
 
 
-def test_directions_url_no_origin():
-    url = directions_url((40.5748, 8.317), mode="walking")
+def test_directions_url_named_no_origin():
+    url = directions_url("Gelateria oops!", mode="walking")
     assert "api=1" in url
     assert "travelmode=walking" in url
-    assert "destination=40.5748%2C8.317" in url
+    assert "destination=Gelateria" in url  # named place, not coordinates
     assert "origin=" not in url
 
 
 def test_directions_url_rejects_bad_mode():
     try:
-        directions_url((1.0, 2.0), mode="teleport")
+        directions_url("somewhere", mode="teleport")
     except ValueError:
         return
     raise AssertionError("expected ValueError for bad mode")
@@ -45,11 +45,11 @@ def test_route_url_named_stops():
     assert "waypoint_place_ids=ChIJre" in url
 
 
-def test_transit_time_url_depart_and_arrive():
-    depart = transit_time_url((41.89, 12.49), (41.90, 12.50), kind="depart", epoch=1787299200)
-    assert "/maps/dir/41.9,12.5/41.89,12.49/data=" in depart
+def test_transit_time_url_named_depart_and_arrive():
+    depart = transit_time_url("Colosseum", "Roma Termini", kind="depart", epoch=1787299200)
+    assert "/maps/dir/Roma%20Termini/Colosseum/data=" in depart
     assert "!6e0!7e2!8j1787299200!3e3" in depart
-    arrive = transit_time_url((41.89, 12.49), (41.90, 12.50), kind="arrive", epoch=1787299200)
+    arrive = transit_time_url("Colosseum", "Roma Termini", kind="arrive", epoch=1787299200)
     assert "!6e1!7e2!8j1787299200!3e3" in arrive
 
 
