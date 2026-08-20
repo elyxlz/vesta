@@ -1,5 +1,6 @@
 import { render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { useShareLocation } from "@/stores/use-share-location";
 import type { Controller } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { PresenceReporter } from "./index";
@@ -33,15 +34,36 @@ describe("PresenceReporter", () => {
         <PresenceReporter />
       </ControllerContext.Provider>,
     );
-    // Sharing is off by default, so the report names the OS zone and retracts any stored position.
+    // Sharing is on by default; with no geolocation in this environment the report names the OS
+    // zone alone and the stored position stands.
     await waitFor(() => {
       expect(reports).toEqual([
-        {
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          position: null,
-        },
+        { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
       ]);
     });
+  });
+
+  it("retracts the position when this device's sharing is switched off", async () => {
+    const { controller, reports } = fakeController();
+    focus.value = true;
+    useShareLocation.setState({ enabled: false });
+    try {
+      render(
+        <ControllerContext.Provider value={controller}>
+          <PresenceReporter />
+        </ControllerContext.Provider>,
+      );
+      await waitFor(() => {
+        expect(reports).toEqual([
+          {
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            position: null,
+          },
+        ]);
+      });
+    } finally {
+      useShareLocation.setState({ enabled: true });
+    }
   });
 
   it("does not report a device context while blurred", () => {

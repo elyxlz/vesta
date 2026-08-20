@@ -34,10 +34,10 @@ function lastSeenLabel(lastSeen: string): string {
   return `last seen ${String(days)}d ago`;
 }
 
-// This device's opt-in to share its precise location. Turning it on makes this browser (or the
-// desktop app, through its OS location provider) read a geolocation fix; off reports only the
-// timezone and retracts the position the gateway stored for this device, so changing your mind
-// wipes it.
+// This device's location sharing switch, on by default: the presence reporter reads a geolocation
+// fix (in the desktop app through its OS location provider), and the OS permission prompt is the
+// real consent. Off reports only the timezone and retracts the position the gateway stored for
+// this device, so changing your mind wipes it.
 function LocationToggle() {
   const enabled = useShareLocation((s) => s.enabled);
   const setEnabled = useShareLocation((s) => s.setEnabled);
@@ -53,7 +53,8 @@ function LocationToggle() {
         </FieldLabel>
         <FieldDescription>
           let your agents see where this device is, from its precise location;
-          the system asks permission the first time
+          the system asks permission the first time, and switching off forgets
+          what this device shared
         </FieldDescription>
       </FieldContent>
       <Switch checked={enabled} onCheckedChange={setEnabled} />
