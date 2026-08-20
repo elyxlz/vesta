@@ -464,9 +464,7 @@ export async function fetchGatewaySettings(
 
 export async function updateGatewaySettings(
   api: ApiClient,
-  patch: Partial<
-    Pick<GatewaySettings, "auto_update" | "user_context" | "channel">
-  >,
+  patch: Partial<Pick<GatewaySettings, "auto_update" | "channel">>,
 ): Promise<GatewaySettings> {
   return api.json("/gateway/settings", api.jsonInit("PUT", patch));
 }

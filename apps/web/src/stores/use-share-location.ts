@@ -1,8 +1,8 @@
 import { create } from "zustand";
 
-// This device's opt-in to share its precise location (browser geolocation), separate from the
-// gateway-wide "share device context" switch: off by default, remembered per device. Turning it on
-// makes the presence reporter ask the browser for a fix, which raises the OS permission prompt.
+// This device's opt-in to share its precise location (browser geolocation): off by default,
+// remembered per device. Turning it on makes the presence reporter ask the browser for a fix,
+// which raises the OS permission prompt; turning it off retracts the stored position.
 const STORAGE_KEY = "vesta:share-location";
 
 interface ShareLocationState {

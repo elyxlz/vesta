@@ -8,7 +8,6 @@ const info: GatewayInfo = {
 };
 const settings: GatewaySettings = {
   auto_update: true,
-  user_context: true,
   channel: "stable",
   auto_backup: {
     enabled: true,
