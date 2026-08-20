@@ -26,8 +26,10 @@ exits 0 when all pass and 1 with the failing checks named otherwise.
 ## How it works
 
 The skill replays Google Maps' own public web endpoints over plain HTTP (no browser, no account,
-no API key). It reads the country and language from `--locale`/`--country`, so pass the user's
-own values for results and formatting that match where they are.
+no API key). The country defaults from the box's timezone (`TZ`, which the agent's configured
+timezone sets, mapped through tzdata's `zone.tab`), so results and formatting follow where the
+user lives with no flags; `--country` overrides it for a query about another country, and
+`--locale` sets the language.
 
 `search`, `show`, and `itinerary` print a human table by default and structured JSON with
 `--json` / `--json-pretty`; the other commands always print JSON.

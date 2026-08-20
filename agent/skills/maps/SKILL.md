@@ -9,9 +9,10 @@ Find places on Google Maps and hand the user a link that opens the exact place, 
 opens the whole trip. You refer to a place across commands by its `cid` (a durable Google id).
 
 `search`, `show`, and `itinerary` print a human table by default; add `--json` (or
-`--json-pretty`) to read a result programmatically. The other commands always print JSON. Set
-the user's locale and country so results and formatting match where they are:
-`maps --locale it-IT --country it search ...`.
+`--json-pretty`) to read a result programmatically. The other commands always print JSON.
+`--country` defaults from the box's timezone, so results and formatting already match where the
+user lives; pass it only for a query about another country. Set `--locale` when the user's
+language is not English: `maps --locale it-IT search ...`.
 
 ## Find places
 
