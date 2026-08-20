@@ -44,17 +44,19 @@ function handleAppProtocol(): void {
   });
 }
 
-function allowMicrophoneOnly(): void {
+// Microphone (voice) and geolocation (the "share this device's location" opt-in) are the only
+// permissions the renderer may request; everything else is denied.
+function allowRendererPermissions(): void {
   session.defaultSession.setPermissionRequestHandler(
     (_wc, permission, callback) => {
-      callback(permission === "media");
+      callback(permission === "media" || permission === "geolocation");
     },
   );
 }
 
 export function createMainWindow(): BrowserWindow {
   handleAppProtocol();
-  allowMicrophoneOnly();
+  allowRendererPermissions();
 
   const window = new BrowserWindow({
     title: "Vesta",

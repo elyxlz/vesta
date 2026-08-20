@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Controller } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
@@ -25,7 +25,7 @@ function fakeController() {
 }
 
 describe("PresenceReporter", () => {
-  it("reports the device timezone on a focus edge, read live", () => {
+  it("reports the device timezone on a focus edge, read live", async () => {
     const { controller, reports } = fakeController();
     focus.value = true;
     render(
@@ -33,9 +33,15 @@ describe("PresenceReporter", () => {
         <PresenceReporter />
       </ControllerContext.Provider>,
     );
-    expect(reports).toEqual([
-      { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    ]);
+    // Sharing is off by default, so the report names the OS zone and retracts any stored position.
+    await waitFor(() => {
+      expect(reports).toEqual([
+        {
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          position: null,
+        },
+      ]);
+    });
   });
 
   it("does not report a device context while blurred", () => {

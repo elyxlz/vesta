@@ -75,13 +75,13 @@ function lastSeenLabel(lastSeen: string): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
-// The device's reported place and zone, falling back to the gateway's IP-derived location.
+// The device's reported place (from its GPS position) and zone.
 function deviceContextLine(device: DeviceInfo): string | undefined {
   const place = device.position?.place;
   const placeLabel =
     place && (place.city ?? place.region)
       ? [place.city ?? place.region, place.country].filter(Boolean).join(", ")
-      : device.location;
+      : undefined;
   const parts = [placeLabel, device.timezone].filter(
     (part): part is string => typeof part === "string" && part.length > 0,
   );

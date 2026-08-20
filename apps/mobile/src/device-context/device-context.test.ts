@@ -55,6 +55,10 @@ const tokyo = {
   coords: { latitude: 35.6762, longitude: 139.6503, accuracy: 50 },
 };
 
+const sardinia = {
+  coords: { latitude: 39.2238, longitude: 9.1217, accuracy: 20 },
+};
+
 describe("toDevicePosition", () => {
   it("carries the fix and the macro place", () => {
     expect(
@@ -94,17 +98,14 @@ describe("readDeviceContext", () => {
     location.calls = [];
   });
 
-  it("retracts the position when location is not shared", async () => {
+  it("retracts the position and names the OS zone when location is not shared", async () => {
     await expect(
       readDeviceContext({ shareLocation: false, mode: "foreground" }),
-    ).resolves.toEqual({
-      timezone: "Asia/Tokyo",
-      position: null,
-    });
+    ).resolves.toEqual({ timezone: "Asia/Tokyo", position: null });
     expect(location.calls).toEqual([]);
   });
 
-  it("gives up on a fresh fix that never arrives and reports the zone alone", async () => {
+  it("falls back to the OS zone when a fresh fix never arrives", async () => {
     vi.useFakeTimers();
     try {
       location.pending = true;
@@ -136,7 +137,7 @@ describe("readDeviceContext", () => {
     expect(location.lastOptions).toEqual({ maxAge: LAST_KNOWN_FIX_MAX_AGE_MS });
   });
 
-  it("reports the zone alone when the permission read itself fails", async () => {
+  it("falls back to the OS zone when the permission read itself fails", async () => {
     location.permissionThrows = true;
     try {
       await expect(
@@ -165,19 +166,50 @@ describe("readDeviceContext", () => {
     expect(location.calls).toEqual(["last"]);
   });
 
-  it("reports the zone alone when location is not granted or no fix exists", async () => {
-    location.granted = false;
+  it("reports the zone the fix falls in, not the device's own (roaming)", async () => {
+    // The OS clock is pinned to Asia/Tokyo (a UK SIM would pin London), but the fix is in Sardinia.
+    location.current = sardinia;
+    location.geocoded = [
+      { city: "Cagliari", region: "Sardinia", country: "Italy" },
+    ];
     await expect(
       readDeviceContext({ shareLocation: true, mode: "foreground" }),
     ).resolves.toEqual({
-      timezone: "Asia/Tokyo",
+      timezone: "Europe/Rome",
+      position: {
+        latitude: 39.2238,
+        longitude: 9.1217,
+        accuracyM: 20,
+        place: { city: "Cagliari", region: "Sardinia", country: "Italy" },
+      },
     });
+  });
+
+  it("reports the zone the fix falls in even when the place cannot be geocoded (offline)", async () => {
+    location.current = sardinia;
+    location.geocoded = [];
+    await expect(
+      readDeviceContext({ shareLocation: true, mode: "foreground" }),
+    ).resolves.toEqual({
+      timezone: "Europe/Rome",
+      position: {
+        latitude: 39.2238,
+        longitude: 9.1217,
+        accuracyM: 20,
+        place: null,
+      },
+    });
+  });
+
+  it("falls back to the OS zone when location is not granted or no fix exists", async () => {
+    location.granted = false;
+    await expect(
+      readDeviceContext({ shareLocation: true, mode: "foreground" }),
+    ).resolves.toEqual({ timezone: "Asia/Tokyo" });
     location.granted = true;
     location.last = null;
     await expect(
       readDeviceContext({ shareLocation: true, mode: "background" }),
-    ).resolves.toEqual({
-      timezone: "Asia/Tokyo",
-    });
+    ).resolves.toEqual({ timezone: "Asia/Tokyo" });
   });
 });

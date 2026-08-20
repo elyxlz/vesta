@@ -292,7 +292,6 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         present: true,
         last_seen: "2026-01-01T00:00:00Z".into(),
         push_enabled: false,
-        location: Some("London, United Kingdom".into()),
         timezone: Some("Europe/London".into()),
         position: Some(crate::device_registry::DevicePosition {
             latitude: 51.5074,

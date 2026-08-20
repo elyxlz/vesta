@@ -122,7 +122,6 @@ describe("parseServerFrame", () => {
       present: true,
       lastSeen: "2026-01-01T00:00:00Z",
       pushEnabled: false,
-      location: "London, United Kingdom",
       timezone: "Europe/London",
       position: {
         latitude: 51.5074,
@@ -144,7 +143,6 @@ describe("parseServerFrame", () => {
       present: false,
       lastSeen: "2026-01-01T00:00:00Z",
       pushEnabled: true,
-      location: null,
       timezone: null,
       position: null,
       positionAt: null,
@@ -166,11 +164,10 @@ describe("parseServerFrame", () => {
       kind: "delta",
       delta: {
         type: "devices",
-        devices: [{ ...base, location: null, timezone: null, position: null, positionAt: null }],
+        devices: [{ ...base, timezone: null, position: null, positionAt: null }],
       },
     })
     for (const bad of [
-      { ...base, location: 42 },
       { ...base, timezone: 42 },
       { ...base, position: { latitude: "x", longitude: 1 } },
       { ...base, position: { latitude: 1, longitude: 1, place: { city: 3 } } },

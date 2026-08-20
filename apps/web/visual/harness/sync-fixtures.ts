@@ -12,7 +12,7 @@ import type {
 export const HELLO = {
   type: "hello",
   version: "0.1.0",
-  min_supported: "0.1.189",
+  min_supported: "0.2.5",
 } as const;
 
 export function baseTree(agents: Record<string, AgentNode> = {}): Tree {

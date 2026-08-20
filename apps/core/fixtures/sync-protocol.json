@@ -29,7 +29,6 @@
           "id": "device-1",
           "kind": "desktop",
           "lastSeen": "2026-01-01T00:00:00Z",
-          "location": "London, United Kingdom",
           "position": {
             "accuracyM": 50.0,
             "latitude": 51.5074,
@@ -104,7 +103,7 @@
     }
   },
   "hello": {
-    "min_supported": "0.1.189",
+    "min_supported": "0.2.5",
     "type": "hello",
     "version": "0.1.0"
   },
@@ -145,7 +144,6 @@
           "id": "device-1",
           "kind": "desktop",
           "lastSeen": "2026-01-01T00:00:00Z",
-          "location": "London, United Kingdom",
           "position": {
             "accuracyM": 50.0,
             "latitude": 51.5074,

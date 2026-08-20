@@ -1,5 +1,6 @@
 import { getCalendars } from "expo-localization";
 import * as Location from "expo-location";
+import tzlookup from "tz-lookup";
 import type { DeviceContext, DevicePlace, DevicePosition } from "@vesta/core";
 
 // What the phone reports about itself: its zone (always) and, with the user's opt-in, its position
@@ -23,8 +24,21 @@ interface Fix {
 }
 
 // Read live on every call: expo-localization asks the OS, so a zone change lands on the next report.
+// iOS keeps this zone correct from the network and location, so it is the fallback when no fix is in
+// hand, and it is never held above a fix, which is the more precise source.
 function deviceTimezone(): string | undefined {
   return getCalendars()[0]?.timeZone ?? undefined;
+}
+
+// The IANA zone the fix falls in, from an embedded offline boundary table: deterministic, network
+// free, and identical on both platforms, so the reported zone is the one the user stands in. `null`
+// only for coordinates the table rejects, which a real fix is not.
+function zoneAt(latitude: number, longitude: number): string | null {
+  try {
+    return tzlookup(latitude, longitude);
+  } catch {
+    return null;
+  }
 }
 
 // `geocoded` is the reverse-geocode row as expo-location hands it over, narrowed to the macro parts.
@@ -81,11 +95,18 @@ async function readFix(
   }).catch(() => null);
 }
 
-// The position, or undefined when the user has not granted location, no fix is available, or the
-// read fails: a report then carries the zone alone. Reverse geocoding is best-effort.
+// The position plus the IANA zone the fix falls in, or undefined when the user has not granted
+// location, no fix is available, or the read fails: a report then carries the device's own zone
+// alone. The zone comes from the coordinates, not the network geocoder, so it is always present with
+// a fix. Reverse geocoding is best-effort and only names the macro place.
+interface LocatedContext {
+  position: DevicePosition;
+  zone: string | null;
+}
+
 async function readDevicePosition(
   mode: PositionMode,
-): Promise<DevicePosition | undefined> {
+): Promise<LocatedContext | undefined> {
   const permission = await Location.getForegroundPermissionsAsync().catch(
     () => null,
   );
@@ -97,26 +118,33 @@ async function readDevicePosition(
     latitude,
     longitude,
   }).catch(() => []);
-  return toDevicePosition(
-    { latitude, longitude, accuracy },
-    geocoded[0] ?? null,
-  );
+  return {
+    position: toDevicePosition(
+      { latitude, longitude, accuracy },
+      geocoded[0] ?? null,
+    ),
+    zone: zoneAt(latitude, longitude),
+  };
 }
 
-// With sharing off the report carries `position: null`, which retracts the position the gateway
-// holds for this device; with sharing on but no fix, the field is absent and the stored one stands.
+// The zone the fix falls in wins over the device's own, which covers the rare case of an OS clock
+// that lags the user's travel; with no fix the OS zone is the fallback, so the phone always names a
+// zone. With sharing off the report carries `position: null`, which retracts the position the
+// gateway holds for this device, and names the OS zone alone.
 export async function readDeviceContext(input: {
   shareLocation: boolean;
   mode: PositionMode;
 }): Promise<DeviceContext> {
   const context: DeviceContext = {};
-  const timezone = deviceTimezone();
-  if (timezone !== undefined) context.timezone = timezone;
   if (!input.shareLocation) {
+    const timezone = deviceTimezone();
+    if (timezone !== undefined) context.timezone = timezone;
     context.position = null;
     return context;
   }
-  const position = await readDevicePosition(input.mode);
-  if (position !== undefined) context.position = position;
+  const located = await readDevicePosition(input.mode);
+  const timezone = located?.zone ?? deviceTimezone();
+  if (timezone !== undefined && timezone !== null) context.timezone = timezone;
+  if (located !== undefined) context.position = located.position;
   return context;
 }
