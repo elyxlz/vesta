@@ -176,8 +176,18 @@ function nativeInputTargets() {
   ];
 }
 
+// Gradle and Xcode write their outputs inside modules/*/android|ios, so a
+// build would churn the fingerprint of inputs that did not change.
+const NATIVE_OUTPUT_SEGMENTS = ["build", ".cxx", ".gradle", "DerivedData"];
+
+export function isNativeSource(file) {
+  return !file
+    .split(path.sep)
+    .some((segment) => NATIVE_OUTPUT_SEGMENTS.includes(segment));
+}
+
 export async function nativeInputFingerprint() {
-  return fingerprintPaths(nativeInputTargets());
+  return fingerprintPaths(nativeInputTargets(), isNativeSource);
 }
 
 // The JavaScript bundle's inputs: when their fingerprint matches the one recorded at the last
