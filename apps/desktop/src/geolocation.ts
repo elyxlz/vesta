@@ -120,7 +120,9 @@ const defaultSleep = (ms: number) =>
 
 // GetClient, identify, Start, poll the Location property until the daemon has a fix, read the
 // coordinates off the location object, Stop. GeoClue signals a fix rather than answering one, and
-// polling a property from a one-shot CLI is the whole event loop we need.
+// polling a property from a one-shot CLI is the whole event loop we need. Some distros authorize
+// clients through an agent or a .desktop allow-list a bare DesktopId does not satisfy; there Start
+// errors and this resolves null, so such a machine degrades to timezone-only.
 async function linuxFix(
   run: Run,
   sleep: (ms: number) => Promise<void> = defaultSleep,
