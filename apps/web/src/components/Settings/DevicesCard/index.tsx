@@ -94,8 +94,8 @@ function UserContextToggle() {
 }
 
 // This device's own opt-in to share its precise location, on top of the gateway-wide switch above.
-// Turning it on makes this browser (or the desktop app) ask for a geolocation fix, which the OS
-// prompts for; off reports only the timezone and retracts any stored position.
+// Turning it on makes this browser (or the desktop app, through its OS location provider) read a
+// geolocation fix; off reports only the timezone and retracts any stored position.
 function LocationToggle() {
   const enabled = useShareLocation((s) => s.enabled);
   const setEnabled = useShareLocation((s) => s.setEnabled);
@@ -111,7 +111,7 @@ function LocationToggle() {
         </FieldLabel>
         <FieldDescription>
           let your agents see where this device is, from its precise location;
-          your browser asks permission the first time
+          the system asks permission the first time
         </FieldDescription>
       </FieldContent>
       <Switch checked={enabled} onCheckedChange={setEnabled} />

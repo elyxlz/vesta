@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("vestaNative", {
       cb(url);
     }),
   oauthCancel: (port: number) => ipcRenderer.invoke("oauth:cancel", port),
+  readGeolocation: () => ipcRenderer.invoke("geolocation:read"),
   onWindowFocus: (cb: (focused: boolean) => void) =>
     subscribe("window-focus", (_event, focused: boolean) => {
       cb(focused);

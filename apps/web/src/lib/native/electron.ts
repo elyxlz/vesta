@@ -2,13 +2,34 @@
 // apps/desktop/src/preload.ts, keep the two declarations identical.
 import type { Platform } from "@/lib/platform";
 import { parseConnectionConfig } from "./parse-connection-config";
-import type { NativeBridge, VestaNativeApi } from "./types";
+import type {
+  NativeBridge,
+  NativeGeolocationFix,
+  VestaNativeApi,
+} from "./types";
 
 const NODE_PLATFORM_MAP: Record<string, Platform> = {
   darwin: "macos",
   win32: "windows",
   linux: "linux",
 };
+
+// Parse at the boundary: the preload answer is untyped IPC, so validate the shape here.
+export function parseNativeFix(value: unknown): NativeGeolocationFix | null {
+  if (typeof value !== "object" || value === null) return null;
+  const fix = value as Record<string, unknown>;
+  const { latitude, longitude, accuracyM } = fix;
+  if (typeof latitude !== "number" || !Number.isFinite(latitude)) return null;
+  if (typeof longitude !== "number" || !Number.isFinite(longitude)) return null;
+  return {
+    latitude,
+    longitude,
+    accuracyM:
+      typeof accuracyM === "number" && Number.isFinite(accuracyM)
+        ? accuracyM
+        : null,
+  };
+}
 
 export function createElectronBridge(api: VestaNativeApi): NativeBridge {
   const platform = NODE_PLATFORM_MAP[api.platform] ?? "linux";
@@ -35,6 +56,7 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
       onCallback: (cb) => api.onOauthCallback(cb),
       cancel: (port) => api.oauthCancel(port),
     },
+    readGeolocation: async () => parseNativeFix(await api.readGeolocation()),
     // macOS keeps its native traffic lights; only Windows draws custom controls.
     windowControls:
       platform === "windows"

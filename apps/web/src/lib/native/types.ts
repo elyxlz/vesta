@@ -17,6 +17,14 @@ export interface OauthLoopback {
   cancel(port: number): Promise<void>;
 }
 
+// A fix the desktop main process resolved through the OS location provider (WinRT on Windows,
+// GeoClue2 on Linux); macOS answers null and the renderer's own geolocation covers it.
+export interface NativeGeolocationFix {
+  latitude: number;
+  longitude: number;
+  accuracyM: number | null;
+}
+
 export interface WindowControls {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
@@ -39,6 +47,8 @@ export interface NativeBridge {
   oauthLoopback: OauthLoopback | null;
   /** Custom title-bar controls; null when the OS draws them (browser, macOS). */
   windowControls: WindowControls | null;
+  /** OS geolocation resolved by the desktop main process; null in the browser. */
+  readGeolocation: (() => Promise<NativeGeolocationFix | null>) | null;
 }
 
 /**
@@ -56,6 +66,7 @@ export interface VestaNativeApi {
   oauthStart(): Promise<number>;
   onOauthCallback(cb: (url: string) => void): () => void;
   oauthCancel(port: number): Promise<void>;
+  readGeolocation(): Promise<unknown>;
   onWindowFocus(cb: (focused: boolean) => void): () => void;
   windowMinimize(): Promise<void>;
   windowToggleMaximize(): Promise<void>;
