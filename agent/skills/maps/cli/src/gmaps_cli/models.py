@@ -59,6 +59,28 @@ class PlaceDetail:
 
 
 @dataclass
+class MapList:
+    id: str
+    name: str
+    kind: int
+    item_count: int | None
+    share_url: str | None
+
+    def to_json(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass
+class MapListItem:
+    name: str
+    cid: int
+    note: str | None
+
+    def to_json(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass
 class Step:
     instruction: str
     line: str | None = None
