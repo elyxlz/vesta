@@ -31,6 +31,12 @@ timezone sets, mapped through tzdata's `zone.tab`), so results and formatting fo
 user lives with no flags; `--country` overrides it for a query about another country, and
 `--locale` sets the language.
 
+The `maps lists` commands are the one exception: they read and manage the user's Google saved
+lists over the agent's signed-in browser, so they need the `browser` skill installed and its
+daemon running, plus a one-time Google sign-in through the browser handover (see SKILL.md,
+"Saved lists"). Every other command uses no browser and no account. Set `MAPS_BROWSER_BIN` to
+point at a different `browser` executable.
+
 `search`, `show`, and `itinerary` print a human table by default and structured JSON with
 `--json` / `--json-pretty`; the other commands always print JSON.
 `search` and `show` record each place's identity (name, coordinates, ids) in a small cache at
