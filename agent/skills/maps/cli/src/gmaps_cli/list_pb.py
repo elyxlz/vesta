@@ -6,6 +6,8 @@ share a template. The `!7e81!28e2` block after a token marks a signed-in session
 
 from __future__ import annotations
 
+import urllib.parse
+
 
 def list_index_pb() -> str:
     return "!1e3"
@@ -22,3 +24,17 @@ def ftid_halves(ftid: str) -> tuple[int, int]:
     if len(parts) != 2:
         raise ValueError(f"malformed ftid: {ftid!r}")
     return (int(parts[0], 16), int(parts[1], 16))
+
+
+# Writes carry the page session token (`!1s...!7e81!28e2`) plus one server-issued consistency
+# token, which already arrives with its `:<ts>` suffix from the page pool.
+def create_pb(name: str, token: str, consistency: str) -> str:
+    return f"!3s{urllib.parse.quote(name)}!5m3!1s{token}!7e81!28e2!9s{consistency}"
+
+
+def rename_pb(list_id: str, name: str, token: str, consistency: str) -> str:
+    return f"!1m4!1s{list_id}!2e1!3m1!1e1!2s{urllib.parse.quote(name)}!4m3!1s{token}!7e81!28e2!6s{consistency}"
+
+
+def delete_pb(list_id: str, token: str, consistency: str) -> str:
+    return f"!1m4!1s{list_id}!2e1!3m1!1e1!2m3!1s{token}!7e81!28e2!3s{consistency}"

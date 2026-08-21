@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from . import browser_bridge, cache, lists
-from .browser_bridge import BrowserUnavailableError, SignedOutError
+from .browser_bridge import BrowserUnavailableError, SignedOutError, WriteRejectedError
 from .client import DOCTOR_ANCHOR_NAME, BlockedError, DriftError, SearchFilters, directions, doctor, itinerary, reverse, search, show
 from .format import format_itinerary, format_list_items, format_lists, format_place_detail, format_search_table
 from .links import Stop, directions_url, route_url, transit_time_url
@@ -235,6 +235,24 @@ def _cmd_lists_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lists_create(args: argparse.Namespace) -> int:
+    new_id = lists.create(args.name)
+    _emit({"id": new_id, "name": args.name, "note": f"Add places: `maps lists add {new_id} <cid>`."})
+    return 0
+
+
+def _cmd_lists_rename(args: argparse.Namespace) -> int:
+    lists.rename(args.id, args.name)
+    _emit({"ok": True, "id": args.id, "name": args.name})
+    return 0
+
+
+def _cmd_lists_delete(args: argparse.Namespace) -> int:
+    lists.delete(args.id)
+    _emit({"ok": True, "id": args.id})
+    return 0
+
+
 def _cmd_lists_auth(args: argparse.Namespace) -> int:
     signed_in = browser_bridge.is_signed_in()
     note = "signed in" if signed_in else "sign in once via the browser skill handover, then re-run"
@@ -321,6 +339,19 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_json_flags(ls_show)
     ls_show.set_defaults(func=_cmd_lists_show)
 
+    ls_create = lst_sub.add_parser("create", help="create a new list")
+    ls_create.add_argument("name")
+    ls_create.set_defaults(func=_cmd_lists_create)
+
+    ls_rename = lst_sub.add_parser("rename", help="rename a list")
+    ls_rename.add_argument("id")
+    ls_rename.add_argument("name")
+    ls_rename.set_defaults(func=_cmd_lists_rename)
+
+    ls_delete = lst_sub.add_parser("delete", help="delete a list")
+    ls_delete.add_argument("id")
+    ls_delete.set_defaults(func=_cmd_lists_delete)
+
     ls_auth = lst_sub.add_parser("auth", help="Google sign-in status for list commands")
     ls_auth.set_defaults(func=_cmd_lists_auth)
     return parser
@@ -352,6 +383,8 @@ def main() -> int:
         return 1
     except BrowserUnavailableError as exc:
         return _fail(f"browser not available (start the browser daemon): {exc}")
+    except WriteRejectedError as exc:
+        return _fail(f"the list write was rejected, the maps pb may have drifted: {exc}")
     except httpx.HTTPError as exc:
         return _fail(f"network error: {exc}")
     except (ValueError, KeyError, TypeError) as exc:

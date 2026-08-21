@@ -32,6 +32,28 @@ def test_get_list_parses_items(monkeypatch):
     assert [(i.name, i.cid, i.note) for i in items] == [("Dishoom", 200, "great naan"), ("Padella", 400, None)]
 
 
+def test_create_returns_new_id(monkeypatch):
+    captured = {}
+
+    def fake_write(op, build_pb):
+        captured["op"] = op
+        captured["pb"] = build_pb("SESS", "AMAbHIx:1")
+        return [[["NEWID", 0, None, 1, 1], 0, None, None, "", ""]]
+
+    monkeypatch.setattr(browser_bridge, "entitylist_write", fake_write)
+    assert lists.create("Dinner spots") == "NEWID"
+    assert captured["op"] == "create" and "Dinner%20spots" in captured["pb"]
+
+
+def test_rename_and_delete_target_the_list(monkeypatch):
+    calls = []
+    monkeypatch.setattr(browser_bridge, "entitylist_write", lambda op, build_pb: calls.append((op, build_pb("S", "C:1"))) or [["ok"]])
+    lists.rename("LID", "New")
+    lists.delete("LID")
+    assert calls[0][0] == "update" and "!1sLID" in calls[0][1] and "New" in calls[0][1]
+    assert calls[1][0] == "delete" and "!1sLID" in calls[1][1]
+
+
 def test_get_list_normalises_signed_cid_to_unsigned(monkeypatch):
     # getlist gives ftid halves as signed 64-bit decimals; a negative low half must fold to unsigned.
     signed_low = "-7008812868250662403"

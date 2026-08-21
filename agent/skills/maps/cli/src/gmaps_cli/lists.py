@@ -60,3 +60,19 @@ def get_list(list_id: str) -> list[MapListItem]:
     items_raw = entry[8] if len(entry) > 8 and isinstance(entry[8], list) else []
     items = [_parse_item(it) for it in items_raw]
     return [item for item in items if item is not None]
+
+
+def create(name: str) -> str:
+    raw = browser_bridge.entitylist_write("create", lambda token, consistency: list_pb.create_pb(name, token, consistency))
+    header = raw[0][0] if isinstance(raw, list) and raw and isinstance(raw[0], list) and raw[0] and isinstance(raw[0][0], list) else None
+    if header is None or not header or not isinstance(header[0], str):
+        raise ValueError("create returned no list id")
+    return header[0]
+
+
+def rename(list_id: str, name: str) -> None:
+    browser_bridge.entitylist_write("update", lambda token, consistency: list_pb.rename_pb(list_id, name, token, consistency))
+
+
+def delete(list_id: str) -> None:
+    browser_bridge.entitylist_write("delete", lambda token, consistency: list_pb.delete_pb(list_id, token, consistency))

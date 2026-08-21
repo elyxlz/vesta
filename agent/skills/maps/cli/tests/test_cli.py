@@ -77,10 +77,13 @@ import stat
 _SHIM_SIGNED_OUT = """#!/usr/bin/env python3
 import json, sys
 cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-if cmd == "evaluate":
-    sys.stdout.write(json.dumps({"signed_in": False, "status": 302, "body": ""}))
-else:
+js = sys.argv[2] if len(sys.argv) > 2 else ""
+if cmd != "evaluate":
     sys.stdout.write("{}")
+elif "maps/search/coffee" in js:
+    sys.stdout.write(json.dumps("<html>Sign in to continue</html>"))  # no token: writes read signed-out
+else:
+    sys.stdout.write(json.dumps({"signed_in": False, "status": 302, "body": ""}))
 """
 
 
@@ -105,3 +108,17 @@ def test_lists_signed_out_returns_sign_in_required(tmp_path, monkeypatch):
     err = json.loads(proc.stderr)
     assert err["error"] == "sign_in_required"
     assert "accounts.google.com" in err["url"]
+
+
+def test_write_verbs_require_sign_in(tmp_path, monkeypatch):
+    _install_browser_shim(tmp_path, _SHIM_SIGNED_OUT, monkeypatch)
+    for argv in (["lists", "create", "x"], ["lists", "rename", "x", "y"], ["lists", "delete", "x"]):
+        proc = subprocess.run(
+            [sys.executable, "-m", "gmaps_cli.cli", *argv],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ),
+            check=False,
+        )
+        assert proc.returncode != 0
+        assert json.loads(proc.stderr)["error"] == "sign_in_required"
