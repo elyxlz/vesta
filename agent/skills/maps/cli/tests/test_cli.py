@@ -69,3 +69,39 @@ def test_network_error_is_json_error(monkeypatch, capsys):
     assert captured.out.strip() == ""
     err = json.loads(captured.err)
     assert "network error" in err["error"]
+
+
+import os
+import stat
+
+_SHIM_SIGNED_OUT = """#!/usr/bin/env python3
+import json, sys
+cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+if cmd == "evaluate":
+    sys.stdout.write(json.dumps({"signed_in": False, "status": 302, "body": ""}))
+else:
+    sys.stdout.write("{}")
+"""
+
+
+def _install_browser_shim(tmp_path, body, monkeypatch):
+    shim = tmp_path / "browser"
+    shim.write_text(body)
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("MAPS_BROWSER_BIN", str(shim))
+
+
+def test_lists_signed_out_returns_sign_in_required(tmp_path, monkeypatch):
+    _install_browser_shim(tmp_path, _SHIM_SIGNED_OUT, monkeypatch)
+    proc = subprocess.run(
+        [sys.executable, "-m", "gmaps_cli.cli", "lists"],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert proc.stdout.strip() == ""
+    err = json.loads(proc.stderr)
+    assert err["error"] == "sign_in_required"
+    assert "accounts.google.com" in err["url"]

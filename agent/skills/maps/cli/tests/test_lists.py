@@ -30,3 +30,13 @@ def test_get_list_parses_items(monkeypatch):
     monkeypatch.setattr(browser_bridge, "entitylist_get", lambda op, pb: payload)
     items = lists.get_list("usr_rest")
     assert [(i.name, i.cid, i.note) for i in items] == [("Dishoom", 200, "great naan"), ("Padella", 400, None)]
+
+
+def test_get_list_normalises_signed_cid_to_unsigned(monkeypatch):
+    # getlist gives ftid halves as signed 64-bit decimals; a negative low half must fold to unsigned.
+    signed_low = "-7008812868250662403"
+    item = [None, [None, None, "addr", None, "a2", [None, None, 1.0, 2.0], ["100", signed_low], "/g/x"], "Hotel", "", None, None, None, [], [[1], ["100", signed_low]]]
+    monkeypatch.setattr(browser_bridge, "entitylist_get", lambda op, pb: [[["usr_rest", 1], 1, None, None, "R", "", None, None, [item]]])
+    items = lists.get_list("usr_rest")
+    assert items[0].cid == int(signed_low) % (2**64)
+    assert items[0].cid > 0

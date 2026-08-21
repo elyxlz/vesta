@@ -48,7 +48,10 @@ def _parse_item(raw_item: list[object]) -> MapListItem | None:
     if not isinstance(ftid_pair, list) or len(ftid_pair) < 2 or not isinstance(ftid_pair[1], str):
         return None
     note = raw_item[3] if len(raw_item) > 3 and isinstance(raw_item[3], str) and raw_item[3] else None
-    return MapListItem(name=name, cid=int(ftid_pair[1]), note=note)
+    # getlist gives the ftid halves as signed 64-bit decimals; the rest of the skill keys on the
+    # unsigned cid (int of the hex half), so normalise here or a shown cid never matches a search one.
+    cid = int(ftid_pair[1]) % (2**64)
+    return MapListItem(name=name, cid=cid, note=note)
 
 
 def get_list(list_id: str) -> list[MapListItem]:

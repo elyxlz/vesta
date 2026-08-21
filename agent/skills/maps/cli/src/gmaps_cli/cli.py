@@ -14,11 +14,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from . import cache
+from . import browser_bridge, cache, lists
+from .browser_bridge import BrowserUnavailableError, SignedOutError
 from .client import DOCTOR_ANCHOR_NAME, BlockedError, DriftError, SearchFilters, directions, doctor, itinerary, reverse, search, show
-from .format import format_itinerary, format_place_detail, format_search_table
+from .format import format_itinerary, format_list_items, format_lists, format_place_detail, format_search_table
 from .links import Stop, directions_url, route_url, transit_time_url
 from .region import default_country
+
+_GOOGLE_SIGNIN_URL = "https://accounts.google.com/ServiceLogin?continue=https://www.google.com/maps"
 
 
 def _emit(payload: dict[str, object]) -> None:
@@ -213,6 +216,32 @@ def _cmd_reverse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lists_all(args: argparse.Namespace) -> int:
+    map_lists = lists.list_all()
+    if args.json or args.json_pretty:
+        _emit_json([m.to_json() for m in map_lists], args)
+    else:
+        print(format_lists(map_lists))
+        _note("Places in a list: `maps lists show <id>`. Add a place: `maps lists add <id> <cid>`.")
+    return 0
+
+
+def _cmd_lists_show(args: argparse.Namespace) -> int:
+    items = lists.get_list(args.id)
+    if args.json or args.json_pretty:
+        _emit_json([item.to_json() for item in items], args)
+    else:
+        print(format_list_items(items))
+    return 0
+
+
+def _cmd_lists_auth(args: argparse.Namespace) -> int:
+    signed_in = browser_bridge.is_signed_in()
+    note = "signed in" if signed_in else "sign in once via the browser skill handover, then re-run"
+    _emit({"signed_in": signed_in, "url": None if signed_in else _GOOGLE_SIGNIN_URL, "note": note})
+    return 0
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     checks = doctor(locale=args.locale, country=args.country)
     ok = all(value == "ok" for value in checks.values())
@@ -281,6 +310,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
     doc = sub.add_parser("doctor", help="health check: one probe per RPC template", parents=[locale])
     doc.set_defaults(func=_cmd_doctor)
+
+    lst = sub.add_parser("lists", help="read and manage Google saved lists (needs sign-in)")
+    lst.set_defaults(func=_cmd_lists_all)  # `maps lists` with no verb lists everything
+    _add_json_flags(lst)
+    lst_sub = lst.add_subparsers(dest="lists_cmd")
+
+    ls_show = lst_sub.add_parser("show", help="places in one list")
+    ls_show.add_argument("id")
+    _add_json_flags(ls_show)
+    ls_show.set_defaults(func=_cmd_lists_show)
+
+    ls_auth = lst_sub.add_parser("auth", help="Google sign-in status for list commands")
+    ls_auth.set_defaults(func=_cmd_lists_auth)
     return parser
 
 
@@ -296,6 +338,20 @@ def main() -> int:
         return _fail(f"maps schema drifted, recapture the pb template: {exc}")
     except BlockedError as exc:
         return _fail(f"temporarily blocked by Google, try later: {exc}")
+    except SignedOutError:
+        json.dump(
+            {
+                "error": "sign_in_required",
+                "url": _GOOGLE_SIGNIN_URL,
+                "next": "not signed into Google; see 'Saved lists' sign-in in the maps skill, then re-run",
+            },
+            sys.stderr,
+            ensure_ascii=False,
+        )
+        sys.stderr.write("\n")
+        return 1
+    except BrowserUnavailableError as exc:
+        return _fail(f"browser not available (start the browser daemon): {exc}")
     except httpx.HTTPError as exc:
         return _fail(f"network error: {exc}")
     except (ValueError, KeyError, TypeError) as exc:

@@ -6,7 +6,7 @@ Each search row shows the `cid`, which is how the agent references a place in a 
 
 from __future__ import annotations
 
-from .models import Itinerary, Place, PlaceDetail
+from .models import Itinerary, MapList, MapListItem, Place, PlaceDetail
 
 
 def _clip(text: str | None, width: int) -> str:
@@ -40,6 +40,26 @@ def format_place_detail(place: PlaceDetail) -> str:
         f"  cid:{place.cid}",
     ]
     return "\n".join(line for line in lines if line)
+
+
+def format_lists(map_lists: list[MapList]) -> str:
+    if not map_lists:
+        return "(no lists)"
+    rows = []
+    for map_list in map_lists:
+        count = f"{map_list.item_count}" if map_list.item_count is not None else "-"
+        rows.append(f"{_clip(map_list.name, 34):<34} {count:>4}  id:{map_list.id}")
+    return "\n".join(rows)
+
+
+def format_list_items(items: list[MapListItem]) -> str:
+    if not items:
+        return "(empty list)"
+    rows = []
+    for i, item in enumerate(items, 1):
+        note = f"  {_clip(item.note, 30)}" if item.note else ""
+        rows.append(f"{i:2}. {_clip(item.name, 40):<40}  cid:{item.cid}{note}")
+    return "\n".join(rows)
 
 
 def format_itinerary(plan: Itinerary) -> str:
