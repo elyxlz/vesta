@@ -3,14 +3,20 @@ import stat
 from pathlib import Path
 
 import pytest
-
 from gmaps_cli import browser_bridge
 from gmaps_cli.browser_bridge import BrowserUnavailableError, SignedOutError, WriteRejectedError, _Envelope
+
+_READ_SHIM = (
+    "#!/usr/bin/env python3\n"
+    "import os, sys\n"
+    "cmd = sys.argv[1] if len(sys.argv) > 1 else ''\n"
+    "sys.stdout.write(os.environ['FAKE_EVAL_OUT'] if cmd == 'evaluate' else '{}')\n"
+)
 
 
 def _install_shim(tmp_path: Path, eval_out: str, monkeypatch) -> None:
     shim = tmp_path / "browser"
-    shim.write_text("#!/usr/bin/env python3\nimport os, sys\ncmd = sys.argv[1] if len(sys.argv) > 1 else ''\nsys.stdout.write(os.environ['FAKE_EVAL_OUT'] if cmd == 'evaluate' else '{}')\n")
+    shim.write_text(_READ_SHIM)
     shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("MAPS_BROWSER_BIN", str(shim))
     monkeypatch.setenv("FAKE_EVAL_OUT", eval_out)
@@ -43,7 +49,7 @@ def test_entitylist_write_tries_pool_until_accepted(monkeypatch):
     def fake_fetch(op: str, pb: str) -> _Envelope:
         tried.append(pb)
         status = 200 if "GOOD" in pb else 400
-        return _Envelope(signed_in=True, status=status, body=")]}'\n[[[\"NEWID\",1]]]")
+        return _Envelope(signed_in=True, status=status, body=')]}\'\n[[["NEWID",1]]]')
 
     monkeypatch.setattr(browser_bridge, "_fetch", fake_fetch)
     result = browser_bridge.entitylist_write("create", lambda session, consistency: f"!1s{session}!9s{consistency}")
@@ -71,6 +77,6 @@ def test_entitylist_write_signed_out_raises(monkeypatch):
 
 
 def test_consistency_pool_dedups_and_orders():
-    html = 'x AMAbHIaaa:1 y AMAbHIbbb:2 z AMAbHIaaa:1 w'
+    html = "x AMAbHIaaa:1 y AMAbHIbbb:2 z AMAbHIaaa:1 w"
     found = list(dict.fromkeys(browser_bridge._CONSISTENCY_RE.findall(html)))
     assert found == ["AMAbHIaaa:1", "AMAbHIbbb:2"]

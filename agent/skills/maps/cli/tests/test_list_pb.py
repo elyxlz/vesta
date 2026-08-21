@@ -1,5 +1,4 @@
 import pytest
-
 from gmaps_cli.list_pb import create_pb, delete_pb, ftid_halves, getlist_pb, list_index_pb, rename_pb
 
 

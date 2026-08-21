@@ -57,8 +57,10 @@ def test_rename_and_delete_target_the_list(monkeypatch):
 def test_get_list_normalises_signed_cid_to_unsigned(monkeypatch):
     # getlist gives ftid halves as signed 64-bit decimals; a negative low half must fold to unsigned.
     signed_low = "-7008812868250662403"
-    item = [None, [None, None, "addr", None, "a2", [None, None, 1.0, 2.0], ["100", signed_low], "/g/x"], "Hotel", "", None, None, None, [], [[1], ["100", signed_low]]]
-    monkeypatch.setattr(browser_bridge, "entitylist_get", lambda op, pb: [[["usr_rest", 1], 1, None, None, "R", "", None, None, [item]]])
+    place = [None, None, "addr", None, "a2", [None, None, 1.0, 2.0], ["100", signed_low], "/g/x"]
+    item = [None, place, "Hotel", "", None, None, None, [], [[1], ["100", signed_low]]]
+    entry = [["usr_rest", 1], 1, None, None, "R", "", None, None, [item]]
+    monkeypatch.setattr(browser_bridge, "entitylist_get", lambda op, pb: [entry])
     items = lists.get_list("usr_rest")
     assert items[0].cid == int(signed_low) % (2**64)
     assert items[0].cid > 0

@@ -253,7 +253,7 @@ def _cmd_lists_delete(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_lists_auth(args: argparse.Namespace) -> int:
+def _cmd_lists_auth(_args: argparse.Namespace) -> int:
     signed_in = browser_bridge.is_signed_in()
     note = "signed in" if signed_in else "sign in once via the browser skill handover, then re-run"
     _emit({"signed_in": signed_in, "url": None if signed_in else _GOOGLE_SIGNIN_URL, "note": note})
@@ -329,6 +329,11 @@ def _build_parser() -> argparse.ArgumentParser:
     doc = sub.add_parser("doctor", help="health check: one probe per RPC template", parents=[locale])
     doc.set_defaults(func=_cmd_doctor)
 
+    _add_lists_parser(sub)
+    return parser
+
+
+def _add_lists_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     lst = sub.add_parser("lists", help="read and manage Google saved lists (needs sign-in)")
     lst.set_defaults(func=_cmd_lists_all)  # `maps lists` with no verb lists everything
     _add_json_flags(lst)
@@ -354,7 +359,31 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ls_auth = lst_sub.add_parser("auth", help="Google sign-in status for list commands")
     ls_auth.set_defaults(func=_cmd_lists_auth)
-    return parser
+
+
+def _sign_in_required() -> int:
+    payload = {
+        "error": "sign_in_required",
+        "url": _GOOGLE_SIGNIN_URL,
+        "next": "not signed into Google; see 'Saved lists' sign-in in the maps skill, then re-run",
+    }
+    json.dump(payload, sys.stderr, ensure_ascii=False)
+    sys.stderr.write("\n")
+    return 1
+
+
+def _error_message(exc: Exception) -> str:
+    if isinstance(exc, DriftError):
+        return f"maps schema drifted, recapture the pb template: {exc}"
+    if isinstance(exc, BlockedError):
+        return f"temporarily blocked by Google, try later: {exc}"
+    if isinstance(exc, BrowserUnavailableError):
+        return f"browser not available (start the browser daemon): {exc}"
+    if isinstance(exc, WriteRejectedError):
+        return f"the list write was rejected, the maps pb may have drifted: {exc}"
+    if isinstance(exc, httpx.HTTPError):
+        return f"network error: {exc}"
+    return str(exc)
 
 
 def main() -> int:
@@ -365,30 +394,10 @@ def main() -> int:
     try:
         result: int = args.func(args)
         return result
-    except DriftError as exc:
-        return _fail(f"maps schema drifted, recapture the pb template: {exc}")
-    except BlockedError as exc:
-        return _fail(f"temporarily blocked by Google, try later: {exc}")
     except SignedOutError:
-        json.dump(
-            {
-                "error": "sign_in_required",
-                "url": _GOOGLE_SIGNIN_URL,
-                "next": "not signed into Google; see 'Saved lists' sign-in in the maps skill, then re-run",
-            },
-            sys.stderr,
-            ensure_ascii=False,
-        )
-        sys.stderr.write("\n")
-        return 1
-    except BrowserUnavailableError as exc:
-        return _fail(f"browser not available (start the browser daemon): {exc}")
-    except WriteRejectedError as exc:
-        return _fail(f"the list write was rejected, the maps pb may have drifted: {exc}")
-    except httpx.HTTPError as exc:
-        return _fail(f"network error: {exc}")
-    except (ValueError, KeyError, TypeError) as exc:
-        return _fail(str(exc))
+        return _sign_in_required()
+    except (DriftError, BlockedError, BrowserUnavailableError, WriteRejectedError, httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        return _fail(_error_message(exc))
 
 
 if __name__ == "__main__":
