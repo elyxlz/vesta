@@ -11,8 +11,9 @@ def list_index_pb() -> str:
     return "!1e3"
 
 
-def getlist_pb(list_id: str, token: str, limit: int = 500) -> str:
-    return f"!1m4!1s{list_id}!2e2!3m1!1e1!2e2!3e2!4i{limit}!6m3!1s{token}!7e81!28e2!8i3!16b1"
+def getlist_pb(list_id: str, limit: int = 500) -> str:
+    """Reads are cookie-authed, so the session-token slot (`!1s` before `!7e81`) stays empty."""
+    return f"!1m4!1s{list_id}!2e2!3m1!1e1!2e2!3e2!4i{limit}!6m3!1s!7e81!28e2!8i3!16b1"
 
 
 def ftid_halves(ftid: str) -> tuple[int, int]:

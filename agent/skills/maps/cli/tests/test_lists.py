@@ -23,3 +23,10 @@ def test_list_all_parses_index(monkeypatch):
     out = lists.list_all()
     assert [(m.id, m.name, m.kind) for m in out] == [("sys_fav", "Favorite places", 2), ("usr_rest", "Restaurants", 1)]
     assert out[1].share_url == "https://www.google.com/maps/placelists/list/usr_rest"
+
+
+def test_get_list_parses_items(monkeypatch):
+    payload = json.loads((_FIX / "entitylist_getlist.json").read_text())
+    monkeypatch.setattr(browser_bridge, "entitylist_get", lambda op, pb: payload)
+    items = lists.get_list("usr_rest")
+    assert [(i.name, i.cid, i.note) for i in items] == [("Dishoom", 200, "great naan"), ("Padella", 400, None)]
