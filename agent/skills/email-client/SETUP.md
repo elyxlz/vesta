@@ -160,7 +160,7 @@ Without this the daemon watches `INBOX` only. Note that `--all` includes folders
 
 ## 5. Register for restart
 
-Add this to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`. The poller only
+Register this for restart as `~/agent/skills/restart/SKILL.md` describes. The poller only
 connects out to IMAP and writes notification files, so it needs no inbound port: it is a
 daemon, not a vestad service.
 

@@ -23,7 +23,7 @@ The port is registered **private**, so vestad is the gate in front of it and the
 service-key mint moneypot --label "what it is for"     # prints the secret once; share the keyed link
 ```
 
-Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so the API comes back after a restart. It is the bare command, nothing around it, because start is idempotent:
+Register the startup line for restart as `~/agent/skills/restart/SKILL.md` describes, so the API comes back after a restart. It is the bare command, nothing around it, because start is idempotent:
 
 ```bash
 moneypot daemon start
