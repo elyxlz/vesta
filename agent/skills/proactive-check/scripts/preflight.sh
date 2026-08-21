@@ -39,7 +39,7 @@ band() {
     esac
     printf 'NOTE  overnight is one band stricter, except a due deep dive: its slot is the small hours, so the bump would leave it no slot at all.\n'
     printf 'NOTE  check resets_at before rationing, since deferring past a near reset costs nothing.\n'
-    printf 'NOTE  these windows are not the whole limit. A monthly spend cap refuses turns with no meter here, so a green band says the windows are fine, never that the next turn is allowed.\n'
+    printf 'NOTE  these windows are not the whole limit: a monthly spend cap refuses turns with no meter here, so a green band says the windows are fine, never that the next turn is allowed. But do not reach for that unmeterable cap to EXPLAIN a refusal until you have read the log, because a rejection names its own window and the weekly one is metered right above. Grep for a RUNTIME rate-limit rejection line. Watch the field: utilization is often None, so a pattern requiring digits matches nothing at all, and that empty result reads exactly like no limits.\n'
 }
 
 # --- Daemons -------------------------------------------------------------------------------------
