@@ -183,6 +183,22 @@ PATTERNS = [
     # events. The digit lookahead keeps camelCase docs URLs (/api/RTCPeerConnectionIceEvent) out.
     r"[?&](?:auth|sig|signature)=[A-Za-z0-9_\-]{16,}",
     r"/api/(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{25,}",
+    # ENV-VAR ASSIGNMENT, added 21 Aug 2026, and the first STRUCTURAL rule here rather than another
+    # vendor prefix. Every rule above needs a known prefix, and the header says so honestly: a clean
+    # scan means "no known-shape secret", never "no secret". A key with no vendor prefix is simply
+    # invisible.
+    #
+    # FOUND by breaking my own rule. Checking whether a Webshare subscription was mine, I ran a
+    # plain `grep -n webshare ~/.bashrc` and printed a live 40-character API key into my own output,
+    # which put it in the event store. I then claimed the nightly scrub would catch it by pattern.
+    # It would not have: the scanner reported 7,147 hits and ZERO of them were this key. Eight
+    # events had to be scrubbed by hand.
+    #
+    # A variable whose NAME ends in key/token/secret/password is the credential-holder's own label,
+    # so it needs no entropy guessing and no vendor list. This is the rule that would have caught it.
+    # Case-anchored for the reason AKIA is: under the outer IGNORECASE, [A-Z] matches lowercase, so
+    # `my_api_key = get_it()` in ordinary code read as a credential. Real env vars are uppercase.
+    r"(?-i:\b[A-Z][A-Z0-9_]*_(?:API_)?(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD))\s*=\s*[\"']?[A-Za-z0-9_\-\.]{16,}",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
