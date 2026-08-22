@@ -1,4 +1,4 @@
-"""Behavioral tests for upstream-pr/scripts/gate2b-check.sh.
+"""Behavioral tests for scripts/gate2b-check.sh.
 
 Every case is derived from a diff the gate exists to reject or to leave alone, never from reading
 the script's own patterns: a case built from the implementation can only confirm that the code
@@ -11,7 +11,7 @@ that works, until it has trained everyone to skim it.
 import pathlib as pl
 import subprocess
 
-SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "upstream-pr" / "scripts" / "gate2b-check.sh"
+SCRIPT = pl.Path(__file__).resolve().parents[2] / "scripts" / "gate2b-check.sh"
 
 
 def repo(tmp_path: pl.Path) -> pl.Path:
