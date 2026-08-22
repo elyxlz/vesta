@@ -207,6 +207,23 @@ def _sort_by_price(results: list[dict], max_results: int) -> list[dict]:
     return valid[:max_results] + errors
 
 
+def _itinerary_key(r: dict) -> tuple:
+    """Identity of an itinerary for dedupe: its ordered (flight number, departure) pairs."""
+    legs = r.get("legs") or (r.get("outbound", {}).get("legs", []) + r.get("return", {}).get("legs", []))
+    return tuple((leg.get("flight_number"), leg.get("departs")) for leg in legs)
+
+
+def _should_recover_nonstops(args, results: list[dict]) -> bool:
+    """Whether a follow-up stops=0 query is warranted for a one-way search that returned no nonstop.
+
+    Gated on one-way (``return_date is None``) because a round-trip result is a
+    ``{price_usd, outbound, return}`` dict with no top-level ``stops`` key, so ``r["stops"] == 0``
+    is never True for a round trip and the check would fire a wasted second query on every one.
+    Also skipped when the caller passed an explicit ``--stops`` other than the default.
+    """
+    return args.stops == DEFAULT_STOPS and args.return_date is None and bool(results) and not any(r.get("stops") == 0 for r in results)
+
+
 def cmd_search(args):
     """flights search — search specific date(s)."""
     origins = args.origin if isinstance(args.origin, list) else [args.origin]
@@ -223,6 +240,38 @@ def cmd_search(args):
             sort=args.sort,
             max_results=args.max_results,
         )
+
+        # The upstream result sets are disjoint, not nested: with no stops filter the default (ANY)
+        # query can return a full page of well-formed CONNECTING itineraries containing zero
+        # nonstops, while the identical query with stops=0 returns the direct flights immediately.
+        # The failure is invisible because the output looks rich, so it reads as "no direct flights"
+        # when several are bookable. So when no nonstop came back at all, fire the second question
+        # and union the two: cheap, and on a route that genuinely has none it just returns nothing.
+        if _should_recover_nonstops(args, results):
+            nonstop = _search_flights(
+                origin=origin.upper(),
+                destination=args.destination.upper(),
+                date=args.date,
+                return_date=args.return_date,
+                stops="0",
+                cabin=args.cabin,
+                sort=args.sort,
+                max_results=args.max_results,
+            )
+            seen = {_itinerary_key(r) for r in results}
+            recovered = [r for r in nonstop if "error" not in r and _itinerary_key(r) not in seen]
+            if recovered:
+                print(
+                    f"flights: the unrestricted search for {origin.upper()} to {args.destination.upper()} "
+                    f"returned no nonstop at all; a follow-up stops=0 query recovered "
+                    f"{len(recovered)} the first one omitted. Results below are the union of both.",
+                    file=sys.stderr,
+                )
+                # Merge AND re-sort by price. Appending the recovered nonstops raw would bury them at
+                # the end of a cheapest-first list, so a consumer that reads "best first" or truncates
+                # gets the connecting flights and misses the very nonstops this recovery surfaces.
+                results = _sort_by_price(results + recovered, args.max_results)
+
         for r in results:
             r["origin"] = origin.upper()
         all_results.extend(results)
