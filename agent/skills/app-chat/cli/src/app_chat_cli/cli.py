@@ -49,6 +49,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Bypass the bubble lint for genuine reference material (a brief, code block, or list they asked for)",
     )
+    send_p.add_argument(
+        "--burst",
+        action="store_true",
+        help="Bypass the burst lint. Real emergency only: a deadline, a cancellation, a broken service",
+    )
 
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
