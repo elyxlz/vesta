@@ -18,7 +18,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .pb import extract_session_token
+from .pb import extract_session_token, strip_envelope
 
 _MAPS_URL = "https://www.google.com/maps"
 _TOKEN_PAGE = "/maps/search/coffee?hl=en"
@@ -74,13 +74,6 @@ _HTML_JS = """(async () => {{
 }})()"""
 
 
-def _strip_xssi(body: str) -> str:
-    stripped = body.lstrip()
-    if stripped.startswith(")]}'"):
-        return stripped.split("\n", 1)[1]
-    return stripped
-
-
 def _parse_envelope(raw: str) -> _Envelope:
     """The in-page JS returns {signed_in, status, body}; `browser evaluate` JSON-encodes it."""
     data = json.loads(raw)
@@ -105,7 +98,7 @@ def entitylist_get(op: str, pb: str) -> object:
     envelope = _fetch(op, pb)
     if not envelope.signed_in:
         raise SignedOutError(f"not signed into Google (status {envelope.status})")
-    return json.loads(_strip_xssi(envelope.body))
+    return json.loads(strip_envelope(envelope.body))
 
 
 def _page_tokens() -> tuple[str, list[str]]:
@@ -134,13 +127,5 @@ def entitylist_write(op: str, build_pb: Callable[[str, str], str]) -> object:
         if not envelope.signed_in:
             raise SignedOutError(f"not signed into Google (status {envelope.status})")
         if envelope.status == 200:
-            return json.loads(_strip_xssi(envelope.body))
+            return json.loads(strip_envelope(envelope.body))
     raise WriteRejectedError(f"{op}: no consistency token accepted; the write pb may have drifted")
-
-
-def is_signed_in() -> bool:
-    try:
-        entitylist_get("list", "!1e3")
-    except SignedOutError:
-        return False
-    return True

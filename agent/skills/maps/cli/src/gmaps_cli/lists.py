@@ -6,22 +6,31 @@ positional response arrays into typed models. The unauthenticated maps commands 
 
 from __future__ import annotations
 
-from . import browser_bridge, cache, client, list_pb
+from . import browser_bridge, cache, client, list_pb, pb
+from .browser_bridge import SignedOutError
 from .models import MapList, MapListItem
 
 
+def _first_row(raw: object) -> list[object]:
+    """The first nested row of a `[[...]]` entitylist response, or `[]` when the shape is empty."""
+    return raw[0] if isinstance(raw, list) and raw and isinstance(raw[0], list) else []
+
+
 def _share_url(entry: list[object]) -> str | None:
-    for field in entry:
-        if isinstance(field, list):
-            for value in field:
-                if isinstance(value, str) and "placelists/list/" in value:
-                    return value
-    return None
+    return next((value for value in pb.json_strings(entry) if "placelists/list/" in value), None)
+
+
+def is_signed_in() -> bool:
+    try:
+        browser_bridge.entitylist_get("list", list_pb.list_index_pb())
+    except SignedOutError:
+        return False
+    return True
 
 
 def list_all() -> list[MapList]:
     raw = browser_bridge.entitylist_get("list", list_pb.list_index_pb())
-    top = raw[0] if isinstance(raw, list) and raw and isinstance(raw[0], list) else []
+    top = _first_row(raw)
     out: list[MapList] = []
     for entry in top:
         if not isinstance(entry, list) or not entry:
@@ -56,7 +65,7 @@ def _parse_item(raw_item: list[object]) -> MapListItem | None:
 
 def get_list(list_id: str) -> list[MapListItem]:
     raw = browser_bridge.entitylist_get("getlist", list_pb.getlist_pb(list_id))
-    entry = raw[0] if isinstance(raw, list) and raw and isinstance(raw[0], list) else []
+    entry = _first_row(raw)
     items_raw = entry[8] if len(entry) > 8 and isinstance(entry[8], list) else []
     items = [_parse_item(it) for it in items_raw]
     return [item for item in items if item is not None]
@@ -64,8 +73,8 @@ def get_list(list_id: str) -> list[MapListItem]:
 
 def create(name: str) -> str:
     raw = browser_bridge.entitylist_write("create", lambda token, consistency: list_pb.create_pb(name, token, consistency))
-    header = raw[0][0] if isinstance(raw, list) and raw and isinstance(raw[0], list) and raw[0] and isinstance(raw[0][0], list) else None
-    if header is None or not header or not isinstance(header[0], str):
+    header = _first_row(_first_row(raw))
+    if not header or not isinstance(header[0], str):
         raise ValueError("create returned no list id")
     return header[0]
 
@@ -90,11 +99,14 @@ def _place_identity(cid: int, *, locale: str, country: str) -> tuple[str, float,
     return detail.name, detail.lat, detail.lng, detail.ftid
 
 
-def add_item(list_id: str, cid: int, *, locale: str, country: str) -> None:
+def _item_write(list_id: str, cid: int, op: str, *, locale: str, country: str) -> None:
     name, lat, lng, ftid = _place_identity(cid, locale=locale, country=country)
-    browser_bridge.entitylist_write("createitem", lambda token, consistency: list_pb.item_pb(list_id, name, lat, lng, ftid, token, consistency))
+    browser_bridge.entitylist_write(op, lambda token, consistency: list_pb.item_pb(list_id, name, lat, lng, ftid, token, consistency))
+
+
+def add_item(list_id: str, cid: int, *, locale: str, country: str) -> None:
+    _item_write(list_id, cid, "createitem", locale=locale, country=country)
 
 
 def remove_item(list_id: str, cid: int, *, locale: str, country: str) -> None:
-    name, lat, lng, ftid = _place_identity(cid, locale=locale, country=country)
-    browser_bridge.entitylist_write("deleteitem", lambda token, consistency: list_pb.item_pb(list_id, name, lat, lng, ftid, token, consistency))
+    _item_write(list_id, cid, "deleteitem", locale=locale, country=country)

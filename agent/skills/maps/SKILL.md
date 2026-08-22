@@ -110,7 +110,7 @@ work through the agent's signed-in browser, not the public relay the other comma
 need the browser skill installed and its daemon running, and a one-time Google sign-in.
 
 ```bash
-maps lists                        # every list: name, item count, id
+maps lists                        # every list: name and id
 maps lists show <id>              # the places in one list, each with a cid
 maps lists create "Date spots"    # make a list, returns its id
 maps lists rename <id> "New name"

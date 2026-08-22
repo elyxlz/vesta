@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from . import browser_bridge, cache, lists
+from . import cache, lists
 from .browser_bridge import BrowserUnavailableError, SignedOutError, WriteRejectedError
 from .client import DOCTOR_ANCHOR_NAME, BlockedError, DriftError, SearchFilters, directions, doctor, itinerary, reverse, search, show
 from .format import format_itinerary, format_list_items, format_lists, format_place_detail, format_search_table
@@ -266,7 +266,7 @@ def _cmd_lists_remove(args: argparse.Namespace) -> int:
 
 
 def _cmd_lists_auth(_args: argparse.Namespace) -> int:
-    signed_in = browser_bridge.is_signed_in()
+    signed_in = lists.is_signed_in()
     note = "signed in" if signed_in else "sign in once via the browser skill handover, then re-run"
     _emit({"signed_in": signed_in, "url": None if signed_in else _GOOGLE_SIGNIN_URL, "note": note})
     return 0
