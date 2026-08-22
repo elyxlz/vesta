@@ -97,7 +97,9 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
     skill.unlink()
     (skill / "app/dist").mkdir(parents=True)
     (skill / "scripts").mkdir()
-    (skill / "scripts/serve").symlink_to(SKILLS_DIR / "dashboard/scripts/serve")
+    # Both launch scripts: start runs the wrapper, which runs `serve` through $HOME.
+    for script in ("serve", "serve-logged"):
+        (skill / "scripts" / script).symlink_to(SKILLS_DIR / "dashboard/scripts" / script)
     # The legacy forwarder execs the launcher through $HOME, so the tree carries it too.
     (skill / "dashboard").symlink_to(SKILLS_DIR / "dashboard/dashboard")
     vite = skill / "app/node_modules/.bin/vite"
