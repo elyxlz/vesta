@@ -163,26 +163,69 @@ def pr_commit_authors(token, number):
     return commits[0]["commit"]["author"]["name"], {c["commit"]["author"]["name"] for c in commits}
 
 
-def list_my_prs(token, agent_name, state, limit):
-    """Print the PRs this agent opened, and separately the ones it only pushed commits to."""
-    me = commit_author_name(agent_name)
-    query = f"state={quote(state)}&per_page={min(limit, 100)}&sort=created&direction=desc"
+SCAN_LIMIT = 300
+PAGE_SIZE = 100
+
+
+def _fetch_open_page(token, state, page):
+    query = f"state={quote(state)}&per_page={PAGE_SIZE}&sort=created&direction=desc&page={page}"
     code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?{query}")
     if code != 0:
         print(f"Error: gh api failed: {out}", file=sys.stderr)
         sys.exit(1)
-    candidates = json.loads(out)[:limit]
-    opened, touched, unreadable = [], [], []
-    for pr in candidates:
-        originator, authors = pr_commit_authors(token, pr["number"])
-        if originator == me:
-            opened.append((pr, originator))
-        elif me in authors:
-            touched.append((pr, originator))
-        elif originator is None:
-            unreadable.append(pr)
+    return json.loads(out)
 
-    print(f"Checked the {len(candidates)} most recent {state} PR(s) as {me}.")
+
+def _scan_for_mine(token, me, state, limit, scan_limit):
+    """Walk the repo's PRs newest first, classifying each by commit author, until one of three ends.
+
+    Returns (opened, touched, unreadable, examined, complete, stop_reason). `complete` is the field
+    the caller needs: it separates a total from a floor, and a floor printed as a total is an
+    under-report, which reads as "your blockers have cleared".
+    """
+    opened, touched, unreadable = [], [], []
+    examined, page = 0, 1
+    while True:
+        batch = _fetch_open_page(token, state, page)
+        if not batch:
+            return opened, touched, unreadable, examined, True, None
+        for pr in batch:
+            if examined >= scan_limit:
+                return opened, touched, unreadable, examined, False, f"scan cap of {scan_limit} PRs"
+            originator, authors = pr_commit_authors(token, pr["number"])
+            examined += 1
+            if originator == me:
+                opened.append((pr, originator))
+            elif me in authors:
+                touched.append((pr, originator))
+            elif originator is None:
+                unreadable.append(pr)
+            if len(opened) >= limit:
+                return opened, touched, unreadable, examined, False, f"--limit of {limit} of your own PRs"
+        if len(batch) < PAGE_SIZE:
+            return opened, touched, unreadable, examined, True, None
+        page += 1
+
+
+def list_my_prs(token, agent_name, state, limit, scan_limit=SCAN_LIMIT):
+    """Print the PRs this agent opened, and separately the ones it only pushed commits to.
+
+    Ownership cannot be filtered server-side: every agent files through one bot account, so the only
+    evidence of who wrote a PR is the commit author name inside it, at one API call per PR. Pay that
+    cost page by page and let `limit` bound the ANSWER, not the fetch, because a fetch truncated
+    before the ownership test drops an agent's older PRs and they read as gone: an under-report says
+    the blockers cleared, and invites a second PR on a file an open PR already touches. The scan
+    stays capped so a huge repo cannot cost thousands of calls, and the cap announces itself: the
+    header separates a COMPLETE count from a FLOOR.
+    """
+    me = commit_author_name(agent_name)
+    opened, touched, unreadable, examined, complete, stop_reason = _scan_for_mine(token, me, state, limit, scan_limit)
+
+    if complete:
+        print(f"Examined ALL {examined} {state} PR(s) in the repo as {me}, so the counts below are complete.")
+    else:
+        print(f"Examined {examined} {state} PR(s) as {me} and STOPPED at the {stop_reason}.")
+        print("  These counts are a FLOOR, not a total: re-run with a higher --limit/--scan-limit to be sure.")
     print(f"\nOpened by you ({len(opened)}):")
     for pr, _ in opened:
         print(f"  #{pr['number']}  {pr['title'][:72]}\n      {pr['html_url']}")
@@ -326,7 +369,7 @@ CREATE_UNSUPPORTED_HELP = (
     "supported create flags: --title --body --head --base --adopt (pr), --title --body (issue). "
     "Other gh create flags are not carried by the guarded create."
 )
-MINE_UNSUPPORTED_HELP = "supported flags with --mine: --state --limit."
+MINE_UNSUPPORTED_HELP = "supported flags with --mine: --state --limit --scan-limit."
 
 
 def _parse_intercepted(supported, rest, unsupported_help):
@@ -388,13 +431,16 @@ def pr_list_mine(rest):
         {
             "--mine": {"action": "store_true"},
             "--state": {"default": "open"},
+            # --limit bounds how many of YOUR OWN PRs come back; --scan-limit bounds how many PRs
+            # are examined to find them, which is where the API cost lives.
             "--limit": {"type": int, "default": 40},
+            "--scan-limit": {"type": int, "default": SCAN_LIMIT},
         },
         rest,
         MINE_UNSUPPORTED_HELP,
     )
     agent_name, _ = resolve_agent_identity()
-    list_my_prs(get_installation_token(), agent_name, args.state, args.limit)
+    list_my_prs(get_installation_token(), agent_name, args.state, args.limit, args.scan_limit)
 
 
 GH_VERB_ALIASES = {"new": "create", "ls": "list"}

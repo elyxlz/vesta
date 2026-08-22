@@ -31,9 +31,13 @@ Three calls are intercepted and carry extra behavior:
 - `upstream gh issue create --title T --body B`: validates the title, appends the same
   footer, creates the issue. The App cannot comment on or edit an issue after posting
   (403), so the body must be complete at create time.
-- `upstream gh pr list --mine [--state open|closed|all] [--limit N]`: the PRs this agent
-  wrote. Every PR here is authored by `vesta-upstream[bot]`, so ownership lives in commit
-  authors (`<agent-name> (vesta)`) and plain `gh pr list` cannot answer "which are mine".
+- `upstream gh pr list --mine [--state open|closed|all] [--limit N] [--scan-limit N]`:
+  the PRs this agent wrote. Every PR here is authored by `vesta-upstream[bot]`, so
+  ownership lives in commit authors (`<agent-name> (vesta)`) and plain `gh pr list` cannot
+  answer "which are mine". Reading that costs one API call per PR, so `--limit` caps how
+  many of yours come back and `--scan-limit` caps how many PRs are examined to find them.
+  The header says whether the scan was COMPLETE or stopped at a cap, in which case the
+  counts are a FLOOR: raise the caps before reading a low number as "nothing open".
   Run it before touching any branch you did not create this session; never take an
   author name you saw in a log as your own commit author.
 

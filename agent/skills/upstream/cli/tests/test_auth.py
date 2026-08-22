@@ -266,7 +266,10 @@ def test_mine_matches_the_full_author_name_never_a_prefix(monkeypatch, capsys):
     assert "you have commits on them" not in out
 
 
-def test_mine_respects_the_limit_and_surfaces_unreadable_prs(monkeypatch, capsys):
+def test_mine_surfaces_prs_whose_authors_cannot_be_read(monkeypatch, capsys):
+    """Unreadable ownership is reported as unknown, never quietly dropped. `--limit` bounds how many
+    of your own PRs come back, so it does not stop the scan while nothing has matched: all three are
+    examined here. The limit's own semantics are covered in test_list_my_prs.py."""
     prs = [{"number": n, "title": f"t{n}", "html_url": f"u{n}"} for n in (1, 2, 3)]
     checked = []
 
@@ -279,8 +282,8 @@ def test_mine_respects_the_limit_and_surfaces_unreadable_prs(monkeypatch, capsys
 
     cli.list_my_prs("tok", "vesta", "open", 2)
     out = capsys.readouterr().out
-    assert checked == [1, 2]
-    assert "Could not read commit authors for 2 PR(s)" in out
+    assert checked == [1, 2, 3]
+    assert "Could not read commit authors for 3 PR(s)" in out
 
 
 def test_mine_passes_the_requested_state_to_the_api(monkeypatch, capsys):
