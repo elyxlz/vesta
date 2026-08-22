@@ -20,7 +20,7 @@ Search under-reports through this token: the App's permission set filters `/sear
 results, so an empty search is a lower bound, never proof an issue does not exist; check a
 known number with `upstream gh issue view <n>`.
 
-Three calls are intercepted and carry extra behavior:
+Four calls are intercepted and carry extra behavior:
 
 - `upstream gh pr create --title T --body B [--head BR] [--base master] [--adopt]`:
   validates the title, refuses to force-push a branch whose commits are all another
@@ -28,6 +28,12 @@ Three calls are intercepted and carry extra behavior:
   attribution footer (`Submitted by **<agent>** on vesta v<version>`), then creates the
   PR, or force-pushes the branch of the existing one, whose title and body stay as first
   filed (edit those with `upstream gh pr edit`).
+- `upstream gh pr edit <n> [--title T] [--body B | --body-file F]`: rewrites a filed PR's
+  title and body through the REST endpoint, holds a new title to the title rule, keeps the
+  attribution footer on the rewritten body, then reads both fields back off GitHub and exits
+  non-zero unless they match what it sent, so a write that does not land can never report
+  success. Every other edit flag (`--add-label`, `--milestone`, `--add-reviewer`) is refused
+  rather than forwarded; reach those through `upstream gh api` yourself.
 - `upstream gh issue create --title T --body B`: validates the title, appends the same
   footer, creates the issue. The App cannot comment on or edit an issue after posting
   (403), so the body must be complete at create time.
