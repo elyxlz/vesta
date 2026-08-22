@@ -68,7 +68,10 @@ done
 # number and issue reference in a technical comment, so only international-format numbers count.
 grep -qE '\+[0-9]{9,15}' "$SRC" && report "phone" "international-format number"
 grep -qE '[0-9]{10,15}@(s\.whatsapp\.net|lid|c\.us)' "$SRC" && report "jid" "whatsapp jid"
-grep -qiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' "$SRC" && report "email" "email address"
+# Boilerplate senders are not the owner, and the hook excludes them, so the two must agree: a
+# noreply address in a quoted code block would otherwise fail the script and pass the hook.
+grep -oiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' "$SRC" 2>/dev/null |
+    grep -qivE '^(noreply|no-reply|example)' && report "email" "email address"
 grep -qE 'https?://[^ ]*(ashbyhq|hibob|survey|invite)[^ ]*' "$SRC" && report "link" "personal onboarding or survey link"
 
 if [ "$hits" -gt 0 ]; then

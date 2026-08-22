@@ -75,7 +75,7 @@ MAX_BODY_BYTES = 2_000_000
 
 
 def agent_dir():
-    return pathlib.Path(os.environ.get("AGENT_DIR") or "~/agent").expanduser()
+    return pathlib.Path(os.environ["AGENT_DIR"] if "AGENT_DIR" in os.environ else "~/agent").expanduser()
 
 
 def owner_names():
@@ -85,7 +85,7 @@ def owner_names():
     publish the very names it exists to keep private."""
     names = set()
     home = pathlib.Path.home()
-    env = os.environ.get("VESTA_OWNER", "")
+    env = os.environ["VESTA_OWNER"] if "VESTA_OWNER" in os.environ else ""
     if env:
         names.add(env)
     memory = agent_dir() / "MEMORY.md"
@@ -163,7 +163,7 @@ def heartbeat(payload):
     LOGIC and says nothing about whether anything invokes it, and a hand test that stamped the
     file would launder itself into evidence of live firing.
     """
-    if not (payload.get("session_id") or payload.get("hook_event_name") or payload.get("transcript_path")):
+    if not any(key in payload for key in ("session_id", "hook_event_name", "transcript_path")):
         return
     try:
         stamp = agent_dir() / "data" / "guard-publish.fired"
@@ -177,9 +177,10 @@ def publishing_command(payload):
     """The Bash command this call is about to run, when that command publishes to a public host.
 
     Empty for everything else, which is the common case and the one that must stay cheap."""
-    if payload.get("tool_name") != "Bash":
+    if ("tool_name" not in payload) or payload["tool_name"] != "Bash":
         return ""
-    command = (payload.get("tool_input") or {}).get("command") or ""
+    tool_input = payload["tool_input"] if "tool_input" in payload else {}
+    command = tool_input["command"] if "command" in tool_input else ""
     if not any(h in command for h in PUBLIC_HOSTS):
         return ""
     if not any(s in command for s in SENDING):
