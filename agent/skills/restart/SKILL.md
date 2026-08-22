@@ -30,6 +30,12 @@ whatsapp daemon start --instance personal --read-only
 file-host daemon start
 ```
 
+## A startup failure under heavy host load is usually a false negative: retry once before believing it
+
+A `daemon start` returns only once its daemon answers a health check on its port, within a bounded timeout. Under extreme host load (noisy-neighbour contention, load average in the tens) that timeout can lapse before a genuinely-fine daemon finishes booting, so `start-daemons.sh` prints `FAILED: never answered on port N` and exits 1 even though nothing is wrong.
+
+So when `start-daemons.sh` reports a subset failed AND host load is high (`uptime`), retry just the failed ones (`<skill> daemon start` each) before treating it as a real failure or reading logs for a root cause. Only if a retry ALSO fails is it a genuine fault worth diagnosing. The core messaging channels (whatsapp, tasks) usually win the race and come up on the first pass regardless, so a partial failure is rarely urgent.
+
 ## After restarting a MESSAGING daemon, go and look for what arrived while it was dead
 
 **Backfill is partial, so a restart is not the end of the recovery.** Verified case: a whatsapp
