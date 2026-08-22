@@ -9,8 +9,10 @@ import { radii } from "@/theme/layout";
 // Android form sheets live inside the app view hierarchy, where the
 // BlockingSheetGateView backdrop paints over them, so the blocking gates
 // present full screen instead: the same brand hero above a Material 3
-// bottom card holding the sheet content, behind a modal-bottom-sheet scrim.
-const SCRIM_COLOR = "rgba(0, 0, 0, 0.2)";
+// bottom card holding the sheet content, behind a scrim matching the
+// dimming UIKit paints under an iOS form sheet in each appearance.
+const SCRIM_COLOR_LIGHT = "rgba(0, 0, 0, 0.2)";
+const SCRIM_COLOR_DARK = "rgba(0, 0, 0, 0.45)";
 
 export function SheetGateScreen({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
@@ -33,7 +35,13 @@ export function SheetGateScreen({ children }: { children: ReactNode }) {
       <View style={[styles.hero, { paddingTop: insets.top }]}>
         <VestaBrand />
       </View>
-      <View pointerEvents="none" style={styles.scrim} />
+      <View
+        pointerEvents="none"
+        style={[
+          styles.scrim,
+          { backgroundColor: dark ? SCRIM_COLOR_DARK : SCRIM_COLOR_LIGHT },
+        ]}
+      />
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         {children}
       </View>
@@ -61,6 +69,5 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: SCRIM_COLOR,
   },
 });
