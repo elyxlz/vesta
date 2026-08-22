@@ -1,5 +1,11 @@
 """Repo convention guards: no lint/type-checker escape hatches, no oversized comment
-blocks, no import cycles. Run from the repo root: uv run python scripts/check-conventions.py"""
+blocks, no import cycles. Run from the repo root: uv run python scripts/check-conventions.py
+
+Optional path arguments narrow the file-scoped guards to those paths, for a pre-commit or
+pre-push caller that has a changed-file list and no reason to walk the repo. Import cycles are a
+property of a whole package, so they are always checked repo-wide and the output says so. A path
+that is not tracked is refused rather than skipped, because a typo that silently narrows the set
+to nothing reports zero violations and reads exactly like a clean run."""
 
 import ast
 import pathlib as pl
@@ -44,9 +50,13 @@ COMMENT_MARKERS = {
 CYCLE_CHECKED_PACKAGES = ["agent/core", "agent/core/cc_sdk"]
 
 
-def tracked_files() -> list[str]:
+def git_ls_files() -> list[str]:
     out = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=True)
-    return [line for line in out.stdout.splitlines() if not line.startswith(SKIP_PREFIXES)]
+    return out.stdout.splitlines()
+
+
+def tracked_files() -> list[str]:
+    return [line for line in git_ls_files() if not line.startswith(SKIP_PREFIXES)]
 
 
 def effective_suffix(path: pl.Path) -> str:
@@ -154,8 +164,35 @@ def check_import_cycles() -> list[str]:
     return errors
 
 
+def select_files(requested: list[str]) -> tuple[list[str], int]:
+    """The files to scan, and how many requested paths these guards deliberately skip.
+
+    Two rejections that look alike and must not behave alike. A path git does not track is a typo
+    or stale wiring, and narrowing to it would scan nothing, find nothing and exit 0, so it raises.
+    A path git tracks that SKIP_PREFIXES excludes is neither: a caller passing its changed-file list
+    will legitimately include one, so it is dropped and counted rather than failing the run.
+    """
+    tracked = tracked_files()
+    if not requested:
+        return tracked, 0
+    all_tracked = set(git_ls_files())
+    unknown = [path for path in requested if path not in all_tracked]
+    if unknown:
+        raise ValueError("not tracked by git: " + ", ".join(sorted(unknown)))
+    wanted = set(requested)
+    selected = [path for path in tracked if path in wanted]
+    return selected, len(wanted) - len(selected)
+
+
 def main() -> int:
-    files = tracked_files()
+    try:
+        files, skipped = select_files(sys.argv[1:])
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if sys.argv[1:]:
+        note = f", {skipped} excluded from these guards" if skipped else ""
+        print(f"scanning {len(files)} requested file(s){note}; import cycles are still checked repo-wide", file=sys.stderr)
     errors = check_escapes(files) + check_comment_blocks(files) + check_import_cycles()
     for error in errors:
         print(error, file=sys.stderr)

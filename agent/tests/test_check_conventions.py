@@ -113,3 +113,49 @@ def test_repo_is_currently_clean():
     repo_root = pl.Path(__file__).resolve().parents[2]
     assert check_conventions.check_import_cycles.__module__ == "check_conventions"
     assert (repo_root / "scripts" / "check-conventions.py").exists()
+
+
+def _fake_git_ls_files(paths):
+    """Stand in for `git ls-files` so tracked_files' own SKIP_PREFIXES filter is the thing under test."""
+
+    class _Completed:
+        stdout = "\n".join(paths) + "\n"
+
+    def _run(*_args, **_kwargs):
+        return _Completed()
+
+    return _run
+
+
+def test_no_arguments_selects_every_tracked_file(monkeypatch):
+    monkeypatch.setattr(check_conventions.subprocess, "run", _fake_git_ls_files(["a.py", "b.sh"]))
+    assert check_conventions.select_files([]) == (["a.py", "b.sh"], 0)
+
+
+def test_requested_paths_narrow_the_set(monkeypatch):
+    monkeypatch.setattr(check_conventions.subprocess, "run", _fake_git_ls_files(["a.py", "b.sh", "c.rs"]))
+    assert check_conventions.select_files(["c.rs", "a.py"]) == (["a.py", "c.rs"], 0)
+
+
+def test_an_untracked_path_is_refused_rather_than_skipped(monkeypatch):
+    monkeypatch.setattr(check_conventions.subprocess, "run", _fake_git_ls_files(["a.py"]))
+    try:
+        check_conventions.select_files(["typo.py"])
+    except ValueError as error:
+        assert "typo.py" in str(error)
+    else:
+        raise AssertionError("a path git does not track must refuse, not narrow the set to nothing")
+
+
+def test_a_tracked_but_excluded_path_is_dropped_and_counted_not_refused(monkeypatch):
+    """A skip-prefix path is dropped, not raised on, and the count of drops is reported.
+
+    Exercised through the real SKIP_PREFIXES filter: monkeypatching tracked_files to a short list
+    would reject a skipped path for being absent from that list, which re-tests the untracked case
+    and proves nothing about exclusion. A caller passing its own changed-file list will legitimately
+    include an excluded file, and failing its whole run for that would make the arguments unusable.
+    """
+    skipped = check_conventions.SKIP_PREFIXES[0]
+    monkeypatch.setattr(check_conventions.subprocess, "run", _fake_git_ls_files(["a.py", skipped]))
+    assert skipped not in check_conventions.tracked_files()
+    assert check_conventions.select_files([skipped, "a.py"]) == (["a.py"], 1)
