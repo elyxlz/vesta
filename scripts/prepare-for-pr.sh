@@ -119,6 +119,32 @@ else
   run_in agent "pytest"              uv run pytest tests/ --ignore=tests/test_e2e.py -q
 fi
 
+# ── conventions ───────────────────────────────────────────────
+# check.sh guards runs this in CI and this script did not, so a convention violation was one of the
+# insta-fails this script exists to catch and did not. Scoped to what the branch changed, which is
+# the question being asked here. With no base ref, or nothing changed against it, it runs repo-wide:
+# a narrowed set of zero files finds zero violations and would report a pass.
+section "conventions"
+if [ "${SKIP_AGENT:-0}" = "1" ]; then
+  skip "conventions"
+else
+  CONV_BASE=""
+  for ref in upstream/master origin/master master; do
+    if git rev-parse --verify --quiet "$ref" >/dev/null; then CONV_BASE="$ref"; break; fi
+  done
+  CONV_FILES=()
+  if [ -n "$CONV_BASE" ]; then
+    while IFS= read -r f; do
+      [ -n "$f" ] && [ -f "$f" ] && CONV_FILES+=("$f")
+    done < <({ git diff --name-only "$CONV_BASE...HEAD"; git diff --name-only HEAD; } | sort -u)
+  fi
+  if [ "${#CONV_FILES[@]}" -eq 0 ]; then
+    run_in . "check-conventions (repo-wide)" uv run --project agent/core python scripts/check-conventions.py
+  else
+    run_in . "check-conventions (${#CONV_FILES[@]} changed files)" uv run --project agent/core python scripts/check-conventions.py "${CONV_FILES[@]}"
+  fi
+fi
+
 # ── test-frontend ─────────────────────────────────────────────
 section "test-frontend"
 if [ "${SKIP_WEB:-0}" = "1" ]; then
