@@ -7,8 +7,8 @@ import subprocess
 SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "dream" / "scripts" / "reality_check.sh"
 
 
-def _run(home: pl.Path) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "HOME": str(home), "PATH": f"{home / 'bin'}:{os.environ['PATH']}"}
+def _run(home: pl.Path, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "HOME": str(home), "PATH": f"{home / 'bin'}:{os.environ['PATH']}", **env_overrides}
     return subprocess.run(["sh", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60, check=False)
 
 
@@ -28,6 +28,18 @@ def _fake_own_usage(home: pl.Path, megabytes: int) -> None:
     fake_du = home / "bin" / "du"
     fake_du.write_text(f'#!/bin/sh\necho "{megabytes} {home}"\necho "0 /tmp"\n')
     fake_du.chmod(0o755)
+
+
+def _fake_pressure(home: pl.Path, io_percent: int, cpu_percent: int = 0) -> dict[str, str]:
+    # The timed-out-walk branch reads the runner's real cgroup pressure files by default, whose
+    # avg60 varies with host load, so which branch fires would depend on how busy the box happens to
+    # be right now rather than on the test. Pinned via the same env-override knobs the script exposes
+    # for exactly this reason, the way df and du are pinned via PATH shims.
+    io_file = home / "io.pressure"
+    io_file.write_text(f"some avg10=0.00 avg60={io_percent}.00 avg300=0.00 total=0\n")
+    cpu_file = home / "cpu.pressure"
+    cpu_file.write_text(f"some avg10=0.00 avg60={cpu_percent}.00 avg300=0.00 total=0\n")
+    return {"IO_PRESSURE_FILE": str(io_file), "CPU_PRESSURE_FILE": str(cpu_file)}
 
 
 def _healthy_home(tmp_path: pl.Path) -> pl.Path:
@@ -124,16 +136,38 @@ def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
 
 def test_a_du_walk_that_never_finishes_goes_red(tmp_path):
     # The walk is bounded by `timeout`, so a pathological tree or a stuck filesystem cannot hang
-    # the dream; the shim stands in for the bound firing (exit 124) without waiting it out.
+    # the dream; the shim stands in for the bound firing (exit 124) without waiting it out. Pressure
+    # is pinned low so this exercises the local-fault branch regardless of how busy the runner is:
+    # left unpinned, this test takes the runner's real io.pressure and turns into the starved-host
+    # branch (a green OK) on any box whose avg60 happens to be at or above IO_STALL_PERCENT.
     home = _healthy_home(tmp_path)
     fake_timeout = home / "bin" / "timeout"
     fake_timeout.write_text("#!/bin/sh\nexit 124\n")
     fake_timeout.chmod(0o755)
+    pressure_env = _fake_pressure(home, io_percent=1)
 
-    run = _run(home)
+    run = _run(home, **pressure_env)
 
     assert run.returncode == 1, run.stdout + run.stderr
     assert "RED sizing" in run.stdout
+
+
+def test_a_du_walk_starved_by_the_host_stays_green(tmp_path):
+    # The other half of the same branch: high IO stall means the walk was starved externally, so
+    # this is a loud OK carrying its evidence rather than a RED, and must not be conflated with the
+    # local-fault case above just because both start from a timed-out walk.
+    home = _healthy_home(tmp_path)
+    fake_timeout = home / "bin" / "timeout"
+    fake_timeout.write_text("#!/bin/sh\nexit 124\n")
+    fake_timeout.chmod(0o755)
+    pressure_env = _fake_pressure(home, io_percent=50)
+
+    run = _run(home, **pressure_env)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  sizing" in run.stdout
+    assert "UNMEASURED" in run.stdout
+    assert "avg60=50%" in run.stdout
 
 
 def test_wal_only_writes_keep_events_db_green(tmp_path):
