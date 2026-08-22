@@ -4,6 +4,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -269,10 +270,52 @@ def create_pr(token, title, body, branch, base):
     sys.exit(1)
 
 
+# The footer by shape, so any agent name and any vesta version reads as a footer already present.
+# Matching one exact line instead would stack a second footer on a body written under another name
+# or another version. `test_pr_edit.py` pins this pattern to the line `attribution_line` writes.
+ATTRIBUTION_SHAPE = re.compile(r"^Submitted by \*\*[^*]+\*\* on vesta v\S+$", re.MULTILINE)
+
+
+def attribution_line(agent_name, vesta_version) -> str:
+    return f"Submitted by **{agent_name}** on vesta v{vesta_version}"
+
+
 def body_with_attribution(body, agent_name, vesta_version) -> str:
-    """Every PR and issue body carries the same footer, and an empty body carries it alone."""
-    attribution = f"\n\n---\nSubmitted by **{agent_name}** on vesta v{vesta_version}"
+    """Every PR and issue body carries the same footer, an empty body carries it alone, and a body
+    that already carries one is left alone: an edit rewrites the whole body, often from text read
+    back off the PR, and a second footer would stack on every pass."""
+    if ATTRIBUTION_SHAPE.search(body):
+        return body
+    attribution = f"\n\n---\n{attribution_line(agent_name, vesta_version)}"
     return f"{body}{attribution}" if body else attribution.lstrip()
+
+
+def _stored_form(text) -> str:
+    """Read-back compares content, not bytes: GitHub serves a body back with CRLF line endings."""
+    return text.replace("\r\n", "\n").strip()
+
+
+def edit_pr(token, number, fields):
+    """PATCH a PR's title and body, then read the fields back and confirm what GitHub now serves.
+
+    The REST edit needs no project query, unlike `gh pr edit`, whose GraphQL mutation carries one.
+    Success is decided on the read-back, never on the write's own status: a write that reports
+    success without applying is invisible to its caller, who then acts on a PR that never changed."""
+    path = f"repos/{UPSTREAM_REPO}/pulls/{number}"
+    code, out = gh_api(token, path, method="PATCH", fields=fields)
+    if code != 0:
+        print(f"Error: editing PR #{number} failed: {out}", file=sys.stderr)
+        sys.exit(1)
+    code, out = gh_api(token, path)
+    if code != 0:
+        print(f"Error: PR #{number} was patched but could not be read back, so the edit is UNVERIFIED: {out}", file=sys.stderr)
+        sys.exit(1)
+    current = json.loads(out)
+    stale = [name for name, sent in fields.items() if _stored_form(current[name]) != _stored_form(sent)]
+    if stale:
+        print(f"Error: PR #{number} still serves its old {', '.join(sorted(stale))}, so the edit did NOT land.", file=sys.stderr)
+        sys.exit(1)
+    print(f"PR #{number} updated ({', '.join(fields)}): {current['html_url']}")
 
 
 def submit_pr(args):
@@ -327,6 +370,10 @@ CREATE_UNSUPPORTED_HELP = (
     "Other gh create flags are not carried by the guarded create."
 )
 MINE_UNSUPPORTED_HELP = "supported flags with --mine: --state --limit."
+EDIT_UNSUPPORTED_HELP = (
+    "supported edit flags: --title --body --body-file, on a PR number. Every other gh edit flag "
+    "is refused rather than forwarded, because the plain `gh pr edit` path is not used at all."
+)
 
 
 def _parse_intercepted(supported, rest, unsupported_help):
@@ -383,6 +430,49 @@ def issue_create(rest):
     print(f"Issue created: {json.loads(out)['html_url']}")
 
 
+def _edit_body(args):
+    """The new body from whichever spelling carried it, with `-` reading stdin as gh does."""
+    if args.body_file is None:
+        return args.body
+    if args.body is not None:
+        print("Error: pass --body or --body-file, not both.", file=sys.stderr)
+        sys.exit(2)
+    if args.body_file == "-":
+        return sys.stdin.read()
+    try:
+        return Path(args.body_file).read_text()
+    except OSError as err:
+        print(f"Error: could not read --body-file {args.body_file}: {err}", file=sys.stderr)
+        sys.exit(1)
+
+
+def pr_edit(rest):
+    args = _parse_intercepted(
+        {
+            "number": {"nargs": "?"},
+            "--title": {"default": None},
+            "--body": {"default": None},
+            "--body-file": {"default": None},
+        },
+        rest,
+        EDIT_UNSUPPORTED_HELP,
+    )
+    if not (args.number or "").isdigit():
+        print("Error: name the PR by number, as in `upstream gh pr edit 123 --body ...`.", file=sys.stderr)
+        sys.exit(2)
+    body = _edit_body(args)
+    if args.title is None and body is None:
+        print(f"Error: nothing to edit on PR #{args.number}. Pass --title, --body or --body-file.", file=sys.stderr)
+        sys.exit(2)
+    fields = {}
+    if args.title is not None:
+        _refuse_bad_title(args.title)
+        fields["title"] = args.title
+    if body is not None:
+        fields["body"] = body_with_attribution(body, *resolve_agent_identity())
+    edit_pr(get_installation_token(), args.number, fields)
+
+
 def pr_list_mine(rest):
     args = _parse_intercepted(
         {
@@ -420,6 +510,8 @@ def main():
         pr_create(args[2:])
     elif args[:2] == ["issue", "create"]:
         issue_create(args[2:])
+    elif args[:2] == ["pr", "edit"]:
+        pr_edit(args[2:])
     elif args[:2] == ["pr", "list"] and "--mine" in args:
         pr_list_mine(args[2:])
     else:
