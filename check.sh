@@ -185,6 +185,22 @@ check_guards() {
   # blocks, no import cycles (see scripts/check-conventions.py).
   uv run --project agent/core python scripts/check-conventions.py || failed=1
 
+  # Gate 2b: added prose under agent/ carries the mechanism and the constraint, never
+  # the story behind them. This one reads a diff, not the tree, so it needs a base to
+  # diff against and the first ref that resolves wins.
+  local gate2b_base=""
+  for ref in origin/master upstream/master master; do
+    git rev-parse --verify --quiet "$ref" >/dev/null && { gate2b_base="$ref"; break; }
+  done
+  if [ -n "$gate2b_base" ] && [ "$(git rev-parse HEAD)" != "$(git rev-parse "$gate2b_base")" ]; then
+    scripts/gate2b-check.sh "$gate2b_base...HEAD" || failed=1
+  else
+    # A shallow clone resolves no base, so this guard inspects nothing. Say so on its
+    # own line: a suite that prints only its passes reads as having checked everything.
+    echo "note: gate2b-check has no base ref to diff against, so it judged nothing" >&2
+    scripts/gate2b-check.sh || failed=1
+  fi
+
   if command -v shellcheck >/dev/null; then
     # Selected by shebang, not just extension: several skill CLIs are bare command names
     # (hue, daemon, skills-install) that must keep those names to stay invocable. The shebang
