@@ -183,6 +183,15 @@ PATTERNS = [
     # events. The digit lookahead keeps camelCase docs URLs (/api/RTCPeerConnectionIceEvent) out.
     r"[?&](?:auth|sig|signature)=[A-Za-z0-9_\-]{16,}",
     r"/api/(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{25,}",
+    # ENV-VAR ASSIGNMENT, 21 Aug 2026: the first STRUCTURAL rule here. Every rule above needs a
+    # known vendor prefix, so a key without one is invisible; a variable whose NAME ends in
+    # key/token/secret/password is the holder's own label and needs no vendor list. Found when a
+    # plain grep of ~/.bashrc printed a live 40-char key into the event store and a full scan
+    # returned zero hits for it. Case-anchored for the reason AKIA is: under the outer IGNORECASE
+    # [A-Z] matches lowercase, so `my_api_key = get_it()` in ordinary code read as a credential.
+    # The digit lookahead matches the named-key and /api/ rules above and keeps identifier-ish
+    # assignments out (PRIMARY_KEY=customer_account_number, sort_key: alphabetical_ordering).
+    r"(?-i:\b[A-Z][A-Z0-9_]*_(?:API_)?(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD))\s*=\s*[\"']?(?=[A-Za-z0-9_\-\.]*\d)[A-Za-z0-9_\-\.]{16,}",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
@@ -913,8 +922,58 @@ def _run_scan() -> int:
     return 0
 
 
+def _self_test() -> int:
+    """Cases both ways for the env-var-name rule, because a detector with no red case has an
+    unknown target.
+
+    Owed since PR #2157 shipped without one, and written after that PR's own premise turned out to
+    be false: the leak that motivated it (`WEBSHARE_API_KEY=`) was ALREADY caught by two older
+    patterns, because `API_KEY` is in the variable name. The measured delta is `PASSWD` alone.
+    Both facts are asserted below, so nobody has to take the PR body's word for either.
+
+    Every value here is fabricated. Real secrets never go in a test file.
+    """
+    must_catch = [
+        # The actual delta this rule added. No other pattern contains PASSWD.
+        "FOO_PASSWD=abcdefgh12345678xyz",
+        "ADMIN_PASSWD=zzzzzzzz99999999aa",
+        # Already covered BEFORE this rule existed. Here as regression cover, and as the standing
+        # correction to the claim that they were newly caught.
+        "WEBSHARE_API_KEY=abcdefgh12345678xyz",
+        "SOME_TOKEN=abcdefgh12345678xyz",
+        "MY_SECRET=abcdefgh12345678xyz",
+        "DB_PASSWORD=abcdefgh12345678xyz",
+    ]
+    must_allow = [
+        "FOO_PASSWD=short123",  # under the 16-char floor
+        # No digit anywhere in the value. The lookahead added for CI noise makes this class
+        # unmatchable BY CONSTRUCTION, which is a real hole and is documented here rather than
+        # left for the next reader to rediscover.
+        "FOO_PASSWD=abcdefghijklmnopqrst",
+        "lower_case_passwd=abcdefgh12345678xyz",  # rule is case-anchored to SHOUTING names
+        "echo FOO_PASSWD is unset",  # a mention, not an assignment
+    ]
+    bad = 0
+    for text in must_catch:
+        if not find_matches(text):
+            print(f"FAIL should catch: {text}")
+            bad += 1
+    for text in must_allow:
+        if find_matches(text):
+            print(f"FAIL should allow: {text}")
+            bad += 1
+    total = len(must_catch) + len(must_allow)
+    if bad:
+        print(f"redact_secrets: self-test FAILED, {bad}/{total} wrong")
+        return 1
+    print(f"redact_secrets: self-test clean ({total} cases, {len(must_catch)} must catch)")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
+    if "--self-test" in args:
+        return _self_test()
     if args[:1] == ["--show"]:
         return _run_show(args[1:])
     if args[:1] == ["--scrub"]:
