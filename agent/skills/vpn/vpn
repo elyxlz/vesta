@@ -184,6 +184,21 @@ cmd_status() {
     local proxy_url
     proxy_url=$(build_proxy_url 2>/dev/null) || { echo "Status: MISCONFIGURED (cannot build proxy URL)" >&2; return 1; }
 
+    # "never set up" and "set up but failing" need opposite responses, so they get different
+    # words. The default config ships a placeholder host, which is the state every fresh box is
+    # in, and reporting that as UNREACHABLE sends the reader to debug a proxy that never existed.
+    case "$host" in
+        your-proxy-host | "" | unknown | example.com | changeme | localhost)
+            echo "Connectivity:    NOT CONFIGURED"
+            echo ""
+            echo "The active provider '$provider' still holds the placeholder host '$host', so no"
+            echo "proxy was ever set up here. This is not a proxy that is down, and retrying or"
+            echo "waiting will never help. Add a provider to $CONFIG_FILE, then activate it with:"
+            echo "  vpn set-provider <name>"
+            return 0
+            ;;
+    esac
+
     echo -n "Connectivity:    "
     if curl -sk --proxy "$proxy_url" --connect-timeout 10 --max-time 15 "https://api.ipify.org?format=json" >/dev/null 2>&1; then
         echo "CONNECTED"
@@ -192,6 +207,10 @@ cmd_status() {
         echo "External IP:     $ip"
     else
         echo "UNREACHABLE"
+        echo ""
+        echo "A real host is configured ($host:$port) and did not answer, which is distinct from"
+        echo "NOT CONFIGURED and is worth retrying. Check that the provider is up, and that the"
+        echo "env vars named by username_env/password_env in $CONFIG_FILE are exported."
     fi
 }
 
