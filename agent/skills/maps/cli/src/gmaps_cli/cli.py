@@ -253,6 +253,18 @@ def _cmd_lists_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lists_add(args: argparse.Namespace) -> int:
+    lists.add_item(args.id, int(args.cid), locale=args.locale, country=args.country)
+    _emit({"ok": True, "id": args.id, "cid": int(args.cid)})
+    return 0
+
+
+def _cmd_lists_remove(args: argparse.Namespace) -> int:
+    lists.remove_item(args.id, int(args.cid), locale=args.locale, country=args.country)
+    _emit({"ok": True, "id": args.id, "cid": int(args.cid)})
+    return 0
+
+
 def _cmd_lists_auth(_args: argparse.Namespace) -> int:
     signed_in = browser_bridge.is_signed_in()
     note = "signed in" if signed_in else "sign in once via the browser skill handover, then re-run"
@@ -329,11 +341,11 @@ def _build_parser() -> argparse.ArgumentParser:
     doc = sub.add_parser("doctor", help="health check: one probe per RPC template", parents=[locale])
     doc.set_defaults(func=_cmd_doctor)
 
-    _add_lists_parser(sub)
+    _add_lists_parser(sub, locale)
     return parser
 
 
-def _add_lists_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+def _add_lists_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser], locale: argparse.ArgumentParser) -> None:
     lst = sub.add_parser("lists", help="read and manage Google saved lists (needs sign-in)")
     lst.set_defaults(func=_cmd_lists_all)  # `maps lists` with no verb lists everything
     _add_json_flags(lst)
@@ -356,6 +368,16 @@ def _add_lists_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     ls_delete = lst_sub.add_parser("delete", help="delete a list")
     ls_delete.add_argument("id")
     ls_delete.set_defaults(func=_cmd_lists_delete)
+
+    ls_add = lst_sub.add_parser("add", help="add a place (by cid) to a list", parents=[locale])
+    ls_add.add_argument("id")
+    ls_add.add_argument("cid", help="the place's cid, from a search result")
+    ls_add.set_defaults(func=_cmd_lists_add)
+
+    ls_remove = lst_sub.add_parser("remove", help="remove a place (by cid) from a list", parents=[locale])
+    ls_remove.add_argument("id")
+    ls_remove.add_argument("cid", help="the place's cid, from `maps lists show`")
+    ls_remove.set_defaults(func=_cmd_lists_remove)
 
     ls_auth = lst_sub.add_parser("auth", help="Google sign-in status for list commands")
     ls_auth.set_defaults(func=_cmd_lists_auth)

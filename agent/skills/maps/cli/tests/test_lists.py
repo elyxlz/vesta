@@ -54,6 +54,56 @@ def test_rename_and_delete_target_the_list(monkeypatch):
     assert calls[1][0] == "delete" and "!1sLID" in calls[1][1]
 
 
+def test_add_item_resolves_cid_and_writes_createitem(monkeypatch):
+    from gmaps_cli import cache
+    from gmaps_cli.links import Stop
+
+    monkeypatch.setattr(cache, "get", lambda cid: Stop(name="Dishoom", lat=51.5, lng=-0.1, place_id="p", ftid="0x2:0x3"))
+    captured = {}
+    monkeypatch.setattr(browser_bridge, "entitylist_write", lambda op, build_pb: captured.update(op=op, pb=build_pb("T", "C:1")))
+    lists.add_item("LID", 3, locale="en-US", country="gb")
+    assert captured["op"] == "createitem"
+    assert "!1sLID" in captured["pb"] and "!1y2!2y3" in captured["pb"] and "Dishoom" in captured["pb"]
+
+
+def test_remove_item_uses_deleteitem(monkeypatch):
+    from gmaps_cli import cache
+    from gmaps_cli.links import Stop
+
+    monkeypatch.setattr(cache, "get", lambda cid: Stop(name="Padella", lat=52.0, lng=-1.0, place_id="p", ftid="0x4:0x5"))
+    captured = {}
+    monkeypatch.setattr(browser_bridge, "entitylist_write", lambda op, build_pb: captured.update(op=op))
+    lists.remove_item("LID", 5, locale="en-US", country="gb")
+    assert captured["op"] == "deleteitem"
+
+
+def test_add_item_without_ftid_falls_back_to_show(monkeypatch):
+    from gmaps_cli import cache, client
+    from gmaps_cli.models import PlaceDetail
+
+    monkeypatch.setattr(cache, "get", lambda cid: None)
+    monkeypatch.setattr(cache, "put", lambda **kwargs: None)
+    detail = PlaceDetail(
+        name="Sky Garden",
+        cid=9,
+        place_id="p",
+        ftid="0x6:0x7",
+        address="a",
+        lat=51.0,
+        lng=-0.08,
+        rating=None,
+        category=None,
+        phone=None,
+        website=None,
+        hours_today=None,
+    )
+    monkeypatch.setattr(client, "show", lambda cid, *, locale, country: detail)
+    captured = {}
+    monkeypatch.setattr(browser_bridge, "entitylist_write", lambda op, build_pb: captured.update(pb=build_pb("T", "C:1")))
+    lists.add_item("LID", 9, locale="en-US", country="gb")
+    assert "!1y6!2y7" in captured["pb"] and "Sky%20Garden" in captured["pb"]
+
+
 def test_get_list_normalises_signed_cid_to_unsigned(monkeypatch):
     # getlist gives ftid halves as signed 64-bit decimals; a negative low half must fold to unsigned.
     signed_low = "-7008812868250662403"

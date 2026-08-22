@@ -38,3 +38,17 @@ def rename_pb(list_id: str, name: str, token: str, consistency: str) -> str:
 
 def delete_pb(list_id: str, token: str, consistency: str) -> str:
     return f"!1m4!1s{list_id}!2e1!3m1!1e1!2m3!1s{token}!7e81!28e2!3s{consistency}"
+
+
+def item_pb(list_id: str, name: str, lat: float, lng: float, ftid: str, token: str, consistency: str) -> str:
+    """Add or remove a place: identical pb for `createitem` and `deleteitem`, only the op differs.
+
+    The place is carried twice (the `!2m6` descriptor and the `!9m5` reference), by coordinates and
+    the two ftid halves; item writes put the consistency token in the `!4s` slot.
+    """
+    hi, lo = ftid_halves(ftid)
+    quoted = urllib.parse.quote(name)
+    return (
+        f"!1m4!1s{list_id}!2e2!3m1!1e1!2m14!2m6!6m2!3d{lat}!4d{lng}!7m2!1y{hi}!2y{lo}!3s{quoted}"
+        f"!9m5!1m1!1e1!2m2!1y{hi}!2y{lo}!3m3!1s{token}!7e81!28e2!4s{consistency}"
+    )

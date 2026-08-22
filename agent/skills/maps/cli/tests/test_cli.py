@@ -122,3 +122,22 @@ def test_write_verbs_require_sign_in(tmp_path, monkeypatch):
         )
         assert proc.returncode != 0
         assert json.loads(proc.stderr)["error"] == "sign_in_required"
+
+
+def test_add_remove_require_sign_in_with_cached_place(tmp_path, monkeypatch):
+    # Seed the identity cache so cid resolution needs no network; the write then hits signed-out.
+    monkeypatch.setenv("GMAPS_CACHE_DIR", str(tmp_path))
+    from gmaps_cli import cache
+
+    cache.put(cid=1, name="Somewhere", lat=51.5, lng=-0.1, ftid="0x2:0x1", place_id="p")
+    _install_browser_shim(tmp_path, _SHIM_SIGNED_OUT, monkeypatch)
+    for argv in (["lists", "add", "x", "1"], ["lists", "remove", "x", "1"]):
+        proc = subprocess.run(
+            [sys.executable, "-m", "gmaps_cli.cli", *argv],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ),
+            check=False,
+        )
+        assert proc.returncode != 0
+        assert json.loads(proc.stderr)["error"] == "sign_in_required"

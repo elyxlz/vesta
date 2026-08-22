@@ -1,6 +1,6 @@
 ---
 name: maps
-description: Find real places and their Google Maps links, get directions, and build multi-stop routes. Use when the user asks where to find something, wants a restaurant or shop nearby, asks how to get somewhere, or wants a route or day-out plan. Also reads and manages the user's Google Maps saved lists (their lists of places), for "what's on my saved list", "make me a list", or "rename my list". Needs internet.
+description: Find real places and their Google Maps links, get directions, and build multi-stop routes. Use when the user asks where to find something, wants a restaurant or shop nearby, asks how to get somewhere, or wants a route or day-out plan. Also reads and manages the user's Google Maps saved lists (their lists of places), for "what's on my saved list", "save this place to my list", "make me a list", or "rename my list". Needs internet.
 ---
 
 # Maps (CLI: maps)
@@ -115,11 +115,13 @@ maps lists show <id>              # the places in one list, each with a cid
 maps lists create "Date spots"    # make a list, returns its id
 maps lists rename <id> "New name"
 maps lists delete <id>
+maps lists add <id> <cid>         # save a place to a list
+maps lists remove <id> <cid>     # take a place off a list
 maps lists auth                   # report the Google sign-in state
 ```
 
-A list's `id` comes from `maps lists`. A place is a `cid` from a `search` result, the same id
-`show` and `directions` take.
+A list's `id` comes from `maps lists`. A place is a `cid`: from a `search` result to save it, or
+from `maps lists show` to take it off. It is the same id `show` and `directions` take.
 
 Sign in once. When a command prints `sign_in_required`, the browser holds no Google session yet.
 Sign in through the browser skill's handover, then run the command again:

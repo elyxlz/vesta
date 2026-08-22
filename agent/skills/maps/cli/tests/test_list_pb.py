@@ -1,5 +1,5 @@
 import pytest
-from gmaps_cli.list_pb import create_pb, delete_pb, ftid_halves, getlist_pb, list_index_pb, rename_pb
+from gmaps_cli.list_pb import create_pb, delete_pb, ftid_halves, getlist_pb, item_pb, list_index_pb, rename_pb
 
 
 def test_list_index_pb_is_the_enumerate_flag():
@@ -33,3 +33,11 @@ def test_rename_pb_sets_new_name():
 def test_delete_pb_targets_list():
     pb = delete_pb("LIST", token="TOK", consistency="AMAbHIx:99")
     assert pb == "!1m4!1sLIST!2e1!3m1!1e1!2m3!1sTOK!7e81!28e2!3sAMAbHIx:99"
+
+
+def test_item_pb_carries_list_place_identity_and_tokens():
+    pb = item_pb("LIST", "Buckingham Palace", 51.5, -0.14, "0x2:0x3", token="TOK", consistency="AMAbHIx:99")
+    assert pb == (
+        "!1m4!1sLIST!2e2!3m1!1e1!2m14!2m6!6m2!3d51.5!4d-0.14!7m2!1y2!2y3!3sBuckingham%20Palace"
+        "!9m5!1m1!1e1!2m2!1y2!2y3!3m3!1sTOK!7e81!28e2!4sAMAbHIx:99"
+    )

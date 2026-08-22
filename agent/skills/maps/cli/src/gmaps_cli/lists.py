@@ -6,7 +6,7 @@ positional response arrays into typed models. The unauthenticated maps commands 
 
 from __future__ import annotations
 
-from . import browser_bridge, list_pb
+from . import browser_bridge, cache, client, list_pb
 from .models import MapList, MapListItem
 
 
@@ -76,3 +76,25 @@ def rename(list_id: str, name: str) -> None:
 
 def delete(list_id: str) -> None:
     browser_bridge.entitylist_write("delete", lambda token, consistency: list_pb.delete_pb(list_id, token, consistency))
+
+
+def _place_identity(cid: int, *, locale: str, country: str) -> tuple[str, float, float, str]:
+    """A place's name, coordinates, and ftid from the cache, else a `show` fetch (then cached)."""
+    cached = cache.get(cid)
+    if cached is not None and cached.ftid is not None:
+        return cached.name, cached.lat, cached.lng, cached.ftid
+    detail = client.show(cid, locale=locale, country=country)
+    if detail.ftid is None or detail.lat is None or detail.lng is None:
+        raise ValueError(f"place {cid} has no ftid or coordinates, so it cannot go in a list")
+    cache.put(cid=detail.cid, name=detail.name, lat=detail.lat, lng=detail.lng, ftid=detail.ftid, place_id=detail.place_id)
+    return detail.name, detail.lat, detail.lng, detail.ftid
+
+
+def add_item(list_id: str, cid: int, *, locale: str, country: str) -> None:
+    name, lat, lng, ftid = _place_identity(cid, locale=locale, country=country)
+    browser_bridge.entitylist_write("createitem", lambda token, consistency: list_pb.item_pb(list_id, name, lat, lng, ftid, token, consistency))
+
+
+def remove_item(list_id: str, cid: int, *, locale: str, country: str) -> None:
+    name, lat, lng, ftid = _place_identity(cid, locale=locale, country=country)
+    browser_bridge.entitylist_write("deleteitem", lambda token, consistency: list_pb.item_pb(list_id, name, lat, lng, ftid, token, consistency))
