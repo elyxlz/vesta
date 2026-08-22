@@ -36,3 +36,24 @@ def test_get_field_prints_the_raw_value(tmp_config: Config, monkeypatch, capsys)
     monkeypatch.setattr(sys, "argv", ["reminders", "get", created["id"], "--field", "message"])
     cli.main()
     assert capsys.readouterr().out.strip() == "just this"
+
+
+def test_get_returns_the_notes_when_there_is_a_file(tmp_config: Config):
+    created = commands.remind_set(tmp_config, commands.ReminderSpec(message="pointer", in_hours=1))
+    notes_dir = tmp_config.data_dir / "metadata"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    (notes_dir / f"{created['id']}.md").write_text("# full text\n")
+    got = commands.remind_get(tmp_config, reminder_id=created["id"])
+    assert got["metadata_content"] == "# full text\n"
+    assert got["metadata_path"].endswith(f"{created['id']}.md")
+
+
+def test_get_without_a_notes_file_is_quiet(tmp_config: Config):
+    created = commands.remind_set(tmp_config, commands.ReminderSpec(message="pointer", in_hours=1))
+    got = commands.remind_get(tmp_config, reminder_id=created["id"])
+    assert got["metadata_content"] is None
+
+
+def test_list_leaves_the_notes_out(tmp_config: Config):
+    commands.remind_set(tmp_config, commands.ReminderSpec(message="pointer", in_hours=1))
+    assert "metadata_content" not in commands.remind_list(tmp_config)[0]
