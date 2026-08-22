@@ -1,0 +1,30 @@
+# Paths the unprotected-state probe in reality_check.sh should stop reporting, because the exposure
+# has been LOOKED AT and ACCEPTED. One path per line, relative to $HOME, matched exactly against a
+# reported path. Lines starting with # are ignored.
+#
+# This is deliberately a list of DECISIONS, not a list of scope. The probe derives its own scope
+# from the filesystem, which is the whole reason it exists: a checklist only ever covers the stores
+# somebody remembered. What lives here is the record of what has already been judged, so a
+# genuinely new store still goes RED, and accepting one is a conscious act visible in the diff.
+#
+# The entries below are the stock artefacts a vesta writes for itself, so a fresh box starts green.
+# Add your own with a line saying why, and delete any line whose file you decide to protect instead.
+
+# Machine-written and too big for git; the container backup is what covers it.
+agent/data/events.db
+# Migration ledger and session id. Machine-written; losing it replays migrations, which is cheap.
+agent/data/state.json
+# A subset of events.db.
+.app-chat/app-chat.db
+# Message history. Too big for git, and it holds other people's words, so it must not be pushed.
+.whatsapp/messages.db
+# CREDENTIAL: whatsmeow linked-device session. Must never be committed; recreate by re-pairing.
+.whatsapp/state.json
+.whatsapp/whatsapp.db
+# CREDENTIAL: harness config carrying OAuth state.
+.claude.json
+# The sqlite behind the tasks skill. Note that a snapshot of it restores by reading, not by
+# loading, because there is no import verb.
+.tasks/tasks.db
+# Outbound send queue; transient by design.
+.microsoft/pending-sends.db

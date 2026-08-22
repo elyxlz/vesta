@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# note-top <file>   [block read from stdin]
+#
+# Inserts a block directly UNDER the title line of a staged file, instead of appending it to the
+# end: the natural motion is `cat >> file`, and the natural motion buries the newest block while a
+# stale one keeps greeting every reader. A rule to remember is not a control; the shell verb is.
+#
+#   note-top ~/agent/data/foo.md <<'EOF'
+#   ## @@NOW@@: what changed
+#   body...
+#   EOF
+#
+# Deliberately dumb: it does not invent a header, because the caller knows what the block is and a
+# generated header would be one more thing to trust. It DOES fill in @@NOW@@ from the clock, and
+# that matters more than tidiness: the timestamp decides which of two contradicting blocks wins, a
+# hand-typed one drifts forward (the line is composed before the clock is read), and re-reading
+# never catches it because 14:40 looks exactly as reasonable as 14:39. Substituting a token the
+# caller asked for is not the same as inventing a date.
+#
+# Exit 0 inserted, 1 usage/target error, 2 empty input (nothing written).
+
+set -uo pipefail
+
+# Not every file wants newest-at-top: a running journal (a dated thread file, say) is
+# chronological oldest-first by design, so its newest entry belongs at the END. Without this mode
+# the fallback is `cat >> file`, which works and silently skips the @@NOW@@ substitution, so
+# append mode closes that bypass: wherever the block lands, the machine writes the time.
+append=0
+case ${1:-} in
+  --append|-a) append=1; shift ;;
+esac
+
+f=${1:-}
+if [ -z "$f" ]; then
+  echo "usage: note-top [--append] <file>   (block on stdin)" >&2; exit 1
+fi
+if [ ! -f "$f" ]; then
+  echo "note-top: no such file: $f" >&2; exit 1
+fi
+if [ -t 0 ]; then
+  echo "note-top: nothing on stdin; pipe the block in" >&2; exit 2
+fi
+
+block=$(cat)
+if [ -z "${block//[[:space:]]/}" ]; then
+  echo "note-top: refusing to insert an empty block into $f" >&2; exit 2
+fi
+
+# @@NOW@@ becomes the real clock, in the box timezone. Announced on stderr rather than done
+# silently: a substitution nobody sees is a substitution nobody can catch. A BACKTICKED token is
+# being talked about, not used, so it is left alone: a tool that rewrites text it was only being
+# shown plants damage in the archive that looks deliberate. Mention is not use.
+case $block in
+  *@@NOW@@*)
+    now=$(date '+%Y-%m-%d %H:%M')
+    sentinel=$'\x01NOWLIT\x01'
+    block=${block//\`@@NOW@@\`/$sentinel}
+    if [ "$block" != "${block//@@NOW@@/}" ]; then
+      block=${block//@@NOW@@/$now}
+      echo "note-top: @@NOW@@ -> $now" >&2
+    fi
+    block=${block//$sentinel/\`@@NOW@@\`}
+    ;;
+esac
+
+# Hand-typed clock times in the heading: warn if one is in the FUTURE. Typed digits drift
+# forward, never back, because the line is composed before the clock is read, so the bypass of
+# @@NOW@@ is made audible as it happens. A warning and not a refusal: a heading may quote a
+# future hour legitimately, and a control that blocks good work just gets worked around.
+first_line=${block%%$'\n'*}
+htime=$(printf '%s' "$first_line" | grep -oE '\b([01][0-9]|2[0-3]):[0-5][0-9]\b' | head -1)
+if [ -n "$htime" ]; then
+  now_hm=$(date '+%H:%M')
+  if [ "$htime" \> "$now_hm" ]; then
+    echo "note-top: WARNING, heading says $htime and the clock says $now_hm (future)." >&2
+    echo "note-top: if that is meant to be now, it is wrong; use @@NOW@@ and let it fill in." >&2
+  fi
+fi
+
+# Respect a PINNED answer block. The rule is not "newest thing at the top", it is "the OPERATIVE
+# ANSWER at the top, research newest first underneath": if the file opens with a CURRENT ANSWER
+# block, new blocks go BELOW it, so the thing a future reader must hit first stays first. Raw
+# findings are not the answer.
+anchor=1
+if [ "$append" -eq 1 ]; then
+  # Append mode ignores the pinned block entirely: the caller has declared this file
+  # chronological, so there is no "operative answer at the top" contract to protect.
+  anchor=$(grep -c '' "$f")
+elif head -n 40 "$f" | grep -qiE '^#{1,6} +(CURRENT ANSWER|RISPOSTA ATTUALE)'; then
+  # Insert just before the heading that FOLLOWS the pinned block, so the pin stays whole.
+  pin=$(grep -niE '^#{1,6} +(CURRENT ANSWER|RISPOSTA ATTUALE)' "$f" | head -1 | cut -d: -f1)
+  # NOTE: plain /^#+ / and not /^#{1,6} +/. mawk does not enable ERE intervals, so the {1,6}
+  # form matches nothing, `nxt` comes back empty, and the block silently lands at the END of
+  # the file: a "next heading" search that never finds a heading.
+  nxt=$(awk -v p="$pin" 'NR>p && /^#+ / {print NR; exit}' "$f")
+  if [ -n "$nxt" ]; then anchor=$((nxt-1)); else anchor=$(grep -c '' "$f"); fi
+  echo "note-top: file has a pinned answer block at line $pin, inserting BELOW it" >&2
+fi
+
+# Normalise the seams: drop trailing blanks from the part above and leading blanks from the part
+# below, then lay in exactly one blank line on each side of the block. Without this, inserting
+# under a pinned block landed a double blank above and no blank at all below, which is the sort of
+# drift that makes a staged file look hand-mangled after a dozen inserts.
+strip_tail_blanks() { awk '{a[NR]=$0} END{n=NR; while(n>0 && a[n] ~ /^[[:space:]]*$/) n--; for(i=1;i<=n;i++) print a[i]}'; }
+
+tmp=$(mktemp) || { echo "note-top: mktemp failed" >&2; exit 1; }
+{
+  head -n "$anchor" "$f" | strip_tail_blanks
+  printf '\n%s\n\n' "$block"
+  tail -n +$((anchor+1)) "$f" | sed '/./,$!d'
+} > "$tmp" && mv "$tmp" "$f" || { echo "note-top: write failed, $f untouched" >&2; rm -f "$tmp"; exit 1; }
+
+if [ "$append" -eq 1 ]; then
+  echo "note-top: APPENDED to the end of $f (line $((anchor+1)))"
+elif [ "$anchor" -eq 1 ]; then
+  echo "note-top: inserted under the title of $f"
+else
+  echo "note-top: inserted at line $((anchor+1)) of $f, under the pinned answer block"
+fi

@@ -498,15 +498,42 @@ def _cell_text(value: CellValue) -> str | None:
     return None
 
 
+# Identity columns hold participant and chat identifiers, never secrets. A messaging id stored
+# without its `@lid` suffix is a bare digit run that can open on a card IIN and pass Luhn, so
+# `_MESSAGING_ID_SUFFIX` has nothing to match on and every row carrying that id reports as a card.
+# Skipping these columns by name is the only guard left there, and it also stops a scrub from
+# rewriting the identifiers the history is keyed by.
+IDENTITY_COLUMNS = frozenset(
+    {
+        "id",
+        "name",
+        "jid",
+        "chat_id",
+        "chat_jid",
+        "chat_name",
+        "contact_name",
+        "phone",
+        "phone_number",
+        "sender",
+        "sender_jid",
+        "sender_name",
+        "sender_phone",
+        "user_id",
+    }
+)
+
+
 def _scannable_cells(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str | bytes]:
     """One row's str and BLOB cells by column name, keeping each cell's storage type so a scrub
-    writes a BLOB back as a BLOB; a missing row is an empty dict."""
+    writes a BLOB back as a BLOB; a missing row is an empty dict. Identity columns are skipped."""
     cursor = conn.execute(f'SELECT * FROM "{table}" WHERE rowid = ?', (rowid,))
     row = cursor.fetchone()
     if row is None:
         return {}
     names = [description[0] for description in cursor.description]
-    return {name: value for name, value in zip(names, row, strict=True) if isinstance(value, str | bytes)}
+    return {
+        name: value for name, value in zip(names, row, strict=True) if isinstance(value, str | bytes) and name.lower() not in IDENTITY_COLUMNS
+    }
 
 
 def _channel_row(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str]:
@@ -853,12 +880,16 @@ def scan_channel_store(conn: sqlite3.Connection, store: Store) -> StoreReport:
 
 def _scan_table(conn: sqlite3.Connection, store: Store, table: str, deadline: float, hits: list[tuple[str, str]]) -> bool:
     cursor = conn.execute(f'SELECT rowid, * FROM "{table}"')
+    # description[0] is the rowid, so description[1:] aligns with row[1:].
+    columns = [description[0] for description in cursor.description][1:]
+    keep = [index for index, name in enumerate(columns) if name.lower() not in IDENTITY_COLUMNS]
     while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
         if time.monotonic() > deadline:
             return False
         for row in rows:
-            for value in row[1:]:
-                text = _cell_text(value)
+            cells = row[1:]
+            for index in keep:
+                text = _cell_text(cells[index])
                 if text is not None:
                     hits.extend((f"{store.name}:{table}:{row[0]}", snippet) for snippet in find_matches(text))
     return True

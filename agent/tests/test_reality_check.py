@@ -2,7 +2,9 @@
 
 import os
 import pathlib as pl
+import re
 import subprocess
+import time
 
 SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "dream" / "scripts" / "reality_check.sh"
 
@@ -95,6 +97,69 @@ def test_quiet_recent_log_stays_green(tmp_path):
     assert "OK  calm.log" in run.stdout
 
 
+def test_undated_traceback_lines_count_with_the_dated_line_above_them(tmp_path):
+    """A traceback's body carries no timestamp of its own, so requiring the date on every counted
+    line hides a live multi-line storm under the threshold."""
+    home = _healthy_home(tmp_path)
+    today = time.strftime("%Y-%m-%d")
+    block = f"{today} 01:00:00 ERROR boom\nTraceback (most recent call last):\n  raise ValueError\n"
+    (home / "agent" / "logs" / "tb.log").write_text(block * 80)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED tb.log" in run.stdout
+
+
+def test_errors_dated_days_ago_age_out_of_a_still_fresh_log(tmp_path):
+    # The count is aged by the line dates, not the file mtime: a component fixed days ago keeps
+    # appending healthy lines to the same file, and its old storm must not stay loud.
+    home = _healthy_home(tmp_path)
+    old = time.strftime("%Y-%m-%d", time.localtime(time.time() - 3 * 86400))
+    today = time.strftime("%Y-%m-%d")
+    lines = f"{old} 01:00:00 ERROR boom\n" * 300 + f"{today} 01:00:00 INFO recovered\n"
+    (home / "agent" / "logs" / "healed.log").write_text(lines)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  healed.log" in run.stdout
+
+
+def test_healthy_zero_count_summaries_do_not_count_as_errors(tmp_path):
+    # "45 matching, 0 new, 0 error(s)" carries the word without reporting a failure.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "sync.log").write_text("45 matching, 0 new, 0 error(s)\n" * 300)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  sync.log: 0 error lines" in run.stdout
+
+
+def test_a_zero_count_next_to_a_nonzero_count_still_counts(tmp_path):
+    """The healthy-summary filter must not overshoot: a line naming a real nonzero count alongside
+    a zero one is a storm, not a healthy summary."""
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "mixed.log").write_text("summary: 0 warnings, 47 errors this cycle\n" * 300)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED mixed.log" in run.stdout
+
+
+def test_a_zero_identifier_before_the_word_error_still_counts(tmp_path):
+    # "worker 0 error: connection refused" is a real error whose worker id happens to be zero.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "worker.log").write_text("worker 0 error: connection refused\n" * 300)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED worker.log" in run.stdout
+
+
 def test_this_agent_filling_the_disk_goes_red(tmp_path):
     home = _healthy_home(tmp_path)
     _fake_disk_usage(home, 95)
@@ -106,7 +171,37 @@ def test_this_agent_filling_the_disk_goes_red(tmp_path):
     assert "25000MB" in run.stdout
 
 
-def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
+def test_a_large_footprint_without_disk_pressure_stays_green(tmp_path):
+    """Own usage alone is a size, not a problem: a corpus-holding agent on a half-empty disk must
+    not read RED every night, because a permanent RED teaches the reader to skim the one output
+    that exists to stop skimming."""
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 50)
+    _fake_own_usage(home, 25_000)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "size without pressure" in run.stdout
+    assert "25000MB" in run.stdout
+
+
+def test_a_failed_df_does_not_wave_a_large_footprint_through(tmp_path):
+    """An empty pressure reading is unknown, not absent: the probe must not fail open on its own
+    instrument breaking, so a large footprint with no df answer stays RED."""
+    home = _healthy_home(tmp_path)
+    fake_df = home / "bin" / "df"
+    fake_df.write_text("#!/bin/sh\nexit 1\n")
+    fake_df.chmod(0o755)
+    _fake_own_usage(home, 25_000)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED disk at unknown% and this agent holds 25000MB" in run.stdout
+
+
+def test_a_busy_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
     """A RED the agent cannot clear teaches it to carry REDs, which is the one thing the probe
     forbids. The host figure still gets reported, as context rather than as a fault."""
     home = _healthy_home(tmp_path)
@@ -120,6 +215,49 @@ def test_a_full_host_disk_this_agent_did_not_fill_stays_green(tmp_path):
     assert "300MB" in run.stdout
     # Pins the context branch itself: dropping to the plain OK line would also pass the figures.
     assert "not yours to clear" in run.stdout
+
+
+def test_a_host_disk_at_the_ceiling_goes_red(tmp_path):
+    """Above the context band the host figure is the agent's problem too, because writes start
+    failing everywhere; the probe exists to catch exactly that, so a full host cannot read green."""
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 100)
+    _fake_own_usage(home, 300)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "100%" in run.stdout
+    # Pins the escalation, since the own-usage RED would also fire on a returncode check alone.
+    assert "tell the user tonight" in run.stdout
+
+
+def test_a_full_host_disk_reports_even_when_this_agent_is_also_over(tmp_path):
+    """The two facts are independent, so a large own footprint must not swallow the host reading:
+    the night both are true is the night the host figure matters most."""
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 99)
+    _fake_own_usage(home, 25_000)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED disk at 99% and this agent holds 25000MB" in run.stdout
+    assert "RED host disk at 99%" in run.stdout
+
+
+def test_a_du_timeout_does_not_report_the_host_share_as_zero(tmp_path):
+    # With no measurement, "0MB of it this agent's" is a figure the probe does not have and reads as
+    # a claim that none of the disk is the agent's.
+    home = _healthy_home(tmp_path)
+    fake_timeout = home / "bin" / "timeout"
+    fake_timeout.write_text("#!/bin/sh\nexit 124\n")
+    fake_timeout.chmod(0o755)
+
+    run = _run(home)
+
+    assert "an unmeasured share" in run.stdout
+    assert "0MB" not in run.stdout
 
 
 def test_a_du_walk_that_never_finishes_goes_red(tmp_path):
@@ -161,3 +299,81 @@ def test_stale_events_db_goes_red(tmp_path):
 
     assert run.returncode == 1
     assert "RED events.db" in run.stdout
+
+
+def _dreamer_summary(home: pl.Path, hours_old: float) -> pl.Path:
+    summary = home / "agent" / "dreamer"
+    summary.mkdir(parents=True, exist_ok=True)
+    written = summary / "2026-01-01.md"
+    written.write_text("summary")
+    aged = time.time() - hours_old * 3600
+    os.utime(written, (aged, aged))
+    return written
+
+
+def test_a_recent_dreamer_summary_stays_green(tmp_path):
+    home = _healthy_home(tmp_path)
+    _dreamer_summary(home, 17)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  last dreamer summary 17h old" in run.stdout
+
+
+def test_a_summary_a_night_late_stays_green(tmp_path):
+    # The bound is 30h rather than 24h on purpose: a nightly cadence is exactly 24h, so a run that
+    # slips a few hours would report RED on a box that never missed a night.
+    home = _healthy_home(tmp_path)
+    _dreamer_summary(home, 26)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "cadence intact" in run.stdout
+
+
+def test_a_missed_night_goes_red(tmp_path):
+    home = _healthy_home(tmp_path)
+    _dreamer_summary(home, 40)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED last dreamer summary is 40h old" in run.stdout
+
+
+def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
+    """A fresh box has no summaries at all, and a probe that reads that as a missed night is red
+    from birth with nothing the agent can do about it."""
+    run = _run(_healthy_home(tmp_path))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "no dreamer summaries yet" in run.stdout
+
+
+def test_the_documented_checkpoint_lookup_finds_a_differently_worded_commit(tmp_path):
+    """The curation review's baseline is found by a grep written in the skill, and the commit
+    subject it looks for is a convention nothing enforces. Pinned by running the documented
+    pattern against a real repo whose checkpoint is worded off-convention: a pattern that only
+    matches the conventional wording finds nothing, and the review then diffs against an older
+    tree while reporting success."""
+    skill = SCRIPT.parents[1] / "SKILL.md"
+    line = next(ln for ln in skill.read_text().splitlines() if "--grep" in ln and "checkpoint" in ln)
+    match = re.search(r"--grep '([^']+)'", line)
+    assert match is not None, "the skill no longer documents the checkpoint lookup as a --grep"
+    pattern = match.group(1)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "config", "user.email", "t@example.com"], check=True)
+    subprocess.run([*git, "config", "user.name", "t"], check=True)
+    (repo / "f").write_text("x")
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "dream 7 Aug: preflight script, memory, personality"], check=True)
+
+    found = subprocess.run([*git, "log", "-n1", "--format=%H", "--grep", pattern], capture_output=True, text=True, check=True)
+
+    assert found.stdout.strip(), f"the documented pattern {pattern!r} misses an off-convention checkpoint"

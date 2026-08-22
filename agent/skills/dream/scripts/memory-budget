@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# memory-budget [--soft N] [<git-ref>]
+#
+# Says WHAT grew in MEMORY.md and WHERE the mass sits: the size against the cap, the delta since
+# the last commit that touched the file (or the given ref), the lines added in that window longest
+# first (those are the trim candidates, and git already knows which they are), and a per-section
+# breakdown so the cutting goes where the mass is.
+#
+# Exit 0 under the soft budget (default 92% of the cap), 1 over it or over the hard cap, 2 on a
+# usage or environment error. The nonzero exit is the point: gate additions on it with
+# `memory-budget && <add the line>`, so the budget sits on the same chain as the work.
+#
+# Neither the cap nor the current size is computed here. Both are parsed out of the output of the
+# dream skill's memory_size.sh, which owns them: a second copy of a constant drifts, and a second
+# way of measuring eventually disagrees with the number the rest of the skill prints. The delta
+# below counts with `LC_ALL=C.UTF-8 wc -m`, the same unit, so headline and growth are always in
+# the same currency.
+
+set -uo pipefail
+
+soft_pct=92
+ref=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --soft) soft_pct=${2:-}; shift 2 || { echo "memory-budget: --soft needs a number" >&2; exit 2; } ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -*) echo "memory-budget: unknown option $1" >&2; exit 2 ;;
+    *) ref=$1; shift ;;
+  esac
+done
+case $soft_pct in
+  ''|*[!0-9]*) echo "memory-budget: --soft must be a whole percentage, got '$soft_pct'" >&2; exit 2 ;;
+esac
+
+f="$HOME/agent/MEMORY.md"
+sizer="$HOME/agent/skills/dream/scripts/memory_size.sh"
+
+if [ ! -f "$f" ]; then
+  echo "memory-budget: no MEMORY.md at $f" >&2; exit 2
+fi
+
+# Size and cap both come from the owning script, by running it and reading its one line. If that
+# script is missing or its output stops looking like "<chars>/<limit> chars (<pct>%)", say so and
+# stop rather than quietly substituting a guess: a budget check with an invented budget is worse
+# than none, because it still prints a confident percentage.
+if [ ! -x "$sizer" ] && [ ! -f "$sizer" ]; then
+  echo "memory-budget: cannot find $sizer, which owns the cap" >&2; exit 2
+fi
+sizer_out=$(sh "$sizer" 2>/dev/null)
+chars=$(printf '%s' "$sizer_out" | sed -n 's|^\([0-9]*\)/[0-9]* chars.*|\1|p')
+cap=$(printf '%s' "$sizer_out" | sed -n 's|^[0-9]*/\([0-9]*\) chars.*|\1|p')
+if [ -z "$cap" ] || [ -z "$chars" ]; then
+  echo "memory-budget: could not read size and cap out of memory_size.sh output: '$sizer_out'" >&2
+  exit 2
+fi
+soft=$((cap * soft_pct / 100))
+pct=$((chars * 100 / cap))
+
+printf 'MEMORY.md  %s/%s chars (%s%%)   soft budget %s (%s%%)   headroom to soft: %s\n' \
+  "$chars" "$cap" "$pct" "$soft" "$soft_pct" "$((soft - chars))"
+
+# --- growth since a baseline -------------------------------------------------
+# Default baseline is the newest commit that touched the file, i.e. "since the state I last
+# recorded". Any ref can be passed instead (a tag, a date, an older commit).
+base=$ref
+if [ -z "$base" ]; then
+  base=$(git -C "$HOME" log --format=%H -1 -- agent/MEMORY.md 2>/dev/null)
+fi
+
+if [ -z "$base" ]; then
+  echo
+  echo "no git history for agent/MEMORY.md, so no delta. Size and sections only."
+else
+  when=$(git -C "$HOME" show -s --format='%ad' --date=format:'%Y-%m-%d %H:%M' "$base" 2>/dev/null)
+  subj=$(git -C "$HOME" show -s --format='%s' "$base" 2>/dev/null)
+  then_chars=$(git -C "$HOME" show "$base:agent/MEMORY.md" 2>/dev/null | LC_ALL=C.UTF-8 wc -m)
+  if [ "${then_chars:-0}" -gt 0 ]; then
+    delta=$((chars - then_chars))
+    sign=""; [ "$delta" -gt 0 ] && sign="+"
+    printf '\nsince %s (%s) "%s"\n  %s -> %s chars, %s%s\n' \
+      "${base:0:8}" "$when" "$subj" "$then_chars" "$chars" "$sign" "$delta"
+
+    # The lines added since the baseline, longest first: the trim candidates, handed over instead
+    # of hunted. Truncated for display only; the char count is of the whole line.
+    added=$(git -C "$HOME" diff "$base" -- agent/MEMORY.md 2>/dev/null \
+            | sed -n 's/^+//p' | sed '/^++ /d' | grep -v '^[[:space:]]*$')
+    if [ -n "$added" ]; then
+      n=$(printf '%s\n' "$added" | grep -c '')
+      total=$(printf '%s\n' "$added" | LC_ALL=C.UTF-8 wc -m)
+      printf '\n  %s lines added since then, %s chars of text, longest first:\n' "$n" "$total"
+      printf '%s\n' "$added" | awk '{print length($0)"\t"$0}' | sort -rn | head -12 \
+        | awk -F'\t' '{printf "    %5d  %s\n", $1, substr($2,1,96)}'
+    else
+      printf '\n  nothing added since then.\n'
+    fi
+  fi
+fi
+
+# --- where the mass sits -----------------------------------------------------
+# Per top-level section. Percentages divide by awk's own whole-file sum, not the headline char
+# count: awk's length() is bytes under mawk and the C locale, so dividing by a character total
+# makes the column sum past 100% on non-Latin text. One measurer per table keeps it honest.
+echo
+echo "by section:"
+LC_ALL=C.UTF-8 awk '
+  /^## /{ if (s != "") { sec[++i] = s; cnt[i] = c } s=$0; c=0 }
+  { c += length($0) + 1; t += length($0) + 1 }
+  END {
+    if (s != "") { sec[++i] = s; cnt[i] = c }
+    for (j = 1; j <= i; j++) printf "  %6d  %2d%%  %s\n", cnt[j], cnt[j]*100/t, sec[j]
+  }
+' "$f"
+
+echo
+if [ "$chars" -ge "$cap" ]; then
+  echo "OVER THE HARD CAP by $((chars - cap)). Cut now; this file is injected into every prompt."
+  exit 1
+elif [ "$chars" -gt "$soft" ]; then
+  echo "over the soft budget by $((chars - soft)). Cut that much before adding anything tonight."
+  echo "The split that works: keep the rule, the tell and the verb in MEMORY.md; move the narrative,"
+  echo "the counts and the rejected alternatives to a file under agent/data/ and point at it."
+  exit 1
+else
+  echo "within budget."
+  exit 0
+fi
