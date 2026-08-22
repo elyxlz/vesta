@@ -110,6 +110,13 @@ by design; the wrapper is the authenticated path. Keep the worktree until the lo
 below is verified, then `git -C ~ worktree remove /tmp/vesta-pr`. Report a PR done only
 when every check is green.
 
+Green CI is not acceptance. A maintainer's blocking critique often lands as a plain issue
+comment, invisible to `pr checks`, so on filing and every later pass that mentions the PR
+read `upstream gh pr view <n> --comments` (covers both formal reviews and issue comments),
+not the checks alone. When a critique lands, reproduce it against your own data before
+agreeing or disagreeing: a fix that nudges a number while reading as a solution is worse
+than none, because it stops anyone looking.
+
 ## Apply the fix locally too
 
 A merged PR reaches you at the next release, so apply the workspace fix to your own tree
