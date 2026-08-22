@@ -86,7 +86,13 @@ part; leave the personal remainder local.
 - **Strip the story.** Agent-facing files state mechanism and constraint, never what
   changed or the incident behind it; that goes in the commit and PR body.
 - **Strip personal information.** Upstream is public: no names, addresses, credentials,
-  or one user's quirks. Describe the pattern, not the instance.
+  or one user's quirks. Describe the pattern, not the instance. Check the draft rather
+  than trusting your reading of it: `~/agent/skills/upstream/scripts/scrub-check.sh <file>`
+  reports every identifier it finds and exits 1 on any hit, resolving names from this box
+  at run time. Exit 2 means nothing was checked, which is not a clean result. The same
+  check runs on every Bash call reaching a public host once `scripts/guard-publish.py` is
+  registered as a PreToolUse hook in `~/.claude/settings.json`; nothing registers it for
+  you, and unregistered it inspects nothing.
 
 ## Creating a PR
 
