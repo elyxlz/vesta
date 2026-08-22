@@ -14,11 +14,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from . import cache
+from . import cache, lists
+from .browser_bridge import BrowserUnavailableError, SignedOutError, WriteRejectedError
 from .client import DOCTOR_ANCHOR_NAME, BlockedError, DriftError, SearchFilters, directions, doctor, itinerary, reverse, search, show
-from .format import format_itinerary, format_place_detail, format_search_table
+from .format import format_itinerary, format_list_items, format_lists, format_place_detail, format_search_table
 from .links import Stop, directions_url, route_url, transit_time_url
 from .region import default_country
+
+_GOOGLE_SIGNIN_URL = "https://accounts.google.com/ServiceLogin?continue=https://www.google.com/maps"
 
 
 def _emit(payload: dict[str, object]) -> None:
@@ -213,6 +216,62 @@ def _cmd_reverse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lists_all(args: argparse.Namespace) -> int:
+    map_lists = lists.list_all()
+    if args.json or args.json_pretty:
+        _emit_json([m.to_json() for m in map_lists], args)
+    else:
+        print(format_lists(map_lists))
+        _note("Places in a list: `maps lists show <id>`. Add a place: `maps lists add <id> <cid>`.")
+    return 0
+
+
+def _cmd_lists_show(args: argparse.Namespace) -> int:
+    items = lists.get_list(args.id)
+    if args.json or args.json_pretty:
+        _emit_json([item.to_json() for item in items], args)
+    else:
+        print(format_list_items(items))
+    return 0
+
+
+def _cmd_lists_create(args: argparse.Namespace) -> int:
+    new_id = lists.create(args.name)
+    _emit({"id": new_id, "name": args.name, "note": f"Add places: `maps lists add {new_id} <cid>`."})
+    return 0
+
+
+def _cmd_lists_rename(args: argparse.Namespace) -> int:
+    lists.rename(args.id, args.name)
+    _emit({"ok": True, "id": args.id, "name": args.name})
+    return 0
+
+
+def _cmd_lists_delete(args: argparse.Namespace) -> int:
+    lists.delete(args.id)
+    _emit({"ok": True, "id": args.id})
+    return 0
+
+
+def _cmd_lists_add(args: argparse.Namespace) -> int:
+    lists.add_item(args.id, int(args.cid), locale=args.locale, country=args.country)
+    _emit({"ok": True, "id": args.id, "cid": int(args.cid)})
+    return 0
+
+
+def _cmd_lists_remove(args: argparse.Namespace) -> int:
+    lists.remove_item(args.id, int(args.cid), locale=args.locale, country=args.country)
+    _emit({"ok": True, "id": args.id, "cid": int(args.cid)})
+    return 0
+
+
+def _cmd_lists_auth(_args: argparse.Namespace) -> int:
+    signed_in = lists.is_signed_in()
+    note = "signed in" if signed_in else "sign in once via the browser skill handover, then re-run"
+    _emit({"signed_in": signed_in, "url": None if signed_in else _GOOGLE_SIGNIN_URL, "note": note})
+    return 0
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     checks = doctor(locale=args.locale, country=args.country)
     ok = all(value == "ok" for value in checks.values())
@@ -281,7 +340,72 @@ def _build_parser() -> argparse.ArgumentParser:
 
     doc = sub.add_parser("doctor", help="health check: one probe per RPC template", parents=[locale])
     doc.set_defaults(func=_cmd_doctor)
+
+    _add_lists_parser(sub, locale)
     return parser
+
+
+def _add_lists_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser], locale: argparse.ArgumentParser) -> None:
+    lst = sub.add_parser("lists", help="read and manage Google saved lists (needs sign-in)")
+    lst.set_defaults(func=_cmd_lists_all)  # `maps lists` with no verb lists everything
+    _add_json_flags(lst)
+    lst_sub = lst.add_subparsers(dest="lists_cmd")
+
+    ls_show = lst_sub.add_parser("show", help="places in one list")
+    ls_show.add_argument("id")
+    _add_json_flags(ls_show)
+    ls_show.set_defaults(func=_cmd_lists_show)
+
+    ls_create = lst_sub.add_parser("create", help="create a new list")
+    ls_create.add_argument("name")
+    ls_create.set_defaults(func=_cmd_lists_create)
+
+    ls_rename = lst_sub.add_parser("rename", help="rename a list")
+    ls_rename.add_argument("id")
+    ls_rename.add_argument("name")
+    ls_rename.set_defaults(func=_cmd_lists_rename)
+
+    ls_delete = lst_sub.add_parser("delete", help="delete a list")
+    ls_delete.add_argument("id")
+    ls_delete.set_defaults(func=_cmd_lists_delete)
+
+    ls_add = lst_sub.add_parser("add", help="add a place (by cid) to a list", parents=[locale])
+    ls_add.add_argument("id")
+    ls_add.add_argument("cid", help="the place's cid, from a search result")
+    ls_add.set_defaults(func=_cmd_lists_add)
+
+    ls_remove = lst_sub.add_parser("remove", help="remove a place (by cid) from a list", parents=[locale])
+    ls_remove.add_argument("id")
+    ls_remove.add_argument("cid", help="the place's cid, from `maps lists show`")
+    ls_remove.set_defaults(func=_cmd_lists_remove)
+
+    ls_auth = lst_sub.add_parser("auth", help="Google sign-in status for list commands")
+    ls_auth.set_defaults(func=_cmd_lists_auth)
+
+
+def _sign_in_required() -> int:
+    payload = {
+        "error": "sign_in_required",
+        "url": _GOOGLE_SIGNIN_URL,
+        "next": "not signed into Google; see 'Saved lists' sign-in in the maps skill, then re-run",
+    }
+    json.dump(payload, sys.stderr, ensure_ascii=False)
+    sys.stderr.write("\n")
+    return 1
+
+
+def _error_message(exc: Exception) -> str:
+    if isinstance(exc, DriftError):
+        return f"maps schema drifted, recapture the pb template: {exc}"
+    if isinstance(exc, BlockedError):
+        return f"temporarily blocked by Google, try later: {exc}"
+    if isinstance(exc, BrowserUnavailableError):
+        return f"browser not available (start the browser daemon): {exc}"
+    if isinstance(exc, WriteRejectedError):
+        return f"the list write was rejected, the maps pb may have drifted: {exc}"
+    if isinstance(exc, httpx.HTTPError):
+        return f"network error: {exc}"
+    return str(exc)
 
 
 def main() -> int:
@@ -292,14 +416,10 @@ def main() -> int:
     try:
         result: int = args.func(args)
         return result
-    except DriftError as exc:
-        return _fail(f"maps schema drifted, recapture the pb template: {exc}")
-    except BlockedError as exc:
-        return _fail(f"temporarily blocked by Google, try later: {exc}")
-    except httpx.HTTPError as exc:
-        return _fail(f"network error: {exc}")
-    except (ValueError, KeyError, TypeError) as exc:
-        return _fail(str(exc))
+    except SignedOutError:
+        return _sign_in_required()
+    except (DriftError, BlockedError, BrowserUnavailableError, WriteRejectedError, httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        return _fail(_error_message(exc))
 
 
 if __name__ == "__main__":

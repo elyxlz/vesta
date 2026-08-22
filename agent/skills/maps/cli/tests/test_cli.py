@@ -69,3 +69,75 @@ def test_network_error_is_json_error(monkeypatch, capsys):
     assert captured.out.strip() == ""
     err = json.loads(captured.err)
     assert "network error" in err["error"]
+
+
+import os
+import stat
+
+_SHIM_SIGNED_OUT = """#!/usr/bin/env python3
+import json, sys
+cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+js = sys.argv[2] if len(sys.argv) > 2 else ""
+if cmd != "evaluate":
+    sys.stdout.write("{}")
+elif "maps/search/coffee" in js:
+    sys.stdout.write(json.dumps("<html>Sign in to continue</html>"))  # no token: writes read signed-out
+else:
+    sys.stdout.write(json.dumps({"signed_in": False, "status": 302, "body": ""}))
+"""
+
+
+def _install_browser_shim(tmp_path, body, monkeypatch):
+    shim = tmp_path / "browser"
+    shim.write_text(body)
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("MAPS_BROWSER_BIN", str(shim))
+
+
+def test_lists_signed_out_returns_sign_in_required(tmp_path, monkeypatch):
+    _install_browser_shim(tmp_path, _SHIM_SIGNED_OUT, monkeypatch)
+    proc = subprocess.run(
+        [sys.executable, "-m", "gmaps_cli.cli", "lists"],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert proc.stdout.strip() == ""
+    err = json.loads(proc.stderr)
+    assert err["error"] == "sign_in_required"
+    assert "accounts.google.com" in err["url"]
+
+
+def test_write_verbs_require_sign_in(tmp_path, monkeypatch):
+    _install_browser_shim(tmp_path, _SHIM_SIGNED_OUT, monkeypatch)
+    for argv in (["lists", "create", "x"], ["lists", "rename", "x", "y"], ["lists", "delete", "x"]):
+        proc = subprocess.run(
+            [sys.executable, "-m", "gmaps_cli.cli", *argv],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ),
+            check=False,
+        )
+        assert proc.returncode != 0
+        assert json.loads(proc.stderr)["error"] == "sign_in_required"
+
+
+def test_add_remove_require_sign_in_with_cached_place(tmp_path, monkeypatch):
+    # Seed the identity cache so cid resolution needs no network; the write then hits signed-out.
+    monkeypatch.setenv("GMAPS_CACHE_DIR", str(tmp_path))
+    from gmaps_cli import cache
+
+    cache.put(cid=1, name="Somewhere", lat=51.5, lng=-0.1, ftid="0x2:0x1", place_id="p")
+    _install_browser_shim(tmp_path, _SHIM_SIGNED_OUT, monkeypatch)
+    for argv in (["lists", "add", "x", "1"], ["lists", "remove", "x", "1"]):
+        proc = subprocess.run(
+            [sys.executable, "-m", "gmaps_cli.cli", *argv],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ),
+            check=False,
+        )
+        assert proc.returncode != 0
+        assert json.loads(proc.stderr)["error"] == "sign_in_required"

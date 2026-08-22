@@ -1,6 +1,6 @@
 ---
 name: maps
-description: Find real places and their Google Maps links, get directions, and build multi-stop routes. Use when the user asks where to find something, wants a restaurant or shop nearby, asks how to get somewhere, or wants a route or day-out plan. Needs internet.
+description: Find real places and their Google Maps links, get directions, and build multi-stop routes. Use when the user asks where to find something, wants a restaurant or shop nearby, asks how to get somewhere, or wants a route or day-out plan. Also reads and manages the user's Google Maps saved lists (their lists of places), for "what's on my saved list", "save this place to my list", "make me a list", or "rename my list". Needs internet.
 ---
 
 # Maps (CLI: maps)
@@ -102,6 +102,37 @@ maps doctor                                   # health check: one probe per RPC,
 
 `reverse` returns a street address when the point is near a building, otherwise a Plus Code for
 open ground.
+
+## Saved lists (needs Google sign-in via the browser skill)
+
+Read and manage the user's Google Maps saved lists: their own lists of places. These commands
+work through the agent's signed-in browser, not the public relay the other commands use. So they
+need the browser skill installed and its daemon running, and a one-time Google sign-in.
+
+```bash
+maps lists                        # every list: name and id
+maps lists show <id>              # the places in one list, each with a cid
+maps lists create "Date spots"    # make a list, returns its id
+maps lists rename <id> "New name"
+maps lists delete <id>
+maps lists add <id> <cid>         # save a place to a list
+maps lists remove <id> <cid>     # take a place off a list
+maps lists auth                   # report the Google sign-in state
+```
+
+A list's `id` comes from `maps lists`. A place is a `cid`: from a `search` result to save it, or
+from `maps lists show` to take it off. It is the same id `show` and `directions` take.
+
+Sign in once. When a command prints `sign_in_required`, the browser holds no Google session yet.
+Sign in through the browser skill's handover, then run the command again:
+
+```bash
+browser handover start --url "https://accounts.google.com/ServiceLogin?continue=https://www.google.com/maps"
+```
+
+Send the user the returned link. Tell them to sign into Google, then run `browser handover stop`.
+The session stays in the browser profile, so later list commands need no new sign-in. Run
+`maps lists auth` to check the state before you start.
 
 ## Keep track of a plan in a trip file
 
