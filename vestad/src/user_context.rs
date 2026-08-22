@@ -90,10 +90,34 @@ impl UserContext {
             .cloned()
             .collect()
     }
+
+    /// Who to tell about a report, gated by presence. A store-only report (an unfocused frame or a
+    /// resync replay) records the device facts but is news to no agent, so both lists are empty and
+    /// nothing is marked told. Otherwise: the agents a new zone is news to, and the agents a new
+    /// position is news to. The returned agents are marked told.
+    pub(crate) fn recipients(
+        &self,
+        context: &DeviceContext,
+        presence: UserPresence,
+        agent_zones: &AgentZones,
+    ) -> (Vec<TimezoneChange>, Vec<String>) {
+        if presence == UserPresence::StoreOnly {
+            return (Vec::new(), Vec::new());
+        }
+        let timezone = match &context.timezone {
+            Some(zone) => self.timezone_changes(zone, agent_zones),
+            None => Vec::new(),
+        };
+        let location = match &context.position {
+            Some(PositionReport::At(position)) => self.location_changes(position, agent_zones),
+            _ => Vec::new(),
+        };
+        (timezone, location)
+    }
 }
 
 /// Whether a report places the user at the reporting device. A focused, fresh socket frame or a
-/// background poll from a phone does; an unfocused frame or a resync replay stores its zone but
+/// background poll from a phone does; an unfocused frame or a resync replay stores its facts but
 /// tells no one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UserPresence {
@@ -110,14 +134,15 @@ pub(crate) async fn report_device_context(state: &SharedState, device_id: &str, 
     let device = state.device_registry.report_context(device_id, context.clone(), now)?;
     // Serving agents with a reported zone: the ones vestad holds a current picture of.
     let agent_zones = state.agent_status_cache.serving_timezones();
-    if let Some(zone) = context.timezone.filter(|_| presence == UserPresence::AtDevice) {
-        for change in state.user_context.timezone_changes(&zone, &agent_zones) {
-            deliver(state, &change.agent, &user_timezone(&device, &zone, &change.agent_zone)).await;
+    let (timezone_changes, location_changes) = state.user_context.recipients(&context, presence, &agent_zones);
+    if let Some(zone) = &context.timezone {
+        for change in timezone_changes {
+            deliver(state, &change.agent, &user_timezone(&device, zone, &change.agent_zone)).await;
         }
     }
-    if let Some(PositionReport::At(position)) = context.position {
-        let notification = user_location(&device, &position);
-        for agent in state.user_context.location_changes(&position, &agent_zones) {
+    if let Some(PositionReport::At(position)) = &context.position {
+        let notification = user_location(&device, position);
+        for agent in location_changes {
             deliver(state, &agent, &notification).await;
         }
     }
@@ -270,6 +295,24 @@ mod tests {
         assert_eq!(context.location_changes(&at(51.5, -0.12, None), &fleet), ["scout"]);
         assert!(context.location_changes(&at(51.6, -0.12, None), &fleet).is_empty(), "11 km is a walk");
         assert_eq!(context.location_changes(&at(52.0, -0.12, None), &fleet), ["scout"], "56 km is a trip");
+    }
+
+    #[test]
+    fn a_store_only_report_tells_no_agent_even_with_a_new_position() {
+        let context = UserContext::default();
+        let fleet = zones(&[("scout", "Europe/London")]);
+        let report = DeviceContext {
+            timezone: Some("Asia/Tokyo".into()),
+            position: Some(PositionReport::At(at(35.6762, 139.6503, Some("Tokyo")))),
+        };
+        // An unfocused frame or a resync replay: store the facts, tell no one, mark nothing told.
+        let (zones_told, places_told) = context.recipients(&report, UserPresence::StoreOnly, &fleet);
+        assert!(zones_told.is_empty() && places_told.is_empty(), "store-only tells no one");
+        // The same facts from a present device are news to the agent, once, on both channels: since
+        // store-only marked nothing told, the zone and the place both still count as a change.
+        let (zones_told, places_told) = context.recipients(&report, UserPresence::AtDevice, &fleet);
+        assert_eq!(zones_told, vec![TimezoneChange { agent: "scout".into(), agent_zone: "Europe/London".into() }]);
+        assert_eq!(places_told, ["scout"]);
     }
 
     #[test]
