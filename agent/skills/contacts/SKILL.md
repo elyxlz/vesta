@@ -60,6 +60,42 @@ Only fill what's real. A near-stranger might be three lines. Someone central mig
 - **Before reaching out**: read their file so you match their style and remember what's open.
 - **The user asks about someone**: their file is your first stop, then `recall` for anything not captured yet.
 
+## Which channel is a person actually reading
+
+A contact file records how someone communicates; it does not know which channel they are on *now*.
+`scripts/live-channel.sh` answers that from the event store:
+
+```bash
+sh ~/agent/skills/contacts/scripts/live-channel.sh            # every contact with inbound
+sh ~/agent/skills/contacts/scripts/live-channel.sh <name>     # one person, ranked by channel
+sh ~/agent/skills/contacts/scripts/live-channel.sh --silence-hours
+```
+
+**It reads their INBOUND only, never your outbound.** A channel whose recent traffic is all yours is
+dead, and that is exactly the case that misleads: you send there, they never see it, and their
+silence gets recorded as their answer. The channel they last wrote to you on is the live one.
+
+`--silence-hours` prints hours since the OWNER last wrote, as a bare integer, or the literal
+`UNMEASURED` with exit 2. **It never prints a number it did not measure.** A caller that rations on
+silence must treat any non-integer as "cannot tell" and ration as though the silence were long: an
+unreadable store and a talkative user produce the same output otherwise, and that failure is silent.
+
+Two things it will not do:
+
+- **It never guesses the owner's name.** There is no structured source for it, since the user gets
+  no contact file (see above) and the config carries the agent's name rather than theirs. `app-chat`
+  is the user's own screen, so inbound there is theirs by construction and needs no name; that is
+  the floor and it always works. Set `VESTA_OWNER` to additionally fold in named channels like
+  WhatsApp. Without it the answer can only be MORE silence than there really was, never less, which
+  rations harder rather than failing open.
+- **It never lists a service as a contact.** It reads the event's normalized `sender` field, which
+  core populates across `contact_name`, `handle`, `from`, `author` and `sender_address`, so one read
+  covers every channel. An empty sender from anything but app-chat is one of your own daemons
+  reporting in; those are dropped and named in one line, rather than rendered as a person called `?`
+  holding a live channel. Do not scrape the name out of `summary`: that is a per-source presentation
+  string, and a channel that attaches `handle` rather than `contact_name` would be silently
+  invisible.
+
 ## Keeping contacts current
 
 People don't live in one place, and you learn about them all day long. Two things keep the files honest, and you do both on one nightly pass in the early hours:
