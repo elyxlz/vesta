@@ -121,9 +121,9 @@ const config: ExpoConfig = {
           "Share where this phone is with your Vesta agents, also while the app is closed, so plans and reminders follow your travel.",
         locationAlwaysPermission:
           "Share where this phone is with your Vesta agents while the app is closed, so plans and reminders follow your travel.",
-        // Reading a fix from the closed-app poll needs the always-on grant on both platforms; the iOS
-        // location background mode is not needed, since the poll runs under the processing mode.
-        isIosBackgroundLocationEnabled: false,
+        // The closed-app poll reads a fresh fix, which needs the always-on grant on both platforms
+        // and, on iOS, the location background mode as well; the processing mode alone cannot get one.
+        isIosBackgroundLocationEnabled: true,
         isAndroidBackgroundLocationEnabled: true,
       },
     ],
