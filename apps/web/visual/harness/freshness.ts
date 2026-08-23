@@ -63,7 +63,7 @@ export function moduleExecuted(entry: CoverageEntry): boolean {
   const inner = entry.functions.filter((fn) => {
     const first = fn.ranges[0];
     const wrapper =
-      first && first.startOffset === 0 && first.endOffset === source.length;
+      first?.startOffset === 0 && first.endOffset === source.length;
     return !wrapper && !isRefreshPlumbing(fn, source);
   });
   if (inner.length === 0) return true;

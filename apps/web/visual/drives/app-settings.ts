@@ -134,7 +134,6 @@ const DEVICES: DeviceInfo[] = [
     present: true,
     lastSeen: minutesAgo(0),
     pushEnabled: false,
-    location: "Milan, Italy",
     timezone: "Europe/Rome",
     position: null,
     positionAt: null,
@@ -146,7 +145,6 @@ const DEVICES: DeviceInfo[] = [
     present: false,
     lastSeen: minutesAgo(3 * 60 + 5),
     pushEnabled: false,
-    location: "London, United Kingdom",
     timezone: "Europe/London",
     position: null,
     positionAt: null,
@@ -158,7 +156,6 @@ const DEVICES: DeviceInfo[] = [
     present: false,
     lastSeen: minutesAgo(12),
     pushEnabled: true,
-    location: null,
     timezone: "Europe/Lisbon",
     position: {
       latitude: 38.7223,
