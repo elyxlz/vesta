@@ -15,13 +15,12 @@ ln -sf "$DIR/../dashboard" "$HOME/.local/bin/dashboard"
 
 cd "$DIR/../app"
 
+# Dependencies first: the build needs them present before it can resolve an import.
 echo "Checking dependencies..."
 "$DIR/ensure-deps.sh"
 
-if [ ! -d dist ]; then
-  echo "Building dashboard..."
-  npx vite build
-fi
+echo "Checking build..."
+"$DIR/ensure-build.sh"
 
 echo "Starting daemon..."
 "$DIR/../dashboard" daemon start

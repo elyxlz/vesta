@@ -100,6 +100,7 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
     (skill / "scripts").mkdir()
     (skill / "scripts/serve").symlink_to(SKILLS_DIR / "dashboard/scripts/serve")
     (skill / "scripts/ensure-deps.sh").symlink_to(SKILLS_DIR / "dashboard/scripts/ensure-deps.sh")
+    (skill / "scripts/ensure-build.sh").symlink_to(SKILLS_DIR / "dashboard/scripts/ensure-build.sh")
     # The legacy forwarder execs the launcher through $HOME, so the tree carries it too.
     (skill / "dashboard").symlink_to(SKILLS_DIR / "dashboard/dashboard")
     vite = skill / "app/node_modules/.bin/vite"
@@ -112,6 +113,19 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
     lock = skill / "app/package-lock.json"
     lock.write_text("{}\n")
     (skill / "app/node_modules/.vesta-deps").write_text(hashlib.sha256(lock.read_bytes()).hexdigest())
+    # Launch also reconciles dist/ against the build inputs. The stamp is written by the real
+    # helper under a no-op npx rather than by restating its digest here, then npx is replaced with
+    # one that fails: a launcher that rebuilds a bundle already current now fails loudly instead
+    # of reaching for the network, which is the property the gate exists to have.
+    npx = bin_dir / "npx"
+    npx.write_text("#!/bin/sh\nexit 0\n")
+    npx.chmod(0o755)
+    subprocess.run(
+        [str(skill / "scripts/ensure-build.sh")],
+        env={**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        check=True,
+    )
+    npx.write_text('#!/bin/sh\necho "rebuilt a dist that was already current" >&2\nexit 1\n')
 
 
 def _rig_whatsapp(home: pl.Path, bin_dir: pl.Path) -> None:
