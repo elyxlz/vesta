@@ -244,7 +244,6 @@ export default function SettingsScreen() {
           onConfirm={() => {
             setActiveConfirm(null);
             gatewayRestart.mutate();
-            router.dismiss();
           }}
           onDismiss={() => setActiveConfirm(null)}
         />

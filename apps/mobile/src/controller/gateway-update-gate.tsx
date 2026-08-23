@@ -35,11 +35,12 @@ export function GatewayUpdateGate({
   const privacyRouteActive = activeRoute === "privacy";
   const gatewayUpdateRouteActive = activeRoute === "gateway-update";
   const privacyBlocked = usePrivacyBlocked();
-  const { operation } = useGatewayOperation();
-  const operationRunning = operation !== null;
+  const { operation, updatedTo, restarted } = useGatewayOperation();
+  const operationPresented =
+    operation !== null || updatedTo !== null || restarted;
   const { action, backdropBlocked } = gatewayUpdateGateDecision({
     blocked,
-    operationRunning,
+    operationPresented,
     privacyBlocked,
     privacyRouteActive,
     gatewayUpdateRouteActive,
@@ -56,11 +57,9 @@ export function GatewayUpdateGate({
       return;
     }
 
-    if (action === "dismiss" || action === "dismiss-home") {
+    if (action === "dismiss") {
       presentationPending.current = false;
-      if (action === "dismiss-home") {
-        router.dismissTo(ROOT_ROUTE);
-      } else if (router.canGoBack()) {
+      if (router.canGoBack()) {
         router.back();
       } else {
         router.replace(ROOT_ROUTE);

@@ -19,11 +19,7 @@ export function latchedGatewayBehind(
 }
 
 export type GatewayUpdateGateNavigationAction =
-  | "none"
-  | "push-update"
-  | "replace-update"
-  | "dismiss"
-  | "dismiss-home";
+  "none" | "push-update" | "replace-update" | "dismiss";
 
 export interface GatewayUpdateGateDecision {
   action: GatewayUpdateGateNavigationAction;
@@ -32,7 +28,8 @@ export interface GatewayUpdateGateDecision {
 
 interface GatewayUpdateGateInput {
   blocked: boolean;
-  operationRunning: boolean;
+  // A gateway operation in flight, or its landing still showing: the sheet renders both.
+  operationPresented: boolean;
   privacyBlocked: boolean;
   privacyRouteActive: boolean;
   gatewayUpdateRouteActive: boolean;
@@ -40,42 +37,33 @@ interface GatewayUpdateGateInput {
 }
 
 // One decision set from one input set: the sheet navigation and the blocking backdrop share the
-// same precedence (privacy first, then a running operation whose progress page owns the screen),
-// so the two can never disagree.
+// same precedence (privacy first, then whatever the sheet has to show), so the two can never
+// disagree. The sheet is up for a needed update and for an operation from its start to its
+// landing, morphing between them in place.
 export function gatewayUpdateGateDecision(
   input: GatewayUpdateGateInput,
 ): GatewayUpdateGateDecision {
+  const privacyOwns = input.privacyBlocked || input.privacyRouteActive;
+  const presented = !privacyOwns && (input.blocked || input.operationPresented);
   return {
-    action: navigationAction(input),
-    backdropBlocked:
-      input.blocked &&
-      !input.privacyBlocked &&
-      !input.privacyRouteActive &&
-      !input.operationRunning,
+    action: navigationAction(input, presented),
+    backdropBlocked: presented,
   };
 }
 
-function navigationAction({
-  blocked,
-  operationRunning,
-  privacyBlocked,
-  privacyRouteActive,
-  gatewayUpdateRouteActive,
-  replaceActiveRoute,
-}: GatewayUpdateGateInput): GatewayUpdateGateNavigationAction {
+function navigationAction(
+  {
+    privacyBlocked,
+    privacyRouteActive,
+    gatewayUpdateRouteActive,
+    replaceActiveRoute,
+  }: GatewayUpdateGateInput,
+  presented: boolean,
+): GatewayUpdateGateNavigationAction {
   if (privacyBlocked || privacyRouteActive) return "none";
-
-  // A started update owns the flow: home renders its live progress, so the sheet hands off to it
-  // seconds after the tap (dismissing straight home, never through a stale agent page) and stays
-  // away for as long as the operation runs.
-  if (operationRunning) {
-    return gatewayUpdateRouteActive ? "dismiss-home" : "none";
-  }
-
-  if (blocked) {
+  if (presented) {
     if (gatewayUpdateRouteActive) return "none";
     return replaceActiveRoute ? "replace-update" : "push-update";
   }
-
   return gatewayUpdateRouteActive ? "dismiss" : "none";
 }

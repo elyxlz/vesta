@@ -24,8 +24,6 @@ import {
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
 import { Screen } from "@/components/layout/Screen";
-import { useGatewayOperation } from "@/controller/gateway-operation-context";
-import { GatewayUpdateProgress } from "@/controller/gateway-update-progress";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
@@ -48,7 +46,6 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status } = useSession();
   const { agents, agentsReady } = useRoster();
-  const { operation, updatedTo, restarted } = useGatewayOperation();
   const { colors } = usePreferences();
   const carouselRef = useRef<FlatList<AgentRow>>(null);
   const hapticPageIndex = useRef(0);
@@ -115,22 +112,6 @@ export default function HomeScreen() {
 
     return () => cancelAnimationFrame(frame);
   }, [agents, restoreRequest, scrollX, width]);
-
-  // Ahead of the roster gate: the gateway is mid-backup or about to restart, so the roster it would
-  // wait on is exactly what stops arriving. The resolution holds the same page for its moment, so
-  // the update reads as one page that finishes rather than a screen that vanishes.
-  if (operation !== null || updatedTo !== null || restarted) {
-    return (
-      <Screen scroll={false} contentStyle={styles.screen}>
-        <HomeHeader showCreate={false} />
-        <GatewayUpdateProgress
-          operation={operation}
-          updatedTo={updatedTo}
-          restarted={restarted}
-        />
-      </Screen>
-    );
-  }
 
   if (status === "booting" || (status === "connected" && !agentsReady)) {
     return <HomeSkeleton />;

@@ -10,7 +10,7 @@ import {
 interface Case {
   name: string;
   blocked: boolean;
-  operationRunning: boolean;
+  operationPresented: boolean;
   privacyBlocked: boolean;
   privacyRouteActive: boolean;
   gatewayUpdateRouteActive: boolean;
@@ -23,7 +23,7 @@ const cases: Case[] = [
   {
     name: "waits while privacy is blocked",
     blocked: true,
-    operationRunning: false,
+    operationPresented: false,
     privacyBlocked: true,
     privacyRouteActive: true,
     gatewayUpdateRouteActive: false,
@@ -34,7 +34,7 @@ const cases: Case[] = [
   {
     name: "waits for an unlocked privacy sheet to finish dismissing",
     blocked: true,
-    operationRunning: false,
+    operationPresented: false,
     privacyBlocked: false,
     privacyRouteActive: true,
     gatewayUpdateRouteActive: false,
@@ -45,7 +45,7 @@ const cases: Case[] = [
   {
     name: "pushes the update after the privacy sheet is gone",
     blocked: true,
-    operationRunning: false,
+    operationPresented: false,
     privacyBlocked: false,
     privacyRouteActive: false,
     gatewayUpdateRouteActive: false,
@@ -56,7 +56,7 @@ const cases: Case[] = [
   {
     name: "replaces another native sheet with the update",
     blocked: true,
-    operationRunning: false,
+    operationPresented: false,
     privacyBlocked: false,
     privacyRouteActive: false,
     gatewayUpdateRouteActive: false,
@@ -67,7 +67,7 @@ const cases: Case[] = [
   {
     name: "dismisses the update after compatibility recovers",
     blocked: false,
-    operationRunning: false,
+    operationPresented: false,
     privacyBlocked: false,
     privacyRouteActive: false,
     gatewayUpdateRouteActive: true,
@@ -76,26 +76,26 @@ const cases: Case[] = [
     backdropBlocked: false,
   },
   {
-    name: "hands the presented sheet off home once the update operation starts",
+    name: "keeps the presented sheet up once the update operation starts",
     blocked: true,
-    operationRunning: true,
+    operationPresented: true,
     privacyBlocked: false,
     privacyRouteActive: false,
     gatewayUpdateRouteActive: true,
     replaceActiveRoute: false,
-    action: "dismiss-home",
-    backdropBlocked: false,
+    action: "none",
+    backdropBlocked: true,
   },
   {
-    name: "never re-presents the sheet while the operation runs",
-    blocked: true,
-    operationRunning: true,
+    name: "presents the sheet for an operation started elsewhere, replacing a native sheet",
+    blocked: false,
+    operationPresented: true,
     privacyBlocked: false,
     privacyRouteActive: false,
     gatewayUpdateRouteActive: false,
-    replaceActiveRoute: false,
-    action: "none",
-    backdropBlocked: false,
+    replaceActiveRoute: true,
+    action: "replace-update",
+    backdropBlocked: true,
   },
 ];
 
@@ -155,7 +155,12 @@ const latchCases: LatchCase[] = [
 ];
 
 describe("latchedGatewayBehind", () => {
-  it.each(latchCases)("$name", ({ latch, connectionKey, syncState, behind }) => {
-    expect(latchedGatewayBehind(latch, connectionKey, syncState)).toBe(behind);
-  });
+  it.each(latchCases)(
+    "$name",
+    ({ latch, connectionKey, syncState, behind }) => {
+      expect(latchedGatewayBehind(latch, connectionKey, syncState)).toBe(
+        behind,
+      );
+    },
+  );
 });
