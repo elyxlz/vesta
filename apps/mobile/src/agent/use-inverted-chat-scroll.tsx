@@ -16,13 +16,10 @@ import {
   type KeyboardChatScrollViewProps,
 } from "react-native-keyboard-controller";
 import type { SharedValue } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getLatestMessageOffset,
   isNearLatestMessage,
 } from "@/agent/chat-scroll-model";
-
-const COMPOSER_MARGIN = 8;
 
 type ChatScrollViewRef = ComponentRef<typeof KeyboardChatScrollView>;
 type ContentInsetChange = NonNullable<
@@ -32,26 +29,24 @@ type ContentInsetChange = NonNullable<
 const NativeChatScrollView = forwardRef<
   ChatScrollViewRef,
   ScrollViewProps & KeyboardChatScrollViewProps
->(({ inverted, ...props }, ref) => {
-  const { bottom } = useSafeAreaInsets();
-
-  return (
-    <KeyboardChatScrollView
-      ref={ref}
-      automaticallyAdjustContentInsets={false}
-      contentInsetAdjustmentBehavior="never"
-      inverted={inverted}
-      keyboardDismissMode="interactive"
-      keyboardLiftBehavior="whenAtEnd"
-      offset={Math.max(bottom - COMPOSER_MARGIN, 0)}
-      {...props}
-    />
-  );
-});
+>(({ inverted, ...props }, ref) => (
+  <KeyboardChatScrollView
+    ref={ref}
+    automaticallyAdjustContentInsets={false}
+    contentInsetAdjustmentBehavior="never"
+    inverted={inverted}
+    keyboardDismissMode="interactive"
+    keyboardLiftBehavior="whenAtEnd"
+    {...props}
+  />
+));
 NativeChatScrollView.displayName = "NativeChatScrollView";
 
+// `keyboardOffset` is the composer dock's own opened offset, so the list and
+// the dock agree on how much of the keyboard's height the content must yield.
 export function useInvertedChatScroll<Row>(
   extraContentPadding: SharedValue<number>,
+  keyboardOffset: number,
 ) {
   const listRef = useRef<FlatList<Row>>(null);
   const isAtLatestRef = useRef(true);
@@ -63,41 +58,39 @@ export function useInvertedChatScroll<Row>(
     listRef.current = list;
   }, []);
 
-  const handleContentInsetChange = useCallback<ContentInsetChange>(
-    (insets) => {
-      const latestOffset = getLatestMessageOffset(
-        process.env.EXPO_OS,
-        insets.top,
-      );
-      latestOffsetRef.current = latestOffset;
+  const handleContentInsetChange = useCallback<ContentInsetChange>((insets) => {
+    const latestOffset = getLatestMessageOffset(
+      process.env.EXPO_OS,
+      insets.top,
+    );
+    latestOffsetRef.current = latestOffset;
 
-      if (
-        process.env.EXPO_OS !== "ios" ||
-        hasInitialInsetAnchorRef.current ||
-        insets.top <= 0 ||
-        !isAtLatestRef.current
-      ) {
-        return;
-      }
+    if (
+      process.env.EXPO_OS !== "ios" ||
+      hasInitialInsetAnchorRef.current ||
+      insets.top <= 0 ||
+      !isAtLatestRef.current
+    ) {
+      return;
+    }
 
-      hasInitialInsetAnchorRef.current = true;
-      listRef.current?.scrollToOffset({
-        offset: latestOffset,
-        animated: false,
-      });
-    },
-    [],
-  );
+    hasInitialInsetAnchorRef.current = true;
+    listRef.current?.scrollToOffset({
+      offset: latestOffset,
+      animated: false,
+    });
+  }, []);
 
   const renderScrollComponent = useCallback(
     (props: ScrollViewProps) => (
       <NativeChatScrollView
         {...props}
         extraContentPadding={extraContentPadding}
+        offset={keyboardOffset}
         onContentInsetChange={handleContentInsetChange}
       />
     ),
-    [extraContentPadding, handleContentInsetChange],
+    [extraContentPadding, handleContentInsetChange, keyboardOffset],
   );
 
   const handleScroll = useCallback(

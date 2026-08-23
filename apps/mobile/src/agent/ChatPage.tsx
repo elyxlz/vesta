@@ -39,6 +39,10 @@ import { connectionKeyOf } from "@/session/session-model";
 const COMPOSER_RESIZE_DURATION = 250;
 const CHAT_COMPOSER_GAP = 6;
 const COMPOSER_SURFACE_PADDING = 8;
+// Space kept below the composer: above the home indicator while the keyboard
+// is closed, and above the keyboard once it is open.
+const COMPOSER_CLOSED_GAP = 6;
+const COMPOSER_KEYBOARD_GAP = 10;
 // The dock sits further inset while the keyboard is closed and widens to
 // the chat list edge once it is open, in step with the keyboard's own motion.
 const COMPOSER_INSET_CLOSED = 48;
@@ -95,6 +99,10 @@ export default function ChatPage() {
   const inputRef = useRef<ChatComposerInputRef>(null);
   const measuredComposerHeight = useRef<number | null>(null);
   const composerInset = useSharedValue(0);
+  // How far the dock drops back toward an open keyboard, so that of its
+  // closed bottom padding only the keyboard gap stays above the keys.
+  const composerKeyboardOffset =
+    insets.bottom + COMPOSER_CLOSED_GAP - COMPOSER_KEYBOARD_GAP;
   const keyboard = useReanimatedKeyboardAnimation();
   const composerDockStyle = useAnimatedStyle(() => ({
     paddingHorizontal: interpolate(
@@ -109,7 +117,7 @@ export default function ChatPage() {
     isAwayFromLatest,
     renderScrollComponent,
     scrollToLatest,
-  } = useInvertedChatScroll<ChatRow>(composerInset);
+  } = useInvertedChatScroll<ChatRow>(composerInset, composerKeyboardOffset);
   const rows = useMemo(
     () => createInvertedChatRows(socket.events, socket.isTyping),
     [socket.events, socket.isTyping],
@@ -237,7 +245,7 @@ export default function ChatPage() {
         onRetry={socket.retry}
       />
       <KeyboardStickyView
-        offset={{ closed: 0, opened: Math.max(insets.bottom - 8, 0) }}
+        offset={{ closed: 0, opened: composerKeyboardOffset }}
         pointerEvents="box-none"
         style={styles.composerOverlay}
       >
@@ -246,7 +254,7 @@ export default function ChatPage() {
             style={[
               styles.composerDock,
               composerDockStyle,
-              { paddingBottom: Math.max(insets.bottom, 8) },
+              { paddingBottom: insets.bottom + COMPOSER_CLOSED_GAP },
             ]}
           >
             {isAwayFromLatest && rows.length > 0 ? (

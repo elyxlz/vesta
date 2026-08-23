@@ -79,7 +79,7 @@ export function ChatComposerInput({
         modifiers={[
           fillMaxWidth(),
           defaultMinSize({ minHeight: CHAT_COMPOSER_CONTROL_HEIGHT }),
-          padding(9, 5, 4, 5),
+          padding(9, 4, 4, 4),
         ]}
         onFocusChanged={lifecycle.onFocusChange}
         onValueChange={lifecycle.onNativeTextChange}

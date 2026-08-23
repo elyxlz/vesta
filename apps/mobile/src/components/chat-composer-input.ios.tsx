@@ -88,7 +88,7 @@ export function ChatComposerInput({
           textFieldStyle("plain"),
           textInputAutocapitalization("sentences"),
           lineLimit({ min: 1, max: CHAT_COMPOSER_MAX_LINES }),
-          padding({ top: 5, bottom: 5, leading: 9, trailing: 4 }),
+          padding({ top: 4, bottom: 4, leading: 9, trailing: 4 }),
           frame({
             minHeight: CHAT_COMPOSER_CONTROL_HEIGHT,
             maxHeight: 180,
