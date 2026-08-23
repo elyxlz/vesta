@@ -15,8 +15,7 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "visual:ios:capture": "node ./scripts/visual-ios.mjs capture",
-    "visual:android:capture": "node ./scripts/visual-android.mjs capture",
-    "postinstall": "patch-package"
+    "visual:android:capture": "node ./scripts/visual-android.mjs capture"
   },
   "dependencies": {
     "@expo-google-fonts/archivo": "^0.4.2",

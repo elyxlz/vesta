@@ -19,6 +19,7 @@
     "react-dom": "19.2.3"
   },
   "scripts": {
+    "postinstall": "patch-package --patch-dir mobile/patches",
     "core:lint": "npm -w @vesta/core run lint",
     "core:check": "npm -w @vesta/core run check",
     "core:test": "npm -w @vesta/core run test",
