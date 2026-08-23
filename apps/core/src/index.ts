@@ -169,3 +169,24 @@ export type {
 
 export { createController } from "./controller/controller"
 export type { Controller, ControllerDeps } from "./controller/controller"
+
+export { voiceBoolSetting, voiceDomainReady } from "./voice/status"
+export type { VoiceDomainStatus, VoiceSettingDef, VoiceSettingOption } from "./voice/status"
+export { createTtsQueue } from "./voice/tts-queue"
+export type { SpeechPlayer, TtsQueue, TtsQueueCallbacks } from "./voice/tts-queue"
+export { createSttSession, MAX_PENDING_AUDIO_BYTES } from "./voice/stt-session"
+export type {
+  AudioCapture,
+  SttSession,
+  SttSessionCallbacks,
+  SttSessionDeps,
+  SttSessionOptions,
+  VoiceSocketLike,
+} from "./voice/stt-session"
+export { createVoiceSession } from "./voice/voice-session"
+export type {
+  VoiceSession,
+  VoiceSessionCallbacks,
+  VoiceSessionDeps,
+  VoiceSessionSettings,
+} from "./voice/voice-session"
