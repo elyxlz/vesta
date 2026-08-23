@@ -165,7 +165,7 @@ EOF
         x86_64) local pkg_arch="x86_64" ;;
         aarch64) local pkg_arch="aarch64" ;;
       esac
-      local artifact="Vesta-${VERSION}-1.${pkg_arch}.rpm"
+      local artifact="Vesta_${VERSION}_${pkg_arch}.rpm"
       echo "Downloading desktop app (RPM)..."
       curl -fsSL -o "$WORK_DIR/vesta.rpm" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
       verify_checksum "$WORK_DIR/vesta.rpm" "$artifact"
