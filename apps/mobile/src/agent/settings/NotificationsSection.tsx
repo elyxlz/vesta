@@ -8,7 +8,7 @@ import { useToast } from "@/components/native-toast";
 import { Card } from "@/components/ui/Card";
 import { FormRow, FormSection } from "@/components/ui/Form";
 import { ErrorState, LoadingState } from "@/components/ui/States";
-import { Text } from "@/components/ui/Typography";
+import { Quote, Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
@@ -174,8 +174,9 @@ export function NotificationsSection() {
           {rules.length === 0 ? "No rules yet" : "Add a rule"}
         </Text>
         <Text style={[styles.hintText, { color: colors.secondaryText }]}>
-          Just ask {name} in chat, for example “don’t let Twitter interrupt you”
-          or “snooze the family group chat”.
+          Just ask {name} in chat, for example{" "}
+          <Quote>“don’t let Twitter interrupt you”</Quote> or{" "}
+          <Quote>“snooze the family group chat”</Quote>.
         </Text>
       </Card>
       <FormSection

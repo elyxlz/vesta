@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
-import { Text } from "@/components/ui/Typography";
+import { Quote, Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
@@ -193,7 +193,13 @@ export function VoiceSection() {
     return (
       <EmptyState
         title="Voice is not set up yet"
-        detail={`${name} can talk and listen once voice is set up. Just ask in chat, for example “set up voice” or “let me talk to you”.`}
+        detail={
+          <>
+            {name} can talk and listen once voice is set up. Just ask in chat,
+            for example <Quote>“set up voice”</Quote> or{" "}
+            <Quote>“let me talk to you”</Quote>.
+          </>
+        }
       />
     );
   }
