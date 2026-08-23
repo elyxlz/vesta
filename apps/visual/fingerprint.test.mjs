@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -37,9 +37,10 @@ describe("fingerprintInputs", () => {
 
 describe("staleReasons", () => {
   it("names the files whose content moved and the set changes", async () => {
-    const directory = await mkdtemp(
-      path.join(appsRoot, "visual/.visual/fp-test-"),
-    );
+    // The store directory is gitignored, so a fresh checkout has none until a capture runs.
+    const store = path.join(appsRoot, "visual/.visual");
+    await mkdir(store, { recursive: true });
+    const directory = await mkdtemp(path.join(store, "fp-test-"));
     const relative = path.relative(appsRoot, directory);
     await writeFile(path.join(directory, "a.ts"), "one");
     await writeFile(path.join(directory, "b.ts"), "two");
@@ -52,6 +53,7 @@ describe("staleReasons", () => {
       [`${relative}/a.ts`, `${relative}/c.ts`],
       ["card v2"],
     );
+    await rm(directory, { recursive: true, force: true });
     expect(staleReasons(before, after)).toEqual({
       changed: [`${relative}/a.ts`],
       added: [`${relative}/c.ts`],
