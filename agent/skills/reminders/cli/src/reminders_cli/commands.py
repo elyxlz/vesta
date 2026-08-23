@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from apscheduler.job import Job
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -52,6 +53,15 @@ class SnoozeSpec(BaseModel):
     in_days: int | None = None
     at: str | None = None
     tz: str | None = None
+
+
+class UpdateSpec(BaseModel):
+    """What to change on an existing reminder, in place, under the same id: its message, the zone
+    its recurring schedule is pinned to, or both. `unpin_tz` returns it to the agent's own zone."""
+
+    message: str | None = None
+    tz: str | None = None
+    unpin_tz: bool = False
 
 
 class ReminderSpec(BaseModel):
@@ -388,6 +398,16 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
         return False
 
 
+def cron_zone_moved(job: Job, trigger_data: TriggerData) -> bool:
+    """True when a live cron job is armed in a zone its reminder no longer stores, which is what a
+    zone repoint leaves behind: the row is right and the running job is not. A fuzzed cron row is
+    armed as a one-shot instead, and moves through its rewritten fire time."""
+    if not isinstance(job.trigger, CronTrigger):
+        return False
+    stored_tz = trigger_data["tz"] if "tz" in trigger_data else None
+    return str(job.trigger.timezone) != str(_zone(stored_tz))
+
+
 def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_dir: Path | None = None):
     """Load all active reminders from DB and register as APScheduler jobs.
     Past-due one-time reminders fire missed notifications immediately."""
@@ -704,16 +724,72 @@ def remind_snooze(config: Config, *, reminder_id: str, spec: SnoozeSpec) -> dict
     }
 
 
-def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
+def _relabel_zone(schedule_type: str, old_tz: str | None, new_tz: str | None) -> str:
+    """The stored label carrying a different zone. `reminders list` prints this label, and a cron
+    label brackets its zone where a dated recurring one appends it after the time."""
+    label, fuzz_sep, fuzz = schedule_type.partition(", fuzz ")
+    bracketed = label.startswith("cron: ")
+    if old_tz:
+        label = label.removesuffix(f" ({old_tz})" if bracketed else f" {old_tz}")
+    if new_tz:
+        label += f" ({new_tz})" if bracketed else f" {new_tz}"
+    return label + fuzz_sep + fuzz
+
+
+def _repoint_zone(reminder_id: str, row, tz: str | None) -> tuple[str, TriggerData, datetime | None]:
+    """Move a recurring schedule to another zone in place: the wall-clock time is kept and read in
+    the new zone, and the next fire is recomputed from it."""
+    trigger_data: TriggerData = json.loads(row["trigger_data"]) if row["trigger_data"] else {}
+    trigger_type = trigger_data["type"] if "type" in trigger_data else None
+    if trigger_type == "date":
+        raise ValueError("A one-shot is a fixed instant, not a zone: move it with 'reminders snooze <id> --at <iso> --tz <zone>'")
+    if trigger_type != "cron":
+        raise ValueError("Only a dated recurring or cron schedule carries a zone; an hourly reminder has no wall-clock time to pin")
+
+    old_tz = trigger_data["tz"] if "tz" in trigger_data else None
+    if tz is None:
+        if old_tz is not None:
+            del trigger_data["tz"]
+    else:
+        trigger_data["tz"] = tz
+
+    now = _now_utc()
+    if "fuzz_minutes" in trigger_data:
+        next_run = fuzzed_next_fire(reminder_id, trigger_data, now)
+    else:
+        next_run = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, now)
+    return _relabel_zone(row["schedule_type"], old_tz, tz), trigger_data, next_run
+
+
+def remind_update(config: Config, *, reminder_id: str, spec: UpdateSpec) -> dict:
+    """Rewrite a reminder in place. The id never changes, so a zone move leaves every note, file and
+    reminder body that named this id still correct."""
+    if spec.tz is not None and spec.unpin_tz:
+        raise ValueError("Pick one zone change: --tz <zone> pins the schedule to that zone, --unpin-tz follows the agent's own zone")
+    if spec.message is None and spec.tz is None and not spec.unpin_tz:
+        raise ValueError('Say what to change: --message "...", --tz <zone>, or --unpin-tz')
+
     with closing(db.get_db(config.data_dir)) as conn:
-        reminder = _require_live_reminder_row(conn, reminder_id)
-        conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
+        row = _require_live_reminder_row(conn, reminder_id)
+        message = spec.message if spec.message is not None else row["message"]
+        schedule, trigger_data, scheduled_time = row["schedule_type"], row["trigger_data"], row["scheduled_time"]
+        next_run = _next_run_for_row(row)
+
+        if spec.tz is not None or spec.unpin_tz:
+            schedule, new_data, next_fire = _repoint_zone(reminder_id, row, spec.tz)
+            trigger_data, scheduled_time = json.dumps(new_data), next_fire.isoformat() if next_fire else None
+            next_run = _echo_local(next_fire)
+
+        conn.execute(
+            "UPDATE reminders SET message = ?, schedule_type = ?, trigger_data = ?, scheduled_time = ? WHERE id = ?",
+            (message, schedule, trigger_data, scheduled_time, reminder_id),
+        )
         conn.commit()
 
     return {
         "id": reminder_id,
         "message": message,
-        "schedule": reminder["schedule_type"],
-        "next_run": _next_run_for_row(reminder),
+        "schedule": schedule,
+        "next_run": next_run,
         "status": "updated",
     }

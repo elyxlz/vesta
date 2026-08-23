@@ -16,7 +16,7 @@ The timezone lives in the agent's config store (`~/agent/data/config.json`, key 
    ```
 3. Applies on the next restart (`restart_vesta` to apply now).
 
-After the restart, tasks and reminders read the new timezone automatically: a recurring reminder created without `--tz` follows it, and one created with `--tz` stays pinned to that zone (`reminders list` names the zone on exactly the pinned rows). If the move is permanent, check the pinned rows still mean what they should.
+After the restart, tasks and reminders read the new timezone automatically: a recurring reminder created without `--tz` follows it, and one created with `--tz` stays pinned to that zone (`reminders list` names the zone on exactly the pinned rows). If the move is permanent, check the pinned rows still mean what they should, and repoint the ones that do not with `reminders update <id> --tz <zone>`, or `--unpin-tz` to make them follow this timezone; both keep the reminder's id.
 
 ## How you learn the user moved
 

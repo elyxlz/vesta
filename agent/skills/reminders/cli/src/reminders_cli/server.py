@@ -3,19 +3,11 @@ import threading
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 
 from . import commands
 from .config import Config
 
 logger = logging.getLogger(__name__)
-
-
-# --- Request bodies ---
-
-
-class UpdateReminderBody(BaseModel):
-    message: str
 
 
 # --- App factory ---
@@ -41,8 +33,8 @@ def _create_app(config: Config) -> FastAPI:
         return commands.remind_get(config, reminder_id=reminder_id)
 
     @app.patch("/reminders/{reminder_id}")
-    def update_reminder(reminder_id: str, body: UpdateReminderBody):
-        return commands.remind_update(config, reminder_id=reminder_id, message=body.message)
+    def update_reminder(reminder_id: str, body: commands.UpdateSpec):
+        return commands.remind_update(config, reminder_id=reminder_id, spec=body)
 
     @app.post("/reminders/{reminder_id}/snooze")
     def snooze_reminder(reminder_id: str, body: commands.SnoozeSpec):
