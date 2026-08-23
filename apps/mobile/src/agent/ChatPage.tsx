@@ -1,8 +1,16 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
-import { useSharedValue, withTiming } from "react-native-reanimated";
+import {
+  KeyboardStickyView,
+  useReanimatedKeyboardAnimation,
+} from "react-native-keyboard-controller";
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fetchVoiceStatus } from "@/api/endpoints";
@@ -19,10 +27,7 @@ import { createInvertedChatRows, type ChatRow } from "@/agent/chat-list-model";
 import { quotedReply, type ReplyTarget } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 import { GlassSurface } from "@/components/ui/glass-surface";
-import {
-  ComposerActionButton,
-  ReplyPreview,
-} from "@/agent/chat/chat-composer";
+import { ComposerActionButton, ReplyPreview } from "@/agent/chat/chat-composer";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
 import { ScrollToBottomButton } from "@/agent/chat/scroll-to-bottom-button";
 import { useTranscriptWordHaptics } from "@/agent/chat/use-transcript-word-haptics";
@@ -32,6 +37,10 @@ import { connectionKeyOf } from "@/session/session-model";
 
 const COMPOSER_RESIZE_DURATION = 250;
 const CHAT_COMPOSER_GAP = 6;
+// The dock sits inset while the keyboard is closed and spans the full
+// width once it is open, widening in step with the keyboard's own motion.
+const COMPOSER_INSET_CLOSED = 22;
+const COMPOSER_INSET_OPEN = 0;
 
 export default function ChatPage() {
   const insets = useSafeAreaInsets();
@@ -84,6 +93,14 @@ export default function ChatPage() {
   const inputRef = useRef<ChatComposerInputRef>(null);
   const measuredComposerHeight = useRef<number | null>(null);
   const composerInset = useSharedValue(0);
+  const keyboard = useReanimatedKeyboardAnimation();
+  const composerDockStyle = useAnimatedStyle(() => ({
+    paddingHorizontal: interpolate(
+      keyboard.progress.value,
+      [0, 1],
+      [COMPOSER_INSET_CLOSED, COMPOSER_INSET_OPEN],
+    ),
+  }));
   const {
     attachList,
     handleScroll,
@@ -155,10 +172,7 @@ export default function ChatPage() {
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
   }, []);
-  const cancelReply = useCallback(
-    () => setReplyTarget(null),
-    [setReplyTarget],
-  );
+  const cancelReply = useCallback(() => setReplyTarget(null), [setReplyTarget]);
   const replyToMessage = useCallback(
     (text: string, user: boolean) => {
       setReplyTarget({ text, sender: user ? "You" : name });
@@ -226,9 +240,10 @@ export default function ChatPage() {
         style={styles.composerOverlay}
       >
         <View onLayout={handleComposerLayout}>
-          <View
+          <Animated.View
             style={[
               styles.composerDock,
+              composerDockStyle,
               { paddingBottom: Math.max(insets.bottom, 8) },
             ]}
           >
@@ -268,7 +283,7 @@ export default function ChatPage() {
                 />
               </View>
             </GlassSurface>
-          </View>
+          </Animated.View>
         </View>
       </KeyboardStickyView>
     </View>
@@ -286,7 +301,7 @@ const styles = StyleSheet.create({
     zIndex: 2,
     justifyContent: "flex-end",
   },
-  composerDock: { paddingHorizontal: 22, paddingTop: 8 },
+  composerDock: { paddingTop: 8 },
   composerSurface: { padding: 4, borderRadius: 22, overflow: "hidden" },
   scrollToBottomSlot: {
     position: "absolute",
