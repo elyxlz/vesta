@@ -51,7 +51,6 @@ export default function RecentGatewaysScreen() {
     recentGateways,
     connectRecentGateway,
     forgetRecentGateway,
-    clearRecentGateways,
   } = useSession();
   const { showError } = useToast();
   const { colors } = usePreferences();
@@ -65,7 +64,6 @@ export default function RecentGatewaysScreen() {
   const [pendingForget, setPendingForget] = useState<RecentGateway | null>(
     null,
   );
-  const [confirmingClear, setConfirmingClear] = useState(false);
   const isConnecting = connectionAttempt?.status === "connecting";
   const showsConnectionState =
     showConnectionState && connectionAttempt !== null;
@@ -122,23 +120,12 @@ export default function RecentGatewaysScreen() {
     setPendingForget(gateway);
   };
 
-  const confirmClear = () => {
-    setConfirmingClear(true);
-  };
-
   const performForget = () => {
     const gateway = pendingForget;
     setPendingForget(null);
     if (!gateway) return;
     void forgetRecentGateway(gateway.id).catch((cause: unknown) =>
       showError(cause, "Could not forget this gateway"),
-    );
-  };
-
-  const performClear = () => {
-    setConfirmingClear(false);
-    void clearRecentGateways().catch((cause: unknown) =>
-      showError(cause, "Could not clear recent gateways"),
     );
   };
 
@@ -304,20 +291,6 @@ export default function RecentGatewaysScreen() {
           )}
 
           <View style={styles.footerActions}>
-            {(recentGateways?.length ?? 0) > 1 ? (
-              <Button
-                pill
-                size="compact"
-                variant="ghost"
-                icon="trash-outline"
-                iconSize={16}
-                labelStyle={styles.footerActionLabel}
-                disabled={isConnecting}
-                onPress={confirmClear}
-              >
-                Clear all gateways
-              </Button>
-            ) : null}
             <Button
               pill
               size="compact"
@@ -339,15 +312,6 @@ export default function RecentGatewaysScreen() {
         destructive
         onConfirm={performForget}
         onDismiss={() => setPendingForget(null)}
-      />
-      <ConfirmDialog
-        visible={confirmingClear}
-        title="Clear all recent gateways?"
-        message="All saved gateway credentials will be permanently removed from this device."
-        confirmLabel="Clear all"
-        destructive
-        onConfirm={performClear}
-        onDismiss={() => setConfirmingClear(false)}
       />
     </AuthSheet>
   );
@@ -417,6 +381,6 @@ const styles = StyleSheet.create({
   gatewayCopy: { flex: 1, gap: 2 },
   gatewayName: { fontSize: 16, lineHeight: 20, fontWeight: "500" },
   gatewayDetail: { fontSize: 13, lineHeight: 18 },
-  footerActions: { marginTop: 16, gap: 12 },
+  footerActions: { marginTop: 16 },
   footerActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
 });
