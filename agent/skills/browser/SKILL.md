@@ -110,6 +110,14 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 `upload_file`, `iframe_target`. Plus ref-based variants: `click_ref`, `type_ref`, `hover_ref`,
 `scroll_to_ref`.
 
+The Python `bidi()` and the `browser bidi` command share a name and do NOT share a calling
+convention. The command takes params as one positional JSON blob
+(`browser bidi "storage.getCookies" '{"filter":{...}}'`); the helper is
+`bidi(method: str, **params)` and takes them as keyword arguments
+(`bidi("storage.getCookies", filter={...})`). Passing the command's dict form to the helper raises
+`TypeError: bidi() takes 1 positional argument but 2 were given`, which names the arity and not the
+cause, so it reads like a bug in the helper rather than a translation error at the boundary.
+
 ## Command reference
 
 ```bash
