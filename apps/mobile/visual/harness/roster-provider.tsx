@@ -99,7 +99,6 @@ const allDevices: DeviceInfo[] = [
     present: true,
     lastSeen: "2026-08-01T09:20:00.000Z",
     pushEnabled: true,
-    location: "Lisbon, Portugal",
     timezone: "Europe/Lisbon",
     position: devicesVariant === "position" ? phonePosition : null,
     positionAt:
@@ -112,7 +111,6 @@ const allDevices: DeviceInfo[] = [
     present: false,
     lastSeen: "2026-07-30T18:05:00.000Z",
     pushEnabled: false,
-    location: null,
     timezone: null,
     position: null,
     positionAt: null,
