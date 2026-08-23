@@ -14,6 +14,7 @@ import {
   padding,
 } from "@expo/ui/jetpack-compose/modifiers";
 import {
+  CHAT_COMPOSER_CONTROL_HEIGHT,
   CHAT_COMPOSER_MAX_LINES,
   type ChatComposerInputProps,
   type ChatComposerInputRef,
@@ -77,8 +78,8 @@ export function ChatComposerInput({
         minLines={1}
         modifiers={[
           fillMaxWidth(),
-          defaultMinSize({ minHeight: 36 }),
-          padding(9, 8, 4, 6),
+          defaultMinSize({ minHeight: CHAT_COMPOSER_CONTROL_HEIGHT }),
+          padding(9, 5, 4, 5),
         ]}
         onFocusChanged={lifecycle.onFocusChange}
         onValueChange={lifecycle.onNativeTextChange}

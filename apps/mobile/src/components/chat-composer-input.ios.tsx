@@ -19,6 +19,7 @@ import {
   tint,
 } from "@expo/ui/swift-ui/modifiers";
 import {
+  CHAT_COMPOSER_CONTROL_HEIGHT,
   CHAT_COMPOSER_MAX_LINES,
   type ChatComposerInputProps,
   type ChatComposerInputRef,
@@ -87,8 +88,12 @@ export function ChatComposerInput({
           textFieldStyle("plain"),
           textInputAutocapitalization("sentences"),
           lineLimit({ min: 1, max: CHAT_COMPOSER_MAX_LINES }),
-          padding({ top: 8, bottom: 6, leading: 9, trailing: 4 }),
-          frame({ minHeight: 36, maxHeight: 180, alignment: "topLeading" }),
+          padding({ top: 5, bottom: 5, leading: 9, trailing: 4 }),
+          frame({
+            minHeight: CHAT_COMPOSER_CONTROL_HEIGHT,
+            maxHeight: 180,
+            alignment: "topLeading",
+          }),
         ]}
       >
         <TextField.Placeholder>

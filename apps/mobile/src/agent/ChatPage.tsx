@@ -19,6 +19,7 @@ import {
   ChatComposerInput,
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input";
+import { CHAT_COMPOSER_CONTROL_HEIGHT } from "@/components/chat-composer-input.types";
 import { useToast } from "@/components/native-toast";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -37,6 +38,7 @@ import { connectionKeyOf } from "@/session/session-model";
 
 const COMPOSER_RESIZE_DURATION = 250;
 const CHAT_COMPOSER_GAP = 6;
+const COMPOSER_SURFACE_PADDING = 8;
 // The dock sits further inset while the keyboard is closed and widens to
 // the chat list edge once it is open, in step with the keyboard's own motion.
 const COMPOSER_INSET_CLOSED = 48;
@@ -302,7 +304,11 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   composerDock: { paddingTop: 8 },
-  composerSurface: { padding: 4, borderRadius: 22, overflow: "hidden" },
+  composerSurface: {
+    padding: COMPOSER_SURFACE_PADDING,
+    borderRadius: CHAT_COMPOSER_CONTROL_HEIGHT / 2 + COMPOSER_SURFACE_PADDING,
+    overflow: "hidden",
+  },
   scrollToBottomSlot: {
     position: "absolute",
     top: -36,

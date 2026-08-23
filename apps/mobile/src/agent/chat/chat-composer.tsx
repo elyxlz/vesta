@@ -10,6 +10,7 @@ import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import type { ReplyTarget } from "@/agent/message-actions";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
+import { CHAT_COMPOSER_CONTROL_HEIGHT } from "@/components/chat-composer-input.types";
 
 export const ReplyPreview = memo(function ReplyPreview({
   target,
@@ -155,10 +156,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   roundButton: {
-    width: 32,
-    height: 32,
-    marginBottom: 2,
-    borderRadius: 16,
+    width: CHAT_COMPOSER_CONTROL_HEIGHT,
+    height: CHAT_COMPOSER_CONTROL_HEIGHT,
+    borderRadius: CHAT_COMPOSER_CONTROL_HEIGHT / 2,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    borderRadius: 16,
+    borderRadius: CHAT_COMPOSER_CONTROL_HEIGHT / 2,
   },
   composerActionGlyph: {
     position: "absolute",
