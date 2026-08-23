@@ -39,13 +39,24 @@ Try to break the change rather than reading it for plausibility. Find the input,
 
 Trust a test only once you have seen it fail. Revert the fix in your local copy, or flip the constant it pins, and confirm the right test goes red; a suite that stays green either way pins nothing. And when a pass could depend on timing, ordering, or filename sorting, run the test twenty times before crediting it: one pass proves it can pass, not that it passes.
 
-Never speculate about code you have not opened. Read the code paths the diff touches before saying anything about them, and where running something settles a question, run it. The `check.sh` subcommands in `CLAUDE.md` are the ones CI uses.
+Never speculate about code you have not opened. Read the code paths the diff touches before saying anything about them, at the pinned refs the next section defines, and where running something settles a question, run it. The `check.sh` subcommands in `CLAUDE.md` are the ones CI uses.
 
 Find everything first, then filter once. While reading, collect every concern at any severity rather than deciding as you go whether one is worth mentioning: judging severity while looking suppresses real findings. Then make one pass over the list and drop only what you could not substantiate, keeping anything real however small. Filter on "is this true", never on "is this important enough".
 
 Say so plainly when the change is simply good. A review that manufactures objections to look thorough is worth as little as one that rubber-stamps.
 
 Work through the diff yourself. Delegate to a subagent only when the diff is genuinely too large to hold in one reading, and then split it by area so each subagent owns a different part rather than re-reviewing the same code. One is usually enough. Do not spawn a subagent to double-check a finding you already have.
+
+## Your checkout is not ground truth
+
+The tree you are running in is a deployed snapshot, not the repository under review: it can sit days or releases behind `origin/master`, and on a stale tree a plain file read resolves to history. Deleted code reads as current, and a verdict built on it files a false regression against the exact PR that removed it. Never cite the working tree for what the code does today, and never let a subagent do so either: this rule rides along in every delegation prompt.
+
+Pin both sides before verifying any claim:
+
+- `git fetch origin` first, then resolve the two refs every read uses: `master=$(git rev-parse origin/master)` and `head=$(gh pr view <n> --json headRefOid -q .headRefOid)`.
+- Read current code with `git show "$master:<path>"` and search it with `git grep <pattern> "$master" -- <paths>`; read the PR's version with `git show "$head:<path>"`. This holds hardest for `agent/skills/**` and service code, where the deployed snapshot lags the most.
+- Run tests in a worktree of the PR head (`git worktree add <dir> "$head"`), never in the tree you woke up in.
+- Cite the ref you read in the finding (`master@<short-sha>` or `head@<short-sha>`), so the command reproduces the read and a stale citation is visible on its face.
 
 ## The junior-code lens
 
