@@ -6,12 +6,15 @@ import {
 } from "react";
 import { StyleSheet, TextInput } from "react-native";
 import {
+  CHAT_COMPOSER_CONTROL_HEIGHT,
   type ChatComposerInputProps,
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input.types";
 import { fontNames } from "@/theme/typography";
 
-const MIN_HEIGHT = 36;
+const LINE_HEIGHT = 22;
+const MIN_HEIGHT = CHAT_COMPOSER_CONTROL_HEIGHT;
+const VERTICAL_PADDING = (MIN_HEIGHT - LINE_HEIGHT) / 2;
 const MAX_HEIGHT = 180;
 
 export function ChatComposerInput({
@@ -62,11 +65,11 @@ const styles = StyleSheet.create({
     flex: 1,
     maxHeight: MAX_HEIGHT,
     paddingHorizontal: 9,
-    paddingTop: 7,
-    paddingBottom: 7,
+    paddingTop: VERTICAL_PADDING,
+    paddingBottom: VERTICAL_PADDING,
     fontFamily: fontNames.sans.native["400"],
     fontSize: 17,
-    lineHeight: 22,
+    lineHeight: LINE_HEIGHT,
   },
 });
 

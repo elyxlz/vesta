@@ -27,7 +27,7 @@ export default function ConnectActionsScreen() {
   };
 
   return (
-    <AuthSheet gap={14}>
+    <AuthSheet gap={16}>
       <AuthPrimaryButton
         accessibilityLabel="Connect with Vesta Cloud"
         icon="person-circle-outline"

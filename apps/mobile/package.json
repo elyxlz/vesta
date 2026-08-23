@@ -11,17 +11,11 @@
     "ios": "VESTA_APP_VARIANT=development VESTA_LOCAL_IOS_NO_PUSH=1 expo run:ios",
     "android": "VESTA_APP_VARIANT=development expo run:android",
     "prebuild": "expo prebuild",
-    "lint": "expo lint",
+    "lint": "expo lint .",
     "check": "tsc --noEmit",
     "test": "vitest run",
-    "visual:ios": "node ./scripts/visual-catalog.mjs capture",
-    "visual:ios:capture": "node ./scripts/visual-catalog.mjs capture --no-serve",
-    "visual:watch": "node ./scripts/visual-catalog.mjs watch",
-    "visual:serve": "node ./scripts/visual-catalog.mjs serve",
-    "visual:android": "node ./scripts/visual-catalog-android.mjs capture",
-    "visual:android:capture": "node ./scripts/visual-catalog-android.mjs capture --no-serve",
-    "visual:android:serve": "node ./scripts/visual-catalog-android.mjs serve",
-    "postinstall": "patch-package"
+    "visual:ios:capture": "node ./scripts/visual-ios.mjs capture",
+    "visual:android:capture": "node ./scripts/visual-android.mjs capture"
   },
   "dependencies": {
     "@expo-google-fonts/archivo": "^0.4.2",
@@ -78,10 +72,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/react": "~19.2.2",
+    "@vesta/visual": "*",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.1",
     "eslint-import-resolver-typescript": "^4.4.5",
+    "globals": "^17.11.0",
     "patch-package": "^8.0.1",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"

@@ -52,6 +52,7 @@ export function AuthSheet({
     return (
       <Animated.ScrollView
         style={{ backgroundColor: colors.card }}
+        alwaysBounceVertical={false}
         contentContainerStyle={contentStyle}
         contentInsetAdjustmentBehavior="never"
         onScroll={Animated.event(

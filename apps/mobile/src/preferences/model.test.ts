@@ -49,13 +49,11 @@ describe("preference persistence", () => {
         JSON.stringify({
           remoteNotifications: false,
           pushChatReplies: false,
-          pushStatusChanges: false,
         }),
       ),
     ).toMatchObject({
       remoteNotifications: false,
       pushChatReplies: false,
-      pushStatusChanges: false,
     });
   });
 

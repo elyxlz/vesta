@@ -2,7 +2,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, render, screen } from "@testing-library/react"
 
-import { UPDATED_NOTICE_MS, useUpdateResolution } from "./use-update-resolution"
+import {
+  RESTARTED_NOTICE_MS,
+  UPDATED_NOTICE_MS,
+  useRestartResolution,
+  useUpdateResolution,
+} from "./use-update-resolution"
 import type { GatewayOperation } from "../protocol/tree"
 
 function operation(kind: GatewayOperation["kind"]): GatewayOperation {
@@ -81,5 +86,42 @@ describe("useUpdateResolution", () => {
     expect(resolution()).toBe("0.1.190")
     view.rerender(<Harness operation={operation("restart")} version="0.1.190" />)
     expect(resolution()).toBe("none")
+  })
+})
+
+function RestartHarness({ operation: running }: { operation: GatewayOperation | null }) {
+  const restarted = useRestartResolution(running)
+  return <span data-testid="restarted">{restarted ? "restarted" : "none"}</span>
+}
+
+function restartedText(): string | null {
+  return screen.getByTestId("restarted").textContent
+}
+
+describe("useRestartResolution", () => {
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
+
+  it("reports a finished restart for a moment, then clears", () => {
+    vi.useFakeTimers()
+    const view = render(<RestartHarness operation={operation("restart")} />)
+    expect(restartedText()).toBe("none")
+    view.rerender(<RestartHarness operation={null} />)
+    expect(restartedText()).toBe("restarted")
+    act(() => {
+      vi.advanceTimersByTime(RESTARTED_NOTICE_MS)
+    })
+    expect(restartedText()).toBe("none")
+  })
+
+  it("stays silent when an update or a failed restart clears", () => {
+    const view = render(<RestartHarness operation={operation("update")} />)
+    view.rerender(<RestartHarness operation={null} />)
+    expect(restartedText()).toBe("none")
+    view.rerender(<RestartHarness operation={{ ...operation("restart"), phase: "failed" }} />)
+    view.rerender(<RestartHarness operation={null} />)
+    expect(restartedText()).toBe("none")
   })
 })

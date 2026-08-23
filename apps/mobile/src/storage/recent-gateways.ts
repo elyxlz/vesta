@@ -96,13 +96,3 @@ export async function forgetRecentGateway(
   await SecureStore.deleteItemAsync(secretKey(id));
   return next;
 }
-
-export async function clearRecentGateways(): Promise<void> {
-  const current = await readRecentGateways();
-  await AsyncStorage.removeItem(RECENT_GATEWAY_INDEX_KEY);
-  await Promise.all(
-    current.map((gateway) =>
-      SecureStore.deleteItemAsync(secretKey(gateway.id)),
-    ),
-  );
-}

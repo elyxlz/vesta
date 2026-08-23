@@ -18,8 +18,7 @@
     "format:check": "prettier --check .",
     "check": "tsc -b",
     "test": "vitest run",
-    "visual": "playwright test --config visual/playwright.config.ts && node visual/gallery.mjs --serve --open",
-    "visual:capture": "playwright test --config visual/playwright.config.ts && node visual/gallery.mjs"
+    "visual:capture": "playwright test --config visual/playwright.config.ts"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",
@@ -71,6 +70,7 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
+    "@vesta/visual": "*",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^6.0.5",
     "eslint": "^10.7.0",

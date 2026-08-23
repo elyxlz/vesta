@@ -1,0 +1,41 @@
+{
+  "name": "@vesta/visual",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Vesta visual QA: the shared platform table, registry contract, shot store, and gallery for every app",
+  "type": "module",
+  "exports": {
+    "./platforms": {
+      "types": "./platforms.d.mts",
+      "default": "./platforms.mjs"
+    },
+    "./registry": {
+      "types": "./registry.d.mts",
+      "default": "./registry.mjs"
+    },
+    "./store": {
+      "types": "./store.d.mts",
+      "default": "./store.mjs"
+    },
+    "./run-status": {
+      "types": "./run-status.d.mts",
+      "default": "./run-status.mjs"
+    },
+    "./fingerprint": {
+      "types": "./fingerprint.d.mts",
+      "default": "./fingerprint.mjs"
+    }
+  },
+  "scripts": {
+    "serve": "node cli.mjs serve",
+    "capture": "node cli.mjs capture",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.7.0",
+    "globals": "^17.11.0",
+    "vitest": "^4.1.10"
+  }
+}

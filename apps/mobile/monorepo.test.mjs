@@ -39,7 +39,13 @@ describe("mobile monorepo dependencies", () => {
     });
   });
 
-  it.each(["react", "react-dom", "react-native"])(
+  it.each([
+    "react",
+    "react-dom",
+    "react-native",
+    "react-native-reanimated",
+    "react-native-worklets",
+  ])(
     "keeps one hoisted %s installation",
     (packageName) => {
       expect(packageLocations(packageName)).toEqual([

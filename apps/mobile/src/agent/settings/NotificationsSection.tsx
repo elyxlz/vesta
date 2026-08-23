@@ -1,17 +1,14 @@
-import { useState } from "react";
 import { Alert, Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import * as Crypto from "expo-crypto";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getNotificationRules, setNotificationRules } from "@/api/endpoints";
 import type { FieldPredicate, NotificationInterruptRule } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
 import { useToast } from "@/components/native-toast";
-import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { Field, FormRow, FormSection } from "@/components/ui/Form";
+import { FormRow, FormSection } from "@/components/ui/Form";
 import { ErrorState, LoadingState } from "@/components/ui/States";
-import { Text } from "@/components/ui/Typography";
+import { Quote, Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
@@ -117,91 +114,6 @@ function RuleCard({
   );
 }
 
-function RuleComposer({
-  onAdd,
-  busy,
-}: {
-  onAdd: (rule: NotificationInterruptRule) => void;
-  busy: boolean;
-}) {
-  const [source, setSource] = useState("");
-  const [type, setType] = useState("");
-  const [sender, setSender] = useState("");
-  const [keyword, setKeyword] = useState("");
-  const [action, setAction] = useState<RuleAction>("interrupt");
-
-  const chooseAction = () => {
-    Alert.alert("Rule action", "The first matching rule wins.", [
-      ...actionOrder.map((value) => ({
-        text: value,
-        onPress: () => setAction(value),
-      })),
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
-  const add = () => {
-    const predicates: FieldPredicate[] = [];
-    if (sender.trim()) {
-      predicates.push({
-        field: "sender",
-        op: "contains",
-        value: sender.trim(),
-      });
-    }
-    if (keyword.trim()) {
-      predicates.push({ field: "text", op: "regex", value: keyword.trim() });
-    }
-    onAdd({
-      id: Crypto.randomUUID(),
-      source: source.trim() || null,
-      type: type.trim() || null,
-      match: predicates,
-      action,
-    });
-    setSource("");
-    setType("");
-    setSender("");
-    setKeyword("");
-    setAction("interrupt");
-  };
-
-  return (
-    <Card>
-      <Field
-        label="Source"
-        description="Optional, for example gmail or slack."
-        value={source}
-        onChangeText={setSource}
-        autoCapitalize="none"
-      />
-      <Field
-        label="Notification type"
-        description="Optional provider event type."
-        value={type}
-        onChangeText={setType}
-        autoCapitalize="none"
-      />
-      <Field
-        label="Sender contains"
-        value={sender}
-        onChangeText={setSender}
-        autoCapitalize="none"
-      />
-      <Field
-        label="Text matches"
-        description="Optional regular expression."
-        value={keyword}
-        onChangeText={setKeyword}
-        autoCapitalize="none"
-      />
-      <FormRow label="Action" value={action} onPress={chooseAction} />
-      <Button disabled={busy} icon="add" onPress={add}>
-        Add rule
-      </Button>
-    </Card>
-  );
-}
-
 export function NotificationsSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
@@ -257,6 +169,16 @@ export function NotificationsSection() {
   const update = (next: NotificationInterruptRule[]) => save.mutate(next);
   return (
     <>
+      <Card style={styles.hint}>
+        <Text style={[styles.hintTitle, { color: colors.text }]}>
+          {rules.length === 0 ? "No rules yet" : "Add a rule"}
+        </Text>
+        <Text style={[styles.hintText, { color: colors.secondaryText }]}>
+          Just ask {name} in chat, for example{" "}
+          <Quote>“don’t let Twitter interrupt you”</Quote> or{" "}
+          <Quote>“snooze the family group chat”</Quote>.
+        </Text>
+      </Card>
       <FormSection
         title="Priority rules"
         footer="Rules are checked from top to bottom. Interrupt delivers now, snooze waits for a natural break, and trash discards the notification."
@@ -312,15 +234,6 @@ export function NotificationsSection() {
           }
         />
       ))}
-      {rules.length === 0 ? (
-        <Text style={[styles.empty, { color: colors.secondaryText }]}>
-          No rules yet. All notifications use the agent default.
-        </Text>
-      ) : null}
-      <RuleComposer
-        busy={save.isPending}
-        onAdd={(rule) => update([...rules, rule])}
-      />
     </>
   );
 }
@@ -343,5 +256,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   badgeText: { fontSize: 13, fontWeight: "800", textTransform: "capitalize" },
-  empty: { textAlign: "center", paddingVertical: 16, fontSize: 14 },
+  hint: { padding: 14, gap: 4 },
+  hintTitle: { fontSize: 15, fontWeight: "600" },
+  hintText: { fontSize: 14, lineHeight: 19 },
 });

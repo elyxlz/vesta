@@ -1,0 +1,450 @@
+appId: ${APP_ID}
+name: Settings states
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*Release channel.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*Release channel.*'
+          timeout: 4000
+          optional: true
+- tapOn:
+    text: '^Release channel,.*'
+- extendedWaitUntil:
+    visible: '.*Release channel.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-channel-picker
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-channel-picker.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*Restart gateway.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*Restart gateway.*'
+          timeout: 4000
+          optional: true
+- tapOn:
+    text: '.*Restart gateway.*'
+- extendedWaitUntil:
+    visible: '.*Restart gateway\?.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-restart-confirm
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-restart-confirm.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- extendedWaitUntil:
+    visible: '^Disconnect,.*'
+    timeout: 10000
+- tapOn:
+    text: '^Disconnect,.*'
+- extendedWaitUntil:
+    visible: '.*Disconnect from Vesta\?.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-disconnect-confirm
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-disconnect-confirm.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*Check for updates.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*Check for updates.*'
+          timeout: 4000
+          optional: true
+- tapOn:
+    text: '.*Check for updates.*'
+- extendedWaitUntil:
+    visible: '.*Check again for updates.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-update-checked
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-update-checked.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualApi=error"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*Check for updates.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*Check for updates.*'
+          timeout: 4000
+          optional: true
+- tapOn:
+    text: '.*Check for updates.*'
+- extendedWaitUntil:
+    visible: '.*Retry update check.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-update-check-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-update-check-error.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*reconnecting.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*reconnecting.*'
+          timeout: 4000
+          optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-gateway-offline
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-gateway-offline.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualTunnel=unavailable"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*unavailable.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*unavailable.*'
+          timeout: 4000
+          optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-tunnel-unavailable
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-tunnel-unavailable.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualManaged=true"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- extendedWaitUntil:
+    visible: '.*Manage account.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-account-managed
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-account-managed.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDevices=none"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- swipe:
+    start: "50%,85%"
+    end: "50%,25%"
+    duration: 400
+- extendedWaitUntil:
+    visible: '^Disconnect,.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-no-devices
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-no-devices.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDevices=position"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*iPhone 17.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*iPhone 17.*'
+          timeout: 4000
+          optional: true
+- extendedWaitUntil:
+    visible: '.*Lisbon.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-device-position
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-device-position.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- repeat:
+    times: 3
+    while:
+      notVisible: '.*Allow notifications.*'
+    commands:
+      - swipe:
+          start: "50%,85%"
+          end: "50%,25%"
+          duration: 400
+      - extendedWaitUntil:
+          visible: '.*Allow notifications.*'
+          timeout: 4000
+          optional: true
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "^1$"
+          rightOf:
+            text: '.*Allow notifications.*'
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          rightOf:
+            text: '.*Allow notifications.*'
+          above:
+            text: '.*Chat replies.*'
+- extendedWaitUntil:
+    visible: '.*Allow notifications.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-notifications-off
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-notifications-off.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Appearance.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Light.*'
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-light-forced
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-light-forced.png
+- stopApp
+- openLink:
+    link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDelay=60000"
+- extendedWaitUntil:
+    visible: '.*Loading release notes.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: whats-new-loading
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: whats-new-loading.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualWhatsNewSeen=0.1.183"
+- extendedWaitUntil:
+    visible: '.*v0\.2\.0.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: whats-new-auto-open
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: whats-new-auto-open.png
+- stopApp
+- openLink:
+    link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChannel=beta"
+- extendedWaitUntil:
+    visible: '.*beta.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: whats-new-beta
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: whats-new-beta.png

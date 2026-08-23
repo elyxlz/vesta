@@ -43,7 +43,8 @@ import {
   useRoster,
 } from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
-import { ChatHoldProvider } from "@/chat/ChatHoldProvider";
+import { AgentHoldsProvider } from "@/holds/AgentHoldsProvider";
+import { AndroidBottomInset } from "@/components/layout/android-bottom-inset";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
@@ -54,7 +55,7 @@ import {
   type BootTargetFrame,
 } from "@/components/BootTransition";
 import { fontNames } from "@/theme/typography";
-import { formSheetCorners } from "@/theme/sheets";
+import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
 
 const IS_ANDROID = process.env.EXPO_OS === "android";
 
@@ -153,11 +154,7 @@ function SessionNavigation() {
               headerTransparent: true,
               headerStyle: { backgroundColor: "transparent" },
               headerTintColor: colors.text,
-              headerTitleStyle: {
-                fontFamily: fontNames.heading.native["500"],
-                fontSize: 24,
-                fontWeight: "500",
-              },
+              headerTitleStyle,
               headerLargeTitleStyle: {
                 fontFamily: fontNames.heading.native["500"],
                 fontWeight: "500",
@@ -166,26 +163,6 @@ function SessionNavigation() {
               headerBackButtonDisplayMode: "minimal",
             }}
           >
-            <Stack.Screen
-              name="privacy"
-              options={
-                IS_ANDROID
-                  ? {
-                      headerShown: false,
-                      animation: "none",
-                      gestureEnabled: false,
-                      contentStyle: { backgroundColor: colors.background },
-                    }
-                  : {
-                      headerShown: false,
-                      presentation: "formSheet",
-                      sheetAllowedDetents: "fitToContents",
-                      sheetGrabberVisible: false,
-                      gestureEnabled: false,
-                      contentStyle: { backgroundColor: colors.card },
-                    }
-              }
-            />
             <Stack.Protected guard={status !== "connected"}>
               <Stack.Screen
                 name="connect"
@@ -329,6 +306,29 @@ function SessionNavigation() {
                 options={{ headerShown: false }}
               />
             </Stack.Protected>
+            {/* Declared after both groups: a screen listed before them becomes the router's
+                fallback base route whenever the guarded initial route is unavailable, and a base
+                screen renders inline instead of presenting as the privacy gate's sheet. */}
+            <Stack.Screen
+              name="privacy"
+              options={
+                IS_ANDROID
+                  ? {
+                      headerShown: false,
+                      animation: "none",
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.background },
+                    }
+                  : {
+                      headerShown: false,
+                      presentation: "formSheet",
+                      sheetAllowedDetents: "fitToContents",
+                      sheetGrabberVisible: false,
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.card },
+                    }
+              }
+            />
           </Stack>
           <GatewayConnectionBanner
             visible={
@@ -389,32 +389,34 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <KeyboardProvider>
-        <QueryClientProvider client={queryClient}>
-          <PreferencesProvider>
-            <ToastProvider>
-              <PrivacyProvider>
-                <SessionProvider>
-                  <PrivacyGate>
-                    <RosterHoldProvider>
-                      <ChatHoldProvider>
-                        <ControllerProvider>
-                          <RosterProvider>
-                            <UserNotifications />
-                            <PresenceReporter />
-                            <PushCoordinator />
-                            <SessionNavigation />
-                          </RosterProvider>
-                        </ControllerProvider>
-                      </ChatHoldProvider>
-                    </RosterHoldProvider>
-                  </PrivacyGate>
-                </SessionProvider>
-              </PrivacyProvider>
-            </ToastProvider>
-          </PreferencesProvider>
-        </QueryClientProvider>
-      </KeyboardProvider>
+      <AndroidBottomInset>
+        <KeyboardProvider>
+          <QueryClientProvider client={queryClient}>
+            <PreferencesProvider>
+              <ToastProvider>
+                <PrivacyProvider>
+                  <SessionProvider>
+                    <PrivacyGate>
+                      <RosterHoldProvider>
+                        <AgentHoldsProvider>
+                          <ControllerProvider>
+                            <RosterProvider>
+                              <UserNotifications />
+                              <PresenceReporter />
+                              <PushCoordinator />
+                              <SessionNavigation />
+                            </RosterProvider>
+                          </ControllerProvider>
+                        </AgentHoldsProvider>
+                      </RosterHoldProvider>
+                    </PrivacyGate>
+                  </SessionProvider>
+                </PrivacyProvider>
+              </ToastProvider>
+            </PreferencesProvider>
+          </QueryClientProvider>
+        </KeyboardProvider>
+      </AndroidBottomInset>
     </GestureHandlerRootView>
   );
 }
