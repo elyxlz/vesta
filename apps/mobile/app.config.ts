@@ -116,11 +116,11 @@ const config: ExpoConfig = {
       "expo-location",
       {
         locationWhenInUsePermission:
-          "Share where this phone is with your Vesta agents, so plans and reminders follow your travel.",
+          "Let Vesta know where you are, to help you wherever you go.",
         locationAlwaysAndWhenInUsePermission:
-          "Share where this phone is with your Vesta agents, also while the app is closed, so plans and reminders follow your travel.",
+          "Let Vesta know where you are, even while the app is closed, to help you wherever you go.",
         locationAlwaysPermission:
-          "Share where this phone is with your Vesta agents while the app is closed, so plans and reminders follow your travel.",
+          "Let Vesta know where you are while the app is closed, to help you wherever you go.",
         // The closed-app poll reads a fresh fix, which needs the always-on grant on both platforms
         // and, on iOS, the location background mode as well; the processing mode alone cannot get one.
         isIosBackgroundLocationEnabled: true,
