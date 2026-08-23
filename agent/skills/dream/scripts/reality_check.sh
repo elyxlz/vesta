@@ -50,10 +50,19 @@ else
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.
+# Exclude the agent's OWN narration before counting: vesta.log interleaves daemon lines with [AGENT]
+# narration and [AGENT] [TOOL CALL] echoes, so a day spent researching (say) Reed-Solomon ERROR
+# correction inflates the count with the agent's own prose and the probe reports an error storm
+# that is really a reading list.
+
+# Subtract [AGENT] rather than whitelisting [SYSTEM]: only vesta.log carries either tag, so asking
+# for [SYSTEM] would score every other daemon log (app-chat, dashboard, reminders, tasks, whatsapp)
+# at zero forever, and this probe would go permanently and invisibly green on exactly the
+# components it exists to watch.
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | grep -icE 'error|traceback')
+    errors=$(tail -n 2000 "$log" | grep -v '\[AGENT\]' | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in its recent tail; read it and find the producer"
     else

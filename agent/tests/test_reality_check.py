@@ -85,6 +85,30 @@ def test_error_storm_in_a_recent_log_goes_red(tmp_path):
     assert "RED stormy.log" in run.stdout
 
 
+def test_agent_narration_does_not_count_as_an_error_storm(tmp_path):
+    # vesta.log interleaves daemon output with the agent's own narration, so a day spent reading
+    # about ERROR correction must not be indistinguishable from a component failing all night.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "vesta.log").write_text("[AGENT] reading about Reed-Solomon ERROR correction\n" * 260)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  vesta.log: 0 error lines" in run.stdout
+
+
+def test_an_untagged_daemon_log_still_storms(tmp_path):
+    # The exclusion subtracts [AGENT]; it must not become a whitelist for [SYSTEM], or the five
+    # daemon logs that carry neither tag would score zero forever and never RED again.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "whatsapp.log").write_text("ERROR send failed\n" * 260)
+
+    run = _run(home)
+
+    assert run.returncode == 1
+    assert "RED whatsapp.log" in run.stdout
+
+
 def test_quiet_recent_log_stays_green(tmp_path):
     home = _healthy_home(tmp_path)
     (home / "agent" / "logs" / "calm.log").write_text("INFO fine\n" * 300)
