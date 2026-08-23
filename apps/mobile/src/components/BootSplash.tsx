@@ -307,9 +307,9 @@ export function BootSplash({
         ]}
       />
       <Animated.View style={orbStyle}>
-        {/* Keep the boot orb neutral. The real target crossfades in with its settled palette. */}
+        {/* The boot orb wears the alive palette; the real target crossfades in with its own. */}
         <AgentOrb
-          status="starting"
+          status="alive"
           size={ORB_SIZE}
           animated={!reduceMotion && holding && !ready}
           pulseScale={1.1}
