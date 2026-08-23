@@ -117,16 +117,6 @@ function AgentSettingsContent() {
         />
         <FormRow label="Logs" onPress={() => openPage("logs")} />
       </FormSection>
-      <FormSection title="Chat">
-        <SwitchRow
-          label="Natural pacing"
-          detail="Let this agent's replies arrive with a more human rhythm."
-          value={preferences.naturalChatPacingForAgent(name)}
-          onValueChange={(value) =>
-            void preferences.setNaturalChatPacingForAgent(name, value)
-          }
-        />
-      </FormSection>
       <FormSection title="Pages">
         <SwitchRow
           label="Chat"
@@ -158,6 +148,16 @@ function AgentSettingsContent() {
           value={preferences.showLogsPage}
           onValueChange={(value) =>
             void preferences.update({ showLogsPage: value })
+          }
+        />
+      </FormSection>
+      <FormSection title="Chat">
+        <SwitchRow
+          label="Natural pacing"
+          detail="Let this agent's replies arrive with a more human rhythm."
+          value={preferences.naturalChatPacingForAgent(name)}
+          onValueChange={(value) =>
+            void preferences.setNaturalChatPacingForAgent(name, value)
           }
         />
       </FormSection>
