@@ -287,7 +287,7 @@ export default function SettingsScreen() {
         <FormSection title="Notifications">
           <SwitchRow
             label="Allow notifications"
-            detail="Receive selected agent updates when the app is closed."
+            detail="Hear from Vesta even when the app is closed."
             value={preferences.remoteNotifications}
             onValueChange={(value) =>
               void preferences.update({ remoteNotifications: value })
@@ -295,7 +295,7 @@ export default function SettingsScreen() {
           />
           <SwitchRow
             label="Chat replies"
-            detail="Notify when an agent sends a completed chat reply."
+            detail="Get notified when Vesta replies."
             value={
               preferences.remoteNotifications && preferences.pushChatReplies
             }
@@ -306,7 +306,7 @@ export default function SettingsScreen() {
           />
           <SwitchRow
             label="Show message content"
-            detail="Show chat text on the lock screen. Off keeps messages private."
+            detail="Preview the message on your lock screen."
             value={
               preferences.remoteNotifications &&
               preferences.pushChatReplies &&
