@@ -39,7 +39,6 @@ import {
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
-const IS_IOS = process.env.EXPO_OS === "ios";
 const appearanceValueIcons = {
   light: "sunny-outline",
   dark: "moon-outline",
@@ -199,17 +198,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const changeAppSwitcherPrivacy = async (enabled: boolean) => {
-    setPrivacySaving(true);
-    try {
-      await privacy.setHideAppSwitcherPreview(enabled);
-    } catch (error) {
-      showError(error, "Could not update privacy");
-    } finally {
-      setPrivacySaving(false);
-    }
-  };
-
   const selectReleaseChannel = (channel: ReleaseChannel) => {
     setActivePicker(null);
     if (channel !== gateway.data?.settings.channel) {
@@ -303,21 +291,6 @@ export default function SettingsScreen() {
             value={privacy.appLockEnabled}
             disabled={!privacy.hydrated || privacySaving}
             onValueChange={(value) => void changeAppLock(value)}
-          />
-          <SwitchRow
-            label="Hide in app switcher"
-            detail={
-              privacy.appLockEnabled
-                ? "Always enabled while App Lock is on."
-                : IS_IOS
-                  ? "Blur Vesta in the app switcher and during interruptions."
-                  : "Hide Vesta in recent apps and block screen capture."
-            }
-            value={privacy.appLockEnabled || privacy.hideAppSwitcherPreview}
-            disabled={
-              !privacy.hydrated || privacySaving || privacy.appLockEnabled
-            }
-            onValueChange={(value) => void changeAppSwitcherPrivacy(value)}
           />
           <SwitchRow
             label="Share device location"
