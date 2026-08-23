@@ -278,7 +278,7 @@ export default function SettingsScreen() {
         <ConfirmDialog
           visible={activeConfirm === "disconnect"}
           title="Disconnect from Vesta?"
-          message="You can reconnect using your account or tunnel link."
+          message="You can reconnect with your gateway link at any time."
           confirmLabel="Disconnect"
           destructive
           onConfirm={() => {

@@ -7,6 +7,7 @@ import {
   useSegments,
 } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { cloudSignInEnabled } from "@/api/auth";
 import { AgentOrb } from "@/components/AgentOrb";
 import {
   BootTransitionTarget,
@@ -41,7 +42,8 @@ function ConnectContent() {
   const privacyBlocked = usePrivacyBlocked();
   const initialDrawerOpened = useRef(false);
   const nextScreenOpened = useRef(false);
-  const estimatedActionSheetHeight = recentGateways?.length ? 186 : 156;
+  const estimatedActionSheetHeight =
+    (recentGateways?.length ? 186 : 156) - (cloudSignInEnabled ? 0 : 68);
   const canPresentSheet =
     !privacyBlocked &&
     (!bootTransition.active || bootTransition.pageRevealed);

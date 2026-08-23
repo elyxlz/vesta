@@ -1,6 +1,10 @@
+import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import * as WebBrowser from "expo-web-browser";
 import type { ConnectionConfig } from "./types";
+
+export const cloudSignInEnabled =
+  Constants.expoConfig?.extra?.cloudSignInEnabled === true;
 
 const CONTROL_APEX = "https://vesta.run";
 const NATIVE_CLIENT_ID = "vesta-app";
