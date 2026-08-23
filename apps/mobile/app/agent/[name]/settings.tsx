@@ -21,7 +21,12 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
-import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
+import {
+  FormGroup,
+  FormRow,
+  FormSection,
+  SwitchRow,
+} from "@/components/ui/Form";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
@@ -99,13 +104,20 @@ function AgentSettingsContent() {
         }
         style={styles.identityCard}
       />
-      <FormSection title="Agent">
-        <FormRow
-          label={sectionTitle("provider")}
-          onPress={() => open("provider")}
-        />
-        <FormRow label={sectionTitle("voice")} onPress={() => open("voice")} />
-      </FormSection>
+      <FormGroup>
+        <FormSection title="Agent">
+          <FormRow
+            label={sectionTitle("provider")}
+            onPress={() => open("provider")}
+          />
+        </FormSection>
+        <FormSection>
+          <FormRow
+            label={sectionTitle("voice")}
+            onPress={() => open("voice")}
+          />
+        </FormSection>
+      </FormGroup>
       <FormSection title="Activity">
         <FormRow
           label="Notifications"
