@@ -643,7 +643,7 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
 
             now = _now()
 
-            if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
+            if config.proactive_check_interval and (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
                 if state.processor_busy or not queue.empty():
                     if not proactive_defer_logged:
                         logger.debug("Proactive check deferred: agent busy, will run when idle")

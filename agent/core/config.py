@@ -489,7 +489,7 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     Key env overrides (operational scalars only; provider fields live in the nested store, not env):
         LOG_LEVEL                - DEBUG | INFO | WARNING | ERROR (default: "INFO")
-        PROACTIVE_CHECK_INTERVAL - seconds between proactive checks (default: 60)
+        PROACTIVE_CHECK_INTERVAL - minutes between proactive checks, 0 to disable (default: 60)
         NIGHTLY_MEMORY_HOUR      - hour 0-23 for nightly dream, unset to disable (default: 3)
         RESPONSE_TIMEOUT         - max seconds for a single response (default: 600)
     """
@@ -514,7 +514,9 @@ class VestaConfig(pyd_settings.BaseSettings):
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     monitor_tick_interval: int = pyd.Field(default=2, ge=1)
-    proactive_check_interval: int = pyd.Field(default=60, ge=1)
+    # Minutes between proactive checks; 0 disables them (a value PUT /config can express, unlike
+    # null, which the store treats as revert-to-default).
+    proactive_check_interval: int = pyd.Field(default=60, ge=0)
     notif_snooze_idle_grace_seconds: float = pyd.Field(default=30.0, gt=0)
     query_timeout: int = pyd.Field(default=120, ge=1)
     response_timeout: int = pyd.Field(default=600, ge=1)
