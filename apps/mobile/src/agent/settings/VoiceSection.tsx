@@ -12,7 +12,7 @@ import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
-import { ErrorState, LoadingState } from "@/components/ui/States";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -149,10 +149,14 @@ function DomainCard({
 export function VoiceSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
-  const { name } = useAgent();
+  const { name, agent } = useAgent();
   const { showError } = useToast();
+  // The voice service registers itself once the agent has set voice up; until then the proxy has
+  // nothing to serve, so the page explains instead of asking.
+  const hasVoiceService = Boolean(agent && "voice" in agent.services);
   const status = useQuery({
     queryKey: ["voice", name],
+    enabled: hasVoiceService,
     queryFn: async () => {
       const [stt, tts] = await Promise.all([
         fetchVoiceStatus(api, name, "stt"),
@@ -184,6 +188,15 @@ export function VoiceSection() {
     },
     onError: (error) => showError(error, "Could not save the voice setting"),
   });
+
+  if (!hasVoiceService) {
+    return (
+      <EmptyState
+        title="Voice is not set up yet"
+        detail={`${name} can talk and listen once voice is set up. Just ask in chat, for example “set up voice” or “let me talk to you”.`}
+      />
+    );
+  }
 
   if (status.isLoading) return <LoadingState label="Loading voice services…" />;
   if (!status.data) {
