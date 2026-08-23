@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
+import {
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import {
   KeyboardStickyView,
@@ -30,6 +38,10 @@ import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 import { usePagerScrollLock } from "@/agent/pager-scroll-lock";
 import { GlassSurface } from "@/components/ui/glass-surface";
 import { ComposerActionButton, ReplyPreview } from "@/agent/chat/chat-composer";
+import {
+  VoiceConversationPanel,
+  type VoiceConversationState,
+} from "@/agent/chat/voice-conversation-panel";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
 import { ScrollToBottomButton } from "@/agent/chat/scroll-to-bottom-button";
 import { useTranscriptWordHaptics } from "@/agent/chat/use-transcript-word-haptics";
@@ -190,6 +202,56 @@ export default function ChatPage() {
     if (socket.latestLiveChat) speakReply(socket.latestLiveChat);
   }, [socket.latestLiveChat, speakReply]);
 
+  // The hands-free conversation: a panel docked over the composer while one
+  // continuous full-duplex session runs. Replies bypass the typing pacing for
+  // the panel's lifetime, so speech starts the moment a reply arrives.
+  const [conversationOpen, setConversationOpen] = useState(false);
+  const [conversationConnecting, setConversationConnecting] = useState(false);
+  const { stopConversation, startConversation } = voice;
+  const { setPacingSuspended } = socket;
+  const closeConversation = useCallback(() => {
+    stopConversation();
+    setPacingSuspended(false);
+    setConversationOpen(false);
+  }, [setPacingSuspended, stopConversation]);
+  const openConversation = () => {
+    Keyboard.dismiss();
+    setConversationOpen(true);
+    setConversationConnecting(true);
+    setPacingSuspended(true);
+    void startConversation()
+      .catch((cause: unknown) => {
+        showError(cause, "Voice conversation could not start");
+        closeConversation();
+      })
+      .finally(() => setConversationConnecting(false));
+  };
+  const toggleConversationMute = () => {
+    if (voice.active) {
+      voice.stop();
+    } else {
+      void voice.start().catch((cause: unknown) => {
+        showError(cause, "Microphone could not restart");
+      });
+    }
+  };
+  useEffect(
+    () => () => {
+      stopConversation();
+      setPacingSuspended(false);
+    },
+    [setPacingSuspended, stopConversation],
+  );
+  const conversationState: VoiceConversationState = conversationConnecting
+    ? "connecting"
+    : voice.speaking
+      ? "speaking"
+      : voice.active
+        ? "listening"
+        : "paused";
+  const { height: windowHeight } = useWindowDimensions();
+  const conversationPanelHeight = Math.round(windowHeight * 0.35);
+
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
   }, []);
@@ -280,37 +342,64 @@ export default function ChatPage() {
                 onPress={scrollToLatest}
               />
             </View>
-            <GlassSurface style={styles.composerSurface}>
-              {replyTarget ? (
-                <ReplyPreview target={replyTarget} onCancel={cancelReply} />
-              ) : null}
-              <View style={styles.composerRow}>
-                <ChatComposerInput
-                  ref={inputRef}
-                  maxLength={20_000}
-                  onChangeText={setInput}
-                  placeholder={
-                    voice.active
-                      ? "Listening…"
-                      : canSend
-                        ? `Message ${name}`
-                        : "Waiting for agent…"
-                  }
-                  placeholderTextColor={colors.tertiaryText}
-                  selectionColor={colors.accent}
-                  textColor={colors.text}
-                  value={input}
-                />
-                <ComposerActionButton
-                  canSend={canSend}
-                  hasDraft={hasDraft}
-                  voiceActive={voice.active}
-                  voiceEnabled={voiceEnabled}
-                  onSend={send}
-                  onToggleVoice={toggleVoice}
-                />
-              </View>
-            </GlassSurface>
+            {conversationOpen ? (
+              <VoiceConversationPanel
+                state={conversationState}
+                transcript={input}
+                height={conversationPanelHeight}
+                onToggleMute={toggleConversationMute}
+                onEnd={closeConversation}
+              />
+            ) : (
+              <GlassSurface style={styles.composerSurface}>
+                {replyTarget ? (
+                  <ReplyPreview target={replyTarget} onCancel={cancelReply} />
+                ) : null}
+                <View style={styles.composerRow}>
+                  <ChatComposerInput
+                    ref={inputRef}
+                    maxLength={20_000}
+                    onChangeText={setInput}
+                    placeholder={
+                      voice.active
+                        ? "Listening…"
+                        : canSend
+                          ? `Message ${name}`
+                          : "Waiting for agent…"
+                    }
+                    placeholderTextColor={colors.tertiaryText}
+                    selectionColor={colors.accent}
+                    textColor={colors.text}
+                    value={input}
+                  />
+                  {voiceEnabled && speechEnabled ? (
+                    <Pressable
+                      accessibilityLabel="Start a voice conversation"
+                      accessibilityRole="button"
+                      disabled={!canSend}
+                      onPress={openConversation}
+                      style={({ pressed }) => [
+                        styles.conversationButton,
+                        {
+                          backgroundColor: colors.input,
+                          opacity: !canSend ? 0.38 : pressed ? 0.72 : 1,
+                        },
+                      ]}
+                    >
+                      <Ionicons name="pulse" size={16} color={colors.text} />
+                    </Pressable>
+                  ) : null}
+                  <ComposerActionButton
+                    canSend={canSend}
+                    hasDraft={hasDraft}
+                    voiceActive={voice.active}
+                    voiceEnabled={voiceEnabled}
+                    onSend={send}
+                    onToggleVoice={toggleVoice}
+                  />
+                </View>
+              </GlassSurface>
+            )}
           </Animated.View>
         </View>
       </KeyboardStickyView>
@@ -344,4 +433,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   composerRow: { flexDirection: "row", alignItems: "flex-end" },
+  conversationButton: {
+    width: CHAT_COMPOSER_CONTROL_HEIGHT,
+    height: CHAT_COMPOSER_CONTROL_HEIGHT,
+    borderRadius: CHAT_COMPOSER_CONTROL_HEIGHT / 2,
+    marginRight: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

@@ -17,7 +17,12 @@ import {
 import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
 import type { VoiceStatus } from "@/api/types";
 import { useSession } from "@/session/SessionProvider";
+import { setHandsFreeSessionActive } from "@/voice/hands-free-session";
 import { setRecordingHapticsEnabled } from "@/voice/recording-haptics";
+import {
+  startVoiceForegroundService,
+  stopVoiceForegroundService,
+} from "@/voice/voice-service";
 
 interface LiveVoiceOptions {
   name: string;
@@ -27,6 +32,10 @@ interface LiveVoiceOptions {
   onSend: (text: string) => void;
   onError: (message: string) => void;
 }
+
+// A conversation with no user turn for this long ends itself, bounding the
+// battery and transcription spend of a session the user forgot.
+const CONVERSATION_IDLE_STOP_MS = 10 * 60_000;
 
 const RECORDING_AUDIO_MODE = {
   allowsRecording: true,
@@ -88,6 +97,10 @@ export function useLiveVoice({
 
   const frameSinkRef = useRef<((pcm: ArrayBuffer) => void) | null>(null);
   const permissionGrantedRef = useRef(false);
+  // Hands-free conversation: forces auto-send and barge-in, arms the idle
+  // auto-stop, and holds the native session (Bluetooth routing, echo
+  // cancellation, the Android foreground service) around the microphone.
+  const conversationRef = useRef(false);
 
   const { stream } = useAudioStream({
     sampleRate: 16_000,
@@ -203,6 +216,17 @@ export function useLiveVoice({
               permissionGrantedRef.current = true;
             }
             await setAudioModeAsync(RECORDING_AUDIO_MODE);
+            if (conversationRef.current) {
+              // After the expo-audio mode so the native override wins: voice
+              // processing plus Bluetooth routing on iOS, and the microphone
+              // foreground service that keeps a locked-screen mic alive on
+              // Android.
+              await setHandsFreeSessionActive(true);
+              await startVoiceForegroundService(
+                "Voice session",
+                `${name} is listening`,
+              );
+            }
             frameSinkRef.current = onFrame;
             await streamRef.current.start();
             await setRecordingHapticsEnabled(true).catch(() => undefined);
@@ -211,6 +235,10 @@ export function useLiveVoice({
             frameSinkRef.current = null;
             streamRef.current.stop();
             void setRecordingHapticsEnabled(false).catch(() => undefined);
+            if (conversationRef.current) {
+              void setHandsFreeSessionActive(false).catch(() => undefined);
+              void stopVoiceForegroundService().catch(() => undefined);
+            }
             void setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => undefined);
           },
         },
@@ -231,22 +259,35 @@ export function useLiveVoice({
         onListeningChange: setActive,
         onSpeakingChange: setSpeaking,
       },
-      () => ({
-        autoSend: voiceBoolSetting(sttStatusRef.current, "auto_send", true),
-        interruptTts: voiceBoolSetting(
-          sttStatusRef.current,
-          "interrupt_tts",
-          true,
-        ),
-        hold: false,
-        idleTimeoutMs: 0,
-      }),
+      () =>
+        conversationRef.current
+          ? {
+              autoSend: true,
+              interruptTts: true,
+              hold: false,
+              idleTimeoutMs: CONVERSATION_IDLE_STOP_MS,
+            }
+          : {
+              autoSend: voiceBoolSetting(
+                sttStatusRef.current,
+                "auto_send",
+                true,
+              ),
+              interruptTts: voiceBoolSetting(
+                sttStatusRef.current,
+                "interrupt_tts",
+                true,
+              ),
+              hold: false,
+              idleTimeoutMs: 0,
+            },
     );
     sessionRef.current = session;
     return () => {
       sessionRef.current = null;
       session.stopListening();
       session.stopSpeech();
+      conversationRef.current = false;
     };
   }, [api, name, playPrepared]);
 
@@ -256,6 +297,23 @@ export function useLiveVoice({
   );
   const stop = useCallback(() => {
     sessionRef.current?.stopListening();
+  }, []);
+  const startConversation = useCallback(async () => {
+    // A dictation session in flight would keep its captured non-conversation
+    // idle setting and skip the native hands-free setup, so end it first.
+    sessionRef.current?.stopListening();
+    conversationRef.current = true;
+    try {
+      await sessionRef.current?.startListening();
+    } catch (cause) {
+      conversationRef.current = false;
+      throw cause;
+    }
+  }, []);
+  const stopConversation = useCallback(() => {
+    sessionRef.current?.stopListening();
+    sessionRef.current?.stopSpeech();
+    conversationRef.current = false;
   }, []);
   const speak = useCallback((text: string) => {
     if (ttsEnabledRef.current) sessionRef.current?.speak(text);
@@ -273,6 +331,8 @@ export function useLiveVoice({
     ttsEnabled,
     start,
     stop,
+    startConversation,
+    stopConversation,
     speak,
     prefetch,
     stopSpeech,

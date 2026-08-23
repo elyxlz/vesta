@@ -172,6 +172,17 @@ export function useAgentSocket(
     setIsTyping(false);
   }, [clearTypingTimer, commit]);
 
+  // Suspended while a voice conversation is open: spoken replies must not sit
+  // behind the typing-pacing delay, so delivery flushes immediately.
+  const pacingSuspendedRef = useRef(false);
+  const setPacingSuspended = useCallback(
+    (suspended: boolean) => {
+      pacingSuspendedRef.current = suspended;
+      if (suspended) flushQueue();
+    },
+    [flushQueue],
+  );
+
   const drainQueue = useCallback(
     function drainQueue() {
       if (drainingRef.current) return;
@@ -181,7 +192,11 @@ export function useAgentSocket(
         setIsTyping(false);
         return;
       }
-      if (queue.length > PACING.flushThreshold || !naturalPacingRef.current) {
+      if (
+        queue.length > PACING.flushThreshold ||
+        !naturalPacingRef.current ||
+        pacingSuspendedRef.current
+      ) {
         flushQueue();
         return;
       }
@@ -411,6 +426,7 @@ export function useAgentSocket(
       send,
       retry,
       reseedRevision,
+      setPacingSuspended,
     }),
     [
       state.messages,
@@ -428,6 +444,7 @@ export function useAgentSocket(
       send,
       retry,
       reseedRevision,
+      setPacingSuspended,
     ],
   );
 }
