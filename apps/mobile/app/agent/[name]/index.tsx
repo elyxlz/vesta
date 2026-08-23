@@ -69,7 +69,12 @@ const PAGE_TABS = {
 
 function AgentPages() {
   const insets = useSafeAreaInsets();
-  const { showNotificationsPage, showLogsPage } = usePreferences();
+  const {
+    showChatPage,
+    showDashboardPage,
+    showNotificationsPage,
+    showLogsPage,
+  } = usePreferences();
   // The name comes from the route, not useAgent(): the agent context re-identifies on every
   // chat tick and would re-render the whole pager shell with it.
   const parameters = useLocalSearchParams<{ name?: string }>();
@@ -87,8 +92,14 @@ function AgentPages() {
   const tabTransitionId = useRef(0);
   const pageTouchStart = useRef<{ x: number; y: number } | null>(null);
   const pages = useMemo(
-    () => getAgentPageKeys({ showNotificationsPage, showLogsPage }),
-    [showLogsPage, showNotificationsPage],
+    () =>
+      getAgentPageKeys({
+        showChatPage,
+        showDashboardPage,
+        showNotificationsPage,
+        showLogsPage,
+      }),
+    [showChatPage, showDashboardPage, showLogsPage, showNotificationsPage],
   );
   // Reopen on the page the user last used for this agent (held above navigation), falling back to
   // chat when the held page is hidden by preferences.

@@ -130,21 +130,23 @@ function AgentSettingsContent() {
       <FormSection title="Pages">
         <SwitchRow
           label="Chat"
-          detail="Always on."
-          value
-          disabled
-          onValueChange={() => undefined}
+          detail="Messages with this agent."
+          value={preferences.showChatPage}
+          onValueChange={(value) =>
+            void preferences.update({ showChatPage: value })
+          }
         />
         <SwitchRow
           label="Dashboard"
-          detail="Always on."
-          value
-          disabled
-          onValueChange={() => undefined}
+          detail="Tasks, reminders, and more."
+          value={preferences.showDashboardPage}
+          onValueChange={(value) =>
+            void preferences.update({ showDashboardPage: value })
+          }
         />
         <SwitchRow
           label="Notifications"
-          detail="Swipe to this agent's notification history."
+          detail="Everything this agent was told."
           value={preferences.showNotificationsPage}
           onValueChange={(value) =>
             void preferences.update({ showNotificationsPage: value })
@@ -152,7 +154,7 @@ function AgentSettingsContent() {
         />
         <SwitchRow
           label="Logs"
-          detail="Swipe to this agent's live output."
+          detail="Live output from this agent."
           value={preferences.showLogsPage}
           onValueChange={(value) =>
             void preferences.update({ showLogsPage: value })

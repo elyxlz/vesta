@@ -7,6 +7,8 @@ export interface PreferencesState {
   theme: ThemePreference;
   naturalChatPacingDefault: boolean;
   naturalChatPacingByAgent: Record<string, boolean>;
+  showChatPage: boolean;
+  showDashboardPage: boolean;
   showNotificationsPage: boolean;
   showLogsPage: boolean;
   remoteNotifications: boolean;
@@ -22,6 +24,8 @@ export const initialPreferences: PreferencesState = {
   theme: "system",
   naturalChatPacingDefault: true,
   naturalChatPacingByAgent: {},
+  showChatPage: true,
+  showDashboardPage: true,
   showNotificationsPage: false,
   showLogsPage: false,
   remoteNotifications: true,
@@ -72,6 +76,12 @@ export function readStoredPreferences(value: string | null): PreferencesState {
       naturalChatPacingByAgent: readBooleanRecord(
         parsed.naturalChatPacingByAgent,
       ),
+      showChatPage:
+        typeof parsed.showChatPage === "boolean" ? parsed.showChatPage : true,
+      showDashboardPage:
+        typeof parsed.showDashboardPage === "boolean"
+          ? parsed.showDashboardPage
+          : true,
       showNotificationsPage:
         typeof parsed.showNotificationsPage === "boolean"
           ? parsed.showNotificationsPage
