@@ -6,6 +6,7 @@ import {
 
 const os = vi.hoisted(() => ({
   foregroundGranted: true,
+  backgroundGranted: false,
   status: "undetermined",
   calls: [] as string[],
 }));
@@ -21,7 +22,7 @@ vi.mock("expo-location", () => ({
   },
   requestBackgroundPermissionsAsync: () => {
     os.calls.push("background");
-    return Promise.resolve({ granted: false });
+    return Promise.resolve({ granted: os.backgroundGranted });
   },
   getForegroundPermissionsAsync: () => Promise.resolve({ status: os.status }),
 }));
@@ -30,16 +31,22 @@ describe("requestLocationSharing", () => {
   beforeEach(() => {
     os.calls = [];
     os.foregroundGranted = true;
+    os.backgroundGranted = false;
   });
 
-  it("asks when-in-use then always-on, and turns on even when always-on is declined", async () => {
-    await expect(requestLocationSharing()).resolves.toBe(true);
+  it("asks when-in-use then always-on, and reports a declined always-on", async () => {
+    await expect(requestLocationSharing()).resolves.toBe("when-in-use");
     expect(os.calls).toEqual(["foreground", "background"]);
+  });
+
+  it("reports the always-on grant", async () => {
+    os.backgroundGranted = true;
+    await expect(requestLocationSharing()).resolves.toBe("always");
   });
 
   it("stops at a refused when-in-use grant", async () => {
     os.foregroundGranted = false;
-    await expect(requestLocationSharing()).resolves.toBe(false);
+    await expect(requestLocationSharing()).resolves.toBe("denied");
     expect(os.calls).toEqual(["foreground"]);
   });
 });

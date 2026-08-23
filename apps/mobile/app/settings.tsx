@@ -65,7 +65,12 @@ const channelOptions: readonly OptionPickerOption<ReleaseChannel>[] = [
 ];
 type ActivePicker = "channel" | null;
 type ActiveConfirm =
-  "update" | "restart" | "disconnect" | "location-settings" | null;
+  | "update"
+  | "restart"
+  | "disconnect"
+  | "location-settings"
+  | "location-always"
+  | null;
 type GatewayQueryData = {
   info: GatewayInfo;
   settings: GatewaySettings;
@@ -189,12 +194,14 @@ export default function SettingsScreen() {
 
   const changeShareLocation = async (enabled: boolean) => {
     try {
-      // The OS prompts once per install; a refusal after that is changed in system settings.
-      if (enabled && !(await requestLocationSharing())) {
+      // The OS prompts once per install; any answer after that is changed in system settings.
+      const grant = enabled ? await requestLocationSharing() : "denied";
+      if (enabled && grant === "denied") {
         setActiveConfirm("location-settings");
         return;
       }
       await preferences.update({ shareLocation: enabled });
+      if (grant === "when-in-use") setActiveConfirm("location-always");
     } catch (error) {
       showError(error, "Location sharing is unavailable");
     }
@@ -250,6 +257,17 @@ export default function SettingsScreen() {
           visible={activeConfirm === "location-settings"}
           title="Location is off for Vesta"
           message="Allow location for Vesta in Settings to share where you are."
+          confirmLabel="Open Settings"
+          onConfirm={() => {
+            setActiveConfirm(null);
+            void Linking.openSettings();
+          }}
+          onDismiss={() => setActiveConfirm(null)}
+        />
+        <ConfirmDialog
+          visible={activeConfirm === "location-always"}
+          title="Share location in the background?"
+          message="Vesta knows where you are while the app is open. Set Location to Always in Settings to keep sharing when it is closed."
           confirmLabel="Open Settings"
           onConfirm={() => {
             setActiveConfirm(null);
