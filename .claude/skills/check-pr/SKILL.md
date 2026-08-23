@@ -18,109 +18,69 @@ Read only. Never push a commit, never merge, never close, never edit the PR. Cha
 
 ## The three answers
 
-**NOISE.** The change should not be carried at all, whatever its code quality. It solves a problem nobody has, fixes a symptom whose cause is elsewhere, churns code for taste, rebuilds something the repo already has, or adds a knob nobody asked for. Say which of those it is. This is the answer maintainers most often have to reach on their own, so reach it for them when it is true, and do not soften it because the code is tidy.
+**NOISE.** The change should not be carried at all, whatever its code quality. It solves a problem nobody has, fixes a symptom whose cause is elsewhere, churns code for taste, rebuilds something the repo already has, adds a knob nobody asked for, or was already fixed on master (name the commit that did it). Say which of those it is. This is the answer maintainers most often have to reach on their own, so reach it for them when it is true, and do not soften it because the code is tidy.
 
 **BUGGED.** The change is worth having but is wrong as written: it does not do what it claims, breaks something else, or misses a case it must handle. Name the case.
 
 **MERGE.** You attacked it and it held. Say so plainly. A verdict that never says MERGE is worth as little as one that always does.
 
-## Critique the solution, not only the code
+## Ground truth
 
-Read the diff closely, then judge the thinking behind it:
+When the PR belongs to the repo this tree tracks, the dispatcher launches you in a fresh worktree reset to `origin/master`, fetched at launch, so a plain file read is today's code. Confirm the guarantee rather than assuming it: `git fetch -q origin master; git rev-parse HEAD origin/master` must print the same sha twice. When it does not (a fallback launch in an undispatched or stale tree), no working-tree read is citable: read current code with `git show origin/master:<path>` and search it with `git grep <pattern> origin/master -- <paths>` instead. A stale tree resolves plain reads to history, and a verdict built on deleted code files a false regression against the exact PR that removed it.
 
-- **Is it the right fix?** Trace the failure to its cause and check the change addresses that rather than the symptom that happened to be visible. A guard at the call site, when the bug is in the callee, is a patch over a symptom.
-- **Is it the smallest fix?** Name a simpler change when one exists. Abstractions for a single caller, options nobody asked for, and defensive branches for impossible states all belong in the review.
-- **What did the author not consider?** Concurrency, partial failure, restart, empty and enormous inputs, the second caller, the fleet already running the old shape.
-- **What does it cost?** New coupling, a widened interface, a dependency, or state somebody has to migrate later.
+The PR's own version is never on disk either way: read its diff with `gh pr diff`, resolve `head=$(gh pr view <n> --json headRefOid -q .headRefOid)`, and run tests in a worktree of it (`git fetch origin "pull/<n>/head" && git worktree add <dir> "$head"`), never in the tree you woke up in. When the PR belongs to a different repo than this tree (`git remote get-url origin` disagrees), nothing local is ground truth: read base and head through `gh` alone.
 
-## Attack it before accepting it
+Cite the ref you read in every finding (`master@<short-sha>` or `head@<short-sha>`), and link cited lines with the full sha in the URL, so the citation reproduces and a stale read is visible on its face. Subagents inherit all of this: it rides along in every delegation prompt.
 
-Try to break the change rather than reading it for plausibility. Find the input, state, or ordering where it misbehaves, and look hardest where there are no tests: a suite tells you what the author thought of, not what is true.
+## The pipeline
 
-Trust a test only once you have seen it fail. Revert the fix in your local copy, or flip the constant it pins, and confirm the right test goes red; a suite that stays green either way pins nothing. And when a pass could depend on timing, ordering, or filename sorting, run the test twenty times before crediting it: one pass proves it can pass, not that it passes.
+Run the review as this sequence. Steps 1 to 3 are cheap gates and context; step 5 is the fan-out; steps 6 to 8 turn findings into the one comment. Make a todo list from these steps first.
 
-Never speculate about code you have not opened. Read the code paths the diff touches before saying anything about them, at the pinned refs the next section defines, and where running something settles a question, run it. The `check.sh` subcommands in `CLAUDE.md` are the ones CI uses.
+**1. Eligibility (one Haiku agent).** Check whether the PR (a) is closed, (b) is a draft, (c) does not need review (an automated PR, or trivial and obviously fine), or (d) already carries your review. On the automatic new-PR run, any of those ends the review. On an explicit `@vestabot` mention, (a) and (b) still end it, but (c) and (d) do not: a maintainer asked, so re-check, reviewing what changed since your last comment rather than repeating it.
 
-Find everything first, then filter once. While reading, collect every concern at any severity rather than deciding as you go whether one is worth mentioning: judging severity while looking suppresses real findings. Then make one pass over the list and drop only what you could not substantiate, keeping anything real however small. Filter on "is this true", never on "is this important enough".
+**2. Repo rules (one Haiku agent).** Collect the paths (not contents) of the governing files: the root `CLAUDE.md`, any `CLAUDE.md` in directories the PR touches, and any repo skill covering the touched area. These bind step 5's compliance lens.
 
-Say so plainly when the change is simply good. A review that manufactures objections to look thorough is worth as little as one that rubber-stamps.
+**3. Summary (one Haiku agent).** Have it read the PR and return what the change claims to do, the linked issues, and the version footer if present (`Submitted by **<name>** on vesta vX.Y.Z`, appended by `upstream` to every agent PR).
 
-Work through the diff yourself. Delegate to a subagent only when the diff is genuinely too large to hold in one reading, and then split it by area so each subagent owns a different part rather than re-reviewing the same code. One is usually enough. Do not spawn a subagent to double-check a finding you already have.
+**4. Confirm ground truth** as the section above defines: verify the tree is at fetched `origin/master` (or fall back to `git show` reads), and resolve `$head`. Every agent below receives the tree's status, `$head`, and the ground-truth rules in its prompt.
 
-## Your checkout is not ground truth
+**5. Parallel reviewers (Sonnet agents, launched together).** Each returns a list of issues, and for each issue the reason it was flagged and the ref-pinned evidence:
 
-The tree you are running in is a deployed snapshot, not the repository under review: it can sit days or releases behind `origin/master`, and on a stale tree a plain file read resolves to history. Deleted code reads as current, and a verdict built on it files a false regression against the exact PR that removed it. Never cite the working tree for what the code does today, and never let a subagent do so either: this rule rides along in every delegation prompt.
+- **Compliance.** Audit the diff against the step 2 files. CLAUDE.md is guidance for writing code, so not every instruction applies in review; flag only what the file actually calls out. Include this repo's standing bans CI does not always catch: inline lint escapes, comment blocks over 8 lines, banned Python accessors (`.get()`/`getattr`/`hasattr`), `.unwrap()` on fallible Rust paths, `any` in TypeScript, and under `agent/` prose that narrates a previous design (apply the `vesta-prompt-guide` encounter test first: prose describing a before and after the agent can still encounter on disk stays; only changelog narration with nothing on disk to act on is the violation).
+- **Bug scan.** Read the file changes and hunt real bugs in them, pressing hardest where the code looks finished and the tests are green. The known misses, each of which has bitten a merged PR: a shared flag flipped for one reader (enumerate every reader); happy path only; tests that encode the author's assumptions (exercise the paths the *other* users of a shared mechanism take); right idea, wrong execution (name case X; that is BUGGED, not MERGE); a probe whose setup dies before the branch it claims to pin; real people in fixtures. Trace the failure to its cause and check the change addresses that rather than the visible symptom, name a simpler change when one exists, and cover the failure, empty, and concurrent paths, not only the happy one.
+- **History.** Establish how far the PR's world is from today's. Do not trust the git base: agent PRs are written on a box's stock snapshot and pushed as a fresh branch, so the merge-base reads current while the code the author saw may be releases old. Resolve the written-on version from the step 3 footer to its `vX.Y.Z` tag; only with no footer fall back to `git merge-base "$master" "$head"`. Walk `git log --oneline <tag-or-base>..$master -- <paths>` plus a pickaxe (`git log -S`) on the load-bearing symbol, read the PRs those commits came from, read git blame for the touched lines, then open today's code path and answer one of: `still broken` (the line that proves it), `already fixed by <commit/PR>` (the line that fixed it), or `partially fixed` (what remains).
+- **Prior review.** Read previous PRs that touched these files and the comments on them; a concern raised there may apply verbatim here. When another open PR touches the same function, read that diff too and say whether they compose, conflict, or need a merge order.
+- **Comment compliance.** Read the code comments in the modified files and check the diff honors what they constrain: an invariant stated above a function the diff breaks is a finding.
+- **Runtime seat** (only when the diff touches `agent/`). Vesta consumes these files at runtime, sometimes on a weaker model. An error message that names its own override is a bypass instruction. Run every command the prose tells the agent to run against the box's real layout. Sweep the whole touched file for contradictions, not just the hunks. A changed record, file, or wire shape must find every reader in every language, tests and scripts included. Say what the change costs a weak model. And one agent's incident is not fleet doctrine: before a workaround ships fleet-wide, check whether master already fixed the cause, whether a stock mechanism already owns the job, and whether the guidance builds a second homemade layer beside the stock one; entrenching a redundant layer is NOISE even when every sentence is true.
 
-Pin both sides before verifying any claim:
+**6. Score every issue (one Haiku agent per issue, in parallel).** Each agent gets the PR, the issue, and the step 2 file list, double checks the issue, and returns a confidence score. For issues flagged from a CLAUDE.md, it verifies the file actually calls that out. Give each agent this rubric verbatim:
 
-- `git fetch origin` first, then resolve the two refs every read uses: `master=$(git rev-parse origin/master)` and `head=$(gh pr view <n> --json headRefOid -q .headRefOid)`.
-- Read current code with `git show "$master:<path>"` and search it with `git grep <pattern> "$master" -- <paths>`; read the PR's version with `git show "$head:<path>"`. This holds hardest for `agent/skills/**` and service code, where the deployed snapshot lags the most.
-- Run tests in a worktree of the PR head (`git worktree add <dir> "$head"`), never in the tree you woke up in.
-- Cite the ref you read in the finding (`master@<short-sha>` or `head@<short-sha>`), so the command reproduces the read and a stale citation is visible on its face.
+- 0: Not confident at all. This is a false positive that doesn't stand up to light scrutiny.
+- 25: Somewhat confident. This might be a real issue, but may also be a false positive. The agent wasn't able to verify that it's a real issue. If the issue is stylistic, it is one that was not explicitly called out in the relevant CLAUDE.md.
+- 50: Moderately confident. The agent was able to verify this is a real issue, but it might be a nitpick or not happen very often in practice. Relative to the rest of the PR, it's not very important.
+- 75: Highly confident. The agent double checked the issue, and verified that it is very likely a real issue that will be hit in practice. The existing approach in the PR is insufficient. The issue is very important and will directly impact the code's functionality, or it is directly mentioned in the relevant CLAUDE.md.
+- 100: Absolutely certain. The agent double checked the issue, and confirmed that it is definitely a real issue, that will happen frequently in practice. The evidence directly confirms this.
 
-## The junior-code lens
+Drop every issue scoring under 80. False positives to score down: something that looks like a bug but is not, pedantic nitpicks a senior engineer would not raise, anything a linter or typechecker catches (CI runs those; do not run build or typecheck yourself), general code-quality wishes not required by the repo rules, issues explicitly silenced in code, and intentional behavior changes that are the point of the PR. One vesta override on the official taxonomy: "pre-existing" alone does not score an issue down. Nothing is pre-existing or out of scope until the scorer has shown the PR's own changed surface cannot reach it: its diff, its documented flow, and the callers of the functions it touches. A defect whose mechanism predates the PR is still this PR's defect when the change's own flow triggers it.
 
-Press hardest when the code looks finished and the tests are green: that is exactly where a junior author stopped. The symptom-versus-cause check above is the first pass; these are the misses it does not catch on its own, and each one has bitten a merged PR:
+**7. Settle what survives.** For a surviving finding that a command can settle, run it in the head worktree and capture the line that matters. Trust a test only once you have seen it fail: revert the fix in the worktree, or flip the constant it pins, and confirm the right test goes red. When a pass could depend on timing, ordering, or filename sorting, run it twenty times before crediting it. Re-run the step 1 eligibility check so a PR that merged or closed mid-review gets no comment.
 
-- **A shared flag flipped for one reader.** The change sets a field, flag, or column that several behaviors read, and only the reader the author cared about was checked. Enumerate every reader and say what the change does to each; the break hides in the one they forgot.
-- **Happy path only.** No guard for contradictory, empty, or impossible input. The branch that "can't happen" is silently wrong the first time it does.
-- **The tests encode the author's assumptions.** Green proves their mental model, not the truth. Find the case the tests skip; when the PR touches a shared mechanism, exercise the paths its *other* users take, not the one the author wrote a test for. The bug the author would have tested for is not the one still in the diff.
-- **Right idea, wrong execution.** The direction is correct and the fix is worth having, and it still double-books, drops, or duplicates in case X. Name X. That is `BUGGED`, not `MERGE`: a needed fix carried in wrong is still carried in wrong.
-- **Stale base.** A PR correct when it was written can be wrong against today's `master`. Read the current code paths, including whatever merged *after* it was opened, since a later change may have repurposed a field it relies on. When another open PR touches the same function, read that diff too and say whether they compose, conflict, or need a merge order.
-- **The probe never reaches the branch.** A test can pass while its setup dies earlier: a "corrupt record" written as `"1234 "` splits back to a valid one, so the tolerance branch it claims to pin never runs. Check what the setup actually produces before crediting the assertion.
-- **Real people in fixtures.** Test data copied from a live incident carries real names, addresses, and employers into the repo forever. Flag it: fictional equivalents exercise the same code.
+**8. Comment**, in the reporting form below.
 
-## The runtime seat
+Also confirm before writing the verdict, whoever's lens it fell through:
 
-Most changes under `agent/` are consumed by Vesta at runtime, mid-conversation, sometimes on a weaker model than the one reviewing them. Judge them from that seat, not only as code:
+- **It fixes the issue it claims to.** Read the closing-keyword issue itself, not the PR's description of it. Distinguish fixing it, fixing part of it, fixing something adjacent, and not addressing it at all.
+- **The stated goal is reached end to end.** Run the documented or changed sequence to the state a user actually ends in. Each command being individually valid is not the goal reached.
+- **Shipped migrations are append-only.** A diff editing a released file under `agent/core/migrations/` reaches nobody; the fix is a new migration file. Walk any migration prompt as a literal-minded executor: every step checks before acting and is safe half-done twice.
+- **It is mergeable.** CI green, no conflicts, not draft, scoped to one concern.
 
-- **An error message that names its own override is a bypass instruction.** A refusal ending "unset X to allow it" or "pass --force" will be followed by exactly the model the guard exists to stop. The right refusal states what happened and the next step that stays inside the rules, usually: tell the user.
-- **Run every command the prose tells the agent to run**, against the box's real layout: the binary must be in the image, the path, table, git ref, and field must exist, and the output must mean what the doc says. A CLI the image does not ship, a ref that does not exist, and a snippet that crashes on default config have all passed review as prose. `Proof:` is the command run against a fabricated home.
-- **Sweep for contradictions.** Read the whole file the diff touches, not the hunks: a new paragraph that disagrees with a standing one gives the agent opposing instructions, and the weaker the model the more that costs. Two open PRs solving the same problem are the same hazard; say which one is law and what survives from the other.
-- **A changed format must find every reader.** When the diff changes a record, file, or wire shape, enumerate every consumer in every language, including tests, watchdogs, and shell scripts. The recurring defect is a reader still parsing the old shape; five hid in one PR this way.
-- **Say what the change costs a weak model.** Fewer decision points, refusals that state the next step, and rules an agent predicts without reading code are net gains worth extra implementation work; a subtler or wordier runtime surface is a loss even when the code got better. Name which the PR is.
-- **One agent's incident is not fleet doctrine.** Agent-authored PRs generalize from a single box's bad day, against the released code, with the circumstances mostly unrecoverable from the PR. Before prose or a workaround ships fleet-wide, ask three things: is the underlying cause already fixed on master, does a stock mechanism already own the job (a watchdog, a preflight, a contract test), and does the guidance teach agents to build a second homemade layer beside the stock one? Guidance that entrenches a redundant layer is `NOISE` even when every sentence in it is verifiably true; the fix for a box where the stock mechanism failed is diagnosing that box.
-
-## Was it already fixed?
-
-Establish how far the PR's world is from today's before trusting anything the diff assumes. Do not trust the git base for this: most PRs here are written by agents on their own boxes against the stock snapshot of the version they run, and `upstream` pushes that work as a branch cut fresh from master, so the merge-base reads current while the code the author actually saw may be many releases old. The version the PR was written on is in the body: `upstream` appends `Submitted by **<name>** on vesta vX.Y.Z` to every agent PR. Read that version and resolve it to the `vX.Y.Z` release tag; only when the body carries no version footer (a human branch, cut from the master it was written against) fall back to `git merge-base origin/master <head>`. Either way, compare against the version on `origin/master` (`git show origin/master:agent/core/pyproject.toml`). A gap of releases means everything the diff touches must be re-read in today's code, and it means the problem itself may already be gone.
-
-When the written-on point is behind master, fan out one subagent dedicated to that single question, in parallel with your own read of the diff. Give it the problem the PR claims to solve and the files it touches, and have it walk `git log --oneline <tag-or-base>..origin/master -- <paths>` plus a pickaxe (`git log -S`) on the load-bearing symbol, read the PRs those commits came from, then open today's code path and say whether the defect still exists. It returns a report, not an opinion about the diff: the written-on version and how it was determined (body footer or merge-base), master sha and version, the commits since that touch the same ground, and one of `still broken` (with the line that proves it), `already fixed by <commit/PR>` (with the line that fixed it), or `partially fixed` (what remains). This is the one delegation that always pays for itself: it needs no context from your read, so it costs you nothing to launch first, and it settles a question you would otherwise answer late or not at all.
-
-Fold the report into the comment, not alongside it: a PR whose problem master already fixed is `NOISE` (superseded; name the commit that did it) whatever its code quality, `partially fixed` reframes what the PR still buys, and `still broken` is what lets the verdict stand on today's code rather than the base's.
-
-## Make the verdict reproducible
-
-Two runs of this skill on the same PR should reach the same verdict. They diverge when they trace different things, scope a finding differently, or map findings to a verdict by feel. Close those three gaps every time.
-
-**Cover the same ground.** Before writing a verdict you must have traced each of these and know its result, whether or not it becomes a finding:
-- the PR's stated goal, end to end: run the documented or changed sequence to the state a user actually ends in, and confirm that state is the claimed one. Each command being individually valid is not the goal reached; "the flags are accepted" is not "read-only is in force".
-- every reader of anything the diff changes (a record, flag, format, column, wire field), in every language, tests and scripts included.
-- the failure, empty, and concurrent path of the main change, not only its happy path.
-- each closing-keyword issue, read from the issue itself, actually closed.
-
-A `MERGE` names the ground it attacked and held ("attacked on completeness, the filter edges, and the failure path"); an unstated attack surface is an unfinished review, not a clean one.
-
-**Scope by reachability, not by feel.** Nothing is "pre-existing" or "out of scope" until you have shown the PR's own changed surface cannot reach it: its diff, its documented flow, and the callers of the functions it touches. A defect whose mechanism predates the PR is still this PR's defect when the change's own flow triggers it. "That is the crash path, not this PR" is the exact miss that ships: test reachability before you file it away.
-
-**Map findings to the verdict mechanically.** The verdict is a function of the findings, not a closing impression. Any Blocking finding makes it `BUGGED`, or `NOISE` when the change should not be carried at all. A bypassable safety or auth control, lost or corrupted data, or a flow that does not reach its own stated goal is always Blocking, however narrow the window. No Blocking finding, a real problem solved, and the coverage floor met makes it `MERGE`. When two reviews of one PR disagree, the reachable Blocking finding outranks the review that only confirmed the parts are valid: re-derive from the code, never average the verdicts.
-
-## Also confirm
-
-**It fixes the issue it claims to.** Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`) and read the issue itself, not the PR's description of it. Distinguish fixing it from fixing part of it, fixing something adjacent, and not addressing it at all. With no issue linked, say what problem the PR appears to solve and whether it is worth carrying.
-
-**It is right for this repository.** Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch for the repo-wide bans CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors (`.get()`/`getattr`/`hasattr`), `.unwrap()` on fallible Rust paths, `any` in TypeScript, and under `agent/` a docstring or comment that narrates a previous design or restates the PR's rationale (the agent reads it cold, so it must state the current mechanism only). Apply the `vesta-prompt-guide` encounter test before flagging this, so the call is deterministic rather than a matter of taste: prose describing a before and after the agent can still **encounter** on disk (a stale record a migration converges, a legacy shape a reader must tolerate, the source state a `LEGACY(...)` block exists for) is correct and stays; only changelog narration with nothing on disk to act on (what this replaces, what it used to do, how many files it folds) is the violation. This keeps migration and convergence prose, which describes a before and after by necessity, from being flagged as a false positive.
-
-**Shipped migrations are append-only.** A diff that edits a file under `agent/core/migrations/` already in a release reaches nobody who ran it; the fix is a new migration file. Walk any migration prompt as a literal-minded executor: every step checks before acting, is safe half-done twice, and the mark-applied step is gated on nothing remaining.
-
-**It is mergeable.** CI green, no conflicts, not draft, scoped to one concern.
+**Map findings to the verdict mechanically.** The verdict is a function of the surviving findings, not a closing impression. Any Blocking finding makes it `BUGGED`, or `NOISE` when the change should not be carried at all (including `already fixed by <commit>` from the history lens). A bypassable safety or auth control, lost or corrupted data, or a flow that does not reach its own stated goal is always Blocking, however narrow the window. No Blocking finding, a real problem solved, and the pipeline completed makes it `MERGE`. When two reviews of one PR disagree, the reachable Blocking finding outranks the review that only confirmed the parts are valid: re-derive from the code, never average the verdicts.
 
 ## Reporting
 
 You get one run, and it ends when you stop. Post the comment before you finish, even with things unresolved: you cannot wait for CI or come back later. Anything still pending goes on the CI line, naming what to watch, and the verdict still answers what you can see now.
 
-
-Post one comment, in the labelled form below. No opening line, no lead-in, no scene setting: the first characters of the comment are the first label. A reader should be able to find any one thing without reading the rest.
+Post one comment, in the labelled form below. No opening line, no lead-in, no scene setting: the first characters of the comment are the first label. A reader should be able to find any one thing without reading the rest. Keep it brief, no emojis, and link every cited file and line with the full sha in the URL (`https://github.com/<org>/<repo>/blob/<full-sha>/<path>#L10-L14`), never a branch name.
 
 Write every label every time, in this order. When a label has nothing under it, write `none` rather than dropping it, so a missing section never has to be interpreted.
 
@@ -131,11 +91,11 @@ Write every label every time, in this order. When a label has nothing under it, 
 - line one: `` `file:line` ``, what the code does, and what goes wrong because of it
 - line two, indented and starting `Proof:`, the thing that settles it
 
-**Non-blocking:** everything else worth saying, same two lines. Do not argue for them; a maintainer decides.
+**Non-blocking:** everything else worth saying, same two lines. Do not argue for them; a maintainer decides. When a CI check is red, one line here names which kind, so the maintainer knows the move: a real failure the diff caused, a fixable nit one commit from green, a flake unrelated to the change (often red on `master` too), or a platform outage. Read the failing job's log tail before classifying: a job that dies before checkout ("Failed to resolve action download info", "Service Unavailable") is GitHub, not the PR, and a rerun is the whole fix.
 
-**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. Judge the diff and nothing else. CI is not your business: a red check is on the PR page already, it says nothing about whether the change is right, and a sound change with a formatting failure is still `MERGE`. When a check is red, still name which kind in one line under **Non-blocking**, so the maintainer knows the move: a real failure the diff caused, a fixable nit one commit from green (a comment over the cap, a banned accessor, a format miss), a flake unrelated to the change (often red on `master` too, green on a re-run), or a platform outage. Read the failing job's log tail before classifying: a job that dies before checkout ("Failed to resolve action download info", "Service Unavailable") is GitHub, not the PR, and a rerun is the whole fix.
+**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. Judge the diff and nothing else: a red check is on the PR page already, and a sound change with a formatting failure is still `MERGE`.
 
-## Proof
+### Proof
 
 A finding a maintainer has to re-derive costs more than it saves. Every finding carries the one thing that lets them start from your work instead of from scratch, in a single line:
 
