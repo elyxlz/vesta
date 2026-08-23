@@ -462,7 +462,6 @@ export default function SettingsScreen() {
         />
 
         <FormSection
-          title="Other"
           actions={
             <Button
               pill
