@@ -6,12 +6,62 @@ import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/layout/Screen";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { SheetChrome } from "@/components/sheet-chrome";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
+import { EmptyState, ErrorState } from "@/components/ui/States";
+import { SkeletonPulse } from "@/components/ui/skeleton-pulse";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { releaseNotesQueryOptions } from "@/releases/release-notes-query";
 import { useRoster } from "@/session/RosterProvider";
 import { radii } from "@/theme/layout";
+
+const SKELETON_CARDS = [
+  { lines: ["100%", "88%", "64%"] },
+  { lines: ["100%", "72%"] },
+  { lines: ["96%", "80%", "40%"] },
+] as const;
+
+function ReleaseNotesSkeleton() {
+  const { colors } = usePreferences();
+  return (
+    <SkeletonPulse label="Loading release notes" style={styles.releaseList}>
+      {SKELETON_CARDS.map((card, index) => (
+        <View
+          key={index}
+          style={[
+            styles.releaseCard,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          <View style={styles.releaseHeader}>
+            <View
+              style={[
+                styles.skeletonLine,
+                styles.skeletonVersion,
+                { backgroundColor: colors.border },
+              ]}
+            />
+            <View
+              style={[
+                styles.skeletonLine,
+                styles.skeletonDate,
+                { backgroundColor: colors.border },
+              ]}
+            />
+          </View>
+          {card.lines.map((width, lineIndex) => (
+            <View
+              key={lineIndex}
+              style={[
+                styles.skeletonLine,
+                { width, backgroundColor: colors.border },
+              ]}
+            />
+          ))}
+        </View>
+      ))}
+    </SkeletonPulse>
+  );
+}
 
 function formatReleaseDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -49,7 +99,7 @@ export default function WhatsNewScreen() {
           visibleFromDetentIndex={1}
         />
         {notes.isPending || !roster.gatewayVersion || !roster.gatewayChannel ? (
-          <LoadingState label="Loading release notes…" />
+          <ReleaseNotesSkeleton />
         ) : notes.isError ? (
           <ErrorState
             message="Couldn’t load release notes."
@@ -130,4 +180,7 @@ const styles = StyleSheet.create({
   date: { fontSize: 13 },
   message: { fontSize: 15, lineHeight: 21 },
   releaseLink: { alignSelf: "center", marginLeft: "auto" },
+  skeletonLine: { height: 12, borderRadius: 6 },
+  skeletonVersion: { width: 56, height: 14 },
+  skeletonDate: { width: 72 },
 });

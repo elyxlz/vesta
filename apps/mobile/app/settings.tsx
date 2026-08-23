@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Linking, StyleSheet } from "react-native";
+import { Linking, StyleSheet, View } from "react-native";
 import { LoadingSpinner } from "@/components/loading-spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -23,6 +23,11 @@ import { SheetChrome } from "@/components/sheet-chrome";
 import { useToast } from "@/components/native-toast";
 import { OptionPicker } from "@/components/option-picker";
 import type { OptionPickerOption } from "@/components/option-picker.types";
+import {
+  SegmentedControl,
+  type SegmentedOption,
+} from "@/components/ui/segmented-control";
+import { AppearancePreview } from "@/components/appearance-preview";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { requestLocationSharing } from "@/device-context/location-consent";
@@ -32,27 +37,28 @@ import {
   type ThemePreference,
 } from "@/preferences/PreferencesProvider";
 import { usePrivacy } from "@/privacy/privacy-provider";
-import {
-  lastSeenLabel,
-  titleCaseChannel,
-} from "@/session/device-label-model";
+import { lastSeenLabel, titleCaseChannel } from "@/session/device-label-model";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
-const appearanceValueIcons = {
-  light: "sunny-outline",
-  dark: "moon-outline",
-} as const;
-const themeOptions: readonly OptionPickerOption<ThemePreference>[] = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
+const themeOptions: readonly SegmentedOption<ThemePreference>[] = [
+  {
+    value: "system",
+    label: "System",
+    preview: <AppearancePreview theme="system" />,
+  },
+  {
+    value: "light",
+    label: "Light",
+    preview: <AppearancePreview theme="light" />,
+  },
+  { value: "dark", label: "Dark", preview: <AppearancePreview theme="dark" /> },
 ];
 const channelOptions: readonly OptionPickerOption<ReleaseChannel>[] = [
   { value: "stable", label: "Stable" },
   { value: "beta", label: "Beta" },
 ];
-type ActivePicker = "theme" | "channel" | null;
+type ActivePicker = "channel" | null;
 type ActiveConfirm = "update" | "restart" | "disconnect" | null;
 type GatewayQueryData = {
   info: GatewayInfo;
@@ -149,13 +155,6 @@ export default function SettingsScreen() {
       queryClient.invalidateQueries({ queryKey: gatewayQueryKey }),
   });
   const updateAvailable = roster.updateAvailable;
-  const resolvedAppearance =
-    preferences.theme === "system"
-      ? preferences.dark
-        ? "dark"
-        : "light"
-      : preferences.theme;
-  const appearanceValueIcon = appearanceValueIcons[resolvedAppearance];
   const gatewayControlsDisabled =
     !gateway.data || !roster.reachable || gatewaySettings.isPending;
 
@@ -168,7 +167,6 @@ export default function SettingsScreen() {
   };
 
   const selectTheme = (theme: ThemePreference) => {
-    setActivePicker(null);
     void preferences.update({ theme });
   };
 
@@ -214,17 +212,9 @@ export default function SettingsScreen() {
           visibleFromDetentIndex={1}
         />
         <OptionPicker
-          visible={activePicker === "theme"}
-          title="Appearance"
-          options={themeOptions}
-          selectedValue={preferences.theme}
-          onSelect={selectTheme}
-          onDismiss={() => setActivePicker(null)}
-        />
-        <OptionPicker
           visible={activePicker === "channel"}
           title="Release channel"
-          message="Beta receives prereleases first. Switching to Stable never downgrades the current gateway."
+          message="Beta gives you new features early. Stable waits until they are ready for everyone."
           options={channelOptions}
           selectedValue={gateway.data?.settings.channel}
           onSelect={selectReleaseChannel}
@@ -267,22 +257,16 @@ export default function SettingsScreen() {
           }}
           onDismiss={() => setActiveConfirm(null)}
         />
-        <FormSection
-          title="Experience"
-          actions={
-            <Button
-              pill
-              variant="card"
-              trailingIcon={appearanceValueIcon}
-              accessibilityLabel={`Appearance, ${resolvedAppearance}${
-                preferences.theme === "system" ? " from system setting" : ""
-              }`}
-              onPress={() => setActivePicker("theme")}
-            >
-              Appearance
-            </Button>
-          }
-        />
+        <FormSection title="Appearance">
+          <View style={styles.appearanceRow}>
+            <SegmentedControl
+              accessibilityLabel="Appearance"
+              options={themeOptions}
+              selectedValue={preferences.theme}
+              onSelect={selectTheme}
+            />
+          </View>
+        </FormSection>
 
         <FormSection title="Privacy">
           <SwitchRow
@@ -417,10 +401,6 @@ export default function SettingsScreen() {
               gatewaySettings.mutate({ auto_update })
             }
           />
-          <FormRow
-            label="Public tunnel"
-            value={gateway.data?.info.tunnel_url ? "active" : "unavailable"}
-          />
         </FormSection>
 
         {roster.devices.length > 0 ? (
@@ -495,5 +475,6 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  appearanceRow: { paddingVertical: 10 },
   content: { gap: 24 },
 });
