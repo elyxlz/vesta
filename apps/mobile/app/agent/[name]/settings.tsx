@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { resolveProviderIdentity } from "@vesta/core";
+import { resolveProviderIdentity, type AgentStatus } from "@vesta/core";
 import { Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -38,6 +38,12 @@ function AgentSettingsContent() {
   const preferences = usePreferences();
   const { showError } = useToast();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // The status the roster is expected to reach after a start or stop. vestad answers the request
+  // before the container has moved, so the button stays busy until the roster catches up.
+  const [awaitedStatus, setAwaitedStatus] = useState<AgentStatus | null>(null);
+  const awaitingStatus =
+    awaitedStatus !== null && agent?.status !== awaitedStatus;
+  const stopped = agent?.status === "stopped";
   const provider = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
@@ -64,9 +70,12 @@ function AgentSettingsContent() {
     onSuccess: (operation) => {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
       if (operation === "delete") router.replace("/");
+      if (operation === "start") setAwaitedStatus("alive");
+      if (operation === "stop") setAwaitedStatus("stopped");
     },
     onError: (error) => showError(error, "The action failed"),
   });
+  const starting = awaitedStatus === "alive" || action.variables === "start";
   const open = (section: string) =>
     router.push({
       pathname: "/agent/[name]/details/[section]",
@@ -203,20 +212,20 @@ function AgentSettingsContent() {
           <ButtonGroup>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending}
+              disabled={action.isPending || awaitingStatus}
               loading={
-                action.isPending &&
-                (action.variables === "start" || action.variables === "stop")
+                awaitingStatus ||
+                (action.isPending &&
+                  (action.variables === "start" || action.variables === "stop"))
               }
-              onPress={() =>
-                action.mutate(agent?.status === "stopped" ? "start" : "stop")
-              }
+              loadingLabel={starting ? "Starting…" : "Stopping…"}
+              onPress={() => action.mutate(stopped ? "start" : "stop")}
             >
-              {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
+              {stopped ? "Start agent" : "Stop agent"}
             </Button>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending}
+              disabled={action.isPending || awaitingStatus}
               loading={action.isPending && action.variables === "restart"}
               onPress={() => action.mutate("restart")}
             >
