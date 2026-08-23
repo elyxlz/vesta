@@ -607,6 +607,20 @@ def _reminder_view(row) -> dict:
     }
 
 
+def _metadata_path(data_dir: Path, reminder_id: str) -> Path:
+    """A reminder's notes file. Mirrors the tasks skill: one markdown file per id."""
+    return data_dir / "metadata" / f"{reminder_id}.md"
+
+
+def _read_metadata(data_dir: Path, reminder_id: str) -> str | None:
+    """The notes, or None when a reminder has none. Most reminders have none, so a missing file is
+    an ordinary answer, never an error."""
+    try:
+        return _metadata_path(data_dir, reminder_id).read_text()
+    except OSError:
+        return None
+
+
 def _require_reminder_row(conn, reminder_id: str):
     row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
     if not row:
@@ -624,9 +638,17 @@ def _require_live_reminder_row(conn, reminder_id: str):
 
 
 def remind_get(config: Config, *, reminder_id: str) -> dict:
-    """One reminder by id. A soft-deleted one still resolves, so a past id can always be inspected."""
+    """One reminder by id, with its notes. A soft-deleted one still resolves, so a past id can
+    always be inspected.
+
+    The notes come with this single read and never with `remind_list`: a notes file carries the
+    detail a one-line message cannot hold, so it runs to tens of KB, and a list returning every
+    one of them would be far heavier than the list itself."""
     with closing(db.get_db(config.data_dir)) as conn:
-        return _reminder_view(_require_reminder_row(conn, reminder_id))
+        view = _reminder_view(_require_reminder_row(conn, reminder_id))
+    view["metadata_path"] = str(_metadata_path(config.data_dir, reminder_id))
+    view["metadata_content"] = _read_metadata(config.data_dir, reminder_id)
+    return view
 
 
 def remind_delete(config: Config, *, reminder_id: str) -> dict:
