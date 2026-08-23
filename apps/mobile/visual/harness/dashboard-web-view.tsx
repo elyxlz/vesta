@@ -1,12 +1,25 @@
-import { forwardRef, type ComponentProps } from "react";
+import { forwardRef, useEffect, useState, type ComponentProps } from "react";
+import { StyleSheet, Text } from "react-native";
+import type { WebViewErrorEvent } from "react-native-webview/lib/WebViewTypes";
 import {
   DashboardWebView as ProductionDashboardWebView,
   type DashboardWebViewHandle,
 } from "../../src/components/DashboardWebView";
+import { visualSwitch } from "./launch-query";
+
+// visualDashboard=error reports a failed load instead of the fixture page.
+const dashboardFails = visualSwitch("visualDashboard") === "error";
 
 export type { DashboardWebViewHandle } from "../../src/components/DashboardWebView";
 
 type DashboardWebViewProps = ComponentProps<typeof ProductionDashboardWebView>;
+
+// Maestro reads the native accessibility tree, which does not reliably expose
+// text rendered inside a WebView on Android. onLoad is a native RN callback, so
+// this transparent Text is a deterministic "content painted" signal the flows
+// wait on instead of racing the WebView's inner text. A Text node exposes its
+// string to Android accessibility where a content-less View does not.
+const DASHBOARD_READY_LABEL = "Dashboard ready";
 
 function dashboardDocument(dark: boolean): string {
   const background = dark ? "#111114" : "#f6f5f2";
@@ -87,17 +100,60 @@ function dashboardDocument(dark: boolean): string {
 export const DashboardWebView = forwardRef<
   DashboardWebViewHandle,
   DashboardWebViewProps
->(function VisualDashboardWebView({ dark, source, ...props }, forwardedRef) {
+>(function VisualDashboardWebView(
+  { dark, source, onLoad, onError, ...props },
+  forwardedRef,
+) {
   const baseUrl = "uri" in source ? source.uri : "https://home.vesta.run/";
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!dashboardFails || !onError) return;
+    onError({
+      nativeEvent: {
+        url: baseUrl,
+        description: "The dashboard did not answer.",
+        code: -1009,
+        domain: "NSURLErrorDomain",
+        loading: false,
+        title: "",
+        canGoBack: false,
+        canGoForward: false,
+        lockIdentifier: 0,
+      },
+    } as WebViewErrorEvent);
+  }, [baseUrl, onError]);
+  if (dashboardFails) return null;
   return (
-    <ProductionDashboardWebView
-      {...props}
-      ref={forwardedRef}
-      dark={dark}
-      source={{
-        html: dashboardDocument(dark),
-        baseUrl,
-      }}
-    />
+    <>
+      <ProductionDashboardWebView
+        {...props}
+        ref={forwardedRef}
+        dark={dark}
+        source={{
+          html: dashboardDocument(dark),
+          baseUrl,
+        }}
+        onLoad={() => {
+          setLoaded(true);
+          onLoad?.();
+        }}
+      />
+      {loaded ? (
+        <Text accessible style={styles.readyMarker}>
+          {DASHBOARD_READY_LABEL}
+        </Text>
+      ) : null}
+    </>
   );
+});
+
+const styles = StyleSheet.create({
+  // Present in the accessibility tree, invisible in the screenshot.
+  readyMarker: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    fontSize: 4,
+    color: "transparent",
+  },
 });

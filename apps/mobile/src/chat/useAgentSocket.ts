@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Crypto from "expo-crypto";
 import {
   PACING,
@@ -33,13 +33,16 @@ import {
   agentActivitySnapshotsEqual,
   selectAgentActivitySnapshot,
 } from "./agent-activity-model";
-import { useChatHold } from "./ChatHoldProvider";
-import { captureChatHold, chatHoldKey, heldChatState } from "./chat-hold-model";
+import { useAgentHolds } from "@/holds/AgentHoldsProvider";
+import { agentHoldKey } from "@/holds/keyed-hold";
 
 interface HistoryPage {
   events: VestaEvent[];
   cursor: number | null;
 }
+
+const SEED_RETRY_MS = 1_000;
+const SEED_RETRY_MAX_MS = 30_000;
 
 function idsEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
@@ -58,17 +61,17 @@ export function useAgentSocket(
 ) {
   const preferences = usePreferences();
   const { connection, api } = useSession();
-  const connectionRef = useRef(connection);
-  connectionRef.current = connection;
   const apiRef = useRef(api);
-  apiRef.current = api;
-  const holdStore = useChatHold();
-  const key = chatHoldKey(name, connectionKeyOf(connection) ?? "");
-  const keyRef = useRef(key);
-  keyRef.current = key;
+  useEffect(() => {
+    apiRef.current = api;
+  }, [api]);
+  const holds = useAgentHolds();
+  const key = agentHoldKey(name, connectionKeyOf(connection) ?? "");
   const naturalPacing = preferences.naturalChatPacingForAgent(name);
   const naturalPacingRef = useRef(naturalPacing);
-  naturalPacingRef.current = naturalPacing;
+  useEffect(() => {
+    naturalPacingRef.current = naturalPacing;
+  }, [naturalPacing]);
 
   const connected = useOptionalControllerSyncState(controller) === "open";
 
@@ -118,16 +121,18 @@ export function useAgentSocket(
   // instead of blanking to a skeleton; seedTail refetches and merges by id. Every commit persists the
   // render slice back to the hold under the current key, so a background/foreground survives it.
   const [state, setState] = useState<ChatState>(
-    () => heldChatState(holdStore.read(), key) ?? initialChatState(),
+    () => holds.chat.read(key) ?? initialChatState(),
   );
   const stateRef = useRef<ChatState>(state);
+  // The key is captured here, not read from a ref, so a paced-typing timer from a previous
+  // agent/gateway epoch can only ever write its own cell, never the next one's.
   const commit = useCallback(
     (fold: (current: ChatState) => ChatState) => {
       stateRef.current = fold(stateRef.current);
       setState(stateRef.current);
-      holdStore.persist(captureChatHold(keyRef.current, stateRef.current));
+      holds.chat.persist(key, stateRef.current);
     },
-    [holdStore],
+    [holds, key],
   );
 
   const [isTyping, setIsTyping] = useState(false);
@@ -227,21 +232,47 @@ export function useAgentSocket(
     if (!active || !name || !controller) return;
     let cancelled = false;
 
-    // Seed from the hold for this key (survives the controller epoch); a mismatched key clears to
-    // empty at the read, so a switched agent or gateway never renders the prior conversation.
-    const seeded = heldChatState(holdStore.read(), key) ?? initialChatState();
+    // Seed from this key's hold cell (survives the controller epoch and screen pops); a missing
+    // cell means a never-visited agent or gateway, which starts empty.
+    const seeded = holds.chat.read(key) ?? initialChatState();
     stateRef.current = seeded;
     setState(seeded);
     resetTyping();
 
     // Reseed the tail from the newest history page and MERGE, never replace. Runs on every socket
     // open (initial connect and each reconnect), so a replay-free gap self-heals, bumping
-    // reseedRevision so the notifications page refetches its own history.
+    // reseedRevision so the notifications page refetches its own history. A failed fetch while the
+    // socket stays healthy retries on a capped backoff, so one blip never strands the skeleton.
     const seed = async () => {
       const page = await fetchPage();
       if (cancelled) return;
       commit((current) => seedTail(current, page));
       setReseedRevision((revision) => revision + 1);
+    };
+
+    let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let seedRetryDelay = SEED_RETRY_MS;
+    let socketOpen = false;
+    const clearSeedRetry = () => {
+      if (seedRetryTimer) clearTimeout(seedRetryTimer);
+      seedRetryTimer = null;
+    };
+    const runSeed = () => {
+      void seed()
+        .then(() => {
+          seedRetryDelay = SEED_RETRY_MS;
+        })
+        .catch((error: unknown) => {
+          console.warn("chat: history load failed", error);
+          // Retries are scoped to a healthy open socket; a fetch that fails after the
+          // socket closed must not keep polling history, the next open reseeds instead.
+          if (cancelled || !socketOpen) return;
+          seedRetryTimer = setTimeout(() => {
+            seedRetryTimer = null;
+            runSeed();
+          }, seedRetryDelay);
+          seedRetryDelay = Math.min(seedRetryDelay * 2, SEED_RETRY_MAX_MS);
+        });
     };
 
     const addLiveEvent = (event: ChatMessage) => {
@@ -261,11 +292,12 @@ export function useAgentSocket(
         onEvent: addLiveEvent,
         onClosedBeforeOpen: dropChatKey,
         onStateChange: (socketState) => {
-          if (socketState === "open") {
+          socketOpen = socketState === "open";
+          clearSeedRetry();
+          if (socketOpen) {
             resetTyping();
-            void seed().catch((error: unknown) => {
-              console.warn("chat: history load failed", error);
-            });
+            seedRetryDelay = SEED_RETRY_MS;
+            runSeed();
           }
         },
       },
@@ -273,6 +305,7 @@ export function useAgentSocket(
 
     return () => {
       cancelled = true;
+      clearSeedRetry();
       socket.close();
       resetTyping();
     };
@@ -281,7 +314,7 @@ export function useAgentSocket(
     controller,
     name,
     key,
-    holdStore,
+    holds,
     commit,
     resetTyping,
     enqueueChat,
@@ -350,27 +383,51 @@ export function useAgentSocket(
     try {
       const page = await fetchPage(stateRef.current.cursor);
       commit((current) => prependPage(current, page.events, page.cursor));
+    } catch (error) {
+      // hasMore stays truthy, so the next onEndReached retries the page naturally.
+      console.warn("chat: history page load failed", error);
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   }, [name, controller, fetchPage, commit]);
 
-  return {
-    events: state.messages,
-    agentState: agentActivity.state,
-    agentStateReady: agentActivity.ready,
-    isTyping,
-    connected,
-    historyLoaded: state.historyLoaded,
-    pendingNotifications,
-    latestLiveChat,
-    pendingLiveChat,
-    hasMore,
-    loadingMore,
-    loadMore,
-    send,
-    retry,
-    reseedRevision,
-  };
+  // Memoized so the AgentContext value built on top of it only changes identity when a consumed
+  // field does; otherwise every provider render would re-render all four agent pages.
+  return useMemo(
+    () => ({
+      events: state.messages,
+      agentState: agentActivity.state,
+      agentStateReady: agentActivity.ready,
+      isTyping,
+      connected,
+      historyLoaded: state.historyLoaded,
+      pendingNotifications,
+      latestLiveChat,
+      pendingLiveChat,
+      hasMore,
+      loadingMore,
+      loadMore,
+      send,
+      retry,
+      reseedRevision,
+    }),
+    [
+      state.messages,
+      state.historyLoaded,
+      agentActivity.state,
+      agentActivity.ready,
+      isTyping,
+      connected,
+      pendingNotifications,
+      latestLiveChat,
+      pendingLiveChat,
+      hasMore,
+      loadingMore,
+      loadMore,
+      send,
+      retry,
+      reseedRevision,
+    ],
+  );
 }

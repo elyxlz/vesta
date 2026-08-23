@@ -3,7 +3,7 @@ export const meta = {
   description:
     "Frontier product/design critique of the Vesta app (visuals, interaction, onboarding, copy, a11y). Every truly-needed fix -> PR drafts (cheap or ambitious); only genuine design forks -> issue drafts. Vesta's voice/personality is out of scope.",
   whenToUse:
-    "Holistic design/UX pass on the Vesta app and onboarding journey. Run after capturing screenshots with tools/critique/capture-ui.mjs. Opens PRs and issues by default; args {emit:'draft'} writes .critique/out/ for review instead, {emit:'publish'} skips the critique and emits PRs from the saved draft.",
+    "Holistic design/UX pass on the Vesta app and onboarding journey. Run after capturing screenshots with `npm run visual:capture -- <runner>` (see apps/visual/README.md). Opens PRs and issues by default; args {emit:'draft'} writes .critique/out/ for review instead, {emit:'publish'} skips the critique and emits PRs from the saved draft.",
   phases: [
     { title: "Load", detail: "publish mode: read the saved PR groups" },
     { title: "Brief", detail: "list captured shots" },

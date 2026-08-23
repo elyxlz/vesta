@@ -1,0 +1,3 @@
+display_name: "Visual QA"
+short_description: "Capture and extend the deterministic Vesta apps gallery"
+default_prompt: "Use $visual-qa to add or debug deterministic screenshots in the Vesta visual QA harness (mobile, web, desktop)."

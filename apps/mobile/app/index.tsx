@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-} from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -18,7 +12,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -30,8 +24,6 @@ import {
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
 import { Screen } from "@/components/layout/Screen";
-import { useGatewayOperation } from "@/controller/gateway-operation-context";
-import { GatewayUpdateProgress } from "@/controller/gateway-update-progress";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
@@ -54,7 +46,6 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status } = useSession();
   const { agents, agentsReady } = useRoster();
-  const { operation, updatedTo } = useGatewayOperation();
   const { colors } = usePreferences();
   const carouselRef = useRef<FlatList<AgentRow>>(null);
   const hapticPageIndex = useRef(0);
@@ -68,11 +59,14 @@ export default function HomeScreen() {
   );
   const activeIndex = Math.min(selectedIndex, Math.max(agents.length - 1, 0));
 
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
+  // Restore the last-used agent once, on first mount only: re-running it on every focus would
+  // snap a carousel the user browsed elsewhere back to the last-opened agent after any sheet
+  // closes. A storage failure degrades to skipping the restore, never to blocking the boot splash.
+  useEffect(() => {
+    let active = true;
 
-      void readLastUsedAgent().then((name) => {
+    void readLastUsedAgent()
+      .then((name) => {
         if (!active) return;
         if (!name) {
           setInitialAgentReady(true);
@@ -80,13 +74,15 @@ export default function HomeScreen() {
         }
         restoreRequestId.current += 1;
         setRestoreRequest({ id: restoreRequestId.current, name });
+      })
+      .catch(() => {
+        if (active) setInitialAgentReady(true);
       });
 
-      return () => {
-        active = false;
-      };
-    }, []),
-  );
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (
@@ -116,18 +112,6 @@ export default function HomeScreen() {
 
     return () => cancelAnimationFrame(frame);
   }, [agents, restoreRequest, scrollX, width]);
-
-  // Ahead of the roster gate: the gateway is mid-backup or about to restart, so the roster it would
-  // wait on is exactly what stops arriving. The resolution holds the same page for its moment, so
-  // the update reads as one page that finishes rather than a screen that vanishes.
-  if (operation !== null || updatedTo !== null) {
-    return (
-      <Screen scroll={false} contentStyle={styles.screen}>
-        <HomeHeader showCreate={false} />
-        <GatewayUpdateProgress operation={operation} updatedTo={updatedTo} />
-      </Screen>
-    );
-  }
 
   if (status === "booting" || (status === "connected" && !agentsReady)) {
     return <HomeSkeleton />;
@@ -205,6 +189,9 @@ export default function HomeScreen() {
             decelerationRate="fast"
             disableIntervalMomentum
             keyExtractor={(agent) => agent.name}
+            // The list can remount mid-session (the gateway-update branch swaps it out); mounting
+            // at the retained index keeps it in step with the page dots and selection state.
+            initialScrollIndex={activeIndex}
             getItemLayout={(_, index) => ({
               length: width,
               offset: width * index,
@@ -473,6 +460,9 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
       <Stack.Screen
         options={{
           headerLargeTitle: false,
+          // Android centers the title in the space left between unequal side
+          // controls; center on the screen instead, matching iOS.
+          headerTitleAlign: "center",
           headerTransparent: true,
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,

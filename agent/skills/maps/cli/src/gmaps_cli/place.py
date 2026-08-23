@@ -20,8 +20,12 @@ from .pb import json_strings, strip_envelope
 _TEMPLATE_PATH = Path(__file__).with_name("place_pb.txt")
 _REVERSE_TEMPLATE_PATH = Path(__file__).with_name("reverse_pb.txt")
 # A reverse label is a street address ("Via Roma, 5, Rome, Italy") or a Plus Code
-# ("WF3W+4HC Rome, ...") for open ground; both have a comma and letters.
+# ("WF3W+4HC Rome, Italy") for open ground.
 _REVERSE_LABEL_RE = re.compile(r'"([^"\[\]{}:]{8,90})"')
+# Google drops the country suffix from a compound Plus Code when the request's `gl` already
+# matches the point's country, so a home-country label can arrive comma-free ("GV2G+75C London").
+# Admitting those by shape keeps the comma-free UI chrome in the same response out of the running.
+_PLUS_CODE_RE = re.compile(r"^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\s")
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _PLACE_ID_RE = re.compile(r"^ChIJ[\w-]{10,}$")
 _RANGE_RE = re.compile(r"^\d{1,2}\S*\s?(?:am|pm|AM|PM).+")
@@ -44,7 +48,7 @@ def parse_reverse(raw_body: str) -> str | None:
     candidates = [
         s
         for s in _REVERSE_LABEL_RE.findall(clean)
-        if s.count(", ") >= 1 and re.search(r"[A-Za-z]{4}", s) and not s.startswith(("0x", "http", "gcid", "/g/"))
+        if (s.count(", ") >= 1 or _PLUS_CODE_RE.match(s)) and re.search(r"[A-Za-z]{4}", s) and not s.startswith(("0x", "http", "gcid", "/g/"))
     ]
     return max(candidates, key=len) if candidates else None
 

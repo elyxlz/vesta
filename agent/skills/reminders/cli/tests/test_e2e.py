@@ -254,6 +254,21 @@ class TestRemindUpdate:
         r = remind_cli(home, "update", "nope", "--message", "x")
         assert r.returncode != 0
 
+    def test_update_repoints_the_zone_under_the_same_id(self, shared_env):
+        home, _, _ = shared_env
+        s = parse(remind_cli(home, "create", "brief", "--recurring", "daily", "--at", "08:45", "--tz", "Europe/London"))
+        data = parse(remind_cli(home, "update", s["id"], "--tz", "America/New_York"))
+        assert data["id"] == s["id"]
+        assert data["schedule"] == "daily at 08:45 America/New_York"
+        remind_cli(home, "delete", s["id"])
+
+    def test_update_with_nothing_to_change_is_refused(self, shared_env):
+        home, _, _ = shared_env
+        s = parse(remind_cli(home, "create", "nothing to change", "--in-minutes", "60"))
+        r = remind_cli(home, "update", s["id"])
+        assert r.returncode != 0
+        assert "Say what to change" in parse(r)["error"]
+
 
 class TestVerbs:
     def test_remind_snooze_moves_one_shot(self, shared_env):

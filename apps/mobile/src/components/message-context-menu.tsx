@@ -1,10 +1,9 @@
 import type { ReactElement } from "react";
-import {
-  Platform,
-  type ColorValue,
-  type NativeSyntheticEvent,
-  type StyleProp,
-  type ViewStyle,
+import type {
+  ColorValue,
+  NativeSyntheticEvent,
+  StyleProp,
+  ViewStyle,
 } from "react-native";
 import { requireNativeViewManager } from "expo-modules-core";
 import {
@@ -12,8 +11,8 @@ import {
   type MenuAction as ExpoMenuAction,
 } from "@expo/ui/community/menu";
 
-export interface MessageMenuAction {
-  id: string;
+export interface MessageMenuAction<Id extends string = string> {
+  id: Id;
   title: string;
   systemImage?: Extract<ExpoMenuAction["image"], string>;
   androidImage?: Exclude<ExpoMenuAction["image"], string>;
@@ -23,10 +22,10 @@ export interface MessageMenuAction {
 
 type TailSide = "none" | "leading" | "trailing";
 
-interface MessageContextMenuProps {
-  actions: MessageMenuAction[];
+interface MessageContextMenuProps<Id extends string> {
+  actions: MessageMenuAction<Id>[];
   children: ReactElement;
-  onAction: (id: string) => void;
+  onAction: (id: Id) => void;
   style?: StyleProp<ViewStyle>;
   tailSide?: TailSide;
   tailOverhang?: number;
@@ -37,21 +36,21 @@ interface MessageContextMenuProps {
 }
 
 interface NativeMessageContextMenuProps
-  extends Omit<MessageContextMenuProps, "onAction"> {
+  extends Omit<MessageContextMenuProps<string>, "onAction"> {
   onAction: (
     event: NativeSyntheticEvent<{ id: string }>,
   ) => void;
 }
 
 const NativeMessageContextMenu =
-  Platform.OS === "ios"
+  process.env.EXPO_OS === "ios"
     ? requireNativeViewManager<NativeMessageContextMenuProps>(
         "VestaMessageMenu",
         "VestaMessageMenuView",
       )
     : null;
 
-export function MessageContextMenu({
+export function MessageContextMenu<Id extends string = string>({
   actions,
   children,
   onAction,
@@ -62,7 +61,12 @@ export function MessageContextMenu({
   bubbleFillColor = "transparent",
   bubbleStrokeColor = "transparent",
   bubbleStrokeWidth = 0,
-}: MessageContextMenuProps) {
+}: MessageContextMenuProps<Id>) {
+  const emitAction = (id: string) => {
+    const action = actions.find((entry) => entry.id === id);
+    if (action) onAction(action.id);
+  };
+
   if (NativeMessageContextMenu) {
     const tailLayout =
       tailSide === "none"
@@ -78,7 +82,7 @@ export function MessageContextMenu({
         bubbleFillColor={bubbleFillColor}
         bubbleStrokeColor={bubbleStrokeColor}
         bubbleStrokeWidth={bubbleStrokeWidth}
-        onAction={({ nativeEvent }) => onAction(nativeEvent.id)}
+        onAction={({ nativeEvent }) => emitAction(nativeEvent.id)}
         previewCornerRadius={previewCornerRadius}
         style={[style, tailLayout]}
         tailOverhang={tailOverhang}
@@ -100,7 +104,7 @@ export function MessageContextMenu({
           disabled: action.disabled,
         },
       }))}
-      onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+      onPressAction={({ nativeEvent }) => emitAction(nativeEvent.event)}
       shouldOpenOnLongPress
       style={style}
     >

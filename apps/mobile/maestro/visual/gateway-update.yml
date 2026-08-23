@@ -72,7 +72,7 @@ tags:
     timeout: 10000
 - scrollUntilVisible:
     element:
-      text: "Gateway"
+      text: "^Update gateway,.*"
     direction: DOWN
     timeout: 10000
     speed: 40
@@ -91,6 +91,8 @@ tags:
     timeout: 10000
     speed: 40
     visibilityPercentage: 100
+    centerElement: true
+
 - tapOn:
     text: "^Update gateway,.*"
 - extendedWaitUntil:
@@ -176,3 +178,18 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: gateway-updated.png
+
+# The opposite version failure: this app is below the gateway's supported window.
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSyncState=app_behind"
+- extendedWaitUntil:
+    visible: "This app is too old for the gateway.*"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: app-behind
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: app-behind.png

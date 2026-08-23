@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react"
 import type { GatewayOperation } from "../protocol/tree"
 
 // How long the "updated to vX.Y.Z" resolution stays up before the app returns to normal.
-export const UPDATED_NOTICE_MS = 6000
+export const UPDATED_NOTICE_MS = 3000
+// A restart has less to say, so its landing is brief.
+export const RESTARTED_NOTICE_MS = 2500
 
 // Resolve the update the user watched: remember the version it started from, and once the operation
 // clears against a different one, report it for a moment. Timing rather than derivable state, so it
@@ -35,4 +37,28 @@ export function useUpdateResolution(
     }
   }, [operation, version])
   return updatedTo
+}
+
+// Resolve the restart the user watched: once a restart operation clears without failing, report it
+// for the same moment. A restart changes no version, so this is the only way it gets a landing.
+export function useRestartResolution(operation: GatewayOperation | null): boolean {
+  const watching = useRef(false)
+  const [restarted, setRestarted] = useState(false)
+  useEffect(() => {
+    if (operation !== null) {
+      setRestarted(false)
+      watching.current = operation.kind === "restart" && operation.phase !== "failed"
+      return
+    }
+    if (!watching.current) return
+    watching.current = false
+    setRestarted(true)
+    const clear = setTimeout(() => {
+      setRestarted(false)
+    }, RESTARTED_NOTICE_MS)
+    return () => {
+      clearTimeout(clear)
+    }
+  }, [operation])
+  return restarted
 }

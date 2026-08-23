@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
-import { Platform, type StyleProp, type ViewStyle } from "react-native";
+import type { StyleProp, ViewStyle } from "react-native";
 import IOSWebView from "react-native-webview/lib/WebView.ios";
 import AndroidWebView from "react-native-webview/lib/WebView.android";
 import type {
@@ -125,7 +125,7 @@ export const DashboardWebView = forwardRef<
     allowsInlineMediaPlayback: true,
     mediaPlaybackRequiresUserAction: false,
   };
-  return Platform.OS === "ios" ? (
+  return process.env.EXPO_OS === "ios" ? (
     <IOSWebView {...sharedProps} />
   ) : (
     // setSupportMultipleWindows(false) routes target=_blank links through

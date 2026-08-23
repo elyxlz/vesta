@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
+import { cloudSignInEnabled } from "@/api/auth";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
 import { useToast } from "@/components/native-toast";
@@ -27,28 +28,41 @@ export default function ConnectActionsScreen() {
   };
 
   return (
-    <AuthSheet gap={14}>
-      <AuthPrimaryButton
-        accessibilityLabel="Connect with Vesta Cloud"
-        icon="person-circle-outline"
-        iconSize={20}
-        loading={busy}
-        loadingLabel="Connecting…"
-        onPress={() => void signInWithAccount()}
-      >
-        Connect with Vesta Cloud
-      </AuthPrimaryButton>
-      <Button
-        pill
-        size="large"
-        variant="secondary"
-        accessibilityLabel="Connect to self-hosted Vesta"
-        icon="server-outline"
-        labelStyle={styles.actionLabel}
-        onPress={() => router.push("/connect-link")}
-      >
-        Connect to self-hosted Vesta
-      </Button>
+    <AuthSheet gap={16}>
+      {cloudSignInEnabled ? (
+        <>
+          <AuthPrimaryButton
+            accessibilityLabel="Connect with Vesta Cloud"
+            icon="person-circle-outline"
+            iconSize={20}
+            loading={busy}
+            loadingLabel="Connecting…"
+            onPress={() => void signInWithAccount()}
+          >
+            Connect with Vesta Cloud
+          </AuthPrimaryButton>
+          <Button
+            pill
+            size="large"
+            variant="secondary"
+            accessibilityLabel="Connect to self-hosted Vesta"
+            icon="server-outline"
+            labelStyle={styles.actionLabel}
+            onPress={() => router.push("/connect-link")}
+          >
+            Connect to self-hosted Vesta
+          </Button>
+        </>
+      ) : (
+        <AuthPrimaryButton
+          accessibilityLabel="Connect to self-hosted Vesta"
+          icon="server-outline"
+          iconSize={20}
+          onPress={() => router.push("/connect-link")}
+        >
+          Connect to self-hosted Vesta
+        </AuthPrimaryButton>
+      )}
       {hasRecentGateways ? (
         <Button
           pill

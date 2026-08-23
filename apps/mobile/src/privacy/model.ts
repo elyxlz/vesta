@@ -19,10 +19,9 @@ export function readPrivacySettings(value: string | null): PrivacySettings {
         typeof parsed.appLockEnabled === "boolean"
           ? parsed.appLockEnabled
           : false,
-      hideAppSwitcherPreview:
-        typeof parsed.hideAppSwitcherPreview === "boolean"
-          ? parsed.hideAppSwitcherPreview
-          : false,
+      // The app switcher toggle is withheld from Settings for now, so a
+      // stored value is ignored until it returns.
+      hideAppSwitcherPreview: false,
     };
   } catch {
     return initialPrivacySettings;

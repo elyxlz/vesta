@@ -1,0 +1,76 @@
+appId: ${APP_ID}
+name: Privacy states
+tags:
+  - visual
+  - privacy
+---
+- clearState
+- openLink:
+    link: "vesta-dev://?visualPrivacy=opening"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: '.*with you through life.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-opening
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-opening.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Privacy unavailable.*'
+    timeout: 30000
+- tapOn:
+    text: 'Try again'
+- extendedWaitUntil:
+    visible: '.*Unlock.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-locked-connected
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-locked-connected.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*App Lock.*'
+    timeout: 30000
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "^1$"
+          rightOf:
+            text: '.*App Lock.*'
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          rightOf:
+            text: '.*App Lock.*'
+          above:
+            text: '.*Hide in app switcher.*'
+- extendedWaitUntil:
+    visible: '.*Hide in app switcher.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-app-lock-off
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-app-lock-off.png

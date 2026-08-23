@@ -1,14 +1,5 @@
-import { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
-import Animated, {
-  Easing,
-  cancelAnimation,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
+import { SkeletonPulse } from "@/components/ui/skeleton-pulse";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
 
@@ -28,37 +19,9 @@ const PLACEHOLDER_ROWS = [
 
 export function ChatLoadingSkeleton() {
   const { colors } = usePreferences();
-  const reduceMotion = useReducedMotion();
-  const opacity = useSharedValue(reduceMotion ? 0.58 : 0.42);
-  const pulseStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
-
-  useEffect(() => {
-    cancelAnimation(opacity);
-    opacity.set(
-      reduceMotion
-        ? 0.58
-        : withRepeat(
-            withTiming(0.76, {
-              duration: 800,
-              easing: Easing.inOut(Easing.quad),
-            }),
-            -1,
-            true,
-          ),
-    );
-
-    return () => cancelAnimation(opacity);
-  }, [opacity, reduceMotion]);
 
   return (
-    <Animated.View
-      accessible
-      accessibilityLabel="Loading conversation"
-      accessibilityRole="progressbar"
-      accessibilityState={{ busy: true }}
-      pointerEvents="none"
-      style={[styles.skeleton, pulseStyle]}
-    >
+    <SkeletonPulse label="Loading conversation" style={styles.skeleton}>
       <View style={styles.stack}>
         {PLACEHOLDER_ROWS.map((row, index) => (
           <View
@@ -78,7 +41,7 @@ export function ChatLoadingSkeleton() {
           />
         ))}
       </View>
-    </Animated.View>
+    </SkeletonPulse>
   );
 }
 

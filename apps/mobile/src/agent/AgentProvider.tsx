@@ -1,4 +1,10 @@
-import { createContext, use, useEffect, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { useLocalSearchParams } from "expo-router";
 import { useAgentSocket } from "@/chat/useAgentSocket";
 import { ControllerContext } from "@/controller/context";
@@ -47,10 +53,14 @@ function AgentContent({
     () => setVisibleAgentSocket(connection?.url ?? "", name, socket.connected),
     [connection?.url, name, socket.connected],
   );
+  // Memoized (with the socket hook's own memoized return) so the four always-mounted agent pages
+  // re-render only when a consumed field changes, not on every provider render.
+  const value = useMemo(
+    () => ({ name, agent, activityState, socket }),
+    [name, agent, activityState, socket],
+  );
   return (
-    <AgentContext.Provider value={{ name, agent, activityState, socket }}>
-      {children}
-    </AgentContext.Provider>
+    <AgentContext.Provider value={value}>{children}</AgentContext.Provider>
   );
 }
 

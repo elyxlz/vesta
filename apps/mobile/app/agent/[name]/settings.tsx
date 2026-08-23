@@ -1,30 +1,35 @@
 import { useState } from "react";
-import { StyleSheet } from "react-native";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { resolveProviderIdentity, type AgentStatus } from "@vesta/core";
+import { Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
+  fetchManifest,
+  getProvider,
   restartAgent,
   startAgent,
   stopAgent,
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
-import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
+import { sectionTitle } from "@/agent/settings/sections-model";
+import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
+import { ProviderPill } from "@/components/ProviderPill";
 import { Screen } from "@/components/layout/Screen";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
-import { SheetChrome } from "@/components/sheet-chrome";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
-import { FormSection, SwitchRow } from "@/components/ui/Form";
+import {
+  FormGroup,
+  FormRow,
+  FormSection,
+  SwitchRow,
+} from "@/components/ui/Form";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-
-// Android keeps the simple critical controls and hides the complex
-// sections (provider sign-in, voice, rules, files, host access, restores).
-const SHOWS_ADVANCED_SECTIONS = process.env.EXPO_OS === "ios";
 
 function AgentSettingsContent() {
   const router = useRouter();
@@ -34,6 +39,26 @@ function AgentSettingsContent() {
   const preferences = usePreferences();
   const { showError } = useToast();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // The status the roster is expected to reach after a start or stop. vestad answers the request
+  // before the container has moved, so the button stays busy until the roster catches up.
+  const [awaitedStatus, setAwaitedStatus] = useState<AgentStatus | null>(null);
+  const awaitingStatus =
+    awaitedStatus !== null && agent?.status !== awaitedStatus;
+  const stopped = agent?.status === "stopped";
+  const restart = useAwaitedRoundTrip(agent?.status !== "alive");
+  const backup = useAwaitedRoundTrip(agent?.operation === "backing_up");
+  const provider = useQuery({
+    queryKey: ["provider", name],
+    queryFn: () => getProvider(api, name),
+  });
+  const manifest = useQuery({
+    queryKey: ["manifest"],
+    queryFn: () => fetchManifest(api),
+  });
+  const providerIdentity = resolveProviderIdentity(
+    provider.data ?? null,
+    manifest.data,
+  );
   const action = useMutation({
     mutationFn: async (
       operation: "start" | "stop" | "restart" | "backup" | "delete",
@@ -48,9 +73,14 @@ function AgentSettingsContent() {
     onSuccess: (operation) => {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
       if (operation === "delete") router.replace("/");
+      if (operation === "start") setAwaitedStatus("alive");
+      if (operation === "stop") setAwaitedStatus("stopped");
+      if (operation === "restart") restart.start();
+      if (operation === "backup") backup.start();
     },
     onError: (error) => showError(error, "The action failed"),
   });
+  const starting = awaitedStatus === "alive" || action.variables === "start";
   const open = (section: string) =>
     router.push({
       pathname: "/agent/[name]/details/[section]",
@@ -73,25 +103,83 @@ function AgentSettingsContent() {
         activityState={activityState}
         operation={agent?.operation ?? null}
         booting={agent?.booting}
+        caption={
+          providerIdentity ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${sectionTitle("provider")}, ${providerIdentity.providerName}`}
+              hitSlop={6}
+              onPress={() => open("provider")}
+              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+            >
+              <ProviderPill identity={providerIdentity} />
+            </Pressable>
+          ) : null
+        }
         style={styles.identityCard}
       />
-      <FormSection
-        title="Agent"
-        actions={
-          SHOWS_ADVANCED_SECTIONS ? (
-            <>
-              <Button pill variant="card" onPress={() => open("provider")}>
-                Provider and model
-              </Button>
-              <Button pill variant="card" onPress={() => open("voice")}>
-                Voice
-              </Button>
-            </>
-          ) : undefined
-        }
-      >
+      <FormGroup>
+        <FormSection title="Agent">
+          <FormRow
+            label={sectionTitle("provider")}
+            onPress={() => open("provider")}
+          />
+        </FormSection>
+        <FormSection>
+          <FormRow
+            label={sectionTitle("voice")}
+            onPress={() => open("voice")}
+          />
+        </FormSection>
+      </FormGroup>
+      <FormGroup>
+        <FormSection title="Activity">
+          <FormRow
+            label="Notifications"
+            onPress={() => openPage("notifications")}
+          />
+        </FormSection>
+        <FormSection>
+          <FormRow label="Logs" onPress={() => openPage("logs")} />
+        </FormSection>
+      </FormGroup>
+      <FormSection title="Pages">
         <SwitchRow
-          label="Natural chat pacing"
+          label="Chat"
+          detail="Messages with this agent."
+          value={preferences.showChatPage}
+          onValueChange={(value) =>
+            void preferences.update({ showChatPage: value })
+          }
+        />
+        <SwitchRow
+          label="Dashboard"
+          detail="Tasks, reminders, and more."
+          value={preferences.showDashboardPage}
+          onValueChange={(value) =>
+            void preferences.update({ showDashboardPage: value })
+          }
+        />
+        <SwitchRow
+          label="Notifications"
+          detail="Everything this agent was told."
+          value={preferences.showNotificationsPage}
+          onValueChange={(value) =>
+            void preferences.update({ showNotificationsPage: value })
+          }
+        />
+        <SwitchRow
+          label="Logs"
+          detail="Live output from this agent."
+          value={preferences.showLogsPage}
+          onValueChange={(value) =>
+            void preferences.update({ showLogsPage: value })
+          }
+        />
+      </FormSection>
+      <FormSection title="Chat">
+        <SwitchRow
+          label="Natural pacing"
           detail="Let this agent's replies arrive with a more human rhythm."
           value={preferences.naturalChatPacingForAgent(name)}
           onValueChange={(value) =>
@@ -99,102 +187,59 @@ function AgentSettingsContent() {
           }
         />
       </FormSection>
-      <AgentPagesSettingsSection />
-      <FormSection
-        title="Attention"
-        actions={
-          SHOWS_ADVANCED_SECTIONS ? (
-            <>
-              <ButtonGroup>
-                <Button
-                  variant="cardGrouped"
-                  onPress={() => openPage("notifications")}
-                >
-                  Notifications
-                </Button>
-                <Button
-                  variant="cardGrouped"
-                  onPress={() => open("notifications")}
-                >
-                  Notification rules
-                </Button>
-              </ButtonGroup>
-              <Button pill variant="card" onPress={() => openPage("logs")}>
-                Logs
-              </Button>
-              <Button pill variant="card" onPress={() => open("files")}>
-                Files
-              </Button>
-              <Button pill variant="card" onPress={() => open("host-access")}>
-                Host access
-              </Button>
-            </>
-          ) : (
-            <ButtonGroup>
-              <Button
-                variant="cardGrouped"
-                onPress={() => openPage("notifications")}
-              >
-                Notifications
-              </Button>
-              <Button variant="cardGrouped" onPress={() => openPage("logs")}>
-                Logs
-              </Button>
-            </ButtonGroup>
-          )
-        }
-      />
+      <FormSection title="Access">
+        <FormRow label={sectionTitle("files")} onPress={() => open("files")} />
+        <FormRow
+          label={sectionTitle("host-access")}
+          onPress={() => open("host-access")}
+        />
+      </FormSection>
       <FormSection
         title="Backups"
         actions={
-          SHOWS_ADVANCED_SECTIONS ? (
-            <ButtonGroup>
-              <Button variant="cardGrouped" onPress={() => open("backups")}>
-                Manage backups
-              </Button>
-              <Button
-                variant="cardGrouped"
-                disabled={action.isPending}
-                loading={action.isPending && action.variables === "backup"}
-                onPress={() => action.mutate("backup")}
-              >
-                Back up now
-              </Button>
-            </ButtonGroup>
-          ) : (
+          <ButtonGroup>
+            <Button variant="cardGrouped" onPress={() => open("backups")}>
+              Manage backups
+            </Button>
             <Button
-              pill
-              variant="card"
-              disabled={action.isPending}
-              loading={action.isPending && action.variables === "backup"}
+              variant="cardGrouped"
+              disabled={action.isPending || backup.busy}
+              loading={
+                backup.busy ||
+                (action.isPending && action.variables === "backup")
+              }
+              loadingLabel="Backing up…"
               onPress={() => action.mutate("backup")}
             >
               Back up now
             </Button>
-          )
+          </ButtonGroup>
         }
       />
       <FormSection
-        title="Actions"
         actions={
           <ButtonGroup>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending}
+              disabled={action.isPending || awaitingStatus || restart.busy}
               loading={
-                action.isPending &&
-                (action.variables === "start" || action.variables === "stop")
+                awaitingStatus ||
+                (action.isPending &&
+                  (action.variables === "start" || action.variables === "stop"))
               }
-              onPress={() =>
-                action.mutate(agent?.status === "stopped" ? "start" : "stop")
-              }
+              loadingLabel={starting ? "Starting…" : "Stopping…"}
+              onPress={() => action.mutate(stopped ? "start" : "stop")}
             >
-              {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
+              {stopped ? "Start agent" : "Stop agent"}
             </Button>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending}
-              loading={action.isPending && action.variables === "restart"}
+              disabled={action.isPending || awaitingStatus || restart.busy}
+              loading={
+                restart.busy ||
+                (action.isPending && action.variables === "restart")
+              }
+              loadingLabel="Restarting…"
               onPress={() => action.mutate("restart")}
             >
               Restart agent
@@ -203,7 +248,6 @@ function AgentSettingsContent() {
         }
       />
       <FormSection
-        title="Danger zone"
         actions={
           <Button
             pill
@@ -238,7 +282,6 @@ export default function AgentSettingsScreen() {
   return (
     <>
       <NativeSheetCloseButton accessibilityLabel="Close agent settings" />
-      <SheetChrome title="Settings" closeLabel="Close agent settings" />
       <AgentSettingsContent />
     </>
   );

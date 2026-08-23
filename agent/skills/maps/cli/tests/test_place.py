@@ -40,3 +40,13 @@ def test_parse_reverse_returns_label():
     label = parse_reverse(body)
     assert label is not None
     assert "Rome" in label
+
+
+def test_parse_reverse_reads_home_country_plus_code():
+    """When `gl` matches the point's own country Google omits the country suffix, so the
+    compound Plus Code arrives with no comma at all. Fixture captured from the live
+    endpoint for 51.5007,-0.1246 (Westminster) with `gl=gb`; the same point under `gl=us`
+    answers "GV2G+75C London, United Kingdom".
+    """
+    body = (FIXTURES / "reverse_london.txt").read_text(encoding="utf-8")
+    assert parse_reverse(body) == "GV2G+75C London"

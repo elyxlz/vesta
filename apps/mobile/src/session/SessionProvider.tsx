@@ -24,7 +24,6 @@ import {
 } from "@/storage/connection";
 import type { RecentGateway } from "@/storage/recent-gateway-model";
 import {
-  clearRecentGateways as clearStoredRecentGateways,
   forgetRecentGateway as forgetStoredRecentGateway,
   readRecentGatewayCredential,
   readRecentGateways,
@@ -46,7 +45,6 @@ interface SessionValue {
   connectLink: (link: string) => Promise<void>;
   connectRecentGateway: (id: string) => Promise<void>;
   forgetRecentGateway: (id: string) => Promise<void>;
-  clearRecentGateways: () => Promise<void>;
   signIn: () => Promise<boolean>;
   disconnect: () => Promise<void>;
 }
@@ -213,11 +211,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setRecentGateways(await forgetStoredRecentGateway(id));
   }, []);
 
-  const clearRecentGateways = useCallback(async (): Promise<void> => {
-    await clearStoredRecentGateways();
-    setRecentGateways([]);
-  }, []);
-
   const signIn = useCallback(async (): Promise<boolean> => {
     const connection = await signInWithVestaAccount();
     if (!connection) return false;
@@ -237,7 +230,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
-      clearRecentGateways,
       signIn,
       disconnect,
     }),
@@ -249,7 +241,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
-      clearRecentGateways,
       signIn,
       disconnect,
     ],

@@ -9,6 +9,9 @@ const { openAuthSessionAsync } = vi.hoisted(() => ({
   openAuthSessionAsync: vi.fn(),
 }));
 
+vi.mock("expo-constants", () => ({
+  default: { expoConfig: { extra: { cloudSignInEnabled: true } } },
+}));
 vi.mock("expo-crypto", () => ({
   randomUUID: () => "00000000-0000-4000-8000-000000000000",
   digestStringAsync: () => Promise.resolve("challenge=="),

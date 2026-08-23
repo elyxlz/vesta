@@ -23,7 +23,7 @@
   --border: oklch(0.923 0.01 80);
   --input: oklch(0.923 0.01 80);
   --ring: oklch(0.55 0.04 75);
-  --interactive: oklch(0.45 0.06 75);
+  --interactive: oklch(0.35 0.005 80);
   --code: oklch(0.97 0.006 80);
   --ansi-black: oklch(0.147 0.005 80);
   --ansi-red: oklch(0.505 0.213 27.518);
@@ -113,7 +113,7 @@
   --border: oklch(1 0.01 80 / 10%);
   --input: oklch(1 0.01 80 / 15%);
   --ring: oklch(0.553 0.015 80);
-  --interactive: oklch(0.8 0.06 75);
+  --interactive: oklch(0.8 0.006 80);
   --code: oklch(0.19 0.007 80);
   --ansi-black: oklch(0.553 0.015 80);
   --ansi-red: oklch(0.704 0.191 22.216);

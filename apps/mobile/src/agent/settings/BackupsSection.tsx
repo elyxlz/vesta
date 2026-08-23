@@ -10,6 +10,7 @@ import {
   setAgentBackupSettings,
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
+import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
 import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -116,6 +117,9 @@ export function BackupsSection() {
     queryKey: ["backups", name],
     queryFn: () => listBackups(api, name),
   });
+  const operationTrip = useAwaitedRoundTrip(
+    (agent?.operation ?? null) !== null,
+  );
   const action = useMutation({
     mutationFn: async (
       operation:
@@ -130,6 +134,7 @@ export function BackupsSection() {
     },
     onSuccess: (type) => {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
+      if (type === "create" || type === "restore") operationTrip.start();
       if (type === "restore")
         Alert.alert(
           "Backup restored",
@@ -143,7 +148,8 @@ export function BackupsSection() {
     queryFn: () => getAgentBackupSettings(api, name),
   });
   const toggleAuto = useMutation({
-    mutationFn: (enabled: boolean) => setAgentBackupSettings(api, name, enabled),
+    mutationFn: (enabled: boolean) =>
+      setAgentBackupSettings(api, name, enabled),
     onSuccess: (updated) => {
       queryClient.setQueryData(["backup-settings", name], updated);
     },
@@ -162,7 +168,10 @@ export function BackupsSection() {
 
   // The gateway runs one operation per agent, so a restore or an update started elsewhere
   // disables these actions until it settles.
-  const busy = action.isPending || (agent?.operation ?? null) !== null;
+  const busy =
+    action.isPending ||
+    operationTrip.busy ||
+    (agent?.operation ?? null) !== null;
   const points = backupTimeline(backups.data, gatewayVersion);
 
   return (

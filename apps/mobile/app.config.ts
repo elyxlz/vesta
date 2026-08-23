@@ -33,7 +33,7 @@ const config: ExpoConfig = {
   name: isDevelopment ? "Vesta Dev" : "Vesta",
   owner: "vesta-cloud",
   slug: "vesta",
-  version: "0.2.6",
+  version: "0.2.9",
   scheme: isDevelopment ? "vesta-dev" : "vesta",
   orientation: "portrait",
   icon: appIcon,
@@ -119,14 +119,14 @@ const config: ExpoConfig = {
       "expo-location",
       {
         locationWhenInUsePermission:
-          "Share where this phone is with your Vesta agents, so plans and reminders follow your travel.",
+          "Let Vesta know where you are, to help you wherever you go.",
         locationAlwaysAndWhenInUsePermission:
-          "Share where this phone is with your Vesta agents, also while the app is closed, so plans and reminders follow your travel.",
+          "Let Vesta know where you are, even while the app is closed, to help you wherever you go.",
         locationAlwaysPermission:
-          "Share where this phone is with your Vesta agents while the app is closed, so plans and reminders follow your travel.",
-        // Reading a fix from the closed-app poll needs the always-on grant on both platforms; the iOS
-        // location background mode is not needed, since the poll runs under the processing mode.
-        isIosBackgroundLocationEnabled: false,
+          "Let Vesta know where you are while the app is closed, to help you wherever you go.",
+        // The closed-app poll reads a fresh fix, which needs the always-on grant on both platforms
+        // and, on iOS, the location background mode as well; the processing mode alone cannot get one.
+        isIosBackgroundLocationEnabled: true,
         isAndroidBackgroundLocationEnabled: true,
       },
     ],
@@ -155,6 +155,10 @@ const config: ExpoConfig = {
   extra: {
     apiCompat: "0.2",
     appVariant,
+    // Vesta Cloud is not open to the public yet: production builds offer
+    // self-hosted connection only, so App Review never meets a sign-in it
+    // cannot complete. Flip to true when cloud sign-up opens.
+    cloudSignInEnabled: isDevelopment,
     pushNotificationsEnabled: !localIosNoPush,
     ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },

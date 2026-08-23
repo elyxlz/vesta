@@ -1,0 +1,70 @@
+diff --git a/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift b/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift
+index ae59d79..22ca0fe 100644
+--- a/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift
++++ b/node_modules/expo-screen-capture/ios/ScreenCaptureModule.swift
+@@ -162,8 +162,8 @@ public final class ScreenCaptureModule: Module {
+   private func enableAppSwitcherProtection() {
+     NotificationCenter.default.addObserver(
+       self,
+-      selector: #selector(appWillResignActive),
+-      name: UIApplication.willResignActiveNotification,
++      selector: #selector(appDidEnterBackground),
++      name: UIApplication.didEnterBackgroundNotification,
+       object: nil
+     )
+ 
+@@ -178,7 +178,7 @@ public final class ScreenCaptureModule: Module {
+   private func disableAppSwitcherProtection() {
+     NotificationCenter.default.removeObserver(
+       self,
+-      name: UIApplication.willResignActiveNotification,
++      name: UIApplication.didEnterBackgroundNotification,
+       object: nil
+     )
+ 
+@@ -192,7 +192,7 @@ public final class ScreenCaptureModule: Module {
+   }
+ 
+   @objc
+-  private func appWillResignActive() {
++  private func appDidEnterBackground() {
+     showPrivacyOverlay()
+   }
+ 
+@@ -204,29 +204,21 @@ public final class ScreenCaptureModule: Module {
+   private func showPrivacyOverlay() {
+     // Don't add a new blur view if one already exists
+     guard self.blurEffectView == nil,
+-      let keyWindow = keyWindow,
+-      let rootView = keyWindow.subviews.first else {
++      let keyWindow = keyWindow else {
+       return
+     }
+ 
+-    let blurEffectView = AnimatedBlurEffectView(style: .light, intensity: self.blurIntensity)
+-    blurEffectView.frame = rootView.bounds
++    // The switcher snapshot is taken right after the app enters the
++    // background, so the overlay must be fully opaque at once and sit on
++    // the window itself, above any presented sheet.
++    let blurEffectView = AnimatedBlurEffectView(style: .systemMaterial, intensity: self.blurIntensity)
++    blurEffectView.frame = keyWindow.bounds
+     blurEffectView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+-    blurEffectView.alpha = 0
+ 
+-    rootView.addSubview(blurEffectView)
++    keyWindow.addSubview(blurEffectView)
+     self.blurEffectView = blurEffectView
+ 
+     blurEffectView.setupBlur()
+-
+-    UIView.animate(
+-      withDuration: 0.3,
+-      delay: 0,
+-      options: [.curveEaseOut],
+-      animations: {
+-        blurEffectView.alpha = 1.0
+-      }
+-    )
+   }
+ 
+   private func removePrivacyOverlay() {

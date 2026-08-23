@@ -23,7 +23,7 @@ import { CreatingStep } from "./Steps/CreatingStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
 import { classifyCreateFailure, isCredentialRejection } from "./create-flow";
 import { Chrome } from "./Chrome";
-import { stepChrome, type ChromeActionKind } from "./chrome";
+import { stepChrome, type ChromeActionKind } from "./step-chrome";
 
 // Generous timeout — first-time setup pulls + builds the agent image.
 const START_TIMEOUT_MS = 10 * 60 * 1000;

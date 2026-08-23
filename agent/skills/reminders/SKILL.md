@@ -23,6 +23,8 @@ reminders get <id> --field next_run            # just that value
 reminders snooze <id> --in-hours 4             # fire 4h from NOW; works on already-fired ones too
 reminders snooze <id> --at "2026-12-01T17:00:00"   # move it to a specific time
 reminders update <id> --message "..."
+reminders update <id> --tz "America/New_York"   # repoint a recurring schedule, same id
+reminders update <id> --unpin-tz                # back to the agent's own timezone
 reminders delete <id>
 ```
 
@@ -32,8 +34,8 @@ reminders delete <id>
 - `--fuzz-minutes N` (recurring/cron only): each fire lands at a varying point within N minutes either side of the nominal time, so a routine feels natural instead of firing at 09:30:00 sharp every day. Translate vague times yourself: "late evening" is roughly `--at "21:30:00" --fuzz-minutes 75`. Use fuzz for human-facing rhythms, never for a hard deadline; it must fit within half the gap between fires.
 - A recurring reminder's message is an instruction: when it fires, act on it. Recurring reminders double as scheduled automations.
 - Snooze moves one-shot reminders only, fired ones included; a recurring reminder fires again on its own, and the CLI rejects snoozing it. Snooze says when two ways, one per call: `--in-*` counts from now, `--at` names the moment (add `--tz` for a different zone). The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
-- `update` changes the message only. To reschedule: move a one-shot with snooze; a recurring reminder's schedule changes only by delete plus recreate, which changes the id, so fix everything that referenced the old one.
-- `get <id> --field <name>` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, message, schedule, next_run, created_at, status, deleted_at.
+- `update` rewrites a reminder in place, under the same id: `--message` for the text, `--tz <zone>` or `--unpin-tz` for a recurring schedule's zone. `--tz` keeps the wall-clock time and reads it in the new zone, `--unpin-tz` drops the pin so the schedule follows the agent's own timezone, and both recompute the next fire and reach the running daemon on its next sync. A one-shot is a fixed instant with no zone to move: use snooze. The rest of a recurring schedule (its time, its days, its fuzz) changes only by delete plus recreate, which changes the id, so fix everything that referenced the old one.
+- `get <id> --field <name>` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, message, schedule, next_run, created_at, status, deleted_at, metadata_path, metadata_content.
 - `delete` is a soft delete: the reminder is kept, it never fires again, and it drops off `reminders list`. There is no undelete: `snooze` and `update` refuse a deleted id. `reminders list --show-deleted` brings it back, marked `[deleted]`, so a past id still resolves.
 - `list` prints a compact table of the first 50; `--json`/`--json-pretty` list all unless `--limit` is given.
 
@@ -51,6 +53,22 @@ Same care when the reminder is one you will act on rather than send: a fired rem
 
 To nudge yourself about a task, set a reminder whose message names the task and its metadata file, and delete the reminder with `reminders delete <id>` when you close the task.
 
+## Reminder metadata
+
+A reminder can carry a markdown notes file of its own, the same shape the tasks skill uses:
+
+```
+~/.reminders/metadata/<reminder-id>.md
+```
+
+The id is the one the CLI prints. Write the file directly; there is no CLI flag for it.
+
+Use it when a reminder needs more than its message can hold. The message says WHERE, the file says WHAT, so the message stays short enough to read as a title wherever it is listed, and the working detail still has somewhere to live. Everything the staged-files section above says (dated blocks newest first, absolute dates, the file wins on a disagreement) applies to this file too.
+
+Prefer a TASK's metadata file when a task already exists, and have the reminder point at the task; reminder metadata is for a reminder that stands alone.
+
+`reminders get <id>`, and `GET /reminders/<id>` on the daemon's HTTP API, returns the file as `metadata_content` and its location as `metadata_path`, with `metadata_content` null when there is no file. `reminders list` leaves both out on purpose: a notes file carries the detail a one-line message cannot hold, so it runs long, and a list returning every one of them would be far heavier than the list itself.
+
 ## What the daemon does on its own
 
 - **Missed one-shots**: a reminder that should have fired while the daemon was down is sent on restart marked `missed`; missed recurring fires are skipped.
@@ -58,7 +76,7 @@ To nudge yourself about a task, set a reminder whose message names the task and 
 
 ## Data
 
-DB `~/.reminders/reminders.db`; logs `~/.reminders/logs/daemon.log`; startup log `~/agent/logs/reminders.log`;
+DB `~/.reminders/reminders.db`; metadata `~/.reminders/metadata/<id>.md`; logs `~/.reminders/logs/daemon.log`; startup log `~/agent/logs/reminders.log`;
 pid and port records `~/agent/data/daemons/reminders.pid` and `reminders.port`.
 
 ## Setup

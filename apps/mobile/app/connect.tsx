@@ -7,12 +7,13 @@ import {
   useSegments,
 } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { cloudSignInEnabled } from "@/api/auth";
 import { AgentOrb } from "@/components/AgentOrb";
 import {
   BootTransitionTarget,
   useBootTransitionPhase,
 } from "@/components/BootTransition";
-import { VestaBrand } from "@/components/VestaBrand";
+import { BRAND_ORB_SIZE, VestaBrand } from "@/components/VestaBrand";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useSession } from "@/session/SessionProvider";
@@ -41,7 +42,8 @@ function ConnectContent() {
   const privacyBlocked = usePrivacyBlocked();
   const initialDrawerOpened = useRef(false);
   const nextScreenOpened = useRef(false);
-  const estimatedActionSheetHeight = recentGateways?.length ? 186 : 156;
+  const estimatedActionSheetHeight =
+    (recentGateways?.length ? 186 : 156) - (cloudSignInEnabled ? 0 : 68);
   const canPresentSheet =
     !privacyBlocked &&
     (!bootTransition.active || bootTransition.pageRevealed);
@@ -85,7 +87,7 @@ function ConnectContent() {
             <BootTransitionTarget destination="connect" status="alive">
               <AgentOrb
                 status="alive"
-                size={88}
+                size={BRAND_ORB_SIZE}
                 pulseScale={1.12}
                 pulseDuration={1400}
                 pulseHaptics={

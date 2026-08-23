@@ -58,6 +58,7 @@ jobs:
       mobile: ${{ steps.filter.outputs.mobile }}
       mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
+      visual: ${{ steps.filter.outputs.visual }}
       comms: ${{ steps.filter.outputs.comms }}
       mac_universal: ${{ steps.flags.outputs.mac_universal }}
       mobile_matrix: ${{ steps.flags.outputs.mobile_matrix }}
@@ -111,6 +112,14 @@ jobs:
               - 'check.sh'
             desktop:
               - 'apps/desktop/**'
+              - 'apps/package.json'
+              - 'apps/package-lock.json'
+              - '.github/workflows/ci.yml'
+              - 'check.sh'
+            visual:
+              - 'apps/visual/**'
+              - 'apps/mobile/visual/scenarios.json'
+              - 'apps/web/visual/scenarios.json'
               - 'apps/package.json'
               - 'apps/package-lock.json'
               - '.github/workflows/ci.yml'
@@ -382,6 +391,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.visual == 'true' ||
       needs.detect-changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -427,12 +437,37 @@ jobs:
       - name: Run desktop checks
         run: ./check.sh app-desktop
 
+  test-app-visual:
+    name: Apps · visual
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.visual == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Install deps
+        run: npm --prefix apps ci
+
+      - name: Run visual checks
+        run: ./check.sh app-visual
+
   test-app-mobile:
     name: Apps · mobile
     needs: detect-changes
     if: >-
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.visual == 'true' ||
       needs.detect-changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1081,6 +1116,7 @@ jobs:
       - test-app-core
       - test-app-web
       - test-app-desktop
+      - test-app-visual
       - test-app-mobile
       - build-agent-image
       - test-integration

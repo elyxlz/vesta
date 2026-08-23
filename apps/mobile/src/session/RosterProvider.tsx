@@ -1,4 +1,11 @@
-import { createContext, use, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { AgentRow, DeviceInfo, ReleaseChannel, Tree } from "@vesta/core";
 import { devicesEqual, rosterFromTree, rostersEqual, selectDevices } from "@vesta/core";
 import { ControllerContext } from "@/controller/context";
@@ -29,8 +36,34 @@ interface RosterValue {
 
 const RosterContext = createContext<RosterValue | null>(null);
 
-function selectGateway(tree: Tree | null) {
-  return tree?.gateway ?? null;
+// The roster consumes five gateway fields; selecting them with their own equality keeps every
+// unrelated gateway delta (e.g. an operation phase tick) from re-identifying the context value.
+type GatewaySummary = Omit<RosterSnapshot, "agents">;
+
+function selectGatewaySummary(tree: Tree | null): GatewaySummary | null {
+  const gateway = tree?.gateway;
+  if (!gateway) return null;
+  return {
+    gatewayVersion: gateway.version,
+    gatewayChannel: gateway.channel,
+    managed: gateway.managed,
+    updateAvailable: gateway.updateAvailable,
+    latestVersion: gateway.latestVersion,
+  };
+}
+
+function gatewaySummariesEqual(
+  a: GatewaySummary | null,
+  b: GatewaySummary | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.gatewayVersion === b.gatewayVersion &&
+    a.gatewayChannel === b.gatewayChannel &&
+    a.managed === b.managed &&
+    a.updateAvailable === b.updateAvailable &&
+    a.latestVersion === b.latestVersion
+  );
 }
 
 // The stale-while-reconnecting hold survives controller epochs and keeps the last complete roster
@@ -85,17 +118,23 @@ function servedRoster(
 
 // Reconcile the hold for this render (pure; the reducer clears it synchronously on a gateway switch,
 // so no stale agents bleed for even one frame) and persist it after commit for the next epoch.
+// Memoized end to end: the hold and the served value keep their identity across unrelated renders,
+// so useRoster consumers only re-render on real roster changes and the persist effect only fires
+// when the hold actually moved.
 function useServedRoster(
   store: RosterHoldStore,
   connectionKey: string,
   fresh: RosterSnapshot | null,
-  live: { reachable: boolean },
+  reachable: boolean,
 ): Omit<RosterValue, "devices"> {
-  const hold = reconcileRosterHold(store.read(), connectionKey, fresh);
+  const hold = useMemo(
+    () => reconcileRosterHold(store.read(), connectionKey, fresh),
+    [store, connectionKey, fresh],
+  );
   useEffect(() => {
     store.persist(hold);
   }, [store, hold]);
-  return servedRoster(hold, live);
+  return useMemo(() => servedRoster(hold, { reachable }), [hold, reachable]);
 }
 
 // The provider itself never changes type across controller epochs. Only its context value updates,
@@ -111,25 +150,25 @@ export function RosterProvider({ children }: { children: ReactNode }) {
     rosterFromTree,
     rostersEqual,
   );
-  const gateway = useOptionalControllerReplica(controller, selectGateway);
+  const gateway = useOptionalControllerReplica(
+    controller,
+    selectGatewaySummary,
+    gatewaySummariesEqual,
+  );
   const devices = useOptionalControllerReplica(controller, selectDevices, devicesEqual);
   // A non-null gateway means the summary snapshot has populated the tree; only then is the roster fresh.
-  const fresh: RosterSnapshot | null = gateway
-    ? {
-        agents,
-        gatewayVersion: gateway.version,
-        gatewayChannel: gateway.channel,
-        managed: gateway.managed,
-        updateAvailable: gateway.updateAvailable,
-        latestVersion: gateway.latestVersion,
-      }
-    : null;
-  const value = useServedRoster(store, connectionKey, fresh, {
-    reachable: syncState === "open",
-  });
+  const fresh = useMemo<RosterSnapshot | null>(
+    () => (gateway ? { agents, ...gateway } : null),
+    [agents, gateway],
+  );
+  const value = useServedRoster(store, connectionKey, fresh, syncState === "open");
+  const contextValue = useMemo(
+    () => ({ ...value, devices }),
+    [value, devices],
+  );
 
   return (
-    <RosterContext.Provider value={{ ...value, devices }}>
+    <RosterContext.Provider value={contextValue}>
       {children}
     </RosterContext.Provider>
   );
