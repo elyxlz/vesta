@@ -12,7 +12,7 @@ import {
   BootTransitionTarget,
   useBootTransitionPhase,
 } from "@/components/BootTransition";
-import { VestaBrand } from "@/components/VestaBrand";
+import { BRAND_ORB_SIZE, VestaBrand } from "@/components/VestaBrand";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useSession } from "@/session/SessionProvider";
@@ -85,7 +85,7 @@ function ConnectContent() {
             <BootTransitionTarget destination="connect" status="alive">
               <AgentOrb
                 status="alive"
-                size={88}
+                size={BRAND_ORB_SIZE}
                 pulseScale={1.12}
                 pulseDuration={1400}
                 pulseHaptics={
