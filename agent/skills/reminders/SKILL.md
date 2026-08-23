@@ -23,6 +23,8 @@ reminders get <id> --field next_run            # just that value
 reminders snooze <id> --in-hours 4             # fire 4h from NOW; works on already-fired ones too
 reminders snooze <id> --at "2026-12-01T17:00:00"   # move it to a specific time
 reminders update <id> --message "..."
+reminders update <id> --tz "America/New_York"   # repoint a recurring schedule, same id
+reminders update <id> --unpin-tz                # back to the agent's own timezone
 reminders delete <id>
 ```
 
@@ -32,7 +34,7 @@ reminders delete <id>
 - `--fuzz-minutes N` (recurring/cron only): each fire lands at a varying point within N minutes either side of the nominal time, so a routine feels natural instead of firing at 09:30:00 sharp every day. Translate vague times yourself: "late evening" is roughly `--at "21:30:00" --fuzz-minutes 75`. Use fuzz for human-facing rhythms, never for a hard deadline; it must fit within half the gap between fires.
 - A recurring reminder's message is an instruction: when it fires, act on it. Recurring reminders double as scheduled automations.
 - Snooze moves one-shot reminders only, fired ones included; a recurring reminder fires again on its own, and the CLI rejects snoozing it. Snooze says when two ways, one per call: `--in-*` counts from now, `--at` names the moment (add `--tz` for a different zone). The result echoes `previous_run` and `next_run`; read them back to confirm the reminder landed where you meant. Prefer snooze over delete-and-recreate: deleting changes the id, so every note, file and message that referenced the old id silently becomes wrong.
-- `update` changes the message only. To reschedule: move a one-shot with snooze; a recurring reminder's schedule changes only by delete plus recreate, which changes the id, so fix everything that referenced the old one.
+- `update` rewrites a reminder in place, under the same id: `--message` for the text, `--tz <zone>` or `--unpin-tz` for a recurring schedule's zone. `--tz` keeps the wall-clock time and reads it in the new zone, `--unpin-tz` drops the pin so the schedule follows the agent's own timezone, and both recompute the next fire and reach the running daemon on its next sync. A one-shot is a fixed instant with no zone to move: use snooze. The rest of a recurring schedule (its time, its days, its fuzz) changes only by delete plus recreate, which changes the id, so fix everything that referenced the old one.
 - `get <id> --field <name>` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, message, schedule, next_run, created_at, status, deleted_at, metadata_path, metadata_content.
 - `delete` is a soft delete: the reminder is kept, it never fires again, and it drops off `reminders list`. There is no undelete: `snooze` and `update` refuse a deleted id. `reminders list --show-deleted` brings it back, marked `[deleted]`, so a past id still resolves.
 - `list` prints a compact table of the first 50; `--json`/`--json-pretty` list all unless `--limit` is given.

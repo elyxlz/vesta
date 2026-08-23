@@ -34,9 +34,10 @@ def test_delete_keeps_the_row_and_stamps_deleted_at(tmp_config: Config):
     "write",
     [
         lambda cfg, rid: commands.remind_snooze(cfg, reminder_id=rid, spec=commands.SnoozeSpec(in_hours=2)),
-        lambda cfg, rid: commands.remind_update(cfg, reminder_id=rid, message="renamed"),
+        lambda cfg, rid: commands.remind_update(cfg, reminder_id=rid, spec=commands.UpdateSpec(message="renamed")),
+        lambda cfg, rid: commands.remind_update(cfg, reminder_id=rid, spec=commands.UpdateSpec(tz="Europe/London")),
     ],
-    ids=["snooze", "update"],
+    ids=["snooze", "update-message", "update-tz"],
 )
 def test_writes_on_a_deleted_reminder_are_refused(tmp_config: Config, write):
     """There is no undelete: a snooze that succeeded would report a fire time nothing ever fires at."""

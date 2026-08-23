@@ -55,14 +55,19 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
 
     to_restore = set(rows) - set(jobs)
     for jid, (scheduled_time, trigger_data) in rows.items():
-        if jid not in jobs or scheduled_time is None or jobs[jid].next_run_time is None:
+        if jid not in jobs:
+            continue
+        data = json.loads(trigger_data)
+        if commands.cron_zone_moved(jobs[jid], data):
+            to_restore.add(jid)
+            continue
+        if scheduled_time is None or jobs[jid].next_run_time is None:
             continue
         if abs((jobs[jid].next_run_time - db.parse_datetime(scheduled_time)).total_seconds()) <= commands.STALE_FIRE_SLACK.total_seconds():
             continue
-        # Only one-shot ("date") triggers move underneath a live job (snooze rewrites them in place);
-        # recurring jobs recompute their own next fire and must not be reset here.
-        data = json.loads(trigger_data)
-        if "type" in data and data["type"] == "date":
+        # Only a one-shot job moves underneath a live job: a snoozed "date" row, or the chained fire
+        # of a fuzzed cron row. A plain cron job recomputes its own next fire and is not reset here.
+        if "type" in data and (data["type"] == "date" or "fuzz_minutes" in data):
             to_restore.add(jid)
     if to_restore:
         commands.restore_jobs_by_ids(config, scheduler, to_restore, notif_dir=notif_dir)
@@ -176,10 +181,13 @@ def _delete_cmd(config: Config, argv: list[str]) -> dict:
 def _update_cmd(config: Config, argv: list[str]) -> dict:
     p = argparse.ArgumentParser(prog="reminders update")
     _add_id_args(p)
-    p.add_argument("--message", required=True)
+    p.add_argument("--message", default=None)
+    p.add_argument("--tz", default=None, help="Repoint a recurring schedule to this IANA zone, keeping its wall-clock time")
+    p.add_argument("--unpin-tz", action="store_true", help="Drop the pinned zone, so the schedule follows the agent's own timezone")
     args = p.parse_args(argv)
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders update <id> or reminders update --id <id>")
-    return commands.remind_update(config, reminder_id=reminder_id, message=args.message)
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "reminders update <id> --message <msg> (or --tz <zone>)")
+    spec = commands.UpdateSpec(message=args.message, tz=args.tz, unpin_tz=args.unpin_tz)
+    return commands.remind_update(config, reminder_id=reminder_id, spec=spec)
 
 
 def _snooze_cmd(config: Config, argv: list[str]) -> dict:
@@ -239,7 +247,7 @@ def _print_help():
        reminders get <id> [--field <name>]
        reminders snooze <id> --in-hours N | --at <iso> [--tz <tz>]
        reminders delete <id>
-       reminders update <id> --message <msg>
+       reminders update <id> --message <msg> | --tz <zone> | --unpin-tz
 
 Create a reminder:
   reminders create "call mom" --in-minutes 30
@@ -266,7 +274,7 @@ subcommands:
   get                   One reminder by id, deleted ones included (--field prints just that value)
   snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at <iso> [--tz <tz>]
   delete                Soft-delete a reminder: it never fires again and drops off list (see it with list --show-deleted)
-  update                Update a reminder message""")
+  update                Rewrite a reminder in place, under the same id: --message, and --tz <zone>/--unpin-tz for a recurring schedule""")
 
 
 def _serve_cmd(config: Config, argv: list[str]) -> None:
