@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, render, screen } from "@testing-library/react"
 
 import {
+  RESTARTED_NOTICE_MS,
   UPDATED_NOTICE_MS,
   useRestartResolution,
   useUpdateResolution,
@@ -110,7 +111,7 @@ describe("useRestartResolution", () => {
     view.rerender(<RestartHarness operation={null} />)
     expect(restartedText()).toBe("restarted")
     act(() => {
-      vi.advanceTimersByTime(UPDATED_NOTICE_MS)
+      vi.advanceTimersByTime(RESTARTED_NOTICE_MS)
     })
     expect(restartedText()).toBe("none")
   })

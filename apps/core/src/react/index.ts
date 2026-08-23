@@ -6,4 +6,5 @@ export {
   useRestartResolution,
   useUpdateResolution,
   UPDATED_NOTICE_MS,
+  RESTARTED_NOTICE_MS,
 } from "./use-update-resolution"
