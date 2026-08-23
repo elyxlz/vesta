@@ -15,10 +15,8 @@ ln -sf "$DIR/../dashboard" "$HOME/.local/bin/dashboard"
 
 cd "$DIR/../app"
 
-if [ ! -d node_modules ]; then
-  echo "Installing dependencies..."
-  npm install
-fi
+echo "Checking dependencies..."
+"$DIR/ensure-deps.sh"
 
 if [ ! -d dist ]; then
   echo "Building dashboard..."
