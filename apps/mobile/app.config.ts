@@ -56,6 +56,9 @@ const config: ExpoConfig = {
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription: "Scan a Vesta connection QR code.",
       NSMicrophoneUsageDescription: "Talk to your Vesta agent.",
+      // Keeps a hands-free voice session (mic + speech) alive with the screen
+      // locked, for use over a car or headset Bluetooth connection.
+      UIBackgroundModes: ["audio"],
     },
   },
   android: {
