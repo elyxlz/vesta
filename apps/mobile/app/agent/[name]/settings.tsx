@@ -14,6 +14,7 @@ import {
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import { sectionTitle } from "@/agent/settings/sections-model";
+import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { ProviderPill } from "@/components/ProviderPill";
 import { Screen } from "@/components/layout/Screen";
@@ -44,6 +45,8 @@ function AgentSettingsContent() {
   const awaitingStatus =
     awaitedStatus !== null && agent?.status !== awaitedStatus;
   const stopped = agent?.status === "stopped";
+  const restart = useAwaitedRoundTrip(agent?.status !== "alive");
+  const backup = useAwaitedRoundTrip(agent?.operation === "backing_up");
   const provider = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
@@ -72,6 +75,8 @@ function AgentSettingsContent() {
       if (operation === "delete") router.replace("/");
       if (operation === "start") setAwaitedStatus("alive");
       if (operation === "stop") setAwaitedStatus("stopped");
+      if (operation === "restart") restart.start();
+      if (operation === "backup") backup.start();
     },
     onError: (error) => showError(error, "The action failed"),
   });
@@ -198,8 +203,12 @@ function AgentSettingsContent() {
             </Button>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending}
-              loading={action.isPending && action.variables === "backup"}
+              disabled={action.isPending || backup.busy}
+              loading={
+                backup.busy ||
+                (action.isPending && action.variables === "backup")
+              }
+              loadingLabel="Backing up…"
               onPress={() => action.mutate("backup")}
             >
               Back up now
@@ -212,7 +221,7 @@ function AgentSettingsContent() {
           <ButtonGroup>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending || awaitingStatus}
+              disabled={action.isPending || awaitingStatus || restart.busy}
               loading={
                 awaitingStatus ||
                 (action.isPending &&
@@ -225,8 +234,12 @@ function AgentSettingsContent() {
             </Button>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending || awaitingStatus}
-              loading={action.isPending && action.variables === "restart"}
+              disabled={action.isPending || awaitingStatus || restart.busy}
+              loading={
+                restart.busy ||
+                (action.isPending && action.variables === "restart")
+              }
+              loadingLabel="Restarting…"
               onPress={() => action.mutate("restart")}
             >
               Restart agent

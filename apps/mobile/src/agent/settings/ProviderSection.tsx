@@ -23,6 +23,7 @@ import {
   type ProviderSelection,
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
+import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
 import {
   buildModelOptions,
   resolveProviderKind,
@@ -80,7 +81,7 @@ function isKeyProviderKind(kind: ProviderKind): kind is KeyProviderKind {
 export function ProviderSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
-  const { name } = useAgent();
+  const { name, agent } = useAgent();
   const { showError } = useToast();
   const { colors } = usePreferences();
   const [authKind, setAuthKind] = useState<ProviderKind>("claude");
@@ -117,7 +118,10 @@ export function ProviderSection() {
   const [oauthCode, setOauthCode] = useState("");
   const [openAIUserCode, setOpenAIUserCode] = useState("");
   const [providerKey, setProviderKey] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [requestBusy, setBusy] = useState(false);
+  // Provisioning ends in an agent restart; the section stays busy until the roster shows it back.
+  const restart = useAwaitedRoundTrip(agent?.status !== "alive");
+  const busy = requestBusy || restart.busy;
 
   const selectAuthKind = (kind: ProviderKind) => {
     setAuthKind(kind);
@@ -222,7 +226,8 @@ export function ProviderSection() {
                   oauthSession,
                   oauthCode.trim(),
                 ),
-                model: provider.data?.model ?? entry?.default_model ?? undefined,
+                model:
+                  provider.data?.model ?? entry?.default_model ?? undefined,
                 maxContextTokens,
               }
             : {
@@ -232,6 +237,7 @@ export function ProviderSection() {
                 maxContextTokens,
               };
         await provisionAgent(api, name, selection);
+        restart.start();
         await queryClient.invalidateQueries({ queryKey: ["provider", name] });
       }
     } catch (cause) {
@@ -264,6 +270,7 @@ export function ProviderSection() {
         ...(defaultContext ? { maxContextTokens: defaultContext } : {}),
       };
       await provisionAgent(api, name, selection);
+      restart.start();
       await queryClient.invalidateQueries({ queryKey: ["provider", name] });
     } catch (cause) {
       showError(cause, "Provider sign-in failed");
@@ -409,7 +416,10 @@ export function ProviderSection() {
                   </Button>
                 </>
               ) : null}
-              <Button loading={busy} onPress={() => void connectOAuth("openai")}>
+              <Button
+                loading={busy}
+                onPress={() => void connectOAuth("openai")}
+              >
                 {oauthSession
                   ? "Finish OpenAI sign-in"
                   : "Open ChatGPT sign-in"}
