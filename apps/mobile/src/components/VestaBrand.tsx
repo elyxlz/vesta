@@ -27,5 +27,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 9,
   },
-  wordmark: { fontSize: 43.56, fontWeight: "500", letterSpacing: -1 },
+  wordmark: { fontSize: 48, fontWeight: "500", letterSpacing: -1 },
 });
