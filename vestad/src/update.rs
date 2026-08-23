@@ -429,7 +429,7 @@ pub fn announcement(recovery: &BootRecovery) -> Option<(String, String)> {
         format!(" Backup warnings: {}.", warnings.join("; "))
     };
     Some((
-        format!("Updated to v{version}"),
+        "Vesta".to_string(),
         format!("Your gateway updated to v{version}.{backup_warnings}"),
     ))
 }
@@ -955,7 +955,7 @@ mod tests {
                 version: "0.1.190".into(),
                 warnings: Vec::new(),
             }),
-            Some(("Updated to v0.1.190".into(), "Your gateway updated to v0.1.190.".into()))
+            Some(("Vesta".into(), "Your gateway updated to v0.1.190.".into()))
         );
     }
 
@@ -966,7 +966,7 @@ mod tests {
             warnings: vec!["axel: snapshot timed out".into(), "mona: disk full".into()],
         })
         .expect("an update that landed announces");
-        assert_eq!(title, "Updated to v0.1.190");
+        assert_eq!(title, "Vesta");
         assert_eq!(
             body,
             "Your gateway updated to v0.1.190. Backup warnings: axel: snapshot timed out; mona: disk full."

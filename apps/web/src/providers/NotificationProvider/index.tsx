@@ -209,7 +209,7 @@ export function NotificationProvider({
     (agentName: string, text: string) => {
       if (!permissionRef.current) return;
       try {
-        const n = new Notification(`${agentName} hit a Claude rate limit`, {
+        const n = new Notification(agentName, {
           body: text,
           tag: `${agentName}-rate-limited`,
         });
@@ -263,7 +263,7 @@ export function NotificationProvider({
         : `${agent.name} needs to sign in again`;
       const body = unprovisioned
         ? "Tap to choose a provider and sign in."
-        : "vesta lost the provider credentials. Tap to re-authenticate.";
+        : "The provider sign-in was lost. Tap to re-authenticate.";
       try {
         const n = new Notification(title, {
           body,

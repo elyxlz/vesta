@@ -412,7 +412,7 @@ fn message_for(
     let (title, body, route) = match text_field(event, "type") {
         Some("gateway_updated") => (
             // The gateway decides its own text: there is no agent to name and nowhere to navigate.
-            text_field(event, "title").unwrap_or("Gateway updated").to_string(),
+            text_field(event, "title").unwrap_or("Vesta").to_string(),
             text_field(event, "body").unwrap_or("Your gateway updated.").to_string(),
             "/".to_string(),
         ),

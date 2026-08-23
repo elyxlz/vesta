@@ -298,9 +298,7 @@ describe("NotificationProvider", () => {
       });
     });
 
-    expect(built).toEqual([
-      { title: "ada hit a Claude rate limit", body: "resets at 3pm" },
-    ]);
+    expect(built).toEqual([{ title: "ada", body: "resets at 3pm" }]);
   });
 
   it("toasts the gateway's update announcement with the title the gateway chose", async () => {
