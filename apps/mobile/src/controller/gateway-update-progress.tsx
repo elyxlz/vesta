@@ -47,16 +47,18 @@ function operationCopy(operation: GatewayOperation): {
 export function GatewayUpdateProgress({
   operation,
   updatedTo,
+  restarted,
 }: {
   operation: GatewayOperation | null;
   updatedTo: string | null;
+  restarted: boolean;
 }) {
   const { colors } = usePreferences();
   const { api } = useSession();
   const [retrying, setRetrying] = useState(false);
 
   if (operation === null) {
-    if (updatedTo === null) return null;
+    if (updatedTo === null && !restarted) return null;
     return (
       <View style={styles.page}>
         <View style={styles.copy}>
@@ -65,10 +67,14 @@ export function GatewayUpdateProgress({
             family="heading"
             style={[styles.title, { color: colors.text }]}
           >
-            {`Updated to v${updatedTo}`}
+            {updatedTo === null
+              ? "Gateway restarted"
+              : `Updated to v${updatedTo}`}
           </Text>
           <Text style={[styles.detail, { color: colors.secondaryText }]}>
-            Your gateway is on the new version.
+            {updatedTo === null
+              ? "Everything is back and connected."
+              : "Your gateway is on the new version."}
           </Text>
         </View>
       </View>
@@ -108,7 +114,11 @@ export function GatewayUpdateProgress({
       </View>
       {failed && (
         <View style={styles.actions}>
-          <AuthPrimaryButton loading={retrying} loadingLabel="Retrying…" onPress={handleRetry}>
+          <AuthPrimaryButton
+            loading={retrying}
+            loadingLabel="Retrying…"
+            onPress={handleRetry}
+          >
             Retry update
           </AuthPrimaryButton>
           <Button

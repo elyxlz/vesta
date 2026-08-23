@@ -8,7 +8,11 @@ import {
   type Controller,
   type Tree,
 } from "@vesta/core";
-import { useSyncState, useUpdateResolution } from "@vesta/core/react";
+import {
+  useRestartResolution,
+  useSyncState,
+  useUpdateResolution,
+} from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
 import { buildController } from "./build-controller";
@@ -56,7 +60,9 @@ function ConnectedController({ children }: { children: ReactNode }) {
   const segments = useSegments();
   const [signal] = useState(createAppStateForegroundSignal);
   const [controller, setController] = useState<Controller | null>(null);
-  const [device, setDevice] = useState<{ id: string; descriptor: string } | undefined>(undefined);
+  const [device, setDevice] = useState<
+    { id: string; descriptor: string } | undefined
+  >(undefined);
   const connectionKey = connectionKeyOf(connection);
 
   // Resolve this device's identity once (the id lives in AsyncStorage). When it lands it enters the
@@ -77,8 +83,15 @@ function ConnectedController({ children }: { children: ReactNode }) {
     key: connectionKey,
     behind: false,
   });
-  const gatewayBehind = latchedGatewayBehind(behindLatch, connectionKey, syncState);
-  if (behindLatch.key !== connectionKey || behindLatch.behind !== gatewayBehind) {
+  const gatewayBehind = latchedGatewayBehind(
+    behindLatch,
+    connectionKey,
+    syncState,
+  );
+  if (
+    behindLatch.key !== connectionKey ||
+    behindLatch.behind !== gatewayBehind
+  ) {
     setBehindLatch({ key: connectionKey, behind: gatewayBehind });
   }
   // A gateway update takes the app back to home for as long as it runs: every agent may be
@@ -96,9 +109,10 @@ function ConnectedController({ children }: { children: ReactNode }) {
   // The other half of the same story: once the operation clears against a new version, home says so
   // for a moment. A client that sees this is one the gateway never has to notify.
   const updatedTo = useUpdateResolution(updateOperation, gatewayVersion);
+  const restarted = useRestartResolution(updateOperation);
   const operationState = useMemo(
-    () => ({ operation: updateOperation, updatedTo }),
-    [updateOperation, updatedTo],
+    () => ({ operation: updateOperation, updatedTo, restarted }),
+    [updateOperation, updatedTo, restarted],
   );
   const routeAction = gatewayOperationRouteAction({
     operating: updateOperation !== null,

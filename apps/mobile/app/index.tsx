@@ -1,9 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-} from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -53,7 +48,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { status } = useSession();
   const { agents, agentsReady } = useRoster();
-  const { operation, updatedTo } = useGatewayOperation();
+  const { operation, updatedTo, restarted } = useGatewayOperation();
   const { colors } = usePreferences();
   const carouselRef = useRef<FlatList<AgentRow>>(null);
   const hapticPageIndex = useRef(0);
@@ -124,11 +119,15 @@ export default function HomeScreen() {
   // Ahead of the roster gate: the gateway is mid-backup or about to restart, so the roster it would
   // wait on is exactly what stops arriving. The resolution holds the same page for its moment, so
   // the update reads as one page that finishes rather than a screen that vanishes.
-  if (operation !== null || updatedTo !== null) {
+  if (operation !== null || updatedTo !== null || restarted) {
     return (
       <Screen scroll={false} contentStyle={styles.screen}>
         <HomeHeader showCreate={false} />
-        <GatewayUpdateProgress operation={operation} updatedTo={updatedTo} />
+        <GatewayUpdateProgress
+          operation={operation}
+          updatedTo={updatedTo}
+          restarted={restarted}
+        />
       </Screen>
     );
   }

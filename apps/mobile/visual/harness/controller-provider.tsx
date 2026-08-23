@@ -188,7 +188,9 @@ const updatedTo = visualSwitch("visualGatewayUpdated");
 export function ControllerProvider({ children }: { children: ReactNode }) {
   return (
     <ControllerContext.Provider value={controller}>
-      <GatewayOperationContext.Provider value={{ operation, updatedTo }}>
+      <GatewayOperationContext.Provider
+        value={{ operation, updatedTo, restarted: false }}
+      >
         {appBehind ? (
           <AppBehindScreen />
         ) : (

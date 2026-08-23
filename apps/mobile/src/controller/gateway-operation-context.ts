@@ -7,11 +7,13 @@ import type { GatewayOperation } from "@vesta/core";
 export interface GatewayOperationState {
   operation: GatewayOperation | null;
   updatedTo: string | null;
+  restarted: boolean;
 }
 
 export const GatewayOperationContext = createContext<GatewayOperationState>({
   operation: null,
   updatedTo: null,
+  restarted: false,
 });
 
 export function useGatewayOperation(): GatewayOperationState {

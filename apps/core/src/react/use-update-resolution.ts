@@ -36,3 +36,27 @@ export function useUpdateResolution(
   }, [operation, version])
   return updatedTo
 }
+
+// Resolve the restart the user watched: once a restart operation clears without failing, report it
+// for the same moment. A restart changes no version, so this is the only way it gets a landing.
+export function useRestartResolution(operation: GatewayOperation | null): boolean {
+  const watching = useRef(false)
+  const [restarted, setRestarted] = useState(false)
+  useEffect(() => {
+    if (operation !== null) {
+      setRestarted(false)
+      watching.current = operation.kind === "restart" && operation.phase !== "failed"
+      return
+    }
+    if (!watching.current) return
+    watching.current = false
+    setRestarted(true)
+    const clear = setTimeout(() => {
+      setRestarted(false)
+    }, UPDATED_NOTICE_MS)
+    return () => {
+      clearTimeout(clear)
+    }
+  }, [operation])
+  return restarted
+}
