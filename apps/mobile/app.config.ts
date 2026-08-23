@@ -152,6 +152,10 @@ const config: ExpoConfig = {
   extra: {
     apiCompat: "0.2",
     appVariant,
+    // Vesta Cloud is not open to the public yet: production builds offer
+    // self-hosted connection only, so App Review never meets a sign-in it
+    // cannot complete. Flip to true when cloud sign-up opens.
+    cloudSignInEnabled: isDevelopment,
     pushNotificationsEnabled: !localIosNoPush,
     ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
