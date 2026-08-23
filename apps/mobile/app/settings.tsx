@@ -29,7 +29,12 @@ import {
 } from "@/components/ui/segmented-control";
 import { AppearancePreview } from "@/components/appearance-preview";
 import { Button, ButtonGroup } from "@/components/ui/Button";
-import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
+import {
+  FormGroup,
+  FormRow,
+  FormSection,
+  SwitchRow,
+} from "@/components/ui/Form";
 import { requestLocationSharing } from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
@@ -284,7 +289,7 @@ export default function SettingsScreen() {
           />
         </FormSection>
 
-        <View style={styles.notificationGroup}>
+        <FormGroup>
           <FormSection title="Notifications">
             <SwitchRow
               label="Allow notifications"
@@ -324,78 +329,85 @@ export default function SettingsScreen() {
               }
             />
           </FormSection>
-        </View>
+        </FormGroup>
 
-        <FormSection
-          title="Gateway"
-          actions={
-            <ButtonGroup>
-              <Button
-                variant="cardGrouped"
-                loading={gatewayUpdate.isPending || updateCheck.isPending}
-                onPress={
-                  updateAvailable
-                    ? confirmGatewayUpdate
-                    : () => updateCheck.mutate()
-                }
-              >
-                {updateCheck.isPending
-                  ? "Checking for updates"
-                  : updateAvailable
-                    ? "Update gateway"
-                    : updateCheck.isError
-                      ? "Retry update check"
-                      : updateCheck.isSuccess
-                        ? "Check again for updates"
-                        : "Check for updates"}
-              </Button>
-              <Button
-                variant="cardGrouped"
-                loading={gatewayRestart.isPending}
-                onPress={confirmGatewayRestart}
-              >
-                Restart gateway
-              </Button>
-            </ButtonGroup>
-          }
-        >
-          <FormRow
-            label="Status"
-            value={roster.reachable ? "connected" : "reconnecting"}
-          />
-          <FormRow
-            label="Host"
-            value={
-              session.connection ? new URL(session.connection.url).hostname : ""
+        <FormGroup>
+          <FormSection title="Gateway">
+            <FormRow
+              label="Status"
+              value={roster.reachable ? "connected" : "reconnecting"}
+            />
+            <FormRow
+              label="Host"
+              value={
+                session.connection
+                  ? new URL(session.connection.url).hostname
+                  : ""
+              }
+            />
+            <FormRow
+              label="Version"
+              value={roster.gatewayVersion ?? "unknown"}
+            />
+            <FormRow
+              label="Release channel"
+              detail="Choose Stable releases or opt into prerelease builds."
+              value={titleCaseChannel(gateway.data?.settings.channel)}
+              trailing={
+                gatewaySettings.isPending &&
+                gatewaySettings.variables?.channel ? (
+                  <LoadingSpinner size="small" />
+                ) : undefined
+              }
+              onPress={
+                gatewayControlsDisabled
+                  ? undefined
+                  : () => setActivePicker("channel")
+              }
+            />
+            <SwitchRow
+              label="Automatic updates"
+              detail="Install new gateway releases automatically in the background."
+              value={gateway.data?.settings.auto_update ?? false}
+              disabled={gatewayControlsDisabled}
+              onValueChange={(auto_update) =>
+                gatewaySettings.mutate({ auto_update })
+              }
+            />
+          </FormSection>
+          <FormSection
+            actions={
+              <ButtonGroup>
+                <Button
+                  variant="cardGrouped"
+                  loading={gatewayUpdate.isPending || updateCheck.isPending}
+                  onPress={
+                    updateAvailable
+                      ? confirmGatewayUpdate
+                      : () => updateCheck.mutate()
+                  }
+                >
+                  {updateCheck.isPending
+                    ? "Checking for updates"
+                    : updateAvailable
+                      ? "Update gateway"
+                      : updateCheck.isError
+                        ? "Retry update check"
+                        : updateCheck.isSuccess
+                          ? "Check again for updates"
+                          : "Check for updates"}
+                </Button>
+                <Button
+                  variant="cardGrouped"
+                  loading={gatewayRestart.isPending}
+                  onPress={confirmGatewayRestart}
+                >
+                  Restart gateway
+                </Button>
+              </ButtonGroup>
             }
           />
-          <FormRow label="Version" value={roster.gatewayVersion ?? "unknown"} />
-          <FormRow
-            label="Release channel"
-            detail="Choose Stable releases or opt into prerelease builds."
-            value={titleCaseChannel(gateway.data?.settings.channel)}
-            trailing={
-              gatewaySettings.isPending &&
-              gatewaySettings.variables?.channel ? (
-                <LoadingSpinner size="small" />
-              ) : undefined
-            }
-            onPress={
-              gatewayControlsDisabled
-                ? undefined
-                : () => setActivePicker("channel")
-            }
-          />
-          <SwitchRow
-            label="Automatic updates"
-            detail="Install new gateway releases automatically in the background."
-            value={gateway.data?.settings.auto_update ?? false}
-            disabled={gatewayControlsDisabled}
-            onValueChange={(auto_update) =>
-              gatewaySettings.mutate({ auto_update })
-            }
-          />
-        </FormSection>
+        </FormGroup>
 
         {roster.devices.length > 0 ? (
           <FormSection title="Devices">
@@ -470,6 +482,5 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   appearanceRow: { paddingVertical: 10 },
-  notificationGroup: { gap: 12 },
   content: { gap: 24 },
 });

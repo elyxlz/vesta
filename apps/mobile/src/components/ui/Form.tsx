@@ -80,6 +80,14 @@ export function Field({
   );
 }
 
+// Space between sibling cards that belong to one block of settings.
+const GROUP_CARD_GAP = 12;
+
+/** Stacks several FormSections as one block under the first one's heading. */
+export function FormGroup({ children }: { children: ReactNode }) {
+  return <View style={styles.group}>{children}</View>;
+}
+
 interface SectionProps {
   title?: string;
   footer?: string;
@@ -278,6 +286,7 @@ const styles = StyleSheet.create({
   error: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
   secondaryError: { fontWeight: "400" },
   section: { gap: 8 },
+  group: { gap: GROUP_CARD_GAP },
   sectionTitle: {
     fontSize: 15,
     lineHeight: 20,
