@@ -11,14 +11,13 @@ import {
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import { sectionTitle } from "@/agent/settings/sections-model";
-import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
-import { FormSection, SwitchRow } from "@/components/ui/Form";
+import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
@@ -71,19 +70,12 @@ function AgentSettingsContent() {
         booting={agent?.booting}
         style={styles.identityCard}
       />
-      <FormSection
-        title="Agent"
-        actions={
-          <>
-            <Button pill variant="card" onPress={() => open("provider")}>
-              {sectionTitle("provider")}
-            </Button>
-            <Button pill variant="card" onPress={() => open("voice")}>
-              {sectionTitle("voice")}
-            </Button>
-          </>
-        }
-      >
+      <FormSection title="Agent">
+        <FormRow
+          label={sectionTitle("provider")}
+          onPress={() => open("provider")}
+        />
+        <FormRow label={sectionTitle("voice")} onPress={() => open("voice")} />
         <SwitchRow
           label="Natural chat pacing"
           detail="Let this agent's replies arrive with a more human rhythm."
@@ -93,37 +85,40 @@ function AgentSettingsContent() {
           }
         />
       </FormSection>
-      <AgentPagesSettingsSection />
-      <FormSection
-        title="Attention"
-        actions={
-          <>
-            <ButtonGroup>
-              <Button
-                variant="cardGrouped"
-                onPress={() => openPage("notifications")}
-              >
-                Notifications
-              </Button>
-              <Button
-                variant="cardGrouped"
-                onPress={() => open("notifications")}
-              >
-                {sectionTitle("notifications")}
-              </Button>
-            </ButtonGroup>
-            <Button pill variant="card" onPress={() => openPage("logs")}>
-              Logs
-            </Button>
-            <Button pill variant="card" onPress={() => open("files")}>
-              {sectionTitle("files")}
-            </Button>
-            <Button pill variant="card" onPress={() => open("host-access")}>
-              {sectionTitle("host-access")}
-            </Button>
-          </>
-        }
-      />
+      <FormSection title="Activity">
+        <FormRow
+          label="Notifications"
+          onPress={() => openPage("notifications")}
+        />
+        <FormRow
+          label={sectionTitle("notifications")}
+          onPress={() => open("notifications")}
+        />
+        <FormRow label="Logs" onPress={() => openPage("logs")} />
+        <SwitchRow
+          label="Swipe to notifications"
+          detail="Add notification history to the agent pages."
+          value={preferences.showNotificationsPage}
+          onValueChange={(value) =>
+            void preferences.update({ showNotificationsPage: value })
+          }
+        />
+        <SwitchRow
+          label="Swipe to logs"
+          detail="Add live output to the agent pages."
+          value={preferences.showLogsPage}
+          onValueChange={(value) =>
+            void preferences.update({ showLogsPage: value })
+          }
+        />
+      </FormSection>
+      <FormSection title="Access">
+        <FormRow label={sectionTitle("files")} onPress={() => open("files")} />
+        <FormRow
+          label={sectionTitle("host-access")}
+          onPress={() => open("host-access")}
+        />
+      </FormSection>
       <FormSection
         title="Backups"
         actions={
@@ -143,7 +138,6 @@ function AgentSettingsContent() {
         }
       />
       <FormSection
-        title="Actions"
         actions={
           <ButtonGroup>
             <Button
@@ -171,7 +165,6 @@ function AgentSettingsContent() {
         }
       />
       <FormSection
-        title="Danger zone"
         actions={
           <Button
             pill
