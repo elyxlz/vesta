@@ -132,6 +132,9 @@ export function useAgentSocket(
 
   const [isTyping, setIsTyping] = useState(false);
   const [latestLiveChat, setLatestLiveChat] = useState<string | null>(null);
+  // The next paced chat, published when its typing delay starts: the TTS
+  // prefetch window, so playback can start the moment the message is shown.
+  const [pendingLiveChat, setPendingLiveChat] = useState<string | null>(null);
   const [reseedRevision, setReseedRevision] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
@@ -179,6 +182,7 @@ export function useAgentSocket(
       }
       drainingRef.current = true;
       setIsTyping(true);
+      if (next.type === "chat") setPendingLiveChat(next.text);
       const delay = typingDelay(next.type === "chat" ? next.text.length : 0);
       typingTimerRef.current = setTimeout(() => {
         typingTimerRef.current = null;
@@ -361,6 +365,7 @@ export function useAgentSocket(
     historyLoaded: state.historyLoaded,
     pendingNotifications,
     latestLiveChat,
+    pendingLiveChat,
     hasMore,
     loadingMore,
     loadMore,

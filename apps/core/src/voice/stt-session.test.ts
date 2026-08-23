@@ -53,6 +53,7 @@ interface Recorded {
   turnEnds: string[]
   errors: string[]
   activeChanges: boolean[]
+  order: string[]
 }
 
 function recorder(): { callbacks: SttSessionCallbacks; recorded: Recorded } {
@@ -62,15 +63,22 @@ function recorder(): { callbacks: SttSessionCallbacks; recorded: Recorded } {
     turnEnds: [],
     errors: [],
     activeChanges: [],
+    order: [],
   }
   return {
     recorded,
     callbacks: {
-      onTranscript: (text) => recorded.transcripts.push(text),
+      onTranscript: (text) => {
+        recorded.transcripts.push(text)
+        recorded.order.push(`transcript:${text}`)
+      },
       onTurnStart: () => {
         recorded.turnStarts += 1
       },
-      onTurnEnd: (text) => recorded.turnEnds.push(text),
+      onTurnEnd: (text) => {
+        recorded.turnEnds.push(text)
+        recorded.order.push(`turnEnd:${text}`)
+      },
       onError: (message) => recorded.errors.push(message),
       onActiveChange: (active) => recorded.activeChanges.push(active),
     },
@@ -164,15 +172,20 @@ describe("createSttSession", () => {
     expect(h.recorded.turnEnds).toEqual([])
   })
 
-  it("ends a turn with the trimmed transcript", async () => {
+  it("ends a turn with the trimmed transcript, clearing the display first", async () => {
     const h = harness()
     await startOpen(h)
 
     h.socket.message({ type: "TurnInfo", transcript: " hello there " })
     h.socket.message({ type: "TurnInfo", event: "EndOfTurn" })
 
-    expect(h.recorded.turnEnds).toEqual(["hello there"])
-    expect(h.recorded.transcripts.at(-1)).toBe("")
+    // The display clears before the turn is delivered, so a consumer that
+    // renders the transcript into a draft box gets the final text last.
+    expect(h.recorded.order).toEqual([
+      "transcript: hello there ",
+      "transcript:",
+      "turnEnd:hello there",
+    ])
   })
 
   it("accumulates committed turns across turn ends", async () => {

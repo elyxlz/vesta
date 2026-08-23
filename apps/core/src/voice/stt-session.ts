@@ -138,13 +138,15 @@ export function createSttSession(
         const text = current.trim()
         current = ""
         if (!text) return
-        callbacks.onTurnEnd(text)
         if (accumulate) {
           committed = committed ? `${committed} ${text}` : text
           callbacks.onTranscript(committed)
         } else {
+          // Clear the display before delivering the turn, so a consumer that
+          // renders the transcript into a draft box gets the final text last.
           callbacks.onTranscript("")
         }
+        callbacks.onTurnEnd(text)
       }
       return
     }
@@ -208,8 +210,8 @@ export function createSttSession(
       const text = current.trim()
       current = ""
       if (text) {
-        callbacks.onTurnEnd(text)
         callbacks.onTranscript("")
+        callbacks.onTurnEnd(text)
       }
     }
     cleanup()

@@ -65,7 +65,7 @@ import { shareVestaMessage } from "@/sharing/share-message";
 import { fontNames } from "@/theme/typography";
 import { radii } from "@/theme/layout";
 import { triggerTranscriptHaptic } from "@/voice/recording-haptics";
-import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
+import { useLiveVoice } from "@/voice/useLiveVoice";
 import { createInvertedChatRows, type ChatRow } from "@/agent/chat-list-model";
 import {
   messageActionIds,
@@ -1058,14 +1058,9 @@ export default function ChatPage() {
   const voiceEnabled = Boolean(
     speechToText.data?.configured && speechToText.data.enabled,
   );
-  const speech = useSpeechPlayer(name, socket.latestLiveChat);
-  const speechEnabled = speech.enabled;
-  const playSpeech = speech.play;
-  const stopSpeech = speech.stop;
   const canSend = socket.connected && agent?.status === "alive";
-  const sendCurrentInput = useCallback(
-    (source?: "voice") => {
-      const text = inputValueRef.current.trim();
+  const sendText = useCallback(
+    (text: string, source?: "voice") => {
       if (!text || !canSend) return;
       const outgoing = replyTarget
         ? `${quotedReply(replyTarget.text)}${text}`
@@ -1077,13 +1072,26 @@ export default function ChatPage() {
     },
     [canSend, replyTarget, setInput, socket],
   );
+  const sendCurrentInput = useCallback(
+    () => sendText(inputValueRef.current.trim()),
+    [sendText],
+  );
   const voice = useLiveVoice({
     name,
     enabled: voiceEnabled,
+    sttStatus: speechToText.data ?? null,
     onTranscript: handleTranscript,
-    onTurnEnd: () => sendCurrentInput("voice"),
+    onSend: (text) => sendText(text, "voice"),
     onError: showError,
   });
+  const speechEnabled = voice.ttsEnabled;
+  const { speak: speakReply, prefetch: prefetchReply, stopSpeech } = voice;
+  useEffect(() => {
+    if (socket.pendingLiveChat) prefetchReply(socket.pendingLiveChat);
+  }, [socket.pendingLiveChat, prefetchReply]);
+  useEffect(() => {
+    if (socket.latestLiveChat) speakReply(socket.latestLiveChat);
+  }, [socket.latestLiveChat, speakReply]);
 
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
@@ -1106,9 +1114,10 @@ export default function ChatPage() {
   );
   const readAloud = useCallback(
     (text: string) => {
-      void playSpeech(text).catch(() => undefined);
+      stopSpeech();
+      speakReply(text);
     },
-    [playSpeech],
+    [speakReply, stopSpeech],
   );
   const renderChatEvent = useCallback<ListRenderItem<ChatRow>>(
     ({ item }) =>
@@ -1161,7 +1170,6 @@ export default function ChatPage() {
     if (voice.active) {
       voice.stop();
     } else {
-      stopSpeech();
       void voice.start().catch((cause) => {
         showError(cause, "Voice could not start");
       });

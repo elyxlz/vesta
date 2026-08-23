@@ -94,33 +94,10 @@ export interface FileReadResponse {
   is_dir: boolean;
 }
 
-export interface SettingDef {
-  key: string;
-  type: "bool" | "number" | "select";
-  label: string;
-  description?: string;
-  value: unknown;
-  default?: unknown;
-  min?: number;
-  max?: number;
-  step?: number;
-  unit?: string;
-  config?: SettingDef[];
-  config_label?: string;
-  options?: {
-    value: string;
-    label: string;
-    preview?: string;
-    custom?: boolean;
-  }[];
-}
-
-export interface VoiceStatus {
-  configured: boolean;
-  provider: string | null;
-  enabled?: boolean;
-  settings?: SettingDef[];
-}
+export type {
+  VoiceSettingDef as SettingDef,
+  VoiceDomainStatus as VoiceStatus,
+} from "@vesta/core";
 
 export interface GatewayInfo {
   lan: { exposed: boolean; url: string | null };
