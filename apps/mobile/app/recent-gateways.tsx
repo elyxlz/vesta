@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
+import { useRouter } from "expo-router";
 import { LoadingSpinner } from "@/components/loading-spinner";
 import { Ionicons } from "@expo/vector-icons";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
@@ -54,6 +55,7 @@ export default function RecentGatewaysScreen() {
   } = useSession();
   const { showError } = useToast();
   const { colors } = usePreferences();
+  const router = useRouter();
   const connectionProgressTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -301,22 +303,32 @@ export default function RecentGatewaysScreen() {
             </View>
           )}
 
-          {(recentGateways?.length ?? 0) > 1 ? (
-            <View style={styles.clearAction}>
+          <View style={styles.footerActions}>
+            {(recentGateways?.length ?? 0) > 1 ? (
               <Button
                 pill
                 size="compact"
                 variant="ghost"
                 icon="trash-outline"
                 iconSize={16}
-                labelStyle={styles.clearActionLabel}
+                labelStyle={styles.footerActionLabel}
                 disabled={isConnecting}
                 onPress={confirmClear}
               >
                 Clear all gateways
               </Button>
-            </View>
-          ) : null}
+            ) : null}
+            <Button
+              pill
+              size="compact"
+              variant="ghost"
+              labelStyle={styles.footerActionLabel}
+              disabled={isConnecting}
+              onPress={router.back}
+            >
+              Back
+            </Button>
+          </View>
         </Animated.View>
       )}
       <ConfirmDialog
@@ -405,6 +417,6 @@ const styles = StyleSheet.create({
   gatewayCopy: { flex: 1, gap: 2 },
   gatewayName: { fontSize: 16, lineHeight: 20, fontWeight: "500" },
   gatewayDetail: { fontSize: 13, lineHeight: 18 },
-  clearAction: { marginTop: 16 },
-  clearActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
+  footerActions: { marginTop: 16, gap: 4 },
+  footerActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
 });
