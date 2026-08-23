@@ -11,7 +11,6 @@ export interface PreferencesState {
   showLogsPage: boolean;
   remoteNotifications: boolean;
   pushChatReplies: boolean;
-  pushStatusChanges: boolean;
   notificationPreviews: boolean;
   // Report the phone's position (and the place the OS geocodes for it) to the gateway, so the
   // agents learn where the user is. On by default; the OS location grant is the consent, and the
@@ -27,7 +26,6 @@ export const initialPreferences: PreferencesState = {
   showLogsPage: false,
   remoteNotifications: true,
   pushChatReplies: true,
-  pushStatusChanges: true,
   notificationPreviews: false,
   shareLocation: true,
 };
@@ -87,10 +85,6 @@ export function readStoredPreferences(value: string | null): PreferencesState {
       pushChatReplies:
         typeof parsed.pushChatReplies === "boolean"
           ? parsed.pushChatReplies
-          : true,
-      pushStatusChanges:
-        typeof parsed.pushStatusChanges === "boolean"
-          ? parsed.pushStatusChanges
           : true,
       notificationPreviews:
         typeof parsed.notificationPreviews === "boolean"

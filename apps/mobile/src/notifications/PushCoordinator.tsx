@@ -312,7 +312,7 @@ function EnabledPushCoordinator() {
     if (!gateway) return;
     const eventTypes = [
       ...(preferences.pushChatReplies ? ["chat"] : []),
-      ...(preferences.pushStatusChanges ? ["status"] : []),
+      "status",
     ];
     let permissionGranted = false;
     const registerExpoToken = async (
@@ -388,7 +388,6 @@ function EnabledPushCoordinator() {
     preferences.hydrated,
     preferences.notificationPreviews,
     preferences.pushChatReplies,
-    preferences.pushStatusChanges,
     preferences.remoteNotifications,
     session.api,
     session.connection?.url,

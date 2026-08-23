@@ -319,17 +319,6 @@ export default function SettingsScreen() {
               void preferences.update({ notificationPreviews: value })
             }
           />
-          <SwitchRow
-            label="Status changes"
-            detail="Notify when an agent starts, stops, or changes availability."
-            value={
-              preferences.remoteNotifications && preferences.pushStatusChanges
-            }
-            disabled={!preferences.remoteNotifications}
-            onValueChange={(value) =>
-              void preferences.update({ pushStatusChanges: value })
-            }
-          />
         </FormSection>
 
         <FormSection
