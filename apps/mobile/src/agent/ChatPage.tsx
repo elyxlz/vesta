@@ -37,10 +37,10 @@ import { connectionKeyOf } from "@/session/session-model";
 
 const COMPOSER_RESIZE_DURATION = 250;
 const CHAT_COMPOSER_GAP = 6;
-// The dock sits inset while the keyboard is closed and spans the full
-// width once it is open, widening in step with the keyboard's own motion.
-const COMPOSER_INSET_CLOSED = 22;
-const COMPOSER_INSET_OPEN = 0;
+// The dock sits further inset while the keyboard is closed and widens to
+// the chat list edge once it is open, in step with the keyboard's own motion.
+const COMPOSER_INSET_CLOSED = 48;
+const COMPOSER_INSET_OPEN = 12;
 
 export default function ChatPage() {
   const insets = useSafeAreaInsets();
