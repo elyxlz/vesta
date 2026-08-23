@@ -118,13 +118,17 @@ function AgentSettingsContent() {
           />
         </FormSection>
       </FormGroup>
-      <FormSection title="Activity">
-        <FormRow
-          label="Notifications"
-          onPress={() => openPage("notifications")}
-        />
-        <FormRow label="Logs" onPress={() => openPage("logs")} />
-      </FormSection>
+      <FormGroup>
+        <FormSection title="Activity">
+          <FormRow
+            label="Notifications"
+            onPress={() => openPage("notifications")}
+          />
+        </FormSection>
+        <FormSection>
+          <FormRow label="Logs" onPress={() => openPage("logs")} />
+        </FormSection>
+      </FormGroup>
       <FormSection title="Pages">
         <SwitchRow
           label="Chat"
