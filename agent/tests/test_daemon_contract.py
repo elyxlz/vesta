@@ -8,6 +8,7 @@ records rather than vestad. One table row per skill.
 
 import contextlib
 import dataclasses
+import hashlib
 import json
 import os
 import pathlib as pl
@@ -98,6 +99,7 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
     (skill / "app/dist").mkdir(parents=True)
     (skill / "scripts").mkdir()
     (skill / "scripts/serve").symlink_to(SKILLS_DIR / "dashboard/scripts/serve")
+    (skill / "scripts/ensure-deps.sh").symlink_to(SKILLS_DIR / "dashboard/scripts/ensure-deps.sh")
     # The legacy forwarder execs the launcher through $HOME, so the tree carries it too.
     (skill / "dashboard").symlink_to(SKILLS_DIR / "dashboard/dashboard")
     vite = skill / "app/node_modules/.bin/vite"
@@ -105,6 +107,11 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
     # `vite preview --port <port> --host 0.0.0.0`, so the port is the third argument.
     vite.write_text('#!/bin/sh\nexec python3 -m http.server "$3" --bind 0.0.0.0\n')
     vite.chmod(0o755)
+    # Launch reconciles node_modules against the lockfile, so an already-installed box carries a
+    # stamp that matches it. Without one the rig would reach for the network on every start.
+    lock = skill / "app/package-lock.json"
+    lock.write_text("{}\n")
+    (skill / "app/node_modules/.vesta-deps").write_text(hashlib.sha256(lock.read_bytes()).hexdigest())
 
 
 def _rig_whatsapp(home: pl.Path, bin_dir: pl.Path) -> None:

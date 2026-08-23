@@ -5,9 +5,9 @@ set -e
 # them while the box keeps running, leaving the preview server to serve 404s. Ensuring both
 # exist here, before every launch, lets the service rebuild itself on the next restart
 # instead of serving nothing. Idempotent: on a normal restart both are present and this goes
-# straight to the preview server.
+# straight to the preview server, at the cost of one hash of the lockfile.
 cd ~/agent/skills/dashboard/app
-[ -d node_modules ] || npm install
+~/agent/skills/dashboard/scripts/ensure-deps.sh
 [ -d dist ] || npx vite build
 # LEGACY(remove-when: the 2026-08-daemon-pidfile migration is fleet-applied): restart lines from the
 # shipped self-heal migration launch this script directly with no PORT in the environment.
