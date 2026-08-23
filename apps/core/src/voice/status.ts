@@ -5,6 +5,7 @@
 export interface VoiceSettingOption {
   value: string
   label: string
+  description?: string
   preview?: string
   custom?: boolean
 }

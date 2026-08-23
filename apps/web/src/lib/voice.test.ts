@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // The credential is the whole point of these tests. A media element and a WebSocket cannot send
 // a header, so both voice URLs carry a token in the query string, and that token must be a minted
 // voice service key rather than the gateway access token. The service-key cache, the connection,
-// and the two carriers are the true edges; streamSpeech and Transcriber run for real.
+// and the two carriers are the true edges; streamPreparedSpeech and the STT session run for real.
 vi.mock("@/api/client", () => ({ apiJson: vi.fn() }));
 vi.mock("@/lib/connection", () => ({
   getConnection: vi.fn(() => ({
@@ -15,15 +15,23 @@ vi.mock("@/lib/service-key-cache", () => ({
   serviceKeys: { get: vi.fn(() => Promise.resolve("voice-key-1")) },
 }));
 
+import { createSttSession } from "@vesta/core";
 import { apiJson } from "@/api/client";
 import { serviceKeys } from "@/lib/service-key-cache";
-import { Transcriber, streamSpeech } from "@/lib/voice";
+import {
+  buildListenUrl,
+  createMicCapture,
+  createVoiceSocket,
+  prepareSpeech,
+  streamPreparedSpeech,
+} from "@/lib/voice";
 
 const apiJsonMock = vi.mocked(apiJson);
 const serviceKeysMock = vi.mocked(serviceKeys);
 
 // Stands in for the browser <audio> element, reporting playback finished on the next microtask so
-// streamSpeech's await resolves without a real media stack (these tests run in node, not jsdom).
+// streamPreparedSpeech's await resolves without a real media stack (these tests run in node, not
+// jsdom).
 class FakeAudio {
   static created: FakeAudio[] = [];
   src: string;
@@ -59,12 +67,12 @@ class FakeSocket {
   }
 }
 
-const TRANSCRIBER_OPTS = {
-  agentName: "my-agent",
+const SESSION_CALLBACKS = {
   onTranscript: () => undefined,
   onTurnEnd: () => undefined,
   onTurnStart: () => undefined,
   onError: () => undefined,
+  onActiveChange: () => undefined,
 };
 
 beforeEach(() => {
@@ -90,7 +98,8 @@ describe("TTS playback url", () => {
   it("carries a minted voice service key, never the access token", async () => {
     apiJsonMock.mockResolvedValue({ id: "utterance 1" });
 
-    await streamSpeech("hello there", "my agent");
+    const id = await prepareSpeech("hello there", "my agent");
+    await streamPreparedSpeech(id, "my agent", new AbortController().signal);
 
     expect(serviceKeysMock.get).toHaveBeenCalledWith("my agent", "voice");
     expect(FakeAudio.created[0]?.src).toBe(
@@ -101,9 +110,16 @@ describe("TTS playback url", () => {
 
 describe("STT socket url", () => {
   it("carries a minted voice service key on the ws scheme", async () => {
-    await expect(new Transcriber(TRANSCRIBER_OPTS).start()).rejects.toThrow(
-      /Could not initialize audio/,
+    const session = createSttSession(
+      {
+        buildUrl: () => buildListenUrl("my-agent"),
+        createSocket: createVoiceSocket,
+        capture: createMicCapture(),
+      },
+      SESSION_CALLBACKS,
     );
+
+    await expect(session.start()).rejects.toThrow(/Could not initialize audio/);
 
     expect(serviceKeysMock.get).toHaveBeenCalledWith("my-agent", "voice");
     expect(FakeSocket.urls).toEqual([

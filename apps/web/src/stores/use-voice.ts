@@ -1,14 +1,22 @@
 import { create } from "zustand";
 import {
-  Transcriber,
-  prepareSpeech,
-  streamSpeech,
+  createVoiceSession,
+  voiceBoolSetting,
+  voiceDomainReady,
+  type InputMethod,
+  type ServiceInfo,
+} from "@vesta/core";
+import {
+  buildListenUrl,
+  createMicCapture,
+  createVoiceSocket,
   fetchSttStatus,
   fetchTtsStatus,
+  prepareSpeech,
+  streamPreparedSpeech,
   type SttStatus,
   type TtsStatus,
 } from "@/lib/voice";
-import type { InputMethod, ServiceInfo } from "@vesta/core";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 
 interface VoiceState {
@@ -60,85 +68,69 @@ interface VoiceState {
 }
 
 // Mutable refs outside React — safe because the store is a singleton
-let transcriber: Transcriber | null = null;
 let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
   null;
 let draftCallback: ((text: string) => void) | null = null;
-let idleTimer: ReturnType<typeof setTimeout> | null = null;
-let ttsAbort: AbortController | null = null;
-let ttsQueue: string[] = [];
-let ttsProcessing = false;
-// Bumped by stopSpeech to invalidate an in-flight processQueue loop, so a
-// stop-then-speak sequence never leaves two loops draining ttsQueue at once.
-let ttsEpoch = 0;
-// Prepared TTS ids, warmed during the typing-pacing delay so playback can
-// start the streamed GET immediately when the message is shown.
-const ttsPrefetchCache = new Map<string, Promise<string>>();
-
-function clearIdleTimer() {
-  if (idleTimer) {
-    clearTimeout(idleTimer);
-    idleTimer = null;
-  }
-}
-
-function boolSetting(
-  status: SttStatus | TtsStatus | null,
-  key: string,
-  fallback: boolean,
-): boolean {
-  const value = status?.settings?.find((s) => s.key === key)?.value;
-  return typeof value === "boolean" ? value : fallback;
-}
 
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
-  const sttAvailable = (stt?.configured && stt.enabled) ?? false;
-  const speechEnabled = (tts?.configured && tts.enabled) ?? false;
-  const voiceAutoSend = boolSetting(stt, "auto_send", true);
-  return { sttAvailable, speechEnabled, voiceAutoSend };
+  return {
+    sttAvailable: voiceDomainReady(stt),
+    speechEnabled: voiceDomainReady(tts),
+    voiceAutoSend: voiceBoolSetting(stt, "auto_send", true),
+  };
 }
 
 export const useVoice = create<VoiceState>((set, get) => {
-  const processQueue = async () => {
-    const { agentName } = get();
-    if (ttsProcessing || !agentName) return;
-    ttsProcessing = true;
-    const myEpoch = ttsEpoch;
-    set({ isSpeaking: true });
-
-    while (ttsQueue.length > 0 && ttsEpoch === myEpoch) {
-      const text = ttsQueue.shift();
-      if (text === undefined) break;
-      const controller = new AbortController();
-      ttsAbort = controller;
-      try {
-        const cached = ttsPrefetchCache.get(text);
-        ttsPrefetchCache.delete(text);
-        const preparedId = cached
-          ? await cached.catch(() => undefined)
-          : undefined;
-        await streamSpeech(text, agentName, controller.signal, preparedId);
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          console.warn("[tts] playback failed:", err);
-          set({ voiceError: "Voice playback failed" });
-        }
-      }
-      if (ttsAbort === controller) ttsAbort = null;
-    }
-
-    // A newer epoch (stopSpeech) superseded this loop; the new loop owns the
-    // shared flags, so exit without resetting them.
-    if (ttsEpoch !== myEpoch) return;
-
-    ttsProcessing = false;
-
-    if (ttsQueue.length > 0) {
-      void processQueue();
-      return;
-    }
-    set({ isSpeaking: false });
-  };
+  // The behavior model (barge-in, auto-send routing, hold accumulation, the
+  // TTS queue) is @vesta/core's voice session; this store adapts the browser
+  // ports and projects the session's state for React.
+  const session = createVoiceSession(
+    {
+      buildUrl: () => {
+        const { agentName } = get();
+        return agentName
+          ? buildListenUrl(agentName)
+          : Promise.reject(new Error("no agent selected"));
+      },
+      createSocket: createVoiceSocket,
+      capture: createMicCapture(),
+      player: {
+        prepare: (text) => {
+          const { agentName } = get();
+          return agentName
+            ? prepareSpeech(text, agentName)
+            : Promise.reject(new Error("no agent selected"));
+        },
+        play: (id, signal) => {
+          const { agentName } = get();
+          return agentName
+            ? streamPreparedSpeech(id, agentName, signal)
+            : Promise.resolve();
+        },
+      },
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (handle) => window.clearTimeout(handle),
+    },
+    {
+      onTranscript: (text) => set({ liveTranscript: text }),
+      onSend: (text) => sendCallback?.(text, "voice"),
+      onDraft: (text) => draftCallback?.(text),
+      onError: (message) => set({ voiceError: message }),
+      onListeningChange: (listening) =>
+        set(
+          listening
+            ? { isRecording: true }
+            : { isRecording: false, liveTranscript: "" },
+        ),
+      onSpeakingChange: (speaking) => set({ isSpeaking: speaking }),
+    },
+    () => ({
+      autoSend: get().voiceAutoSend,
+      interruptTts: voiceBoolSetting(get().sttStatus, "interrupt_tts", true),
+      hold: useVoiceActivation.getState().mode === "hold",
+      idleTimeoutMs: useVoiceActivation.getState().toggleIdleTimeoutMs ?? 0,
+    }),
+  );
 
   return {
     agentName: null,
@@ -158,14 +150,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     isSpeaking: false,
 
     toggleVoice: () => {
-      if (transcriber?.isActive()) {
-        const isHold = useVoiceActivation.getState().mode === "hold";
-        const captured = isHold ? get().liveTranscript.trim() : "";
-        transcriber.stop();
-        transcriber = null;
-        clearIdleTimer();
-        set({ isRecording: false, liveTranscript: "" });
-        if (captured) sendCallback?.(captured, "voice");
+      if (get().isRecording) {
+        session.stopListening();
         return;
       }
 
@@ -178,86 +164,29 @@ export const useVoice = create<VoiceState>((set, get) => {
       }
 
       set({ voiceError: null });
-
-      // Stop TTS when recording starts
-      get().stopSpeech();
-
-      const isHold = useVoiceActivation.getState().mode === "hold";
-      const idleTimeoutMs = useVoiceActivation.getState().toggleIdleTimeoutMs;
-
-      const armIdleTimer = () => {
-        if (isHold || !idleTimeoutMs) return;
-        clearIdleTimer();
-        idleTimer = setTimeout(() => {
-          idleTimer = null;
-          if (transcriber?.isActive()) get().toggleVoice();
-        }, idleTimeoutMs);
-      };
-
-      const stream = new Transcriber({
-        agentName,
-        accumulate: isHold,
-        onTranscript: (text) => {
-          set({ liveTranscript: text });
-          if (!isHold && !get().voiceAutoSend) draftCallback?.(text);
-          if (text) armIdleTimer();
-        },
-        onTurnEnd: (text) => {
-          if (isHold) return;
-          if (get().voiceAutoSend) sendCallback?.(text, "voice");
-          else draftCallback?.(text);
-          set({ liveTranscript: "" });
-          armIdleTimer();
-        },
-        onTurnStart: () => {
-          if (boolSetting(get().sttStatus, "interrupt_tts", true))
-            get().stopSpeech();
-        },
-        onError: (err) => {
-          set({ voiceError: err, isRecording: false });
-          transcriber?.stop();
-          transcriber = null;
-        },
+      session.startListening().catch((err: unknown) => {
+        const msg =
+          err instanceof Error ? err.message : "Microphone access denied";
+        set({ voiceError: msg });
       });
-
-      transcriber = stream;
-      stream
-        .start()
-        .then(() => {
-          set({ isRecording: true });
-          armIdleTimer();
-        })
-        .catch((err: unknown) => {
-          const msg =
-            err instanceof Error ? err.message : "Microphone access denied";
-          set({ voiceError: msg });
-          transcriber = null;
-        });
     },
 
     prefetch: (text: string) => {
       const { speechEnabled, agentName } = get();
       if (!speechEnabled || !agentName) return;
-      if (ttsPrefetchCache.has(text)) return;
       console.debug("[tts] prefetching:", text.slice(0, 60));
-      ttsPrefetchCache.set(text, prepareSpeech(text, agentName));
+      session.prefetch(text);
     },
 
     speak: (text: string) => {
       const { speechEnabled, agentName } = get();
       if (!speechEnabled || !agentName) return;
       console.debug("[tts] queueing:", text.slice(0, 60));
-      ttsQueue.push(text);
-      void processQueue();
+      session.speak(text);
     },
 
     stopSpeech: () => {
-      ttsQueue = [];
-      ttsPrefetchCache.clear();
-      ttsEpoch++;
-      ttsAbort?.abort();
-      ttsProcessing = false;
-      set({ isSpeaking: false });
+      session.stopSpeech();
     },
 
     registerChatCallbacks: (send, draft) => {
@@ -322,9 +251,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     },
 
     _cleanup: () => {
-      transcriber?.stop();
-      transcriber = null;
-      get().stopSpeech();
+      session.stopListening();
+      session.stopSpeech();
       set({ isRecording: false, liveTranscript: "" });
     },
   };
