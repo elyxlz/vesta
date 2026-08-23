@@ -417,6 +417,6 @@ const styles = StyleSheet.create({
   gatewayCopy: { flex: 1, gap: 2 },
   gatewayName: { fontSize: 16, lineHeight: 20, fontWeight: "500" },
   gatewayDetail: { fontSize: 13, lineHeight: 18 },
-  footerActions: { marginTop: 16, gap: 4 },
+  footerActions: { marginTop: 16, gap: 12 },
   footerActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
 });
