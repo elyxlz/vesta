@@ -111,10 +111,6 @@ function AgentSettingsContent() {
           label="Notifications"
           onPress={() => openPage("notifications")}
         />
-        <FormRow
-          label={sectionTitle("notifications")}
-          onPress={() => open("notifications")}
-        />
         <FormRow label="Logs" onPress={() => openPage("logs")} />
       </FormSection>
       <FormSection title="Pages">
