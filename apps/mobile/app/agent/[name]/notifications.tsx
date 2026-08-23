@@ -1,5 +1,6 @@
 import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
+import { SheetTitle } from "@/components/sheet-title";
 import NotificationsPage from "@/agent/NotificationsPage";
 import { useAgent } from "@/agent/AgentProvider";
 import { sectionTitle } from "@/agent/settings/sections-model";
@@ -21,7 +22,7 @@ function NotificationsContent() {
     });
   return (
     <>
-      <Stack.Title>Notifications</Stack.Title>
+      <SheetTitle>Notifications</SheetTitle>
       <NativeSheetCloseButton accessibilityLabel="Close notifications" />
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Button

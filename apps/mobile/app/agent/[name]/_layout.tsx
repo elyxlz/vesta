@@ -1,8 +1,7 @@
 import Stack from "expo-router/stack";
 import { AgentProvider } from "@/agent/AgentProvider";
 import { usePreferences } from "@/preferences/PreferencesProvider";
-import { formSheetCorners } from "@/theme/sheets";
-import { fontNames } from "@/theme/typography";
+import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
 
 // iOS presents logs and notifications sheet-like on its own, because they
 // push from the settings form sheet's modal context; Android has no such
@@ -29,11 +28,7 @@ export default function AgentLayout() {
           headerTransparent: true,
           headerStyle: { backgroundColor: "transparent" },
           headerTintColor: colors.text,
-          headerTitleStyle: {
-            fontFamily: fontNames.heading.native["500"],
-            fontSize: 24,
-            fontWeight: "500",
-          },
+          headerTitleStyle,
           headerShadowVisible: false,
           headerBackButtonDisplayMode: "minimal",
         }}

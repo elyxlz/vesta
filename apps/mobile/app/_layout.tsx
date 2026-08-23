@@ -55,7 +55,7 @@ import {
   type BootTargetFrame,
 } from "@/components/BootTransition";
 import { fontNames } from "@/theme/typography";
-import { formSheetCorners } from "@/theme/sheets";
+import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
 
 const IS_ANDROID = process.env.EXPO_OS === "android";
 
@@ -154,11 +154,7 @@ function SessionNavigation() {
               headerTransparent: true,
               headerStyle: { backgroundColor: "transparent" },
               headerTintColor: colors.text,
-              headerTitleStyle: {
-                fontFamily: fontNames.heading.native["500"],
-                fontSize: 24,
-                fontWeight: "500",
-              },
+              headerTitleStyle,
               headerLargeTitleStyle: {
                 fontFamily: fontNames.heading.native["500"],
                 fontWeight: "500",

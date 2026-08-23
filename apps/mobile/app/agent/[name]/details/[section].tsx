@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 import { StyleSheet } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import Stack from "expo-router/stack";
+import { SheetTitle } from "@/components/sheet-title";
 import { BackupsSection } from "@/agent/settings/BackupsSection";
 import { FilesSection } from "@/agent/settings/FilesSection";
 import { GeneralSection } from "@/agent/settings/GeneralSection";
@@ -40,7 +40,7 @@ export default function AgentDetailScreen() {
   const Section = found ? SECTION_CONTENT[found.key] : null;
   return (
     <>
-      <Stack.Title>{title}</Stack.Title>
+      <SheetTitle>{title}</SheetTitle>
       <NativeSheetCloseButton accessibilityLabel={`Close ${title}`} />
       <SheetChrome title={title} closeLabel={`Close ${title}`} />
       <Screen contentStyle={styles.content}>
