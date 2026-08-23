@@ -218,6 +218,9 @@ export default function NotificationsPage({
         onContentSizeChange={
           standalone ? bottomAnchor.onContentSizeChange : undefined
         }
+        // The sheet lays out every loaded row before its tail scroll, so the end it lands on is
+        // the real one rather than the first batch's.
+        initialNumToRender={standalone ? displayItems.length : undefined}
         onScroll={standalone ? bottomAnchor.onScroll : undefined}
         scrollEventThrottle={standalone ? 16 : undefined}
         ListEmptyComponent={
