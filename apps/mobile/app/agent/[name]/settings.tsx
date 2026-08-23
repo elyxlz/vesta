@@ -1,10 +1,13 @@
 import { useState } from "react";
-import { StyleSheet } from "react-native";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { resolveProviderIdentity } from "@vesta/core";
+import { Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
+  fetchManifest,
+  getProvider,
   restartAgent,
   startAgent,
   stopAgent,
@@ -12,6 +15,7 @@ import {
 import { useAgent } from "@/agent/AgentProvider";
 import { sectionTitle } from "@/agent/settings/sections-model";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
+import { ProviderPill } from "@/components/ProviderPill";
 import { Screen } from "@/components/layout/Screen";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
@@ -29,6 +33,18 @@ function AgentSettingsContent() {
   const preferences = usePreferences();
   const { showError } = useToast();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const provider = useQuery({
+    queryKey: ["provider", name],
+    queryFn: () => getProvider(api, name),
+  });
+  const manifest = useQuery({
+    queryKey: ["manifest"],
+    queryFn: () => fetchManifest(api),
+  });
+  const providerIdentity = resolveProviderIdentity(
+    provider.data ?? null,
+    manifest.data,
+  );
   const action = useMutation({
     mutationFn: async (
       operation: "start" | "stop" | "restart" | "backup" | "delete",
@@ -68,6 +84,19 @@ function AgentSettingsContent() {
         activityState={activityState}
         operation={agent?.operation ?? null}
         booting={agent?.booting}
+        caption={
+          providerIdentity ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${sectionTitle("provider")}, ${providerIdentity.providerName}`}
+              hitSlop={6}
+              onPress={() => open("provider")}
+              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+            >
+              <ProviderPill identity={providerIdentity} />
+            </Pressable>
+          ) : null
+        }
         style={styles.identityCard}
       />
       <FormSection title="Agent">

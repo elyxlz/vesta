@@ -20,6 +20,8 @@ export function AgentIdentityCard({
   booting = false,
   orb,
   showStatus = true,
+  /** Rendered under the name, for example the provider pill. */
+  caption,
   style,
 }: {
   name: string;
@@ -29,6 +31,7 @@ export function AgentIdentityCard({
   booting?: boolean;
   orb?: ReactNode;
   showStatus?: boolean;
+  caption?: ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = usePreferences();
@@ -57,6 +60,7 @@ export function AgentIdentityCard({
         <Text family="heading" style={[styles.name, { color: colors.text }]}>
           {name}
         </Text>
+        {caption ? <View style={styles.caption}>{caption}</View> : null}
       </View>
     </View>
   );
@@ -66,4 +70,5 @@ const styles = StyleSheet.create({
   card: { alignItems: "center", gap: 32 },
   details: { alignItems: "center", gap: 6 },
   name: { fontSize: 38, fontWeight: "500", letterSpacing: -1 },
+  caption: { marginTop: 4 },
 });
