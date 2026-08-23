@@ -33,7 +33,8 @@ import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection } from "@/components/ui/Form";
-import { ErrorState, LoadingState } from "@/components/ui/States";
+import { FormSectionSkeleton } from "@/components/ui/form-section-skeleton";
+import { ErrorState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import type { Account } from "@/api/types";
@@ -146,8 +147,19 @@ export function ProviderSection() {
     onError: (error) => showError(error, "Could not update provider"),
   });
 
-  if (provider.isLoading || manifest.isLoading)
-    return <LoadingState label="Loading provider…" />;
+  if (provider.isLoading || manifest.isLoading) {
+    return (
+      <>
+        <FormSectionSkeleton
+          title="Provider"
+          rows={5}
+          label="Loading provider"
+        />
+        <FormSectionSkeleton title="Account" rows={3} label="Loading account" />
+        <FormSectionSkeleton title="Usage" rows={2} label="Loading usage" />
+      </>
+    );
+  }
   if (!provider.data || !manifest.data) {
     return (
       <ErrorState
@@ -306,6 +318,17 @@ export function ProviderSection() {
           }
         />
       </FormSection>
+
+      {usage.isPending ? (
+        <>
+          <FormSectionSkeleton
+            title="Account"
+            rows={3}
+            label="Loading account"
+          />
+          <FormSectionSkeleton title="Usage" rows={2} label="Loading usage" />
+        </>
+      ) : null}
 
       {usage.data?.account ? (
         <AccountSection account={usage.data.account} />
