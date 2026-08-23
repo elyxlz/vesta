@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
   sectionActions: { gap: 10 },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16 },
   row: {
-    minHeight: 54,
+    minHeight: 44,
     paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
