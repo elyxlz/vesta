@@ -284,42 +284,47 @@ export default function SettingsScreen() {
           />
         </FormSection>
 
-        <FormSection title="Notifications">
-          <SwitchRow
-            label="Allow notifications"
-            detail="Hear from Vesta even when the app is closed."
-            value={preferences.remoteNotifications}
-            onValueChange={(value) =>
-              void preferences.update({ remoteNotifications: value })
-            }
-          />
-          <SwitchRow
-            label="Chat replies"
-            detail="Get notified when Vesta replies."
-            value={
-              preferences.remoteNotifications && preferences.pushChatReplies
-            }
-            disabled={!preferences.remoteNotifications}
-            onValueChange={(value) =>
-              void preferences.update({ pushChatReplies: value })
-            }
-          />
-          <SwitchRow
-            label="Show message content"
-            detail="Preview the message on your lock screen."
-            value={
-              preferences.remoteNotifications &&
-              preferences.pushChatReplies &&
-              preferences.notificationPreviews
-            }
-            disabled={
-              !preferences.remoteNotifications || !preferences.pushChatReplies
-            }
-            onValueChange={(value) =>
-              void preferences.update({ notificationPreviews: value })
-            }
-          />
-        </FormSection>
+        <View style={styles.notificationGroup}>
+          <FormSection title="Notifications">
+            <SwitchRow
+              label="Allow notifications"
+              detail="Hear from Vesta even when the app is closed."
+              value={preferences.remoteNotifications}
+              onValueChange={(value) =>
+                void preferences.update({ remoteNotifications: value })
+              }
+            />
+          </FormSection>
+
+          <FormSection>
+            <SwitchRow
+              label="Chat replies"
+              detail="Get notified when Vesta replies."
+              value={
+                preferences.remoteNotifications && preferences.pushChatReplies
+              }
+              disabled={!preferences.remoteNotifications}
+              onValueChange={(value) =>
+                void preferences.update({ pushChatReplies: value })
+              }
+            />
+            <SwitchRow
+              label="Show message content"
+              detail="Preview the message on your lock screen."
+              value={
+                preferences.remoteNotifications &&
+                preferences.pushChatReplies &&
+                preferences.notificationPreviews
+              }
+              disabled={
+                !preferences.remoteNotifications || !preferences.pushChatReplies
+              }
+              onValueChange={(value) =>
+                void preferences.update({ notificationPreviews: value })
+              }
+            />
+          </FormSection>
+        </View>
 
         <FormSection
           title="Gateway"
@@ -465,5 +470,6 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   appearanceRow: { paddingVertical: 10 },
+  notificationGroup: { gap: 12 },
   content: { gap: 24 },
 });
