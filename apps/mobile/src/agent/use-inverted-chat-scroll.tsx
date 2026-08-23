@@ -51,6 +51,7 @@ export function useInvertedChatScroll<Row>(
   const listRef = useRef<FlatList<Row>>(null);
   const isAtLatestRef = useRef(true);
   const hasInitialInsetAnchorRef = useRef(false);
+  const hasContentRef = useRef(false);
   const latestOffsetRef = useRef(0);
   const [isAwayFromLatest, setIsAwayFromLatest] = useState(false);
 
@@ -58,17 +59,15 @@ export function useInvertedChatScroll<Row>(
     listRef.current = list;
   }, []);
 
-  const handleContentInsetChange = useCallback<ContentInsetChange>((insets) => {
-    const latestOffset = getLatestMessageOffset(
-      process.env.EXPO_OS,
-      insets.top,
-    );
-    latestOffsetRef.current = latestOffset;
-
+  // iOS rests an inverted list at offset 0, the screen's bottom edge, until it
+  // is told where the end lies; anchor once both the inset and content exist,
+  // whichever lands second.
+  const anchorToLatest = useCallback(() => {
     if (
       process.env.EXPO_OS !== "ios" ||
       hasInitialInsetAnchorRef.current ||
-      insets.top <= 0 ||
+      !hasContentRef.current ||
+      latestOffsetRef.current >= 0 ||
       !isAtLatestRef.current
     ) {
       return;
@@ -76,10 +75,29 @@ export function useInvertedChatScroll<Row>(
 
     hasInitialInsetAnchorRef.current = true;
     listRef.current?.scrollToOffset({
-      offset: latestOffset,
+      offset: latestOffsetRef.current,
       animated: false,
     });
   }, []);
+
+  const handleContentInsetChange = useCallback<ContentInsetChange>(
+    (insets) => {
+      latestOffsetRef.current = getLatestMessageOffset(
+        process.env.EXPO_OS,
+        insets.top,
+      );
+      anchorToLatest();
+    },
+    [anchorToLatest],
+  );
+
+  const handleContentSizeChange = useCallback(
+    (_width: number, height: number) => {
+      hasContentRef.current = height > 0;
+      anchorToLatest();
+    },
+    [anchorToLatest],
+  );
 
   const renderScrollComponent = useCallback(
     (props: ScrollViewProps) => (
@@ -118,6 +136,7 @@ export function useInvertedChatScroll<Row>(
 
   return {
     attachList,
+    handleContentSizeChange,
     handleScroll,
     isAwayFromLatest,
     renderScrollComponent,

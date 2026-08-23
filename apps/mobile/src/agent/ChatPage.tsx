@@ -27,6 +27,7 @@ import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
 import { createInvertedChatRows, type ChatRow } from "@/agent/chat-list-model";
 import { quotedReply, type ReplyTarget } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
+import { usePagerScrollLock } from "@/agent/pager-scroll-lock";
 import { GlassSurface } from "@/components/ui/glass-surface";
 import { ComposerActionButton, ReplyPreview } from "@/agent/chat/chat-composer";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
@@ -97,6 +98,7 @@ export default function ChatPage() {
     [notifyTranscriptWords, setInput],
   );
   const inputRef = useRef<ChatComposerInputRef>(null);
+  const lockPagerScroll = usePagerScrollLock();
   const measuredComposerHeight = useRef<number | null>(null);
   const composerInset = useSharedValue(0);
   // How far the dock drops back toward an open keyboard, so that of its
@@ -114,6 +116,7 @@ export default function ChatPage() {
   const {
     attachList,
     handleScroll,
+    handleContentSizeChange,
     isAwayFromLatest,
     renderScrollComponent,
     scrollToLatest,
@@ -237,6 +240,7 @@ export default function ChatPage() {
         composerInset={composerInset}
         attachList={attachList}
         onScroll={handleScroll}
+        onContentSizeChange={handleContentSizeChange}
         renderScrollComponent={renderScrollComponent}
         onLoadEarlier={socket.loadMore}
         onReply={replyToMessage}
@@ -249,7 +253,12 @@ export default function ChatPage() {
         pointerEvents="box-none"
         style={styles.composerOverlay}
       >
-        <View onLayout={handleComposerLayout}>
+        <View
+          onLayout={handleComposerLayout}
+          onTouchStart={() => lockPagerScroll(true)}
+          onTouchEnd={() => lockPagerScroll(false)}
+          onTouchCancel={() => lockPagerScroll(false)}
+        >
           <Animated.View
             style={[
               styles.composerDock,
@@ -257,11 +266,12 @@ export default function ChatPage() {
               { paddingBottom: insets.bottom + COMPOSER_CLOSED_GAP },
             ]}
           >
-            {isAwayFromLatest && rows.length > 0 ? (
-              <View pointerEvents="box-none" style={styles.scrollToBottomSlot}>
-                <ScrollToBottomButton onPress={scrollToLatest} />
-              </View>
-            ) : null}
+            <View pointerEvents="box-none" style={styles.scrollToBottomSlot}>
+              <ScrollToBottomButton
+                visible={isAwayFromLatest && rows.length > 0}
+                onPress={scrollToLatest}
+              />
+            </View>
             <GlassSurface style={styles.composerSurface}>
               {replyTarget ? (
                 <ReplyPreview target={replyTarget} onCancel={cancelReply} />

@@ -17,6 +17,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams } from "expo-router";
 import ChatPage from "@/agent/ChatPage";
+import { PagerScrollLockProvider } from "@/agent/pager-scroll-lock";
 import DashboardPage from "@/agent/DashboardPage";
 import LogsPage from "@/agent/LogsPage";
 import NotificationsPage from "@/agent/NotificationsPage";
@@ -77,6 +78,7 @@ function AgentPages() {
   const holds = useAgentHolds();
   const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
   const pager = useRef<PagerView>(null);
+  const [pagerScrollLocked, setPagerScrollLocked] = useState(false);
   const tabVisibility = useSharedValue(1);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabInteractionTimer = useRef<ReturnType<typeof setTimeout> | null>(
@@ -163,13 +165,10 @@ function AgentPages() {
     const transitionId = ++tabTransitionId.current;
     setTabsVisible(false);
     tabVisibility.set(
-      withTiming(
-        0,
-        {
-          duration: TAB_ANIMATION_DURATION_MS,
-          easing: Easing.in(Easing.cubic),
-        },
-      ),
+      withTiming(0, {
+        duration: TAB_ANIMATION_DURATION_MS,
+        easing: Easing.in(Easing.cubic),
+      }),
     );
     tabInteractionTimer.current = setTimeout(() => {
       tabInteractionTimer.current = null;
@@ -223,12 +222,7 @@ function AgentPages() {
       clearTabInteractionTimer();
       cancelAnimation(tabVisibility);
     };
-  }, [
-    animateTabsOut,
-    clearHideTimer,
-    clearTabInteractionTimer,
-    tabVisibility,
-  ]);
+  }, [animateTabsOut, clearHideTimer, clearTabInteractionTimer, tabVisibility]);
 
   const onPageScrollStateChanged = useCallback(
     (event: PageScrollStateChangedNativeEvent) => {
@@ -299,6 +293,7 @@ function AgentPages() {
         offscreenPageLimit={Math.max(pages.length - 1, 1)}
         orientation="horizontal"
         overdrag
+        scrollEnabled={!pagerScrollLocked}
         onTouchStart={onPageTouchStart}
         onTouchEnd={onPageTouchEnd}
         onTouchCancel={() => {
@@ -316,7 +311,9 @@ function AgentPages() {
               page === "chat" ? (
                 // Keyed by holdKey so a gateway switch under a retained screen remounts the
                 // composer and reseeds from the new key's cell instead of persisting stale state.
-                <ChatPage key={holdKey} />
+                <PagerScrollLockProvider value={setPagerScrollLocked}>
+                  <ChatPage key={holdKey} />
+                </PagerScrollLockProvider>
               ) : page === "dashboard" ? (
                 <DashboardPage />
               ) : page === "notifications" ? (

@@ -42,6 +42,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   composerInset,
   attachList,
   onScroll,
+  onContentSizeChange,
   renderScrollComponent,
   onLoadEarlier,
   onReply,
@@ -57,7 +58,10 @@ export const ChatTranscript = memo(function ChatTranscript({
   composerInset: SharedValue<number>;
   attachList: (list: FlatList<ChatRow> | null) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  renderScrollComponent: (props: ScrollViewProps) => ReactElement<ScrollViewProps>;
+  onContentSizeChange: (width: number, height: number) => void;
+  renderScrollComponent: (
+    props: ScrollViewProps,
+  ) => ReactElement<ScrollViewProps>;
   onLoadEarlier: () => void;
   onReply: (text: string, user: boolean) => void;
   onEditAndResend: (text: string) => void;
@@ -117,6 +121,7 @@ export const ChatTranscript = memo(function ChatTranscript({
         scrollEnabled={historyLoaded || rows.length > 0}
         renderScrollComponent={renderScrollComponent}
         onScroll={onScroll}
+        onContentSizeChange={onContentSizeChange}
         scrollEventThrottle={16}
         onEndReached={onLoadEarlier}
         onEndReachedThreshold={0.1}
@@ -156,7 +161,11 @@ export const ChatTranscript = memo(function ChatTranscript({
       {NAV_BAR_VEIL && insets.bottom > 0 ? (
         <LinearGradient
           pointerEvents="none"
-          colors={[`${colors.background}00`, colors.background, colors.background]}
+          colors={[
+            `${colors.background}00`,
+            colors.background,
+            colors.background,
+          ]}
           locations={[
             0,
             NAV_BAR_VEIL_FADE / (insets.bottom + NAV_BAR_VEIL_FADE),
