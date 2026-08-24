@@ -3062,6 +3062,7 @@ pub async fn run_server(cfg: ServerConfig) {
         agents_dir,
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
+        vestad_lan_url: lan_url.clone(),
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");

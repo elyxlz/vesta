@@ -33,7 +33,7 @@ returns 0. If a session was killed without `stop` ever running, remove the lefto
 ```
 
 On a box, `start` registers a public vestad service itself and returns the ready-to-send
-`user_url` (`$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html`); vestad proxies the
+`user_url` (`$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/browser/handover.html`); vestad proxies the
 websocket through that route, so the same page works for a remote user with no extra tunnel. Off a
 box (dev), it returns a `http://localhost:<port>/handover.html` link instead. Pass `--port` only
 to override the port by hand.

@@ -47,8 +47,8 @@ READY_POLL_S = 0.1
 # where 1920 rendered a 16px font at 11px. 16:10 keeps it filling the cut-out exactly.
 SCREEN_W, SCREEN_H = 1280, 800
 
-# Public vestad service name for the handover page. The tunnel routes it at
-# `$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html` (no token).
+# Public vestad service name for the handover page. The gateway routes it at
+# `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/browser/handover.html` (no token).
 HANDOVER_SERVICE = "browser"
 REGISTER_SERVICE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
 DEREGISTER_SERVICE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "deregister-service"
@@ -166,13 +166,13 @@ def _read_pid(suffix: str) -> int | None:
 def _register_public_service() -> tuple[int, str] | None:
     """Register (idempotently) the public handover service and return (port, public_url).
 
-    Returns None off a box, when there is no tunnel, agent name, or register-service script, so
-    dev/tests fall back to a local port. This is what lets `handover start` hand the agent a
+    Returns None off a box, when there is no public URL, agent name, or register-service script,
+    so dev/tests fall back to a local port. This is what lets `handover start` hand the agent a
     ready-to-send URL instead of making it register a service and assemble the link by hand.
     """
-    tunnel = os.environ["VESTAD_TUNNEL"] if "VESTAD_TUNNEL" in os.environ else ""
+    public_url = os.environ["VESTAD_PUBLIC_URL"] if "VESTAD_PUBLIC_URL" in os.environ else ""
     agent = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
-    if not tunnel or not agent or not REGISTER_SERVICE.exists():
+    if not public_url or not agent or not REGISTER_SERVICE.exists():
         return None
     result = subprocess.run(
         [str(REGISTER_SERVICE), HANDOVER_SERVICE, "--public"],
@@ -184,7 +184,7 @@ def _register_public_service() -> tuple[int, str] | None:
     if result.returncode != 0:
         return None
     port = int(result.stdout.strip())
-    return port, f"{tunnel.rstrip('/')}/agents/{agent}/{HANDOVER_SERVICE}/handover.html"
+    return port, f"{public_url.rstrip('/')}/agents/{agent}/{HANDOVER_SERVICE}/handover.html"
 
 
 def _deregister_public_service() -> None:

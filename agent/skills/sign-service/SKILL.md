@@ -27,7 +27,7 @@ sign-service daemon start
 # 2. Mint a key and send the user the link it opens. The path form is what a browser needs:
 #    the page's own assets inherit the prefix, where a header or a query param would not.
 KEY=$(service-key mint sign --label "signature pad")
-echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/sign/k/$KEY/"
+echo "$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/sign/k/$KEY/"
 # 3. On the signature_received notification, stamp + preview:
 uv run --with PyMuPDF python3 ~/agent/skills/sign-service/stamp.py \
   --signature /tmp/sign-service/signature.png \

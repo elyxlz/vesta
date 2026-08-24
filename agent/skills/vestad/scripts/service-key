@@ -11,7 +11,7 @@
 #        service-key list <service>
 #        service-key revoke <service> <id>
 #   KEY=$(service-key mint expenses --label accountant)
-#   echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/expenses/k/$KEY/"
+#   echo "$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/expenses/k/$KEY/"
 #
 # Omit --ttl for vestad's 30 day default; --never-expires wins over any --ttl.
 

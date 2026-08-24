@@ -1080,6 +1080,19 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
+    /// The advertised `https://<lan-ip>:<port>`, set only when the API is bound to the
+    /// LAN (`--expose-lan`) and an IP was resolvable; a LAN URL written without that
+    /// bind would be unreachable.
+    pub vestad_lan_url: Option<String>,
+}
+
+/// The user-facing base URL of the gateway, one value for scripts: the tunnel when one
+/// exists, else the LAN URL. Written as `VESTAD_PUBLIC_URL`; this is its one owner.
+fn vestad_public_url<'a>(
+    vestad_tunnel: Option<&'a str>,
+    vestad_lan_url: Option<&'a str>,
+) -> Option<&'a str> {
+    vestad_tunnel.or(vestad_lan_url)
 }
 
 /// Validate that the config and agents directories exist, are writable, and have
@@ -1142,8 +1155,10 @@ pub fn write_agent_env_file(
          export AGENT_TOKEN={agent_token}\n\
          export IS_SANDBOX=1\n\
          export VESTAD_PORT={}\n\
-         export BOX_HOST={AGENT_BOX_HOST}\n",
+         export BOX_HOST={AGENT_BOX_HOST}\n\
+         export VESTAD_HOSTNAME={}\n",
         env_config.vestad_port,
+        crate::tunnel::gethostname(),
     );
     let mut append_optional = |key: &str, value: Option<&str>| {
         if let Some(v) = value {
@@ -1152,6 +1167,13 @@ pub fn write_agent_env_file(
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
+    append_optional(
+        "VESTAD_PUBLIC_URL",
+        vestad_public_url(
+            env_config.vestad_tunnel.as_deref(),
+            env_config.vestad_lan_url.as_deref(),
+        ),
+    );
     // The control-plane base URL the agent's account/onboard skills call. Comes
     // from vestad's own env (the cloud-init managed.conf drop-in); absent on
     // self-hosted boxes. (The referral code is NOT forwarded here: it lives with
@@ -1239,15 +1261,18 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update `VESTAD_PORT`, `VESTAD_TUNNEL`, and `BOX_HOST` in all existing per-agent env
-/// files. Called at vestad startup so running containers pick up the current values on
-/// restart; this is how an agent created before `BOX_HOST` existed converges onto it,
-/// with no separate migration needed.
+/// Update `VESTAD_PORT`, `VESTAD_TUNNEL`, `BOX_HOST`, `VESTAD_HOSTNAME`, and
+/// `VESTAD_PUBLIC_URL` in all existing per-agent env files. Called at vestad startup so
+/// running containers pick up the current values on restart; this is how an agent
+/// created before one of these vars existed converges onto it, with no separate
+/// migration needed.
 pub fn update_all_agent_env_files(
     agents_dir: &std::path::Path,
     vestad_port: u16,
     vestad_tunnel: Option<&str>,
+    vestad_lan_url: Option<&str>,
 ) {
+    let hostname = crate::tunnel::gethostname();
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else {
@@ -1260,6 +1285,8 @@ pub fn update_all_agent_env_files(
                 if stripped.starts_with("VESTAD_PORT=")
                     || stripped.starts_with("VESTAD_TUNNEL=")
                     || stripped.starts_with("BOX_HOST=")
+                    || stripped.starts_with("VESTAD_HOSTNAME=")
+                    || stripped.starts_with("VESTAD_PUBLIC_URL=")
                 {
                     return None; // re-appended below with the current values
                 }
@@ -1271,6 +1298,10 @@ pub fn update_all_agent_env_files(
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
         new_lines.push(format!("export BOX_HOST={AGENT_BOX_HOST}"));
+        new_lines.push(format!("export VESTAD_HOSTNAME={hostname}"));
+        if let Some(url) = vestad_public_url(vestad_tunnel, vestad_lan_url) {
+            new_lines.push(format!("export VESTAD_PUBLIC_URL={url}"));
+        }
         new_lines.push(String::new());
         let new_content = new_lines.join("\n");
         if new_content == content {
@@ -3657,6 +3688,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
         let content = std::fs::read_to_string(&path).expect("read env file");
@@ -3683,6 +3715,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
         let content = std::fs::read_to_string(&path).expect("read env file");
@@ -3690,13 +3723,48 @@ mod tests {
             content.contains(&format!("export BOX_HOST={AGENT_BOX_HOST}")),
             "BOX_HOST written for a fresh agent: {content}"
         );
+        assert!(
+            content.contains("export VESTAD_HOSTNAME="),
+            "VESTAD_HOSTNAME written for a fresh agent: {content}"
+        );
+        // No tunnel and no LAN URL: no public URL exists, so no line is written.
+        assert!(
+            !content.contains("VESTAD_PUBLIC_URL"),
+            "VESTAD_PUBLIC_URL absent with no reachable URL: {content}"
+        );
+    }
+
+    #[test]
+    fn write_agent_env_file_merges_public_url_tunnel_over_lan() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mut cfg = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+            vestad_lan_url: Some("https://192.168.1.10:4433".to_string()),
+        };
+        let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains("export VESTAD_PUBLIC_URL=https://192.168.1.10:4433"),
+            "LAN URL used when no tunnel exists: {content}"
+        );
+
+        cfg.vestad_tunnel = Some("https://box.vesta.run".to_string());
+        let path = write_agent_env_file(&cfg, "agent2", 3, "tok2").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains("export VESTAD_PUBLIC_URL=https://box.vesta.run"),
+            "tunnel preferred over LAN URL: {content}"
+        );
     }
 
     #[test]
     fn update_all_agent_env_files_adds_vestad_host_to_a_legacy_file() {
-        // A legacy env file predating BOX_HOST: no such line at all. This is exactly
-        // the fleet-convergence path — the agent picks it up on its next restart with no
-        // separate migration.
+        // A legacy env file predating BOX_HOST, VESTAD_HOSTNAME, and VESTAD_PUBLIC_URL:
+        // none of those lines at all. This is exactly the fleet-convergence path — the
+        // agent picks them up on its next restart with no separate migration.
         let dir = tempfile::TempDir::new().expect("tempdir");
         let path = dir.path().join("agent1.env");
         std::fs::write(
@@ -3705,7 +3773,7 @@ mod tests {
         )
         .expect("write legacy env file");
 
-        update_all_agent_env_files(dir.path(), 9443, None);
+        update_all_agent_env_files(dir.path(), 9443, None, Some("https://192.168.1.10:9443"));
 
         let content = std::fs::read_to_string(&path).expect("read env file");
         assert!(
@@ -3713,6 +3781,14 @@ mod tests {
             "BOX_HOST added on convergence: {content}"
         );
         assert!(content.contains("export VESTAD_PORT=9443"));
+        assert!(
+            content.contains("export VESTAD_HOSTNAME="),
+            "VESTAD_HOSTNAME added on convergence: {content}"
+        );
+        assert!(
+            content.contains("export VESTAD_PUBLIC_URL=https://192.168.1.10:9443"),
+            "VESTAD_PUBLIC_URL added on convergence: {content}"
+        );
     }
 
     #[test]
@@ -4413,6 +4489,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let _net_cleanup = TestNetwork {
             name: agent_network_name(&tc.name),
@@ -4534,6 +4611,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let spec = ContainerSpec {
             cname: &cname,
@@ -4591,6 +4669,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         create_container(
             &docker,
@@ -4638,6 +4717,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let _net_cleanup = TestNetwork {
             name: agent_network_name(&tc.name),
@@ -4951,6 +5031,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 4111,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         write_agent_env_file(&env_config, &agent, 45_999, "tok").expect("write env file");
 
@@ -5023,6 +5104,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 4111,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
 
         create_test_container_with_binds_async(
@@ -5071,6 +5153,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 4111,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
 
         create_test_container_with_binds_async(

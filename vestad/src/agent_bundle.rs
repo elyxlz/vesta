@@ -1067,6 +1067,7 @@ mod tests {
             agents_dir,
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         TestAgentEnv { dir, config, core_dir: code_dir.join("core") }
     }

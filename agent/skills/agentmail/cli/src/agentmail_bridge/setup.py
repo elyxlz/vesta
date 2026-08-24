@@ -28,7 +28,11 @@ from agentmail_bridge.config import (
 
 
 def _resolve_webhook_url() -> str:
-    """Public URL AgentMail POSTs inbound mail to. Reads VESTAD_TUNNEL from env."""
+    """Public URL AgentMail POSTs inbound mail to. Reads VESTAD_TUNNEL from env.
+
+    Deliberately the tunnel, never VESTAD_PUBLIC_URL: AgentMail's servers call this
+    from the internet, so a LAN address can never receive the webhook.
+    """
     tunnel = os.environ["VESTAD_TUNNEL"].strip() if "VESTAD_TUNNEL" in os.environ else ""
     if not tunnel:
         return ""
