@@ -53,7 +53,7 @@ func stripProtected(text string) string {
 // textAfterFullStop reports whether a '.', '!' or '?' has a further thought after
 // it: the tell of a second thought crammed into the same bubble. A mark only reads
 // as a full stop when whitespace follows it, so "main.py" and "example.com" stay
-// single thoughts, and only words carry a thought, so a trailing emoji or emoticon
+// single thoughts, and only words carry a thought, so a trailing emoji
 // ("see you there? ☀️") decorates the bubble rather than starting a second one.
 func textAfterFullStop(text string) bool {
 	cleaned := strings.TrimSpace(stripProtected(text))
@@ -72,7 +72,7 @@ func textAfterFullStop(text string) bool {
 }
 
 // containsWord reports whether text carries any letter or digit, the material of
-// an actual thought as opposed to emoji, emoticons, and punctuation.
+// an actual thought as opposed to emoji and punctuation.
 func containsWord(text string) bool {
 	return strings.ContainsFunc(text, func(r rune) bool {
 		return unicode.IsLetter(r) || unicode.IsNumber(r)
