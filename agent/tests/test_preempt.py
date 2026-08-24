@@ -440,13 +440,19 @@ async def test_burst_of_preempts_with_merged_results_never_wedges(tmp_path):
 async def test_turnless_stream_activity_drives_state():
     """Output with no open Vesta turn (a delivered preempt running as its own CLI turn, or a
     CLI-initiated turn) flips the activity state to thinking, and its result flips it back to
-    idle. The state drives the snoozed-batch flush and the proactive gate, so it must track
-    the stream, not Vesta's turn bookkeeping."""
-    from claude_agent_sdk import TextBlock
+    idle. Extended thinking's token ticks count too: they precede the turn's first
+    AssistantMessage, and a state stuck on idle through them would flush the snoozed batch
+    into a busy CLI. The state drives the snoozed-batch flush and the proactive gate, so it
+    must track the stream, not Vesta's turn bookkeeping."""
+    from claude_agent_sdk import SystemMessage, TextBlock
 
     state, config, _, _, message_queue, _ = make_stream_harness()
     async with consuming(state, config):
+        await message_queue.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5}))
+        await wait_for_condition(lambda: state.event_bus.state == "thinking", message="turnless thinking tick never set thinking")
+        await message_queue.put(result_msg())
+        await wait_for_condition(lambda: state.event_bus.state == "idle", message="turnless result never set idle")
         await message_queue.put(assistant_msg([TextBlock("turnless reply")]))
         await wait_for_condition(lambda: state.event_bus.state == "thinking", message="turnless activity never set thinking")
         await message_queue.put(result_msg())
-        await wait_for_condition(lambda: state.event_bus.state == "idle", message="turnless result never set idle")
+        await wait_for_condition(lambda: state.event_bus.state == "idle", message="the second turnless result never set idle")
