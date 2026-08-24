@@ -13,6 +13,11 @@ type Message struct {
 	IsForwarded bool      `json:"is_forwarded"`
 	MediaType   string    `json:"media_type,omitempty"`
 	Filename    string    `json:"filename,omitempty"`
+	// Receipts for messages we sent. Recorded by the daemon since the LID split was fixed, but
+	// until now never surfaced by list-messages, so every reader of this CLI was blind to whether
+	// the user had opened anything. omitempty because an inbound message has no receipt of ours.
+	DeliveryStatus    string     `json:"delivery_status,omitempty"`
+	DeliveryTimestamp *time.Time `json:"delivery_timestamp,omitempty"`
 }
 
 type Chat struct {
