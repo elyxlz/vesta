@@ -34,9 +34,9 @@ func TestLinkServeArgs(t *testing.T) {
 
 func TestLinkPageURL(t *testing.T) {
 	cases := []struct {
-		tunnel, agent, service string
-		port                   int
-		want                   string
+		publicURL, agent, service string
+		port                      int
+		want                      string
 	}{
 		{"https://foo.vesta.run", "gianfranco", "wa-link", 8811, "https://foo.vesta.run/agents/gianfranco/wa-link/"},
 		{"https://foo.vesta.run/", "gianfranco", "wa-link", 8811, "https://foo.vesta.run/agents/gianfranco/wa-link/"},
@@ -45,8 +45,8 @@ func TestLinkPageURL(t *testing.T) {
 		{"", "", "wa-link", 8811, "http://localhost:8811/"},
 	}
 	for _, tc := range cases {
-		if got := linkPageURL(tc.tunnel, tc.agent, tc.service, tc.port); got != tc.want {
-			t.Errorf("linkPageURL(%q,%q,%q,%d) = %q, want %q", tc.tunnel, tc.agent, tc.service, tc.port, got, tc.want)
+		if got := linkPageURL(tc.publicURL, tc.agent, tc.service, tc.port); got != tc.want {
+			t.Errorf("linkPageURL(%q,%q,%q,%d) = %q, want %q", tc.publicURL, tc.agent, tc.service, tc.port, got, tc.want)
 		}
 	}
 }

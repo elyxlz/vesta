@@ -285,14 +285,14 @@ def test_readiness_ok_when_all_present(monkeypatch, isolated):
 
 
 def test_register_public_service_none_off_box(monkeypatch):
-    # No tunnel / agent env means dev or tests: fall back to a local port, no registration.
-    monkeypatch.delenv("VESTAD_TUNNEL", raising=False)
+    # No public URL / agent env means dev or tests: fall back to a local port, no registration.
+    monkeypatch.delenv("VESTAD_PUBLIC_URL", raising=False)
     monkeypatch.delenv("AGENT_NAME", raising=False)
     assert handover._register_public_service() is None
 
 
 def test_register_public_service_returns_port_and_public_url(monkeypatch, tmp_path):
-    monkeypatch.setenv("VESTAD_TUNNEL", "https://box.vesta.run/")
+    monkeypatch.setenv("VESTAD_PUBLIC_URL", "https://box.vesta.run/")
     monkeypatch.setenv("AGENT_NAME", "ada")
     script = tmp_path / "register-service"
     script.write_text("#!/bin/sh\necho 7431\n")
