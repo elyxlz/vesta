@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -49,10 +50,11 @@ func stripProtected(text string) string {
 	return text
 }
 
-// textAfterFullStop reports whether a '.', '!' or '?' has anything after it: the
-// tell of a second thought crammed into the same bubble. A mark only reads as a
-// full stop when whitespace follows it, so "main.py" and "example.com" stay
-// single thoughts.
+// textAfterFullStop reports whether a '.', '!' or '?' has a further thought after
+// it: the tell of a second thought crammed into the same bubble. A mark only reads
+// as a full stop when whitespace follows it, so "main.py" and "example.com" stay
+// single thoughts, and only words carry a thought, so a trailing emoji or emoticon
+// ("see you there? ☀️") decorates the bubble rather than starting a second one.
 func textAfterFullStop(text string) bool {
 	cleaned := strings.TrimSpace(stripProtected(text))
 	for _, loc := range bubbleEnderRe.FindAllStringIndex(cleaned, -1) {
@@ -61,9 +63,20 @@ func textAfterFullStop(text string) bool {
 		if trimmed == "" || len(trimmed) == len(rest) {
 			continue // the mark ends the bubble, or no whitespace gap follows it
 		}
+		if !containsWord(trimmed) {
+			continue // only emoji/symbols follow: decoration, not a second thought
+		}
 		return true
 	}
 	return false
+}
+
+// containsWord reports whether text carries any letter or digit, the material of
+// an actual thought as opposed to emoji, emoticons, and punctuation.
+func containsWord(text string) bool {
+	return strings.ContainsFunc(text, func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsNumber(r)
+	})
 }
 
 // bubbleLintReason returns a non-empty explanation when message is a wall (too
