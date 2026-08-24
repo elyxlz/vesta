@@ -214,23 +214,25 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     running as its own turn, a CLI-initiated continuation, or an interrupted turn's wind-down)
     still emit, nothing is ever lost, and their ResultMessage is dropped."""
     diagnostics.touch_activity(state, "sdk_message")
+    # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into an open
+    # turn's liveness narrative ("Thinking..." on the first tick, interval notes from the wait loop).
+    thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
     turn = state.turn
     if turn:
         turn.last_message_at = time.monotonic()
-    # Turnless CLI activity (a delivered preempt running as its own turn, or a
-    # CLI-initiated turn such as a background task notification): keep the activity state
-    # honest, since it drives the snoozed-batch flush and the proactive-check gate.
-    elif isinstance(msg, AssistantMessage):
+        if thinking_estimate is not None:
+            diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
+    # Turnless CLI activity (a delivered preempt running as its own turn, or a CLI-initiated
+    # turn such as a background task notification): keep the activity state honest, since it
+    # drives the snoozed-batch flush and the proactive-check gate. The thinking ticks count as
+    # activity here because extended thinking precedes the turn's first AssistantMessage, and
+    # without them the state reads idle for that whole stretch.
+    elif isinstance(msg, AssistantMessage) or thinking_estimate is not None:
         state.event_bus.set_state("thinking")
     elif isinstance(msg, ResultMessage):
         state.event_bus.set_state("idle")
     if isinstance(msg, AssistantMessage):
         state.compacting = False
-    # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
-    # turn's liveness narrative ("Thinking..." on the first tick, interval notes from the wait loop).
-    thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
-    if turn and thinking_estimate is not None:
-        diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
     state.resolved_model = sdk_parsing.init_resolved_model(msg) or state.resolved_model
     texts, thinking_blocks, session_id, error_texts = sdk_parsing.parse_sdk_message(msg)
     if session_id and session_id != state.persisted.session_id:
