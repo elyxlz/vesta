@@ -1,6 +1,9 @@
 import type { ConnectionConfig } from "@/api/types";
 import { visualDelay } from "./launch-query";
 
+// The catalog documents the development build, where Vesta Cloud sign-in is offered.
+export const cloudSignInEnabled = true;
+
 export async function signInWithVestaAccount(): Promise<ConnectionConfig | null> {
   await new Promise((resolve) => setTimeout(resolve, 4_000));
   await visualDelay();

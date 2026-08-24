@@ -208,7 +208,11 @@
       "title": "Live agent logs",
       "description": "Colorized deterministic runtime output in the standalone log viewer.",
       "group": "Agent",
-      "screenshot": "agent-logs.png"
+      "screenshot": "agent-logs.png",
+      "platforms": [
+        "ios",
+        "ios-dark"
+      ]
     },
     {
       "id": "agent-files",
@@ -345,23 +349,23 @@
     },
     {
       "id": "whats-new",
-      "title": "What’s new",
+      "title": "What\u2019s new",
       "description": "Deterministic release notes available to the connected gateway version.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new.png"
     },
     {
       "id": "whats-new-empty",
       "title": "No release notes",
       "description": "Empty release-note state when nothing new applies to this gateway.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new-empty.png"
     },
     {
       "id": "whats-new-error",
       "title": "Release notes unavailable",
       "description": "Recoverable error state when release notes cannot be loaded.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new-error.png"
     },
     {
@@ -767,26 +771,6 @@
       "group": "Chat"
     },
     {
-      "id": "agent-pager-notifications",
-      "title": "Pager, notifications page",
-      "description": "Notifications as a swipe page beside chat.",
-      "group": "Chat",
-      "platforms": [
-        "ios",
-        "ios-dark"
-      ]
-    },
-    {
-      "id": "agent-pager-logs",
-      "title": "Pager, logs page",
-      "description": "Logs as a swipe page beside chat.",
-      "group": "Chat",
-      "platforms": [
-        "ios",
-        "ios-dark"
-      ]
-    },
-    {
       "id": "connect-actions-no-recent",
       "title": "Connect actions, no recent",
       "description": "The connect sheet with no saved gateways.",
@@ -842,12 +826,6 @@
       "id": "connect-prefilled-link",
       "title": "Connect, prefilled",
       "description": "The link screen opened with a link from a universal link.",
-      "group": "Connect"
-    },
-    {
-      "id": "recent-gateways-clear-confirm",
-      "title": "Recent gateways, clear all",
-      "description": "The clear-all confirmation.",
       "group": "Connect"
     },
     {
@@ -992,12 +970,6 @@
       "id": "gateway-update-failed-generic",
       "title": "Gateway update, failed",
       "description": "A failed update with no error detail, showing the generic copy.",
-      "group": "Gateway update"
-    },
-    {
-      "id": "gateway-update-with-settings",
-      "title": "Gateway update, settings open",
-      "description": "App settings reachable over the update screen.",
       "group": "Gateway update"
     }
   ]

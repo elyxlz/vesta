@@ -5,6 +5,9 @@ tags:
   - connect
 ---
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - openLink:
     link: "vesta-dev://connect-actions?visualPrivacy=unlocked&visualRecentGateways=none&visualDelay=60000"
 - waitForAnimationToEnd:
@@ -13,6 +16,40 @@ tags:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
 - extendedWaitUntil:
     visible: '.*Connect with Vesta Cloud.*'
     timeout: 30000
@@ -171,27 +208,10 @@ tags:
       SCREENSHOT: connect-prefilled-link.png
 - stopApp
 - openLink:
-    link: "vesta-dev://recent-gateways?visualPrivacy=unlocked"
-- extendedWaitUntil:
-    visible: '.*home\.vesta\.run.*'
-    timeout: 30000
-- tapOn:
-    text: '.*Clear all gateways.*'
-- extendedWaitUntil:
-    visible: '.*Clear all.*'
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: recent-gateways-clear-confirm
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: recent-gateways-clear-confirm.png
-- tapOn:
-    text: 'Clear all'
+    link: "vesta-dev://recent-gateways?visualPrivacy=unlocked&visualRecentGateways=none"
 - extendedWaitUntil:
     visible: '.*No saved gateways.*'
-    timeout: 10000
+    timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: recent-gateways-empty

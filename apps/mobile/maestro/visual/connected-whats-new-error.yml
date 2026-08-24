@@ -5,6 +5,9 @@ tags:
   - connected
 ---
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
 - waitForAnimationToEnd:
@@ -13,6 +16,40 @@ tags:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
@@ -29,12 +66,12 @@ tags:
 
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualServices=voice"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: '.*Provider and model.*'
     timeout: 30000
 - tapOn:
-    text: "^Provider and model,.*"
+    text: "^Provider and model.*"
 - extendedWaitUntil:
     visible: ".*claude-sonnet-4-5.*"
     timeout: 10000
@@ -50,12 +87,12 @@ tags:
       SCREENSHOT: agent-provider.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualServices=voice"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: '.*Provider and model.*'
     timeout: 30000
 - tapOn:
-    text: "^Voice,.*"
+    text: "^Voice.*"
 - extendedWaitUntil:
     visible: "Deepgram Nova-3"
     timeout: 10000

@@ -5,6 +5,9 @@ tags:
   - connected
 ---
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=empty"
 - waitForAnimationToEnd:
@@ -13,6 +16,40 @@ tags:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
@@ -31,11 +68,11 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: '.*Provider and model.*'
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: "^Notification rules,.*"
+      text: "^Notifications.*"
     direction: DOWN
     timeout: 10000
     speed: 40
@@ -43,12 +80,14 @@ tags:
     centerElement: true
 
 - tapOn:
-    text: "^Notification rules,.*"
+    text: "^Notifications.*"
 - extendedWaitUntil:
-    visible: "Priority rules"
+    visible: ".*Design review.*"
     timeout: 10000
-- extendedWaitUntil:
-    visible: "source is calendar"
+- scrollUntilVisible:
+    element:
+      text: ".*interrupted.*"
+    direction: DOWN
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
@@ -61,11 +100,11 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: '.*Provider and model.*'
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: "^Host access,.*"
+      text: "^Host access.*"
     direction: DOWN
     timeout: 10000
     speed: 40
@@ -73,7 +112,7 @@ tags:
     centerElement: true
 
 - tapOn:
-    text: "^Host access,.*"
+    text: "^Host access.*"
 - extendedWaitUntil:
     visible: "Shared folders"
     timeout: 10000
@@ -91,11 +130,11 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: '.*Provider and model.*'
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: "^Files,.*"
+      text: "^Files.*"
     direction: DOWN
     timeout: 10000
     speed: 40
@@ -103,7 +142,7 @@ tags:
     centerElement: true
 
 - tapOn:
-    text: "^Files,.*"
+    text: "^Files.*"
 - extendedWaitUntil:
     visible: "Who aria is"
     timeout: 10000

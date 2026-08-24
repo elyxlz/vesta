@@ -5,6 +5,9 @@ tags:
   - gateway-update
 ---
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
 - waitForAnimationToEnd:
@@ -13,6 +16,40 @@ tags:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
 - extendedWaitUntil:
     visible: '.*Disconnect gateway.*'
     timeout: 30000
@@ -71,7 +108,7 @@ tags:
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=failed-generic"
 - extendedWaitUntil:
-    visible: '.*The update stopped before it finished.*'
+    visible: '.*Something stopped the update.*'
     timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
@@ -81,20 +118,3 @@ tags:
     env:
       SCREENSHOT: gateway-update-failed-generic.png
 - stopApp
-- openLink:
-    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=snapshotting"
-- extendedWaitUntil:
-    visible: '.*backing up.*'
-    timeout: 30000
-- tapOn:
-    text: '.*App settings.*'
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: gateway-update-with-settings
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: gateway-update-with-settings.png

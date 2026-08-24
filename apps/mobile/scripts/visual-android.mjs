@@ -376,6 +376,10 @@ async function normalizeEmulator(tools, serial, navOverlay) {
     ["global", "animator_duration_scale", "0"],
     ["system", "font_scale", "1.0"],
     ["global", "sysui_demo_allowed", "1"],
+    // Location on and the Google Location Accuracy consent pre-answered, so a
+    // foreground fix never raises the accuracy dialog over a captured screen.
+    ["secure", "location_mode", "3"],
+    ["secure", "network_location_opt_in", "1"],
   ];
   for (const [namespace, key, value] of settings) {
     await adb(tools, serial, [
