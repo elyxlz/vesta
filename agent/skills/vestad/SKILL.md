@@ -13,9 +13,13 @@ Every call authenticates with the agent's own token:
 -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
-`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, and `$BOX_HOST` come
-from `/run/vestad-env`, already exported into the environment. The API is
-`https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
+`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, `$VESTAD_PUBLIC_URL`,
+`$VESTAD_HOSTNAME`, and `$BOX_HOST` come from `/run/vestad-env`, already exported into
+the environment. The API is `https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert,
+so always `curl -sk`. `$BOX_HOST` resolves only inside this container: use it for API
+calls, never in a link for the user. `$VESTAD_HOSTNAME` is the name of the host machine
+vestad runs on, for when you talk about the machine itself. `$VESTAD_PUBLIC_URL` is the
+one base URL for links the user opens (see Public URLs below).
 
 This skill's helpers are commands: `register-service`, `deregister-service`, `service-key`,
 `user-notification`, and `vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
@@ -272,7 +276,7 @@ it exactly once, so put it straight into the link:
 
 ```bash
 KEY=$(service-key mint expenses --label accountant)
-echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/expenses/k/$KEY/"
+echo "$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/expenses/k/$KEY/"
 ```
 
 Add `--ttl <secs>` for a shorter life than the 30 day default, or `--never-expires` for a
@@ -289,15 +293,25 @@ the helper says so and exits non-zero, so register it first.
 
 ## Public URLs (how to reach a service from outside)
 
-vestad exposes registered services under the tunnel. The stable patterns:
-- **Skill/service routes**: `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/...`. A service registered `public: true` needs no credential. A private one is gated by vestad, which accepts the app's api key or a service key minted for that service, carried as an `Authorization: Bearer <key>` header, a `?token=<key>` query param, or a `/k/<key>/` prefix right after the service name. `X-Agent-Token` is not a credential here: the proxy never accepts it, so a curl that only sets that header gets a 401. A dashboard registered as service `dashboard` is at `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/`, and a link someone else can open is `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/k/<key>/`. Prefer the path form for anything a browser loads: a page's relative assets inherit the prefix, while a header or a query param reaches only the first request. Reach for the `?token=` form when the client cannot send a header at all, which in practice means a media element's `src` or a browser `WebSocket`. The voice service's audio stream and STT socket URLs carry their service key that way for that reason.
-- **User-facing web app**: `$VESTAD_TUNNEL/app`.
+`$VESTAD_PUBLIC_URL` is the single base for every link the user opens: vestad sets it to
+the tunnel URL when a tunnel exists, else to a LAN address like `https://<lan-ip>:<port>`
+when the gateway is exposed on the local network. Build links on it directly; you never
+need to pick between the two yourself. When you do care which one you got: `$VESTAD_TUNNEL`
+set means the link works from anywhere; unset means `$VESTAD_PUBLIC_URL` is LAN-only, so
+tell the user the link works only on their own network. When `$VESTAD_PUBLIC_URL` is
+unset, no user-reachable URL exists at all: the user must connect a tunnel
+(`vestad connect` on the host) before you can hand out any link. These values are read at
+container start, so a tunnel connected later appears after a restart.
+
+The stable patterns:
+- **Skill/service routes**: `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/<service>/...`. A service registered `public: true` needs no credential. A private one is gated by vestad, which accepts the app's api key or a service key minted for that service, carried as an `Authorization: Bearer <key>` header, a `?token=<key>` query param, or a `/k/<key>/` prefix right after the service name. `X-Agent-Token` is not a credential here: the proxy never accepts it, so a curl that only sets that header gets a 401. A dashboard registered as service `dashboard` is at `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/dashboard/`, and a link someone else can open is `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/dashboard/k/<key>/`. Prefer the path form for anything a browser loads: a page's relative assets inherit the prefix, while a header or a query param reaches only the first request. Reach for the `?token=` form when the client cannot send a header at all, which in practice means a media element's `src` or a browser `WebSocket`. The voice service's audio stream and STT socket URLs carry their service key that way for that reason.
+- **User-facing web app**: `$VESTAD_PUBLIC_URL/app`.
 
 Reach for these instead of reverse-engineering the route when you need to hand the user a link.
 
 ### Building an interactive web app served this way
-The browser sits at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/...`, so the prefix is a **client-side** concern only:
-- **Keep client URLs relative.** An absolute `fetch('/api/x')` resolves against the tunnel root rather than the service, and the same goes for asset and link hrefs. Use relative URLs, or derive a base from `location.pathname`.
+The browser sits at `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/<svc>/...`, so the prefix is a **client-side** concern only:
+- **Keep client URLs relative.** An absolute `fetch('/api/x')` resolves against the gateway root rather than the service, and the same goes for asset and link hrefs. Use relative URLs, or derive a base from `location.pathname`.
 - **The server needs no prefix handling.** vestad splits the service name off and forwards the exact subpath, so a request to `<svc>/api/x` reaches the handler as `/api/x`. Match routes with `==`.
 - **WebSockets work for a registered service.** vestad upgrades the connection and bridges it, pinging the client on a keepalive interval so an idle socket survives the tunnel. Only the raw agent port refuses to upgrade, because that carries the internal event bus; use `/sync` for that. A browser `WebSocket` cannot set headers, so carry a private service's key as `?token=<key>`.
 - **Bind `0.0.0.0`, not `127.0.0.1`.** The container has its own network and vestad proxies in from outside, so a loopback-only bind answers 502.

@@ -224,6 +224,7 @@ fn import_from_file(
         agents_dir: config.join("agents"),
         vestad_port: read_port_file(config).unwrap_or(0),
         vestad_tunnel: tunnel::get_tunnel_config(config).map(|tc| tc.url()),
+        vestad_lan_url: Status::load(config).and_then(|s| s.lan_url),
     };
     let code_dir =
         agent_code::ensure_agent_code(config).map_err(|e| format!("failed to populate agent code: {e}"))?;
@@ -605,13 +606,18 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool, f
                 )
             };
 
-            docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             // Only advertise a LAN address when the API is actually bound to the
             // LAN (--expose-lan); otherwise the URL would be unreachable.
             let lan_url = expose_lan
                 .then(local_lan_ip)
                 .flatten()
                 .map(|ip| format!("https://{ip}:{port}"));
+            docker::update_all_agent_env_files(
+                &config.join("agents"),
+                port,
+                tunnel_url.as_deref(),
+                lan_url.as_deref(),
+            );
             let user = std::env::var("USER")
                 .or_else(|_| std::env::var("LOGNAME"))
                 .unwrap_or_else(|_| "unknown".into());
