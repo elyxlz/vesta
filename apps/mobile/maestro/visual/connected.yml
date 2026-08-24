@@ -5,6 +5,9 @@ tags:
   - connected
 ---
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - waitForAnimationToEnd:
@@ -13,6 +16,40 @@ tags:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
@@ -61,7 +98,7 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: '.*Provider and model.*'
     timeout: 30000
 - extendedWaitUntil:
     visible: "Close agent settings"
@@ -76,7 +113,7 @@ tags:
 
 - scrollUntilVisible:
     element:
-      text: "^Notifications,.*"
+      text: "^Notifications.*"
     direction: DOWN
     timeout: 10000
     speed: 40
@@ -84,7 +121,7 @@ tags:
     centerElement: true
 
 - tapOn:
-    text: "^Notifications,.*"
+    text: "^Notifications.*"
 - extendedWaitUntil:
     visible: "Design review"
     timeout: 10000
@@ -93,6 +130,20 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: agent-notifications.png
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - openLink:
+          link: "vesta-dev://agent/aria/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+      - extendedWaitUntil:
+          visible: ".*boot step.*settled.*"
+          timeout: 10000
+      - takeScreenshot: agent-logs
+      - runScript:
+          file: capture-screenshot.js
+          env:
+            SCREENSHOT: agent-logs.png
 - openLink:
     link: "vesta-dev://agent/aria/settings"
 - extendedWaitUntil:
@@ -100,7 +151,7 @@ tags:
     timeout: 10000
 - scrollUntilVisible:
     element:
-      text: "^Logs,.*"
+      text: "^Files.*"
     direction: DOWN
     timeout: 10000
     speed: 40
@@ -108,31 +159,7 @@ tags:
     centerElement: true
 
 - tapOn:
-    text: "^Logs,.*"
-- extendedWaitUntil:
-    visible: ".*gateway sync ready"
-    timeout: 10000
-- takeScreenshot: agent-logs
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: agent-logs.png
-- openLink:
-    link: "vesta-dev://agent/aria/settings"
-- extendedWaitUntil:
-    visible: "Close agent settings"
-    timeout: 10000
-- scrollUntilVisible:
-    element:
-      text: "^Files,.*"
-    direction: DOWN
-    timeout: 10000
-    speed: 40
-    visibilityPercentage: 100
-    centerElement: true
-
-- tapOn:
-    text: "^Files,.*"
+    text: "^Files.*"
 - extendedWaitUntil:
     visible: "Who aria is"
     timeout: 10000
@@ -150,7 +177,7 @@ tags:
 
 - tapOn: "Create agent"
 - extendedWaitUntil:
-    visible: "Coming soon"
+    visible: ".*coming to mobile.*"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
@@ -164,7 +191,7 @@ tags:
 - repeat:
     times: 3
     while:
-      visible: "Coming soon"
+      visible: ".*coming to mobile.*"
     commands:
       - swipe:
           start: "50%,45%"
@@ -245,7 +272,7 @@ tags:
 
 - scrollUntilVisible:
     element:
-      text: "Share device context"
+      text: "Devices"
     direction: DOWN
     timeout: 10000
     speed: 40

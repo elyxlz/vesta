@@ -233,7 +233,7 @@ export const APP_SETTINGS: Record<string, Scenario> = {
   },
   "app-settings-devices": {
     state: settingsState({ sync: { devices: DEVICES } }),
-    drive: (page) => scrollTo(page, "share device context"),
+    drive: (page) => scrollTo(page, "share this device's location"),
     settle: async (page) => {
       await expect(page.getByText("present now")).toBeVisible();
       await expect(page.getByText("last seen 3h ago")).toBeVisible();
@@ -241,7 +241,9 @@ export const APP_SETTINGS: Record<string, Scenario> = {
       await expect(
         page.getByText("Lisbon, Portugal · Europe/Lisbon"),
       ).toBeVisible();
-      await expect(page.getByText("share device context")).toBeVisible();
+      await expect(
+        page.getByText("share this device's location"),
+      ).toBeVisible();
     },
   },
   "app-settings-lan-tunnel": {
