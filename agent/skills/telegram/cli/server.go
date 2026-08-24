@@ -101,10 +101,10 @@ func trySocketCommand(sockPath string, command string, args []string) ([]byte, i
 	}
 
 	if resp.Error != "" {
-		data, _ := json.MarshalIndent(map[string]interface{}{"error": resp.Error}, "", "  ")
+		data, _ := json.Marshal(map[string]interface{}{"error": resp.Error})
 		return data, 1, true
 	}
 
-	data, _ := json.MarshalIndent(resp.Result, "", "  ")
+	data, _ := json.Marshal(resp.Result)
 	return data, 0, true
 }

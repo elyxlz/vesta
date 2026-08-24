@@ -245,9 +245,9 @@ func waitForQRReady(port int, result <-chan socketCommandResult) (socketCommandR
 				}
 			}
 		case <-deadline.C:
-			data, _ := json.MarshalIndent(map[string]any{
+			data, _ := json.Marshal(map[string]any{
 				"error": "WhatsApp did not produce a QR code in time; run `whatsapp status` before retrying connect",
-			}, "", "  ")
+			})
 			return socketCommandResult{output: data, exitCode: 1, connected: true}, false
 		}
 	}
