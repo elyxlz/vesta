@@ -129,8 +129,10 @@ func emitAndExit(data []byte, exitCode int) {
 }
 
 // printJSON prints a success result; failures go through failJSON or failDaemon.
+// The envelope is single-line JSON: agents truncate output (`tail -1`), and a
+// pretty-printed envelope's last line is "}" whether it succeeded or failed.
 func printJSON(v any) {
-	data, err := json.MarshalIndent(v, "", "  ")
+	data, err := json.Marshal(v)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
 		os.Exit(1)
@@ -141,7 +143,7 @@ func printJSON(v any) {
 // failJSON prints an {"error": ...} object and exits nonzero, the single owner
 // of the print-error-then-exit pattern the daemon and link commands share.
 func failJSON(format string, args ...any) {
-	data, _ := json.MarshalIndent(map[string]any{"error": fmt.Sprintf(format, args...)}, "", "  ")
+	data, _ := json.Marshal(map[string]any{"error": fmt.Sprintf(format, args...)})
 	emitAndExit(data, 1)
 }
 

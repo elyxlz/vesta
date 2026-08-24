@@ -139,8 +139,10 @@ func failReserve(err error) {
 }
 
 // printJSON prints a success result; failures go through failJSON or failObject.
+// The envelope is single-line JSON: agents truncate output (`tail -1`), and a
+// pretty-printed envelope's last line is "}" whether it succeeded or failed.
 func printJSON(v any) {
-	data, err := json.MarshalIndent(v, "", "  ")
+	data, err := json.Marshal(v)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
 		os.Exit(1)
@@ -152,7 +154,7 @@ func printJSON(v any) {
 // stderr with a non-zero exit, so stdout carries only success output and a
 // filter piped onto stdout can never swallow a failure or its explanation.
 func failObject(v any) {
-	data, _ := json.MarshalIndent(v, "", "  ")
+	data, _ := json.Marshal(v)
 	fmt.Fprintln(os.Stderr, string(data))
 	os.Exit(1)
 }
