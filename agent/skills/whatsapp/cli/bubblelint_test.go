@@ -32,6 +32,9 @@ func TestBubbleLintPasses(t *testing.T) {
 		"1. eggs\n2) milk",                              // "2)" marker style is also exempt
 		"here are steps:\n1. open\n2. run",              // list under a lead-in line
 		"- eggs\n- milk",                                // bullets carry no dot, so they always passed
+		"Is one of you in Sardinia? ☀️",                 // a trailing emoji decorates the bubble, not a second thought
+		"ok! 👍",                                         // same for a thumbs-up
+		"done. 🚀🚀",                                      // several trailing emoji still decorate one bubble
 	}
 	for _, msg := range cases {
 		if reason := bubbleLintReason(msg); reason != "" {
@@ -62,6 +65,7 @@ func TestBubbleLintBlocks(t *testing.T) {
 		// "2." that still reads as a wall, and a real full stop inside an item still trips.
 		{"mid-line marker on one line is a wall", "1. Hello 2. Hi"},
 		{"real full stop inside a list item", "1. one thought. and another"},
+		{"emoji then words is still a second thought", "done! ☀️ see you tomorrow"},
 		{"long single sentence", "so the thing about the deploy is that it kept timing out on the build step and i had to bump the worker memory and also tweak the cache config and re-run it twice and then clear the layer cache before it finally went green for us this afternoon"},
 	}
 	for _, c := range cases {
