@@ -13,6 +13,10 @@ type Message struct {
 	IsForwarded bool      `json:"is_forwarded"`
 	MediaType   string    `json:"media_type,omitempty"`
 	Filename    string    `json:"filename,omitempty"`
+	// Delivery receipts for messages we sent, as recorded by the daemon. omitempty because an
+	// inbound message carries no receipt of ours.
+	DeliveryStatus    string     `json:"delivery_status,omitempty"`
+	DeliveryTimestamp *time.Time `json:"delivery_timestamp,omitempty"`
 }
 
 type Chat struct {

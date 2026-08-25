@@ -782,7 +782,8 @@ func (ms *MessageStore) listMessagesQuery(
 	qb.WriteString(`
 		SELECT
 			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
+			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename,
+			m.delivery_status, m.delivery_timestamp
 		FROM messages m
 		JOIN chats c ON m.chat_jid = c.jid`)
 	var args []any
@@ -833,16 +834,23 @@ func (ms *MessageStore) scanMessages(rows *sql.Rows, err error) ([]Message, erro
 	var messages []Message
 	for rows.Next() {
 		var m Message
-		var chatName, mediaType, filename sql.NullString
+		var chatName, mediaType, filename, deliveryStatus sql.NullString
+		var deliveryTimestamp sql.NullTime
 		if err := rows.Scan(
 			&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
 			&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
+			&deliveryStatus, &deliveryTimestamp,
 		); err != nil {
 			continue
 		}
 		m.ChatName = chatName.String
 		m.MediaType = mediaType.String
 		m.Filename = filename.String
+		m.DeliveryStatus = deliveryStatus.String
+		if deliveryTimestamp.Valid {
+			t := deliveryTimestamp.Time
+			m.DeliveryTimestamp = &t
+		}
 		messages = append(messages, m)
 	}
 	return messages, nil
