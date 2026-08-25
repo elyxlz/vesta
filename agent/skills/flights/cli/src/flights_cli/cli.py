@@ -33,11 +33,22 @@ def _fmt_duration(minutes: int) -> str:
     return f"{h}h{m:02d}m"
 
 
+# The Google-backed search returns prices in a currency decided by IP/locale, NOT in USD. Until
+# 25 Aug 2026 every result was emitted under the key "price_usd" with no currency ever requested,
+# so on this box the field said USD and held GBP. Proven by holding the query fixed and varying only
+# this parameter: curr=None -> 114.0, GBP -> 114.0, USD -> 155.0, EUR -> 133.0 (FCO-LHR, 5 Sep 2026).
+# The damage was not merely a wrong label. A 36% understatement was quoted to a user as a real fare,
+# and a phantom "37% disagreement between Google and Duffel" was recorded as a known trap when it was
+# the same GBP number twice with one of them mislabelled. So: always send an explicit currency, and
+# always report which one back, because a price without a currency is not a price.
+DEFAULT_CURRENCY = "USD"
+
+
 def _fmt_datetime(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def _flight_to_dict(flight) -> dict:
+def _flight_to_dict(flight, currency: str = DEFAULT_CURRENCY) -> dict:
     """Convert a FlightResult to a plain dict."""
     legs = [
         {
@@ -52,48 +63,56 @@ def _flight_to_dict(flight) -> dict:
         for leg in flight.legs
     ]
     return {
-        "price_usd": round(flight.price, 2),
+        "price": round(flight.price, 2),
+        "currency": currency,
         "total_duration": _fmt_duration(flight.duration),
         "stops": flight.stops,
         "legs": legs,
     }
 
 
-def _roundtrip_to_dict(outbound, inbound) -> dict:
+def _roundtrip_to_dict(outbound, inbound, currency: str = DEFAULT_CURRENCY) -> dict:
     return {
-        "price_usd": round(outbound.price + inbound.price, 2),
-        "outbound": _flight_to_dict(outbound),
-        "return": _flight_to_dict(inbound),
+        "price": round(outbound.price + inbound.price, 2),
+        "currency": currency,
+        "outbound": _flight_to_dict(outbound, currency),
+        "return": _flight_to_dict(inbound, currency),
     }
 
 
-def _search_flights(
-    origin: str,
-    destination: str,
-    date: str,
-    return_date: str | None = None,
-    stops: str = DEFAULT_STOPS,
-    cabin: str = DEFAULT_CABIN,
-    sort: str = DEFAULT_SORT,
-    max_results: int = 10,
-) -> list[dict]:
+@dataclasses.dataclass
+class FlightSearchQuery:
+    """Bundled so adding a field does not trip PLR0913, the same reason DateSearchQuery exists."""
+
+    origin: str
+    destination: str
+    date: str
+    return_date: str | None = None
+    stops: str = DEFAULT_STOPS
+    cabin: str = DEFAULT_CABIN
+    sort: str = DEFAULT_SORT
+    max_results: int = 10
+    currency: str = DEFAULT_CURRENCY
+
+
+def _search_flights(query: FlightSearchQuery) -> list[dict]:
     """Run a flight search for a single origin and return list of result dicts."""
     from fli.core import build_flight_segments, parse_cabin_class, parse_max_stops, parse_sort_by, resolve_airport
     from fli.models import FlightSearchFilters, PassengerInfo
     from fli.search import SearchFlights
 
     try:
-        origin_ap = resolve_airport(origin)
-        dest_ap = resolve_airport(destination)
-        seat_type = parse_cabin_class(cabin)
-        max_stops = parse_max_stops(stops)
-        sort_by = parse_sort_by(sort)
+        origin_ap = resolve_airport(query.origin)
+        dest_ap = resolve_airport(query.destination)
+        seat_type = parse_cabin_class(query.cabin)
+        max_stops = parse_max_stops(query.stops)
+        sort_by = parse_sort_by(query.sort)
 
         segments, trip_type = build_flight_segments(
             origin=origin_ap,
             destination=dest_ap,
-            departure_date=date,
-            return_date=return_date,
+            departure_date=query.date,
+            return_date=query.return_date,
         )
 
         filters = FlightSearchFilters(
@@ -105,20 +124,20 @@ def _search_flights(
             sort_by=sort_by,
         )
 
-        results = SearchFlights().search(filters)
+        results = SearchFlights().search(filters, currency=query.currency)
         if not results:
             return []
 
         out = []
-        for r in results[:max_results]:
+        for r in results[: query.max_results]:
             if isinstance(r, tuple):
-                out.append(_roundtrip_to_dict(r[0], r[1]))
+                out.append(_roundtrip_to_dict(r[0], r[1], query.currency))
             else:
-                out.append(_flight_to_dict(r))
+                out.append(_flight_to_dict(r, query.currency))
         return out
 
     except Exception as e:
-        return [{"error": str(e), "origin": origin}]
+        return [{"error": str(e), "origin": query.origin}]
 
 
 @dataclasses.dataclass
@@ -132,6 +151,7 @@ class DateSearchQuery:
     stops: str = DEFAULT_STOPS
     cabin: str = DEFAULT_CABIN
     max_results: int = 20
+    currency: str = DEFAULT_CURRENCY
 
 
 def _search_dates(query: DateSearchQuery) -> list[dict]:
@@ -165,7 +185,8 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
             duration=query.duration if query.round_trip else None,
         )
 
-        results = SearchDates().search(filters)
+        currency = query.currency
+        results = SearchDates().search(filters, currency=currency)
         if not results:
             return []
 
@@ -175,7 +196,8 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
         for r in results[: query.max_results]:
             if len(r.date) == 2:
                 entry = {
-                    "price_usd": round(r.price, 2),
+                    "price": round(r.price, 2),
+                    "currency": currency,
                     "depart": r.date[0].strftime("%Y-%m-%d"),
                     "depart_day": r.date[0].strftime("%A"),
                     "return": r.date[1].strftime("%Y-%m-%d"),
@@ -183,7 +205,8 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
                 }
             else:
                 entry = {
-                    "price_usd": round(r.price, 2),
+                    "price": round(r.price, 2),
+                    "currency": currency,
                     "depart": r.date[0].strftime("%Y-%m-%d"),
                     "depart_day": r.date[0].strftime("%A"),
                 }
@@ -203,7 +226,7 @@ def _sort_by_price(results: list[dict], max_results: int) -> list[dict]:
     """Sort valid results cheapest-first, keeping any error entries at the end."""
     valid = [r for r in results if "error" not in r]
     errors = [r for r in results if "error" in r]
-    valid.sort(key=lambda x: x.get("price_usd", float("inf")))
+    valid.sort(key=lambda x: x.get("price", float("inf")))
     return valid[:max_results] + errors
 
 
@@ -214,14 +237,17 @@ def cmd_search(args):
     all_results = []
     for origin in origins:
         results = _search_flights(
-            origin=origin.upper(),
-            destination=args.destination.upper(),
-            date=args.date,
-            return_date=args.return_date,
-            stops=args.stops,
-            cabin=args.cabin,
-            sort=args.sort,
-            max_results=args.max_results,
+            FlightSearchQuery(
+                origin=origin.upper(),
+                destination=args.destination.upper(),
+                date=args.date,
+                return_date=args.return_date,
+                stops=args.stops,
+                cabin=args.cabin,
+                sort=args.sort,
+                max_results=args.max_results,
+                currency=args.currency,
+            )
         )
         for r in results:
             r["origin"] = origin.upper()
@@ -251,6 +277,7 @@ def cmd_dates(args):
                 stops=args.stops,
                 cabin=args.cabin,
                 max_results=args.max_results,
+                currency=args.currency,
             )
         )
         for r in results:
@@ -284,13 +311,14 @@ def cmd_cheapest(args):
                 stops=DEFAULT_STOPS,
                 cabin=DEFAULT_CABIN,
                 max_results=5,  # top 5 per airport
+                currency=args.currency,
             )
         )
         for r in results:
             r["origin"] = origin
         all_results.extend(r for r in results if "error" not in r)
 
-    all_results.sort(key=lambda x: x.get("price_usd", float("inf")))
+    all_results.sort(key=lambda x: x.get("price", float("inf")))
     top = all_results[: args.top]
 
     print(json.dumps(top, indent=2))
@@ -634,6 +662,11 @@ def _add_google_parsers(sub) -> None:
     p_search.add_argument("--cabin", default=DEFAULT_CABIN, help="Cabin class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST")
     p_search.add_argument("--sort", default=DEFAULT_SORT, help="Sort by: CHEAPEST, DURATION, DEPARTURE_TIME, ARRIVAL_TIME")
     p_search.add_argument("--max-results", type=int, default=10, dest="max_results", help="Max results to return per origin (default: 10)")
+    p_search.add_argument(
+        "--currency",
+        default=DEFAULT_CURRENCY,
+        help=f"ISO 4217 currency for prices (default: {DEFAULT_CURRENCY}). The provider otherwise picks by IP/locale.",
+    )
     p_search.set_defaults(func=cmd_search)
 
     # --- dates (Google Flights) ---
@@ -672,6 +705,11 @@ def _add_google_parsers(sub) -> None:
     p_dates.add_argument("--stops", default=DEFAULT_STOPS, help="Max stops: ANY, 0, 1, 2 (default: ANY)")
     p_dates.add_argument("--cabin", default=DEFAULT_CABIN, help="Cabin class (default: ECONOMY)")
     p_dates.add_argument("--max-results", type=int, default=20, dest="max_results", help="Max results (default: 20)")
+    p_dates.add_argument(
+        "--currency",
+        default=DEFAULT_CURRENCY,
+        help=f"ISO 4217 currency for prices (default: {DEFAULT_CURRENCY}). The provider otherwise picks by IP/locale.",
+    )
     p_dates.set_defaults(func=cmd_dates)
 
     # --- cheapest (Google Flights) ---
@@ -704,6 +742,11 @@ def _add_google_parsers(sub) -> None:
     p_cheapest.add_argument("--round-trip", action="store_true", dest="round_trip", help="Search round-trip dates")
     p_cheapest.add_argument("--duration", type=int, default=3, help="Trip duration in days for round-trip (default: 3)")
     p_cheapest.add_argument("--top", type=int, default=10, help="Number of cheapest options to return (default: 10)")
+    p_cheapest.add_argument(
+        "--currency",
+        default=DEFAULT_CURRENCY,
+        help=f"ISO 4217 currency for prices (default: {DEFAULT_CURRENCY}). The provider otherwise picks by IP/locale.",
+    )
     p_cheapest.set_defaults(func=cmd_cheapest)
 
 
