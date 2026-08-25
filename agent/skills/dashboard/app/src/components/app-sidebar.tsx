@@ -38,7 +38,7 @@ export function AppSidebar({
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
+      <SidebarHeader className="hidden md:flex">
         <SidebarMenu>
           <SidebarMenuItem>
             <div className="flex items-center gap-2 overflow-hidden px-3 py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:px-0">
