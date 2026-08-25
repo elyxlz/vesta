@@ -212,7 +212,14 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::ClientContext(mut ctx)) => {
                         if let Some(device_id) = ctx.device_id.clone() {
-                            device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
+                            let first_sighting =
+                                device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
+                            if first_sighting {
+                                state
+                                    .user_notifier()
+                                    .await
+                                    .notify_device_connected(ctx.descriptor.clone());
+                            }
                             let context = std::mem::take(&mut ctx.context);
                             if !context.is_empty() {
                                 // The user is at a focused device; an unfocused frame or a resync
@@ -376,6 +383,8 @@ struct DeviceGuard {
 }
 
 impl DeviceGuard {
+    /// Returns whether this attach was the device id's first sighting ever (see
+    /// `DeviceRegistry::mark_connected`), which keys the new-device notification.
     fn attach(&mut self, device_id: &str, kind: ClientKind, descriptor: Option<String>) -> bool {
         if self.device.as_deref() == Some(device_id) {
             return false;
@@ -383,9 +392,10 @@ impl DeviceGuard {
         if let Some(previous) = self.device.take() {
             self.registry.mark_disconnected(&previous, now_epoch_secs());
         }
-        self.registry.mark_connected(device_id, kind, descriptor, now_epoch_secs());
+        let first_sighting =
+            self.registry.mark_connected(device_id, kind, descriptor, now_epoch_secs());
         self.device = Some(device_id.to_string());
-        true
+        first_sighting
     }
 }
 

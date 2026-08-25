@@ -99,6 +99,12 @@ html[data-platform="android"] {
   padding-bottom: var(--page-padding-x);
 }
 
+/* The shared "outline" surface: a bordered popover-colored chrome. One owner
+   for the pill, the agent island, the composer, and any future surface. */
+@utility chrome-outline {
+  @apply border border-border bg-popover;
+}
+
 @property --scroll-fade-top {
   syntax: "<length>";
   inherits: false;
@@ -127,7 +133,9 @@ html[data-platform="android"] {
 }
 
 /* macOS-style scrollbars app-wide: a thin, inset, rounded pill thumb over a transparent track, no
-   arrow buttons. Electron is always Chromium, so the WebKit pseudo-elements render identically on
+   arrow buttons. The thumb stays hidden until the scroll container is hovered, focused, or active,
+   so an idle scroller shows no bar; the 12px gutter is always reserved, so revealing it never shifts
+   layout. Electron is always Chromium, so the WebKit pseudo-elements render identically on
    macOS/Windows/Linux; Firefox falls back to the standard scrollbar-* properties. Radix ScrollArea
    hides its own native bar (a more specific selector), so this styles only plain overflow scrollers. */
 /* Firefox uses the standard scrollbar-* properties (it has no ::-webkit-scrollbar).
@@ -137,9 +145,12 @@ html[data-platform="android"] {
 @supports not selector(::-webkit-scrollbar) {
   * {
     scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .show-scrollbar {
     scrollbar-color: oklch(0 0 0 / 0.28) transparent;
   }
-  .dark * {
+  .dark .show-scrollbar {
     scrollbar-color: oklch(1 0 0 / 0.28) transparent;
   }
 }
@@ -161,18 +172,25 @@ html[data-platform="android"] {
 ::-webkit-scrollbar-thumb {
   border-radius: 9999px;
   border: 3px solid transparent;
+  background: transparent;
+  background-clip: padding-box;
+}
+/* Reveal the thumb only on the `show-scrollbar` class, which use-auto-hide-scrollbars toggles while
+   a scroll container is hovered or scrolling. Blink honors a class on the element for scrollbar
+   pseudo-elements, but not the element's own :hover, so the reveal is driven by the class. */
+.show-scrollbar::-webkit-scrollbar-thumb {
   background: oklch(0 0 0 / 0.28);
   background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover {
+.show-scrollbar::-webkit-scrollbar-thumb:hover {
   background: oklch(0 0 0 / 0.45);
   background-clip: padding-box;
 }
-.dark ::-webkit-scrollbar-thumb {
+.dark .show-scrollbar::-webkit-scrollbar-thumb {
   background: oklch(1 0 0 / 0.28);
   background-clip: padding-box;
 }
-.dark ::-webkit-scrollbar-thumb:hover {
+.dark .show-scrollbar::-webkit-scrollbar-thumb:hover {
   background: oklch(1 0 0 / 0.4);
   background-clip: padding-box;
 }

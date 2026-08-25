@@ -1,3 +1,6 @@
+// Dashboard-local sonner Toaster. It lives outside components/ui/ because that
+// directory is a strict mirror of the main app's shadcn registry (scripts/
+// sync-dashboard.sh rsync --delete), which would remove any extra file.
 import { useTheme } from "next-themes";
 import { Toaster as Sonner, type ToasterProps } from "sonner";
 import {

@@ -37,6 +37,16 @@ export type {
 } from "./protocol/tree"
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
 export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
+export {
+  PILL_FALLBACK_ICON,
+  PILL_KIND_ICONS,
+  type PillContent,
+  type PillNotification,
+} from "./notifications-pill/notifications-pill"
+export {
+  fetchUserNotifications,
+  type LoggedUserNotification,
+} from "./notifications-pill/user-notification-feed"
 export { parseServerFrame } from "./protocol/parse"
 export type { ParsedFrame } from "./protocol/parse"
 export { selectDevices, devicesEqual } from "./tree/devices"
@@ -132,6 +142,9 @@ export {
   orbIsLive,
 } from "./agent-status/agent-status"
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
+
+export { ORB_GRADIENT_ANGLE_DEG, orbVisual } from "./orb/orb"
+export type { OrbHighlight, OrbPoint, OrbVisual } from "./orb/orb"
 
 export {
   buildBackupTimeline,

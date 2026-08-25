@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
 import { createAgent } from "@/api";
 import {
   setProvider,
@@ -11,6 +10,7 @@ import {
 import { errorMessage } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
 import { useManifest } from "@/hooks/use-manifest";
+import { useToast } from "@/stores/use-toast";
 import {
   loadOnboarding,
   saveOnboarding,
@@ -34,6 +34,7 @@ export function NewAgent() {
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const navigate = useNavigate();
   const manifest = useManifest();
+  const toast = useToast();
   // Refreshing mid-onboarding restores the name and personality (never the credentials, which
   // stay in memory only); a resumed run re-collects the provider and skips whatever it already has.
   const [agentName, setAgentName] = useState(

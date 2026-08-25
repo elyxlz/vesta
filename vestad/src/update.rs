@@ -393,10 +393,6 @@ pub fn recover_at_boot(config_dir: &Path, running_version: &str) -> BootRecovery
 
 // --- Announcing an update that landed ---
 
-/// The kind the announcement rides on the `user_notification` delta. Owned by the gateway: the
-/// agent-injected endpoint refuses it, so nothing but a real update can produce one.
-pub const UPDATED_NOTIFICATION_KIND: &str = "gateway_updated";
-
 /// The `agent` a gateway-owned user notification names: none. The field identifies the source, and
 /// the gateway is not an agent. Every shipped client degrades gracefully on it, rendering the
 /// server-decided title and body and routing nowhere.
@@ -426,12 +422,9 @@ pub fn announcement(recovery: &BootRecovery) -> Option<(String, String)> {
     let backup_warnings = if warnings.is_empty() {
         String::new()
     } else {
-        format!(" Backup warnings: {}.", warnings.join("; "))
+        format!("Backup warnings: {}.", warnings.join("; "))
     };
-    Some((
-        "Vesta".to_string(),
-        format!("Your gateway updated to v{version}.{backup_warnings}"),
-    ))
+    Some((format!("gateway updated to v{version}"), backup_warnings))
 }
 
 /// Whether the grace window passed with no client connected and focused. A client that focused at
@@ -454,12 +447,9 @@ pub async fn announce(state: SharedState, title: String, body: String) {
         return;
     }
     tracing::info!(%title, "announcing the update to the clients that missed it");
-    state
-        .mobile_app
-        .push_user_notification(GATEWAY_NOTIFICATION_AGENT, UPDATED_NOTIFICATION_KIND, &title, &body);
-    state.sync_hub.publish_user_notification(
+    state.user_notifier().await.notify(
         GATEWAY_NOTIFICATION_AGENT,
-        UPDATED_NOTIFICATION_KIND.to_string(),
+        crate::user_notifications::KIND_GATEWAY_UPDATED,
         title,
         body,
     );
@@ -545,11 +535,27 @@ pub async fn refresh_update_info(state: &SharedState) -> Result<UpdateInfo, Stri
     match tokio::task::spawn_blocking(move || check_once(channel)).await {
         Ok(Ok(info)) => {
             *state.update_info.lock().await = Some(info.clone());
+            announce_available(state, &info).await;
             Ok(info)
         }
         Ok(Err(error)) => Err(error),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Notify each newly discovered pending release once ever, remembered by the durable
+/// notification log itself: an ambient nudge beside the `UpdatePill`, for the gateways that
+/// update by hand, never repeated by a restart or a re-check.
+async fn announce_available(state: &SharedState, info: &UpdateInfo) {
+    if !info.update_available {
+        return;
+    }
+    state.user_notifier().await.notify_once(
+        GATEWAY_NOTIFICATION_AGENT,
+        crate::user_notifications::KIND_UPDATE_AVAILABLE,
+        format!("gateway v{} available", info.latest),
+        String::new(),
+    );
 }
 
 /// One update in flight: the state it drives and the identity it records at every transition.
@@ -955,7 +961,7 @@ mod tests {
                 version: "0.1.190".into(),
                 warnings: Vec::new(),
             }),
-            Some(("Vesta".into(), "Your gateway updated to v0.1.190.".into()))
+            Some(("gateway updated to v0.1.190".into(), String::new()))
         );
     }
 
@@ -966,11 +972,8 @@ mod tests {
             warnings: vec!["axel: snapshot timed out".into(), "mona: disk full".into()],
         })
         .expect("an update that landed announces");
-        assert_eq!(title, "Vesta");
-        assert_eq!(
-            body,
-            "Your gateway updated to v0.1.190. Backup warnings: axel: snapshot timed out; mona: disk full."
-        );
+        assert_eq!(title, "gateway updated to v0.1.190");
+        assert_eq!(body, "Backup warnings: axel: snapshot timed out; mona: disk full.");
     }
 
     fn focused_context() -> crate::sync::protocol::ClientContext {

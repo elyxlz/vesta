@@ -50,6 +50,11 @@ pub(crate) struct Settings {
     /// unit, and the daemon reads it at startup. Set via `vestad serve --expose-lan`.
     #[serde(default)]
     pub(crate) expose_lan: bool,
+    /// Per-kind background-push overrides for user notifications, keyed by kind. A kind absent
+    /// here pushes per its default in `user_notifications::MOBILE_PUSH_ROUTES`; the delta to
+    /// connected clients always fans regardless. Set via PUT /gateway/settings.
+    #[serde(default)]
+    pub(crate) push_notifications: HashMap<String, bool>,
 }
 
 // Manual `Default` (not derived) so a fresh install with no settings.json gets
@@ -64,6 +69,7 @@ impl Default for Settings {
             channel: default_channel(),
             auto_update: true,
             expose_lan: false,
+            push_notifications: HashMap::new(),
         }
     }
 }

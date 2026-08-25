@@ -137,6 +137,9 @@ pub struct AppState {
     /// Per-connection client presence fed by the `/sync` socket. Read by the mobile push path to
     /// suppress a push while any client is focused, and fanned to sessions for return-to-focus.
     pub(crate) presence: Arc<crate::sync::Presence>,
+    /// The durable, uncapped log of user-facing notifications, appended by every
+    /// `UserNotifier::notify` and paged by `GET /notifications`.
+    pub(crate) user_notification_log: Arc<crate::user_notification_log::UserNotificationLog>,
     /// Which agents have been told which device zone or place, so each change is delivered once.
     pub(crate) user_context: crate::user_context::UserContext,
     pub(crate) dev_mode: bool,
@@ -187,6 +190,9 @@ impl AppState {
         let http_client = reqwest::Client::new();
         let presence = Arc::new(crate::sync::Presence::new());
         let device_registry = Arc::new(crate::device_registry::DeviceRegistry::load(&env_config.config_dir));
+        let user_notification_log = Arc::new(
+            crate::user_notification_log::UserNotificationLog::load(&env_config.config_dir),
+        );
         let (mobile_app, mobile_app_worker) =
             mobile_app::MobileApp::new(device_registry.clone(), http_client.clone(), presence.clone());
         (
@@ -209,6 +215,7 @@ impl AppState {
                 mobile_app,
                 device_registry,
                 presence,
+                user_notification_log,
                 user_context: crate::user_context::UserContext::default(),
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
@@ -220,6 +227,17 @@ impl AppState {
             },
             mobile_app_worker,
         )
+    }
+
+    /// The delivery targets of one user notification, with the live push overrides read once.
+    /// Every producer builds one of these per notification, so delivery has a single shape.
+    pub(crate) async fn user_notifier(&self) -> crate::user_notifications::UserNotifier {
+        crate::user_notifications::UserNotifier {
+            sync_hub: self.sync_hub.clone(),
+            mobile_app: self.mobile_app.clone(),
+            log: self.user_notification_log.clone(),
+            push_overrides: self.settings.read().await.push_notifications.clone(),
+        }
     }
 
     pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {

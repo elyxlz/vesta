@@ -9,11 +9,11 @@ import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
 import { PresenceReporter } from "@/providers/PresenceReporter";
 import { InsetFrame } from "@/components/InsetFrame";
-import { Toaster } from "@/components/ui/sonner";
+import { Scrim } from "@/components/Scrim";
 import { WhatsNewDialog } from "@/components/WhatsNew";
 import { router } from "@/router";
+import { useAutoHideScrollbars } from "./hooks/use-auto-hide-scrollbars";
 import { useIsMobile } from "./hooks/use-mobile";
-import { useLayout } from "@/stores/use-layout";
 import { useRuntime } from "@/providers/RuntimeProvider";
 
 function openAgent(agentName: string): void {
@@ -23,8 +23,6 @@ function openAgent(agentName: string): void {
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
   const { versionChecked } = useGateway();
-  // Toasts drop in below the absolute navbar instead of over it.
-  const navbarHeight = useLayout((s) => s.navbarHeight);
 
   return (
     <AnimatePresence mode="wait">
@@ -44,12 +42,6 @@ function AppContent() {
         >
           <RouterProvider router={router} />
           <WhatsNewDialog />
-          <Toaster
-            position="top-right"
-            richColors
-            offset={{ top: navbarHeight + 20 }}
-            mobileOffset={{ top: navbarHeight + 20 }}
-          />
         </motion.div>
       )}
     </AnimatePresence>
@@ -60,6 +52,7 @@ export default function App() {
   const isMobile = useIsMobile();
   const { isDesktopApp } = useRuntime();
   const isFullscreen = isMobile || isDesktopApp;
+  useAutoHideScrollbars();
 
   const content = (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -71,6 +64,7 @@ export default function App() {
                 <GatewayProvider>
                   <NotificationProvider onOpenAgent={openAgent}>
                     <PresenceReporter />
+                    <Scrim />
                     <AppContent />
                   </NotificationProvider>
                 </GatewayProvider>

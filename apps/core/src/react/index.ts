@@ -8,3 +8,8 @@ export {
   UPDATED_NOTICE_MS,
   RESTARTED_NOTICE_MS,
 } from "./use-update-resolution"
+export {
+  useNotificationsPill,
+  type NotificationsPillOptions,
+  type PillDeltaSource,
+} from "./use-notifications-pill"

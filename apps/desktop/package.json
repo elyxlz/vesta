@@ -12,6 +12,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "npm run compile && node scripts/dev.mjs",
+    "make-icons": "uv run --with pillow --with numpy scripts/make-icons.py",
     "compile": "tsc",
     "check": "tsc --noEmit",
     "lint": "eslint src scripts",

@@ -21,10 +21,9 @@ import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
   agent: AgentRow;
-  enableTracking?: boolean;
 }
 
-export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
+export function AgentCard({ agent }: AgentCardProps) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
 
@@ -50,7 +49,6 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
                 <Orb
                   state={orbState}
                   size={112}
-                  enableTracking={enableTracking}
                   label={`${agent.name}: ${label}`}
                 />
               </span>

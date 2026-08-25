@@ -102,7 +102,7 @@ export function AgentIsland() {
               }
         }
         className={cn(
-          "flex items-center justify-center overflow-hidden border border-border bg-popover bg-clip-padding text-base text-popover-foreground will-change-[transform,opacity]",
+          "chrome-outline flex items-center justify-center overflow-hidden bg-clip-padding text-base text-popover-foreground will-change-[transform,opacity]",
           expanded
             ? "absolute top-0 left-1/2 aspect-square w-[min(100vw-2rem,178px)] shrink-0 -translate-x-1/2"
             : "mx-auto h-full w-fit max-w-[min(100vw-2rem,280px)] cursor-pointer touch-manipulation",

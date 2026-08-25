@@ -17,9 +17,39 @@ import {
 const EDGE_FADE =
   "linear-gradient(to right, transparent, black 10%, black 90%, transparent)";
 
+// Pixels per line when a mouse wheel reports deltas in lines (deltaMode 1).
+const WHEEL_LINE_HEIGHT = 16;
+// Idle gap after the last wheel event before snap is restored to settle.
+const WHEEL_SETTLE_MS = 120;
+// Fraction of the wheel delta applied to the carousel, to slow the cards.
+const WHEEL_SPEED = 0.5;
+
 // scrollLeft that places the card's center at the scroller's horizontal center.
 function centerScrollLeft(scroller: HTMLDivElement, card: HTMLDivElement) {
   return card.offsetLeft + card.offsetWidth / 2 - scroller.clientWidth / 2;
+}
+
+// Index of the card whose center sits nearest the scroller's viewport center
+// (-1 with no cards): the one nearest-card decision, shared by the per-frame
+// effects pass and the wheel gesture's settle.
+function nearestCardIndex(
+  scroller: HTMLDivElement,
+  cards: (HTMLDivElement | null)[],
+): number {
+  const viewportCenter = scroller.scrollLeft + scroller.clientWidth / 2;
+  let nearestIndex = -1;
+  let nearestDistance = Infinity;
+  cards.forEach((card, index) => {
+    if (!card) return;
+    const distance = Math.abs(
+      card.offsetLeft + card.offsetWidth / 2 - viewportCenter,
+    );
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+  return nearestIndex;
 }
 
 function Pagination({
@@ -70,25 +100,20 @@ export function AgentsCarousel({
   // Scale every card by its distance to the scroller's horizontal center and
   // derive the centered index. Scale is written imperatively so per-frame
   // scroll updates never touch React state; only a changed centered index
-  // re-renders (to flip enableTracking + the active pagination dot).
+  // re-renders (to flip the active pagination dot).
   const applyEffects = useCallback(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
     const viewportCenter = scroller.scrollLeft + scroller.clientWidth / 2;
-    let nearestIndex = 0;
-    let nearestDistance = Infinity;
-    cardRefs.current.forEach((card, index) => {
+    cardRefs.current.forEach((card) => {
       if (!card) return;
-      const cardCenter = card.offsetLeft + card.offsetWidth / 2;
-      const offset = cardCenter - viewportCenter;
+      const offset = card.offsetLeft + card.offsetWidth / 2 - viewportCenter;
       card.style.transform = `scale(${String(scaleForCarouselItemOffset(offset))})`;
-      const distance = Math.abs(offset);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestIndex = index;
-      }
     });
-    setCenteredIndex((prev) => (prev === nearestIndex ? prev : nearestIndex));
+    const nearestIndex = nearestCardIndex(scroller, cardRefs.current);
+    if (nearestIndex >= 0) {
+      setCenteredIndex((prev) => (prev === nearestIndex ? prev : nearestIndex));
+    }
   }, []);
 
   // Center initialIndex before paint, without animation.
@@ -124,6 +149,66 @@ export function AgentsCarousel({
     };
   }, [applyEffects]);
 
+  // Every wheel direction drives the horizontal carousel at one speed. Snap is
+  // off during the gesture so small trackpad deltas accumulate; when it stops
+  // the carousel eases to the nearest card, then mandatory snap is restored on
+  // scrollend to hold it (touch and resize still center). Snap lives here, not
+  // in React style, so a re-render mid-gesture cannot reset it.
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    scroller.style.scrollSnapType = "x mandatory";
+    let settleTimer: number | null = null;
+    let restoreSnap: (() => void) | null = null;
+
+    const cancelRestore = () => {
+      if (restoreSnap === null) return;
+      scroller.removeEventListener("scrollend", restoreSnap);
+      restoreSnap = null;
+    };
+
+    const settle = () => {
+      const nearest =
+        cardRefs.current[nearestCardIndex(scroller, cardRefs.current)];
+      if (!nearest) {
+        scroller.style.scrollSnapType = "x mandatory";
+        return;
+      }
+      scroller.scrollTo({
+        left: centerScrollLeft(scroller, nearest),
+        behavior: "smooth",
+      });
+      restoreSnap = () => {
+        cancelRestore();
+        scroller.style.scrollSnapType = "x mandatory";
+      };
+      scroller.addEventListener("scrollend", restoreSnap);
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      const raw =
+        Math.abs(event.deltaX) > Math.abs(event.deltaY)
+          ? event.deltaX
+          : event.deltaY;
+      if (raw === 0) return;
+      event.preventDefault();
+      cancelRestore();
+      const scale =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE_HEIGHT : 1;
+      scroller.style.scrollSnapType = "none";
+      scroller.scrollLeft += raw * scale * WHEEL_SPEED;
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(settle, WHEEL_SETTLE_MS);
+    };
+
+    scroller.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      scroller.removeEventListener("wheel", onWheel);
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      cancelRestore();
+    };
+  }, []);
+
   const gotoIndex = (index: number) => {
     const scroller = scrollerRef.current;
     const card = cardRefs.current[index];
@@ -135,13 +220,12 @@ export function AgentsCarousel({
   };
 
   return (
-    <div className="relative flex min-h-0 w-full flex-1 items-center">
+    <div className="relative flex min-h-0 w-full flex-1">
       <div
         ref={scrollerRef}
         className="flex w-full items-center overflow-x-auto no-scrollbar"
         style={{
           gap: AGENT_CAROUSEL_GAP,
-          scrollSnapType: "x mandatory",
           paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
           overscrollBehaviorX: "none",
           touchAction: "pan-x",
@@ -160,9 +244,10 @@ export function AgentsCarousel({
               width: `${String(AGENT_CAROUSEL_CARD_WIDTH)}px`,
               aspectRatio: "1/1",
               scrollSnapAlign: "center",
+              willChange: "transform",
             }}
           >
-            <AgentCard agent={agent} enableTracking={index === centeredIndex} />
+            <AgentCard agent={agent} />
           </div>
         ))}
       </div>

@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { bubbleRadiusStyle } from "../bubble-radius";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
@@ -45,22 +46,29 @@ function statusLineText(
 export const ChatBubble = memo(function ChatBubble({
   event,
   className,
-  fullscreen,
   isMobile,
+  hasTail = true,
   onRetry,
 }: {
   event: ChatMessage;
   className?: string;
-  fullscreen?: boolean;
   isMobile: boolean;
+  hasTail?: boolean;
   onRetry?: RetryHandler;
 }) {
+  // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
+  const large = !isMobile;
   if (event.type === "status") return null;
 
   if (event.type === "error" || event.type === "rate_limited") {
     return (
       <div className={cn("flex justify-center", className)}>
-        <span className="text-[11px] text-muted-foreground/60 select-none">
+        <span
+          className={cn(
+            "text-muted-foreground/60 select-none",
+            large ? "text-sm" : "text-[11px]",
+          )}
+        >
           {statusLineText(event)}
         </span>
       </div>
@@ -68,6 +76,8 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (event.type !== "user" && event.type !== "chat") return null;
+
+  const ts = formatBubbleTime(event.ts);
 
   // A send whose POST failed (503 retryable) or errored: a subtle "not sent" line with tap-to-retry,
   // re-posting the same intent id. Delivery truth is still the echo, which clears send_state.
@@ -83,8 +93,9 @@ export const ChatBubble = memo(function ChatBubble({
         <MessageBubble
           isUser
           text={text}
-          ts={formatBubbleTime(event.ts)}
-          mobileCard={Boolean(fullscreen && isMobile)}
+          ts={ts}
+          large={large}
+          hasTail={hasTail}
         />
         <div className="mt-0.5 flex justify-end pr-1">
           <button
@@ -105,9 +116,10 @@ export const ChatBubble = memo(function ChatBubble({
     <MessageBubble
       isUser={event.type === "user"}
       text={event.text}
-      ts={formatBubbleTime(event.ts)}
+      ts={ts}
       className={className}
-      mobileCard={Boolean(fullscreen && isMobile)}
+      large={large}
+      hasTail={hasTail}
     />
   );
 });
@@ -117,34 +129,30 @@ function MessageBubble({
   text,
   ts,
   className,
-  mobileCard,
+  large,
+  hasTail,
 }: {
   isUser: boolean;
   text: string;
   ts: string;
   className?: string;
-  // Mobile fullscreen lifts the agent bubble onto a card surface with a ring/shadow; the
-  // bg override goes through the same `*:data-[slot=bubble-content]` channel the variant uses
-  // so twMerge drops the variant's bg-secondary cleanly.
-  mobileCard: boolean;
+  // Desktop fullscreen: 16px body text (overrides the ui bubble's text-sm default).
+  large: boolean;
+  // Only the last bubble of a group carries the tighter tail corner.
+  hasTail: boolean;
 }) {
   return (
     <Message align={isUser ? "end" : "start"} className={className}>
       <Bubble
         variant={isUser ? "default" : "secondary"}
         align={isUser ? "end" : "start"}
-        className={cn(
-          "max-w-[85%]",
-          !isUser && mobileCard && "*:data-[slot=bubble-content]:bg-card",
-        )}
+        className="max-w-[85%]"
       >
         <BubbleContent
-          className={cn(
-            "flex items-end rounded-squircle-sm [corner-shape:squircle] px-3 py-1.5",
-            isUser ? "rounded-br-sm" : "rounded-bl-sm",
-            mobileCard &&
-              "shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
-          )}
+          className={cn("flex items-end px-3.5 py-1.5", large && "text-base")}
+          // Pill bubble; the last bubble of a group gets one tighter "tail"
+          // corner for the conversation look.
+          style={bubbleRadiusStyle(isUser, hasTail)}
         >
           <div className="min-w-0 break-words">
             <Markdown>{text}</Markdown>

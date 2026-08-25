@@ -80,7 +80,7 @@ async def send_user_notification(kind: str, title: str, body: str) -> None:
     connected clients and an Expo push to backgrounded mobile. Best-effort: any missing identity,
     transport failure, non-2xx, or timeout is logged and swallowed, so surfacing a user notification
     never disrupts the turn that emitted it (the durable work it describes already happened). `kind` is
-    one of "message"/"rate_limited"."""
+    one of "message"/"needs_user"/"task"."""
     endpoint = _agent_endpoint("user-notification")
     if endpoint is None:
         return

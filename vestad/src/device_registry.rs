@@ -204,15 +204,18 @@ impl DeviceRegistry {
 
     /// A `/sync` connection reporting this device: bump the live count, upsert the identity facet,
     /// stamp `last_seen`. Non-blocking (runs in the async loop); the disk write is deferred.
+    /// Returns whether this device id was never in the store before (its first sighting ever),
+    /// which is what the new-device notification keys on.
     pub(crate) fn mark_connected(
         &self,
         id: &str,
         kind: ClientKind,
         descriptor: Option<String>,
         now: u64,
-    ) {
+    ) -> bool {
         let mut state = self.state.lock().expect("device registry mutex");
         *state.live_counts.entry(id.to_string()).or_insert(0) += 1;
+        let first_sighting = !state.devices.contains_key(id);
         let record = state.devices.entry(id.to_string()).or_default();
         record.kind = kind;
         if descriptor.is_some() {
@@ -221,6 +224,7 @@ impl DeviceRegistry {
         record.last_seen = now;
         self.republish(&state);
         self.dirty.notify_one();
+        first_sighting
     }
 
     /// Record what a device reports about itself: its zone, its position. A field the report omits

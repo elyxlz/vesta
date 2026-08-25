@@ -3,13 +3,9 @@ import { Home, Plus } from "lucide-react";
 import { SettingsButton } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useOnboarding } from "@/stores/use-onboarding";
+import { useToast } from "@/stores/use-toast";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "..";
 
@@ -18,59 +14,44 @@ function Leading() {
   const location = useLocation();
   const { reachable, agentsFetched, agents } = useGateway();
   const onboardingStep = useOnboarding((s) => s.step);
+  const toast = useToast();
 
   const isHome = location.pathname === "/";
   const isNew = location.pathname === "/new";
 
-  if (isHome && reachable && agentsFetched) {
+  // Rendered whenever the gateway is unreachable too, but a click then raises a toast
+  // instead of routing into the create flow that needs a live gateway.
+  if (isHome && (!reachable || agentsFetched)) {
     return (
-      <>
-        <Button
-          variant="ghost"
-          size="lg"
-          onClick={() => {
-            void navigate("/new");
-          }}
-          className="max-sm:hidden"
-        >
-          <Plus data-icon="inline-start" />
-          new agent
-        </Button>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-lg"
-              onClick={() => {
-                void navigate("/new");
-              }}
-              className="sm:hidden"
-            >
-              <Plus />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>new agent</TooltipContent>
-        </Tooltip>
-      </>
+      <Button
+        variant="outline"
+        size="icon-lg"
+        aria-label="new agent"
+        onClick={() => {
+          if (!reachable) {
+            toast.error("can't reach the gateway right now");
+            return;
+          }
+          void navigate("/new");
+        }}
+      >
+        <Plus />
+      </Button>
     );
   }
 
   if (isNew && agents.length > 0 && onboardingStep === "name") {
     return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="outline"
-            size="icon-lg"
-            onClick={() => {
-              void navigate("/");
-            }}
-          >
-            <Home />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>home</TooltipContent>
-      </Tooltip>
+      <Button
+        variant="outline"
+        size="icon-lg"
+        aria-label="home"
+        onClick={() => {
+          void navigate("/");
+        }}
+      >
+        <Home />
+      </Button>
     );
   }
 
@@ -85,10 +66,10 @@ export function HomeNavbar() {
   return (
     <Navbar
       leading={<Leading />}
-      center={<LogoText />}
+      center={<LogoText className="-translate-y-1" />}
       trailing={
         <>
-          <StatusPill />
+          <StatusPill showHostname={false} />
           {reachable && <SettingsButton />}
         </>
       }

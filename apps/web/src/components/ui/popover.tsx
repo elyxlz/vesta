@@ -2,11 +2,25 @@ import * as React from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
+import { useOverlayScrim } from "@/hooks/use-scrim-hold";
 
 function Popover({
+  open,
+  defaultOpen,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />;
+  // Holds the app scrim (components/Scrim) while open, like every overlay root.
+  const handleOpenChange = useOverlayScrim({ open, defaultOpen, onOpenChange });
+  return (
+    <PopoverPrimitive.Root
+      data-slot="popover"
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  );
 }
 
 function PopoverTrigger({
@@ -18,7 +32,7 @@ function PopoverTrigger({
 function PopoverContent({
   className,
   align = "center",
-  sideOffset = 4,
+  sideOffset = 10,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
   return (

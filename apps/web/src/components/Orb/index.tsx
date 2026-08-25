@@ -1,313 +1,48 @@
 import { useEffect, useRef } from "react";
-import { orbIsLive, type OrbVisualState } from "@vesta/core";
+import { orbVisual, type OrbVisualState } from "@vesta/core";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
-import { orbColors } from "./styles";
+import {
+  orbColors,
+  orbGradientCss,
+  orbHighlightStyle,
+  orbShadowCss,
+} from "./styles";
 
 interface OrbProps {
   state: OrbVisualState;
   size?: number;
-  enableTracking?: boolean;
   suppressMotion?: boolean;
-  glowSpreadScale?: number;
-  glowGradientFade?: number;
   label?: string;
 }
 
-const COLOR_LERP_SPEED = 3;
-const VALUE_LERP_SPEED = 4;
-const TRACK_LERP_SPEED = 7;
-const FLOAT_LERP_SPEED = 5;
-const MAX_FRAME_TIME = 0.05;
+// The solid orb fills this fraction of its box; the rest is breathing room for
+// the glow halo (the old WebGL sphere occupied a similar fraction of `size`).
+const ORB_FILL = 0.68;
 
-const VERTEX_SHADER_SOURCE = `
-attribute vec2 a_position;
-varying vec2 v_uv;
-
-void main() {
-  v_uv = (a_position + 1.0) * 0.5;
-  gl_Position = vec4(a_position, 0.0, 1.0);
-}
-`;
-
-const FRAGMENT_SHADER_SOURCE = `
-precision mediump float;
-
-varying vec2 v_uv;
-
-uniform vec2 u_resolution;
-uniform vec3 u_light_color;
-uniform vec3 u_mid_color;
-uniform vec3 u_dark_color;
-uniform vec2 u_track;
-uniform vec2 u_highlight;
-uniform float u_glow_opacity;
-uniform float u_glow_scale;
-uniform float u_orb_scale;
-uniform float u_scene_scale;
-uniform float u_float_offset;
-
-void main() {
-  vec2 uv = v_uv * 2.0 - 1.0;
-  uv.x *= u_resolution.x / u_resolution.y;
-
-  vec2 center = vec2(
-    u_track.x * 0.08 * u_scene_scale,
-    u_track.y * 0.08 * u_scene_scale + u_float_offset
-  );
-  float sphere_radius = 0.58 * u_scene_scale * u_orb_scale;
-  float glow_radius = sphere_radius * (1.6 * u_glow_scale);
-  float distance_to_center = length(uv - center);
-
-  float glow = exp(-pow(distance_to_center / max(glow_radius, 0.001), 2.0) * 2.6) * u_glow_opacity;
-  float orb_mask = 1.0 - smoothstep(sphere_radius - 0.01, sphere_radius + 0.01, distance_to_center);
-
-  vec3 color = u_mid_color * glow * 0.9;
-  float alpha = glow;
-
-  if (orb_mask > 0.0) {
-    vec2 sphere_uv = (uv - center) / sphere_radius;
-    float sphere_depth = sqrt(max(0.0, 1.0 - dot(sphere_uv, sphere_uv)));
-    vec3 normal = normalize(vec3(sphere_uv, sphere_depth));
-    vec3 light_direction = normalize(vec3(-0.55 + u_track.x * 0.25, -0.75 + u_track.y * 0.25, 1.35));
-    float diffuse = max(dot(normal, light_direction), 0.0);
-    float fresnel = pow(1.0 - max(normal.z, 0.0), 2.6);
-    float shade = clamp(0.22 + diffuse * 0.95, 0.0, 1.0);
-
-    vec3 sphere_color = mix(u_dark_color, u_light_color, shade);
-    sphere_color = mix(sphere_color, u_mid_color, 0.22 + (1.0 - diffuse) * 0.18);
-    sphere_color *= 1.0 - fresnel * 0.28;
-
-    vec2 highlight_center = center + vec2(
-      (-0.18 + u_highlight.x * 0.08) * u_scene_scale * u_orb_scale,
-      (-0.24 + u_highlight.y * 0.08) * u_scene_scale * u_orb_scale
-    );
-    vec2 highlight_delta = uv - highlight_center;
-    highlight_delta.x /= 0.29 * u_scene_scale * u_orb_scale;
-    highlight_delta.y /= 0.19 * u_scene_scale * u_orb_scale;
-    float highlight = exp(-dot(highlight_delta, highlight_delta) * 2.6) * 0.35;
-
-    color += sphere_color + vec3(highlight);
-    alpha = max(alpha, orb_mask);
-  }
-
-  gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
-}
-`;
-
-interface VisualTarget {
-  lightColor: [number, number, number];
-  midColor: [number, number, number];
-  darkColor: [number, number, number];
-  glowOpacityBase: number;
-  glowOpacityAmplitude: number;
-  glowScaleBase: number;
-  glowScaleAmplitude: number;
-  orbScaleBase: number;
-  orbScaleAmplitude: number;
-  pulseDuration: number;
-  floatAmplitudePx: number;
-  floatDuration: number;
-}
-
-interface VisualState {
-  lightColor: [number, number, number];
-  midColor: [number, number, number];
-  darkColor: [number, number, number];
-  glowOpacity: number;
-  glowScale: number;
-  orbScale: number;
-  floatAmplitudePx: number;
-  trackX: number;
-  trackY: number;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function mix(current: number, target: number, amount: number) {
-  return current + (target - current) * amount;
-}
-
-function mixTriple(
-  current: [number, number, number],
-  target: [number, number, number],
-  amount: number,
-) {
-  current[0] = mix(current[0], target[0], amount);
-  current[1] = mix(current[1], target[1], amount);
-  current[2] = mix(current[2], target[2], amount);
-}
-
-function getUniformLocations(gl: WebGLRenderingContext, program: WebGLProgram) {
-  return {
-    resolution: gl.getUniformLocation(program, "u_resolution"),
-    lightColor: gl.getUniformLocation(program, "u_light_color"),
-    midColor: gl.getUniformLocation(program, "u_mid_color"),
-    darkColor: gl.getUniformLocation(program, "u_dark_color"),
-    track: gl.getUniformLocation(program, "u_track"),
-    highlight: gl.getUniformLocation(program, "u_highlight"),
-    glowOpacity: gl.getUniformLocation(program, "u_glow_opacity"),
-    glowScale: gl.getUniformLocation(program, "u_glow_scale"),
-    orbScale: gl.getUniformLocation(program, "u_orb_scale"),
-    sceneScale: gl.getUniformLocation(program, "u_scene_scale"),
-    floatOffset: gl.getUniformLocation(program, "u_float_offset"),
-  };
-}
-
-function parseRgbColor(value: string): [number, number, number] {
-  const channels = (value.match(/[\d.]+/g) ?? [])
-    .slice(0, 3)
-    .map((channel) => Number.parseFloat(channel) / 255);
-
-  if (
-    channels.length !== 3 ||
-    channels.some((channel) => Number.isNaN(channel))
-  ) {
-    return [1, 1, 1];
-  }
-
-  return channels as [number, number, number];
-}
-
-function resolveCssColor(value: string, container: HTMLElement) {
-  const probe = document.createElement("span");
-  probe.style.color = value;
-  probe.style.position = "absolute";
-  probe.style.visibility = "hidden";
-  probe.style.pointerEvents = "none";
-  container.appendChild(probe);
-  const resolved = getComputedStyle(probe).color;
-  probe.remove();
-  return parseRgbColor(resolved);
-}
-
-function createShader(gl: WebGLRenderingContext, type: number, source: string) {
-  const shader = gl.createShader(type);
-
-  if (!shader) {
-    return null;
-  }
-
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-
-  if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    return shader;
-  }
-
-  gl.deleteShader(shader);
-  return null;
-}
-
-function createProgram(gl: WebGLRenderingContext) {
-  const vertexShader = createShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER_SOURCE);
-  const fragmentShader = createShader(
-    gl,
-    gl.FRAGMENT_SHADER,
-    FRAGMENT_SHADER_SOURCE,
-  );
-
-  if (!vertexShader || !fragmentShader) {
-    if (vertexShader) gl.deleteShader(vertexShader);
-    if (fragmentShader) gl.deleteShader(fragmentShader);
-    return null;
-  }
-
-  const program = gl.createProgram();
-
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
-  gl.deleteShader(vertexShader);
-  gl.deleteShader(fragmentShader);
-
-  if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    return program;
-  }
-
-  gl.deleteProgram(program);
-  return null;
-}
-
-function getVisualTarget(
-  state: OrbVisualState,
-  container: HTMLElement,
-  suppressMotion: boolean,
-): VisualTarget {
-  const [lightColor, midColor, darkColor] = orbColors[state].map((color) =>
-    resolveCssColor(color, container),
-  ) as [
-    VisualTarget["lightColor"],
-    VisualTarget["midColor"],
-    VisualTarget["darkColor"],
-  ];
-  const isLive = orbIsLive(state);
-  const thinking = state === "thinking";
-
-  const target: VisualTarget = {
-    lightColor,
-    midColor,
-    darkColor,
-    glowOpacityBase: thinking ? 0.55 : isLive ? 0.5 : 0.12,
-    glowOpacityAmplitude: thinking ? 0.08 : 0,
-    glowScaleBase: thinking ? 1.08 : isLive ? 1.04 : 0.85,
-    glowScaleAmplitude: thinking ? 0.028 : 0,
-    orbScaleBase: thinking ? 1.015 : 1,
-    orbScaleAmplitude: thinking ? 0.009 : 0,
-    pulseDuration: 2.5,
-    floatAmplitudePx: isLive ? (thinking ? 4 : 3) : 0,
-    floatDuration: thinking ? 3.8 : 5,
-  };
-  if (!suppressMotion) return target;
-
-  return {
-    ...target,
-    glowOpacityAmplitude: 0,
-    glowScaleAmplitude: 0,
-    orbScaleAmplitude: 0,
-    floatAmplitudePx: 0,
-    floatDuration: thinking ? 3 : 4,
-  };
-}
-
-function createInitialVisualState(target: VisualTarget): VisualState {
-  return {
-    lightColor: [...target.lightColor] as [number, number, number],
-    midColor: [...target.midColor] as [number, number, number],
-    darkColor: [...target.darkColor] as [number, number, number],
-    glowOpacity: target.glowOpacityBase,
-    glowScale: target.glowScaleBase,
-    orbScale: target.orbScaleBase,
-    floatAmplitudePx: target.floatAmplitudePx,
-    trackX: 0,
-    trackY: 0,
-  };
-}
+// Glow halo shape: how far the halo spreads past the orb, and the radius (as a
+// percentage of the halo box) where its radial fade ends.
+const GLOW_SPREAD_SCALE = 2;
+const GLOW_FADE_PCT = 60;
 
 export function Orb({
   state,
   size = 140,
-  enableTracking = false,
   suppressMotion = false,
-  glowSpreadScale = 2,
-  glowGradientFade = 60,
   label,
 }: OrbProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gradientRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
   const motionSuppressed = suppressMotion || prefersReducedMotion;
-  const isLive = orbIsLive(state);
-  const shouldTrack = enableTracking && isLive;
-  const targetTrackRef = useRef({ x: 0, y: 0 });
-  const targetVisualRef = useRef<VisualTarget | null>(null);
-  const visualStateRef = useRef<VisualState | null>(null);
+  const visual = orbVisual(state);
+  const orbSize = size * ORB_FILL;
+  const orbInset = (size - orbSize) / 2;
+
   const glowColor = orbColors[state][1];
-  const glowOpacity = state === "thinking" ? 0.62 : isLive ? 0.46 : 0.18;
+  const glowOpacity = state === "thinking" ? 0.62 : visual.live ? 0.46 : 0.18;
   const glowSize = state === "thinking" ? 1.25 : 1.12;
-  const glowInset = Math.round(size * 0.18 * glowSpreadScale);
-  const fadePct = Math.min(100, Math.max(0, glowGradientFade));
+  const glowInset = Math.round(size * 0.18 * GLOW_SPREAD_SCALE);
+  const fadePct = GLOW_FADE_PCT;
   const coreGlowPct = Math.max(0, fadePct - 48);
   const innerGlowPct = Math.max(0, fadePct - 32);
   const midGlowPct = Math.max(0, fadePct - 18);
@@ -315,243 +50,57 @@ export function Orb({
   const edgeGlowPct = Math.max(0, fadePct - 2);
   const glowGradient = `radial-gradient(circle, ${glowColor}b8 0%, ${glowColor}84 ${String(coreGlowPct)}%, ${glowColor}52 ${String(innerGlowPct)}%, ${glowColor}2c ${String(midGlowPct)}%, ${glowColor}14 ${String(outerGlowPct)}%, ${glowColor}08 ${String(edgeGlowPct)}%, transparent ${String(fadePct)}%)`;
 
+  // Slow spin of the gradient layer, only while the orb is live.
   useEffect(() => {
-    const container = containerRef.current;
-
-    if (!container) {
-      return;
-    }
-
-    const target = getVisualTarget(state, container, motionSuppressed);
-    targetVisualRef.current = target;
-
-    visualStateRef.current ??= createInitialVisualState(target);
-  }, [state, motionSuppressed]);
-
-  useEffect(() => {
-    if (!shouldTrack) {
-      targetTrackRef.current = { x: 0, y: 0 };
-      return;
-    }
-
-    const onMove = (e: MouseEvent) => {
-      const container = containerRef.current;
-
-      if (!container) {
-        return;
-      }
-
-      const rect = container.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      targetTrackRef.current = {
-        x: clamp((e.clientX - cx) / (window.innerWidth * 0.4), -1, 1),
-        y: clamp(-(e.clientY - cy) / (window.innerHeight * 0.4), -1, 1),
-      };
-    };
-
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
-  }, [shouldTrack]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-
-    if (!canvas || !container) {
-      return;
-    }
-
-    const webglAttributes: WebGLContextAttributes = {
-      alpha: true,
-      antialias: true,
-      premultipliedAlpha: false,
-    };
-    const gl =
-      canvas.getContext("webgl", webglAttributes) ??
-      canvas.getContext("experimental-webgl", webglAttributes);
-
-    if (!gl || !(gl instanceof WebGLRenderingContext)) {
-      return;
-    }
-
-    const program = createProgram(gl);
-
-    if (!program) {
-      return;
-    }
-
-    const positionLocation = gl.getAttribLocation(program, "a_position");
-    const uniforms = getUniformLocations(gl, program);
-    const buffer = gl.createBuffer();
-
+    const layer = gradientRef.current;
     if (
-      positionLocation < 0 ||
-      Object.values(uniforms).some((location) => location === null)
+      !layer ||
+      typeof layer.animate !== "function" ||
+      motionSuppressed ||
+      !visual.live
     ) {
-      gl.deleteBuffer(buffer);
-      gl.deleteProgram(program);
       return;
     }
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
-      gl.STATIC_DRAW,
+    const animation = layer.animate(
+      [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
+      { duration: visual.rotationMs, iterations: Infinity, easing: "linear" },
     );
+    return () => animation.cancel();
+  }, [motionSuppressed, visual.live, visual.rotationMs]);
 
-    gl.useProgram(program);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.enableVertexAttribArray(positionLocation);
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-
-    const initialTarget =
-      targetVisualRef.current ??
-      getVisualTarget(state, container, motionSuppressed);
-    targetVisualRef.current = initialTarget;
-    visualStateRef.current ??= createInitialVisualState(initialTarget);
-
-    let animationFrame = 0;
-    let lastFrameTime = performance.now();
-
-    const render = (frameTime: number) => {
-      const visualState = visualStateRef.current;
-      const visualTarget = targetVisualRef.current;
-
-      if (!visualState || !visualTarget) {
-        animationFrame = window.requestAnimationFrame(render);
-        return;
-      }
-
-      const deltaTime = Math.min(
-        MAX_FRAME_TIME,
-        (frameTime - lastFrameTime) / 1000,
-      );
-      lastFrameTime = frameTime;
-
-      // Suppressed motion snaps every lerp to its target: state changes land
-      // as a cut, not a transition, per prefers-reduced-motion.
-      const colorAmount = motionSuppressed
-        ? 1
-        : 1 - Math.exp(-deltaTime * COLOR_LERP_SPEED);
-      const valueAmount = motionSuppressed
-        ? 1
-        : 1 - Math.exp(-deltaTime * VALUE_LERP_SPEED);
-      const trackAmount = motionSuppressed
-        ? 1
-        : 1 - Math.exp(-deltaTime * TRACK_LERP_SPEED);
-      const floatAmount = motionSuppressed
-        ? 1
-        : 1 - Math.exp(-deltaTime * FLOAT_LERP_SPEED);
-      const pulseWave = Math.sin(
-        (frameTime / 1000 / visualTarget.pulseDuration) * Math.PI * 2,
-      );
-      const glowOpacityTarget =
-        visualTarget.glowOpacityBase +
-        visualTarget.glowOpacityAmplitude * pulseWave;
-      const glowScaleTarget =
-        visualTarget.glowScaleBase +
-        visualTarget.glowScaleAmplitude * pulseWave;
-      const orbScaleTarget =
-        visualTarget.orbScaleBase + visualTarget.orbScaleAmplitude * pulseWave;
-
-      mixTriple(visualState.lightColor, visualTarget.lightColor, colorAmount);
-      mixTriple(visualState.midColor, visualTarget.midColor, colorAmount);
-      mixTriple(visualState.darkColor, visualTarget.darkColor, colorAmount);
-
-      visualState.glowOpacity = mix(
-        visualState.glowOpacity,
-        glowOpacityTarget,
-        valueAmount,
-      );
-      visualState.glowScale = mix(
-        visualState.glowScale,
-        glowScaleTarget,
-        valueAmount,
-      );
-      visualState.orbScale = mix(
-        visualState.orbScale,
-        orbScaleTarget,
-        valueAmount,
-      );
-      visualState.floatAmplitudePx = mix(
-        visualState.floatAmplitudePx,
-        visualTarget.floatAmplitudePx,
-        floatAmount,
-      );
-      visualState.trackX = mix(
-        visualState.trackX,
-        targetTrackRef.current.x,
-        trackAmount,
-      );
-      visualState.trackY = mix(
-        visualState.trackY,
-        targetTrackRef.current.y,
-        trackAmount,
-      );
-
-      const devicePixelRatio = window.devicePixelRatio || 1;
-      const glowPad = Math.round(size * 0.25);
-      const renderSize = size + glowPad * 2;
-      const canvasWidth = Math.max(
-        1,
-        Math.round(renderSize * devicePixelRatio),
-      );
-      const canvasHeight = Math.max(
-        1,
-        Math.round(renderSize * devicePixelRatio),
-      );
-
-      if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
-        canvas.width = canvasWidth;
-        canvas.height = canvasHeight;
-        gl.viewport(0, 0, canvasWidth, canvasHeight);
-      }
-
-      const floatOffset =
-        Math.sin(
-          (frameTime / 1000 / visualTarget.floatDuration) * Math.PI * 2,
-        ) *
-        ((visualState.floatAmplitudePx * 2) / renderSize);
-      const sceneScale = size / renderSize;
-
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-
-      gl.uniform2f(uniforms.resolution, canvasWidth, canvasHeight);
-      gl.uniform3fv(uniforms.lightColor, visualState.lightColor);
-      gl.uniform3fv(uniforms.midColor, visualState.midColor);
-      gl.uniform3fv(uniforms.darkColor, visualState.darkColor);
-      gl.uniform2f(uniforms.track, visualState.trackX, visualState.trackY);
-      gl.uniform2f(
-        uniforms.highlight,
-        visualState.trackX * 0.6,
-        visualState.trackY * 0.6,
-      );
-      gl.uniform1f(uniforms.glowOpacity, visualState.glowOpacity);
-      gl.uniform1f(uniforms.glowScale, visualState.glowScale);
-      gl.uniform1f(uniforms.orbScale, visualState.orbScale);
-      gl.uniform1f(uniforms.sceneScale, sceneScale);
-      gl.uniform1f(uniforms.floatOffset, floatOffset);
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-      animationFrame = window.requestAnimationFrame(render);
-    };
-
-    animationFrame = window.requestAnimationFrame(render);
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      gl.deleteBuffer(buffer);
-      gl.deleteProgram(program);
-    };
-  }, [size, state, motionSuppressed]);
+  // Breathing, only for the states that "the agent itself is up" (alive/thinking).
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (
+      !shell ||
+      typeof shell.animate !== "function" ||
+      motionSuppressed ||
+      !visual.breathes
+    ) {
+      return;
+    }
+    const animation = shell.animate(
+      [
+        { transform: "scale(1)" },
+        { transform: `scale(${String(visual.pulseScale)})` },
+      ],
+      {
+        duration: visual.pulseHalfMs,
+        iterations: Infinity,
+        direction: "alternate",
+        easing: "ease-in-out",
+      },
+    );
+    return () => animation.cancel();
+  }, [
+    motionSuppressed,
+    visual.breathes,
+    visual.pulseScale,
+    visual.pulseHalfMs,
+  ]);
 
   return (
     <div
-      ref={containerRef}
       role="img"
       aria-label={label ?? `agent ${state}`}
       style={{ width: size, height: size, position: "relative" }}
@@ -569,18 +118,31 @@ export function Orb({
             "background 1.5s ease-in-out, opacity 1.5s ease-in-out, transform 1.5s ease-in-out",
         }}
       />
-      <canvas
-        ref={canvasRef}
+      <div
+        ref={shellRef}
         style={{
-          width: size + Math.round(size * 0.5),
-          height: size + Math.round(size * 0.5),
-          display: "block",
           position: "absolute",
-          left: -Math.round(size * 0.25),
-          top: -Math.round(size * 0.25),
-          pointerEvents: "none",
+          width: orbSize,
+          height: orbSize,
+          left: orbInset,
+          top: orbInset,
+          borderRadius: "50%",
+          overflow: "hidden",
+          boxShadow: orbShadowCss(orbSize, state),
         }}
-      />
+      >
+        <div
+          ref={gradientRef}
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "50%",
+            background: orbGradientCss(state),
+            transition: "background 1.5s ease-in-out",
+          }}
+        />
+        <div style={orbHighlightStyle(orbSize, state)} />
+      </div>
     </div>
   );
 }
