@@ -157,7 +157,9 @@ function NotesPanel({ notes, onRetry }: { notes: Notes | undefined; onRetry: () 
   )
 }
 
-export function TasksPage() {
+// Exported as a self-contained section so the Home page can embed the full tasks + reminders
+// experience (tabs, grouping, notes, completion) below its agenda without rebuilding any of it.
+export function TasksAndReminders() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [loading, setLoading] = useState(true)
@@ -280,7 +282,7 @@ export function TasksPage() {
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="gap-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <TabsList className="h-8 p-0.5">
           <TabsTrigger value="tasks" className="h-7 gap-1.5 px-2.5 text-xs">
             Tasks
@@ -357,7 +359,7 @@ export function TasksPage() {
                             onClick={() => setOpenKey(open ? null : key)}
                             className="min-w-0 flex-1 cursor-pointer text-left"
                           >
-                            <p className="leading-snug">{t.subject}</p>
+                            <p className="leading-snug break-words">{t.subject}</p>
                             {rel.text && (
                               <p className={`mt-0.5 text-xs ${rel.tone}`}>{rel.text}</p>
                             )}
@@ -419,8 +421,8 @@ export function TasksPage() {
                       onClick={() => setOpenKey(open ? null : key)}
                       className="min-w-0 flex-1 cursor-pointer text-left"
                     >
-                      <p className="leading-snug">{r.message}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
+                      <p className="leading-snug break-words">{r.message}</p>
+                      <p className="mt-0.5 text-xs break-words text-muted-foreground">
                         {recurring ? (
                           <>
                             {r.schedule}

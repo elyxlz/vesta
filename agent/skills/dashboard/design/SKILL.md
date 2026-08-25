@@ -35,6 +35,8 @@ The dashboard renders inside an iframe, in a card that sits in the main app's la
 
 Prefer a single responsive layout, but when making one layout serve both gets contorted, it is fine to branch: render a distinct arrangement per viewport with `useIsMobile()` from `@/hooks/use-mobile` (the parent app also passes `isMobile` through `parent-bridge`). A clean desktop view and a clean mobile view beat one tangled layout that half works on each.
 
+Any row of two or more things laid out side by side (a header with a title and an action, a toolbar, a greeting beside a value, a stat next to a control) must wrap or stack on a narrow frame rather than cram or truncate. A bare `flex ... justify-between` with no wrap is the single most common way a page that looks right on desktop breaks on a phone: the two sides collide and one truncates. Give the row `flex-wrap` with a `gap-y` so the wrapped line has breathing room, or branch to `flex-col sm:flex-row`. When items wrap, set the vertical gap deliberately (a `gap-x` that looks right in a row is usually too tight once the items stack).
+
 ## Progressive disclosure
 
 Progressive disclosure is a priority, not a nice-to-have, on a surface this dense, embedded, and mobile-friendly: show the essential at a glance and reveal detail on demand. It is what keeps every widget calm and what makes the narrow frame work. Examples:
@@ -81,7 +83,7 @@ Spend your boldness in one place and keep everything around it quiet and discipl
 
 ## CSS gotcha
 
-Be careful with selector specificity: it is easy to generate classes that cancel each other out (a type-based selector like `.section` fighting an element-based one), which shows up most in the paddings and margins between sections.
+Be careful with selector specificity: it is easy to generate classes that cancel each other out (a type-based selector like `.section` fighting an element-based one), which shows up most in the paddings and margins between sections. A component's own variant can also out-specify a plain utility you add: `Card`/`CardHeader` ship generous default padding and `CardHeader`'s `border-b` variant adds extra bottom padding on top of it, so a card header reads as too spacious until you tighten it and align its padding to the card body. When the component's built-in rule wins on specificity, override the exact property (with a trailing `!`, e.g. `py-2!`) rather than layering more spacing around it. Same trap on icon sizing: a button's `[&_svg:not([class*='size-'])]` rule out-specifies a plain `[&_svg]:size-5`, so force the size you want.
 
 ## Writing and copy
 
