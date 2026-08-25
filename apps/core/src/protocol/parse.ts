@@ -23,7 +23,7 @@ const UNKNOWN: ParsedFrame = { kind: "unknown" }
 // contract-tested at the fixture seam), so the parser routes on `type` and the
 // fields it keys on, then asserts the trusted sub-shapes. Anything it cannot
 // classify becomes `unknown`, which the reducer skips by rule.
-function record(value: unknown): Record<string, unknown> | null {
+export function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null
 }
 

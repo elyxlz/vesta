@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { useMeasuredHeight } from "@/hooks/use-measured-height";
-import { useMeasuredWidth } from "@/hooks/use-measured-width";
+import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLayout } from "@/stores/use-layout";
 import { WindowControls } from "@/components/WindowControls";
@@ -24,7 +23,7 @@ const MIN_INLINE_TOAST_WIDTH = 260;
 
 export function Navbar({ leading, center, trailing }: NavbarProps) {
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
-  const measureRef = useMeasuredHeight(setNavbarHeight);
+  const measureRef = useMeasuredSize("height", setNavbarHeight);
   const isMobile = useIsMobile();
 
   // The toast's responsive width budget: its slot spans from the navbar's
@@ -32,8 +31,8 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
   // that same point, so half the center's width intrudes into the slot.
   const [centerWidth, setCenterWidth] = useState(0);
   const [toastSlotWidth, setToastSlotWidth] = useState(0);
-  const centerRef = useMeasuredWidth(setCenterWidth);
-  const toastSlotRef = useMeasuredWidth(setToastSlotWidth);
+  const centerRef = useMeasuredSize("width", setCenterWidth);
+  const toastSlotRef = useMeasuredSize("width", setToastSlotWidth);
   const toastMaxWidth = Math.max(
     0,
     toastSlotWidth - centerWidth / 2 - TOAST_CENTER_GAP,

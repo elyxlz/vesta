@@ -18,7 +18,7 @@ import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useMeasuredHeight } from "@/hooks/use-measured-height";
+import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
@@ -90,7 +90,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   useLayoutEffect(() => {
     hasDraftRef.current = input.length > 0;
   });
-  const composerRef = useMeasuredHeight(
+  const composerRef = useMeasuredSize(
+    "height",
     useCallback((height: number) => {
       if (height === 0 || !hasDraftRef.current) setComposerInset(height);
     }, []),

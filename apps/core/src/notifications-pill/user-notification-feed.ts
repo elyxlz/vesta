@@ -1,3 +1,4 @@
+import { record } from "../protocol/parse"
 import type { HttpClient } from "../transport/http"
 import type { PillContent } from "./notifications-pill"
 
@@ -25,10 +26,6 @@ export async function fetchUserNotifications(
     `/notifications${query ? `?${query}` : ""}`,
   )
   return parseLogged(body.notifications)
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null
 }
 
 // Parse at the boundary: an entry missing any field is dropped, never rendered

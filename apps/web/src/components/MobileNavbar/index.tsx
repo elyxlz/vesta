@@ -8,7 +8,7 @@ import {
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { LayoutDashboard, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useMeasuredHeight } from "@/hooks/use-measured-height";
+import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { useLayout } from "@/stores/use-layout";
 
 export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
@@ -19,7 +19,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
   const dashboardRef = useRef<HTMLButtonElement | null>(null);
   const chatRef = useRef<HTMLButtonElement | null>(null);
   const setBottomBarHeight = useLayout((s) => s.setBottomBarHeight);
-  const wrapperRef = useMeasuredHeight(setBottomBarHeight);
+  const wrapperRef = useMeasuredSize("height", setBottomBarHeight);
   const [pillNode, setPillNode] = useState<HTMLDivElement | null>(null);
   const [tabMetrics, setTabMetrics] = useState({
     overlayWidth: 0,
