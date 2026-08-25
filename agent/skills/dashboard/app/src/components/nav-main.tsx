@@ -1,3 +1,4 @@
+import { useRef } from "react"
 import type { ReactNode } from "react"
 import { Reorder } from "motion/react"
 import { ChevronRightIcon } from "lucide-react"
@@ -38,6 +39,7 @@ export function NavMain({
   onNavigate: (id: string) => void
   onReorder: (items: NavItem[]) => void
 }) {
+  const draggingRef = useRef(false)
   return (
     <SidebarGroup>
       <Reorder.Group
@@ -65,10 +67,25 @@ export function NavMain({
               value={item.id}
               data-slot="sidebar-menu-item"
               data-sidebar="menu-item"
+              data-vaul-no-drag=""
               className="group/menu-item relative rounded-xl"
               style={{ background: "transparent" }}
               whileDrag={{ scale: 1.03, background: "var(--sidebar)", boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}
               transition={{ duration: 0.15 }}
+              onDragStart={() => {
+                draggingRef.current = true
+              }}
+              onDragEnd={() => {
+                window.setTimeout(() => {
+                  draggingRef.current = false
+                }, 0)
+              }}
+              onClickCapture={(e) => {
+                if (draggingRef.current) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }
+              }}
             >
               <SidebarMenuButton
                 tooltip={item.title}
@@ -98,6 +115,7 @@ function CollapsibleNavItem({
   const { state, isMobile } = useSidebar()
   const collapsed = state === "collapsed" && !isMobile
   const hasActiveChild = item.children?.some((c) => c.id === activeId) ?? false
+  const draggingRef = useRef(false)
 
   return (
     <Reorder.Item
@@ -105,10 +123,25 @@ function CollapsibleNavItem({
       value={item.id}
       data-slot="sidebar-menu-item"
       data-sidebar="menu-item"
+      data-vaul-no-drag=""
       className="group/menu-item relative rounded-xl"
       style={{ background: "transparent" }}
       whileDrag={{ scale: 1.03, background: "var(--sidebar)", boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}
       transition={{ duration: 0.15 }}
+      onDragStart={() => {
+        draggingRef.current = true
+      }}
+      onDragEnd={() => {
+        window.setTimeout(() => {
+          draggingRef.current = false
+        }, 0)
+      }}
+      onClickCapture={(e) => {
+        if (draggingRef.current) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }}
     >
       <Collapsible defaultOpen={hasActiveChild} className="group/collapsible">
         <div className="rounded-lg [[data-collapsible=icon]_&]:rounded-xl [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:ring-1 [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:ring-sidebar-border [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:my-1">
