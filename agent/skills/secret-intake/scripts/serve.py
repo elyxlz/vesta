@@ -130,7 +130,11 @@ def main() -> int:
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         print(f"listening on {args.port}, waiting up to {args.timeout}s", flush=True)
         if done.wait(args.timeout):
-            print(f"received: {args.name} written to {SECRETS}")
+            # Names the variable that was set, never the value, and never interpolates the
+            # SECRETS path: CodeQL's clear-text-logging rule treats an identifier matching
+            # "secret" as a sensitive source, so naming the constant here trips it even though
+            # a path is not a credential. The destination is documented in the module docstring.
+            print(f"received: {args.name}, written to the env file")
             return 0
         print("timed out, nothing received", file=sys.stderr)
         return 1
