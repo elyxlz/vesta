@@ -53,9 +53,7 @@ export function orbVisual(state: OrbVisualState): OrbVisual {
 }
 
 // CSS `linear-gradient` angle (deg) that matches the start -> end axis, with the
-// screen's y-axis pointing down.
-export function orbGradientAngleDeg(visual: OrbVisual): number {
-  const dx = visual.gradient.end.x - visual.gradient.start.x
-  const dy = visual.gradient.end.y - visual.gradient.start.y
-  return (Math.atan2(dx, -dy) * 180) / Math.PI
-}
+// screen's y-axis pointing down. Precomputed once: the axis is a constant.
+export const ORB_GRADIENT_ANGLE_DEG =
+  (Math.atan2(GRADIENT.end.x - GRADIENT.start.x, -(GRADIENT.end.y - GRADIENT.start.y)) * 180) /
+  Math.PI

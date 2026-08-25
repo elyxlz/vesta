@@ -2,7 +2,6 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/providers/AuthProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { NotificationsPillProvider } from "@/providers/NotificationsPillProvider";
-import { ToastPillProvider } from "@/providers/ToastPillProvider";
 
 // The only routes an update leaves reachable: home, which renders the update itself, and settings,
 // which is where a user goes when an update looks stuck.
@@ -42,9 +41,7 @@ export function NavigationGuard() {
   // navbars, and the pill they render, remount per layout.
   return (
     <NotificationsPillProvider>
-      <ToastPillProvider>
-        <Outlet />
-      </ToastPillProvider>
+      <Outlet />
     </NotificationsPillProvider>
   );
 }

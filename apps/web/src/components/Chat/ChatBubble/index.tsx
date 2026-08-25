@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { bubbleRadiusStyle } from "../bubble-radius";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
@@ -11,13 +12,6 @@ export type RetryHandler = (
   text: string,
   inputMethod?: InputMethod,
 ) => void;
-
-// Bubble corner radii (px). The body radius is large but FINITE, not 9999: a pill-corner
-// shares each edge with the tail, and CSS clamps a whole edge's radii proportionally, which
-// crushes the tail to ~0. A finite body keeps the pill look while letting the tail show.
-export const BUBBLE_BODY_RADIUS = 20;
-// The one tail corner kept tighter than the body so the bubble reads as a chat bubble.
-export const BUBBLE_TAIL_RADIUS = 6;
 
 // Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
 // plenty of precision for "come back later" copy.
@@ -64,7 +58,6 @@ export const ChatBubble = memo(function ChatBubble({
 }) {
   // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
   const large = !isMobile;
-  const ts = formatBubbleTime(event.ts);
   if (event.type === "status") return null;
 
   if (event.type === "error" || event.type === "rate_limited") {
@@ -83,6 +76,8 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (event.type !== "user" && event.type !== "chat") return null;
+
+  const ts = formatBubbleTime(event.ts);
 
   // A send whose POST failed (503 retryable) or errored: a subtle "not sent" line with tap-to-retry,
   // re-posting the same intent id. Delivery truth is still the echo, which clears send_state.
@@ -121,7 +116,7 @@ export const ChatBubble = memo(function ChatBubble({
     <MessageBubble
       isUser={event.type === "user"}
       text={event.text}
-      ts={formatBubbleTime(event.ts)}
+      ts={ts}
       className={className}
       large={large}
       hasTail={hasTail}
@@ -155,19 +150,9 @@ function MessageBubble({
       >
         <BubbleContent
           className={cn("flex items-end px-3.5 py-1.5", large && "text-base")}
-          // Pill bubble; the last bubble of a group gets one tighter "tail" corner for the
-          // conversation look. All four corners as longhands (no `borderRadius` shorthand) so
-          // React never drops the per-corner override, and inline so it beats the ui base radius.
-          style={{
-            borderTopLeftRadius: BUBBLE_BODY_RADIUS,
-            borderTopRightRadius: BUBBLE_BODY_RADIUS,
-            borderBottomLeftRadius: BUBBLE_BODY_RADIUS,
-            borderBottomRightRadius: BUBBLE_BODY_RADIUS,
-            ...(hasTail &&
-              isUser && { borderBottomRightRadius: BUBBLE_TAIL_RADIUS }),
-            ...(hasTail &&
-              !isUser && { borderBottomLeftRadius: BUBBLE_TAIL_RADIUS }),
-          }}
+          // Pill bubble; the last bubble of a group gets one tighter "tail"
+          // corner for the conversation look.
+          style={bubbleRadiusStyle(isUser, hasTail)}
         >
           <div className="min-w-0 break-words">
             <Markdown>{text}</Markdown>

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { motionValue, type MotionValue } from "motion/react";
 import { create } from "zustand";
 
 // How long a toast stays up before it auto-dismisses.
@@ -14,6 +15,11 @@ export interface Toast {
 
 interface ToastState {
   current: Toast | null;
+  /**
+   * The pill shell's animated width, held beside the queue so a navbar
+   * remount on page navigation resumes mid-morph instead of replaying it.
+   */
+  morphWidth: MotionValue<number>;
   show: (kind: ToastKind, title: string) => void;
   dismiss: () => void;
 }
@@ -22,6 +28,7 @@ interface ToastState {
 // schedules its own id-guarded auto-dismiss, so a superseded toast's timer is a harmless no-op.
 export const useToastStore = create<ToastState>((set) => ({
   current: null,
+  morphWidth: motionValue(0),
   show: (kind, title) => {
     const id = crypto.randomUUID();
     set({ current: { id, kind, title } });

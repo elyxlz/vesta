@@ -29,6 +29,29 @@ function centerScrollLeft(scroller: HTMLDivElement, card: HTMLDivElement) {
   return card.offsetLeft + card.offsetWidth / 2 - scroller.clientWidth / 2;
 }
 
+// Index of the card whose center sits nearest the scroller's viewport center
+// (-1 with no cards): the one nearest-card decision, shared by the per-frame
+// effects pass and the wheel gesture's settle.
+function nearestCardIndex(
+  scroller: HTMLDivElement,
+  cards: (HTMLDivElement | null)[],
+): number {
+  const viewportCenter = scroller.scrollLeft + scroller.clientWidth / 2;
+  let nearestIndex = -1;
+  let nearestDistance = Infinity;
+  cards.forEach((card, index) => {
+    if (!card) return;
+    const distance = Math.abs(
+      card.offsetLeft + card.offsetWidth / 2 - viewportCenter,
+    );
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+  return nearestIndex;
+}
+
 function Pagination({
   total,
   current,
@@ -82,20 +105,15 @@ export function AgentsCarousel({
     const scroller = scrollerRef.current;
     if (!scroller) return;
     const viewportCenter = scroller.scrollLeft + scroller.clientWidth / 2;
-    let nearestIndex = 0;
-    let nearestDistance = Infinity;
-    cardRefs.current.forEach((card, index) => {
+    cardRefs.current.forEach((card) => {
       if (!card) return;
-      const cardCenter = card.offsetLeft + card.offsetWidth / 2;
-      const offset = cardCenter - viewportCenter;
+      const offset = card.offsetLeft + card.offsetWidth / 2 - viewportCenter;
       card.style.transform = `scale(${String(scaleForCarouselItemOffset(offset))})`;
-      const distance = Math.abs(offset);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestIndex = index;
-      }
     });
-    setCenteredIndex((prev) => (prev === nearestIndex ? prev : nearestIndex));
+    const nearestIndex = nearestCardIndex(scroller, cardRefs.current);
+    if (nearestIndex >= 0) {
+      setCenteredIndex((prev) => (prev === nearestIndex ? prev : nearestIndex));
+    }
   }, []);
 
   // Center initialIndex before paint, without animation.
@@ -150,20 +168,8 @@ export function AgentsCarousel({
     };
 
     const settle = () => {
-      const viewportCenter = scroller.scrollLeft + scroller.clientWidth / 2;
-      let nearestIndex = -1;
-      let nearestDistance = Infinity;
-      cardRefs.current.forEach((card, index) => {
-        if (!card) return;
-        const distance = Math.abs(
-          card.offsetLeft + card.offsetWidth / 2 - viewportCenter,
-        );
-        if (distance < nearestDistance) {
-          nearestDistance = distance;
-          nearestIndex = index;
-        }
-      });
-      const nearest = cardRefs.current[nearestIndex];
+      const nearest =
+        cardRefs.current[nearestCardIndex(scroller, cardRefs.current)];
       if (!nearest) {
         scroller.style.scrollSnapType = "x mandatory";
         return;

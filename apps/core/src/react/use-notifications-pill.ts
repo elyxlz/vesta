@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { Delta } from "../protocol/deltas"
 import type { OrbVisualState } from "../agent-status/agent-status"
 import {
@@ -40,61 +40,51 @@ export function useNotificationsPill(
   source: PillDeltaSource | null,
   options: NotificationsPillOptions,
 ): { current: PillNotification | null; dismiss: () => void } {
-  const { viewedAgent, orbStateFor, paused = false, onNotification } = options
   const [queue, setQueue] = useState<PillNotification[]>([])
   const nextIdRef = useRef(0)
 
-  // The delta handler reads the viewed agent and orb resolver from refs so
-  // the subscription survives route and roster changes.
-  const viewedRef = useRef(viewedAgent)
+  // The delta handler reads the live options through one ref so the
+  // subscription survives route and roster changes.
+  const optionsRef = useRef(options)
   useEffect(() => {
-    viewedRef.current = viewedAgent
-  }, [viewedAgent])
-  const orbStateForRef = useRef(orbStateFor)
-  useEffect(() => {
-    orbStateForRef.current = orbStateFor
-  }, [orbStateFor])
-  const onNotificationRef = useRef(onNotification)
-  useEffect(() => {
-    onNotificationRef.current = onNotification
-  }, [onNotification])
-  const pausedRef = useRef(paused)
-  useEffect(() => {
-    pausedRef.current = paused
-  }, [paused])
+    optionsRef.current = options
+  })
 
   useEffect(() => {
     if (!source) return
     return source.subscribeDeltas((delta: Delta) => {
+      const { viewedAgent, orbStateFor, paused = false, onNotification } = optionsRef.current
       const item = pillContentFromDelta(delta)
-      if (!item || !pillVisibleWhileViewing(item, viewedRef.current)) return
-      onNotificationRef.current?.(item)
-      if (pausedRef.current) return
+      if (!item || !pillVisibleWhileViewing(item, viewedAgent)) return
+      onNotification?.(item)
+      if (paused) return
       const id = nextIdRef.current++
-      const orbState = orbStateForRef.current(item.agent)
+      const orbState = orbStateFor(item.agent)
       setQueue((current) => enqueuePillNotification(current, { ...item, id, orbState }))
     })
   }, [source])
 
+  // Keyed on the head's id, not the queue: an enqueue behind the head must not
+  // reset the shown item's timer, or a steady stream would starve the rotation.
+  const head = queue[0] ?? null
+  const headId = head?.id ?? null
   useEffect(() => {
-    if (queue.length === 0) return
+    if (headId === null) return
     const timer = setTimeout(() => {
       setQueue((current) => current.slice(1))
     }, PILL_SHOW_MS)
     return () => {
       clearTimeout(timer)
     }
-  }, [queue])
+  }, [headId])
 
   // Visibility is derived at render: a head the user navigated into (their
   // agent's own message) hides instantly and expires on the advance timer.
-  const head = queue[0] ?? null
-  const current = head && pillVisibleWhileViewing(head, viewedAgent) ? head : null
+  const current = head && pillVisibleWhileViewing(head, options.viewedAgent) ? head : null
 
-  return {
-    current,
-    dismiss: () => {
-      setQueue((queued) => queued.slice(1))
-    },
-  }
+  const dismiss = useCallback(() => {
+    setQueue((queued) => queued.slice(1))
+  }, [])
+
+  return { current, dismiss }
 }

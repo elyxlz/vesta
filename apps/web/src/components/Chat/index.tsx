@@ -18,6 +18,7 @@ import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useMeasuredHeight } from "@/hooks/use-measured-height";
 import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
@@ -80,32 +81,20 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // Every chat floats the composer over the message list; the messages reserve
   // its live height plus the gap at the bottom so the last one always clears it,
   // and the scroll-to-bottom button parks just above it.
-  const composerRef = useRef<HTMLDivElement>(null);
   const [composerInset, setComposerInset] = useState(0);
   // The inset tracks the composer's collapsed baseline only: a growing draft
   // expands the pill over the (masked, opaque-covered) list instead of shifting
-  // it, so measurements while a draft exists are ignored; send clears the draft
-  // and the next resize re-syncs the baseline.
+  // it, so measurements while a draft exists are ignored (a cleared inset, 0,
+  // always applies); send clears the draft and the next resize re-syncs.
   const hasDraftRef = useRef(false);
   useLayoutEffect(() => {
     hasDraftRef.current = input.length > 0;
   });
-  useLayoutEffect(() => {
-    const el = composerRef.current;
-    if (!el) {
-      setComposerInset(0);
-      return;
-    }
-    // Measure synchronously before first paint (ResizeObserver callbacks are
-    // async, and waiting for one paints a frame with no inset reserved); the
-    // observer covers later composer resizes.
-    setComposerInset(el.offsetHeight);
-    const ro = new ResizeObserver(() => {
-      if (!hasDraftRef.current) setComposerInset(el.offsetHeight);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const composerRef = useMeasuredHeight(
+    useCallback((height: number) => {
+      if (height === 0 || !hasDraftRef.current) setComposerInset(height);
+    }, []),
+  );
 
   const chatMessages = useMemo(
     () =>

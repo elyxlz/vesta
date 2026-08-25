@@ -5,7 +5,7 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { Drawer as DrawerPrimitive } from "vaul";
 
 import { cn } from "@/lib/utils";
-import { useScrimHold } from "@/hooks/use-scrim-hold";
+import { useOverlayScrim } from "@/hooks/use-scrim-hold";
 import { Button } from "@/components/ui/button";
 import { XIcon } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -22,15 +22,7 @@ function Dialog({
   const isDrawer = !!drawerOnMobile && isMobile;
   // Holds the app scrim (components/Scrim) while open, like every overlay
   // root; the drawer path keeps vaul's own drag-tracking overlay instead.
-  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(
-    props.defaultOpen ?? false,
-  );
-  const isOpen = props.open ?? uncontrolledOpen;
-  useScrimHold(!isDrawer && isOpen);
-  const handleOpenChange = (next: boolean) => {
-    setUncontrolledOpen(next);
-    props.onOpenChange?.(next);
-  };
+  const handleOpenChange = useOverlayScrim(props, { enabled: !isDrawer });
   const rootProps = { ...props, onOpenChange: handleOpenChange };
 
   if (isDrawer) {

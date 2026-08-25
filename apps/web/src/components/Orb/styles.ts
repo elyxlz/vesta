@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import {
   agentOrbState,
   agentStatusLabel,
-  orbGradientAngleDeg,
+  ORB_GRADIENT_ANGLE_DEG,
   orbVisual,
   type AgentActivityState,
   type AgentOperation as ServerOperation,
@@ -16,7 +16,7 @@ export { orbColors };
 // The diagonal 3-stop gradient that fills the orb circle.
 export function orbGradientCss(state: OrbVisualState): string {
   const [light, mid, dark] = orbColors[state];
-  const deg = orbGradientAngleDeg(orbVisual(state)).toFixed(2);
+  const deg = ORB_GRADIENT_ANGLE_DEG.toFixed(2);
   return `linear-gradient(${deg}deg, ${light} 0%, ${mid} 50%, ${dark} 100%)`;
 }
 

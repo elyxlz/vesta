@@ -11,15 +11,8 @@ import {
   OctagonXIcon,
   type LucideIcon,
 } from "lucide-react";
-import {
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useToastStore, type Toast, type ToastKind } from "@/stores/use-toast";
-import { ToastPillContext } from "@/providers/ToastPillProvider/context";
 import { PILL_EXPANDED_HEIGHT } from "@/providers/NotificationsPillProvider/context";
 
 // Mirrors NotificationsPill's shell on the other side of the navbar: one pill
@@ -77,7 +70,7 @@ export function ToastPill({
     // The shell's key is constant: replacements rotate inside the open shell,
     // and only an emptied store collapses it. initial={false} keeps a navbar
     // remount (page navigation) from replaying the shown toast's entrance;
-    // the preview feed lives in ToastPillProvider.
+    // the morph width persists in the toast store.
     <AnimatePresence mode="wait" initial={false}>
       {current && (
         <ToastShell
@@ -103,11 +96,9 @@ function ToastShell({
   centered: boolean;
   onDismiss: () => void;
 }) {
-  // Provider-owned so a navbar remount resumes mid-morph; surfaces outside
-  // the router fall back to a local value.
-  const provided = useContext(ToastPillContext);
-  const localWidth = useMotionValue(0);
-  const width = provided?.morphWidth ?? localWidth;
+  // Store-owned (module scope, beside the queue) so a navbar remount resumes
+  // mid-morph.
+  const width = useToastStore((state) => state.morphWidth);
 
   // The kind tint crossfades in exact sync with the width: the front layer
   // fades in on the same spring as the resize, over a back layer (the

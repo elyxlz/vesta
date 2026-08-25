@@ -1,4 +1,12 @@
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useMotionValue } from "motion/react";
 import { useMatch, useNavigate } from "react-router-dom";
 import {
@@ -18,8 +26,6 @@ import {
   type NotificationHistory,
 } from "./context";
 
-export { useNotificationsPillState } from "./context";
-
 const HISTORY_PAGE_SIZE = 50;
 // A near-instant fetch still shows the skeletons for at least this long, so
 // they read as a loading state instead of a flash.
@@ -34,9 +40,14 @@ function useNotificationHistory(): NotificationHistory {
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  // Loading UI exists only for the first-ever fetch: later opens show the
+  // cached list instantly and refresh it quietly in the background
+  // (stale-while-revalidate); a failed refresh keeps the cache.
+  const loadedRef = useRef(false);
+
   // allSettled (never all) so a failing fetch still waits out the skeletons'
   // minimum hold instead of short-circuiting past it.
-  const loadPage = (before?: number) => {
+  const loadPage = useCallback((before?: number) => {
     setLoading(true);
     const minimumHold = new Promise((resolve) =>
       setTimeout(resolve, HISTORY_MIN_LOADING_MS),
@@ -58,13 +69,9 @@ function useNotificationHistory(): NotificationHistory {
       }
       setLoading(false);
     });
-  };
+  }, []);
 
-  // Loading UI exists only for the first-ever fetch: later opens show the
-  // cached list instantly and refresh it quietly in the background
-  // (stale-while-revalidate); a failed refresh keeps the cache.
-  const loadedRef = useRef(false);
-  const ensure = () => {
+  const ensure = useCallback(() => {
     if (!loadedRef.current) {
       setHistory([]);
       setExhausted(false);
@@ -78,23 +85,26 @@ function useNotificationHistory(): NotificationHistory {
         setHistory(page);
       })
       .catch(() => undefined);
-  };
+  }, [loadPage]);
 
   // A notification arriving while the history is on screen appears at the top
   // of the list, stamped now. Synthetic ids count down from the top of the
   // safe range so they never collide with the log's ids or the "load older"
   // cursor (which pages from the oldest fetched entry).
   const syntheticIdRef = useRef(Number.MAX_SAFE_INTEGER);
-  const prepend = (item: PillContent) => {
+  const prepend = useCallback((item: PillContent) => {
     const entry: LoggedUserNotification = {
       ...item,
       id: syntheticIdRef.current--,
       at: Math.floor(Date.now() / 1000),
     };
     setHistory((existing) => [entry, ...existing]);
-  };
+  }, []);
 
-  return { history, exhausted, loading, failed, loadPage, ensure, prepend };
+  return useMemo(
+    () => ({ history, exhausted, loading, failed, loadPage, ensure, prepend }),
+    [history, exhausted, loading, failed, loadPage, ensure, prepend],
+  );
 }
 
 // Owns every piece of the notifications pill's state, mounted once above the
@@ -117,14 +127,14 @@ export function NotificationsPillProvider({
   // The compact (mobile) bell's dot: raised by any arrival while no history
   // surface is open, cleared by opening one.
   const [unseen, setUnseen] = useState(false);
-  const openPopover = (open: boolean) => {
+  const openPopover = useCallback((open: boolean) => {
     setPopoverOpen(open);
     if (open) setUnseen(false);
-  };
-  const openDialog = (open: boolean) => {
+  }, []);
+  const openDialog = useCallback((open: boolean) => {
     setDialogOpen(open);
     if (open) setUnseen(false);
-  };
+  }, []);
 
   const { agents } = useGateway();
   const agentsRef = useRef(agents);
@@ -156,34 +166,58 @@ export function NotificationsPillProvider({
   // Navigation lives here, inside the router, so the pill component can render
   // on routerless surfaces (the version-gate screens) without crashing.
   const navigate = useNavigate();
-  const openAgent = (agent: string) => {
-    dismiss();
-    void navigate(agent ? `/agent/${encodeURIComponent(agent)}` : "/");
-  };
-  const openEntry = (entry: LoggedUserNotification) => {
-    setPopoverOpen(false);
-    setDialogOpen(false);
-    void navigate(
-      entry.agent ? `/agent/${encodeURIComponent(entry.agent)}` : "/",
-    );
-  };
+  const openAgent = useCallback(
+    (agent: string) => {
+      dismiss();
+      void navigate(agent ? `/agent/${encodeURIComponent(agent)}` : "/");
+    },
+    [dismiss, navigate],
+  );
+  const openEntry = useCallback(
+    (entry: LoggedUserNotification) => {
+      setPopoverOpen(false);
+      setDialogOpen(false);
+      void navigate(
+        entry.agent ? `/agent/${encodeURIComponent(entry.agent)}` : "/",
+      );
+    },
+    [navigate],
+  );
+
+  // Memoized so a provider re-render with unchanged pill state (a roster
+  // delta refreshing agentsRef) does not re-render every consumer.
+  const value = useMemo(
+    () => ({
+      current,
+      dismiss,
+      unseen,
+      feed,
+      popoverOpen,
+      setPopoverOpen: openPopover,
+      dialogOpen,
+      setDialogOpen: openDialog,
+      openAgent,
+      openEntry,
+      morph: { width: morphWidth, height: morphHeight },
+    }),
+    [
+      current,
+      dismiss,
+      unseen,
+      feed,
+      popoverOpen,
+      openPopover,
+      dialogOpen,
+      openDialog,
+      openAgent,
+      openEntry,
+      morphWidth,
+      morphHeight,
+    ],
+  );
 
   return (
-    <NotificationsPillContext.Provider
-      value={{
-        current,
-        dismiss,
-        unseen,
-        feed,
-        popoverOpen,
-        setPopoverOpen: openPopover,
-        dialogOpen,
-        setDialogOpen: openDialog,
-        openAgent,
-        openEntry,
-        morph: { width: morphWidth, height: morphHeight },
-      }}
-    >
+    <NotificationsPillContext.Provider value={value}>
       {children}
     </NotificationsPillContext.Provider>
   );

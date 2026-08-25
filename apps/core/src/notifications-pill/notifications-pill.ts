@@ -1,9 +1,9 @@
 import type { Delta } from "../protocol/deltas"
 import type { OrbVisualState } from "../agent-status/agent-status"
 
-// The shared model of the navbar notifications pill: every view (web, mobile)
-// renders the same queue, grouping, timing, and icon vocabulary from here, and
-// owns only its platform's rendering.
+// The shared, view-independent model of the navbar notifications pill: the
+// queue, grouping, timing, and icon vocabulary live here, and a view owns only
+// its platform's rendering.
 
 /** How long one notification holds the pill before the queue advances. */
 export const PILL_SHOW_MS = 2500
@@ -36,6 +36,8 @@ export interface PillNotification extends PillContent {
 export const PILL_KIND_ICONS: Record<string, string> = {
   message: "message-square",
   needs_user: "circle-alert",
+  // LEGACY(remove-when: no supported gateway emits kind=rate_limited; it was
+  // renamed needs_user in the release carrying the durable notification log):
   rate_limited: "circle-alert",
   task: "square-check",
   agent_status: "activity",

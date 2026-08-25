@@ -4,11 +4,12 @@ import remarkGfm from "remark-gfm";
 
 // remark-gfm only autolinks http(s)/www/email; this catches bare domains too (e.g.
 // "linkedin.com/in/x"). A curated TLD list keeps code filenames like `index.ts` from
-// linkifying. The lookbehind avoids grabbing an email's domain or a longer token.
+// linkifying. The lookbehind avoids grabbing an email's domain or a longer token; the
+// lookahead keeps a listed TLD from matching inside a longer one ("example.community").
 const LINK_TLDS =
   "com|org|net|edu|gov|mil|io|ai|co|dev|app|me|info|biz|tv|ly|gg|xyz|so|us|uk|ca|de|fr|it|es|nl|eu|in|jp|au";
 const BARE_URL = new RegExp(
-  `(?<![\\w@./-])((?:[a-z0-9-]+\\.)+(?:${LINK_TLDS})(?:/[^\\s)]*)?)`,
+  `(?<![\\w@./-])((?:[a-z0-9-]+\\.)+(?:${LINK_TLDS})(?![a-z0-9-])(?:/[^\\s)]*)?)`,
   "gi",
 );
 

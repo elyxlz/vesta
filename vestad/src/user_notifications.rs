@@ -63,6 +63,15 @@ pub fn known_push_kind(kind: &str) -> bool {
     MOBILE_PUSH_ROUTES.iter().any(|(routed, _, _, _)| *routed == kind)
 }
 
+/// The kinds an agent may inject (`POST /agents/{me}/user-notification`), a closed set:
+/// `message` (a new agent reply), `needs_user` (the agent needs the user), and `task` (task and
+/// reminder activity). An unknown kind is rejected so the surface cannot drift open, and that
+/// includes the gateway-owned kinds: only the gateway's own observations publish those, so no
+/// agent can forge one.
+pub fn agent_injectable_kind(kind: &str) -> bool {
+    matches!(kind, KIND_MESSAGE | KIND_NEEDS_USER | KIND_TASK)
+}
+
 /// The delivery targets of one notification, bundled once per producer call site (built by
 /// `AppState::user_notifier`, which reads the live push overrides).
 pub struct UserNotifier {
@@ -99,6 +108,18 @@ impl UserNotifier {
             }
         }
         self.sync_hub.publish_user_notification(agent, kind.to_string(), title, body);
+    }
+
+    /// A device id's first sighting ever. The copy lives here beside the other gateway-minted
+    /// producers; the sync handler only relays the sighting and the device's descriptor.
+    pub fn notify_device_connected(&self, descriptor: Option<String>) {
+        let label = descriptor.unwrap_or_else(|| "unknown device".to_string());
+        self.notify(
+            "",
+            KIND_DEVICE_CONNECTED,
+            format!("new device connected: {label}"),
+            String::new(),
+        );
     }
 
     /// Route one observed stable-status transition into exactly one notification: a status only
@@ -180,6 +201,28 @@ mod tests {
             ));
         }
         queued
+    }
+
+    #[test]
+    fn agent_injectable_kinds_are_a_closed_set() {
+        assert!(agent_injectable_kind(KIND_MESSAGE));
+        assert!(agent_injectable_kind(KIND_NEEDS_USER));
+        assert!(agent_injectable_kind(KIND_TASK));
+        for gateway_owned in [
+            KIND_GATEWAY_UPDATED,
+            KIND_UPDATE_AVAILABLE,
+            KIND_AGENT_STATUS,
+            KIND_DEVICE_CONNECTED,
+        ] {
+            assert!(
+                !agent_injectable_kind(gateway_owned),
+                "{gateway_owned} is gateway-owned; an agent cannot forge it"
+            );
+        }
+        assert!(!agent_injectable_kind("rate_limited"));
+        assert!(!agent_injectable_kind("chat"));
+        assert!(!agent_injectable_kind("status"));
+        assert!(!agent_injectable_kind(""));
     }
 
     #[tokio::test]

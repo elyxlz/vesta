@@ -38,12 +38,8 @@ export type {
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
 export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
 export {
-  enqueuePillNotification,
-  pillContentFromDelta,
-  pillVisibleWhileViewing,
   PILL_FALLBACK_ICON,
   PILL_KIND_ICONS,
-  PILL_SHOW_MS,
   type PillContent,
   type PillNotification,
 } from "./notifications-pill/notifications-pill"
@@ -147,7 +143,7 @@ export {
 } from "./agent-status/agent-status"
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
 
-export { orbGradientAngleDeg, orbVisual } from "./orb/orb"
+export { ORB_GRADIENT_ANGLE_DEG, orbVisual } from "./orb/orb"
 export type { OrbHighlight, OrbPoint, OrbVisual } from "./orb/orb"
 
 export {

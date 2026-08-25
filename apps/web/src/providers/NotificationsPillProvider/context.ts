@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext } from "react";
 import type { MotionValue } from "motion/react";
 import type {
   LoggedUserNotification,
@@ -12,8 +12,8 @@ import type {
 export const PILL_BUTTON_SIZE = 40;
 export const PILL_EXPANDED_HEIGHT = 38;
 
-// Context + hook live apart from the provider component so the context
-// identity is stable across Fast Refresh (matches ControllerProvider).
+// The context lives apart from the provider component so its identity is
+// stable across Fast Refresh (matches ControllerProvider).
 
 export interface NotificationHistory {
   history: LoggedUserNotification[];
@@ -59,13 +59,3 @@ export function isLivePillEntry(id: number): boolean {
 
 export const NotificationsPillContext =
   createContext<NotificationsPillState | null>(null);
-
-export function useNotificationsPillState(): NotificationsPillState {
-  const state = useContext(NotificationsPillContext);
-  if (!state) {
-    throw new Error(
-      "useNotificationsPillState must be used within NotificationsPillProvider",
-    );
-  }
-  return state;
-}

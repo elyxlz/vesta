@@ -12,8 +12,6 @@ interface OrbProps {
   state: OrbVisualState;
   size?: number;
   suppressMotion?: boolean;
-  glowSpreadScale?: number;
-  glowGradientFade?: number;
   label?: string;
 }
 
@@ -21,12 +19,15 @@ interface OrbProps {
 // the glow halo (the old WebGL sphere occupied a similar fraction of `size`).
 const ORB_FILL = 0.68;
 
+// Glow halo shape: how far the halo spreads past the orb, and the radius (as a
+// percentage of the halo box) where its radial fade ends.
+const GLOW_SPREAD_SCALE = 2;
+const GLOW_FADE_PCT = 60;
+
 export function Orb({
   state,
   size = 140,
   suppressMotion = false,
-  glowSpreadScale = 2,
-  glowGradientFade = 60,
   label,
 }: OrbProps) {
   const gradientRef = useRef<HTMLDivElement>(null);
@@ -40,8 +41,8 @@ export function Orb({
   const glowColor = orbColors[state][1];
   const glowOpacity = state === "thinking" ? 0.62 : visual.live ? 0.46 : 0.18;
   const glowSize = state === "thinking" ? 1.25 : 1.12;
-  const glowInset = Math.round(size * 0.18 * glowSpreadScale);
-  const fadePct = Math.min(100, Math.max(0, glowGradientFade));
+  const glowInset = Math.round(size * 0.18 * GLOW_SPREAD_SCALE);
+  const fadePct = GLOW_FADE_PCT;
   const coreGlowPct = Math.max(0, fadePct - 48);
   const innerGlowPct = Math.max(0, fadePct - 32);
   const midGlowPct = Math.max(0, fadePct - 18);

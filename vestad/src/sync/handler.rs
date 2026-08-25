@@ -215,16 +215,10 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                             let first_sighting =
                                 device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
                             if first_sighting {
-                                let label = ctx
-                                    .descriptor
-                                    .clone()
-                                    .unwrap_or_else(|| "unknown device".to_string());
-                                state.user_notifier().await.notify(
-                                    "",
-                                    crate::user_notifications::KIND_DEVICE_CONNECTED,
-                                    format!("new device connected: {label}"),
-                                    String::new(),
-                                );
+                                state
+                                    .user_notifier()
+                                    .await
+                                    .notify_device_connected(ctx.descriptor.clone());
                             }
                             let context = std::mem::take(&mut ctx.context);
                             if !context.is_empty() {

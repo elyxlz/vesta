@@ -19,8 +19,11 @@ export async function fetchUserNotifications(
   const params = new URLSearchParams()
   if (options.before !== undefined) params.set("before", String(options.before))
   if (options.limit !== undefined) params.set("limit", String(options.limit))
-  const query = params.size > 0 ? `?${params.toString()}` : ""
-  const body = await http.json<{ notifications?: unknown }>(`/notifications${query}`)
+  // params.toString(), not params.size: RN's Hermes URLSearchParams lacks `size`.
+  const query = params.toString()
+  const body = await http.json<{ notifications?: unknown }>(
+    `/notifications${query ? `?${query}` : ""}`,
+  )
   return parseLogged(body.notifications)
 }
 

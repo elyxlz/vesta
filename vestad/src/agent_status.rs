@@ -398,7 +398,7 @@ impl AgentStatusCache {
         agents: &[ListEntry],
         operated: &HashSet<String>,
         gateway_operation_running: bool,
-    ) -> Vec<(String, docker::AgentStatus, docker::AgentStatus)> {
+    ) -> Vec<(String, docker::AgentStatus)> {
         if !self.observing.load(std::sync::atomic::Ordering::Relaxed) {
             return Vec::new();
         }
@@ -418,7 +418,7 @@ impl AgentStatusCache {
             }
             match stable.insert(agent.name.clone(), agent.status) {
                 Some(before) if before != agent.status => {
-                    transitions.push((agent.name.clone(), before, agent.status));
+                    transitions.push((agent.name.clone(), agent.status));
                 }
                 _ => {}
             }
@@ -713,7 +713,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             );
             if !transitions.is_empty() {
                 let notifier = state.user_notifier().await;
-                for (agent, _previous, status) in transitions {
+                for (agent, status) in transitions {
                     notifier.notify_status_transition(&agent, status);
                 }
             }
@@ -1274,7 +1274,7 @@ mod tests {
     fn observe(
         cache: &AgentStatusCache,
         agents: &[ListEntry],
-    ) -> Vec<(String, docker::AgentStatus, docker::AgentStatus)> {
+    ) -> Vec<(String, docker::AgentStatus)> {
         cache.observe_transitions(agents, &HashSet::new(), false)
     }
 
@@ -1284,7 +1284,7 @@ mod tests {
         assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
         assert_eq!(
             observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Stopped)]),
-            vec![("luna".to_string(), docker::AgentStatus::Alive, docker::AgentStatus::Stopped)]
+            vec![("luna".to_string(), docker::AgentStatus::Stopped)]
         );
         assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Stopped)]).is_empty());
     }
@@ -1323,7 +1323,7 @@ mod tests {
         assert!(observe(&cache, &[lifecycle_entry("athena", docker::AgentStatus::NotAuthenticated)]).is_empty());
         assert_eq!(
             observe(&cache, &[lifecycle_entry("apollo", docker::AgentStatus::Dead)]),
-            vec![("apollo".to_string(), docker::AgentStatus::Alive, docker::AgentStatus::Dead)]
+            vec![("apollo".to_string(), docker::AgentStatus::Dead)]
         );
     }
 
@@ -1368,7 +1368,7 @@ mod tests {
             .is_empty());
         assert_eq!(
             observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Dead)]),
-            vec![("luna".to_string(), docker::AgentStatus::Alive, docker::AgentStatus::Dead)]
+            vec![("luna".to_string(), docker::AgentStatus::Dead)]
         );
     }
 

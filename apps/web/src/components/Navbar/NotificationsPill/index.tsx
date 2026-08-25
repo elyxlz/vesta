@@ -26,6 +26,7 @@ import {
   type NotificationsPillState,
 } from "@/providers/NotificationsPillProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
+import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useOrbStatus } from "@/hooks/use-orb-state";
 import { Orb } from "@/components/Orb";
@@ -55,8 +56,8 @@ const HISTORY_SKELETON_ROWS = 5;
 // The compact popover under the bell shows this many before "see more".
 const POPOVER_ROWS = 6;
 
-// This app's rendering of the core icon names (PILL_KIND_ICONS): mobile keeps
-// its own lucide-react-native copy of this lookup.
+// This app's rendering of the core icon names (PILL_KIND_ICONS): the shared
+// vocabulary is view-independent, and each view maps it onto its own icon set.
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
   "message-square": MessageSquare,
   "circle-alert": CircleAlert,
@@ -99,11 +100,16 @@ function HistoryList({
 }) {
   const { history, loading, failed, exhausted } = state;
   const shown = limit === undefined ? history : history.slice(0, limit);
-  const emptyText = failed
-    ? "couldn't load notifications"
-    : history.length === 0 && exhausted
-      ? "no notifications yet"
-      : null;
+  // Empty-state text only: a failed "load older" under loaded rows keeps its
+  // button and must not caption the list as unloadable.
+  const emptyText =
+    history.length > 0
+      ? null
+      : failed
+        ? "couldn't load notifications"
+        : exhausted
+          ? "no notifications yet"
+          : null;
   return (
     <>
       {loading && history.length === 0 && (
@@ -117,11 +123,12 @@ function HistoryList({
         const previous = index > 0 ? shown[index - 1] : undefined;
         const opensDay =
           timestamps && (!previous || dayKey(previous.at) !== dayKey(entry.at));
+        const dayLabel = opensDay ? formatDayLabel(entry.at) : "";
         return (
           <Fragment key={entry.id}>
-            {opensDay && formatDayLabel(entry.at) && (
+            {dayLabel && (
               <div className="px-2 pt-5 pb-3 text-center text-xs text-muted-foreground">
-                {formatDayLabel(entry.at)}
+                {dayLabel}
               </div>
             )}
             <motion.div
@@ -301,19 +308,22 @@ function ConnectedNotificationsPill({
 }
 
 // Rows carry the time alone; the day lives in the date separators above them.
+const TIME_FORMAT = new Intl.DateTimeFormat([], {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatTimestamp(atSeconds: number): string {
-  return new Date(atSeconds * 1000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return TIME_FORMAT.format(new Date(atSeconds * 1000));
 }
 
-function dayKey(atSeconds: number): string {
-  return new Date(atSeconds * 1000).toDateString();
+function dayKey(atSeconds: number): string | null {
+  return calendarDayKey(new Date(atSeconds * 1000).toISOString());
 }
 
 // Today's group carries no label (the freshest rows just start); the labels
-// begin at yesterday.
+// begin at yesterday, then fall to the chat's day-stamp rule so the two
+// history surfaces date rows identically.
 function formatDayLabel(atSeconds: number): string {
   const date = new Date(atSeconds * 1000);
   const today = new Date();
@@ -321,13 +331,7 @@ function formatDayLabel(atSeconds: number): string {
   yesterday.setDate(today.getDate() - 1);
   if (date.toDateString() === today.toDateString()) return "";
   if (date.toDateString() === yesterday.toDateString()) return "yesterday";
-  const sameYear = date.getFullYear() === today.getFullYear();
-  return date.toLocaleDateString(
-    [],
-    sameYear
-      ? { month: "short", day: "numeric" }
-      : { year: "numeric", month: "short", day: "numeric" },
-  );
+  return formatChatDayStampLabel(date.toISOString());
 }
 
 // The persistent shell: a bell button at rest, widening into the pill while a

@@ -6,15 +6,20 @@ const IDLE_MS = 1200;
 function scrollableAncestor(node: EventTarget | null): HTMLElement | null {
   let el = node instanceof HTMLElement ? node : null;
   while (el) {
-    const style = getComputedStyle(el);
-    const overflowsY =
-      (style.overflowY === "auto" || style.overflowY === "scroll") &&
-      el.scrollHeight > el.clientHeight;
-    const overflowsX =
-      (style.overflowX === "auto" || style.overflowX === "scroll") &&
-      el.scrollWidth > el.clientWidth;
+    // Cheap size test first: getComputedStyle is resolved only for the rare
+    // element that actually overflows (this runs on every pointerover).
+    const overflowsY = el.scrollHeight > el.clientHeight;
+    const overflowsX = el.scrollWidth > el.clientWidth;
     if (overflowsY || overflowsX) {
-      return el;
+      const style = getComputedStyle(el);
+      if (
+        (overflowsY &&
+          (style.overflowY === "auto" || style.overflowY === "scroll")) ||
+        (overflowsX &&
+          (style.overflowX === "auto" || style.overflowX === "scroll"))
+      ) {
+        return el;
+      }
     }
     el = el.parentElement;
   }

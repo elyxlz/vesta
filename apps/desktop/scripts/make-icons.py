@@ -9,6 +9,7 @@ derives the platform .icns/.ico from it at build time.
 Run from the desktop workspace:  npm run make-icons
 """
 
+import json
 import math
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 DESKTOP_DIR = Path(__file__).resolve().parent.parent
 BUILD_DIR = DESKTOP_DIR / "build"
+REPO_ROOT = DESKTOP_DIR.parent.parent
 
 MASTER = 1024  # macOS master icon size
 SS = 2  # supersample while drawing, then downscale for clean edges
@@ -30,8 +32,11 @@ SQUIRCLE_N = 5.0  # superellipse exponent; ~5 matches the macOS corner
 
 CREAM = (250, 249, 247)  # the app background the orb sits on
 
-# The orb, mirroring AgentOrb + designTokens.orb ("thinking" gold state).
-ORB_COLORS = ((232, 208, 160), (196, 160, 96), (160, 128, 64))  # #e8d0a0 #c4a060 #a08040
+# The orb colors come straight from the canonical token source (the "thinking"
+# gold state), so an orb recolor reaches the icon on the next make-icons run;
+# the geometry below hand-mirrors AgentOrb / the shared orb model.
+_ORB_HEX = json.loads((REPO_ROOT / "design" / "tokens.json").read_text())["orb"]["thinking"]
+ORB_COLORS = tuple(tuple(int(hex_color[i : i + 2], 16) for i in (1, 3, 5)) for hex_color in _ORB_HEX)
 GRADIENT_START = (0.15, 0.0)  # LinearGradient start, in orb-normalized coords
 GRADIENT_END = (0.9, 1.0)
 ORB_FLATTEN = 0.35  # 0 = full spherical gradient, 1 = flat mid tone

@@ -12,12 +12,8 @@ import { CardContent } from "@/components/ui/card";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { stepTransition } from "@/lib/motion";
-import {
-  BUBBLE_BODY_RADIUS,
-  BUBBLE_TAIL_RADIUS,
-  ChatBubble,
-  type RetryHandler,
-} from "../ChatBubble";
+import { bubbleRadiusStyle } from "../bubble-radius";
+import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import { CHAT_CONTENT_WIDTH } from "../content-width";
 import { buildDecorated } from "./virtual";
 
@@ -106,16 +102,7 @@ function ChatSkeleton({ bottomPad }: { bottomPad: number }) {
                 row.size,
                 isUser ? "bg-primary" : "bg-secondary",
               )}
-              style={{
-                borderTopLeftRadius: BUBBLE_BODY_RADIUS,
-                borderTopRightRadius: BUBBLE_BODY_RADIUS,
-                borderBottomLeftRadius: BUBBLE_BODY_RADIUS,
-                borderBottomRightRadius: BUBBLE_BODY_RADIUS,
-                ...(isGroupEnd &&
-                  isUser && { borderBottomRightRadius: BUBBLE_TAIL_RADIUS }),
-                ...(isGroupEnd &&
-                  !isUser && { borderBottomLeftRadius: BUBBLE_TAIL_RADIUS }),
-              }}
+              style={bubbleRadiusStyle(isUser, isGroupEnd)}
             />
           </div>
         );

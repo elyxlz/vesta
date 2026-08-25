@@ -8,6 +8,8 @@ export function shouldPresentUserNotification(
   delta: UserNotificationDelta,
   activeAgent: string | null,
 ): boolean {
+  // LEGACY(remove-when: no supported gateway emits kind=rate_limited; it was
+  // renamed needs_user in the release that added the durable notification log):
   if (delta.kind === "rate_limited" || delta.kind === "needs_user") return true;
   return delta.agent !== activeAgent;
 }

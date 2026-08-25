@@ -84,6 +84,8 @@ function ReplicaNotifications({
     return controller.subscribeDeltas((delta: Delta) => {
       if (delta.type !== "user_notification") return;
       const { agent, kind, title, body } = delta;
+      // LEGACY(remove-when: no supported gateway emits kind=rate_limited; it
+      // was renamed needs_user alongside the durable notification log):
       if (kind === "needs_user" || kind === "rate_limited") {
         notifyNeedsUser(agent, title, body);
         return;

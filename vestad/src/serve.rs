@@ -1757,21 +1757,6 @@ struct UserNotificationBody {
     body: String,
 }
 
-/// The kinds an agent may inject are a closed set: `message` (a new agent reply), `needs_user`
-/// (the agent needs the user: a rate limit, or anything else only the user can fix), and `task`
-/// (task and reminder activity). An unknown kind is rejected so the user-notification surface
-/// cannot drift open, and that includes the gateway-owned kinds (`gateway_updated`,
-/// `update_available`, `agent_status`, `device_connected`): only the gateway's own observations
-/// publish those, so no agent can forge one.
-fn valid_user_notification_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        user_notifications::KIND_MESSAGE
-            | user_notifications::KIND_NEEDS_USER
-            | user_notifications::KIND_TASK
-    )
-}
-
 /// Truncate to at most `max` chars on a char boundary, appending an ellipsis when it cut. Counting by
 /// `char` keeps multibyte text from being split mid-codepoint.
 fn truncate_chars(value: &str, max: usize) -> String {
@@ -1792,7 +1777,7 @@ async fn user_notification_handler(
     Path(name): Path<String>,
     Json(body): Json<UserNotificationBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if !valid_user_notification_kind(&body.kind) {
+    if !user_notifications::agent_injectable_kind(&body.kind) {
         return Err(err_response(StatusCode::BAD_REQUEST, "unknown user notification kind"));
     }
     let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
@@ -3353,31 +3338,9 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         allocate_service_port, ensure_not_rebuilding, ephemeral_port_high, port_for_registration,
-        resolve_public, spawn_pipeline_sse, truncate_chars, user_notifications,
-        valid_user_notification_kind, RegisterServiceBody, SERVICE_PORT_MAX, SERVICE_PORT_MIN,
+        resolve_public, spawn_pipeline_sse, truncate_chars, RegisterServiceBody, SERVICE_PORT_MAX,
+        SERVICE_PORT_MIN,
     };
-
-    #[test]
-    fn user_notification_kind_is_a_closed_set() {
-        assert!(valid_user_notification_kind("message"));
-        assert!(valid_user_notification_kind("needs_user"));
-        assert!(valid_user_notification_kind("task"));
-        for gateway_owned in [
-            user_notifications::KIND_GATEWAY_UPDATED,
-            user_notifications::KIND_UPDATE_AVAILABLE,
-            user_notifications::KIND_AGENT_STATUS,
-            user_notifications::KIND_DEVICE_CONNECTED,
-        ] {
-            assert!(
-                !valid_user_notification_kind(gateway_owned),
-                "{gateway_owned} is gateway-owned; an agent cannot forge it"
-            );
-        }
-        assert!(!valid_user_notification_kind("rate_limited"));
-        assert!(!valid_user_notification_kind("chat"));
-        assert!(!valid_user_notification_kind("status"));
-        assert!(!valid_user_notification_kind(""));
-    }
 
     #[test]
     fn truncate_chars_cuts_on_char_boundaries_with_an_ellipsis() {
