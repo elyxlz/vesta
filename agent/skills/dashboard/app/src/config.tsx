@@ -9,8 +9,8 @@
 // ============================================================================
 
 import type { ComponentType, ReactNode } from "react"
-import { LayoutDashboardIcon, ListTodoIcon } from "lucide-react"
-import { TasksPage } from "./pages/tasks"
+import { LayoutDashboardIcon, HomeIcon } from "lucide-react"
+import { HomePage } from "./pages/home"
 
 // --- Types ---
 
@@ -35,6 +35,6 @@ export const config: DashboardConfig = {
   titleIcon: <LayoutDashboardIcon className="size-5!" />,
 
   pages: [
-    { id: "tasks", title: "Tasks", icon: <ListTodoIcon />, component: TasksPage },
+    { id: "home", title: "Home", icon: <HomeIcon />, component: HomePage },
   ],
 }
