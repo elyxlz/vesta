@@ -454,7 +454,7 @@ impl Client {
 
     /// Post an agent-injected user-facing notification via `POST /agents/{name}/user-notification`
     /// carrying the agent's own `X-Agent-Token` (self-scoped, the loopback path the app-chat reply hook
-    /// and the rate-limit notice use). `kind` is the closed set `message`/`rate_limited`; an unknown
+    /// and the rate-limit notice use). `kind` is the closed set `message`/`needs_user`; an unknown
     /// kind is a 400 (surfaced here as the mapped error string). On success vestad fans a
     /// `user_notification` delta `{agent,kind,title,body}` to every connected `/sync` session.
     pub fn send_user_notification(

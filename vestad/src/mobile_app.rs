@@ -4,9 +4,8 @@
 //! then this module owns the complete remote-notification path: device registration,
 //! subscription policy, persistence, payload rendering, queueing, and Expo delivery.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{extract::State, http::StatusCode, Json};
@@ -15,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::device_registry::{DeviceRegistry, PushSubscription};
-use crate::docker::{AgentStatus, ListEntry};
 use crate::state::{err_response, ok_json, SharedState};
 use crate::time_utils::now_epoch_secs;
 use crate::types::MobilePlatform;
@@ -48,10 +46,10 @@ pub(crate) struct DeleteMobileDevice {
 }
 
 #[derive(Debug)]
-struct QueuedAgentEvent {
-    agent: String,
-    event_type: String,
-    event: serde_json::Value,
+pub(crate) struct QueuedAgentEvent {
+    pub(crate) agent: String,
+    pub(crate) event_type: String,
+    pub(crate) event: serde_json::Value,
 }
 
 #[derive(Clone, Debug)]
@@ -66,24 +64,12 @@ struct DeliveryContext {
 pub(crate) struct MobileApp {
     registry: Arc<DeviceRegistry>,
     event_tx: mpsc::Sender<QueuedAgentEvent>,
-    /// Each agent's last stable status: the one source of lifecycle pushes. It advances only
-    /// when the agent is observed in a stable state with no planned operation covering it, so
-    /// probe noise, boots, and vestad's own work can never masquerade as agent news, while a
-    /// real change (died, stopped, signed out, recovered) pushes exactly once. An agent's
-    /// first stable observation seeds silently, which is what keeps every boot quiet.
-    stable_statuses: Arc<Mutex<HashMap<String, AgentStatus>>>,
-    /// Whether lifecycle observation is live. It runs between the two ends of vestad's own agent
-    /// work: the boot reconcile stops, starts, and restarts agents as planned work (new agent
-    /// code, desired-run state) and the shutdown stops every one of them, and the map above lives
-    /// only in memory, so observing across either would report vestad's own cycle ("is available",
-    /// "needs you to sign in", "stopped") as agent news on every restart.
-    observing: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
 pub(crate) struct MobileAppWorker {
     context: DeliveryContext,
-    event_rx: mpsc::Receiver<QueuedAgentEvent>,
+    pub(crate) event_rx: mpsc::Receiver<QueuedAgentEvent>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -176,12 +162,7 @@ impl MobileApp {
             presence,
         };
         (
-            Self {
-                registry,
-                event_tx,
-                stable_statuses: Arc::new(Mutex::new(HashMap::new())),
-                observing: Arc::new(AtomicBool::new(false)),
-            },
+            Self { registry, event_tx },
             MobileAppWorker {
                 context: delivery_context,
                 event_rx,
@@ -189,91 +170,10 @@ impl MobileApp {
         )
     }
 
-    /// Enqueue a mobile push for a user notification. Each pushable kind rides the device
-    /// subscription that already covers it, so registered devices need no change: a new agent reply
-    /// is `chat`, and the gateway announcing its own update is a `status` change. A `rate_limited`
-    /// user notification toasts on connected clients and never pushes.
-    pub(crate) fn push_user_notification(&self, agent: &str, kind: &str, title: &str, body: &str) {
-        let (subscription, event_type) = match kind {
-            "message" => ("chat", "chat"),
-            crate::update::UPDATED_NOTIFICATION_KIND => ("status", "gateway_updated"),
-            _ => return,
-        };
-        self.queue_event(
-            agent,
-            subscription,
-            serde_json::json!({"type": event_type, "title": title, "body": body}),
-        );
-    }
-
-    /// Advance each agent's last stable status from a fresh poll and enqueue a push per real
-    /// change. An agent in a transient state, covered by a planned operation, or momentarily
-    /// off the list does not move; an agent observed for the first time seeds silently.
-    pub(crate) fn observe_agent_statuses(
-        &self,
-        agents: &[ListEntry],
-        operated: &HashSet<String>,
-        gateway_operation_running: bool,
-    ) {
-        if !self.observing.load(Ordering::Relaxed) {
-            return;
-        }
-        let transitions: Vec<(String, AgentStatus, AgentStatus)> = {
-            let mut stable = self
-                .stable_statuses
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut transitions = Vec::new();
-            for agent in agents {
-                // Operations are keyed by normalized name, exactly as the roster joins them.
-                if gateway_operation_running
-                    || operated.contains(&crate::docker::normalize_name(&agent.name))
-                {
-                    continue;
-                }
-                if !agent.status.is_stable() {
-                    continue;
-                }
-                match stable.insert(agent.name.clone(), agent.status) {
-                    Some(before) if before != agent.status => {
-                        transitions.push((agent.name.clone(), before, agent.status));
-                    }
-                    _ => {}
-                }
-            }
-            transitions
-        };
-        for (agent, previous_status, status) in transitions {
-            self.queue_event(
-                &agent,
-                "status",
-                serde_json::json!({
-                    "type": "status",
-                    "previousState": previous_status,
-                    "state": status,
-                }),
-            );
-        }
-    }
-
-    pub(crate) fn begin_observing(&self) {
-        self.observing.store(true, Ordering::Relaxed);
-    }
-
-    pub(crate) fn stop_observing(&self) {
-        self.observing.store(false, Ordering::Relaxed);
-    }
-
-    /// Drop a destroyed agent's last stable status, so a later agent created under the same
-    /// name seeds silently instead of diffing against its predecessor.
-    pub(crate) fn forget_agent(&self, agent: &str) {
-        self.stable_statuses
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(agent);
-    }
-
-    fn queue_event(&self, agent: &str, event_type: &str, event: serde_json::Value) {
+    /// Enqueue a mobile push for one already-rendered event on a device subscription. The
+    /// which-kinds-push decision is not here: `user_notifications::MOBILE_PUSH_ROUTES` owns it,
+    /// and this is its transport.
+    pub(crate) fn push_event(&self, agent: &str, event_type: &str, event: serde_json::Value) {
         let queued = QueuedAgentEvent {
             agent: agent.to_string(),
             event_type: event_type.to_string(),
@@ -403,17 +303,17 @@ fn text_field<'a>(event: &'a serde_json::Value, key: &str) -> Option<&'a str> {
 
 /// Render one queued event as its push. The event's own `type` says what happened and decides the
 /// text; `event_type` is the subscription that carried it, which only decided who receives it.
-fn message_for(
+fn render_push(
     device: &PushSubscription,
     agent: &str,
     event_type: &str,
     event: &serde_json::Value,
 ) -> ExpoPushMessage {
     let (title, body, route) = match text_field(event, "type") {
-        Some("gateway_updated") => (
-            // The gateway decides its own text: there is no agent to name and nowhere to navigate.
+        // Gateway-owned news: there is no agent to name and nowhere to navigate.
+        Some("gateway_updated" | "update_available" | "device_connected") => (
             text_field(event, "title").unwrap_or("Vesta").to_string(),
-            text_field(event, "body").unwrap_or("Your gateway updated.").to_string(),
+            text_field(event, "body").unwrap_or("Your gateway has news.").to_string(),
             "/".to_string(),
         ),
         Some("chat") => {
@@ -424,22 +324,13 @@ fn message_for(
             };
             (title, body, format!("/agent/{agent}/chat"))
         }
-        Some("status") => {
-            let state = text_field(event, "state").unwrap_or("updated");
-            let body = match state {
-                "alive" => format!("{agent} is available."),
-                "setting_up" => format!("{agent} is being set up."),
-                "starting" => format!("{agent} is starting."),
-                "not_authenticated" => format!("{agent} needs you to sign in."),
-                "unprovisioned" => format!("{agent} needs to be set up."),
-                "rebuilding" => format!("{agent} is rebuilding."),
-                "stopped" => format!("{agent} stopped."),
-                "dead" => format!("{agent} encountered a problem."),
-                "not_found" => format!("{agent} is unavailable."),
-                _ => format!("{agent}'s status changed."),
-            };
-            ("Vesta".to_string(), body, format!("/agent/{agent}"))
-        }
+        // Agent news carrying its server-decided text; tapping it lands on the agent, where
+        // the fix (or the story) lives.
+        Some("needs_user" | "agent_status" | "task") => (
+            text_field(event, "title").unwrap_or(agent).to_string(),
+            text_field(event, "body").unwrap_or("Vesta needs you.").to_string(),
+            format!("/agent/{agent}"),
+        ),
         _ => (
             "Vesta".to_string(),
             format!("{agent} has an update."),
@@ -539,7 +430,7 @@ async fn deliver_agent_event(context: DeliveryContext, event: QueuedAgentEvent) 
         .registry
         .push_targets(&event.event_type)
         .iter()
-        .map(|device| message_for(device, &event.agent, &event.event_type, &event.event))
+        .map(|device| render_push(device, &event.agent, &event.event_type, &event.event))
         .collect();
     // Every push funnels through here, so this line is the journal's only record that one left the
     // gateway; logging failures alone leaves a spurious push untraceable.
@@ -615,7 +506,7 @@ mod tests {
     #[test]
     fn private_chat_push_does_not_contain_message_text() {
         let event = serde_json::json!({"type": "chat", "title": "alex", "body": "Private reply"});
-        let message = message_for(&device(false, &["chat"]), "alex", "chat", &event);
+        let message = render_push(&device(false, &["chat"]), "alex", "chat", &event);
         assert_eq!(message.title, "alex");
         assert_eq!(message.body, "alex sent a new message.");
         assert!(!message.body.contains("Private"));
@@ -624,7 +515,7 @@ mod tests {
     #[test]
     fn preview_chat_push_contains_bounded_message_text() {
         let event = serde_json::json!({"type": "chat", "title": "alex", "body": "Hello from Vesta"});
-        let message = message_for(&device(true, &["chat"]), "alex", "chat", &event);
+        let message = render_push(&device(true, &["chat"]), "alex", "chat", &event);
         assert_eq!(message.body, "Hello from Vesta");
         assert_eq!(message.data["eventType"], "chat");
     }
@@ -641,18 +532,6 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_status_copy_uses_gateway_status() {
-        let event = serde_json::json!({
-            "type": "status",
-            "previousState": AgentStatus::Starting,
-            "state": AgentStatus::Alive,
-        });
-        let message = message_for(&device(false, &["status"]), "alex", "status", &event);
-        assert_eq!(message.body, "alex is available.");
-        assert_eq!(message.data["eventType"], "status");
-    }
-
-    #[test]
     fn a_gateway_update_push_carries_the_gateway_s_own_text() {
         let event = serde_json::json!({
             "type": "gateway_updated",
@@ -660,187 +539,36 @@ mod tests {
             "body": "Your gateway updated to v0.1.190.",
         });
         // No previews opt-in and no agent to name: the gateway's copy carries nothing private.
-        let message = message_for(&device(false, &["status"]), "", "status", &event);
+        let message = render_push(&device(false, &["status"]), "", "status", &event);
         assert_eq!(message.title, "Updated to v0.1.190");
         assert_eq!(message.body, "Your gateway updated to v0.1.190.");
         assert_eq!(message.data["route"], "/");
     }
 
-    #[tokio::test]
-    async fn each_pushable_kind_rides_the_subscription_that_already_covers_it() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let (app, mut worker) = MobileApp::new(
-            registry(directory.path()),
-            reqwest::Client::new(),
-            Arc::new(crate::sync::Presence::new()),
-        );
-        app.push_user_notification("alex", "message", "alex", "hi");
-        app.push_user_notification("", crate::update::UPDATED_NOTIFICATION_KIND, "Updated to v0.1.190", "done");
-        // Never a push: it toasts on connected clients only.
-        app.push_user_notification("alex", "rate_limited", "alex", "slow down");
-        drop(app);
-
-        let mut queued = Vec::new();
-        while let Some(event) = worker.event_rx.recv().await {
-            queued.push((event.event_type, event.event["type"].as_str().unwrap_or_default().to_string()));
-        }
-        assert_eq!(
-            queued,
-            vec![
-                ("chat".to_string(), "chat".to_string()),
-                ("status".to_string(), "gateway_updated".to_string()),
-            ]
-        );
+    #[test]
+    fn needs_user_push_carries_its_server_decided_text_and_routes_to_the_agent() {
+        let event = serde_json::json!({
+            "type": "needs_user",
+            "title": "luna needs to be set up",
+            "body": "Choose a provider and sign in.",
+        });
+        let message = render_push(&device(false, &["status"]), "luna", "status", &event);
+        assert_eq!(message.title, "luna needs to be set up");
+        assert_eq!(message.body, "Choose a provider and sign in.");
+        assert_eq!(message.data["route"], "/agent/luna");
     }
 
-    fn lifecycle_entry(name: &str, status: AgentStatus) -> ListEntry {
-        ListEntry {
-            name: name.to_string(),
-            status,
-            ws_port: 4200,
-            booting: false,
-            started_at: None,
-        }
-    }
-
-    fn lifecycle_app() -> (MobileApp, MobileAppWorker, tempfile::TempDir) {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let (app, worker) = MobileApp::new(
-            registry(directory.path()),
-            reqwest::Client::new(),
-            Arc::new(crate::sync::Presence::new()),
-        );
-        app.begin_observing();
-        (app, worker, directory)
-    }
-
-    fn observe(app: &MobileApp, agents: &[ListEntry]) {
-        app.observe_agent_statuses(agents, &HashSet::new(), false);
-    }
-
-    async fn drain_status_events(
-        app: MobileApp,
-        mut worker: MobileAppWorker,
-    ) -> Vec<(String, String, String)> {
-        drop(app);
-        let mut queued = Vec::new();
-        while let Some(event) = worker.event_rx.recv().await {
-            queued.push((
-                event.agent,
-                event.event["previousState"].as_str().unwrap_or_default().to_string(),
-                event.event["state"].as_str().unwrap_or_default().to_string(),
-            ));
-        }
-        queued
-    }
-
-    #[tokio::test]
-    async fn a_stable_change_of_an_unoperated_agent_pushes_exactly_once() {
-        let (app, worker, _dir) = lifecycle_app();
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Stopped)]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Stopped)]);
-        assert_eq!(
-            drain_status_events(app, worker).await,
-            vec![("luna".to_string(), "alive".to_string(), "stopped".to_string())]
-        );
-    }
-
-    #[tokio::test]
-    async fn a_forgotten_agents_successor_seeds_silently_under_the_old_name() {
-        let (app, worker, _dir) = lifecycle_app();
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        // Destroyed, then recreated under the same name: the fresh agent's first stable state
-        // must seed like any first sighting, not diff against the dead predecessor.
-        app.forget_agent("luna");
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::SettingUp)]);
-        assert!(drain_status_events(app, worker).await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn first_stable_observations_seed_silently_so_boots_are_quiet() {
-        let (app, worker, _dir) = lifecycle_app();
-        // A boot: agents come up through starting, then land alive. Nothing is news.
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        assert!(drain_status_events(app, worker).await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn the_boot_reconciles_own_agent_cycle_never_pushes() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let (app, worker) = MobileApp::new(
-            registry(directory.path()),
-            reqwest::Client::new(),
-            Arc::new(crate::sync::Presence::new()),
-        );
-        // The post-restart poll observes the shutdown-stopped agents before the boot reconcile
-        // brings them up (the 5am self-update incident). None of it is agent news.
-        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Stopped)]);
-        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
-        observe(&app, &[lifecycle_entry("athena", AgentStatus::Stopped)]);
-        observe(&app, &[lifecycle_entry("athena", AgentStatus::NotAuthenticated)]);
-        // Reconcile settles: the world as it stands seeds silently, and only a later real
-        // change pushes.
-        app.begin_observing();
-        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
-        observe(&app, &[lifecycle_entry("athena", AgentStatus::NotAuthenticated)]);
-        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Dead)]);
-        assert_eq!(
-            drain_status_events(app, worker).await,
-            vec![("apollo".to_string(), "alive".to_string(), "dead".to_string())]
-        );
-    }
-
-    #[tokio::test]
-    async fn the_shutdown_that_stops_every_agent_never_pushes() {
-        let (app, worker, _dir) = lifecycle_app();
-        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Alive)]);
-        // vestad stops every agent on its way out, and the poll keeps running while it does.
-        app.stop_observing();
-        observe(&app, &[lifecycle_entry("apollo", AgentStatus::Stopped)]);
-        assert!(drain_status_events(app, worker).await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn transient_states_and_absence_never_move_the_stable_status() {
-        let (app, worker, _dir) = lifecycle_app();
-        // The backup-storm regression: a healthy agent flaps through probe noise (starting,
-        // momentarily off the list) and back. Its stable status never moved, so no push.
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
-        observe(&app, &[]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Restarting)]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Starting)]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        assert!(drain_status_events(app, worker).await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn an_operated_agents_planned_cycle_is_silent_but_a_real_death_reports() {
-        let (app, worker, _dir) = lifecycle_app();
-        let operated: HashSet<String> = HashSet::from(["luna".to_string()]);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        // A planned restart: the stop and recovery under the operation never move the map.
-        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Stopped)], &operated, false);
-        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Starting)], &operated, false);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        // A backup that killed the agent: once the operation clears, dead is real news.
-        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Dead)], &operated, false);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Dead)]);
-        assert_eq!(
-            drain_status_events(app, worker).await,
-            vec![("luna".to_string(), "alive".to_string(), "dead".to_string())]
-        );
-    }
-
-    #[tokio::test]
-    async fn a_running_gateway_operation_covers_every_agent() {
-        let (app, worker, _dir) = lifecycle_app();
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        app.observe_agent_statuses(&[lifecycle_entry("luna", AgentStatus::Stopped)], &HashSet::new(), true);
-        observe(&app, &[lifecycle_entry("luna", AgentStatus::Alive)]);
-        assert!(drain_status_events(app, worker).await.is_empty());
+    #[test]
+    fn agent_status_push_carries_its_server_decided_text_and_routes_to_the_agent() {
+        let event = serde_json::json!({
+            "type": "agent_status",
+            "title": "luna hit a problem",
+            "body": "The agent's container died.",
+        });
+        let message = render_push(&device(false, &["status"]), "luna", "status", &event);
+        assert_eq!(message.title, "luna hit a problem");
+        assert_eq!(message.body, "The agent's container died.");
+        assert_eq!(message.data["route"], "/agent/luna");
     }
 
     #[test]
@@ -959,7 +687,7 @@ mod tests {
     #[test]
     fn prunes_tokens_rejected_by_expo() {
         let messages = vec![
-            message_for(
+            render_push(
                 &device(false, &["chat"]),
                 "alex",
                 "chat",
@@ -967,7 +695,7 @@ mod tests {
             ),
             ExpoPushMessage {
                 to: "ExponentPushToken[healthy]".to_string(),
-                ..message_for(
+                ..render_push(
                     &device(false, &["chat"]),
                     "alex",
                     "chat",

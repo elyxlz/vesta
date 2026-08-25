@@ -205,7 +205,7 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
         state.rate_limit_noticed = window_key
         state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
         agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
-        await vestad_client.send_user_notification("rate_limited", agent_name, notice)
+        await vestad_client.send_user_notification("needs_user", f"{agent_name} is rate limited", notice)
 
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:

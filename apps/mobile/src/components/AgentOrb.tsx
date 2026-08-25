@@ -4,7 +4,7 @@ import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   agentOrbState,
-  orbIsLive,
+  orbVisual,
   type AgentActivityState,
   type AgentOperation,
   type AgentStatus,
@@ -40,14 +40,15 @@ export function AgentOrb({
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
   const orbState = agentOrbState(status, activityState, operation, booting);
-  const shouldAnimate = animated && !transitionFrozen && orbIsLive(orbState);
+  const visual = orbVisual(orbState);
+  const shouldAnimate = animated && !transitionFrozen && visual.live;
   const colors = designTokens.orb[orbState];
   // Breathing is what "the agent itself is up" looks like, so it follows the resolved orb state:
   // a restore on a still-alive agent reads busy and must not keep breathing.
-  const thinking = orbState === "thinking";
-  const breathes = orbState === "alive" || thinking;
-  const maximumPulseScale = pulseScale ?? (thinking ? 1.1 : 1.04);
-  const halfPulseDuration = pulseDuration ?? (thinking ? 1200 : 1800);
+  const breathes = visual.breathes;
+  const maximumPulseScale = pulseScale ?? visual.pulseScale;
+  const halfPulseDuration = pulseDuration ?? visual.pulseHalfMs;
+  const highlight = visual.highlight;
 
   useEffect(() => {
     pulseHapticsEnabled.current = pulseHaptics;
@@ -62,14 +63,14 @@ export function AgentOrb({
     const rotate = Animated.loop(
       Animated.timing(rotation, {
         toValue: 1,
-        duration: thinking ? 2600 : 9000,
+        duration: visual.rotationMs,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     );
     rotate.start();
     return () => rotate.stop();
-  }, [rotation, shouldAnimate, thinking]);
+  }, [rotation, shouldAnimate, visual.rotationMs]);
 
   useEffect(() => {
     if (!shouldAnimate || !breathes) {
@@ -147,8 +148,8 @@ export function AgentOrb({
       >
         <LinearGradient
           colors={colors}
-          start={{ x: 0.15, y: 0 }}
-          end={{ x: 0.9, y: 1 }}
+          start={visual.gradient.start}
+          end={visual.gradient.end}
           style={{ flex: 1, borderRadius: size / 2 }}
         />
       </Animated.View>
@@ -156,11 +157,13 @@ export function AgentOrb({
         style={[
           styles.highlight,
           {
-            width: size * 0.42,
-            height: size * 0.24,
+            width: size * highlight.wRatio,
+            height: size * highlight.hRatio,
             borderRadius: size,
-            top: size * 0.16,
-            left: size * 0.18,
+            top: size * (highlight.cy - highlight.hRatio / 2),
+            left: size * (highlight.cx - highlight.wRatio / 2),
+            backgroundColor: `rgba(255,255,255,${String(highlight.alpha)})`,
+            transform: [{ rotate: `${String(highlight.angleDeg)}deg` }],
           },
         ]}
       />
@@ -178,7 +181,5 @@ const styles = StyleSheet.create({
   },
   highlight: {
     position: "absolute",
-    backgroundColor: "rgba(255,255,255,0.34)",
-    transform: [{ rotate: "-24deg" }],
   },
 });

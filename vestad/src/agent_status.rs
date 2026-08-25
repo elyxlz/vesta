@@ -12,7 +12,6 @@ use futures_util::StreamExt;
 use tokio::sync::watch;
 
 use crate::docker::{self, ListEntry};
-use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
 use crate::state::{err_response, ok_json, SharedState};
 use crate::sync::{activity_state, notification_change, SyncHub};
@@ -282,6 +281,18 @@ pub struct AgentStatusCache {
     /// while the tap is connected, so a flags fetch that fails under load keeps the last known
     /// answer instead of demoting a live agent.
     readiness: Mutex<HashMap<String, Readiness>>,
+    /// Each agent's last stable status: the one source of lifecycle user notifications. It
+    /// advances only when the agent is observed in a stable state with no planned operation
+    /// covering it, so probe noise, boots, and vestad's own work can never masquerade as agent
+    /// news, while a real change (died, stopped, signed out, recovered) reports exactly once.
+    /// An agent's first stable observation seeds silently, which is what keeps every boot quiet.
+    stable_statuses: Mutex<HashMap<String, docker::AgentStatus>>,
+    /// Whether lifecycle observation is live. It runs between the two ends of vestad's own agent
+    /// work: the boot reconcile stops, starts, and restarts agents as planned work (new agent
+    /// code, desired-run state) and the shutdown stops every one of them, and the map above lives
+    /// only in memory, so observing across either would report vestad's own cycle as agent news
+    /// on every restart.
+    observing: std::sync::atomic::AtomicBool,
 }
 
 /// What the last successful `GET /status` fetch resolved to: the readiness-derived reachable
@@ -319,6 +330,8 @@ impl AgentStatusCache {
             operations: Mutex::new(HashMap::new()),
             tap_connected: Mutex::new(HashSet::new()),
             readiness: Mutex::new(HashMap::new()),
+            stable_statuses: Mutex::new(HashMap::new()),
+            observing: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -358,15 +371,67 @@ impl AgentStatusCache {
             .copied()
     }
 
-    /// Drop a destroyed agent's observation state (readiness, tap mark), so a later agent
-    /// created under the same name starts from nothing instead of its predecessor's flags.
+    /// Drop a destroyed agent's observation state (readiness, tap mark, last stable status), so
+    /// a later agent created under the same name starts from nothing instead of its
+    /// predecessor's flags, and its first stable state seeds silently instead of diffing
+    /// against the dead predecessor.
     pub fn forget_agent(&self, name: &str) {
+        self.stable_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
         let normalized = docker::normalize_name(name);
         self.readiness
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&normalized);
         self.set_tap_connected(&normalized, false);
+    }
+
+    /// Advance each agent's last stable status from a fresh poll and return each real change.
+    /// An agent in a transient state, covered by a planned operation, or momentarily off the
+    /// list does not move; an agent observed for the first time seeds silently. The caller
+    /// routes every returned transition into exactly one delivery
+    /// (`user_notifications::notify_status_transition`).
+    pub fn observe_transitions(
+        &self,
+        agents: &[ListEntry],
+        operated: &HashSet<String>,
+        gateway_operation_running: bool,
+    ) -> Vec<(String, docker::AgentStatus, docker::AgentStatus)> {
+        if !self.observing.load(std::sync::atomic::Ordering::Relaxed) {
+            return Vec::new();
+        }
+        let mut stable = self
+            .stable_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut transitions = Vec::new();
+        for agent in agents {
+            // Operations are keyed by normalized name, exactly as the roster joins them.
+            if gateway_operation_running || operated.contains(&docker::normalize_name(&agent.name))
+            {
+                continue;
+            }
+            if !agent.status.is_stable() {
+                continue;
+            }
+            match stable.insert(agent.name.clone(), agent.status) {
+                Some(before) if before != agent.status => {
+                    transitions.push((agent.name.clone(), before, agent.status));
+                }
+                _ => {}
+            }
+        }
+        transitions
+    }
+
+    pub fn begin_observing(&self) {
+        self.observing.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn stop_observing(&self) {
+        self.observing.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn subscribe_agents(&self) -> watch::Receiver<Vec<ListEntry>> {
@@ -593,8 +658,9 @@ pub struct AgentStatusTaskDeps {
     pub agents_dir: PathBuf,
     pub on_agents_changed: OnAgentsChanged,
     pub rebuilding: docker::RebuildTracker,
-    pub mobile_app: MobileApp,
-    pub sync_hub: Arc<SyncHub>,
+    /// The app state, for the notification path: the sync hub and mobile app that deliver a
+    /// transition's user notification, and the live push-override settings it consults.
+    pub state: SharedState,
     /// The gateway's one operation slot, read per poll: while an operation (an update) runs,
     /// every agent's lifecycle churn is that operation's doing, not agent news.
     pub gateway_operation: Arc<crate::operation::OperationSlot>,
@@ -623,10 +689,10 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
         agents_dir,
         on_agents_changed,
         rebuilding,
-        mobile_app,
-        sync_hub,
+        state,
         gateway_operation,
     } = deps;
+    let sync_hub = state.sync_hub.clone();
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
         let (activity_event_tx, mut activity_event_rx) =
@@ -636,13 +702,21 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             // Poll agent list via async bollard
             let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
 
-            // Mobile lifecycle notifications come from vestad's authoritative agent list,
-            // never the agent EventBus's thinking/idle activity.
-            mobile_app.observe_agent_statuses(
+            // Lifecycle notifications come from vestad's authoritative agent list, never the
+            // agent EventBus's thinking/idle activity. Each observed transition is routed into
+            // exactly one user notification: `needs_user` when only the user can fix it,
+            // `agent_status` otherwise.
+            let transitions = cache.observe_transitions(
                 &agents,
                 &cache.operations().into_keys().collect(),
                 gateway_operation.running_phase().is_some(),
             );
+            if !transitions.is_empty() {
+                let notifier = state.user_notifier().await;
+                for (agent, _previous, status) in transitions {
+                    notifier.notify_status_transition(&agent, status);
+                }
+            }
 
             // Update the agents watch channel (only notifies if changed)
             let changed = cache.agents_tx.send_if_modified(|current| {
@@ -1179,5 +1253,132 @@ mod tests {
         assert!(seeded, "the snapshot's pending id should seed the notifications projection");
 
         listener.abort();
+    }
+
+    fn lifecycle_entry(name: &str, status: docker::AgentStatus) -> ListEntry {
+        ListEntry {
+            name: name.to_string(),
+            status,
+            ws_port: 4200,
+            booting: false,
+            started_at: None,
+        }
+    }
+
+    fn lifecycle_cache() -> AgentStatusCache {
+        let cache = AgentStatusCache::new();
+        cache.begin_observing();
+        cache
+    }
+
+    fn observe(
+        cache: &AgentStatusCache,
+        agents: &[ListEntry],
+    ) -> Vec<(String, docker::AgentStatus, docker::AgentStatus)> {
+        cache.observe_transitions(agents, &HashSet::new(), false)
+    }
+
+    #[test]
+    fn a_stable_change_of_an_unoperated_agent_reports_exactly_once() {
+        let cache = lifecycle_cache();
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+        assert_eq!(
+            observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Stopped)]),
+            vec![("luna".to_string(), docker::AgentStatus::Alive, docker::AgentStatus::Stopped)]
+        );
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Stopped)]).is_empty());
+    }
+
+    #[test]
+    fn a_forgotten_agents_successor_seeds_silently_under_the_old_name() {
+        let cache = lifecycle_cache();
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+        // Destroyed, then recreated under the same name: the fresh agent's first stable state
+        // must seed like any first sighting, not diff against the dead predecessor.
+        cache.forget_agent("luna");
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::SettingUp)]).is_empty());
+    }
+
+    #[test]
+    fn first_stable_observations_seed_silently_so_boots_are_quiet() {
+        let cache = lifecycle_cache();
+        // A boot: agents come up through starting, then land alive. Nothing is news.
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Starting)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+    }
+
+    #[test]
+    fn the_boot_reconciles_own_agent_cycle_never_reports() {
+        let cache = AgentStatusCache::new();
+        // The post-restart poll observes the shutdown-stopped agents before the boot reconcile
+        // brings them up (the 5am self-update incident). None of it is agent news.
+        assert!(observe(&cache, &[lifecycle_entry("apollo", docker::AgentStatus::Stopped)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("apollo", docker::AgentStatus::Alive)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("athena", docker::AgentStatus::Stopped)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("athena", docker::AgentStatus::NotAuthenticated)]).is_empty());
+        // Reconcile settles: the world as it stands seeds silently, and only a later real
+        // change reports.
+        cache.begin_observing();
+        assert!(observe(&cache, &[lifecycle_entry("apollo", docker::AgentStatus::Alive)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("athena", docker::AgentStatus::NotAuthenticated)]).is_empty());
+        assert_eq!(
+            observe(&cache, &[lifecycle_entry("apollo", docker::AgentStatus::Dead)]),
+            vec![("apollo".to_string(), docker::AgentStatus::Alive, docker::AgentStatus::Dead)]
+        );
+    }
+
+    #[test]
+    fn the_shutdown_that_stops_every_agent_never_reports() {
+        let cache = lifecycle_cache();
+        assert!(observe(&cache, &[lifecycle_entry("apollo", docker::AgentStatus::Alive)]).is_empty());
+        // vestad stops every agent on its way out, and the poll keeps running while it does.
+        cache.stop_observing();
+        assert!(observe(&cache, &[lifecycle_entry("apollo", docker::AgentStatus::Stopped)]).is_empty());
+    }
+
+    #[test]
+    fn transient_states_and_absence_never_move_the_stable_status() {
+        let cache = lifecycle_cache();
+        // The backup-storm regression: a healthy agent flaps through probe noise (starting,
+        // momentarily off the list) and back. Its stable status never moved, so nothing reports.
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Starting)]).is_empty());
+        assert!(observe(&cache, &[]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Restarting)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Starting)]).is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+    }
+
+    #[test]
+    fn an_operated_agents_planned_cycle_is_silent_but_a_real_death_reports() {
+        let cache = lifecycle_cache();
+        let operated: HashSet<String> = HashSet::from(["luna".to_string()]);
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+        // A planned restart: the stop and recovery under the operation never move the map.
+        assert!(cache
+            .observe_transitions(&[lifecycle_entry("luna", docker::AgentStatus::Stopped)], &operated, false)
+            .is_empty());
+        assert!(cache
+            .observe_transitions(&[lifecycle_entry("luna", docker::AgentStatus::Starting)], &operated, false)
+            .is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+        // A backup that killed the agent: once the operation clears, dead is real news.
+        assert!(cache
+            .observe_transitions(&[lifecycle_entry("luna", docker::AgentStatus::Dead)], &operated, false)
+            .is_empty());
+        assert_eq!(
+            observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Dead)]),
+            vec![("luna".to_string(), docker::AgentStatus::Alive, docker::AgentStatus::Dead)]
+        );
+    }
+
+    #[test]
+    fn a_running_gateway_operation_covers_every_agent() {
+        let cache = lifecycle_cache();
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
+        assert!(cache
+            .observe_transitions(&[lifecycle_entry("luna", docker::AgentStatus::Stopped)], &HashSet::new(), true)
+            .is_empty());
+        assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Alive)]).is_empty());
     }
 }

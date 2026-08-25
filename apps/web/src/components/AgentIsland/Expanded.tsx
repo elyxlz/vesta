@@ -27,7 +27,6 @@ export function AgentIslandExpanded({
         <Orb
           state={orbState}
           size={100}
-          enableTracking
           label={`${name}: ${statusLabel || orbState}`}
         />
       </div>

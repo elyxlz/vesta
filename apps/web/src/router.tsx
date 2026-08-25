@@ -4,8 +4,6 @@ import { AgentLayout } from "@/layouts/AgentLayout";
 import { HomeLayout } from "@/layouts/HomeLayout";
 import { NavigationGuard } from "@/layouts/NavigationGuard";
 import {
-  AgentLogs,
-  AgentSettingsPage,
   AppSettingsPage,
   Callback,
   Connect,
@@ -40,11 +38,13 @@ export const router = createBrowserRouter(
               path: "agent/:name",
               element: <AgentLayout />,
               errorElement: <RouteErrorBoundary />,
+              // Subpages render as null: AgentLayout keeps every pane mounted
+              // in an Activity and shows the one matching the location.
               children: [
                 { index: true, element: null },
                 { path: "chat", element: null },
-                { path: "logs", element: <AgentLogs /> },
-                { path: "settings", element: <AgentSettingsPage /> },
+                { path: "logs", element: null },
+                { path: "settings", element: null },
               ],
             },
             { path: "*", element: <Navigate to="/" replace /> },

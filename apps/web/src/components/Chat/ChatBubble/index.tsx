@@ -12,6 +12,13 @@ export type RetryHandler = (
   inputMethod?: InputMethod,
 ) => void;
 
+// Bubble corner radii (px). The body radius is large but FINITE, not 9999: a pill-corner
+// shares each edge with the tail, and CSS clamps a whole edge's radii proportionally, which
+// crushes the tail to ~0. A finite body keeps the pill look while letting the tail show.
+export const BUBBLE_BODY_RADIUS = 20;
+// The one tail corner kept tighter than the body so the bubble reads as a chat bubble.
+export const BUBBLE_TAIL_RADIUS = 6;
+
 // Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
 // plenty of precision for "come back later" copy.
 function formatResetTime(resetsAt: number): string {
@@ -45,22 +52,30 @@ function statusLineText(
 export const ChatBubble = memo(function ChatBubble({
   event,
   className,
-  fullscreen,
   isMobile,
+  hasTail = true,
   onRetry,
 }: {
   event: ChatMessage;
   className?: string;
-  fullscreen?: boolean;
   isMobile: boolean;
+  hasTail?: boolean;
   onRetry?: RetryHandler;
 }) {
+  // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
+  const large = !isMobile;
+  const ts = formatBubbleTime(event.ts);
   if (event.type === "status") return null;
 
   if (event.type === "error" || event.type === "rate_limited") {
     return (
       <div className={cn("flex justify-center", className)}>
-        <span className="text-[11px] text-muted-foreground/60 select-none">
+        <span
+          className={cn(
+            "text-muted-foreground/60 select-none",
+            large ? "text-sm" : "text-[11px]",
+          )}
+        >
           {statusLineText(event)}
         </span>
       </div>
@@ -83,8 +98,9 @@ export const ChatBubble = memo(function ChatBubble({
         <MessageBubble
           isUser
           text={text}
-          ts={formatBubbleTime(event.ts)}
-          mobileCard={Boolean(fullscreen && isMobile)}
+          ts={ts}
+          large={large}
+          hasTail={hasTail}
         />
         <div className="mt-0.5 flex justify-end pr-1">
           <button
@@ -107,7 +123,8 @@ export const ChatBubble = memo(function ChatBubble({
       text={event.text}
       ts={formatBubbleTime(event.ts)}
       className={className}
-      mobileCard={Boolean(fullscreen && isMobile)}
+      large={large}
+      hasTail={hasTail}
     />
   );
 });
@@ -117,34 +134,40 @@ function MessageBubble({
   text,
   ts,
   className,
-  mobileCard,
+  large,
+  hasTail,
 }: {
   isUser: boolean;
   text: string;
   ts: string;
   className?: string;
-  // Mobile fullscreen lifts the agent bubble onto a card surface with a ring/shadow; the
-  // bg override goes through the same `*:data-[slot=bubble-content]` channel the variant uses
-  // so twMerge drops the variant's bg-secondary cleanly.
-  mobileCard: boolean;
+  // Desktop fullscreen: 16px body text (overrides the ui bubble's text-sm default).
+  large: boolean;
+  // Only the last bubble of a group carries the tighter tail corner.
+  hasTail: boolean;
 }) {
   return (
     <Message align={isUser ? "end" : "start"} className={className}>
       <Bubble
         variant={isUser ? "default" : "secondary"}
         align={isUser ? "end" : "start"}
-        className={cn(
-          "max-w-[85%]",
-          !isUser && mobileCard && "*:data-[slot=bubble-content]:bg-card",
-        )}
+        className="max-w-[85%]"
       >
         <BubbleContent
-          className={cn(
-            "flex items-end rounded-squircle-sm [corner-shape:squircle] px-3 py-1.5",
-            isUser ? "rounded-br-sm" : "rounded-bl-sm",
-            mobileCard &&
-              "shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
-          )}
+          className={cn("flex items-end px-3.5 py-1.5", large && "text-base")}
+          // Pill bubble; the last bubble of a group gets one tighter "tail" corner for the
+          // conversation look. All four corners as longhands (no `borderRadius` shorthand) so
+          // React never drops the per-corner override, and inline so it beats the ui base radius.
+          style={{
+            borderTopLeftRadius: BUBBLE_BODY_RADIUS,
+            borderTopRightRadius: BUBBLE_BODY_RADIUS,
+            borderBottomLeftRadius: BUBBLE_BODY_RADIUS,
+            borderBottomRightRadius: BUBBLE_BODY_RADIUS,
+            ...(hasTail &&
+              isUser && { borderBottomRightRadius: BUBBLE_TAIL_RADIUS }),
+            ...(hasTail &&
+              !isUser && { borderBottomLeftRadius: BUBBLE_TAIL_RADIUS }),
+          }}
         >
           <div className="min-w-0 break-words">
             <Markdown>{text}</Markdown>

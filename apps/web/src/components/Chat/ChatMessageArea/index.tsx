@@ -4,18 +4,21 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type RefObject,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { stepTransition } from "@/lib/motion";
-import { ChatBubble, type RetryHandler } from "../ChatBubble";
+import {
+  BUBBLE_BODY_RADIUS,
+  BUBBLE_TAIL_RADIUS,
+  ChatBubble,
+  type RetryHandler,
+} from "../ChatBubble";
+import { CHAT_CONTENT_WIDTH } from "../content-width";
 import { buildDecorated } from "./virtual";
 
 // First-paint estimate per row (actual heights are measured).
@@ -50,6 +53,10 @@ interface ChatMessageAreaProps {
   isTyping: boolean;
   isMobile: boolean;
   onRetry?: RetryHandler;
+  // Space reserved at the end of the list so the last message clears the floating composer.
+  bottomInset?: number;
+  // Fires when pinned-to-latest flips; drives the parent's scroll-to-bottom button.
+  onAtBottomChange: (atBottom: boolean) => void;
 }
 
 // Placeholder bubbles shown while the first page of history is in flight, so a slow
@@ -74,12 +81,16 @@ const SKELETON_ROWS: { side: "agent" | "user"; size: string }[] = [
   { side: "user", size: "h-9 w-40" },
 ];
 
-function ChatSkeleton() {
+function ChatSkeleton({ bottomPad }: { bottomPad: number }) {
   return (
-    <div className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4 pb-4">
+    <div
+      className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4"
+      style={{ paddingBottom: bottomPad }}
+    >
       {SKELETON_ROWS.map((row, i) => {
         const isUser = row.side === "user";
         const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1]?.side === row.side;
+        const isGroupEnd = SKELETON_ROWS[i + 1]?.side !== row.side;
         return (
           <div
             key={i}
@@ -91,12 +102,20 @@ function ChatSkeleton() {
           >
             <div
               className={cn(
-                "animate-pulse rounded-squircle-sm [corner-shape:squircle]",
+                "animate-pulse",
                 row.size,
-                isUser
-                  ? "bg-primary rounded-br-sm"
-                  : "bg-secondary rounded-bl-sm",
+                isUser ? "bg-primary" : "bg-secondary",
               )}
+              style={{
+                borderTopLeftRadius: BUBBLE_BODY_RADIUS,
+                borderTopRightRadius: BUBBLE_BODY_RADIUS,
+                borderBottomLeftRadius: BUBBLE_BODY_RADIUS,
+                borderBottomRightRadius: BUBBLE_BODY_RADIUS,
+                ...(isGroupEnd &&
+                  isUser && { borderBottomRightRadius: BUBBLE_TAIL_RADIUS }),
+                ...(isGroupEnd &&
+                  !isUser && { borderBottomLeftRadius: BUBBLE_TAIL_RADIUS }),
+              }}
             />
           </div>
         );
@@ -120,8 +139,18 @@ export function ChatMessageArea({
   isTyping,
   isMobile,
   onRetry,
+  bottomInset = 0,
+  onAtBottomChange,
 }: ChatMessageAreaProps) {
-  const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
+  // Desktop treatment (floating-composer inset, spacious gaps, sizes) applies to both the
+  // fullscreen and split-panel chats; only mobile keeps the plain layout. The narrow centered
+  // column is fullscreen-only, the split-panel chat fills its panel.
+  const floating = !isMobile;
+  const centered = Boolean(fullscreen) && !isMobile;
+  const decorated = useMemo(
+    () => buildDecorated(chatMessages, floating),
+    [chatMessages, floating],
+  );
   const count = decorated.length;
   const lastAgentText = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i--) {
@@ -131,9 +160,18 @@ export function ChatMessageArea({
     return "";
   }, [chatMessages]);
   const parentRef = useRef<HTMLDivElement>(null);
-  // Drives the scroll-to-bottom button: true while pinned near the latest message, false once
-  // the user scrolls up. Recomputed on scroll and on content resize (see below).
-  const [atBottom, setAtBottom] = useState(true);
+  // True while pinned near the latest message, false once the user scrolls up.
+  // Recomputed on scroll and on content resize (see below); the parent renders
+  // the scroll-to-bottom button off it, notified only on change.
+  const atBottomRef = useRef(true);
+  const setAtBottom = useCallback(
+    (pinned: boolean) => {
+      if (atBottomRef.current === pinned) return;
+      atBottomRef.current = pinned;
+      onAtBottomChange(pinned);
+    },
+    [onAtBottomChange],
+  );
 
   const getItemKey = useCallback(
     (index: number) => decorated[index]?.key ?? String(index),
@@ -153,6 +191,7 @@ export function ChatMessageArea({
     anchorTo: "end",
     followOnAppend: "smooth",
     scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,
+    paddingEnd: bottomInset,
     overscan: OVERSCAN_ROWS,
     // Apply row positions straight to the DOM instead of through a React re-render on every
     // scroll frame. Critical for smooth upward scrolling, where measuring newly-revealed rows
@@ -176,6 +215,13 @@ export function ChatMessageArea({
     if (hasRows && !hadRowsRef.current) virtualizer.scrollToEnd();
     hadRowsRef.current = hasRows;
   }, [count, virtualizer]);
+
+  // The composer inset lands after the initial end-jump (its ResizeObserver is async) and
+  // changes while a multi-line draft grows; the virtualizer never re-anchors on a padding
+  // change, so while pinned we re-pin ourselves.
+  useLayoutEffect(() => {
+    if (atBottomRef.current) virtualizer.scrollToEnd();
+  }, [bottomInset, virtualizer]);
 
   // Highest row index seen as of the last commit — read during render (holds the prior
   // value, since this effect hasn't fired yet) to tell a genuine append from a history
@@ -210,14 +256,17 @@ export function ChatMessageArea({
     const content = el?.firstElementChild;
     if (!el || !content) return;
     const ro = new ResizeObserver(() => {
-      setAtBottom(
-        el.scrollHeight - el.scrollTop - el.clientHeight <=
-          AT_BOTTOM_THRESHOLD_PX,
-      );
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const pinned = dist <= AT_BOTTOM_THRESHOLD_PX;
+      setAtBottom(pinned);
+      // Repay any shortfall a smooth follow left behind: the virtualizer skips
+      // its own end re-pin while a smooth scroll is in flight, so a row measured
+      // mid-animation lands short and would otherwise stay short.
+      if (pinned && dist > 1) virtualizer.scrollToEnd();
     });
     ro.observe(content);
     return () => ro.disconnect();
-  }, []);
+  }, [setAtBottom, virtualizer]);
 
   const items = virtualizer.getVirtualItems();
   const topPad = fullscreen ? navbarHeight + 16 : 32;
@@ -230,9 +279,15 @@ export function ChatMessageArea({
       </span>
       {count === 0 &&
         (connected && !historyLoaded ? (
-          <ChatSkeleton />
+          // The extra 16px mirrors the real list's trailing pb-4 (the typing
+          // indicator slot after the last row), so the skeleton's last bubble
+          // sits exactly where a real last bubble does.
+          <ChatSkeleton bottomPad={bottomInset + 16} />
         ) : (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center"
+            style={{ paddingBottom: bottomInset + 24 }}
+          >
             <span className="text-xs text-muted-foreground">
               {!connected
                 ? "connecting..."
@@ -263,9 +318,22 @@ export function ChatMessageArea({
       <div
         ref={parentRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto overflow-x-hidden"
+        className={cn(
+          "h-full overflow-y-auto overflow-x-hidden",
+          // Reserve the scrollbar gutter on both sides so the centered message column
+          // shares the same center as the (scrollbar-free) floating composer.
+          floating && "[scrollbar-gutter:stable_both-edges]",
+        )}
+        // One mask owns both fades. Fullscreen's top approximates the old
+        // stacked card+list pair: near-invisible within the navbar's height,
+        // then a long dissolve (3.5x/1.75x the navbar) so bubbles evaporate
+        // before reaching it. The bottom stop fades behind the composer.
         style={{
-          maskImage: `linear-gradient(to bottom, transparent, black ${String(fullscreen ? navbarHeight : 48)}px, black calc(100% - 20px), transparent)`,
+          maskImage: `linear-gradient(to bottom, ${
+            fullscreen
+              ? `rgb(0 0 0 / 0) 0px, rgb(0 0 0 / 0.25) ${String(navbarHeight)}px, black ${String(Math.round(navbarHeight * (isMobile ? 1.75 : 3.5)))}px`
+              : "transparent, black 48px"
+          }, black calc(100% - ${String(bottomInset)}px), transparent)`,
         }}
       >
         <div
@@ -290,90 +358,80 @@ export function ChatMessageArea({
                   width: "100%",
                 }}
               >
-                {row.isFirst && (
-                  <div style={{ paddingTop: topPad }}>
-                    {!hasMore && (
-                      <div className="flex justify-center py-3">
-                        <span className="text-[11px] text-muted-foreground/40">
-                          beginning of conversation
+                <div className={cn(centered && CHAT_CONTENT_WIDTH)}>
+                  {row.isFirst && (
+                    <div style={{ paddingTop: topPad }}>
+                      {!hasMore && (
+                        <div className="flex justify-center py-3">
+                          <span className="text-[11px] text-muted-foreground/40">
+                            beginning of conversation
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex flex-col px-4">
+                    {row.showDayStamp && row.dayLabel && (
+                      <div
+                        className={cn(
+                          "flex justify-center",
+                          !row.isFirst && "mt-5",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "text-muted-foreground/60 select-none",
+                            floating ? "text-sm" : "text-[11px]",
+                          )}
+                        >
+                          {row.dayLabel}
                         </span>
                       </div>
                     )}
-                  </div>
-                )}
-                <div className="flex flex-col px-4">
-                  {row.showDayStamp && row.dayLabel && (
-                    <div
-                      className={cn(
-                        "flex justify-center",
-                        !row.isFirst && "mt-5",
-                      )}
-                    >
-                      <span className="text-[11px] text-muted-foreground/60 select-none">
-                        {row.dayLabel}
-                      </span>
-                    </div>
-                  )}
-                  {isNewAppend ? (
-                    <motion.div
-                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      transition={stepTransition.transition}
-                    >
+                    {isNewAppend ? (
+                      <motion.div
+                        initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={stepTransition.transition}
+                      >
+                        <ChatBubble
+                          event={row.event}
+                          className={row.gap}
+                          isMobile={isMobile}
+                          hasTail={row.isGroupEnd}
+                          onRetry={onRetry}
+                        />
+                      </motion.div>
+                    ) : (
                       <ChatBubble
                         event={row.event}
                         className={row.gap}
-                        fullscreen={fullscreen}
                         isMobile={isMobile}
+                        hasTail={row.isGroupEnd}
                         onRetry={onRetry}
                       />
-                    </motion.div>
-                  ) : (
-                    <ChatBubble
-                      event={row.event}
-                      className={row.gap}
-                      fullscreen={fullscreen}
-                      isMobile={isMobile}
-                      onRetry={onRetry}
-                    />
-                  )}
-                </div>
-                {isLast && (
-                  <div className="px-4 pb-4">
-                    {isTyping && (
-                      <div className="flex justify-start mt-2">
-                        <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-                          <span className="sr-only">typing...</span>
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:300ms]" />
-                        </div>
-                      </div>
                     )}
                   </div>
-                )}
+                  {isLast && (
+                    <div className="px-4 pb-4">
+                      {isTyping && (
+                        <div className="flex justify-start mt-2">
+                          <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
+                            <span className="sr-only">typing...</span>
+                            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
+                            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />
+                            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:300ms]" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
       </div>
-      {count > 0 && (
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-sm"
-          aria-label="Scroll to latest message"
-          data-active={!atBottom}
-          onClick={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
-          className={cn(
-            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm transition-all duration-200",
-            "data-[active=false]:pointer-events-none data-[active=false]:translate-y-full data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[active=false]:duration-150 data-[active=false]:ease-[cubic-bezier(0.7,0,0.84,0)]",
-            "data-[active=true]:translate-y-0 data-[active=true]:scale-100 data-[active=true]:opacity-100 data-[active=true]:ease-[cubic-bezier(0.23,1,0.32,1)]",
-          )}
-        >
-          <ArrowDown />
-        </Button>
-      )}
     </CardContent>
   );
 }

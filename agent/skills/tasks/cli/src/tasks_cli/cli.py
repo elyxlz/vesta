@@ -1,8 +1,10 @@
 import argparse
+import contextlib
 import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -188,6 +190,22 @@ def main():
         sys.exit(1)
 
 
+def _agent_name() -> str:
+    return os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
+
+
+def _notify_user_task(title: str) -> None:
+    """Surface task activity to the app clients: kind `task` on the vestad user-notification
+    helper, title-only (the title is the whole one-line message). Fire-and-forget, so a missing
+    helper or unreachable gateway never fails the command (the task write already happened)."""
+    with contextlib.suppress(OSError):
+        subprocess.Popen(
+            ["user-notification", "task", title],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
 def _handle_task(args, config: Config):
     if args.command == "create":
         subject = _require_arg(args.subject_pos or args.subject, "subject", 'tasks create "subject" or tasks create --subject "subject"')
@@ -199,6 +217,7 @@ def _handle_task(args, config: Config):
             priority=args.priority,
             initial_metadata=args.initial_metadata,
         )
+        _notify_user_task(f"{_agent_name()} added a task: {subject}")
         print(json.dumps(result, indent=2))
         return
     if args.command == "list":
@@ -226,9 +245,12 @@ def _handle_task(args, config: Config):
             due=_due_spec(args, clear=args.clear_due),
             backburner=args.backburner,
         )
+        if args.status == "completed":
+            _notify_user_task(f"{_agent_name()} completed a task: {result['subject']}")
     elif args.command == "done":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks done <id> or tasks done --id <id>")
         result = commands.update_task(config, task_id=task_id, status="completed")
+        _notify_user_task(f"{_agent_name()} completed a task: {result['subject']}")
     elif args.command == "postpone":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks postpone <id> --in-days N")
         result = commands.postpone_task(config, task_id=task_id, due=_due_spec(args))

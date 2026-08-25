@@ -41,6 +41,8 @@ mod types;
 mod update;
 mod upstream;
 mod user_context;
+mod user_notification_log;
+mod user_notifications;
 mod vendored_bin;
 mod vesta_cloud;
 

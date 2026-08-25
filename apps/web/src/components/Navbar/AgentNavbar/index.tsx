@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useState } from "react";
+import { useState } from "react";
 import { type MotionValue } from "motion/react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import {
@@ -14,11 +14,6 @@ import { AgentMenu } from "@/components/AgentMenu";
 import { MobileNavbar } from "@/components/MobileNavbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/providers/AuthProvider";
 import { useGateway } from "@/providers/GatewayProvider";
@@ -27,6 +22,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import { agentNeedsUser, type AgentStatus } from "@vesta/core";
+import { PILL_EXPANDED_HEIGHT } from "@/providers/NotificationsPillProvider/context";
 import { Navbar } from "..";
 
 export function AgentNavbar({
@@ -35,7 +31,7 @@ export function AgentNavbar({
   swipeProgress,
 }: {
   chatCollapsed: boolean;
-  setChatCollapsed: Dispatch<SetStateAction<boolean>>;
+  setChatCollapsed: (collapsed: boolean) => void;
   swipeProgress: MotionValue<number>;
 }) {
   const { connected } = useAuth();
@@ -211,7 +207,12 @@ function AgentNavbarTrailing({
         </Button>
       )}
       {showChatButton && (
-        <Button variant="default" size="lg" onClick={onExpandChat}>
+        <Button
+          variant="default"
+          size="lg"
+          style={{ height: PILL_EXPANDED_HEIGHT }}
+          onClick={onExpandChat}
+        >
           <MessageSquare data-icon="inline-start" />
           chat
         </Button>
@@ -233,18 +234,13 @@ function LeadingButton({
   onClick: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="outline"
-          size="icon-lg"
-          aria-label={label}
-          onClick={onClick}
-        >
-          {icon}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <Button
+      variant="outline"
+      size="icon-lg"
+      aria-label={label}
+      onClick={onClick}
+    >
+      {icon}
+    </Button>
   );
 }

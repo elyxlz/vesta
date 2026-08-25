@@ -282,7 +282,31 @@ describe("NotificationProvider", () => {
     expect(built).toEqual([]);
   });
 
-  it("toasts a rate-limit alert even while focused", async () => {
+  it("toasts a needs-user alert with the server title even while focused", async () => {
+    const { controller, emit } = makeController({ ada: "alive" });
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    focus();
+
+    act(() => {
+      emit({
+        type: "user_notification",
+        agent: "ada",
+        kind: "needs_user",
+        title: "ada needs to be set up",
+        body: "Choose a provider and sign in.",
+      });
+    });
+
+    expect(built).toEqual([
+      {
+        title: "ada needs to be set up",
+        body: "Choose a provider and sign in.",
+      },
+    ]);
+  });
+
+  it("toasts an older gateway's rate-limit alert even while focused", async () => {
     const { controller, emit } = makeController({ ada: "alive" });
     mount(controller, [agentInfo("ada", "alive")]);
     await flush();

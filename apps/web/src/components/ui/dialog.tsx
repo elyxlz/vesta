@@ -5,6 +5,7 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { Drawer as DrawerPrimitive } from "vaul";
 
 import { cn } from "@/lib/utils";
+import { useScrimHold } from "@/hooks/use-scrim-hold";
 import { Button } from "@/components/ui/button";
 import { XIcon } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -19,18 +20,30 @@ function Dialog({
 }) {
   const isMobile = useIsMobile();
   const isDrawer = !!drawerOnMobile && isMobile;
+  // Holds the app scrim (components/Scrim) while open, like every overlay
+  // root; the drawer path keeps vaul's own drag-tracking overlay instead.
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(
+    props.defaultOpen ?? false,
+  );
+  const isOpen = props.open ?? uncontrolledOpen;
+  useScrimHold(!isDrawer && isOpen);
+  const handleOpenChange = (next: boolean) => {
+    setUncontrolledOpen(next);
+    props.onOpenChange?.(next);
+  };
+  const rootProps = { ...props, onOpenChange: handleOpenChange };
 
   if (isDrawer) {
     return (
       <DrawerModeContext.Provider value={true}>
-        <DrawerPrimitive.Root data-slot="dialog" {...props} />
+        <DrawerPrimitive.Root data-slot="dialog" {...rootProps} />
       </DrawerModeContext.Provider>
     );
   }
 
   return (
     <DrawerModeContext.Provider value={false}>
-      <DialogPrimitive.Root data-slot="dialog" {...props} />
+      <DialogPrimitive.Root data-slot="dialog" {...rootProps} />
     </DrawerModeContext.Provider>
   );
 }
@@ -75,7 +88,7 @@ function DialogOverlay({
       <DrawerPrimitive.Overlay
         data-slot="dialog-overlay"
         className={cn(
-          "fixed inset-0 z-50 bg-black/30 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+          "fixed inset-0 z-50 bg-black/30 will-change-[opacity,backdrop-filter] supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className,
         )}
         {...props}
@@ -109,7 +122,7 @@ function DialogContent({
       <DrawerPrimitive.Portal data-slot="dialog-portal">
         <DrawerPrimitive.Overlay
           data-slot="dialog-overlay"
-          className="fixed inset-0 z-50 bg-black/30 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+          className="fixed inset-0 z-50 bg-black/30 will-change-[opacity,backdrop-filter] supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
         />
         <DrawerPrimitive.Content
           data-slot="dialog-content"
@@ -129,21 +142,28 @@ function DialogContent({
 
   return (
     <DialogPortal>
-      <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-4xl bg-popover p-6 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/5 duration-100 outline-none sm:max-w-md dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // iOS-26 sheet: a clipped, rounded shell with a capped height. The header and footer
+          // float (they sit sticky inside the one scroll region below), so the content scrolls
+          // edge-to-edge, dissolving under the header's fade and past the bottom mask.
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[75vh] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl bg-popover text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/5 duration-100 outline-none sm:max-w-md dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
       >
-        {children}
+        <div
+          data-slot="dialog-scroll"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pb-6 [mask-image:linear-gradient(to_bottom,black_calc(100%-20px),transparent_calc(100%-1px))]"
+        >
+          {children}
+        </div>
         {showCloseButton && (
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button
               variant="ghost"
-              className="absolute top-4 right-4 bg-secondary"
+              className="absolute top-4 right-4 z-20 bg-secondary"
               size="icon-sm"
             >
               <XIcon />
@@ -156,13 +176,41 @@ function DialogContent({
   );
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+function DialogHeader({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"div">) {
+  const isDrawer = React.useContext(DrawerModeContext);
+  if (isDrawer) {
+    return (
+      <div
+        data-slot="dialog-header"
+        className={cn("flex flex-col gap-1.5 text-left", className)}
+        {...props}
+      >
+        {children}
+      </div>
+    );
+  }
+  // Floats over the scrolling content with no background of its own: the fade sits behind the title
+  // (a gradient layer covering the header and tailing off below it), so the content dissolves as it
+  // scrolls up behind the header while the title stays crisp on top.
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-1.5 text-left", className)}
+      className={cn(
+        "sticky top-0 z-10 -mx-6 flex flex-col gap-1.5 px-6 pt-6 pb-4 text-left",
+        className,
+      )}
       {...props}
-    />
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -bottom-5 -z-10 bg-popover/90 backdrop-blur-sm [mask-image:linear-gradient(to_bottom,black_58%,rgba(0,0,0,0.85)_70%,rgba(0,0,0,0.5)_82%,rgba(0,0,0,0.2)_92%,transparent)]"
+      />
+      {children}
+    </div>
   );
 }
 
@@ -197,11 +245,18 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        // Pinned to the bottom with no background of its own: the fade sits behind the buttons
+        // (a gradient covering the footer and tailing off above it), so the content dissolves as
+        // it scrolls down behind the buttons while they stay crisp on top.
+        "sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-col-reverse gap-2 px-6 pt-4 pb-6 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}
     >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 -top-5 bottom-0 -z-10 bg-popover/90 backdrop-blur-sm [mask-image:linear-gradient(to_top,black_58%,rgba(0,0,0,0.85)_70%,rgba(0,0,0,0.5)_82%,rgba(0,0,0,0.2)_92%,transparent)]"
+      />
       {children}
       {showCloseButton && (
         <DialogPrimitive.Close asChild>
@@ -232,10 +287,7 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn(
-        "font-heading text-base leading-none font-medium",
-        className,
-      )}
+      className={cn("font-heading text-lg leading-none font-medium", className)}
       {...props}
     />
   );

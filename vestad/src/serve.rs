@@ -22,7 +22,7 @@ use crate::state::{
 };
 use crate::{
     agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
-    maintenance_window, mobile_app, operation, systemd, update,
+    maintenance_window, mobile_app, operation, systemd, update, user_notifications,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -883,7 +883,6 @@ async fn destroy_agent_handler(
     // Forget the destroyed agent's lifecycle-observation state, so an agent later created under
     // the same name seeds fresh instead of diffing against its predecessor.
     state.agent_status_cache.forget_agent(&name);
-    state.mobile_app.forget_agent(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -1758,11 +1757,19 @@ struct UserNotificationBody {
     body: String,
 }
 
-/// The kinds an agent may inject are a closed set: `message` (a new agent reply) and `rate_limited`.
-/// An unknown kind is rejected so the user-notification surface cannot drift open, and that includes
-/// the gateway's own `gateway_updated`: only a real update publishes one, so no agent can forge it.
+/// The kinds an agent may inject are a closed set: `message` (a new agent reply), `needs_user`
+/// (the agent needs the user: a rate limit, or anything else only the user can fix), and `task`
+/// (task and reminder activity). An unknown kind is rejected so the user-notification surface
+/// cannot drift open, and that includes the gateway-owned kinds (`gateway_updated`,
+/// `update_available`, `agent_status`, `device_connected`): only the gateway's own observations
+/// publish those, so no agent can forge one.
 fn valid_user_notification_kind(kind: &str) -> bool {
-    matches!(kind, "message" | "rate_limited")
+    matches!(
+        kind,
+        user_notifications::KIND_MESSAGE
+            | user_notifications::KIND_NEEDS_USER
+            | user_notifications::KIND_TASK
+    )
 }
 
 /// Truncate to at most `max` chars on a char boundary, appending an ellipsis when it cut. Counting by
@@ -1790,10 +1797,7 @@ async fn user_notification_handler(
     }
     let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
     let preview = truncate_chars(&body.body, USER_NOTIFICATION_BODY_MAX_CHARS);
-    state
-        .sync_hub
-        .publish_user_notification(&name, body.kind.clone(), title.clone(), preview.clone());
-    state.mobile_app.push_user_notification(&name, &body.kind, &title, &preview);
+    state.user_notifier().await.notify(&name, &body.kind, title, preview);
     Ok(ok_json())
 }
 
@@ -2120,6 +2124,11 @@ async fn delete_backup_handler(
 /// The unified settings view returned by GET/PUT /gateway/settings. Single owner of
 /// the daemon-settings wire shape, shared by both handlers.
 fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Value {
+    let push_notifications: serde_json::Map<String, serde_json::Value> =
+        user_notifications::effective_push_kinds(&settings.push_notifications)
+            .into_iter()
+            .map(|(kind, enabled)| (kind.to_string(), serde_json::Value::Bool(enabled)))
+            .collect();
     serde_json::json!({
         "auto_update": settings.auto_update,
         "channel": channel,
@@ -2128,6 +2137,7 @@ fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Valu
             "every_n_days": settings.backup.every_n_days,
             "retention": settings.backup.retention,
         },
+        "push_notifications": push_notifications,
     })
 }
 
@@ -2202,6 +2212,32 @@ struct UpdateSettingsBody {
     auto_update: Option<bool>,
     channel: Option<String>,
     auto_backup: Option<SetBackupSettingsBody>,
+    /// Sparse per-kind push toggles, merged into the stored overrides.
+    push_notifications: Option<std::collections::HashMap<String, bool>>,
+}
+
+#[derive(Deserialize)]
+struct UserNotificationsQuery {
+    /// Return entries with ids below this (a page cursor); absent means newest.
+    before: Option<u64>,
+    limit: Option<usize>,
+}
+
+const USER_NOTIFICATIONS_DEFAULT_LIMIT: usize = 50;
+const USER_NOTIFICATIONS_MAX_LIMIT: usize = 200;
+
+/// `GET /notifications`: a newest-first, id-cursored page of the durable user-notification log
+/// (the history behind the ephemeral `user_notification` delta; a feed joins the two by id).
+async fn list_user_notifications_handler(
+    State(state): State<SharedState>,
+    Query(query): Query<UserNotificationsQuery>,
+) -> Json<serde_json::Value> {
+    let limit = query
+        .limit
+        .unwrap_or(USER_NOTIFICATIONS_DEFAULT_LIMIT)
+        .min(USER_NOTIFICATIONS_MAX_LIMIT);
+    let notifications = state.user_notification_log.page(query.before, limit);
+    Json(serde_json::json!({ "notifications": notifications }))
 }
 
 async fn get_gateway_settings_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
@@ -2233,6 +2269,14 @@ async fn put_gateway_settings_handler(
         })?),
         None => None,
     };
+    if let Some(ref push) = body.push_notifications {
+        if let Some(unknown) = push.keys().find(|kind| !user_notifications::known_push_kind(kind)) {
+            return Err(err_response(
+                StatusCode::BAD_REQUEST,
+                &format!("unknown notification kind '{unknown}'"),
+            ));
+        }
+    }
 
     {
         let mut settings = state.settings.write().await;
@@ -2247,6 +2291,10 @@ async fn put_gateway_settings_handler(
         if let Some(ref backup) = body.auto_backup {
             apply_backup_update(&mut settings.backup, backup);
             tracing::info!("auto-backup settings updated");
+        }
+        if let Some(push) = body.push_notifications {
+            settings.push_notifications.extend(push);
+            tracing::info!("push-notification settings updated");
         }
         save_settings(&settings);
     }
@@ -2665,6 +2713,7 @@ pub fn build_router(state: SharedState) -> Router {
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
         )
+        .route("/notifications", get(list_user_notifications_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -3138,7 +3187,7 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
-    let reconcile_mobile_app = state.mobile_app.clone();
+    let reconcile_status_cache = state.agent_status_cache.clone();
     tokio::spawn(async move {
         Box::pin(docker::reconcile_containers(
             &reconcile_docker,
@@ -3159,7 +3208,7 @@ pub async fn run_server(cfg: ServerConfig) {
         ))
         .await;
         // Only now is a stable observation the agent's own news, not the tail of the reconcile.
-        reconcile_mobile_app.begin_observing();
+        reconcile_status_cache.begin_observing();
     });
     // Each agent has its own bridge network, so its calls into vestad (register-service,
     // user-notification, health) cannot reach the loopback bind below; they dial `BOX_HOST`
@@ -3191,8 +3240,7 @@ pub async fn run_server(cfg: ServerConfig) {
         agents_dir: state.env_config.agents_dir.clone(),
         on_agents_changed,
         rebuilding: state.rebuilding.clone(),
-        mobile_app: state.mobile_app.clone(),
-        sync_hub: state.sync_hub.clone(),
+        state: state.clone(),
         gateway_operation: state.operation.clone(),
     });
     let app = build_router(state.clone());
@@ -3269,7 +3317,7 @@ pub async fn run_server(cfg: ServerConfig) {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             shutdown_state.shutdown_tx.send_replace(true);
             // The stops below are vestad's own work, exactly as the boot reconcile's starts are.
-            shutdown_state.mobile_app.stop_observing();
+            shutdown_state.agent_status_cache.stop_observing();
             docker::stop_all_agents(&shutdown_docker).await;
         }
     }
@@ -3305,18 +3353,27 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         allocate_service_port, ensure_not_rebuilding, ephemeral_port_high, port_for_registration,
-        resolve_public, spawn_pipeline_sse, truncate_chars, update, valid_user_notification_kind,
-        RegisterServiceBody, SERVICE_PORT_MAX, SERVICE_PORT_MIN,
+        resolve_public, spawn_pipeline_sse, truncate_chars, user_notifications,
+        valid_user_notification_kind, RegisterServiceBody, SERVICE_PORT_MAX, SERVICE_PORT_MIN,
     };
 
     #[test]
     fn user_notification_kind_is_a_closed_set() {
         assert!(valid_user_notification_kind("message"));
-        assert!(valid_user_notification_kind("rate_limited"));
-        assert!(
-            !valid_user_notification_kind(update::UPDATED_NOTIFICATION_KIND),
-            "the gateway owns its update announcement; an agent cannot inject one"
-        );
+        assert!(valid_user_notification_kind("needs_user"));
+        assert!(valid_user_notification_kind("task"));
+        for gateway_owned in [
+            user_notifications::KIND_GATEWAY_UPDATED,
+            user_notifications::KIND_UPDATE_AVAILABLE,
+            user_notifications::KIND_AGENT_STATUS,
+            user_notifications::KIND_DEVICE_CONNECTED,
+        ] {
+            assert!(
+                !valid_user_notification_kind(gateway_owned),
+                "{gateway_owned} is gateway-owned; an agent cannot forge it"
+            );
+        }
+        assert!(!valid_user_notification_kind("rate_limited"));
         assert!(!valid_user_notification_kind("chat"));
         assert!(!valid_user_notification_kind("status"));
         assert!(!valid_user_notification_kind(""));

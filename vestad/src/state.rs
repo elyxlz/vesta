@@ -119,6 +119,9 @@ pub struct AppState {
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     pub(crate) tunnel_url: Mutex<Option<String>>,
     pub(crate) update_info: Mutex<Option<operation::UpdateInfo>>,
+    /// The release version the update-available notification last announced, so each discovered
+    /// version notifies once for this process (a restart may re-announce; that is rare and mild).
+    pub(crate) update_available_notified: Mutex<Option<String>>,
     /// The gateway's one operation slot (see operation.rs): what the gateway is doing to itself
     /// right now, and the lock that keeps an update and a restart from racing each other.
     pub(crate) operation: Arc<operation::OperationSlot>,
@@ -137,6 +140,9 @@ pub struct AppState {
     /// Per-connection client presence fed by the `/sync` socket. Read by the mobile push path to
     /// suppress a push while any client is focused, and fanned to sessions for return-to-focus.
     pub(crate) presence: Arc<crate::sync::Presence>,
+    /// The durable, uncapped log of user-facing notifications, appended by every
+    /// `UserNotifier::notify` and paged by `GET /notifications`.
+    pub(crate) user_notification_log: Arc<crate::user_notification_log::UserNotificationLog>,
     /// Which agents have been told which device zone or place, so each change is delivered once.
     pub(crate) user_context: crate::user_context::UserContext,
     pub(crate) dev_mode: bool,
@@ -187,6 +193,9 @@ impl AppState {
         let http_client = reqwest::Client::new();
         let presence = Arc::new(crate::sync::Presence::new());
         let device_registry = Arc::new(crate::device_registry::DeviceRegistry::load(&env_config.config_dir));
+        let user_notification_log = Arc::new(
+            crate::user_notification_log::UserNotificationLog::load(&env_config.config_dir),
+        );
         let (mobile_app, mobile_app_worker) =
             mobile_app::MobileApp::new(device_registry.clone(), http_client.clone(), presence.clone());
         (
@@ -201,6 +210,7 @@ impl AppState {
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
                 update_info: Mutex::new(None),
+                update_available_notified: Mutex::new(None),
                 operation: Arc::new(operation::OperationSlot::new()),
                 shutdown_tx: tokio::sync::watch::channel(false).0,
                 http_client,
@@ -209,6 +219,7 @@ impl AppState {
                 mobile_app,
                 device_registry,
                 presence,
+                user_notification_log,
                 user_context: crate::user_context::UserContext::default(),
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
@@ -220,6 +231,17 @@ impl AppState {
             },
             mobile_app_worker,
         )
+    }
+
+    /// The delivery targets of one user notification, with the live push overrides read once.
+    /// Every producer builds one of these per notification, so delivery has a single shape.
+    pub(crate) async fn user_notifier(&self) -> crate::user_notifications::UserNotifier {
+        crate::user_notifications::UserNotifier {
+            sync_hub: self.sync_hub.clone(),
+            mobile_app: self.mobile_app.clone(),
+            log: self.user_notification_log.clone(),
+            push_overrides: self.settings.read().await.push_notifications.clone(),
+        }
     }
 
     pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {

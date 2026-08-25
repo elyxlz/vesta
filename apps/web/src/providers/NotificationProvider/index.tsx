@@ -7,20 +7,13 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import {
-  agentNeedsUser,
-  type Controller,
-  type Delta,
-  type Tree,
-} from "@vesta/core";
+import { type Controller, type Delta, type Tree } from "@vesta/core";
 import { useAnyFocused, useReplica } from "@vesta/core/react";
-import { useGateway } from "@/providers/GatewayProvider";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
-import type { AgentRow } from "@/lib/types";
 import { NotificationContext } from "./context";
 
 export { useNotifications } from "./context";
@@ -63,7 +56,7 @@ function ReplicaNotifications({
   chattingAgentRef,
   anyFocusedRef,
   notifyAssistant,
-  notifyRateLimited,
+  notifyNeedsUser,
   notifyGateway,
   markUnseen,
 }: {
@@ -71,7 +64,7 @@ function ReplicaNotifications({
   chattingAgentRef: RefObject<string | null>;
   anyFocusedRef: RefObject<boolean>;
   notifyAssistant: (agentName: string, text: string) => void;
-  notifyRateLimited: (agentName: string, text: string) => void;
+  notifyNeedsUser: (agentName: string, title: string, text: string) => void;
   notifyGateway: (title: string, text: string) => void;
   markUnseen: () => void;
 }) {
@@ -83,15 +76,16 @@ function ReplicaNotifications({
   }, [anyFocused, anyFocusedRef]);
 
   // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display triple:
-  // kind/title/body), independent of any subscription. A rate limit toasts even while focused; a
-  // chat lights the unseen badge and toasts, deferring the actively-chatted agent to
-  // AgentSocketProvider (which fires after the typing delay so it lines up with the visible bubble).
+  // kind/title/body), independent of any subscription. A needs-user alert (set up, sign in, rate
+  // limited) toasts even while focused, since the chat surface shows nothing for it; a chat lights
+  // the unseen badge and toasts, deferring the actively-chatted agent to AgentSocketProvider (which
+  // fires after the typing delay so it lines up with the visible bubble).
   useEffect(() => {
     return controller.subscribeDeltas((delta: Delta) => {
       if (delta.type !== "user_notification") return;
       const { agent, kind, title, body } = delta;
-      if (kind === "rate_limited") {
-        notifyRateLimited(agent, body);
+      if (kind === "needs_user" || kind === "rate_limited") {
+        notifyNeedsUser(agent, title, body);
         return;
       }
       // The gateway's own announcement, sent only to clients that missed the update: it names no
@@ -107,7 +101,7 @@ function ReplicaNotifications({
   }, [
     controller,
     notifyAssistant,
-    notifyRateLimited,
+    notifyNeedsUser,
     notifyGateway,
     chattingAgentRef,
     markUnseen,
@@ -140,7 +134,6 @@ export function NotificationProvider({
   children: ReactNode;
   onOpenAgent: (agentName: string) => void;
 }) {
-  const { agents } = useGateway();
   const controller = useContext(ControllerContext);
   const focused = useWindowFocus();
   const focusedRef = useRef(focused);
@@ -151,7 +144,6 @@ export function NotificationProvider({
 
   const permissionRef = useRef<boolean>(false);
   const chattingAgentRef = useRef<string | null>(null);
-  const prevStatusRef = useRef<Map<string, AgentRow["status"]>>(new Map());
 
   useEffect(() => {
     const onVisible = () => {
@@ -203,15 +195,16 @@ export function NotificationProvider({
     [onOpenAgent],
   );
 
-  // Unlike chat previews, a hit rate limit fires even while the app is focused: the chat
-  // surface shows nothing for a throttled turn, so this is the user's only signal.
-  const notifyRateLimited = useCallback(
-    (agentName: string, text: string) => {
+  // Unlike chat previews, a needs-user alert (set up, sign in, rate limited) fires even while
+  // the app is focused: the chat surface shows nothing for it, so this is the user's only
+  // signal. The server decides the title; tapping it opens the agent, where the fix lives.
+  const notifyNeedsUser = useCallback(
+    (agentName: string, title: string, text: string) => {
       if (!permissionRef.current) return;
       try {
-        const n = new Notification(agentName, {
-          body: text,
-          tag: `${agentName}-rate-limited`,
+        const n = new Notification(title, {
+          body: truncate(text),
+          tag: `${agentName}-needs-user`,
         });
         n.onclick = () => {
           void focusAndOpen(agentName, onOpenAgent);
@@ -250,35 +243,6 @@ export function NotificationProvider({
     };
   }, []);
 
-  useEffect(() => {
-    for (const agent of agents) {
-      const previous = prevStatusRef.current.get(agent.name);
-      prevStatusRef.current.set(agent.name, agent.status);
-      if (!previous || previous === agent.status) continue;
-      if (!agentNeedsUser(agent.status)) continue;
-      if (!permissionRef.current) continue;
-      const unprovisioned = agent.status === "unprovisioned";
-      const title = unprovisioned
-        ? `${agent.name} needs to be set up`
-        : `${agent.name} needs to sign in again`;
-      const body = unprovisioned
-        ? "Tap to choose a provider and sign in."
-        : "The provider sign-in was lost. Tap to re-authenticate.";
-      try {
-        const n = new Notification(title, {
-          body,
-          tag: `${agent.name}-${agent.status}`,
-        });
-        n.onclick = () => {
-          void focusAndOpen(agent.name, onOpenAgent);
-          n.close();
-        };
-      } catch {
-        /* ignore */
-      }
-    }
-  }, [agents, onOpenAgent]);
-
   const value = useMemo(
     () => ({ notifyAssistant, setChattingAgent }),
     [notifyAssistant, setChattingAgent],
@@ -292,7 +256,7 @@ export function NotificationProvider({
           chattingAgentRef={chattingAgentRef}
           anyFocusedRef={anyFocusedRef}
           notifyAssistant={notifyAssistant}
-          notifyRateLimited={notifyRateLimited}
+          notifyNeedsUser={notifyNeedsUser}
           notifyGateway={notifyGateway}
           markUnseen={markUnseen}
         />

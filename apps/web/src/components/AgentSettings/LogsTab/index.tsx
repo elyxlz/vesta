@@ -16,7 +16,7 @@ const BOTTOM_GAP = 24;
 // the whole tab there.
 export function LogsTab() {
   const navigate = useNavigate();
-  const { name, agent } = useSelectedAgent();
+  const { name } = useSelectedAgent();
   const isMobile = useIsMobile();
   const { ref, height } = useFillHeight(BOTTOM_GAP);
 
@@ -29,7 +29,7 @@ export function LogsTab() {
       )}
       style={isMobile ? { height } : undefined}
     >
-      <Console name={name} status={agent.status} />
+      <Console />
       <div className="absolute right-3 top-3 z-10">
         <Button
           variant="outline"

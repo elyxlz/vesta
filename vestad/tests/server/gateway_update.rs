@@ -464,10 +464,14 @@ async fn an_update_walks_its_phases_and_the_next_boot_reports_the_new_version() 
         Some(""),
         "a gateway-owned notification names no agent"
     );
-    assert_eq!(announcement["title"].as_str(), Some("Vesta"));
+    assert_eq!(
+        announcement["title"].as_str(),
+        Some(format!("gateway updated to v{NEWER_VERSION}").as_str())
+    );
     assert_eq!(
         announcement["body"].as_str(),
-        Some(format!("Your gateway updated to v{NEWER_VERSION}.").as_str())
+        Some(""),
+        "the title is the whole message; the body carries only backup warnings"
     );
 
     destroy_agent(&updated_client, &agent);
