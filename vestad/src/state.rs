@@ -119,9 +119,6 @@ pub struct AppState {
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     pub(crate) tunnel_url: Mutex<Option<String>>,
     pub(crate) update_info: Mutex<Option<operation::UpdateInfo>>,
-    /// The release version the update-available notification last announced, so each discovered
-    /// version notifies once for this process (a restart may re-announce; that is rare and mild).
-    pub(crate) update_available_notified: Mutex<Option<String>>,
     /// The gateway's one operation slot (see operation.rs): what the gateway is doing to itself
     /// right now, and the lock that keeps an update and a restart from racing each other.
     pub(crate) operation: Arc<operation::OperationSlot>,
@@ -210,7 +207,6 @@ impl AppState {
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
                 update_info: Mutex::new(None),
-                update_available_notified: Mutex::new(None),
                 operation: Arc::new(operation::OperationSlot::new()),
                 shutdown_tx: tokio::sync::watch::channel(false).0,
                 http_client,

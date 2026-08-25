@@ -84,18 +84,26 @@ pub struct UserNotifier {
 impl UserNotifier {
     /// Deliver one user-facing notification: append it to the durable log, fan the
     /// `user_notification` delta to every `/sync` client, plus the mobile push when the kind's
-    /// effective setting (the user's override, or the route's default) says so. The title is the
-    /// one line every surface renders, so no notification may go out without one: a blank title
-    /// becomes the agent's name, or "Vesta" for the gateway's own notifications (they name no
-    /// agent).
+    /// effective setting (the user's override, or the route's default) says so. A blank title
+    /// takes the default from `effective_title`.
     pub fn notify(&self, agent: &str, kind: &str, title: String, body: String) {
-        let title = if title.trim().is_empty() {
-            if agent.is_empty() { "Vesta".to_string() } else { agent.to_string() }
-        } else {
-            title
-        };
-        tracing::info!(%agent, %kind, %title, "user notification");
+        let title = effective_title(agent, title);
         self.log.append(agent, kind, &title, &body);
+        self.fan(agent, kind, title, body);
+    }
+
+    /// `notify`, delivered at most once ever: skipped when the durable log already holds an
+    /// entry with this kind and title, so neither a restart nor a repeated check can re-deliver
+    /// it (the update announcement).
+    pub fn notify_once(&self, agent: &str, kind: &str, title: String, body: String) {
+        let title = effective_title(agent, title);
+        if self.log.append_once(agent, kind, &title, &body) {
+            self.fan(agent, kind, title, body);
+        }
+    }
+
+    fn fan(&self, agent: &str, kind: &str, title: String, body: String) {
+        tracing::info!(%agent, %kind, %title, "user notification");
         if let Some((_, subscription, event_type, default_on)) =
             MOBILE_PUSH_ROUTES.iter().find(|(routed, _, _, _)| *routed == kind)
         {
@@ -133,6 +141,17 @@ impl UserNotifier {
                 (KIND_AGENT_STATUS, title, body)
             };
         self.notify(agent, kind, title, body);
+    }
+}
+
+/// The one line every surface renders, so no notification may go out without one: a blank
+/// title becomes the agent's name, or "Vesta" for the gateway's own notifications (they name
+/// no agent).
+fn effective_title(agent: &str, title: String) -> String {
+    if title.trim().is_empty() {
+        if agent.is_empty() { "Vesta".to_string() } else { agent.to_string() }
+    } else {
+        title
     }
 }
 
@@ -251,6 +270,22 @@ mod tests {
             logged.iter().map(|entry| (entry.id, entry.kind.as_str())).collect::<Vec<_>>(),
             vec![(2, KIND_UPDATE_AVAILABLE), (1, KIND_MESSAGE)]
         );
+    }
+
+    #[tokio::test]
+    async fn notify_once_skips_a_kind_and_title_already_in_the_log() {
+        let (delivery, sync_hub, _worker, _dir) = notifier(HashMap::new());
+        let mut deltas = sync_hub.subscribe_user_notifications();
+
+        let title = "gateway v0.3.0 available";
+        delivery.notify_once("", KIND_UPDATE_AVAILABLE, title.into(), String::new());
+        delivery.notify_once("", KIND_UPDATE_AVAILABLE, title.into(), String::new());
+        delivery.notify_once("", KIND_UPDATE_AVAILABLE, "gateway v0.4.0 available".into(), String::new());
+
+        assert_eq!(deltas.try_recv().expect("first delta").title, title);
+        assert_eq!(deltas.try_recv().expect("new version delta").title, "gateway v0.4.0 available");
+        assert!(deltas.try_recv().is_err(), "the repeated title fans no delta");
+        assert_eq!(delivery.log.page(None, 10).len(), 2);
     }
 
     #[tokio::test]

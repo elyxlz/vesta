@@ -543,18 +543,14 @@ pub async fn refresh_update_info(state: &SharedState) -> Result<UpdateInfo, Stri
     }
 }
 
-/// Notify each newly discovered pending release once: an ambient nudge beside the `UpdatePill`,
-/// for the gateways that update by hand.
+/// Notify each newly discovered pending release once ever, remembered by the durable
+/// notification log itself: an ambient nudge beside the `UpdatePill`, for the gateways that
+/// update by hand, never repeated by a restart or a re-check.
 async fn announce_available(state: &SharedState, info: &UpdateInfo) {
     if !info.update_available {
         return;
     }
-    let mut notified = state.update_available_notified.lock().await;
-    if notified.as_deref() == Some(info.latest.as_str()) {
-        return;
-    }
-    *notified = Some(info.latest.clone());
-    state.user_notifier().await.notify(
+    state.user_notifier().await.notify_once(
         GATEWAY_NOTIFICATION_AGENT,
         crate::user_notifications::KIND_UPDATE_AVAILABLE,
         format!("gateway v{} available", info.latest),
