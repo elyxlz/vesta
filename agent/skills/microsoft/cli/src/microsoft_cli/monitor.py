@@ -413,6 +413,13 @@ def _arrived_since(message: ChatMessage, last_dt: datetime) -> bool:
     return created > last_dt
 
 
+def _is_forbidden(exc: Exception) -> bool:
+    """True when an exception carries an HTTP 403 response (httpx.HTTPStatusError and look-alikes),
+    duck-typed so no httpx import is needed here. A 403 is an authorization verdict, not transient."""
+    resp = getattr(exc, "response", None)
+    return resp is not None and getattr(resp, "status_code", None) == 403
+
+
 def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> bool:
     """Emit a notification per chat whose latest message arrived since last_dt (excluding the user's
     own messages), True when the chats were read. One /me/chats request per cycle carries every
@@ -427,6 +434,14 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
         my_id = teams._my_id(ctx.http_client, token)
         chats = cast("list[Chat]", teams.list_chats(ctx.http_client, token, limit=50))
     except Exception as e:
+        if _is_forbidden(e):
+            # A 403 is an authorization verdict, not a transient error. The tenant granted the Teams
+            # scope string at sign-in (so `auth setup` marked this account Teams-capable), but forbids
+            # the actual Teams Graph calls. Left as-is this errors every poll cycle forever. Unmark the
+            # account so we stop hammering a blocked endpoint; a later `auth teams-capture` re-enables it.
+            teams.unmark_device_account(account_email, config)
+            logger.info("Teams forbidden (403) for %s; unmarking to stop polling a blocked endpoint", account_email)
+            return False
         logger.error("Error fetching Teams chats for %s: %s", account_email, e)
         return False
 
