@@ -1,9 +1,9 @@
 import type { HttpClient } from "../transport/http"
 
-// A service key opens exactly one service on one agent. It is the only credential the
-// dashboard frame and the voice media URLs ever carry, so the api key and access tokens
-// stay out of every service URL. vestad keeps only a hash, so a key cannot be re-read: a
-// cache miss simply mints a fresh one.
+// A service key opens exactly one service on one agent. The apps use it for the dashboard
+// frame alone: an iframe's relative sub-resources inherit only a path prefix, and only a
+// service key opens the /k/{key}/ path form. vestad keeps only a hash, so a key cannot be
+// re-read: a cache miss simply mints a fresh one.
 export interface ServiceKey {
   id: string
   key: string
@@ -17,10 +17,6 @@ export interface CachedServiceKey {
 
 export interface ServiceKeyCache {
   get: (agent: string, service: string) => Promise<string>
-  // Forget the cached key for a pair. A key can be revoked or expire while a consumer holds it,
-  // and vestad keeps only a hash, so nothing local can tell a live key from a refused one: the
-  // consumer the gateway refused drops it and its next `get` mints.
-  drop: (agent: string, service: string) => void
 }
 
 // The margin `get` demands of a cached key: anything handed out has more than an hour of life
@@ -92,11 +88,6 @@ export function createServiceKeyCache(deps: {
       minting.set(cacheKey, pending)
       return pending
     },
-    // A mint in flight is left alone: its key is newer than the one being dropped, and it lands in
-    // the cache after this returns.
-    drop: (agent, service) => {
-      cached.delete(identity(agent, service))
-    },
   }
 }
 
@@ -111,32 +102,4 @@ export function serviceKeyPathUrl(
   const agentSegment = encodeURIComponent(agent)
   const serviceSegment = encodeURIComponent(service)
   return `${baseUrl}/agents/${agentSegment}/${serviceSegment}/k/${encodeURIComponent(key)}/`
-}
-
-// The query form, for a media element or a WebSocket, neither of which can send a header.
-export function serviceKeyQueryUrl(
-  baseUrl: string,
-  agent: string,
-  service: string,
-  key: string,
-  // Appended verbatim after the service segment: it must start with a slash and carry no query
-  // string of its own, or the result is a run-on path or a url with two `?`.
-  subpath: string,
-): string {
-  const params = new URLSearchParams({ token: key })
-  const agentSegment = encodeURIComponent(agent)
-  const serviceSegment = encodeURIComponent(service)
-  return `${baseUrl}/agents/${agentSegment}/${serviceSegment}${subpath}?${params.toString()}`
-}
-
-// The socket form: the query carrier on the ws(s) scheme a WebSocket needs, derived from
-// the http(s) gateway url every caller holds.
-export function serviceKeySocketUrl(
-  baseUrl: string,
-  agent: string,
-  service: string,
-  key: string,
-  subpath: string,
-): string {
-  return serviceKeyQueryUrl(baseUrl.replace(/^http/, "ws"), agent, service, key, subpath)
 }

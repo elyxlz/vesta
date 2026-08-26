@@ -58,9 +58,20 @@ afterEach(() => {
 });
 
 describe("AgentLogStreamProvider", () => {
-  it("opens no stream until a consumer starts the session", () => {
+  // Warmed at the layout, so navigating to the log view renders an already-filled buffer
+  // instead of paying the connect + tail cost at click time.
+  it("warms the stream on mount while the container is up, with no consumer", () => {
     render(tree(agentInfo("ada", "alive"), false));
+    expect(streamLogsMock).toHaveBeenCalledTimes(1);
+  });
+
+  // A stopped agent's backlog is a one-shot dump that reads the whole log file server-side,
+  // so it streams only when a viewer actually asks.
+  it("opens no stream for a stopped agent until a consumer starts the session", () => {
+    const { rerender } = render(tree(agentInfo("ada", "stopped"), false));
     expect(streamLogsMock).not.toHaveBeenCalled();
+    rerender(tree(agentInfo("ada", "stopped"), true));
+    expect(streamLogsMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the stream open after the consumer unmounts", () => {

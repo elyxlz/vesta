@@ -1,20 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // The true edges of the TTS playback path: the HTTP call that registers the
-// text (POST /voice/tts/prepare), the connection and the minted service key
-// used to build the streamed GET url, and the <audio> element that plays it.
-// Everything between them — the store's gate, queue, and streamSpeech — runs
-// for real, because that is the layer that decides whether an assistant
-// message ever reaches the voice endpoint at all.
+// text (POST /voice/tts/prepare), the authed-url owner that builds the
+// streamed GET url, and the <audio> element that plays it. Everything between
+// them — the store's gate, queue, and streamSpeech — runs for real, because
+// that is the layer that decides whether an assistant message ever reaches
+// the voice endpoint at all.
 vi.mock("@/api/client", () => ({ apiJson: vi.fn() }));
-vi.mock("@/lib/connection", () => ({
-  getConnection: vi.fn(() => ({
-    url: "https://host:8443",
-    accessToken: "tok",
-  })),
-}));
-vi.mock("@/lib/service-key-cache", () => ({
-  serviceKeys: { get: vi.fn(() => Promise.resolve("voice-key-1")) },
+vi.mock("@/lib/authed-url", () => ({
+  authedUrl: vi.fn((path: string) =>
+    Promise.resolve(`https://host:8443${path}?token=tok`),
+  ),
+  websocketUrl: vi.fn((path: string) =>
+    Promise.resolve(`wss://host:8443${path}?token=tok`),
+  ),
 }));
 
 import { apiJson } from "@/api/client";
@@ -85,7 +84,7 @@ describe("speak() — the assistant-message TTS trigger", () => {
     // ... and the returned id was played from the streamed GET url.
     await vi.waitFor(() => expect(FakeAudio.created).toHaveLength(1));
     expect(FakeAudio.created[0]?.src).toBe(
-      "https://host:8443/agents/test-agent/voice/tts/stream/tts-1?token=voice-key-1",
+      "https://host:8443/agents/test-agent/voice/tts/stream/tts-1?token=tok",
     );
   });
 
@@ -137,8 +136,8 @@ describe("speak() — the assistant-message TTS trigger", () => {
 
     await vi.waitFor(() => expect(FakeAudio.created).toHaveLength(2));
     expect(FakeAudio.created.map((a) => a.src)).toEqual([
-      "https://host:8443/agents/test-agent/voice/tts/stream/a?token=voice-key-1",
-      "https://host:8443/agents/test-agent/voice/tts/stream/b?token=voice-key-1",
+      "https://host:8443/agents/test-agent/voice/tts/stream/a?token=tok",
+      "https://host:8443/agents/test-agent/voice/tts/stream/b?token=tok",
     ]);
   });
 });

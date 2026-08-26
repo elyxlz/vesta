@@ -17,14 +17,12 @@ import {
   prependPage,
   seedTail,
   sendMessage,
-  serviceKeySocketUrl,
   typingDelay,
 } from "@vesta/core";
 import { useController } from "@/providers/ControllerProvider";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { createBrowserSocket } from "@/providers/ControllerProvider/browser-socket";
-import { getConnection } from "@/lib/connection";
-import { serviceKeys } from "@/lib/service-key-cache";
+import { websocketUrl } from "@/lib/authed-url";
 import { fetchHistory } from "@/api/agents";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
@@ -41,8 +39,9 @@ interface UseAgentSocketOptions {
 
 // The chat view-model over the core controller and the shared chat-stream model. The chat tail is a
 // per-agent app-chat socket (replay-free: it streams only events appended after connect) joined to
-// the HTTP history page, deduped at the seam by event id; on every socket open the hook refetches the
-// tail so a reconnect gap self-heals. agentState + pending come from the replica; gateway
+// the HTTP history page, deduped at the seam by event id; the hook fetches the tail at mount, in
+// parallel with the socket handshake, and refetches it on every reconnect open so a gap self-heals.
+// agentState + pending come from the replica; gateway
 // connectedness from the single sync socket. Sends are POST intents confirmed by their chat-socket
 // echo. ChatState (mirrored into React state for rendering) is the single source of truth; every fold
 // runs synchronously against the ref so a batch of appends dedups against the running accumulation.
@@ -175,14 +174,28 @@ export function useAgentSocketState({
     setState(stateRef.current);
     resetTyping();
 
-    // Reseed the tail from the newest history page and MERGE, never replace. Runs on every socket
-    // open (initial connect and each reconnect), so a replay-free gap self-heals; the shared model
-    // dedups by id and reconciles pending sends against the page.
+    // Reseed the tail from the newest history page and MERGE, never replace. Runs at mount, in
+    // parallel with the socket handshake (the fetch needs only the Bearer header, so nothing
+    // gates it), and again on each reconnect open so a replay-free gap self-heals; the shared
+    // model dedups by id and reconciles pending sends against the page.
     const seed = async () => {
       const page = await fetchHistory(agent, "app-chat");
       if (cancelled) return;
       commit((current) => seedTail(current, page));
     };
+
+    let mountSeedSucceeded = false;
+    let sawOpen = false;
+    const runSeed = (onSuccess?: () => void) => {
+      void seed()
+        .then(onSuccess)
+        .catch((err: unknown) => {
+          console.warn("chat: history load failed", err);
+        });
+    };
+    runSeed(() => {
+      mountSeedSucceeded = true;
+    });
 
     const addLiveEvent = (event: ChatMessage) => {
       const { state: next, paced } = foldLiveEvent(stateRef.current, event);
@@ -190,34 +203,24 @@ export function useAgentSocketState({
       if (paced) enqueueChatMessage(event);
     };
 
-    // app-chat is a private service, so the socket authenticates with a key scoped to it alone
-    // rather than the gateway access token. Minted per connect through the cache, so a reconnect
-    // after the key aged out dials with a fresh one.
-    const buildUrl = async (): Promise<string> => {
-      const conn = getConnection();
-      if (!conn) throw new Error("not connected to vestad");
-      const key = await serviceKeys.get(agent, "app-chat");
-      return serviceKeySocketUrl(conn.url, agent, "app-chat", key, "/ws");
-    };
-
     const socket = createChatSocket(
       {
-        buildUrl,
+        buildUrl: () =>
+          websocketUrl(`/agents/${encodeURIComponent(agent)}/app-chat/ws`),
         createSocket: createBrowserSocket,
         setTimer: (fn, ms) => window.setTimeout(fn, ms),
         clearTimer: (handle) => window.clearTimeout(handle),
       },
       {
         onEvent: addLiveEvent,
-        onClosedBeforeOpen: () => {
-          serviceKeys.drop(agent, "app-chat");
-        },
         onStateChange: (socketState) => {
           if (socketState === "open") {
             resetTyping();
-            void seed().catch((err: unknown) => {
-              console.warn("chat: history load failed", err);
-            });
+            // The first open skips the refetch the mount seed already landed; every later open
+            // reseeds, and a first open racing a still-inflight mount seed reseeds too, so a
+            // mount fetch that fails after this check cannot strand the tail.
+            if (sawOpen || !mountSeedSucceeded) runSeed();
+            sawOpen = true;
           }
         },
       },

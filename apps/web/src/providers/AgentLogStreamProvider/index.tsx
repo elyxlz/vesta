@@ -9,6 +9,7 @@ import { streamLogs, stopLogs } from "@/api";
 import { renderAnsiHtml } from "@/lib/ansi-html";
 import { linkify } from "@/lib/linkify";
 import { createLogSession, type LogSession } from "@/lib/log-session";
+import { isAgentContainerUp } from "@/lib/log-stream-policy";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
 const AgentLogSessionContext = createContext<LogSession | null>(null);
@@ -25,8 +26,10 @@ function makeSession(name: string): LogSession {
 // The layout-level owner of the selected agent's log stream. It lives above the
 // AgentLayout Activity panes, so the stream a log viewer started stays connected
 // and keeps accumulating while the viewer is hidden; it dies with the layout, so
-// leaving the agent closes it. The stream is lazy: nothing connects until a
-// viewer calls start().
+// leaving the agent closes it. The stream is warmed as soon as the agent's
+// container is up, so opening the log view renders an already-filled buffer; a
+// stopped agent stays lazy (its one-shot dump reads the whole log file
+// server-side) and streams only when a viewer calls start().
 export function AgentLogStreamProvider({ children }: { children: ReactNode }) {
   const { name, agent } = useSelectedAgent();
   const [held, setHeld] = useState(() => ({
@@ -44,6 +47,10 @@ export function AgentLogStreamProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     session.setStatus(agent.status);
+  }, [session, agent.status]);
+
+  useEffect(() => {
+    if (isAgentContainerUp(agent.status)) session.start();
   }, [session, agent.status]);
 
   return (

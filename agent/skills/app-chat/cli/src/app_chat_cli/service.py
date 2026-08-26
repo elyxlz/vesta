@@ -134,7 +134,8 @@ async def history_handler(request: web.Request) -> web.Response:
     except ValueError:
         return web.json_response({"error": "invalid cursor"}, status=400)
     kwargs = {"limit": limit} if limit is not None else {}
-    events, next_cursor = state.store.page(before_cursor=cursor, **kwargs)
+    # The sqlite read runs off the event loop, so a large page never stalls the live WS fan-out.
+    events, next_cursor = await asyncio.to_thread(state.store.page, before_cursor=cursor, **kwargs)
     return web.json_response({"events": events, "cursor": next_cursor})
 
 

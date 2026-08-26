@@ -29,6 +29,7 @@ export interface ApiClient {
     init?: RequestInit,
   ) => Promise<ResponseBody>;
   jsonInit: (method: string, body: unknown) => RequestInit;
+  authedUrl: (path: string, query?: URLSearchParams) => Promise<string>;
   websocketUrl: (path: string, query?: URLSearchParams) => Promise<string>;
   getConnection: () => ConnectionConfig | null;
   forceRefresh: () => Promise<boolean>;
@@ -142,10 +143,10 @@ export function createApiClient(options: ClientOptions): ApiClient {
     init?: RequestInit,
   ): Promise<ResponseBody> => http.json<ResponseBody>(path, init);
 
-  // The one place the access token is stamped into a URL: a socket handshake sends no headers.
-  // Refreshing here is what makes it impossible for a call site to dial with a token that
-  // expired while the client was away.
-  const socketUrl = async (
+  // The one place the access token is stamped into a URL: a socket handshake and a media
+  // element send no headers. Refreshing here is what makes it impossible for a call site to
+  // dial with a token that expired while the client was away.
+  const tokenUrl = async (
     path: string,
     query: URLSearchParams,
   ): Promise<string> => {
@@ -153,7 +154,7 @@ export function createApiClient(options: ClientOptions): ApiClient {
     const connection = options.getConnection();
     if (!connection) throw new Error("Not connected to a Vesta gateway.");
     query.set("token", connection.accessToken);
-    return `${connection.url.replace(/^http/, "ws")}${path}?${query.toString()}`;
+    return `${connection.url}${path}?${query.toString()}`;
   };
 
   return {
@@ -164,8 +165,9 @@ export function createApiClient(options: ClientOptions): ApiClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-    websocketUrl: (path, query = new URLSearchParams()) =>
-      socketUrl(path, query),
+    authedUrl: (path, query = new URLSearchParams()) => tokenUrl(path, query),
+    websocketUrl: async (path, query = new URLSearchParams()) =>
+      (await tokenUrl(path, query)).replace(/^http/, "ws"),
     getConnection: options.getConnection,
     forceRefresh: async () => (await refresh(true)) !== null,
     serviceKeys: createServiceKeyCache({

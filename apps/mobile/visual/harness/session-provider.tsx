@@ -447,7 +447,6 @@ function createVisualApi(): ApiClient {
     },
     serviceKeys: {
       get: async () => "visual-dashboard-key",
-      drop: () => undefined,
     },
   };
 }
