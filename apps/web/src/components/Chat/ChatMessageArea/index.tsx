@@ -37,6 +37,9 @@ interface ChatMessageAreaProps {
   onRetry?: RetryHandler;
   // Space reserved at the end of the list so the last message clears the floating composer.
   bottomInset?: number;
+  // A tall draft's extra composer height beyond the baseline inset. It extends the scroll
+  // range so covered bubbles stay reachable, without moving the pinned viewport.
+  bottomOverhang?: number;
   // Fires when pinned-to-latest flips; drives the parent's scroll-to-bottom button.
   onAtBottomChange: (atBottom: boolean) => void;
 }
@@ -221,6 +224,7 @@ export function ChatMessageArea({
   isMobile,
   onRetry,
   bottomInset = 0,
+  bottomOverhang = 0,
   onAtBottomChange,
 }: ChatMessageAreaProps) {
   // Desktop treatment (floating-composer inset, spacious gaps, sizes) applies to both the
@@ -363,6 +367,9 @@ export function ChatMessageArea({
             )}
           </div>
         </div>
+        {/* The draft's overhang sits outside the resize-observed content div, so a growing
+            draft extends the scroll range without ever triggering the pinned re-pin. */}
+        <div style={{ height: bottomOverhang }} />
       </div>
     </CardContent>
   );

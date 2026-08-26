@@ -89,10 +89,14 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // its live height plus the gap at the bottom so the last one always clears it,
   // and the scroll-to-bottom button parks just above it.
   const [composerInset, setComposerInset] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(0);
   // The inset tracks the composer's collapsed baseline only: a growing draft
   // expands the pill over the (masked, opaque-covered) list instead of shifting
   // it, so measurements while a draft exists are ignored (a cleared inset, 0,
-  // always applies); send clears the draft and the next resize re-syncs.
+  // always applies); send clears the draft and the next resize re-syncs. The
+  // live height is tracked separately: its overhang beyond the baseline extends
+  // the message list's scroll range, so the bubbles a tall draft covers stay
+  // reachable by scrolling without the list ever shifting under the typist.
   const hasDraftRef = useRef(false);
   useLayoutEffect(() => {
     hasDraftRef.current = input.length > 0;
@@ -100,6 +104,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const composerRef = useMeasuredSize(
     "height",
     useCallback((height: number) => {
+      setComposerHeight(height);
       if (height === 0 || !hasDraftRef.current) setComposerInset(height);
     }, []),
   );
@@ -185,6 +190,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             composerInset +
             (fullscreen ? COMPOSER_GAP_FULLSCREEN_PX : COMPOSER_GAP_PANEL_PX)
           }
+          bottomOverhang={Math.max(0, composerHeight - composerInset)}
           onAtBottomChange={setAtBottom}
         />
 
