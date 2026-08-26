@@ -600,8 +600,66 @@ _COMPACT_FORMATTERS = {
 }
 
 
+def _warn_if_capped(args, result) -> None:
+    """Say so when a result exactly fills `--limit`, because a truncated list and a complete
+    one are byte-for-byte indistinguishable.
+
+    `--limit` is a hard cap, not a page size. A caller who lists a date window and gets back
+    exactly `limit` items has seen an arbitrary newest-first slice of that window, but nothing
+    in the output says so, so the natural reading is "this is everything in the window". That
+    turns straight into a false negative the moment anyone concludes something from what is
+    ABSENT: no booking, no reply, no invoice.
+
+    Written after it happened twice inside one hour: two mailbox windows each returned exactly
+    400 of 400, and only an explicit count check caught that neither window had been fully
+    seen. The second one was hiding five days of mail behind the cap.
+
+    Goes to STDERR on purpose, so `--json` output stays machine-parseable and a caller piping
+    to a parser still sees the warning on their terminal.
+    """
+    limit = vars(args).get("limit")
+    if isinstance(result, list) and isinstance(limit, int) and limit > 0 and len(result) >= limit:
+        print(
+            f"NOTE: returned exactly --limit ({limit}) items, so this is very likely TRUNCATED "
+            f"and more exist. Raise --limit or narrow the window before concluding anything "
+            f"from what is missing here.",
+            file=sys.stderr,
+        )
+
+
+def _warn_if_search_found_nothing(args, result) -> None:
+    """Say so when a mailbox-wide search returns nothing, because `$search` does not reach
+    Junk Email or Deleted Items and an empty result reads as "this was never sent".
+
+    Graph's `$search` over `/me/messages` skips those two folders. The CLI presents the call as
+    a plain search, so "(no messages)" looks like a statement about the mailbox when it is only
+    a statement about the folders `$search` happens to cover. Anyone asking "did they ever
+    reply", "was this ever sent", "have I heard from this address" gets a confident no.
+
+    Verified both ways rather than assumed. Two emails sitting in Junk were invisible to
+    `--query`, and the SAME query returned all of them the moment they were moved to the Inbox,
+    so the folder is the only variable. Repeated on a second, unrelated sender.
+
+    Fires only on an EMPTY unfoldered search, which is exactly where absence gets concluded. A
+    warning on every call is trained out within a day, and a partial result that silently omits
+    a junk item is a different problem this cannot honestly catch.
+    """
+    if vars(args).get("folder"):
+        return
+    if isinstance(result, list) and not result:
+        print(
+            "NOTE: $search does not reach JunkEmail or DeletedItems, so an empty result is NOT "
+            "proof the message does not exist. To rule out absence, list those folders directly "
+            "(--folder JunkEmail, --folder DeletedItems) instead of concluding from this.",
+            file=sys.stderr,
+        )
+
+
 def _print_result(args, result) -> None:
     """Route a command result to the compact formatter or a JSON variant."""
+    _warn_if_capped(args, result)
+    if (args.group, args.command) == ("email", "search"):
+        _warn_if_search_found_nothing(args, result)
     attrs = vars(args)
     want_json = "json" in attrs and attrs["json"]
     want_pretty = "json_pretty" in attrs and attrs["json_pretty"]
