@@ -40,6 +40,19 @@ perl -i -pe 's/bg-background ?//g; s/ bg-background//g' "$DASHBOARD_SRC/index.cs
 perl -i -pe 's|^(\s*html \{)$|$1\n    background: transparent;|; s|^(\s*body \{)$|$1\n    background: transparent;|' "$DASHBOARD_SRC/index.css"
 perl -i -pe 'print "\@source \"./components/ui\";\n\@source \"./lib\";\n\@source \"./hooks\";\n" if $. == 1' "$DASHBOARD_SRC/index.css"
 
+# Dashboard cards are flat: neutralize the shared Card's shadow in the dashboard copy only
+# (apps/web keeps shadow-md). Appended here so the rule lives in the synced index.css without
+# touching the canonical apps/web source. See agent/skills/dashboard/design/SKILL.md.
+cat >> "$DASHBOARD_SRC/index.css" <<'CARD_FLAT_CSS'
+
+/* Dashboard cards are flat: drop the base Card's shadow while keeping its hairline ring
+   for edge definition, by zeroing only the shadow layer of the composed box-shadow (the
+   ring uses its own var, so it survives). See the "Cards are flat" design rule. */
+[data-slot="card"] {
+  --tw-shadow: 0 0 #0000;
+}
+CARD_FLAT_CSS
+
 # Guard: every font the synced index.css @imports must be a dependency of the dashboard's own
 # package.json. The CSS is synced but package.json is NOT, so a font newly added to apps/web (e.g.
 # jetbrains-mono) lands in the dashboard's CSS while its package is missing — the agent's dashboard

@@ -53,6 +53,10 @@ Structure follows the design system. Buttons, cards, inputs, borders, and surfac
 
 Raw scales (`text-green-500`, `bg-amber-100`) are fine where you need a color a token does not cover: a value that is up or down, a chart series, a status dot, a category. Reserve them for signal, not decoration, and use them the same way across every widget so the user learns them once. A widget washed in one accent has no signal left to give.
 
+## Cards are flat
+
+Dashboard cards carry no drop shadow. The shared `Card` ships with `shadow-md` for the main app, but the dashboard neutralizes it globally so cards sit flat against the page, held only by their hairline ring for edge definition. Do not add `shadow-*` to a card or any card-like surface (a metric tile, a grouped row list, a section panel), and do not reach for elevation to separate sections: use spacing, the ring, and the background and muted tokens instead. Depth on this dashboard reads as noise, not hierarchy.
+
 ## Structure is information
 
 Structural devices (numbering, eyebrows, dividers, labels) should encode something true about the content, not decorate it. Numbered markers (01 / 02 / 03) belong only when the content actually is a sequence: a real process or an ordered timeline where order carries information the reader needs. Question whether a device makes sense before using it.
