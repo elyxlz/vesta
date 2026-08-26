@@ -53,7 +53,15 @@ fi
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | grep -icE 'error|traceback')
+    # -a because a log picks up NUL bytes from an unclean write or a killed process: grep then
+    # treats the stream as binary, and what it writes to stdout depends on the grep and on whether
+    # anything filters between the two, so the count can come back empty.
+    errors=$(tail -n 2000 "$log" | grep -aicE 'error|traceback')
+    # An uncomputable count is not zero. Without this the arithmetic test below errors on it and
+    # takes the else branch, so a probe that has stopped working reports its log as healthy.
+    case "$errors" in
+        ''|*[!0-9]*) bad "$(basename "$log"): error count came back '$errors', so the probe itself is broken"; continue ;;
+    esac
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in its recent tail; read it and find the producer"
     else

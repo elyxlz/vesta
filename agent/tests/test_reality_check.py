@@ -85,6 +85,37 @@ def test_error_storm_in_a_recent_log_goes_red(tmp_path):
     assert "RED stormy.log" in run.stdout
 
 
+def test_error_storm_survives_nul_bytes_in_the_log(tmp_path):
+    # Logs acquire NUL bytes from an unclean write, and grep then reads the stream as binary. The
+    # storm has to be counted anyway: a log that has just been truncated by a crash is exactly the
+    # log worth reading.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "truncated.log").write_bytes(b"INFO fine\n" * 10 + b"\x00" * 200 + b"\nERROR boom\n" * 300)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED truncated.log" in run.stdout
+
+
+def test_an_uncomputable_error_count_goes_red(tmp_path):
+    # The failure this guards is silent by construction: the count comes back empty, the arithmetic
+    # test errors on it, and the else branch reports the log as healthy. A probe that has stopped
+    # working must say so rather than pass. The shim stands in for any grep that writes nothing for
+    # a stream it considers binary.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "some.log").write_text("ERROR boom\n" * 300)
+    fake_grep = home / "bin" / "grep"
+    fake_grep.write_text("#!/bin/sh\nexit 1\n")
+    fake_grep.chmod(0o755)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED some.log" in run.stdout
+    assert "the probe itself is broken" in run.stdout
+
+
 def test_quiet_recent_log_stays_green(tmp_path):
     home = _healthy_home(tmp_path)
     (home / "agent" / "logs" / "calm.log").write_text("INFO fine\n" * 300)
