@@ -40,6 +40,7 @@ export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/delt
 export {
   PILL_FALLBACK_ICON,
   PILL_KIND_ICONS,
+  pillDisplayLine,
   type PillContent,
   type PillNotification,
 } from "./notifications-pill/notifications-pill"

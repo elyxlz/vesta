@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   enqueuePillNotification,
   pillContentFromDelta,
+  pillDisplayLine,
   pillVisibleWhileViewing,
   type PillNotification,
 } from "./notifications-pill"
@@ -46,6 +47,16 @@ describe("pillVisibleWhileViewing", () => {
     for (const kind of ["needs_user", "task", "agent_status"]) {
       expect(pillVisibleWhileViewing(item(0, kind, "aria"), "aria")).toBe(true)
     }
+  })
+})
+
+describe("pillDisplayLine", () => {
+  it("joins a title and body as title: body", () => {
+    expect(pillDisplayLine({ title: "aria", body: "hi there" })).toBe("aria: hi there")
+  })
+
+  it("renders a bodiless notification as the title alone", () => {
+    expect(pillDisplayLine({ title: "aria stopped", body: "" })).toBe("aria stopped")
   })
 })
 
