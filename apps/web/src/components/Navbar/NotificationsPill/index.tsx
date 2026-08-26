@@ -14,6 +14,7 @@ import { Fragment, useContext, useLayoutEffect, useRef } from "react";
 import {
   PILL_FALLBACK_ICON,
   PILL_KIND_ICONS,
+  pillDisplayLine,
   type LoggedUserNotification,
   type PillNotification,
 } from "@vesta/core";
@@ -381,7 +382,7 @@ function NotificationRow({
           compact ? "text-[13px]" : "text-sm",
         )}
       >
-        {entry.title}
+        {pillDisplayLine(entry)}
       </div>
       {timestamp && (
         <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -512,7 +513,7 @@ function MorphingPill({
                 <PillKindIcon kind={current.kind} />
               )}
               <span className="min-w-0 truncate text-[13px]">
-                {current.title}
+                {pillDisplayLine(current)}
               </span>
             </>
           ) : (

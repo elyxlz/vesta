@@ -69,6 +69,15 @@ export function enqueuePillNotification(
   return [...queue, item]
 }
 
+/**
+ * The one-line rendering of a notification on a pill surface: the title alone,
+ * or "title: body" when a body carries detail (a message preview under the
+ * agent-name title). One owner, so every view joins the pair identically.
+ */
+export function pillDisplayLine(item: Pick<PillContent, "title" | "body">): string {
+  return item.body ? `${item.title}: ${item.body}` : item.title
+}
+
 /** The `user_notification` payload as a pill item, or null for any other delta. */
 export function pillContentFromDelta(delta: Delta): PillContent | null {
   if (delta.type !== "user_notification") return null

@@ -6,8 +6,9 @@ set -euo pipefail
 # AGENT_NAME. Best-effort: a transport failure never surfaces (the caller's durable work already happened).
 #
 # Usage: user-notification <kind> <title> [body]    (kind in: message needs_user task)
-# The title is the whole one-line message; pass a body only when it adds information the
-# title cannot carry (a message preview, an instruction).
+# Clients render each notification as one line: the title alone, or "title: body" when a
+# body is present. Keep the title a short headline (who or what happened) and put the
+# detail in the body (a message preview, an instruction).
 
 KIND="${1:?Usage: user-notification <kind> <title> [body]}"
 TITLE="${2:?Usage: user-notification <kind> <title> [body]}"
