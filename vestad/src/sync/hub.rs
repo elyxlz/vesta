@@ -30,6 +30,8 @@ pub(crate) struct SyncHub {
     notifications_tx: watch::Sender<u64>,
     notifications_rx: watch::Receiver<u64>,
     user_notifications_tx: broadcast::Sender<Arc<UserNotification>>,
+    user_feed_tx: watch::Sender<u64>,
+    user_feed_rx: watch::Receiver<u64>,
 }
 
 impl Default for SyncHub {
@@ -42,7 +44,8 @@ impl SyncHub {
     pub fn new() -> Self {
         let (notifications_tx, notifications_rx) = watch::channel(0);
         let (user_notifications_tx, _user_notifications_rx) = broadcast::channel(USER_NOTIFICATION_BROADCAST_CAPACITY);
-        Self { agents: Mutex::new(HashMap::new()), notifications_tx, notifications_rx, user_notifications_tx }
+        let (user_feed_tx, user_feed_rx) = watch::channel(0);
+        Self { agents: Mutex::new(HashMap::new()), notifications_tx, notifications_rx, user_notifications_tx, user_feed_tx, user_feed_rx }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, PendingNotifications>> {
@@ -97,6 +100,18 @@ impl SyncHub {
 
     fn bump_notifications(&self) {
         self.notifications_tx.send_modify(|v| *v = v.wrapping_add(1));
+    }
+
+    /// Subscribe to the user-notification feed's scalar state (the seen watermark and the newest
+    /// entry's stamp, carried on the gateway branch): a wake means sessions must re-emit gateway state.
+    pub fn subscribe_user_feed(&self) -> watch::Receiver<u64> {
+        self.user_feed_rx.clone()
+    }
+
+    /// Wake `/sync` sessions after the feed's scalars changed (an append moved the newest stamp, or
+    /// the user marked the feed seen).
+    pub fn bump_user_feed(&self) {
+        self.user_feed_tx.send_modify(|v| *v = v.wrapping_add(1));
     }
 }
 

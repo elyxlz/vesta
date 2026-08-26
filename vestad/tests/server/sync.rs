@@ -208,6 +208,46 @@ async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
     sock.close().await.ok();
 }
 
+/// The user-notification feed's seen watermark is synced state on the gateway branch:
+/// `POST /notifications/seen` advances it server-side and every `/sync` session receives a `state`
+/// delta carrying the new `userNotificationsSeenAt`; an appended notification moves
+/// `lastUserNotificationAt` the same way. Predicates are `>=` because parallel scenarios share the
+/// server and may append or mark concurrently.
+#[tokio::test]
+async fn marking_the_feed_seen_projects_the_watermark_on_the_gateway_branch() {
+    let c = SERVER.client();
+    let agent = running_agent(&c, "sync-seen");
+    let token = c.read_agent_token(&agent.name).expect("read agent token");
+
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+
+    let seen_at = c.mark_notifications_seen().expect("mark notifications seen");
+    assert!(seen_at > 0, "the watermark is the server's now");
+    sock.expect_frame_matching(
+        |f| {
+            f["type"].as_str() == Some("state")
+                && f["value"]["userNotificationsSeenAt"].as_u64().is_some_and(|at| at >= seen_at)
+        },
+        USER_NOTIFICATION_TIMEOUT,
+    )
+    .await
+    .expect("a state delta carrying the advanced seen watermark");
+
+    c.send_user_notification(&agent.name, &token, "message", &agent.name, "past the watermark")
+        .expect("send user notification");
+    sock.expect_frame_matching(
+        |f| {
+            f["type"].as_str() == Some("state")
+                && f["value"]["lastUserNotificationAt"].as_u64().is_some_and(|at| at >= seen_at)
+        },
+        USER_NOTIFICATION_TIMEOUT,
+    )
+    .await
+    .expect("a state delta carrying the newest entry's stamp");
+    sock.close().await.ok();
+}
+
 /// (3) `POST /app-chat/message` with an explicit intent id round-trips end-to-end: the echo on the
 /// replay-free chat socket carries the SAME `intent_id` the HTTP intake was given (the delivery-truth
 /// contract clients dedup and confirm on), and `GET /app-chat/history` then returns that message.

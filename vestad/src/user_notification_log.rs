@@ -7,6 +7,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::time_utils::now_epoch_secs;
 
 const LOG_FILE: &str = "user-notifications.jsonl";
+const SEEN_FILE: &str = "user-notifications-seen";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LoggedUserNotification {
@@ -29,12 +31,15 @@ pub(crate) struct LoggedUserNotification {
 #[derive(Debug)]
 pub(crate) struct UserNotificationLog {
     path: PathBuf,
+    seen_path: PathBuf,
     entries: Mutex<Vec<LoggedUserNotification>>,
+    seen_at: AtomicU64,
 }
 
 impl UserNotificationLog {
     /// Load the log from disk. A missing file is an empty log; a corrupt line
-    /// (a torn final write) is skipped rather than poisoning the rest.
+    /// (a torn final write) is skipped rather than poisoning the rest. The seen
+    /// watermark loads from its sidecar; missing or unreadable is 0 (nothing seen).
     pub(crate) fn load(config_dir: &Path) -> Self {
         let path = config_dir.join(LOG_FILE);
         let entries = match std::fs::read_to_string(&path) {
@@ -44,7 +49,36 @@ impl UserNotificationLog {
                 .collect(),
             Err(_) => Vec::new(),
         };
-        Self { path, entries: Mutex::new(entries) }
+        let seen_path = config_dir.join(SEEN_FILE);
+        let seen_at = std::fs::read_to_string(&seen_path)
+            .ok()
+            .and_then(|content| content.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        Self { path, seen_path, entries: Mutex::new(entries), seen_at: AtomicU64::new(seen_at) }
+    }
+
+    /// The feed's seen watermark: unix seconds of the user's last catch-up, 0 before the first.
+    /// Everything stamped after it is unseen; the client derives that, this is only the memory.
+    pub(crate) fn seen_at(&self) -> u64 {
+        self.seen_at.load(Ordering::Relaxed)
+    }
+
+    /// Advance the seen watermark to now and persist it, returning the new value. The disk write
+    /// is best-effort like the log's own: a failure costs the memory across a restart, never the
+    /// live state.
+    pub(crate) fn mark_seen_now(&self) -> u64 {
+        let now = now_epoch_secs();
+        self.seen_at.store(now, Ordering::Relaxed);
+        if let Err(error) = std::fs::write(&self.seen_path, now.to_string()) {
+            tracing::warn!(%error, "could not persist the notifications seen watermark");
+        }
+        now
+    }
+
+    /// The newest logged entry's delivery stamp, `None` on an empty log.
+    pub(crate) fn last_at(&self) -> Option<u64> {
+        let entries = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        entries.last().map(|entry| entry.at)
     }
 
     /// Append one delivered notification, assigning the next monotonic id. The
@@ -157,6 +191,28 @@ mod tests {
         let reloaded = UserNotificationLog::load(directory.path());
         assert!(!reloaded.append_once("", "update_available", "gateway v0.3.0 available", ""));
         assert_eq!(reloaded.page(None, 10).len(), 2);
+    }
+
+    #[test]
+    fn the_seen_watermark_starts_at_zero_and_survives_a_restart() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let marked = {
+            let log = UserNotificationLog::load(directory.path());
+            assert_eq!(log.seen_at(), 0);
+            log.mark_seen_now()
+        };
+        let reloaded = UserNotificationLog::load(directory.path());
+        assert_eq!(reloaded.seen_at(), marked);
+    }
+
+    #[test]
+    fn last_at_reports_the_newest_entry_stamp() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let log = UserNotificationLog::load(directory.path());
+        assert_eq!(log.last_at(), None);
+        log.append("aria", "message", "aria", "hi");
+        let newest = log.page(None, 1);
+        assert_eq!(log.last_at(), Some(newest[0].at));
     }
 
     #[test]

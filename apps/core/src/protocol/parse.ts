@@ -58,7 +58,7 @@ export function parseServerFrame(raw: string): ParsedFrame {
     case "state":
     case "agent":
     case "agent_removed":
-    case "notifications":
+    case "agent_notifications":
     case "user_notification":
     case "presence":
     case "devices":
@@ -99,13 +99,13 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
       if (name === null) return UNKNOWN
       return { kind: "delta", delta: { type: "agent_removed", name } }
     }
-    case "notifications": {
+    case "agent_notifications": {
       const agent = str(frame.agent)
       const pending = arr(frame.pending)
       if (agent === null || pending === null) return UNKNOWN
       return {
         kind: "delta",
-        delta: { type: "notifications", agent, pending: pending as NotificationEvent[] },
+        delta: { type: "agent_notifications", agent, pending: pending as NotificationEvent[] },
       }
     }
     case "user_notification": {

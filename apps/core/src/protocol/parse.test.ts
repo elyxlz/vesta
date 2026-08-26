@@ -31,7 +31,10 @@ describe("parseServerFrame", () => {
       { raw: { type: "state", scope: "gateway", value: { version: "1" } }, type: "state" },
       { raw: { type: "agent", name: "scout", info: { status: "alive" } }, type: "agent" },
       { raw: { type: "agent_removed", name: "scout" }, type: "agent_removed" },
-      { raw: { type: "notifications", agent: "scout", pending: [] }, type: "notifications" },
+      {
+        raw: { type: "agent_notifications", agent: "scout", pending: [] },
+        type: "agent_notifications",
+      },
       {
         raw: {
           type: "user_notification",
@@ -228,7 +231,7 @@ describe("parseServerFrame", () => {
   it("ignores a delta missing a required field", () => {
     const inputs = [
       JSON.stringify({ type: "agent", name: "scout" }),
-      JSON.stringify({ type: "notifications", agent: "scout" }),
+      JSON.stringify({ type: "agent_notifications", agent: "scout" }),
       JSON.stringify({ type: "state", scope: "other", value: {} }),
     ]
     for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })

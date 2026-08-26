@@ -45,6 +45,36 @@ function selectGateway(tree: Tree | null) {
   return tree?.gateway ?? null;
 }
 
+// The gateway-branch slice of the context value, defaulted for the not-yet-synced
+// null tree in one place so the component stays under the complexity ceiling.
+function gatewayValues(gateway: ReturnType<typeof selectGateway>) {
+  if (gateway === null) {
+    return {
+      managed: false,
+      gatewayChannel: "stable" as const,
+      gatewayAutoUpdate: true,
+      gatewayPort: 0,
+      updateAvailable: false,
+      latestVersion: null,
+      agentsFetched: false,
+      userNotificationsSeenAt: 0,
+      lastUserNotificationAt: null,
+    };
+  }
+  return {
+    managed: gateway.managed,
+    gatewayChannel: gateway.channel,
+    gatewayAutoUpdate: gateway.autoUpdate,
+    gatewayPort: gateway.port,
+    updateAvailable: gateway.updateAvailable,
+    latestVersion: gateway.latestVersion,
+    agentsFetched: true,
+    // Absent on an older gateway: treat as never caught up / empty log.
+    userNotificationsSeenAt: gateway.userNotificationsSeenAt ?? 0,
+    lastUserNotificationAt: gateway.lastUserNotificationAt ?? null,
+  };
+}
+
 // Route compatibility screens inside the provider because their shared navbar reads gateway state.
 function routeContent(syncState: SyncState, children: ReactNode): ReactNode {
   if (syncState === "app_behind") return <AppBehindScreen />;
@@ -110,19 +140,13 @@ function ReplicaGateway({
   }, [controller]);
 
   const value: GatewayContextValue = {
+    ...gatewayValues(gateway),
     reachable: syncState === "open",
-    managed: gateway?.managed ?? false,
     gatewayVersion,
-    gatewayChannel: gateway?.channel ?? "stable",
-    gatewayAutoUpdate: gateway?.autoUpdate ?? true,
-    gatewayPort: gateway?.port ?? 0,
     versionChecked: true,
-    updateAvailable: gateway?.updateAvailable ?? false,
-    latestVersion: gateway?.latestVersion ?? null,
     gatewayOperation,
     updatedTo,
     agents,
-    agentsFetched: gateway !== null,
     devices,
     triggerGatewayUpdate,
     triggerGatewayRestart,

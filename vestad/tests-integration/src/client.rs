@@ -476,6 +476,17 @@ impl Client {
         Ok(())
     }
 
+    /// Mark the user-notification feed seen via `POST /notifications/seen` (client auth): vestad
+    /// advances the synced watermark to its own now and returns it as `{seenAt}`.
+    pub fn mark_notifications_seen(&self) -> Result<u64, String> {
+        let resp = self.post_json("/notifications/seen", &serde_json::json!({}))?;
+        let body: serde_json::Value = check_response(resp)?
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        body["seenAt"].as_u64().ok_or_else(|| format!("seenAt missing: {body}"))
+    }
+
     /// Report a device's context outside the `/sync` socket via `PUT /devices/{device_id}/context`
     /// (client auth), the mobile background poll's carrier. `context` is `{timezone?, position?}`.
     pub fn report_device_context(&self, device_id: &str, context: &serde_json::Value) -> Result<(), String> {

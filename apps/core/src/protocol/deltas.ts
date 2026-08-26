@@ -18,8 +18,10 @@ export interface AgentRemovedDelta {
   name: string
 }
 
-export interface NotificationsDelta {
-  type: "notifications"
+// An agent's own pending intake notifications (the files awaiting its attention), distinct from
+// the user-facing `user_notification` feed below.
+export interface AgentNotificationsDelta {
+  type: "agent_notifications"
   agent: string
   pending: NotificationEvent[]
 }
@@ -56,7 +58,7 @@ export type Delta =
   | StateDelta
   | AgentDelta
   | AgentRemovedDelta
-  | NotificationsDelta
+  | AgentNotificationsDelta
   | UserNotificationDelta
   | PresenceDelta
   | DevicesDelta

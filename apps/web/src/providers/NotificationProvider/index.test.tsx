@@ -376,7 +376,7 @@ describe("NotificationProvider", () => {
 
     act(() => {
       emit({
-        type: "notifications",
+        type: "agent_notifications",
         agent: "ada",
         pending: [
           {

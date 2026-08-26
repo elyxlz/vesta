@@ -28,6 +28,39 @@ export async function fetchUserNotifications(
   return parseLogged(body.notifications)
 }
 
+// The awareness-feed seen model, shared by every view: one gateway-synced watermark
+// (`userNotificationsSeenAt` on the gateway branch), everything stamped after it unseen.
+
+/** Split a newest-first page on the watermark: what the user has not caught up on, then the rest. */
+export function splitBySeen(
+  entries: LoggedUserNotification[],
+  seenAt: number,
+): { unseen: LoggedUserNotification[]; seen: LoggedUserNotification[] } {
+  const unseen: LoggedUserNotification[] = []
+  const seen: LoggedUserNotification[] = []
+  for (const entry of entries) {
+    ;(entry.at > seenAt ? unseen : seen).push(entry)
+  }
+  return { unseen, seen }
+}
+
+/** Whether anything arrived past the watermark, from the gateway branch's two scalars alone. */
+export function feedHasUnseen(
+  lastAt: number | null | undefined,
+  seenAt: number | undefined,
+): boolean {
+  return (lastAt ?? 0) > (seenAt ?? 0)
+}
+
+/**
+ * Tell the gateway the user caught up on the feed (a history surface closed having offered
+ * everything unseen). The server stamps the watermark with its own clock and fans the updated
+ * gateway branch to every device, so the client never computes "now" itself.
+ */
+export async function markUserNotificationsSeen(http: HttpClient): Promise<void> {
+  await http.request("/notifications/seen", { method: "POST" })
+}
+
 // Parse at the boundary: an entry missing any field is dropped, never rendered
 // half-shaped, and an unknown extra field is ignored (additive evolution).
 function parseLogged(value: unknown): LoggedUserNotification[] {

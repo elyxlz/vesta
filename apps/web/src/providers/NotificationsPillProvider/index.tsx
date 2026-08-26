@@ -10,7 +10,9 @@ import {
 import { useMotionValue } from "motion/react";
 import { useMatch, useNavigate } from "react-router-dom";
 import {
+  feedHasUnseen,
   fetchUserNotifications,
+  markUserNotificationsSeen,
   type LoggedUserNotification,
   type PillContent,
 } from "@vesta/core";
@@ -25,6 +27,7 @@ import {
   PILL_BUTTON_SIZE,
   type NotificationHistory,
 } from "./context";
+import { useCatchUpSession } from "./use-catch-up-session";
 
 const HISTORY_PAGE_SIZE = 50;
 // A near-instant fetch still shows the skeletons for at least this long, so
@@ -124,19 +127,39 @@ export function NotificationsPillProvider({
   const historyOpen = popoverOpen || dialogOpen;
   const feed = useNotificationHistory();
 
-  // The compact (mobile) bell's dot: raised by any arrival while no history
-  // surface is open, cleared by opening one.
-  const [unseen, setUnseen] = useState(false);
+  const { agents, userNotificationsSeenAt, lastUserNotificationAt } =
+    useGateway();
+
+  // The bell's dot is derived, never stored: anything logged past the synced
+  // watermark is unseen, so another device catching up clears it here too.
+  const unseen = feedHasUnseen(lastUserNotificationAt, userNotificationsSeenAt);
+
+  const seenSnapshot = useCatchUpSession(
+    historyOpen,
+    userNotificationsSeenAt,
+    lastUserNotificationAt,
+    useCallback(() => {
+      markUserNotificationsSeen(httpClient).catch(() => undefined);
+    }, []),
+  );
+
+  // While a session holds a real watermark, make sure the loaded history
+  // reaches back past it, so the surfaces can offer the whole unseen set. A
+  // 0 watermark (never caught up) deliberately does not page: everything ever
+  // logged is unseen, and the first catch-up starts the model.
+  useEffect(() => {
+    if (seenSnapshot === null || seenSnapshot === 0) return;
+    if (feed.loading || feed.failed || feed.exhausted) return;
+    const oldest = feed.history[feed.history.length - 1];
+    if (oldest && oldest.at > seenSnapshot) feed.loadPage(oldest.id);
+  }, [seenSnapshot, feed]);
+
   const openPopover = useCallback((open: boolean) => {
     setPopoverOpen(open);
-    if (open) setUnseen(false);
   }, []);
   const openDialog = useCallback((open: boolean) => {
     setDialogOpen(open);
-    if (open) setUnseen(false);
   }, []);
-
-  const { agents } = useGateway();
   const agentsRef = useRef(agents);
   useEffect(() => {
     agentsRef.current = agents;
@@ -156,7 +179,6 @@ export function NotificationsPillProvider({
     paused: historyOpen,
     onNotification: (item) => {
       if (historyOpen) feed.prepend(item);
-      else setUnseen(true);
     },
   });
 
@@ -191,6 +213,7 @@ export function NotificationsPillProvider({
       current,
       dismiss,
       unseen,
+      seenSnapshot,
       feed,
       popoverOpen,
       setPopoverOpen: openPopover,
@@ -204,6 +227,7 @@ export function NotificationsPillProvider({
       current,
       dismiss,
       unseen,
+      seenSnapshot,
       feed,
       popoverOpen,
       openPopover,

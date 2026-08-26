@@ -121,9 +121,11 @@ describe("createSyncSocket", () => {
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: { gateway: {}, agents: {} } }))
-    socket?.onmessage?.(JSON.stringify({ type: "notifications", agent: "scout", pending: [] }))
+    socket?.onmessage?.(
+      JSON.stringify({ type: "agent_notifications", agent: "scout", pending: [] }),
+    )
     expect(h.snapshots).toHaveLength(1)
-    expect(h.deltas).toEqual([{ type: "notifications", agent: "scout", pending: [] }])
+    expect(h.deltas).toEqual([{ type: "agent_notifications", agent: "scout", pending: [] }])
   })
 
   it("ignores unknown frames", async () => {

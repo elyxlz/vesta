@@ -111,6 +111,9 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     let mut services_rx = state.agent_status_cache.subscribe_services();
     let mut invalidations_rx = state.agent_status_cache.subscribe_invalidations();
     let mut notifications_rx = state.sync_hub.subscribe_notifications();
+    // The user-notification feed's scalars ride the gateway branch, so its wake re-runs the
+    // gateway diff exactly as a roster wake does.
+    let mut user_feed_rx = state.sync_hub.subscribe_user_feed();
     // User notifications are live-only (no snapshot backlog), so subscribing before the snapshot send
     // just avoids missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
     let mut user_notifications_rx = state.sync_hub.subscribe_user_notifications();
@@ -124,6 +127,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     services_rx.borrow_and_update();
     invalidations_rx.borrow_and_update();
     notifications_rx.borrow_and_update();
+    user_feed_rx.borrow_and_update();
     devices_rx.borrow_and_update();
 
     // 2. immediate snapshot: gateway + agents (info + pending sets) + known devices, no tails.
@@ -157,6 +161,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = services_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
+            r = user_feed_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = presence_rx.changed() => { if r.is_err() { break } Wake::Presence }
             r = devices_rx.changed() => { if r.is_err() { break } Wake::Devices }
             r = operation_rx.changed() => { if r.is_err() { break } Wake::Roster }
@@ -341,7 +346,7 @@ fn notifications_deltas(
             continue;
         }
         if last.get(&agent) != Some(&pending) {
-            deltas.push(Frame::Notifications { agent: agent.clone(), pending: pending.clone() });
+            deltas.push(Frame::AgentNotifications { agent: agent.clone(), pending: pending.clone() });
         }
         recorded.insert(agent, pending);
     }
@@ -540,6 +545,8 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
     };
     let tunnel_url = state.tunnel_url.lock().await.clone();
     let operation = state.operation.snapshot().map(Into::into);
+    let user_notifications_seen_at = state.user_notification_log.seen_at();
+    let last_user_notification_at = state.user_notification_log.last_at();
     GatewayInfo {
         version: crate::update::running_version().to_string(),
         channel,
@@ -551,6 +558,8 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
         latest_version,
         managed: crate::is_cloud_managed(),
         operation,
+        user_notifications_seen_at,
+        last_user_notification_at,
     }
 }
 
@@ -619,7 +628,7 @@ mod tests {
         // Roster upsert lands; the next emit with the same pending now delivers and records it.
         let roster = BTreeMap::from([("newbie".to_string(), info_of(AgentStatus::Alive))]);
         let (deltas, recorded) = notifications_deltas(&recorded, current, &roster);
-        assert_eq!(deltas, vec![Frame::Notifications { agent: "newbie".into(), pending: pending.clone() }]);
+        assert_eq!(deltas, vec![Frame::AgentNotifications { agent: "newbie".into(), pending: pending.clone() }]);
         assert_eq!(recorded.get("newbie"), Some(&pending));
     }
 

@@ -46,6 +46,9 @@ export {
 } from "./notifications-pill/notifications-pill"
 export {
   fetchUserNotifications,
+  feedHasUnseen,
+  markUserNotificationsSeen,
+  splitBySeen,
   type LoggedUserNotification,
 } from "./notifications-pill/user-notification-feed"
 export { parseServerFrame } from "./protocol/parse"
