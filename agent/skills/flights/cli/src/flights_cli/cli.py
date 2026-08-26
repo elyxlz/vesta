@@ -33,14 +33,10 @@ def _fmt_duration(minutes: int) -> str:
     return f"{h}h{m:02d}m"
 
 
-# The Google-backed search returns prices in a currency decided by IP/locale, NOT in USD. Until
-# 25 Aug 2026 every result was emitted under the key "price_usd" with no currency ever requested,
-# so on this box the field said USD and held GBP. Proven by holding the query fixed and varying only
-# this parameter: curr=None -> 114.0, GBP -> 114.0, USD -> 155.0, EUR -> 133.0 (FCO-LHR, 5 Sep 2026).
-# The damage was not merely a wrong label. A 36% understatement was quoted to a user as a real fare,
-# and a phantom "37% disagreement between Google and Duffel" was recorded as a known trap when it was
-# the same GBP number twice with one of them mislabelled. So: always send an explicit currency, and
-# always report which one back, because a price without a currency is not a price.
+# The Google-backed search prices in a currency chosen by IP/locale, so a request that sends none
+# comes back as a bare number whose unit depends on where the box sits. Holding the query fixed and
+# varying only this parameter: curr=None -> 114.0, GBP -> 114.0, USD -> 155.0, EUR -> 133.0
+# (FCO-LHR, 5 Sep 2026). Send an explicit currency and report it alongside every price.
 DEFAULT_CURRENCY = "USD"
 
 
