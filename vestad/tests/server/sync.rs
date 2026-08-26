@@ -42,7 +42,7 @@ const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 // contract literal here). Dropping the device `location` field from the roster removed a wire field
 // clients read, so the floor moved to the in-gap bump above the shipped version (see release.sh for
 // the in-gap bump convention).
-const EXPECT_MIN_SUPPORTED: &str = "0.2.5";
+const EXPECT_MIN_SUPPORTED: &str = "0.2.11";
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
 /// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed). The
