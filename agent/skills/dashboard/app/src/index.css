@@ -225,3 +225,10 @@ html[data-platform="android"] {
       calc(100% - var(--scroll-fade-size)) 100%;
   }
 }
+
+/* Dashboard cards are flat: drop the base Card's shadow while keeping its hairline ring
+   for edge definition, by zeroing only the shadow layer of the composed box-shadow (the
+   ring uses its own var, so it survives). See the "Cards are flat" design rule. */
+[data-slot="card"] {
+  --tw-shadow: 0 0 #0000;
+}
