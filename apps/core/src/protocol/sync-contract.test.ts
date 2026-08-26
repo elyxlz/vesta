@@ -20,6 +20,8 @@ describe("sync protocol contract (vestad fixtures)", () => {
     expect(parsed.kind).toBe("snapshot")
     if (parsed.kind === "snapshot") {
       expect(parsed.frame.tree.gateway.autoUpdate).toBe(true)
+      expect(parsed.frame.tree.gateway.userNotificationsSeenAt).toBe(1_700_000_000)
+      expect(parsed.frame.tree.gateway.lastUserNotificationAt).toBe(1_700_000_400)
       expect(parsed.frame.tree.agents["sample-agent"]?.info.activityState).toBe("thinking")
     }
   })

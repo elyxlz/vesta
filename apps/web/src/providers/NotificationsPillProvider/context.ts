@@ -29,11 +29,19 @@ export interface NotificationsPillState {
   current: PillNotification | null;
   dismiss: () => void;
   /**
-   * A notification arrived since the user last opened a history surface. The
-   * compact (mobile) bell renders it as a dot; opening the popover or dialog
-   * clears it.
+   * Something in the feed is past the synced seen watermark. The compact
+   * (mobile) bell renders it as a dot; it clears when any device catches up
+   * (closes a history surface), including this one.
    */
   unseen: boolean;
+  /**
+   * The seen watermark as it stood when the open catch-up session began (the
+   * first history surface opened), or null while none is open. The surfaces
+   * split unseen from seen against this held value, so the split cannot shift
+   * under the user mid-view; 0 means the user never caught up, which renders
+   * as an unsectioned history.
+   */
+  seenSnapshot: number | null;
   feed: NotificationHistory;
   popoverOpen: boolean;
   setPopoverOpen: (open: boolean) => void;

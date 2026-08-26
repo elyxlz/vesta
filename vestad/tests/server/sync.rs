@@ -42,7 +42,7 @@ const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 // contract literal here). Dropping the device `location` field from the roster removed a wire field
 // clients read, so the floor moved to the in-gap bump above the shipped version (see release.sh for
 // the in-gap bump convention).
-const EXPECT_MIN_SUPPORTED: &str = "0.2.5";
+const EXPECT_MIN_SUPPORTED: &str = "0.2.11";
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
 /// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed). The
@@ -205,6 +205,46 @@ async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
         .send_user_notification(&agent.name, &token, "bogus", &agent.name, "nope")
         .expect_err("an unknown kind is rejected");
     assert!(err.contains("unknown user notification kind"), "unexpected error for a bad kind: {err}");
+    sock.close().await.ok();
+}
+
+/// The user-notification feed's seen watermark is synced state on the gateway branch:
+/// `POST /notifications/seen` advances it server-side and every `/sync` session receives a `state`
+/// delta carrying the new `userNotificationsSeenAt`; an appended notification moves
+/// `lastUserNotificationAt` the same way. Predicates are `>=` because parallel scenarios share the
+/// server and may append or mark concurrently.
+#[tokio::test]
+async fn marking_the_feed_seen_projects_the_watermark_on_the_gateway_branch() {
+    let c = SERVER.client();
+    let agent = running_agent(&c, "sync-seen");
+    let token = c.read_agent_token(&agent.name).expect("read agent token");
+
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+
+    let seen_at = c.mark_notifications_seen().expect("mark notifications seen");
+    assert!(seen_at > 0, "the watermark is the server's now");
+    sock.expect_frame_matching(
+        |f| {
+            f["type"].as_str() == Some("state")
+                && f["value"]["userNotificationsSeenAt"].as_u64().is_some_and(|at| at >= seen_at)
+        },
+        USER_NOTIFICATION_TIMEOUT,
+    )
+    .await
+    .expect("a state delta carrying the advanced seen watermark");
+
+    c.send_user_notification(&agent.name, &token, "message", &agent.name, "past the watermark")
+        .expect("send user notification");
+    sock.expect_frame_matching(
+        |f| {
+            f["type"].as_str() == Some("state")
+                && f["value"]["lastUserNotificationAt"].as_u64().is_some_and(|at| at >= seen_at)
+        },
+        USER_NOTIFICATION_TIMEOUT,
+    )
+    .await
+    .expect("a state delta carrying the newest entry's stamp");
     sock.close().await.ok();
 }
 

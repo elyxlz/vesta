@@ -82,6 +82,12 @@ export interface GatewayInfo {
   latestVersion: string | null
   managed: boolean
   operation: GatewayOperation | null
+  // The user-notification feed's synced seen watermark (unix seconds of the user's last catch-up
+  // on any device, 0 before the first) and the newest logged entry's stamp (null on an empty
+  // log). Unseen is derived: an entry is unseen while its `at` is above the watermark. Absent on
+  // older gateways, so readers treat undefined as 0 / null.
+  userNotificationsSeenAt?: number
+  lastUserNotificationAt?: number | null
 }
 
 export interface AgentNode {

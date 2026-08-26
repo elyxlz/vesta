@@ -15,6 +15,7 @@ import {
   PILL_FALLBACK_ICON,
   PILL_KIND_ICONS,
   pillDisplayLine,
+  splitBySeen,
   type LoggedUserNotification,
   type PillNotification,
 } from "@vesta/core";
@@ -84,33 +85,38 @@ const ICON_COMPONENTS: Record<string, LucideIcon> = {
 // budget, skeleton count, and footer.
 function HistoryList({
   state,
-  limit,
+  entries,
+  emptyLabel,
   skeletonCount,
   footer,
   timestamps = false,
   compact = false,
+  dimmed = false,
   onOpen,
 }: {
   state: NotificationHistory;
-  limit?: number;
+  /** The rows this surface renders (the popover passes only the unseen ones). */
+  entries: LoggedUserNotification[];
+  /** Caption when there are no rows and nothing is loading; null captions nothing. */
+  emptyLabel: string | null;
   skeletonCount: number;
   footer?: React.ReactNode;
   timestamps?: boolean;
   compact?: boolean;
+  /** The dialog's already-seen section renders its rows sat back. */
+  dimmed?: boolean;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
-  const { history, loading, failed, exhausted } = state;
-  const shown = limit === undefined ? history : history.slice(0, limit);
-  // Empty-state text only: a failed "load older" under loaded rows keeps its
-  // button and must not caption the list as unloadable.
+  const { history, loading, failed } = state;
+  const shown = entries;
+  // A failed first load captions the list as unloadable; a failed "load older"
+  // under loaded rows keeps its button instead.
   const emptyText =
-    history.length > 0
+    shown.length > 0
       ? null
-      : failed
+      : failed && history.length === 0
         ? "couldn't load notifications"
-        : exhausted
-          ? "no notifications yet"
-          : null;
+        : emptyLabel;
   return (
     <>
       {loading && history.length === 0 && (
@@ -146,6 +152,7 @@ function HistoryList({
                 entry={entry}
                 timestamp={timestamps}
                 compact={compact}
+                dimmed={dimmed}
                 onOpen={onOpen}
               />
             </motion.div>
@@ -163,6 +170,85 @@ function HistoryList({
         </p>
       )}
       {footer}
+    </>
+  );
+}
+
+type SeenSplit = ReturnType<typeof splitBySeen>;
+
+// Whether the archive holds more than the popover is showing, which is what
+// earns the "see all" footer. Before the first-ever catch-up (no split) the
+// popover caps at POPOVER_ROWS, so the archive extends past it sooner.
+function archiveExtendsBeyond(
+  feed: NotificationHistory,
+  split: SeenSplit | null,
+): boolean {
+  if (split) return feed.history.length > 0 || !feed.exhausted;
+  return (
+    feed.history.length > 0 &&
+    (feed.history.length > POPOVER_ROWS || !feed.exhausted)
+  );
+}
+
+function popoverEmptyLabel(
+  split: SeenSplit | null,
+  exhausted: boolean,
+): string | null {
+  if (split) return "you're all caught up";
+  return exhausted ? "no notifications yet" : null;
+}
+
+// The dialog's body: the unseen/seen sections while the session's watermark
+// splits the history, the plain list otherwise (including before the
+// first-ever catch-up, where everything would be "new").
+function DialogHistory({
+  feed,
+  split,
+  footer,
+  onOpen,
+}: {
+  feed: NotificationHistory;
+  split: SeenSplit | null;
+  footer?: React.ReactNode;
+  onOpen: (entry: LoggedUserNotification) => void;
+}) {
+  if (!split || split.unseen.length === 0) {
+    return (
+      <HistoryList
+        state={feed}
+        entries={feed.history}
+        emptyLabel={feed.exhausted ? "no notifications yet" : null}
+        skeletonCount={HISTORY_SKELETON_ROWS}
+        footer={footer}
+        timestamps
+        onOpen={onOpen}
+      />
+    );
+  }
+  return (
+    <>
+      <SectionLabel text="new" />
+      <HistoryList
+        state={feed}
+        entries={split.unseen}
+        emptyLabel={null}
+        skeletonCount={0}
+        timestamps
+        onOpen={onOpen}
+      />
+      {(split.seen.length > 0 || !feed.exhausted) && (
+        <SectionLabel text="earlier" />
+      )}
+      <HistoryList
+        state={feed}
+        entries={split.seen}
+        emptyLabel={null}
+        skeletonCount={0}
+        footer={footer}
+        timestamps
+        dimmed
+        onOpen={onOpen}
+      />
     </>
   );
 }
@@ -192,6 +278,7 @@ function ConnectedNotificationsPill({
   const {
     current,
     feed,
+    seenSnapshot,
     popoverOpen,
     setPopoverOpen,
     dialogOpen,
@@ -199,6 +286,12 @@ function ConnectedNotificationsPill({
     openAgent,
     openEntry,
   } = state;
+
+  // The awareness-feed split, against the watermark held for this catch-up
+  // session. A 0 watermark (the user never caught up) renders unsectioned:
+  // everything ever logged is "unseen", so a split would only add noise.
+  const caughtUpBefore = seenSnapshot !== null && seenSnapshot > 0;
+  const split = caughtUpBefore ? splitBySeen(feed.history, seenSnapshot) : null;
 
   // The bell is a toggle: a click that began while the popover was open is
   // the close half (Radix's outside-pointerdown already dismissed it), so it
@@ -217,24 +310,30 @@ function ConnectedNotificationsPill({
     setPopoverOpen(true);
   };
 
-  // Known at render: "see more" exists only when the history holds more than
-  // the popover's budget, and it rides the same slide the rows do, one block.
-  const moreThanPopover = feed.history.length > POPOVER_ROWS || !feed.exhausted;
-  const seeMore = !feed.loading &&
+  // The popover shows the whole unseen set (scrolling past its cap), or, before
+  // the first-ever catch-up, the newest page the way the dialog would.
+  const popoverEntries = split
+    ? split.unseen
+    : feed.history.slice(0, POPOVER_ROWS);
+
+  // "see all" opens the dialog over the full archive; it rides the same slide
+  // the rows do, one block.
+  const seeAll = !feed.loading &&
     !feed.failed &&
-    moreThanPopover &&
-    feed.history.length > 0 && (
+    archiveExtendsBeyond(feed, split) && (
       <motion.div layout>
         <Button
           variant="ghost"
           size="xs"
           className="w-full text-[13px] text-muted-foreground"
           onClick={() => {
-            setPopoverOpen(false);
+            // Dialog first, popover after: historyOpen never blips false, so the
+            // catch-up session (and its held watermark) carries over.
             setDialogOpen(true);
+            setPopoverOpen(false);
           }}
         >
-          see more
+          see all
         </Button>
       </motion.div>
     );
@@ -276,12 +375,13 @@ function ConnectedNotificationsPill({
         {/* Above the navbar layer (z-[99999]), where the toast lives: an open
             history must not have toasts floating over it. */}
         <PopoverContent align="center" className="z-[100000] w-58 p-2">
-          <div className="space-y-1">
+          <div className="max-h-[60vh] space-y-1 overflow-y-auto">
             <HistoryList
               state={feed}
-              limit={POPOVER_ROWS}
+              entries={popoverEntries}
+              emptyLabel={popoverEmptyLabel(split, feed.exhausted)}
               skeletonCount={POPOVER_ROWS}
-              footer={seeMore}
+              footer={seeAll}
               compact
               onOpen={openEntry}
             />
@@ -294,17 +394,25 @@ function ConnectedNotificationsPill({
             <DialogTitle>notifications</DialogTitle>
           </DialogHeader>
           <div className="space-y-1">
-            <HistoryList
-              state={feed}
-              skeletonCount={HISTORY_SKELETON_ROWS}
+            <DialogHistory
+              feed={feed}
+              split={split}
               footer={loadOlder}
-              timestamps
               onOpen={openEntry}
             />
           </div>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+// The dialog's unseen/seen boundary, styled as the day separators are.
+function SectionLabel({ text }: { text: string }) {
+  return (
+    <div className="px-2 pt-5 pb-3 text-center text-xs text-muted-foreground">
+      {text}
+    </div>
   );
 }
 
@@ -345,11 +453,14 @@ function NotificationRow({
   entry,
   timestamp,
   compact,
+  dimmed,
   onOpen,
 }: {
   entry: LoggedUserNotification;
   timestamp: boolean;
   compact: boolean;
+  /** Already-seen rows in the dialog sit back; hovering lifts them for reading. */
+  dimmed: boolean;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
   // The pill's leading-glyph rule, identically: the orb when the notification
@@ -364,6 +475,7 @@ function NotificationRow({
       className={cn(
         "flex w-full items-center gap-2.5 overflow-hidden rounded-xl px-2 text-left hover:bg-muted",
         compact ? "py-1.5" : "py-2",
+        dimmed && "opacity-60 transition-opacity hover:opacity-100",
       )}
       onClick={() => {
         onOpen(entry);
@@ -371,7 +483,13 @@ function NotificationRow({
     >
       {row ? (
         <span className="shrink-0">
-          <Orb state={orbState} size={22} suppressMotion label={entry.agent} />
+          <Orb
+            state={orbState}
+            size={22}
+            suppressMotion
+            label={entry.agent}
+            glow={0.5}
+          />
         </span>
       ) : (
         <PillKindIcon kind={entry.kind} />

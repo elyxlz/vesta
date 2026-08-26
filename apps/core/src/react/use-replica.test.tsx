@@ -99,7 +99,7 @@ describe("useReplica", () => {
     // A different agent's notifications change the tree but not the gateway.version slice.
     act(() => {
       replica.applyDelta({
-        type: "notifications",
+        type: "agent_notifications",
         agent: "scout",
         pending: [{ id: 1, type: "notification", source: "chat", summary: "hi" }],
       })

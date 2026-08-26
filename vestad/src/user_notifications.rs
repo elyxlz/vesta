@@ -104,6 +104,9 @@ impl UserNotifier {
 
     fn fan(&self, agent: &str, kind: &str, title: String, body: String) {
         tracing::info!(%agent, %kind, %title, "user notification");
+        // The append just moved the feed's newest stamp, which rides the gateway branch: wake
+        // sessions so their next gateway diff carries it.
+        self.sync_hub.bump_user_feed();
         if let Some((_, subscription, event_type, default_on)) =
             MOBILE_PUSH_ROUTES.iter().find(|(routed, _, _, _)| *routed == kind)
         {

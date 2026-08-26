@@ -26,6 +26,15 @@ pub(crate) struct GatewayInfo {
     /// the field existed) still parses.
     #[serde(default)]
     pub operation: Option<GatewayOperation>,
+    /// The user-notification feed's synced seen watermark: unix seconds of the user's last
+    /// catch-up on any device, 0 before the first. Advanced by `POST /notifications/seen`.
+    /// Defaulted so a tree written by an older gateway still parses.
+    #[serde(default)]
+    pub user_notifications_seen_at: u64,
+    /// The newest user-notification log entry's delivery stamp, `None` on an empty log. With the
+    /// watermark above, clients derive "anything unseen?" without fetching the feed.
+    #[serde(default)]
+    pub last_user_notification_at: Option<u64>,
 }
 
 /// The kinds of gateway operation there are. An enum rather than a bare string so a third kind
@@ -185,7 +194,7 @@ pub(crate) enum Frame {
     State { scope: GatewayScope, value: GatewayInfo },
     Agent { name: String, info: AgentInfo },
     AgentRemoved { name: String },
-    Notifications { agent: String, pending: Vec<serde_json::Value> },
+    AgentNotifications { agent: String, pending: Vec<serde_json::Value> },
     UserNotification { agent: String, kind: String, title: String, body: String },
     Presence { any_focused: bool },
     Devices { devices: Vec<DeviceInfo> },
@@ -264,6 +273,8 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             warnings: vec!["other-agent: backup failed (disk full)".into()],
             error: None,
         }),
+        user_notifications_seen_at: 1_700_000_000,
+        last_user_notification_at: Some(1_700_000_400),
     };
     let mut services = BTreeMap::new();
     services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3 });
@@ -317,7 +328,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "state": to_value(Frame::State { scope: GatewayScope::Gateway, value: gateway }).expect("serialize state"),
             "agent": to_value(Frame::Agent { name: "sample-agent".into(), info }).expect("serialize agent"),
             "agent_removed": to_value(Frame::AgentRemoved { name: "stopped-agent".into() }).expect("serialize agent_removed"),
-            "notifications": to_value(Frame::Notifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize notifications"),
+            "agent_notifications": to_value(Frame::AgentNotifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize agent_notifications"),
             "user_notification": to_value(Frame::UserNotification {
                 agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize user_notification"),
@@ -343,6 +354,8 @@ mod tests {
             latest_version: None,
             managed: false,
             operation: None,
+            user_notifications_seen_at: 0,
+            last_user_notification_at: None,
         }
     }
 
@@ -461,7 +474,7 @@ mod tests {
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
-            (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
+            (Frame::AgentNotifications { agent: "scout".into(), pending: vec![] }, "agent_notifications"),
             (Frame::UserNotification { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
             (Frame::Presence { any_focused: true }, "presence"),
         ];

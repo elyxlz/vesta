@@ -13,6 +13,8 @@ interface OrbProps {
   size?: number;
   suppressMotion?: boolean;
   label?: string;
+  /** Halo strength multiplier (0..1): dense surfaces damp the glow. */
+  glow?: number;
 }
 
 // The solid orb fills this fraction of its box; the rest is breathing room for
@@ -29,6 +31,7 @@ export function Orb({
   size = 140,
   suppressMotion = false,
   label,
+  glow = 1,
 }: OrbProps) {
   const gradientRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -39,7 +42,8 @@ export function Orb({
   const orbInset = (size - orbSize) / 2;
 
   const glowColor = orbColors[state][1];
-  const glowOpacity = state === "thinking" ? 0.62 : visual.live ? 0.46 : 0.18;
+  const glowOpacity =
+    (state === "thinking" ? 0.62 : visual.live ? 0.46 : 0.18) * glow;
   const glowSize = state === "thinking" ? 1.25 : 1.12;
   const glowInset = Math.round(size * 0.18 * GLOW_SPREAD_SCALE);
   const fadePct = GLOW_FADE_PCT;

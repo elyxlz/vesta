@@ -2225,6 +2225,15 @@ async fn list_user_notifications_handler(
     Json(serde_json::json!({ "notifications": notifications }))
 }
 
+/// `POST /notifications/seen`: the user caught up on the feed (closed a history surface having
+/// been shown everything unseen). Advances the synced watermark to the server's now, so client
+/// clocks never decide what was seen, and wakes `/sync` sessions to carry it on the gateway branch.
+async fn mark_user_notifications_seen_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let seen_at = state.user_notification_log.mark_seen_now();
+    state.sync_hub.bump_user_feed();
+    Json(serde_json::json!({ "seenAt": seen_at }))
+}
+
 async fn get_gateway_settings_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let settings = state.settings.read().await;
     let channel = crate::channel::Channel::resolve(&settings.channel);
@@ -2699,6 +2708,7 @@ pub fn build_router(state: SharedState) -> Router {
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
         )
         .route("/notifications", get(list_user_notifications_handler))
+        .route("/notifications/seen", post(mark_user_notifications_seen_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),

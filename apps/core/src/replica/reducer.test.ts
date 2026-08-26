@@ -121,7 +121,7 @@ describe("reduceDelta", () => {
 
   it("replaces the notification branch wholesale", () => {
     const next = reduceDelta(baseTree(), {
-      type: "notifications",
+      type: "agent_notifications",
       agent: "scout",
       pending: [{ id: 1, type: "notification", source: "sms", summary: "hi" }],
     })
@@ -184,9 +184,9 @@ describe("reduceDelta", () => {
       freshReference: true,
     },
     {
-      name: "notifications",
+      name: "agent_notifications",
       delta: {
-        type: "notifications",
+        type: "agent_notifications",
         agent: "scout",
         pending: [{ id: 1, type: "notification", source: "sms", summary: "hi" }],
       },

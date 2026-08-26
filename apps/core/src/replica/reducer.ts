@@ -20,7 +20,7 @@ export function reduceDelta(tree: Tree, delta: Delta): Tree {
       )
       return { ...tree, agents }
     }
-    case "notifications": {
+    case "agent_notifications": {
       const prev = tree.agents[delta.agent]
       if (prev === undefined) return tree
       const node: AgentNode = { ...prev, notifications: { pending: delta.pending } }

@@ -25,6 +25,10 @@ export interface GatewayContextValue {
   agents: AgentRow[];
   agentsFetched: boolean;
   devices: DeviceInfo[];
+  /** The user-notification feed's synced seen watermark, 0 before the first catch-up ever. */
+  userNotificationsSeenAt: number;
+  /** The newest feed entry's stamp, null on an empty log or an older gateway. */
+  lastUserNotificationAt: number | null;
   triggerGatewayUpdate: () => Promise<boolean>;
   triggerGatewayRestart: () => Promise<boolean>;
   dismissUpdate: () => Promise<boolean>;
@@ -48,6 +52,8 @@ export const disconnectedValue: GatewayContextValue = {
   agents: [],
   agentsFetched: false,
   devices: [],
+  userNotificationsSeenAt: 0,
+  lastUserNotificationAt: null,
   triggerGatewayUpdate: () => Promise.resolve(false),
   triggerGatewayRestart: () => Promise.resolve(false),
   dismissUpdate: () => Promise.resolve(false),
