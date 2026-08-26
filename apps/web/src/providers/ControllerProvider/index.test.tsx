@@ -1,4 +1,4 @@
-import { useContext, useEffect } from "react";
+import { StrictMode, useContext, useEffect } from "react";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import {
   afterAll,
@@ -102,6 +102,12 @@ const appBehindHelloFrame = JSON.stringify({
 const gatewayBehindHelloFrame = JSON.stringify({
   type: "hello",
   version: "0.0.1",
+  min_supported: "0.0.0",
+});
+// A window containing the client (__CLIENT_VERSION__), so the socket proceeds to "open".
+const openHelloFrame = JSON.stringify({
+  type: "hello",
+  version: "9.9.9",
   min_supported: "0.0.0",
 });
 const snapshotFrame = JSON.stringify({
@@ -266,6 +272,40 @@ describe("ControllerProvider", () => {
           (frame) => (JSON.parse(frame) as { type: string }).type === "reauth",
         ),
       ).toBe(true);
+    });
+  });
+
+  // StrictMode's double effect pass (setup, cleanup, setup with preserved state) is the same
+  // sequence React Fast Refresh runs on a hot update, so this pins the dev-mode bug where a
+  // hot reload closed the state-held controller for good and /sync never reconnected.
+  it("keeps a live controller across an effect remount (StrictMode / Fast Refresh)", async () => {
+    let controller: Controller | null = null;
+
+    render(
+      <StrictMode>
+        <ControllerProvider>
+          <Probe
+            onReady={(c) => {
+              controller = c;
+            }}
+          />
+        </ControllerProvider>
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
+    });
+    const socket = FakeWebSocket.instances.at(-1);
+    if (!socket) throw new Error("socket not constructed");
+
+    act(() => {
+      socket.onopen?.();
+      socket.onmessage?.({ data: openHelloFrame });
+    });
+
+    await waitFor(() => {
+      expect(controller?.getSyncState()).toBe("open");
     });
   });
 

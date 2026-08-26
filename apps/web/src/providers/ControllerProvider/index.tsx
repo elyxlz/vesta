@@ -59,23 +59,40 @@ function ActiveController({ children }: { children: ReactNode }) {
   );
 }
 
-// One live controller for the lifetime of a session mount. Built once via a lazy useState
-// initializer (run exactly once per mount and never discarded, so it avoids the
-// useMemo-side-effect-in-render caveat), closed on unmount. Reauth rotates the socket's token
-// in-band before it expires; the overlay tracks the sync sub-store. Like mobile, the desktop
-// app is a drifting client: it opens /sync and the served version window (min_supported..version)
-// decides compatibility. GatewayProvider turns incompatible states into blocking screens while
-// keeping the gateway context mounted for their shared UI.
+// One live controller for the lifetime of a session mount, created by the effect whose cleanup
+// closes it so the two lifetimes cannot diverge: Fast Refresh and StrictMode re-run effects
+// while preserving state, and a render-owned controller would be closed by the re-run's cleanup
+// and stranded terminal (sync state "closed", which never reconnects). Here the re-run builds a
+// live replacement instead. Children wait out the one pre-effect render with no controller.
 function ControllerSession({ children }: { children: ReactNode }) {
-  const [controller] = useState(buildController);
-  const syncState = useSyncState(controller);
-  const [showDisconnected, setShowDisconnected] = useState(false);
+  const [controller, setController] = useState<Controller | null>(null);
 
   useEffect(() => {
+    const created = buildController();
+    setController(created);
     return () => {
-      controller.close();
+      created.close();
     };
-  }, [controller]);
+  }, []);
+
+  if (controller === null) return null;
+  return <LiveSession controller={controller}>{children}</LiveSession>;
+}
+
+// Reauth rotates the socket's token in-band before it expires; the overlay tracks the sync
+// sub-store. Like mobile, the desktop app is a drifting client: it opens /sync and the served
+// version window (min_supported..version) decides compatibility. GatewayProvider turns
+// incompatible states into blocking screens while keeping the gateway context mounted for
+// their shared UI.
+function LiveSession({
+  controller,
+  children,
+}: {
+  controller: Controller;
+  children: ReactNode;
+}) {
+  const syncState = useSyncState(controller);
+  const [showDisconnected, setShowDisconnected] = useState(false);
 
   useEffect(() => {
     // Also on mount, not just every poll: a session restored with an already-expired token
