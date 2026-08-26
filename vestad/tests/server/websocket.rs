@@ -93,8 +93,8 @@ async fn raw_bus_ws_rejected_but_registered_service_ws_upgrades() {
     let agent = TestAgent::create(&c, &unique_agent("ws")).unwrap();
     inject_fake_token(&c, &agent.name);
     c.start_agent(&agent.name).unwrap();
-    // The WS handler runs ensure_running() before the service guard, so the container must be up
-    // for a raw-port upgrade to reach (and be rejected by) that guard rather than a docker error.
+    // The registered-service upgrade below runs ensure_running(), so the container must be up
+    // for that half to prove the service plane rather than fail on a docker error.
     c.wait_until_running(&agent.name, WS_AGENT_RUNNING_TIMEOUT_SECS)
         .unwrap();
 

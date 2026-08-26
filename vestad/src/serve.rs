@@ -769,6 +769,10 @@ async fn stop_agent_handler(
     docker::stop_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
+    // Uncached, a proxied request to this stopped agent fails its address resolve immediately
+    // and diagnoses "not running" at once, instead of dialing the stale address through the
+    // full bind-grace window first.
+    state.agent_status_cache.clear_bridge_ip(&name);
     Ok(ok_json())
 }
 
