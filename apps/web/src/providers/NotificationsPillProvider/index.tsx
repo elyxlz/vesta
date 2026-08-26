@@ -131,8 +131,12 @@ export function NotificationsPillProvider({
     useGateway();
 
   // The bell's dot is derived, never stored: anything logged past the synced
-  // watermark is unseen, so another device catching up clears it here too.
-  const unseen = feedHasUnseen(lastUserNotificationAt, userNotificationsSeenAt);
+  // watermark is unseen, so another device catching up clears it here too. It
+  // hides the moment a history surface opens (the user is looking); the synced
+  // truth catches up when the session closes and marks seen.
+  const unseen =
+    feedHasUnseen(lastUserNotificationAt, userNotificationsSeenAt) &&
+    !historyOpen;
 
   const seenSnapshot = useCatchUpSession(
     historyOpen,
