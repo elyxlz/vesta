@@ -91,6 +91,7 @@ function HistoryList({
   footer,
   timestamps = false,
   compact = false,
+  dimmed = false,
   onOpen,
 }: {
   state: NotificationHistory;
@@ -102,6 +103,8 @@ function HistoryList({
   footer?: React.ReactNode;
   timestamps?: boolean;
   compact?: boolean;
+  /** The dialog's already-seen section renders its rows sat back. */
+  dimmed?: boolean;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
   const { history, loading, failed } = state;
@@ -149,6 +152,7 @@ function HistoryList({
                 entry={entry}
                 timestamp={timestamps}
                 compact={compact}
+                dimmed={dimmed}
                 onOpen={onOpen}
               />
             </motion.div>
@@ -242,6 +246,7 @@ function DialogHistory({
         skeletonCount={0}
         footer={footer}
         timestamps
+        dimmed
         onOpen={onOpen}
       />
     </>
@@ -448,11 +453,14 @@ function NotificationRow({
   entry,
   timestamp,
   compact,
+  dimmed,
   onOpen,
 }: {
   entry: LoggedUserNotification;
   timestamp: boolean;
   compact: boolean;
+  /** Already-seen rows in the dialog sit back; hovering lifts them for reading. */
+  dimmed: boolean;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
   // The pill's leading-glyph rule, identically: the orb when the notification
@@ -467,6 +475,7 @@ function NotificationRow({
       className={cn(
         "flex w-full items-center gap-2.5 overflow-hidden rounded-xl px-2 text-left hover:bg-muted",
         compact ? "py-1.5" : "py-2",
+        dimmed && "opacity-60 transition-opacity hover:opacity-100",
       )}
       onClick={() => {
         onOpen(entry);
@@ -474,7 +483,13 @@ function NotificationRow({
     >
       {row ? (
         <span className="shrink-0">
-          <Orb state={orbState} size={22} suppressMotion label={entry.agent} />
+          <Orb
+            state={orbState}
+            size={22}
+            suppressMotion
+            label={entry.agent}
+            glow={0.5}
+          />
         </span>
       ) : (
         <PillKindIcon kind={entry.kind} />
