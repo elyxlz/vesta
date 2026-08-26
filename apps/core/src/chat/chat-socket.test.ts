@@ -24,7 +24,6 @@ interface Harness {
   timers: { fn: () => void; ms: number }[]
   states: ChatSocketState[]
   events: ChatMessage[]
-  refusals: number
   deps: Parameters<typeof createChatSocket>[0]
 }
 
@@ -36,8 +35,8 @@ function harness(): Harness {
   const events: ChatMessage[] = []
   let builds = 0
   const deps = {
-    // A fresh credential per attempt, as the real builder mints one: the counter makes it
-    // observable that the URL is re-derived rather than captured once.
+    // A fresh credential per attempt, as the real builder refreshes the token: the counter makes
+    // it observable that the URL is re-derived rather than captured once.
     buildUrl: () => {
       builds += 1
       return Promise.resolve(`wss://vestad.test/agents/ada/app-chat/ws?token=key-${String(builds)}`)
@@ -54,7 +53,7 @@ function harness(): Harness {
     },
     clearTimer: () => undefined,
   }
-  return { sockets, urls, timers, states, events, refusals: 0, deps }
+  return { sockets, urls, timers, states, events, deps }
 }
 
 // The URL builder is async, so the socket is created a microtask after createChatSocket returns.
@@ -66,9 +65,6 @@ async function start(h: Harness): Promise<ReturnType<typeof createChatSocket>> {
   const socket = createChatSocket(h.deps, {
     onEvent: (event) => h.events.push(event),
     onStateChange: (state) => h.states.push(state),
-    onClosedBeforeOpen: () => {
-      h.refusals += 1
-    },
   })
   await flush()
   return socket
@@ -139,30 +135,7 @@ describe("createChatSocket", () => {
     ])
   })
 
-  // A refused handshake is indistinguishable from any other close here, so "never opened" is the
-  // signal the call site turns into dropping its cached key.
-  it("reports a socket that closed before opening", async () => {
-    const h = harness()
-    await start(h)
-    h.sockets[0]?.onclose?.()
-
-    expect(h.refusals).toBe(1)
-    expect(h.states).toEqual(["connecting", "reconnecting"])
-  })
-
-  it("does not report a close that follows an open", async () => {
-    const h = harness()
-    await start(h)
-    h.sockets[0]?.onopen?.()
-    h.sockets[0]?.onclose?.()
-
-    expect(h.refusals).toBe(0)
-  })
-
-  // The refusal need not be about the credential at all: a stopped agent 503s the upgrade for as
-  // long as it is down. Reporting every tick would have the call site mint a key per backoff for
-  // hours, so only the first of a streak reports: by the second the credential is already fresh.
-  it("reports only the first of a streak of pre-open closes", async () => {
+  it("keeps reconnecting through a streak of pre-open closes", async () => {
     const h = harness()
     await start(h)
     h.sockets[0]?.onclose?.()
@@ -171,28 +144,15 @@ describe("createChatSocket", () => {
     h.sockets[1]?.onclose?.()
     h.timers[1]?.fn()
     await flush()
-    h.sockets[2]?.onclose?.()
 
     expect(h.sockets).toHaveLength(3)
-    expect(h.refusals).toBe(1)
-  })
-
-  // Re-armed by a working connection, so a key that is refused a day later is still dropped.
-  it("reports again after a successful open in between", async () => {
-    const h = harness()
-    await start(h)
-    h.sockets[0]?.onclose?.()
-    expect(h.refusals).toBe(1)
-
-    h.timers[0]?.fn()
-    await flush()
-    h.sockets[1]?.onopen?.()
-    h.sockets[1]?.onclose?.()
-    h.timers[1]?.fn()
-    await flush()
-    h.sockets[2]?.onclose?.()
-
-    expect(h.refusals).toBe(2)
+    expect(h.states).toEqual([
+      "connecting",
+      "reconnecting",
+      "connecting",
+      "reconnecting",
+      "connecting",
+    ])
   })
 
   it("schedules a reconnect when the url builder rejects", async () => {

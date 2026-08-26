@@ -6,7 +6,6 @@ import {
   useAudioPlayer,
   useAudioStream,
 } from "expo-audio";
-import { serviceKeyQueryUrl, serviceKeySocketUrl } from "@vesta/core";
 import type { ApiClient } from "@/api/client";
 import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
 import { useSession } from "@/session/SessionProvider";
@@ -181,15 +180,8 @@ export function useLiveVoice({
       await prepareAudioMode();
       if (!isCurrent()) return;
 
-      const connection = api.getConnection();
-      if (!connection) throw new Error("Not connected to a Vesta gateway.");
-      const key = await api.serviceKeys.get(name, "voice");
-      const listenUrl = serviceKeySocketUrl(
-        connection.url,
-        name,
-        "voice",
-        key,
-        "/stt/listen",
+      const listenUrl = await api.websocketUrl(
+        `/agents/${encodeURIComponent(name)}/voice/stt/listen`,
       );
       if (!isCurrent()) return;
 
@@ -293,22 +285,17 @@ export function useLiveVoice({
   return { start, stop, active };
 }
 
-// The URL the audio player streams a prepared utterance from, carrying a minted service key:
-// a media element sends no header. Null when the session has no gateway to stream from.
+// The URL the audio player streams a prepared utterance from, carrying the access token in
+// the query: a media element sends no header. Null when the session has no gateway to
+// stream from.
 async function ttsStreamUrl(
   api: ApiClient,
   name: string,
   identifier: string,
 ): Promise<string | null> {
-  const connection = api.getConnection();
-  if (!connection) return null;
-  const key = await api.serviceKeys.get(name, "voice");
-  return serviceKeyQueryUrl(
-    connection.url,
-    name,
-    "voice",
-    key,
-    `/tts/stream/${encodeURIComponent(identifier)}`,
+  if (!api.getConnection()) return null;
+  return api.authedUrl(
+    `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
   );
 }
 

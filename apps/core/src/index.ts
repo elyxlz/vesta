@@ -127,8 +127,6 @@ export {
   isKeyFresh,
   mintServiceKey,
   serviceKeyPathUrl,
-  serviceKeyQueryUrl,
-  serviceKeySocketUrl,
 } from "./service-keys/service-keys"
 export type { CachedServiceKey, ServiceKey, ServiceKeyCache } from "./service-keys/service-keys"
 

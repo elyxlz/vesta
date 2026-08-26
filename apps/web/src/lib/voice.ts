@@ -1,7 +1,5 @@
-import { serviceKeyQueryUrl, serviceKeySocketUrl } from "@vesta/core";
 import { apiJson } from "@/api/client";
-import { getConnection } from "@/lib/connection";
-import { serviceKeys } from "@/lib/service-key-cache";
+import { authedUrl, websocketUrl } from "@/lib/authed-url";
 
 const SAMPLE_RATE = 16000;
 
@@ -140,16 +138,9 @@ export function prepareSpeech(
   ).then((res) => res.id);
 }
 
-async function ttsStreamUrl(agentName: string, id: string): Promise<string> {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vestad");
-  const key = await serviceKeys.get(agentName, "voice");
-  return serviceKeyQueryUrl(
-    conn.url,
-    agentName,
-    "voice",
-    key,
-    `/tts/stream/${encodeURIComponent(id)}`,
+function ttsStreamUrl(agentName: string, id: string): Promise<string> {
+  return authedUrl(
+    `/agents/${encodeURIComponent(agentName)}/voice/tts/stream/${encodeURIComponent(id)}`,
   );
 }
 
@@ -416,16 +407,9 @@ export class Transcriber {
     return this.active;
   }
 
-  private async buildWsUrl(): Promise<string> {
-    const conn = getConnection();
-    if (!conn) throw new Error("not connected to vestad");
-    const key = await serviceKeys.get(this.opts.agentName, "voice");
-    return serviceKeySocketUrl(
-      conn.url,
-      this.opts.agentName,
-      "voice",
-      key,
-      "/stt/listen",
+  private buildWsUrl(): Promise<string> {
+    return websocketUrl(
+      `/agents/${encodeURIComponent(this.opts.agentName)}/voice/stt/listen`,
     );
   }
 
