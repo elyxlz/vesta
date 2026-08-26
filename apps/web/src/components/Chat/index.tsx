@@ -25,7 +25,7 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
-import { agentNeedsUser } from "@vesta/core";
+import { TRIM_HISTORY_SETTLE_MS, agentNeedsUser } from "@vesta/core";
 
 // Breathing room between the last bubble and the floating composer, folded into
 // the inset so the message list, skeleton, mask, and button all clear it.
@@ -63,12 +63,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     hasMore,
     loadingMore,
     loadMore,
+    trimHistory,
     send,
     retry,
   } = useAgentSocket();
 
   const [input, setInput] = useState("");
   const [atBottom, setAtBottom] = useState(true);
+
+  useEffect(() => {
+    if (!atBottom) return;
+    const timer = window.setTimeout(trimHistory, TRIM_HISTORY_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [atBottom, trimHistory]);
 
   useEffect(() => {
     registerChatCallbacks(send, setInput);
@@ -82,10 +89,14 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // its live height plus the gap at the bottom so the last one always clears it,
   // and the scroll-to-bottom button parks just above it.
   const [composerInset, setComposerInset] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(0);
   // The inset tracks the composer's collapsed baseline only: a growing draft
   // expands the pill over the (masked, opaque-covered) list instead of shifting
   // it, so measurements while a draft exists are ignored (a cleared inset, 0,
-  // always applies); send clears the draft and the next resize re-syncs.
+  // always applies); send clears the draft and the next resize re-syncs. The
+  // live height is tracked separately: its overhang beyond the baseline extends
+  // the message list's scroll range, so the bubbles a tall draft covers stay
+  // reachable by scrolling without the list ever shifting under the typist.
   const hasDraftRef = useRef(false);
   useLayoutEffect(() => {
     hasDraftRef.current = input.length > 0;
@@ -93,6 +104,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const composerRef = useMeasuredSize(
     "height",
     useCallback((height: number) => {
+      setComposerHeight(height);
       if (height === 0 || !hasDraftRef.current) setComposerInset(height);
     }, []),
   );
@@ -112,6 +124,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const scrollToBottom = useCallback(() => {
     scrollRef.current?.scrollToBottom();
   }, []);
+
+  // Stable so ChatMessageArea's memo holds across per-keystroke composer re-renders.
+  const handleLoadMore = useCallback(() => {
+    void loadMore();
+  }, [loadMore]);
 
   const handleSend = () => {
     const text = input.trim();
@@ -159,9 +176,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
         <ChatMessageArea
           scrollRef={scrollRef}
-          loadMore={() => {
-            void loadMore();
-          }}
+          loadMore={handleLoadMore}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}
@@ -178,6 +193,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             composerInset +
             (fullscreen ? COMPOSER_GAP_FULLSCREEN_PX : COMPOSER_GAP_PANEL_PX)
           }
+          bottomOverhang={Math.max(0, composerHeight - composerInset)}
           onAtBottomChange={setAtBottom}
         />
 

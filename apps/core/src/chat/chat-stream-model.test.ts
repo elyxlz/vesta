@@ -8,6 +8,7 @@ import {
   markSend,
   prependPage,
   seedTail,
+  trimTail,
   type ChatMessage,
   type ChatState,
 } from "./chat-stream-model"
@@ -209,5 +210,45 @@ describe("chat-stream-model", () => {
     expect(state.messages).toHaveLength(0)
     expect(state.pendingIntents.size).toBe(0)
     expect(next).not.toBe(state)
+  })
+
+  it("trimTail drops older rows, restores the cursor, and shrinks the dedup set", () => {
+    let state = seedTail(initialChatState(), {
+      events: [chat(10, "a"), chat(11, "b"), chat(12, "c"), chat(13, "d")],
+      cursor: 10,
+    })
+    state = prependPage(state, [chat(5, "old"), chat(6, "older")], 5)
+    const trimmed = trimTail(state, 3)
+    expect(trimmed.messages.map((m) => m.id)).toEqual([11, 12, 13])
+    expect(trimmed.cursor).toBe(11)
+    expect(trimmed.shownIds.has(5)).toBe(false)
+    expect(trimmed.shownIds.has(11)).toBe(true)
+  })
+
+  it("trimTail keeps an optimistic bubble in the retained tail", () => {
+    let state = seedTail(initialChatState(), {
+      events: [chat(10, "a"), chat(11, "b"), chat(12, "c")],
+      cursor: null,
+    })
+    state = beginSend(state, "hi", "typed", "i-1")
+    const trimmed = trimTail(state, 2)
+    expect(trimmed.messages.map((m) => m.id)).toEqual([12, undefined])
+    expect(trimmed.cursor).toBe(12)
+    expect(trimmed.pendingIntents.has("i-1")).toBe(true)
+  })
+
+  it("trimTail is a no-op at or under the keep size", () => {
+    const state = seedTail(initialChatState(), {
+      events: [chat(10, "a"), chat(11, "b")],
+      cursor: null,
+    })
+    expect(trimTail(state, 2)).toBe(state)
+  })
+
+  it("trimTail is a no-op when no retained row has a persisted id", () => {
+    let state = initialChatState()
+    state = beginSend(state, "hi", "typed", "i-1")
+    state = beginSend(state, "yo", "typed", "i-2")
+    expect(trimTail(state, 1)).toBe(state)
   })
 })

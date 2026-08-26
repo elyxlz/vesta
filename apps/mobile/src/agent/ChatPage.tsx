@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TRIM_HISTORY_SETTLE_MS } from "@vesta/core";
 import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -125,6 +126,15 @@ export default function ChatPage() {
     () => createInvertedChatRows(socket.events, socket.isTyping),
     [socket.events, socket.isTyping],
   );
+
+  // Settled at the latest message: paged-in history far above the viewport (held for the whole
+  // session by the chat hold) is released; scrolling up refetches through the ordinary paging.
+  const trimHistory = socket.trimHistory;
+  useEffect(() => {
+    if (isAwayFromLatest) return;
+    const timer = setTimeout(trimHistory, TRIM_HISTORY_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [isAwayFromLatest, trimHistory]);
 
   const handleComposerLayout = useCallback(
     (event: LayoutChangeEvent) => {

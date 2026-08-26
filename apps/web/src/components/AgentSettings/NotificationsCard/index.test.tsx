@@ -28,6 +28,9 @@ function socketValue(
     loadMore: async () => {
       /* noop */
     },
+    trimHistory: () => {
+      /* noop */
+    },
     send: () => true,
     retry: () => undefined,
   };

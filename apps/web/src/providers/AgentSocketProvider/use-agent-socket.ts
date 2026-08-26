@@ -17,6 +17,7 @@ import {
   prependPage,
   seedTail,
   sendMessage,
+  trimTail,
   typingDelay,
 } from "@vesta/core";
 import { useController } from "@/providers/ControllerProvider";
@@ -268,6 +269,13 @@ export function useAgentSocketState({
 
   const hasMore = state.cursor !== null;
 
+  // Skipped while a load is in flight: trimming under an unresolved prepend would leave a hole
+  // between the landed page and the kept tail.
+  const trimHistory = useCallback(() => {
+    if (loadingMoreRef.current) return;
+    commit((current) => trimTail(current));
+  }, [commit]);
+
   const loadMore = useCallback(async () => {
     if (!name || loadingMoreRef.current || stateRef.current.cursor === null)
       return;
@@ -297,6 +305,7 @@ export function useAgentSocketState({
     hasMore,
     loadingMore,
     loadMore,
+    trimHistory,
     send,
     retry,
   };

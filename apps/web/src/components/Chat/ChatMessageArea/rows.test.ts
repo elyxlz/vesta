@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ChatMessage } from "@/lib/types";
-import { buildDecorated, rowKey } from "./virtual";
+import { buildDecorated, lastSeenIndex, rowKey } from "./rows";
 
 function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
@@ -64,5 +64,33 @@ describe("buildDecorated", () => {
       userMsg("not-a-date"),
     ]);
     expect(rows[1]?.gap).toBe("mt-1.5");
+  });
+});
+
+describe("lastSeenIndex", () => {
+  const rows = (...ts: string[]) => buildDecorated(ts.map(userMsg));
+
+  it("keeps the boundary on the previous last row when a prepend shifts indices", () => {
+    const before = rows("2026-06-08T10:00:00Z", "2026-06-08T10:01:00Z");
+    const prevLastKey = before[before.length - 1]?.key ?? null;
+    const after = rows(
+      "2026-06-08T09:00:00Z",
+      "2026-06-08T10:00:00Z",
+      "2026-06-08T10:01:00Z",
+    );
+    expect(lastSeenIndex(after, prevLastKey)).toBe(2);
+  });
+
+  it("marks appended rows as past the boundary", () => {
+    const before = rows("2026-06-08T10:00:00Z");
+    const prevLastKey = before[0]?.key ?? null;
+    const after = rows("2026-06-08T10:00:00Z", "2026-06-08T10:01:00Z");
+    expect(lastSeenIndex(after, prevLastKey)).toBe(0);
+  });
+
+  it("disables the boundary before the first page and after a reseed", () => {
+    const after = rows("2026-06-08T10:00:00Z");
+    expect(lastSeenIndex(after, null)).toBe(-1);
+    expect(lastSeenIndex(after, "2026-01-01T00:00:00Z-user")).toBe(-1);
   });
 });

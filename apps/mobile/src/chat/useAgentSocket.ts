@@ -11,6 +11,7 @@ import {
   prependPage,
   seedTail,
   sendMessage,
+  trimTail,
   typingDelay,
   type ChatMessage,
   type ChatState,
@@ -357,6 +358,14 @@ export function useAgentSocket(
 
   const hasMore = state.cursor !== null;
 
+  // Skipped while a load is in flight: trimming under an unresolved prepend would leave a hole
+  // between the landed page and the kept tail. The trimmed state persists to the hold via commit,
+  // so a popped screen holds two pages instead of everything the user ever paged in.
+  const trimHistory = useCallback(() => {
+    if (loadingMoreRef.current) return;
+    commit((current) => trimTail(current));
+  }, [commit]);
+
   const loadMore = useCallback(async (): Promise<void> => {
     if (
       !name ||
@@ -395,6 +404,7 @@ export function useAgentSocket(
       hasMore,
       loadingMore,
       loadMore,
+      trimHistory,
       send,
       retry,
       reseedRevision,
@@ -411,6 +421,7 @@ export function useAgentSocket(
       hasMore,
       loadingMore,
       loadMore,
+      trimHistory,
       send,
       retry,
       reseedRevision,
