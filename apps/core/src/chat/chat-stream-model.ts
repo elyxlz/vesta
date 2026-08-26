@@ -209,12 +209,11 @@ export const TRIM_HISTORY_SETTLE_MS = 30_000
 // conversation forever. The cursor moves to the oldest kept persisted id (ids page exclusively
 // below the cursor), so loadMore refetches exactly what was dropped, and the dedup set shrinks to
 // the kept range. Optimistic bubbles are the newest rows, so the kept slice always contains them.
-export function trimTail(state: ChatState, keep: number): ChatState {
+export function trimTail(state: ChatState, keep = TRIM_HISTORY_KEEP): ChatState {
   if (state.messages.length <= keep) return state
   const messages = state.messages.slice(-keep)
-  const oldestKept = messages.find((message) => message.id != null)
-  if (oldestKept?.id == null) return state
-  const oldestKeptId = oldestKept.id
+  const oldestKeptId = messages.find((message) => message.id != null)?.id
+  if (oldestKeptId == null) return state
   const shownIds = new Set([...state.shownIds].filter((id) => id >= oldestKeptId))
   return { ...state, messages, shownIds, cursor: oldestKeptId }
 }

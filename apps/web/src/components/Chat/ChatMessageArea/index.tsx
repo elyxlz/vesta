@@ -1,4 +1,5 @@
 import {
+  memo,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -13,7 +14,7 @@ import { stepTransition } from "@/lib/motion";
 import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import { CHAT_CONTENT_WIDTH } from "../content-width";
-import { buildDecorated, type DecoratedRow } from "./rows";
+import { buildDecorated, lastSeenIndex, type DecoratedRow } from "./rows";
 import { useChatScroll } from "./use-chat-scroll";
 
 export interface ChatScrollHandle {
@@ -154,14 +155,12 @@ function ChatEmptyState({
 function MessageRow({
   row,
   index,
-  floating,
   isMobile,
   isNewAppend,
   onRetry,
 }: {
   row: DecoratedRow;
   index: number;
-  floating: boolean;
   isMobile: boolean;
   isNewAppend: boolean;
   onRetry?: RetryHandler;
@@ -182,7 +181,7 @@ function MessageRow({
           <span
             className={cn(
               "text-muted-foreground/60 select-none",
-              floating ? "text-sm" : "text-[11px]",
+              isMobile ? "text-[11px]" : "text-sm",
             )}
           >
             {row.dayLabel}
@@ -204,11 +203,24 @@ function MessageRow({
   );
 }
 
+// The index the previous commit's last row now sits at — read during render (the effect
+// hasn't advanced the ref yet), so rows past it are genuine appends and animate in,
+// while a history page landing above (which shifts indices) never does.
+function useAppendBoundary(decorated: DecoratedRow[]): number {
+  const prevLastKeyRef = useRef<string | null>(null);
+  const prevLastIndex = lastSeenIndex(decorated, prevLastKeyRef.current);
+  useLayoutEffect(() => {
+    prevLastKeyRef.current = decorated[decorated.length - 1]?.key ?? null;
+  }, [decorated]);
+  return prevLastIndex;
+}
+
 // Every fetched row stays mounted in a plain scroller: each message parses its markdown
 // once, ever, and scrolling moves static DOM (the same choice the Console makes, for the
 // same reason — no windowing, no size estimates, no remount cost). History paging bounds
-// the DOM, so long conversations stay cheap.
-export function ChatMessageArea({
+// the DOM, so long conversations stay cheap. memo keeps the parent's per-keystroke
+// composer re-renders from re-invoking every mounted row.
+export const ChatMessageArea = memo(function ChatMessageArea({
   scrollRef,
   loadMore,
   hasMore,
@@ -251,22 +263,14 @@ export function ChatMessageArea({
     count,
     firstKey: decorated[0]?.key ?? null,
     bottomInset,
+    bottomOverhang,
     hasMore,
     loadingMore,
     loadMore,
     onAtBottomChange,
   });
 
-  // Highest row index seen as of the last commit — read during render (holds the prior
-  // value, since the effect below hasn't fired yet) to tell a genuine append from a history
-  // page landing or an unrelated re-render, then advanced after commit. Gated on
-  // hadRowsRef so the first page of history never plays the entrance animation.
-  const hadRowsRef = useRef(false);
-  const maxSeenIndexRef = useRef(-1);
-  useLayoutEffect(() => {
-    hadRowsRef.current = count > 0;
-    maxSeenIndexRef.current = count - 1;
-  }, [count]);
+  const prevLastIndex = useAppendBoundary(decorated);
 
   useImperativeHandle(scrollRef, () => ({ scrollToBottom }), [scrollToBottom]);
 
@@ -345,11 +349,8 @@ export function ChatMessageArea({
                 key={row.key}
                 row={row}
                 index={index}
-                floating={floating}
                 isMobile={isMobile}
-                isNewAppend={
-                  hadRowsRef.current && index > maxSeenIndexRef.current
-                }
+                isNewAppend={prevLastIndex >= 0 && index > prevLastIndex}
                 onRetry={onRetry}
               />
             ))}
@@ -373,4 +374,4 @@ export function ChatMessageArea({
       </div>
     </CardContent>
   );
-}
+});

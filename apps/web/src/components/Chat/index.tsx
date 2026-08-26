@@ -125,6 +125,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     scrollRef.current?.scrollToBottom();
   }, []);
 
+  // Stable so ChatMessageArea's memo holds across per-keystroke composer re-renders.
+  const handleLoadMore = useCallback(() => {
+    void loadMore();
+  }, [loadMore]);
+
   const handleSend = () => {
     const text = input.trim();
     if (!text) return;
@@ -171,9 +176,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
         <ChatMessageArea
           scrollRef={scrollRef}
-          loadMore={() => {
-            void loadMore();
-          }}
+          loadMore={handleLoadMore}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}

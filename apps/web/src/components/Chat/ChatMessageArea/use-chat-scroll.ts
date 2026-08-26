@@ -6,9 +6,10 @@ import {
   type RefObject,
 } from "react";
 import {
-  AT_BOTTOM_THRESHOLD_PX,
   IDLE_LATCH,
-  isPrepend,
+  captureMetrics,
+  onResizeTick,
+  onRowsChange,
   onScrollTick,
   restoredScrollTop,
   startFollow,
@@ -21,6 +22,8 @@ interface ChatScrollArgs {
   count: number;
   firstKey: string | null;
   bottomInset: number;
+  // A tall draft's extra scroll range, rendered outside the resize-observed content.
+  bottomOverhang: number;
   hasMore: boolean;
   loadingMore: boolean;
   loadMore: () => void;
@@ -36,6 +39,7 @@ export function useChatScroll({
   count,
   firstKey,
   bottomInset,
+  bottomOverhang,
   hasMore,
   loadingMore,
   loadMore,
@@ -66,28 +70,26 @@ export function useChatScroll({
     [onAtBottomChange],
   );
 
-  // Position the scroller across data changes, before paint.
+  // Position the scroller across data changes, before paint; onRowsChange decides.
   useLayoutEffect(() => {
     const el = parentRef.current;
     if (el) {
-      const prepend = isPrepend(
+      const action = onRowsChange(
         prevFirstKeyRef.current,
         firstKey,
         prevCountRef.current,
         count,
+        atBottomRef.current,
       );
-      if (prepend) {
+      if (action === "restore") {
         el.scrollTop = restoredScrollTop(lastTickRef.current, el.scrollHeight);
-      } else if (count > 0 && prevCountRef.current === 0) {
+      } else if (action === "jump") {
         el.scrollTop = el.scrollHeight;
-      } else if (count > prevCountRef.current && atBottomRef.current) {
+      } else if (action === "follow") {
         el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
         latchRef.current = startFollow(el);
       }
-      lastTickRef.current = {
-        scrollTop: el.scrollTop,
-        scrollHeight: el.scrollHeight,
-      };
+      lastTickRef.current = captureMetrics(el);
     }
     prevFirstKeyRef.current = firstKey;
     prevCountRef.current = count;
@@ -100,15 +102,25 @@ export function useChatScroll({
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [bottomInset, parentRef]);
 
+  // The draft overhang grows the scroll range from outside the observed content div, so
+  // neither a scroll nor a resize tick fires: refresh the prepend snapshot here, or a
+  // later restore would replay the overhang's growth as if a prepend added it.
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    if (el) lastTickRef.current = captureMetrics(el);
+  }, [bottomOverhang, parentRef]);
+
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
-    const tick = onScrollTick(el, latchRef.current, hasMore && !loadingMore);
+    const metrics = captureMetrics(el);
+    const tick = onScrollTick(
+      metrics,
+      latchRef.current,
+      hasMore && !loadingMore,
+    );
     latchRef.current = tick.latch;
-    lastTickRef.current = {
-      scrollTop: el.scrollTop,
-      scrollHeight: el.scrollHeight,
-    };
+    lastTickRef.current = metrics;
     setNearTop(tick.nearTop);
     if (tick.atBottom !== null) setAtBottom(tick.atBottom);
     if (tick.loadOlder) loadMore();
@@ -116,23 +128,21 @@ export function useChatScroll({
 
   // "At bottom" depends on content height, not just scroll position: growth beneath a pinned
   // viewport (a rewrap on resize, late fonts) moves the end without firing a scroll event.
-  // Re-pin, unless a follow animation is mid-flight and already owns the position.
+  // onResizeTick decides: re-pin, land or re-aim a mid-flight follow, or recompute the flag.
   useLayoutEffect(() => {
     const el = parentRef.current;
     const content = el?.firstElementChild;
     if (!el || !content) return;
     const ro = new ResizeObserver(() => {
-      if (latchRef.current.following) return;
-      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (atBottomRef.current && dist > 1) {
-        el.scrollTop = el.scrollHeight;
-      } else {
-        setAtBottom(dist <= AT_BOTTOM_THRESHOLD_PX);
+      let metrics = captureMetrics(el);
+      const tick = onResizeTick(metrics, latchRef.current, atBottomRef.current);
+      latchRef.current = tick.latch;
+      if (tick.scrollToEnd) {
+        el.scrollTo({ top: el.scrollHeight, behavior: tick.scrollToEnd });
+        metrics = captureMetrics(el);
       }
-      lastTickRef.current = {
-        scrollTop: el.scrollTop,
-        scrollHeight: el.scrollHeight,
-      };
+      if (tick.atBottom !== null) setAtBottom(tick.atBottom);
+      lastTickRef.current = metrics;
     });
     ro.observe(content);
     return () => ro.disconnect();

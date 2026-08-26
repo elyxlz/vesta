@@ -8,7 +8,6 @@ import type {
 } from "@vesta/core";
 import {
   PACING,
-  TRIM_HISTORY_KEEP,
   beginSend,
   commitPacedChat,
   createChatSocket,
@@ -274,7 +273,7 @@ export function useAgentSocketState({
   // between the landed page and the kept tail.
   const trimHistory = useCallback(() => {
     if (loadingMoreRef.current) return;
-    commit((current) => trimTail(current, TRIM_HISTORY_KEEP));
+    commit((current) => trimTail(current));
   }, [commit]);
 
   const loadMore = useCallback(async () => {

@@ -87,7 +87,6 @@ export type {
 } from "./notification-content/notification-content"
 
 export {
-  TRIM_HISTORY_KEEP,
   TRIM_HISTORY_SETTLE_MS,
   beginSend,
   commitPacedChat,

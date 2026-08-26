@@ -17,6 +17,22 @@ export function rowKey(event: ChatMessage, idxFallback: number): string {
   return event.ts ? `${event.ts}-${event.type}` : `i-${String(idxFallback)}`;
 }
 
+// Where the previous commit's last row now sits: rows after it are genuine appends (they
+// animate in). Index-based detection would misfire — a prepend shifts every index — so the
+// row is found by key, scanned from the end where it stays. -1 means nothing qualifies:
+// no previous commit (the first page never animates) or the row vanished in a reseed.
+export function lastSeenIndex(
+  rows: DecoratedRow[],
+  prevLastKey: string | null,
+): number {
+  if (prevLastKey !== null) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i]?.key === prevLastKey) return i;
+    }
+  }
+  return -1;
+}
+
 function rowGap(
   msg: ChatMessage,
   prev: ChatMessage | undefined,

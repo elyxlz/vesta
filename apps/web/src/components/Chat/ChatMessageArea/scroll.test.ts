@@ -3,7 +3,8 @@ import {
   AT_BOTTOM_THRESHOLD_PX,
   IDLE_LATCH,
   distanceFromEnd,
-  isPrepend,
+  onResizeTick,
+  onRowsChange,
   onScrollTick,
   restoredScrollTop,
   startFollow,
@@ -92,21 +93,58 @@ describe("onScrollTick while following a smooth scroll to the latest message", (
   });
 });
 
-describe("isPrepend", () => {
-  it("detects older rows landing above the existing first row", () => {
-    expect(isPrepend("k5", "k1", 10, 30)).toBe(true);
+describe("onResizeTick", () => {
+  it("re-pins a pinned viewport when content grows beneath it", () => {
+    const tick = onResizeTick(metrics(1000), IDLE_LATCH, true);
+    expect(tick.scrollToEnd).toBe("instant");
+    expect(tick.atBottom).toBe(null);
   });
 
-  it("ignores the first page of history", () => {
-    expect(isPrepend(null, "k1", 0, 20)).toBe(false);
+  it("recomputes the pinned flag for an unpinned viewport", () => {
+    const tick = onResizeTick(metrics(1000), IDLE_LATCH, false);
+    expect(tick.scrollToEnd).toBe(null);
+    expect(tick.atBottom).toBe(false);
   });
 
-  it("ignores appends, which keep the first row", () => {
-    expect(isPrepend("k1", "k1", 10, 11)).toBe(false);
+  it("re-aims a mid-flight follow whose target moved, so it cannot land short", () => {
+    const latch = startFollow(metrics(1000, 2000));
+    const tick = onResizeTick(metrics(1200, 2600), latch, true);
+    expect(tick.scrollToEnd).toBe("smooth");
+    expect(tick.latch.following).toBe(true);
+    expect(tick.latch.lastDistance).toBe(distanceFromEnd(metrics(1200, 2600)));
+    expect(tick.atBottom).toBe(null);
   });
 
-  it("ignores in-place edits that keep the count", () => {
-    expect(isPrepend("k1", "k1", 10, 10)).toBe(false);
+  it("lands a follow that the resize left within the bottom threshold", () => {
+    const latch = startFollow(metrics(1000));
+    const tick = onResizeTick(
+      metrics(1400 - AT_BOTTOM_THRESHOLD_PX),
+      latch,
+      true,
+    );
+    expect(tick.latch.following).toBe(false);
+    expect(tick.scrollToEnd).toBe(null);
+    expect(tick.atBottom).toBe(true);
+  });
+});
+
+describe("onRowsChange", () => {
+  it("restores the viewport over older rows landing above it, even while pinned", () => {
+    expect(onRowsChange("k5", "k1", 10, 30, false)).toBe("restore");
+    expect(onRowsChange("k5", "k1", 10, 30, true)).toBe("restore");
+  });
+
+  it("jumps the first page of history onto the latest message", () => {
+    expect(onRowsChange(null, "k1", 0, 20, true)).toBe("jump");
+  });
+
+  it("follows an append only while pinned", () => {
+    expect(onRowsChange("k1", "k1", 10, 11, true)).toBe("follow");
+    expect(onRowsChange("k1", "k1", 10, 11, false)).toBe("none");
+  });
+
+  it("leaves in-place edits that keep the count alone", () => {
+    expect(onRowsChange("k1", "k1", 10, 10, true)).toBe("none");
   });
 });
 

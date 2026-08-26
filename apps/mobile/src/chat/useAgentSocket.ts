@@ -11,7 +11,6 @@ import {
   prependPage,
   seedTail,
   sendMessage,
-  TRIM_HISTORY_KEEP,
   trimTail,
   typingDelay,
   type ChatMessage,
@@ -364,7 +363,7 @@ export function useAgentSocket(
   // so a popped screen holds two pages instead of everything the user ever paged in.
   const trimHistory = useCallback(() => {
     if (loadingMoreRef.current) return;
-    commit((current) => trimTail(current, TRIM_HISTORY_KEEP));
+    commit((current) => trimTail(current));
   }, [commit]);
 
   const loadMore = useCallback(async (): Promise<void> => {
