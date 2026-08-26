@@ -1052,9 +1052,26 @@ pub fn read_agent_port_and_token(
     agents_dir: &std::path::Path,
 ) -> (Option<u16>, Option<String>) {
     let env_path = agents_dir.join(format!("{agent_name}.env"));
-    let Ok(content) = std::fs::read_to_string(&env_path) else {
-        return (None, None);
-    };
+    match std::fs::read_to_string(&env_path) {
+        Ok(content) => parse_agent_env(&content),
+        Err(_) => (None, None),
+    }
+}
+
+/// `read_agent_port_and_token` for async callers: the same single read through tokio's fs,
+/// so a request handler never blocks the runtime on file IO.
+pub async fn read_agent_port_and_token_async(
+    agent_name: &str,
+    agents_dir: &std::path::Path,
+) -> (Option<u16>, Option<String>) {
+    let env_path = agents_dir.join(format!("{agent_name}.env"));
+    match tokio::fs::read_to_string(&env_path).await {
+        Ok(content) => parse_agent_env(&content),
+        Err(_) => (None, None),
+    }
+}
+
+fn parse_agent_env(content: &str) -> (Option<u16>, Option<String>) {
     let mut port = None;
     let mut token = None;
     for line in content.lines() {

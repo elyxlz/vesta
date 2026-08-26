@@ -7,7 +7,6 @@ use axum::{
     response::Response,
     Json,
 };
-use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 use crate::auth;
@@ -18,27 +17,68 @@ use crate::state::{
 };
 
 // When a freshly-registered service is still binding its port (e.g. `vite preview`
-// takes a couple of seconds), wait briefly for the upstream to start accepting
-// connections before proxying. Without this, the first iframe load hits 502 and
-// the app caches "unavailable" until a manual refresh. See issue #379.
+// takes a couple of seconds), retry a refused connect within this window instead of
+// failing the request. Without this, the first iframe load hits 502 and the app
+// caches "unavailable" until a manual refresh. See issue #379. A healthy service
+// costs no probe: the real request is the only connect made.
 const UPSTREAM_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const UPSTREAM_READY_POLL_INITIAL: Duration = Duration::from_millis(25);
 const UPSTREAM_READY_POLL_MAX: Duration = Duration::from_millis(250);
 
-async fn wait_for_upstream(host: &str, port: u16, timeout: Duration) {
+/// Send the request, retrying connection failures within the bind-grace window when `grace`
+/// (registered services only; the raw agent port is up whenever its container is). The last
+/// error is handed back for diagnosis.
+async fn send_with_bind_grace(
+    req_builder: reqwest::RequestBuilder,
+    grace: bool,
+    timeout: Duration,
+) -> Result<reqwest::Response, reqwest::Error> {
     let deadline = Instant::now() + timeout;
     let mut delay = UPSTREAM_READY_POLL_INITIAL;
     loop {
-        if TcpStream::connect((host, port)).await.is_ok() {
-            return;
+        let result = match req_builder.try_clone() {
+            Some(attempt) => attempt.send().await,
+            // A non-clonable (streaming) body cannot retry; send it once.
+            None => return req_builder.send().await,
+        };
+        match result {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                let now = Instant::now();
+                if !(grace && error.is_connect() && now < deadline) {
+                    return Err(error);
+                }
+                tokio::time::sleep(delay.min(deadline - now)).await;
+                delay = (delay * 2).min(UPSTREAM_READY_POLL_MAX);
+            }
         }
-        let now = Instant::now();
-        if now >= deadline {
-            return;
+    }
+}
+
+/// Dial a registered service's upstream socket, retrying io-level failures within the
+/// bind-grace window, the socket counterpart of `send_with_bind_grace`.
+async fn dial_upstream_ws(
+    url: &str,
+    timeout: Duration,
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    tokio_tungstenite::tungstenite::Error,
+> {
+    let deadline = Instant::now() + timeout;
+    let mut delay = UPSTREAM_READY_POLL_INITIAL;
+    loop {
+        match tokio_tungstenite::connect_async(url).await {
+            Ok((ws, _)) => return Ok(ws),
+            Err(error) => {
+                let now = Instant::now();
+                let retryable = matches!(error, tokio_tungstenite::tungstenite::Error::Io(_));
+                if !retryable || now >= deadline {
+                    return Err(error);
+                }
+                tokio::time::sleep(delay.min(deadline - now)).await;
+                delay = (delay * 2).min(UPSTREAM_READY_POLL_MAX);
+            }
         }
-        let remaining = deadline - now;
-        tokio::time::sleep(delay.min(remaining)).await;
-        delay = (delay * 2).min(UPSTREAM_READY_POLL_MAX);
     }
 }
 
@@ -144,11 +184,8 @@ pub async fn agent_proxy_handler(
     let lock = state.agent_lock(&name).await;
     let guard = lock.read_owned().await;
 
-    docker::ensure_running(&state.docker, &cname)
-        .await
-        .map_err(map_docker_err)?;
     let (agent_port, agent_token) =
-        docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
+        docker::read_agent_port_and_token_async(&name, &state.env_config.agents_dir).await;
     let agent_port = agent_port.ok_or_else(|| {
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -156,16 +193,21 @@ pub async fn agent_proxy_handler(
         )
     })?;
     // The agent answers on its own bridge network (see AgentStatusCache::bridge_ip_or_resolve).
-    let target_host = state
+    // The happy path is a cache hit; only the miss asks Docker, and only then whether the
+    // container itself explains the unresolved address.
+    let Some(target_host) = state
         .agent_status_cache
         .bridge_ip_or_resolve(&state.docker, &cname, &name)
         .await
-        .ok_or_else(|| {
-            err_response(
+    else {
+        return Err(match docker::ensure_running(&state.docker, &cname).await {
+            Err(docker_error) => map_docker_err(docker_error),
+            Ok(()) => err_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "agent's network address not yet resolved -- retry shortly",
-            )
-        })?;
+            ),
+        });
+    };
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
     let resolved = if first_segment.is_empty() {
@@ -225,8 +267,8 @@ pub async fn agent_proxy_handler(
         .get("upgrade")
         .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
 
-    // Only wait for registered services — the raw agent port is already running
-    // by the time ensure_running() returns, so a wait there would just mask dead agents.
+    // Bind grace applies to registered services only — the raw agent port is up whenever
+    // its container is, so a retry there would just mask dead agents.
     let is_registered_service = service.is_some();
 
     if is_ws_upgrade {
@@ -238,6 +280,11 @@ pub async fn agent_proxy_handler(
                 "the raw agent event bus is not client-exposed; use /sync",
             ));
         }
+        // One inspect per socket connect, amortized over the socket's life: a stopped agent
+        // must refuse the handshake rather than accept the upgrade and immediately close.
+        docker::ensure_running(&state.docker, &cname)
+            .await
+            .map_err(map_docker_err)?;
         let (mut parts, _body) = request.into_parts();
         let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
             Ok(ws) => ws,
@@ -250,27 +297,33 @@ pub async fn agent_proxy_handler(
         };
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
-            if is_registered_service {
-                wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
-            }
             ws_proxy(socket, &target_host, target_port, &target_path).await;
         }))
     } else {
         drop(guard);
         let token = injected_agent_token(agent_token.as_deref(), is_registered_service);
-        if is_registered_service {
-            wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
-        }
         forward_http_to_container(
-            &state.http_client,
-            &target_host,
-            target_port,
-            &target_path,
+            &state,
+            &cname,
+            UpstreamTarget {
+                host: &target_host,
+                port: target_port,
+                path: &target_path,
+            },
             request,
             token,
+            is_registered_service,
         )
         .await
     }
+}
+
+/// The upstream address a forward dials: the agent's bridge-network host plus the resolved
+/// service (or raw agent) port and the credential-stripped path.
+struct UpstreamTarget<'a> {
+    host: &'a str,
+    port: u16,
+    path: &'a str,
 }
 
 /// Bridge a client socket to a registered service's upstream. Only registered services reach
@@ -286,8 +339,8 @@ async fn ws_proxy(
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
     let url = build_target_url("ws", host, agent_port, path);
-    let agent_ws = match tokio_tungstenite::connect_async(&url).await {
-        Ok((ws, _)) => ws,
+    let agent_ws = match dial_upstream_ws(&url, UPSTREAM_READY_TIMEOUT).await {
+        Ok(ws) => ws,
         Err(e) => {
             tracing::warn!(port = agent_port, error = %e, "agent websocket not reachable");
             let mut client_ws = client_ws;
@@ -377,15 +430,15 @@ async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
 }
 
 async fn forward_http_to_container(
-    client: &reqwest::Client,
-    host: &str,
-    port: u16,
-    target_path: &str,
+    state: &crate::state::AppState,
+    cname: &str,
+    target: UpstreamTarget<'_>,
     request: Request,
     agent_token: Option<&str>,
+    bind_grace: bool,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let (parts, body) = request.into_parts();
-    let url = build_target_url("http", host, port, target_path);
+    let url = build_target_url("http", target.host, target.port, target.path);
 
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {e}")))?;
@@ -397,7 +450,7 @@ async fn forward_http_to_container(
     // Hop-by-hop headers, plus the client credential vestad already consumed
     // (auth::presented_tokens): the proxy is the gate, so no upstream, registered
     // service or raw agent port alike, is handed the gateway-tier bearer.
-    let mut req_builder = client.request(method, &url);
+    let mut req_builder = state.http_client.request(method, &url);
     for (name, value) in &parts.headers {
         let n = name.as_str().to_ascii_lowercase();
         if matches!(
@@ -416,14 +469,26 @@ async fn forward_http_to_container(
         req_builder = req_builder.body(body_bytes.to_vec());
     }
 
-    let upstream = req_builder.send().await.map_err(|e| {
-        err_response(
-            StatusCode::BAD_GATEWAY,
-            &format!(
-                "container unreachable on port {port} ({target_path}): {e} — is the service running?"
-            ),
-        )
-    })?;
+    let upstream = match send_with_bind_grace(req_builder, bind_grace, UPSTREAM_READY_TIMEOUT).await
+    {
+        Ok(upstream) => upstream,
+        Err(send_error) => {
+            // Ask Docker only on the failure path: a missing or stopped container explains an
+            // unreachable upstream better than the transport error, and the happy path pays
+            // no inspect.
+            return Err(match docker::ensure_running(&state.docker, cname).await {
+                Err(docker_error) => map_docker_err(docker_error),
+                Ok(()) => err_response(
+                    StatusCode::BAD_GATEWAY,
+                    &format!(
+                        "container unreachable on port {port} ({target_path}): {send_error} — is the service running?",
+                        port = target.port,
+                        target_path = target.path,
+                    ),
+                ),
+            });
+        }
+    };
 
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -531,8 +596,8 @@ mod keyed_forward_path_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_target_url, forwarded_query, injected_agent_token, pump_agent_to_client,
-        split_key_subpath, split_service_subpath, wait_for_upstream,
+        build_target_url, dial_upstream_ws, forwarded_query, injected_agent_token,
+        pump_agent_to_client, send_with_bind_grace, split_key_subpath, split_service_subpath,
     };
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
@@ -706,51 +771,122 @@ mod tests {
         assert_eq!(split_key_subpath("/k//assets/index.js"), None);
     }
 
+    /// Reserve a port by binding+dropping, so nothing is listening there now.
+    async fn free_port() -> u16 {
+        let tmp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        tmp.local_addr().unwrap().port()
+    }
+
+    /// Accept one connection and answer any bytes with an empty 200, the smallest
+    /// upstream a real `send` can complete against.
+    async fn serve_one_http_200(listener: TcpListener) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+                .await;
+        }
+    }
+
+    fn get_builder(port: u16) -> reqwest::RequestBuilder {
+        reqwest::Client::new().get(format!("http://127.0.0.1:{port}/"))
+    }
+
     #[tokio::test]
-    async fn wait_returns_immediately_when_port_is_listening() {
+    async fn a_live_upstream_serves_the_first_send_with_no_probe_delay() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        tokio::spawn(serve_one_http_200(listener));
 
         let start = Instant::now();
-        wait_for_upstream("127.0.0.1", port, Duration::from_secs(5)).await;
-        assert!(start.elapsed() < Duration::from_millis(100));
+        let response = send_with_bind_grace(get_builder(port), true, Duration::from_secs(5))
+            .await
+            .expect("send succeeds");
+        assert_eq!(response.status(), 200);
+        assert!(start.elapsed() < Duration::from_millis(300));
     }
 
     #[tokio::test]
-    async fn wait_returns_after_timeout_when_port_never_binds() {
-        // Reserve a port by binding+dropping, so nothing is listening there now.
-        let port = {
-            let tmp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-            tmp.local_addr().unwrap().port()
-        };
-
-        let start = Instant::now();
-        wait_for_upstream("127.0.0.1", port, Duration::from_millis(300)).await;
-        let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(300));
-        assert!(elapsed < Duration::from_millis(1200));
-    }
-
-    #[tokio::test]
-    async fn wait_returns_once_port_starts_listening_mid_wait() {
-        let port = {
-            let tmp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-            tmp.local_addr().unwrap().port()
-        };
-
-        let binder = tokio::spawn(async move {
+    async fn bind_grace_retries_until_a_late_binding_service_answers() {
+        let port = free_port().await;
+        tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(150)).await;
-            TcpListener::bind((Ipv4Addr::LOCALHOST, port))
-                .await
-                .unwrap()
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await.unwrap();
+            serve_one_http_200(listener).await;
         });
 
         let start = Instant::now();
-        wait_for_upstream("127.0.0.1", port, Duration::from_secs(5)).await;
+        let response = send_with_bind_grace(get_builder(port), true, Duration::from_secs(5))
+            .await
+            .expect("send succeeds once the port binds");
+        assert_eq!(response.status(), 200);
         let elapsed = start.elapsed();
         assert!(elapsed >= Duration::from_millis(150));
-        assert!(elapsed < Duration::from_millis(800));
+        assert!(elapsed < Duration::from_millis(1500));
+    }
 
-        drop(binder.await.unwrap());
+    #[tokio::test]
+    async fn without_grace_a_refused_connect_fails_immediately() {
+        let port = free_port().await;
+
+        let start = Instant::now();
+        let error = send_with_bind_grace(get_builder(port), false, Duration::from_secs(5))
+            .await
+            .expect_err("dead port refuses");
+        assert!(error.is_connect());
+        assert!(start.elapsed() < Duration::from_millis(300));
+    }
+
+    #[tokio::test]
+    async fn bind_grace_gives_up_at_the_deadline() {
+        let port = free_port().await;
+
+        let start = Instant::now();
+        let error = send_with_bind_grace(get_builder(port), true, Duration::from_millis(300))
+            .await
+            .expect_err("port never binds");
+        assert!(error.is_connect());
+        let elapsed = start.elapsed();
+        assert!(elapsed >= Duration::from_millis(300));
+        assert!(elapsed < Duration::from_millis(1500));
+    }
+
+    #[tokio::test]
+    async fn ws_dial_retries_until_a_late_binding_service_accepts() {
+        let port = free_port().await;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await.unwrap();
+            if let Ok((socket, _)) = listener.accept().await {
+                let _ = tokio_tungstenite::accept_async(socket).await;
+            }
+        });
+
+        let start = Instant::now();
+        dial_upstream_ws(&format!("ws://127.0.0.1:{port}/ws"), Duration::from_secs(5))
+            .await
+            .expect("dial succeeds once the port binds");
+        let elapsed = start.elapsed();
+        assert!(elapsed >= Duration::from_millis(150));
+        assert!(elapsed < Duration::from_millis(1500));
+    }
+
+    #[tokio::test]
+    async fn ws_dial_gives_up_at_the_deadline() {
+        let port = free_port().await;
+
+        let start = Instant::now();
+        let error = dial_upstream_ws(
+            &format!("ws://127.0.0.1:{port}/ws"),
+            Duration::from_millis(300),
+        )
+        .await
+        .expect_err("port never binds");
+        assert!(matches!(error, tokio_tungstenite::tungstenite::Error::Io(_)));
+        let elapsed = start.elapsed();
+        assert!(elapsed >= Duration::from_millis(300));
+        assert!(elapsed < Duration::from_millis(1500));
     }
 }
