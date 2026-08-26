@@ -197,6 +197,28 @@ export function markSend(
   return { ...state, messages }
 }
 
+// Trim policy, shared by every client: chat views outlive navigation (web pages hide instead of
+// unmounting, mobile holds persist the tail across screen pops), so paged-in history would
+// otherwise accumulate for the whole session. Settling at the latest message for the settle
+// window trims the tail to two pages; scrolling up refetches through the ordinary paging.
+export const TRIM_HISTORY_KEEP = 100
+export const TRIM_HISTORY_SETTLE_MS = 30_000
+
+// The inverse of prependPage: drop loaded older history back down to the newest `keep` rows once
+// the user has settled at the bottom, so a long-lived chat view does not hold the whole
+// conversation forever. The cursor moves to the oldest kept persisted id (ids page exclusively
+// below the cursor), so loadMore refetches exactly what was dropped, and the dedup set shrinks to
+// the kept range. Optimistic bubbles are the newest rows, so the kept slice always contains them.
+export function trimTail(state: ChatState, keep: number): ChatState {
+  if (state.messages.length <= keep) return state
+  const messages = state.messages.slice(-keep)
+  const oldestKept = messages.find((message) => message.id != null)
+  if (oldestKept?.id == null) return state
+  const oldestKeptId = oldestKept.id
+  const shownIds = new Set([...state.shownIds].filter((id) => id >= oldestKeptId))
+  return { ...state, messages, shownIds, cursor: oldestKeptId }
+}
+
 // Prepend an older history page for loadMore, recording its ids for dedup. Unlike the tail, older
 // pages are not capped: loadMore grows the visible history upward on demand.
 export function prependPage(

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ChatMessage } from "@/lib/types";
-import { buildDecorated, rowKey } from "./virtual";
+import { buildDecorated, rowKey } from "./rows";
 
 function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };

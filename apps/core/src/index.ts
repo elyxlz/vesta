@@ -87,6 +87,8 @@ export type {
 } from "./notification-content/notification-content"
 
 export {
+  TRIM_HISTORY_KEEP,
+  TRIM_HISTORY_SETTLE_MS,
   beginSend,
   commitPacedChat,
   foldLiveEvent,
@@ -94,6 +96,7 @@ export {
   markSend,
   prependPage,
   seedTail,
+  trimTail,
 } from "./chat/chat-stream-model"
 export type { ChatMessage, ChatState, HistoryPage, SendState } from "./chat/chat-stream-model"
 

@@ -25,7 +25,7 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
-import { agentNeedsUser } from "@vesta/core";
+import { TRIM_HISTORY_SETTLE_MS, agentNeedsUser } from "@vesta/core";
 
 // Breathing room between the last bubble and the floating composer, folded into
 // the inset so the message list, skeleton, mask, and button all clear it.
@@ -63,12 +63,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     hasMore,
     loadingMore,
     loadMore,
+    trimHistory,
     send,
     retry,
   } = useAgentSocket();
 
   const [input, setInput] = useState("");
   const [atBottom, setAtBottom] = useState(true);
+
+  useEffect(() => {
+    if (!atBottom) return;
+    const timer = window.setTimeout(trimHistory, TRIM_HISTORY_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [atBottom, trimHistory]);
 
   useEffect(() => {
     registerChatCallbacks(send, setInput);
