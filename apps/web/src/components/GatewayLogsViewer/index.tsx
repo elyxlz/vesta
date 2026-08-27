@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, RefreshCw } from "lucide-react";
 import { streamGatewayLogs, stopGatewayLogs } from "@/api/gateway";
+import { LOG_SCROLLBACK_LINES } from "@/lib/log-stream-policy";
+import { useLogWindow } from "@/lib/use-log-window";
 import {
   Dialog,
   DialogContent,
@@ -40,36 +42,52 @@ interface GatewayLogsViewerProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const AUTOSCROLL_THRESHOLD_PX = 40;
 // Copy grabs only the most recent lines — enough to paste into a bug report without
 // dumping a whole follow session's worth of output.
 const COPY_TAIL_LINES = 200;
+
+interface GatewayLogLine {
+  id: number;
+  text: string;
+}
 
 export function GatewayLogsViewer({
   open,
   onOpenChange,
 }: GatewayLogsViewerProps) {
-  const [lines, setLines] = useState<string[]>([]);
+  const [lines, setLines] = useState<GatewayLogLine[]>([]);
   const [follow, setFollow] = useState(true);
   const [refreshEpoch, setRefreshEpoch] = useState(0);
-  const linesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const shouldAutoScrollRef = useRef(true);
+  const nextIdRef = useRef(0);
+  const { visibleCount, onScroll } = useLogWindow({
+    parentRef: scrollRef,
+    count: lines.length,
+    newestId: lines.at(-1)?.id,
+  });
 
   useEffect(() => {
     if (!open) return;
     setLines([]);
-    shouldAutoScrollRef.current = true;
+    nextIdRef.current = 0;
     let active = true;
+
+    const append = (text: string) =>
+      setLines((prev) => {
+        const next = [...prev, { id: nextIdRef.current++, text }];
+        return next.length > LOG_SCROLLBACK_LINES
+          ? next.slice(-LOG_SCROLLBACK_LINES)
+          : next;
+      });
 
     const handleEvent = (event: LogEvent) => {
       if (!active) return;
       switch (event.kind) {
         case "Line":
-          setLines((prev) => [...prev, event.text]);
+          append(event.text);
           break;
         case "Error":
-          setLines((prev) => [...prev, event.message]);
+          append(event.message);
           break;
         case "End":
           break;
@@ -85,24 +103,16 @@ export function GatewayLogsViewer({
     };
   }, [open, follow, refreshEpoch]);
 
-  useEffect(() => {
-    if (shouldAutoScrollRef.current && linesEndRef.current) {
-      linesEndRef.current.scrollIntoView({ behavior: "auto" });
-    }
-  }, [lines]);
-
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    shouldAutoScrollRef.current = dist < AUTOSCROLL_THRESHOLD_PX;
-  }, []);
-
   const handleCopy = () => {
     void navigator.clipboard.writeText(
-      lines.slice(-COPY_TAIL_LINES).join("\n"),
+      lines
+        .slice(-COPY_TAIL_LINES)
+        .map((line) => line.text)
+        .join("\n"),
     );
   };
+
+  const visible = lines.slice(-visibleCount);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -133,13 +143,12 @@ export function GatewayLogsViewer({
           </div>
         </div>
 
-        <div ref={scrollRef} onScroll={handleScroll} style={styles.scroll}>
+        <div ref={scrollRef} onScroll={onScroll} style={styles.scroll}>
           {lines.length === 0 ? (
             <span style={styles.empty}>No logs yet.</span>
           ) : (
-            lines.map((line, index) => <LogLine key={index} text={line} />)
+            visible.map((line) => <LogLine key={line.id} text={line.text} />)
           )}
-          <div ref={linesEndRef} />
         </div>
       </DialogContent>
     </Dialog>

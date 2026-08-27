@@ -1,17 +1,9 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useLayout } from "@/stores/use-layout";
 import type { LogStreamState } from "@/lib/log-session";
+import { useLogWindow } from "@/lib/use-log-window";
 import { useAgentLogSession } from "@/providers/AgentLogStreamProvider";
 import { cn } from "@/lib/utils";
-
-// How close to the bottom still counts as pinned for follow-on-append.
-const AT_BOTTOM_THRESHOLD_PX = 80;
 
 const STREAM_NOTICE: Record<Exclude<LogStreamState, "live">, string> = {
   stopped: "— agent stopped —",
@@ -55,33 +47,13 @@ export function Console({ fullscreen }: { fullscreen?: boolean }) {
     session.start();
   }, [session]);
 
-  // Follow the tail unless the user has scrolled up; true whenever the list is (re)filled.
-  const pinnedRef = useRef(true);
   const parentRef = useRef<HTMLDivElement>(null);
-  const count = lines.length;
-  // `count` stops changing once the scrollback cap is full, but the tail still
-  // advances as old lines are dropped. Key follow-on-append to the newest line
-  // instead so a full console continues to follow live output.
-  const newestLineId = lines.at(-1)?.id;
-
-  useEffect(() => {
-    if (count === 0) pinnedRef.current = true;
-  }, [count]);
-
-  const updatePinned = useCallback(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    pinnedRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight <=
-      AT_BOTTOM_THRESHOLD_PX;
-  }, []);
-
-  // Follow the tail on append, and jump to the bottom when the buffered tail first
-  // lands or the list refills after an agent switch/resume, unless the user scrolled up.
-  useLayoutEffect(() => {
-    const el = parentRef.current;
-    if (el && count > 0 && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [count, newestLineId]);
+  const { visibleCount, onScroll } = useLogWindow({
+    parentRef,
+    count: lines.length,
+    newestId: lines.at(-1)?.id,
+  });
+  const visible = lines.slice(-visibleCount);
 
   const lineClass = cn(
     "break-words whitespace-pre-wrap",
@@ -98,7 +70,7 @@ export function Console({ fullscreen }: { fullscreen?: boolean }) {
       <div className="flex-1 min-h-0">
         <div
           ref={parentRef}
-          onScroll={updatePinned}
+          onScroll={onScroll}
           className="h-full overflow-y-auto overflow-x-hidden font-mono text-xs leading-[1.6] text-white/70"
           style={
             fullscreen
@@ -108,7 +80,7 @@ export function Console({ fullscreen }: { fullscreen?: boolean }) {
               : undefined
           }
         >
-          {count === 0 ? (
+          {lines.length === 0 ? (
             <StreamingPlaceholder state={streamState} />
           ) : (
             <>
@@ -121,12 +93,12 @@ export function Console({ fullscreen }: { fullscreen?: boolean }) {
               ) : (
                 <div className="h-6" />
               )}
-              {/* Every log line stays in the DOM (no windowing) so a native text selection
-                  survives scrolling and copies the full range. Rows must lay out for real,
-                  not behind a content-visibility size estimate: lines wrap to unpredictable
-                  heights, and an estimate makes scrollHeight shift mid-scroll, so scrolling
-                  jumps. */}
-              {lines.map((line) => (
+              {/* Only the tail window renders (useLogWindow); scrolling up grows it from the
+                  buffer and settling at the bottom trims it back, so the DOM stays bounded.
+                  Rows lay out for real, not behind a content-visibility size estimate: lines
+                  wrap to unpredictable heights, so an estimate would shift scrollHeight
+                  mid-scroll and make scrolling jump. */}
+              {visible.map((line) => (
                 <div
                   key={line.id}
                   className={lineClass}
