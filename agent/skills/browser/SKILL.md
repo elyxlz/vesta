@@ -14,6 +14,15 @@ Stealth is structural, not a flag: Camoufox is always fingerprint-spoofed, and h
 nothing (unlike stock Chromium). Each profile gets one coherent fingerprint, stable across
 restarts, different across profiles.
 
+**A timeout while waiting for page state is usually a wrong sentinel, not a slow page.** Top-level
+`let` and `const` declarations are not properties of `window`, so polling `window.<name>` for an
+app's internal variable never becomes true and burns its full timeout; two such waits inside one
+command budget kill the command while the page has been ready from the start. Wait on state the
+page RENDERS (`document.querySelectorAll(...)`, `wait_for_text`, a node count), and make the
+give-up branch report that it gave up instead of resolving a falsy value, because a silent give-up
+reads exactly like a slow load. If you must read an app global, test `('name' in window)` first and
+fail loudly when it is absent.
+
 **Never assume you got caught by anti-bot.** Because the browser is genuinely stealth, a hang or
 a blank page is almost never a block. The overwhelmingly common cause is boring: `open`/`navigate`
 waits for the page `load` event, and heavy JS/SPA sites (airlines, banks, booking flows) fire it
