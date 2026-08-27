@@ -16,7 +16,10 @@ export interface ScenarioState {
   storage?: Record<string, string>;
   // false leaves no saved connection, which is how the connect page is reached.
   connection?: boolean;
-  native?: { platform: "darwin" | "win32" };
+  native?: {
+    platform?: "darwin" | "win32";
+    appUpdate?: { available: boolean; version: string };
+  };
 }
 
 // The imperative half of a scenario: how to reach the state and how to know it

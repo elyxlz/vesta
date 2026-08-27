@@ -52,6 +52,22 @@ if (!gotLock) {
         return shell.openExternal(url);
       throw new Error("openExternal only accepts http(s) urls");
     });
+    // App self-update is manual: the renderer drives check -> download -> relaunch on a click.
+    ipcMain.handle("app-update:check", () =>
+      import("./updater.js").then(({ getAppUpdate }) => getAppUpdate()),
+    );
+    ipcMain.handle("app-update:download", (event) =>
+      import("./updater.js").then(({ downloadAppUpdate }) =>
+        downloadAppUpdate((percent) => {
+          event.sender.send("app-update:progress", percent);
+        }),
+      ),
+    );
+    ipcMain.handle("app-update:install", () =>
+      import("./updater.js").then(({ quitAndInstallUpdate }) =>
+        quitAndInstallUpdate(),
+      ),
+    );
     ipcMain.handle("store:read", () => readConnection());
     ipcMain.handle("store:write", (_event, value: unknown) =>
       writeConnection(value),
@@ -98,14 +114,5 @@ if (!gotLock) {
         mainWindow?.hide();
       }
     });
-    // Drift toward the latest release on our own: check on launch, download in the
-    // background, install on the next quit. Packaged only (dev has no update feed).
-    if (app.isPackaged) {
-      void import("./updater.js")
-        .then(({ checkForAppUpdate }) => checkForAppUpdate())
-        .catch((err: unknown) => {
-          console.error("app update check failed:", err);
-        });
-    }
   });
 }

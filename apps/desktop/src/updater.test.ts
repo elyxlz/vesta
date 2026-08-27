@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkForAppUpdate, isNewerVersion, selectLinuxAsset } from "./updater";
+import { getAppUpdate, isNewerVersion, selectLinuxAsset } from "./updater";
 
-// A stand-in for electron-updater's autoUpdater that records the event handlers the code
-// registers, so the test can assert an "error" handler exists and swallows.
+// A stand-in for electron-updater's autoUpdater that lets a test steer the check result and
+// records the handlers the code registers.
 const updaterMock = vi.hoisted(() => {
   const handlers: Record<string, (arg: unknown) => void> = {};
+  let checkResult: { updateInfo: { version: string } } | null = null;
+  let checkError: Error | null = null;
   const autoUpdater = {
     autoDownload: false,
     autoInstallOnAppQuit: false,
@@ -12,14 +14,32 @@ const updaterMock = vi.hoisted(() => {
     on(event: string, cb: (arg: unknown) => void): void {
       handlers[event] = cb;
     },
+    removeAllListeners(): void {
+      /* noop */
+    },
     setFeedURL(): void {
       /* noop */
     },
-    checkForUpdates(): Promise<null> {
-      return Promise.resolve(null);
+    checkForUpdates(): Promise<{ updateInfo: { version: string } } | null> {
+      if (checkError) return Promise.reject(checkError);
+      return Promise.resolve(checkResult);
+    },
+    downloadUpdate: (): Promise<string[]> => Promise.resolve([]),
+    quitAndInstall(): void {
+      /* noop */
     },
   };
-  return { autoUpdater, handlers };
+  return {
+    autoUpdater,
+    handlers,
+    setCheckResult(version: string | null): void {
+      checkError = null;
+      checkResult = version ? { updateInfo: { version } } : null;
+    },
+    setCheckError(error: Error): void {
+      checkError = error;
+    },
+  };
 });
 
 vi.mock("electron-updater", () => ({
@@ -74,23 +94,38 @@ describe("latest-channel version comparison", () => {
   );
 });
 
-describe("background auto-update errors", () => {
-  it("attaches an error listener so a mid-download failure is consumed, not thrown", async () => {
+describe("manual app-update check (darwin path)", () => {
+  const withDarwin = async (fn: () => Promise<void>) => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    // Force the electron-updater path (Linux uses the manual package path instead).
     Object.defineProperty(process, "platform", {
       value: "darwin",
       configurable: true,
     });
     try {
-      await checkForAppUpdate();
-      // Node throws on an "error" EventEmitter event with no listener; registering one turns a
-      // mid-download failure into a logged no-op instead of an uncaught main-process exception.
-      const errorHandler = updaterMock.handlers.error;
-      expect(errorHandler).toBeDefined();
-      expect(() => errorHandler?.(new Error("network blip"))).not.toThrow();
+      await fn();
     } finally {
       if (platform) Object.defineProperty(process, "platform", platform);
     }
+  };
+
+  it("reports available with the version when the feed is newer", async () => {
+    await withDarwin(async () => {
+      updaterMock.setCheckResult("0.2.0");
+      expect(await getAppUpdate()).toEqual({ available: true, version: "0.2.0" });
+    });
+  });
+
+  it("reports not-available when the feed is the same or older", async () => {
+    await withDarwin(async () => {
+      updaterMock.setCheckResult("0.1.0");
+      expect(await getAppUpdate()).toEqual({ available: false, version: null });
+    });
+  });
+
+  it("fails closed when the check throws", async () => {
+    await withDarwin(async () => {
+      updaterMock.setCheckError(new Error("network blip"));
+      expect(await getAppUpdate()).toEqual({ available: false, version: null });
+    });
   });
 });

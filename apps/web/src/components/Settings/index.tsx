@@ -33,6 +33,7 @@ import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { DevicesCard } from "@/components/Settings/DevicesCard";
+import { UpdatesCard } from "@/components/Settings/UpdatesCard";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -144,6 +145,8 @@ export function AppSettings() {
       </Card>
 
       <KeybindsCard />
+
+      <UpdatesCard />
 
       <Card size="sm" className="md:col-span-2">
         <CardContent>

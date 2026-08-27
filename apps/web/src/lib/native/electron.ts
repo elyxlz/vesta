@@ -3,6 +3,7 @@
 import type { Platform } from "@/lib/platform";
 import { parseConnectionConfig } from "./parse-connection-config";
 import type {
+  AppUpdateStatus,
   NativeBridge,
   NativeGeolocationFix,
   VestaNativeApi,
@@ -31,6 +32,16 @@ export function parseNativeFix(value: unknown): NativeGeolocationFix | null {
   };
 }
 
+// Parse at the boundary: the preload answer is untyped IPC, so validate the shape here.
+export function parseAppUpdateStatus(value: unknown): AppUpdateStatus {
+  if (typeof value !== "object" || value === null)
+    return { available: false, version: null };
+  const status = value as Record<string, unknown>;
+  const available = status.available === true;
+  const version = typeof status.version === "string" ? status.version : null;
+  return { available, version: available ? version : null };
+}
+
 export function createElectronBridge(api: VestaNativeApi): NativeBridge {
   const platform = NODE_PLATFORM_MAP[api.platform] ?? "linux";
   return {
@@ -57,6 +68,18 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
       cancel: (port) => api.oauthCancel(port),
     },
     readGeolocation: async () => parseNativeFix(await api.readGeolocation()),
+    appUpdate: {
+      check: async () => parseAppUpdateStatus(await api.getAppUpdate()),
+      download: async (onProgress) => {
+        const unsubscribe = api.onAppUpdateProgress(onProgress);
+        try {
+          await api.downloadAppUpdate();
+        } finally {
+          unsubscribe();
+        }
+      },
+      install: () => api.installAppUpdate(),
+    },
     // macOS keeps its native traffic lights; only Windows draws custom controls.
     windowControls:
       platform === "windows"

@@ -248,12 +248,6 @@
       "group": "Home"
     },
     {
-      "id": "home-update-available",
-      "title": "Home, update available",
-      "description": "The navbar update pill when a newer gateway release exists.",
-      "group": "Home"
-    },
-    {
       "id": "update-snapshotting",
       "title": "Update, backing up all",
       "description": "The update screen while every agent is snapshotted.",
@@ -732,8 +726,15 @@
     {
       "id": "app-settings-check-updates",
       "title": "Check for updates",
-      "description": "The check-for-updates control while checking.",
+      "description": "The updates card's check control while checking.",
       "group": "App settings"
+    },
+    {
+      "id": "app-settings-updates",
+      "title": "Updates available",
+      "description": "The updates card with a Vesta Desktop and a gateway update available.",
+      "group": "App settings",
+      "platforms": ["desktop", "desktop-dark"]
     },
     {
       "id": "app-settings-restart-dialog",

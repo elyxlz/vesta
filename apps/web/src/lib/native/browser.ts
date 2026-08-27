@@ -50,5 +50,6 @@ export function createBrowserBridge(): NativeBridge {
     oauthLoopback: null,
     windowControls: null,
     readGeolocation: null,
+    appUpdate: null,
   };
 }

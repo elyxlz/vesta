@@ -18,6 +18,13 @@ contextBridge.exposeInMainWorld("vestaNative", {
     ipcRenderer.send("set-theme", theme);
   },
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
+  getAppUpdate: () => ipcRenderer.invoke("app-update:check"),
+  downloadAppUpdate: () => ipcRenderer.invoke("app-update:download"),
+  onAppUpdateProgress: (cb: (percent: number) => void) =>
+    subscribe("app-update:progress", (_event, percent: number) => {
+      cb(percent);
+    }),
+  installAppUpdate: () => ipcRenderer.invoke("app-update:install"),
   storeRead: () => ipcRenderer.invoke("store:read"),
   storeWrite: (value: unknown) => ipcRenderer.invoke("store:write", value),
   storeClear: () => ipcRenderer.invoke("store:clear"),

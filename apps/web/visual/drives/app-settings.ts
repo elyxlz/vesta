@@ -269,12 +269,30 @@ export const APP_SETTINGS: Record<string, Scenario> = {
       routes: [{ path: "/version/check", method: "POST", hang: true }],
     }),
     drive: async (page) => {
+      await scrollTo(page, "check for updates");
       await page.getByRole("button", { name: "check for updates" }).click();
     },
     settle: async (page) => {
       await expect(
-        page.getByRole("button", { name: "checking..." }),
+        page.getByRole("button", { name: "check for updates" }),
       ).toBeDisabled();
+    },
+  },
+  "app-settings-updates": {
+    state: {
+      ...settingsState({
+        sync: { gateway: { updateAvailable: true, latestVersion: "0.2.11" } },
+      }),
+      native: { appUpdate: { available: true, version: "0.2.11" } },
+    },
+    drive: (page) =>
+      page.getByText("Vesta Desktop", { exact: true }).scrollIntoViewIfNeeded(),
+    settle: async (page) => {
+      await expect(page.getByText("Vesta gateway")).toBeVisible();
+      // Both rows expose an "update" action (Vesta Desktop and the gateway pill).
+      await expect(
+        page.getByRole("button", { name: "update", exact: true }),
+      ).toHaveCount(2);
     },
   },
   "app-settings-restart-dialog": {

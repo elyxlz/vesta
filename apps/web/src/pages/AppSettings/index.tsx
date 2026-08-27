@@ -1,7 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { Home } from "lucide-react";
 import { AppSettings } from "@/components/Settings";
-import { CheckForUpdates } from "@/components/CheckForUpdates";
 import { WhatsNewButton } from "@/components/WhatsNew";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
@@ -34,7 +33,6 @@ export function AppSettingsPage() {
           <div className="flex items-center gap-2">
             <StatusPill showHostname={false} />
             <WhatsNewButton />
-            <CheckForUpdates />
           </div>
         }
       />
