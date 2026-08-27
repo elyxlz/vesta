@@ -285,7 +285,8 @@ export const APP_SETTINGS: Record<string, Scenario> = {
       }),
       native: { appUpdate: { available: true, version: "0.2.11" } },
     },
-    drive: (page) => scrollTo(page, "Vesta Desktop"),
+    drive: (page) =>
+      page.getByText("Vesta Desktop", { exact: true }).scrollIntoViewIfNeeded(),
     settle: async (page) => {
       await expect(
         page.getByRole("button", { name: "update Vesta Desktop" }),
