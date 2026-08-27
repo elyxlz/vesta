@@ -337,6 +337,13 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('apps/package-lock.json') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # The user-home gradle.properties overrides the Expo template's, whose
+      # 512m Metaspace cap OOMs the daemon on this build.
+      - name: Size the gradle daemon for the runner
+        run: |
+          mkdir -p ~/.gradle
+          printf 'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1536m\n' >> ~/.gradle/gradle.properties
+
       - name: Install app deps
         run: npm --prefix apps ci
 
