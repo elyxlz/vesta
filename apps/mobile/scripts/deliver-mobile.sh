@@ -7,7 +7,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: deliver-mobile.sh --platform ios|android --profile <name> [--changelog <text>] [--submit]
+Usage: deliver-mobile.sh --platform ios|android --profile <name> [--submit]
 
 Requires EXPO_TOKEN in the environment (EAS remote credentials, and submit).
 Prints the built artifact's absolute path on stdout on success.
@@ -18,13 +18,11 @@ EOF
 
 PLATFORM=""
 PROFILE=""
-CHANGELOG=""
 SUBMIT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --platform) PLATFORM="${2:-}"; shift 2 ;;
     --profile) PROFILE="${2:-}"; shift 2 ;;
-    --changelog) CHANGELOG="${2:-}"; shift 2 ;;
     --submit) SUBMIT=1; shift ;;
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
@@ -55,11 +53,15 @@ npx --yes eas-cli@latest build \
   --non-interactive \
   --output "$output" >&2
 
+# No --what-to-test: setting the TestFlight changelog through EAS Submit is an
+# Enterprise-plan feature, and passing it fails the whole submission.
 if [ "$PLATFORM" = ios ] && [ "$SUBMIT" = 1 ]; then
   echo "Submitting the iOS build to TestFlight..." >&2
-  submit_args=(--platform ios --path "$output" --profile "$PROFILE" --non-interactive)
-  [ -n "$CHANGELOG" ] && submit_args+=(--what-to-test "$CHANGELOG")
-  npx --yes eas-cli@latest submit "${submit_args[@]}" >&2
+  npx --yes eas-cli@latest submit \
+    --platform ios \
+    --path "$output" \
+    --profile "$PROFILE" \
+    --non-interactive >&2
 fi
 
 echo "$output"

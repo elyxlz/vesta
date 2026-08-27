@@ -308,10 +308,7 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          RELEASE_BODY: ${{ github.event.release.body }}
-        run: |
-          CHANGELOG=$(printf '%s\n' "$RELEASE_BODY" | sed -n '/<!-- whats-new -->/,/<!-- \/whats-new -->/p' | sed '1d;$d')
-          ./scripts/deliver-mobile.sh --platform ios --profile production --changelog "$CHANGELOG" --submit
+        run: ./scripts/deliver-mobile.sh --platform ios --profile production --submit
 
   mobile-android:
     name: Mobile · Build and attach Android APK
