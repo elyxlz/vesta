@@ -8,6 +8,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
+import { useLocation } from "react-router-dom";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,6 +26,7 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
+import { agentSubpage } from "@/lib/agent-subpage";
 import { TRIM_HISTORY_SETTLE_MS, agentNeedsUser } from "@vesta/core";
 
 // Breathing room between the last bubble and the floating composer, folded into
@@ -84,6 +86,17 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useChatKeyboardFocus(textareaRef);
+
+  // Focus the composer whenever the chat becomes the visible surface: on mount,
+  // and again when a logs/settings subpage closes (the pane stays mounted, so a
+  // mount-time autofocus never refires). Skipped on mobile, where autofocus
+  // would raise the keyboard on every open. A fullscreen and a panel Chat can
+  // both be mounted; focus() is a no-op on the visibility-hidden one.
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (isMobile || agentSubpage(pathname, name) !== null) return;
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [isMobile, pathname, name]);
 
   // Every chat floats the composer over the message list; the messages reserve
   // its live height plus the gap at the bottom so the last one always clears it,
