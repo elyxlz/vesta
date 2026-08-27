@@ -364,7 +364,9 @@ jobs:
         mobile-ios,
         mobile-android,
       ]
-    if: ${{ failure() }}
+    # cancelled() too: a job that overruns timeout-minutes concludes cancelled,
+    # not failed, and a half-delivered release must revert either way.
+    if: ${{ failure() || cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
