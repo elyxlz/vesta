@@ -734,7 +734,7 @@
       "title": "Updates available",
       "description": "The updates card with a Vesta Desktop and a gateway update available.",
       "group": "App settings",
-      "platforms": ["desktop"]
+      "platforms": ["desktop", "desktop-dark"]
     },
     {
       "id": "app-settings-restart-dialog",
