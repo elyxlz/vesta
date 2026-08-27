@@ -132,50 +132,69 @@ function logsState(route: RouteFixture, page = "logs"): ScenarioState {
 }
 
 async function settleLogLines(page: Page): Promise<void> {
-  await expect(page.getByText("agent luna starting")).toBeVisible(LOADED);
-  await expect(page.getByText("— agent stopped —")).toBeVisible();
+  await expect(logText(page, "agent luna starting")).toBeVisible(LOADED);
+  await expect(logText(page, "— agent stopped —")).toBeVisible();
 }
 
-// The chat also mirrors the latest agent reply into an sr-only live region,
-// so a bubble is located by its rendered paragraph.
+// The standalone logs pane stays mounted (hidden Activity) behind the settings
+// logs tab, so log text is scoped to the visible console.
+function logText(page: Page, text: string): Locator {
+  return page.getByText(text).filter({ visible: true });
+}
+
+// The chat also mirrors the latest agent reply into an sr-only live region, and
+// keeps a hidden height-measurement clone of the thread, so chat text is scoped
+// to the visible copy.
 function bubble(page: Page, text: string): Locator {
   return page.getByRole("paragraph").filter({ hasText: text });
 }
 
+function chatText(page: Page, text: string): Locator {
+  return page.getByText(text).filter({ visible: true });
+}
+
+function composer(page: Page): Locator {
+  return page.getByPlaceholder(`message ${AGENT}`).filter({ visible: true });
+}
+
 async function typeMessage(page: Page, text: string): Promise<void> {
-  await page.getByPlaceholder("send a message...").fill(text);
+  await composer(page).fill(text);
 }
 
 async function hoverMessageArea(page: Page): Promise<void> {
-  const box = await page.getByPlaceholder("send a message...").boundingBox();
+  const box = await composer(page).boundingBox();
   if (!box) throw new Error("chat composer not laid out");
   await page.mouse.move(box.x + box.width / 2, box.y - 250);
 }
 
 export const CHAT: Record<string, Scenario> = {
   "chat-history-skeleton": chatScenario({ hang: true }, async (page) => {
-    await expect(page.locator(".animate-pulse").first()).toBeVisible(LOADED);
-    await expect(page.getByPlaceholder("send a message...")).toBeVisible();
+    await expect(
+      page.locator(".animate-pulse").filter({ visible: true }).first(),
+    ).toBeVisible(LOADED);
+    await expect(composer(page)).toBeVisible();
   }),
   "chat-empty": chatScenario({ events: [] }, async (page) => {
-    await expect(page.getByText(`${AGENT} is setting things up`)).toBeVisible(
+    await expect(chatText(page, `${AGENT} is setting things up`)).toBeVisible(
       LOADED,
     );
-    await expect(page.getByPlaceholder("send a message...")).toBeEnabled();
+    await expect(composer(page)).toBeEnabled();
   }),
   "chat-needs-sign-in": chatScenario(
     { events: [] },
     async (page) => {
-      await expect(page.getByText(`${AGENT} needs to sign in`)).toBeVisible(
+      await expect(chatText(page, `${AGENT} needs to sign in`)).toBeVisible(
         LOADED,
       );
-      await expect(page.getByPlaceholder("sign in to chat")).toBeDisabled();
+      await expect(
+        page.getByPlaceholder("sign in to chat").filter({ visible: true }),
+      ).toBeDisabled();
     },
     { status: "not_authenticated" },
   ),
   "chat-populated": chatScenario({ events: CONVERSATION }, async (page) => {
     await expect(bubble(page, "moved to 4:30.")).toBeVisible(LOADED);
-    await expect(page.getByText("beginning of conversation")).toBeVisible();
+    await expect(chatText(page, "beginning of conversation")).toBeVisible();
   }),
   "chat-markdown": chatScenario({ events: MARKDOWN_REPLY }, async (page) => {
     await expect(
@@ -190,13 +209,13 @@ export const CHAT: Record<string, Scenario> = {
   }),
   "chat-error-line": chatScenario({ events: ERROR_HISTORY }, async (page) => {
     await expect(
-      page.getByText("hit a snag, this may not have gone through"),
+      chatText(page, "hit a snag, this may not have gone through"),
     ).toBeVisible(LOADED);
   }),
   "chat-rate-limited": chatScenario(
     { events: RATE_LIMITED_HISTORY },
     async (page) => {
-      await expect(page.getByText("rate limited, back in 2h")).toBeVisible(
+      await expect(chatText(page, "rate limited, back in 2h")).toBeVisible(
         LOADED,
       );
     },
@@ -221,7 +240,7 @@ export const CHAT: Record<string, Scenario> = {
       await page.getByRole("button", { name: "send message" }).click();
     },
     settle: async (page) => {
-      await expect(page.getByText("not sent · tap to retry")).toBeVisible();
+      await expect(chatText(page, "not sent · tap to retry")).toBeVisible();
       await expect(
         bubble(page, "and book the table for friday at 8"),
       ).toBeVisible();
@@ -245,11 +264,15 @@ export const CHAT: Record<string, Scenario> = {
       await hoverMessageArea(page);
       await page.mouse.wheel(0, -600);
     },
+    // The un-virtualized scroller keeps the top marker mounted, so "scrolled up"
+    // is proven by the active scroll-to-latest button rather than the marker
+    // leaving the DOM.
     settle: async (page) => {
       await expect(
-        page.getByRole("button", { name: "Scroll to latest message" }),
+        page
+          .getByRole("button", { name: "Scroll to latest message" })
+          .filter({ visible: true }),
       ).toHaveAttribute("data-active", "true");
-      await expect(page.getByText("beginning of conversation")).toBeHidden();
     },
   },
   "chat-composer-typed": {
@@ -259,7 +282,7 @@ export const CHAT: Record<string, Scenario> = {
       await typeMessage(page, "and book the table for friday at 8");
     },
     settle: async (page) => {
-      await expect(page.getByPlaceholder("send a message...")).toHaveValue(
+      await expect(composer(page)).toHaveValue(
         "and book the table for friday at 8",
       );
       await expect(
@@ -271,7 +294,7 @@ export const CHAT: Record<string, Scenario> = {
     { events: CONVERSATION },
     async (page) => {
       await expect(bubble(page, "moved to 4:30.")).toBeVisible(LOADED);
-      await expect(page.getByPlaceholder("send a message...")).toBeVisible();
+      await expect(composer(page)).toBeVisible();
     },
   ),
   "logs-streaming": {
@@ -297,7 +320,7 @@ export const CHAT: Record<string, Scenario> = {
       await page.getByRole("tab", { name: "logs" }).click(LOADED);
     },
     settle: async (page) => {
-      await expect(page.getByText("— reconnecting —")).toBeVisible(LOADED);
+      await expect(logText(page, "— reconnecting —")).toBeVisible(LOADED);
     },
   },
   "settings-logs-tab": {

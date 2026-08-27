@@ -131,14 +131,23 @@ async function openAgentMenu(page: Page): Promise<void> {
 }
 
 // The same action label reaches the desktop dropdown item and the drawer button.
+// The settings panel stays mounted (hidden Activity) with its own copies of these
+// labels, so every match is scoped to the visible menu.
 async function pickAgentAction(page: Page, label: string): Promise<void> {
   await openAgentMenu(page);
-  await page.getByText(label, { exact: true }).click();
+  await page
+    .getByText(label, { exact: true })
+    .filter({ visible: true })
+    .click();
 }
 
 async function expectMenuOpen(page: Page, toggleLabel: string): Promise<void> {
-  await expect(page.getByText("Controls", { exact: true })).toBeVisible();
-  await expect(page.getByText(toggleLabel, { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Controls", { exact: true }).filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(toggleLabel, { exact: true }).filter({ visible: true }),
+  ).toBeVisible();
 }
 
 async function expectDashboardEmpty(page: Page): Promise<void> {
@@ -241,7 +250,7 @@ export const AGENT: Record<string, Scenario> = {
       await expect(
         page.getByRole("button", { name: "chat", exact: true }),
       ).toBeVisible();
-      await expect(page.getByPlaceholder("send a message...")).toBeHidden();
+      await expect(page.getByPlaceholder(`message ${AGENT_NAME}`)).toBeHidden();
     },
   },
   "agent-navbar-needs-auth": {
@@ -360,7 +369,9 @@ export const AGENT: Record<string, Scenario> = {
     drive: () => Promise.resolve(),
     settle: async (page) => {
       await expect(bottomTab(page, "chat").first()).toBeVisible();
-      await expect(page.getByPlaceholder("send a message...")).toBeVisible();
+      await expect(
+        page.getByPlaceholder(`message ${AGENT_NAME}`),
+      ).toBeVisible();
       await expectChatEmpty(page);
     },
   },
