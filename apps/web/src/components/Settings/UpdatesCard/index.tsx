@@ -42,7 +42,7 @@ export function UpdatesCard() {
               type="button"
               variant="ghost"
               size="xs"
-              className="text-muted-foreground"
+              className="ml-auto text-muted-foreground"
               disabled={checking}
               onClick={() => {
                 void onCheck();
@@ -135,7 +135,7 @@ function DesktopAction({
           void start();
         }}
       >
-        {phase === "error" ? "retry" : "update Vesta Desktop"}
+        {phase === "error" ? "retry" : "update"}
       </Button>
     );
   return <OnLatest />;

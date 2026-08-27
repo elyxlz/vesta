@@ -288,12 +288,11 @@ export const APP_SETTINGS: Record<string, Scenario> = {
     drive: (page) =>
       page.getByText("Vesta Desktop", { exact: true }).scrollIntoViewIfNeeded(),
     settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "update Vesta Desktop" }),
-      ).toBeVisible();
+      await expect(page.getByText("Vesta gateway")).toBeVisible();
+      // Both rows expose an "update" action (Vesta Desktop and the gateway pill).
       await expect(
         page.getByRole("button", { name: "update", exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(2);
     },
   },
   "app-settings-restart-dialog": {
