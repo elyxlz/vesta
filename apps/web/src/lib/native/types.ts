@@ -25,6 +25,20 @@ export interface NativeGeolocationFix {
   accuracyM: number | null;
 }
 
+// The latest stable release relative to the running desktop app, resolved on demand.
+export interface AppUpdateStatus {
+  available: boolean;
+  version: string | null;
+}
+
+// Manual desktop self-update: the App Settings Updates card and the AppBehindScreen drive
+// check -> download -> relaunch on a click, so the app never silently runs ahead of the gateway.
+export interface AppUpdater {
+  check(): Promise<AppUpdateStatus>;
+  download(onProgress: (percent: number) => void): Promise<void>;
+  install(): Promise<void>;
+}
+
 export interface WindowControls {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
@@ -49,6 +63,8 @@ export interface NativeBridge {
   windowControls: WindowControls | null;
   /** OS geolocation resolved by the desktop main process; null in the browser. */
   readGeolocation: (() => Promise<NativeGeolocationFix | null>) | null;
+  /** Manual desktop self-update, driven by the App Settings Updates card; null in the browser. */
+  appUpdate: AppUpdater | null;
 }
 
 /**
@@ -60,6 +76,10 @@ export interface VestaNativeApi {
   focusWindow(): Promise<void>;
   setTheme(theme: "light" | "dark"): void;
   openExternal(url: string): Promise<void>;
+  getAppUpdate(): Promise<unknown>;
+  downloadAppUpdate(): Promise<void>;
+  onAppUpdateProgress(cb: (percent: number) => void): () => void;
+  installAppUpdate(): Promise<void>;
   storeRead(): Promise<unknown>;
   storeWrite(value: unknown): Promise<void>;
   storeClear(): Promise<void>;

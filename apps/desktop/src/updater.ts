@@ -11,34 +11,82 @@ const GITHUB_REPO = "vesta";
 const API_LATEST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 
 /**
- * Self-update to the latest published release. The app is a drifting client of vestad
- * (compatibility is decided by the /sync served version window, not version equality), so it
- * tracks the latest release on its own, up only, independent of the gateway's version.
- * On macOS/Windows the download happens in the background and installs on the next quit;
- * Linux resolves and installs the matching package in place.
+ * Manual self-update to the latest published release. The app is a drifting client of vestad
+ * (compatibility is decided by the /sync served version window, not version equality), so an
+ * update is never automatic: the App Settings "Updates" card and the AppBehindScreen drive
+ * check -> download -> relaunch on an explicit click, so the app never silently runs ahead of the
+ * user's gateway. Up only, like the release channel it tracks.
  */
-export async function checkForAppUpdate(): Promise<void> {
-  if (process.platform === "linux") {
-    await updateLinuxToLatest();
-    return;
-  }
-  // electron-updater is CommonJS; its exports come through under `.default`.
-  const { autoUpdater } = (await import("electron-updater")).default;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowDowngrade = false;
-  // With autoDownload, checkForUpdates() resolves at the metadata fetch and the download runs
-  // in the background; its failure surfaces only as an EventEmitter "error" event, which throws
-  // if unhandled. Swallow it so a mid-download network blip (or an offline launch) stays silent.
-  autoUpdater.on("error", (err) => {
-    console.error("app auto-update failed:", err);
-  });
-  autoUpdater.setFeedURL({
+export interface AppUpdateStatus {
+  available: boolean;
+  version: string | null;
+}
+
+// electron-updater is CommonJS; its exports come through under `.default`. It is a singleton, so
+// one configured instance carries state across check -> download -> install within a run.
+async function autoUpdater() {
+  const { autoUpdater: updater } = (await import("electron-updater")).default;
+  updater.autoDownload = false;
+  updater.autoInstallOnAppQuit = false;
+  updater.allowDowngrade = false;
+  updater.setFeedURL({
     provider: "github",
     owner: GITHUB_OWNER,
     repo: GITHUB_REPO,
   });
-  await autoUpdater.checkForUpdates();
+  return updater;
+}
+
+/** Check for a newer stable release without downloading it. Fails closed (no update on error). */
+export async function getAppUpdate(): Promise<AppUpdateStatus> {
+  try {
+    if (process.platform === "linux") {
+      const latest = await fetchLatestRelease();
+      const available = isNewerVersion(latest.version, app.getVersion());
+      return { available, version: available ? latest.version : null };
+    }
+    const updater = await autoUpdater();
+    const result = await updater.checkForUpdates();
+    const version = result?.updateInfo.version;
+    if (version !== undefined && isNewerVersion(version, app.getVersion()))
+      return { available: true, version };
+    return { available: false, version: null };
+  } catch (err) {
+    console.error("app update check failed:", err);
+    return { available: false, version: null };
+  }
+}
+
+/**
+ * Download the pending update, reporting progress as a 0-100 percentage. On macOS/Windows the
+ * downloaded package is staged for install; on Linux it is installed in place via the OS package
+ * manager. Resolves when the update is ready to take effect on the next relaunch.
+ */
+export async function downloadAppUpdate(
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  if (process.platform === "linux") {
+    await updateLinuxToLatest(onProgress);
+    return;
+  }
+  const updater = await autoUpdater();
+  updater.removeAllListeners("download-progress");
+  updater.on("download-progress", (progress: { percent: number }) => {
+    onProgress(progress.percent);
+  });
+  await updater.checkForUpdates();
+  await updater.downloadUpdate();
+}
+
+/** Relaunch into the downloaded update. macOS/Windows install on quit; Linux is already installed. */
+export async function quitAndInstallUpdate(): Promise<void> {
+  if (process.platform === "linux") {
+    app.relaunch();
+    app.quit();
+    return;
+  }
+  const updater = await autoUpdater();
+  updater.quitAndInstall();
 }
 
 function run(
@@ -124,7 +172,9 @@ async function fetchLatestRelease(): Promise<LatestRelease> {
   return { version: tag.replace(/^v/, ""), assets };
 }
 
-async function updateLinuxToLatest(): Promise<void> {
+async function updateLinuxToLatest(
+  onProgress: (percent: number) => void,
+): Promise<void> {
   const dpkg = await commandExists("dpkg");
   const rpm = !dpkg && (await commandExists("rpm"));
   if (!dpkg && !rpm)
@@ -150,7 +200,15 @@ async function updateLinuxToLatest(): Promise<void> {
   const download = await fetch(asset.browser_download_url);
   if (!download.ok || !download.body)
     throw new Error(`download failed (${String(download.status)})`);
-  await pipeline(Readable.fromWeb(download.body), createWriteStream(packagePath));
+  const total = Number(download.headers.get("content-length") ?? 0);
+  let received = 0;
+  const source = Readable.fromWeb(download.body);
+  if (total > 0)
+    source.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      onProgress((received / total) * 100);
+    });
+  await pipeline(source, createWriteStream(packagePath));
 
   // pkexec drives the GUI privilege-escalation prompt
   const installArgs = dpkg
