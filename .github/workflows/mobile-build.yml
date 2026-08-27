@@ -1,5 +1,11 @@
 name: Mobile build
 
+# Manual mobile delivery on GitHub-hosted runners through the same
+# apps/mobile/scripts/deliver-mobile.sh the release pipeline runs (eas build
+# --local, signing from EAS remote credentials). Dispatch with a tag ref plus
+# attach_to_release to rebuild one platform for an existing release, e.g. after
+# a delivery job died mid-pipeline.
+
 on:
   workflow_dispatch:
     inputs:
@@ -7,23 +13,38 @@ on:
         description: Platform to build
         type: choice
         required: true
-        default: all
+        default: android
         options:
-          - all
           - ios
           - android
       profile:
         description: EAS build profile
         type: choice
         required: true
-        default: preview
+        default: android-internal
         options:
           - development
           - preview
           - production
+          - android-internal
+      ref:
+        description: Tag or ref to build (defaults to the dispatched branch)
+        type: string
+        required: false
+        default: ""
+      submit:
+        description: Submit the iOS build to TestFlight
+        type: boolean
+        required: true
+        default: false
+      attach_to_release:
+        description: Release tag to attach the Android APK to (vesta-android.apk)
+        type: string
+        required: false
+        default: ""
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: mobile-build-${{ inputs.platform }}-${{ inputs.profile }}
@@ -32,12 +53,12 @@ concurrency:
 jobs:
   build:
     name: Mobile · Build (${{ inputs.platform }}, ${{ inputs.profile }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      EXPO_PUBLIC_EAS_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
+    runs-on: ${{ inputs.platform == 'ios' && 'macos-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: actions/setup-node@v7
         with:
@@ -45,19 +66,34 @@ jobs:
           cache: npm
           cache-dependency-path: apps/package-lock.json
 
-      - name: Install dependencies
+      - uses: actions/cache@v4
+        if: inputs.platform == 'android'
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('apps/package-lock.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Install app deps
         run: npm --prefix apps ci
 
-      - name: Validate mobile app
-        run: ./check.sh app-mobile
-
-      - name: Set up EAS
-        uses: expo/expo-github-action@v9
-        with:
-          eas-version: latest
-          packager: npm
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Queue EAS build
+      - name: Build on this runner
+        id: build
         working-directory: apps/mobile
-        run: eas build --platform "${{ inputs.platform }}" --profile "${{ inputs.profile }}" --non-interactive --no-wait
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          args=(--platform "${{ inputs.platform }}" --profile "${{ inputs.profile }}")
+          [ "${{ inputs.submit }}" = "true" ] && args+=(--submit)
+          artifact=$(./scripts/deliver-mobile.sh "${args[@]}")
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+
+      - name: Attach the Android APK to the release
+        if: inputs.platform == 'android' && inputs.attach_to_release != ''
+        working-directory: apps/mobile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp "${{ steps.build.outputs.artifact }}" vesta-android.apk
+          gh release upload "${{ inputs.attach_to_release }}" vesta-android.apk --clobber
