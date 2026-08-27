@@ -35,22 +35,9 @@ export function UpdatesCard() {
   return (
     <Card size="sm" className="md:col-span-2">
       <CardContent>
-        <MenuSection title="updates">
-          {appUpdate.supported && (
-            <UpdateRow label="Vesta Desktop" version={__APP_VERSION__}>
-              <DesktopAction appUpdate={appUpdate} />
-            </UpdateRow>
-          )}
-          {reachable && (
-            <UpdateRow label="gateway" version={gatewayVersion}>
-              {updateAvailable || gatewayOperation !== null ? (
-                <UpdatePill />
-              ) : (
-                <OnLatest />
-              )}
-            </UpdateRow>
-          )}
-          <div className="mt-3 flex justify-end">
+        <MenuSection
+          title="updates"
+          trailing={
             <Button
               type="button"
               variant="ghost"
@@ -67,7 +54,22 @@ export function UpdatesCard() {
               />
               check for updates
             </Button>
-          </div>
+          }
+        >
+          {appUpdate.supported && (
+            <UpdateRow label="Vesta Desktop" version={__APP_VERSION__}>
+              <DesktopAction appUpdate={appUpdate} />
+            </UpdateRow>
+          )}
+          {reachable && (
+            <UpdateRow label="Vesta gateway" version={gatewayVersion}>
+              {updateAvailable || gatewayOperation !== null ? (
+                <UpdatePill />
+              ) : (
+                <OnLatest />
+              )}
+            </UpdateRow>
+          )}
         </MenuSection>
       </CardContent>
     </Card>
@@ -85,7 +87,7 @@ function UpdateRow({
 }) {
   return (
     <div className="mt-2 flex items-center justify-between gap-3 text-sm leading-none">
-      <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 items-baseline gap-2">
         <span className="truncate font-medium text-foreground">{label}</span>
         {version && (
           <span className="text-xs text-muted-foreground">v{version}</span>
