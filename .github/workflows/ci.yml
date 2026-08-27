@@ -487,37 +487,6 @@ jobs:
       - name: Run mobile checks
         run: ./check.sh app-mobile
 
-  # ── EAS workflow schema validation (mobile PRs only) ─────────────────
-  # This is local schema validation only. It neither authenticates to Expo nor
-  # queues a cloud build, so PRs cannot consume EAS quota or access EXPO_TOKEN.
-  validate-mobile-eas:
-    name: Mobile · Validate EAS workflows
-    needs: detect-changes
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.mobile == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Validate EAS workflows
-        working-directory: apps/mobile
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          workflows=(.eas/workflows/*.yml .eas/workflows/*.yaml)
-          if [ "${#workflows[@]}" -eq 0 ]; then
-            echo "No EAS workflows found"
-            exit 1
-          fi
-          schema="$RUNNER_TEMP/eas-workflow-schema.json"
-          curl --fail --silent --show-error https://api.expo.dev/v2/workflows/schema |
-            jq --exit-status '.data' > "$schema"
-          uvx check-jsonschema==0.36.2 --schemafile "$schema" "${workflows[@]}"
-
   # ── Warm the agent image build cache (shared by the Docker consumers) ──
   # test-integration and check-vestad each build the agent image from their own
   # checkout for hermeticity, and used to cold-build it twice in parallel without
@@ -1128,7 +1097,6 @@ jobs:
       - build-electron-linux
       - build-electron-windows
       - mobile-native
-      - validate-mobile-eas
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -276,22 +276,21 @@ jobs:
   # Gated on the release gates (test-live + test-linux, the same pair push-image
   # waits on), not on publish-release: this job reads only the release event's body
   # and builds mobile from the tag checkout, so it needs no uploaded GitHub assets.
-  # Decoupling lets mobile delivery run in parallel with the GHCR push and asset
-  # upload. Accepted tradeoff: if publish-release later fails and revert-failed-release
-  # fires, a TestFlight build of a since-reverted release may already be delivered to
-  # the internal (beta) group. The user accepted this beta-channel risk.
-  # Delivery covers both platforms: iOS to TestFlight, and the Android internal
-  # APK attached to the GitHub release as vesta-android.apk, which is what the
-  # README's stable releases/latest/download link serves.
-  mobile-delivery:
-    name: Mobile · Deliver TestFlight build and release APK
+  # Both mobile builds run on GitHub-hosted runners through the same
+  # apps/mobile/scripts/deliver-mobile.sh (eas build --local, signing from EAS
+  # remote credentials via EXPO_TOKEN): iOS on macOS submits to TestFlight, Android
+  # on ubuntu attaches the internal APK to the GitHub release as vesta-android.apk,
+  # which is what the README's stable releases/latest/download link serves.
+  # They run in parallel with the GHCR push and asset upload. Accepted tradeoff: if
+  # publish-release later fails and revert-failed-release fires, a TestFlight build
+  # of a since-reverted release may already be delivered to the internal (beta) group.
+  mobile-ios:
+    name: Mobile · Build and submit iOS to TestFlight
     needs: [test-live, test-linux]
-    permissions:
-      contents: write
     if: >-
       ${{ !failure() && !cancelled() &&
       contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -300,41 +299,48 @@ jobs:
         with:
           node-version: 22
 
-      - name: Set up EAS
-        uses: expo/expo-github-action@v9
-        with:
-          eas-version: latest
-          packager: npm
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      # eas workflow:run reads apps/mobile/app.config.ts locally, which needs the
+      # deliver-mobile.sh reads apps/mobile/app.config.ts, which needs the
       # monorepo's TypeScript toolchain installed or the read fails.
       - name: Install app deps
         run: npm --prefix apps ci
 
-      - name: Build and deliver the tagged app on both platforms
+      - name: Build and submit iOS to TestFlight
         working-directory: apps/mobile
         env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           CHANGELOG=$(printf '%s\n' "$RELEASE_BODY" | sed -n '/<!-- whats-new -->/,/<!-- \/whats-new -->/p' | sed '1d;$d')
-          jq -n --arg changelog "$CHANGELOG" '{changelog: $changelog}' | \
-            eas workflow:run .eas/workflows/mobile-prerelease.yml \
-              --non-interactive \
-              --wait
+          ./scripts/deliver-mobile.sh --platform ios --profile production --changelog "$CHANGELOG" --submit
 
-      - name: Attach the Android APK to the release
+  mobile-android:
+    name: Mobile · Build and attach Android APK
+    needs: [test-live, test-linux]
+    permissions:
+      contents: write
+    if: >-
+      ${{ !failure() && !cancelled() &&
+      contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install app deps
+        run: npm --prefix apps ci
+
+      - name: Build and attach the Android APK
         working-directory: apps/mobile
         env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          apk_url=$(eas build:list --platform android --status finished --limit 10 --json --non-interactive |
-            jq -r --arg sha "$GITHUB_SHA" '[.[] | select(.gitCommitHash == $sha)][0].artifacts.buildUrl')
-          if [ -z "$apk_url" ] || [ "$apk_url" = "null" ]; then
-            echo "::error::no finished Android build found for $GITHUB_SHA"
-            exit 1
-          fi
-          curl --fail --silent --show-error --location "$apk_url" --output vesta-android.apk
+          apk=$(./scripts/deliver-mobile.sh --platform android --profile android-internal)
+          cp "$apk" vesta-android.apk
           gh release upload "${{ github.event.release.tag_name }}" vesta-android.apk --clobber
 
   revert-failed-release:
@@ -348,7 +354,8 @@ jobs:
         push-image,
         push-image-manifest,
         publish-release,
-        mobile-delivery,
+        mobile-ios,
+        mobile-android,
       ]
     if: ${{ failure() }}
     runs-on: ubuntu-latest
