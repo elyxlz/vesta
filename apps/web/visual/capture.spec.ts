@@ -44,6 +44,7 @@ async function installState(
     await installNativeStub(page, {
       platform: state.native?.platform,
       connection: state.connection,
+      appUpdate: state.native?.appUpdate,
     });
   }
   await seedStorage(page, {

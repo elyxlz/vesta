@@ -8,6 +8,10 @@ interface VestaNativeApi {
   focusWindow(): Promise<void>;
   setTheme(theme: "light" | "dark"): void;
   openExternal(url: string): Promise<void>;
+  getAppUpdate(): Promise<unknown>;
+  downloadAppUpdate(): Promise<void>;
+  onAppUpdateProgress(cb: (percent: number) => void): () => void;
+  installAppUpdate(): Promise<void>;
   storeRead(): Promise<unknown>;
   storeWrite(value: unknown): Promise<void>;
   storeClear(): Promise<void>;
@@ -34,10 +38,14 @@ declare global {
 // visual connection, which is where the desktop bridge reads it from.
 export async function installNativeStub(
   page: Page,
-  options: { platform?: "darwin" | "win32"; connection?: boolean } = {},
+  options: {
+    platform?: "darwin" | "win32";
+    connection?: boolean;
+    appUpdate?: { available: boolean; version: string };
+  } = {},
 ): Promise<void> {
   await page.addInitScript(
-    ({ connection, platform }) => {
+    ({ appUpdate, connection, platform }) => {
       // The app reads the user agent, not the bridge, for platform-specific
       // chrome such as keybind glyphs, so a Windows shell needs a Windows UA.
       if (platform === "win32") {
@@ -54,6 +62,11 @@ export async function installNativeStub(
         focusWindow: resolved,
         setTheme: noop,
         openExternal: resolved,
+        getAppUpdate: () =>
+          Promise.resolve(appUpdate ?? { available: false, version: null }),
+        downloadAppUpdate: resolved,
+        onAppUpdateProgress: () => noop,
+        installAppUpdate: resolved,
         storeRead: () => Promise.resolve(stored),
         storeWrite: (value: unknown) => {
           stored = value;
@@ -75,6 +88,7 @@ export async function installNativeStub(
       };
     },
     {
+      appUpdate: options.appUpdate ?? null,
       connection: options.connection === false ? null : VISUAL_CONNECTION,
       platform: options.platform ?? "darwin",
     },

@@ -178,21 +178,6 @@ export const HOME: Record<string, Scenario> = {
       await expect(card.getByText(START_REFUSED)).toBeVisible();
     },
   },
-  "home-update-available": {
-    state: {
-      route: HOME_ROUTE,
-      sync: {
-        agents: { [AGENT]: agentNode() },
-        gateway: { updateAvailable: true, latestVersion: LATEST_VERSION },
-      },
-    },
-    drive: noDrive,
-    settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "update" }),
-      ).toHaveAttribute("title", `Update to v${LATEST_VERSION}`);
-    },
-  },
   "update-snapshotting": updateScreen(gatewayOperation(), async (page) => {
     await expect(page.getByText(UPDATE_TITLE)).toBeVisible();
     await expect(page.getByText("backing up your agents")).toBeVisible();
