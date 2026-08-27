@@ -167,7 +167,10 @@ export const HOME: Record<string, Scenario> = {
     // page and carried home in memory rather than reloaded.
     drive: async (page) => {
       await page.getByRole("button", { name: "agent actions" }).click();
-      await page.getByText("start", { exact: true }).click();
+      await page
+        .getByText("start", { exact: true })
+        .filter({ visible: true })
+        .click();
       await page.getByRole("button", { name: "home", exact: true }).click();
     },
     // The island on the page being left can still carry the same line for a
