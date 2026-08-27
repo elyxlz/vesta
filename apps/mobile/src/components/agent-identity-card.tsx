@@ -57,7 +57,7 @@ export function AgentIdentityCard({
             centered
           />
         ) : null}
-        <Text family="heading" style={[styles.name, { color: colors.text }]}>
+        <Text family="serif" style={[styles.name, { color: colors.text }]}>
           {name}
         </Text>
         {caption ? <View style={styles.caption}>{caption}</View> : null}

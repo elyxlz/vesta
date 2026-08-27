@@ -131,6 +131,15 @@ export const designTokens = {
         },
       },
       heading: {
+        css: '"Archivo Variable", sans-serif',
+        native: {
+          "400": "Archivo_400Regular",
+          "500": "Archivo_500Medium",
+          "600": "Archivo_600SemiBold",
+          "700": "Archivo_700Bold",
+        },
+      },
+      serif: {
         css: '"Source Serif 4 Variable", Georgia, serif',
         native: {
           "400": "SourceSerif4_400Regular",
