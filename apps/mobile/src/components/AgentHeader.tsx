@@ -113,7 +113,7 @@ export function AgentIsland({
           size={24}
         />
       </BootTransitionTarget>
-      <Text family="heading" numberOfLines={1} style={[styles.name, { color }]}>
+      <Text family="serif" numberOfLines={1} style={[styles.name, { color }]}>
         {name}
       </Text>
     </Pressable>
