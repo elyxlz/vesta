@@ -291,7 +291,7 @@ class TestDaemonNotifications:
             rid = s["id"]
             time.sleep(6)
 
-            notif_files = list(notif_dir.glob("*-reminders-reminder.json"))
+            notif_files = list(notif_dir.glob("*-reminders-reminder_due.json"))
             assert len(notif_files) >= 1
             found = False
             for f in notif_files:
@@ -332,7 +332,7 @@ class TestDaemonNotifications:
             deadline = time.time() + 15
             found = False
             while time.time() < deadline and not found:
-                found = any(json.loads(f.read_text())["reminder_id"] == s["id"] for f in notif_dir.glob("*-reminders-reminder.json"))
+                found = any(json.loads(f.read_text())["reminder_id"] == s["id"] for f in notif_dir.glob("*-reminders-reminder_due.json"))
                 time.sleep(0.5)
             assert found, "snoozed reminder did not fire at its new time"
         finally:
@@ -363,11 +363,11 @@ class TestMissedReminders:
         proc = start_daemon(home, notif_dir)
         try:
             time.sleep(3)
-            notif_files = list(notif_dir.glob("*-reminders-reminder.json"))
+            notif_files = list(notif_dir.glob("*-reminders-reminder_missed.json"))
             assert len(notif_files) >= 1
             data = json.loads(notif_files[0].read_text())
             assert data["message"].splitlines()[0] == "you missed this"
-            assert data["missed"] is True
+            assert data["type"] == "reminder_missed"
 
             items = parse(remind_cli(home, "list", "--json"))
             assert not any(i["id"] == "pastdue01" for i in items)
@@ -390,7 +390,7 @@ class TestMissedReminders:
             time.sleep(3)
             items = parse(remind_cli(home, "list", "--json"))
             assert any(i["id"] == "recur01" for i in items)
-            notif_files = list(notif_dir.glob("*-reminders-reminder.json"))
+            notif_files = list(notif_dir.glob("*-reminders-reminder_*.json"))
             missed = [f for f in notif_files if json.loads(f.read_text()).get("reminder_id") == "recur01"]
             assert len(missed) == 0
         finally:
@@ -497,7 +497,7 @@ class TestRecurringNextRun:
 
         send_reminder_job("ghost99", message="nope", data_dir=str(data_dir), notif_dir=str(notif_dir))
 
-        notif_files = list(notif_dir.glob("*-reminders-reminder.json"))
+        notif_files = list(notif_dir.glob("*-reminders-reminder_*.json"))
         assert not any(json.loads(f.read_text())["reminder_id"] == "ghost99" for f in notif_files)
 
     def test_null_trigger_data_still_fires_notification(self, test_home):
@@ -514,7 +514,7 @@ class TestRecurringNextRun:
 
         send_reminder_job("null_td", message="no trigger", data_dir=str(home / ".reminders"), notif_dir=str(notif_dir))
 
-        notif_files = list(notif_dir.glob("*-reminders-reminder.json"))
+        notif_files = list(notif_dir.glob("*-reminders-reminder_due.json"))
         found = any(json.loads(f.read_text())["reminder_id"] == "null_td" for f in notif_files)
         assert found, "notification should still be written even without trigger_data"
 
@@ -532,7 +532,7 @@ class TestRecurringNextRun:
 
         send_reminder_job("msg01", message="kwarg message", data_dir=str(home / ".reminders"), notif_dir=str(notif_dir))
 
-        notif_files = list(notif_dir.glob("*-reminders-reminder.json"))
+        notif_files = list(notif_dir.glob("*-reminders-reminder_due.json"))
         data = next(json.loads(f.read_text()) for f in notif_files if json.loads(f.read_text())["reminder_id"] == "msg01")
         assert data["message"].splitlines()[0] == "db message"
 

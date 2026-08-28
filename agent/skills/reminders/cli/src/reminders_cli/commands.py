@@ -350,7 +350,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
                         notif_dir,
                         reminder_id,
                         row["message"],
-                        extra={"missed": True},
+                        notif_type="reminder_missed",
                         snooze_hint=True,
                     )
                 conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))

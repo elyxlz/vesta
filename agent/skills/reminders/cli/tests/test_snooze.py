@@ -120,7 +120,7 @@ def test_just_fired_one_shot_is_not_replayed_as_missed(tmp_config: Config, tmp_p
 
     rewind_run_date(120)
     commands.restore_jobs_by_ids(tmp_config, scheduler, {reminder["id"]}, notif_dir=notif_dir)
-    missed = list(notif_dir.glob("*-reminders-reminder.json"))
+    missed = list(notif_dir.glob("*-reminders-reminder_missed.json"))
     assert len(missed) == 1
-    assert json.loads(missed[0].read_text())["missed"] is True
+    assert json.loads(missed[0].read_text())["type"] == "reminder_missed"
     assert _row(tmp_config, reminder["id"])["completed"] == 1

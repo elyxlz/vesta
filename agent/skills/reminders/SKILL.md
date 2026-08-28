@@ -71,7 +71,8 @@ Prefer a TASK's metadata file when a task already exists, and have the reminder 
 
 ## What the daemon does on its own
 
-- **Missed one-shots**: a reminder that should have fired while the daemon was down is sent on restart marked `missed`; missed recurring fires are skipped.
+- A reminder firing on schedule arrives as a `type=reminder_due` notification. To route reminders with a `notifications` rule, key it on `source=reminders` plus `type=reminder_due` (on-schedule) or `type=reminder_missed` (below).
+- **Missed one-shots**: a reminder that should have fired while the daemon was down is sent on restart as a `type=reminder_missed` notification; missed recurring fires are skipped.
 - A fired one-shot is marked completed and drops off `reminders list`; `--show-completed` brings it back so a self-chaining reminder can re-read its own body.
 
 ## Data
