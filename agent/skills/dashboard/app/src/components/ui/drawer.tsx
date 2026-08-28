@@ -65,9 +65,13 @@ function DrawerContent({
   className,
   children,
   container,
+  showHandle = true,
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Content> & {
   container?: Element | null;
+  // Off when a consumer floats the handle inside its own sticky header instead
+  // (the Dialog drawer path), so content scrolls flush under handle and title.
+  showHandle?: boolean;
 }) {
   return (
     <DrawerPortal data-slot="drawer-portal" container={container}>
@@ -75,14 +79,18 @@ function DrawerContent({
       <DrawerPrimitive.Content
         data-slot="drawer-content"
         className={cn(
-          "group/drawer-content fixed z-50 flex h-auto flex-col bg-transparent px-1 sm:px-2 md:px-4 pt-0 text-sm before:absolute before:inset-x-2 before:top-0 before:bottom-2 before:-z-10 before:rounded-squircle-md before:[corner-shape:squircle] before:bg-popover before:ring-1 before:ring-(color:--card-ring) data-[vaul-drawer-direction=bottom]:inset-x-0 data-[vaul-drawer-direction=bottom]:bottom-0 data-[vaul-drawer-direction=bottom]:mt-24 data-[vaul-drawer-direction=bottom]:max-h-[80vh] data-[vaul-drawer-direction=left]:inset-y-0 data-[vaul-drawer-direction=left]:left-0 data-[vaul-drawer-direction=left]:w-3/4 data-[vaul-drawer-direction=right]:inset-y-0 data-[vaul-drawer-direction=right]:right-0 data-[vaul-drawer-direction=right]:w-3/4 data-[vaul-drawer-direction=top]:inset-x-0 data-[vaul-drawer-direction=top]:top-0 data-[vaul-drawer-direction=top]:mb-24 data-[vaul-drawer-direction=top]:max-h-[80vh] data-[vaul-drawer-direction=left]:sm:max-w-sm data-[vaul-drawer-direction=right]:sm:max-w-sm",
+          // The content element IS the sheet surface, so overflow-hidden clips children to the
+          // squircle instead of the old inset before-layer they could spill past.
+          "group/drawer-content fixed z-50 flex h-auto flex-col overflow-hidden rounded-squircle-md [corner-shape:squircle] bg-popover text-sm ring-1 ring-(color:--card-ring) data-[vaul-drawer-direction=bottom]:inset-x-2 data-[vaul-drawer-direction=bottom]:bottom-2 data-[vaul-drawer-direction=bottom]:mt-24 data-[vaul-drawer-direction=bottom]:max-h-[80vh] data-[vaul-drawer-direction=left]:inset-y-2 data-[vaul-drawer-direction=left]:left-2 data-[vaul-drawer-direction=left]:w-3/4 data-[vaul-drawer-direction=right]:inset-y-2 data-[vaul-drawer-direction=right]:right-2 data-[vaul-drawer-direction=right]:w-3/4 data-[vaul-drawer-direction=top]:inset-x-2 data-[vaul-drawer-direction=top]:top-2 data-[vaul-drawer-direction=top]:mb-24 data-[vaul-drawer-direction=top]:max-h-[80vh] data-[vaul-drawer-direction=left]:sm:max-w-sm data-[vaul-drawer-direction=right]:sm:max-w-sm",
           className,
         )}
         {...props}
       >
-        <div className="hidden w-full py-5 shrink-0 cursor-grab active:cursor-grabbing group-data-[vaul-drawer-direction=bottom]/drawer-content:flex items-center justify-center">
-          <div className="h-1.5 w-[100px] rounded-full bg-muted-foreground/40" />
-        </div>
+        {showHandle && (
+          <div className="hidden w-full py-5 shrink-0 cursor-grab active:cursor-grabbing group-data-[vaul-drawer-direction=bottom]/drawer-content:flex items-center justify-center">
+            <div className="h-1.5 w-[100px] rounded-full bg-muted-foreground/40" />
+          </div>
+        )}
         {children}
       </DrawerPrimitive.Content>
     </DrawerPortal>

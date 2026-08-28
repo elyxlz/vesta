@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { LogOut } from "lucide-react";
 import { Footer } from "@/components/Footer";
-import { LogoText } from "@/components/Logo/LogoText";
+import { NavbarLogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -40,7 +40,7 @@ export function GatewayBehindScreen() {
   return (
     <>
       {/* no StatusPill: the socket is live here, so the pill would read "can't reach gateway" */}
-      <Navbar center={<LogoText />} />
+      <Navbar center={<NavbarLogoText />} />
       <Empty>
         <EmptyHeader className="max-w-lg">
           <EmptyTitle>gateway is behind</EmptyTitle>

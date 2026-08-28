@@ -1,4 +1,3 @@
-import type { Delta } from "../protocol/deltas"
 import type { OrbVisualState } from "../agent-status/agent-status"
 
 // The shared, view-independent model of the navbar notifications pill: the
@@ -16,10 +15,10 @@ export interface PillContent {
 }
 
 /**
- * One queued pill notification: the id keys one displayed notification for the
- * rotary slide, and the orb state is the named agent's status snapshotted when
- * the notification was taken in, so what the pill shows is what the agent
- * looked like at that moment.
+ * One queued pill notification: the id is the durable log's (it keys the rotary
+ * slide and names the item a dismiss removes), and the orb state is the named
+ * agent's status snapshotted when the notification was taken in, so what the
+ * pill shows is what the agent looked like at that moment.
  */
 export interface PillNotification extends PillContent {
   id: number
@@ -76,11 +75,4 @@ export function enqueuePillNotification(
  */
 export function pillDisplayLine(item: Pick<PillContent, "title" | "body">): string {
   return item.body ? `${item.title}: ${item.body}` : item.title
-}
-
-/** The `user_notification` payload as a pill item, or null for any other delta. */
-export function pillContentFromDelta(delta: Delta): PillContent | null {
-  if (delta.type !== "user_notification") return null
-  const { agent, kind, title, body } = delta
-  return { agent, kind, title, body }
 }

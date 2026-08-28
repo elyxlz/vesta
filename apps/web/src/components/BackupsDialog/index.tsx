@@ -71,7 +71,12 @@ function TimelinePoint({
         )}
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2">
-        <Button size="sm" disabled={disabled || refused} onClick={onRestore}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || refused}
+          onClick={onRestore}
+        >
           restore
         </Button>
         <Button
@@ -201,11 +206,23 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>backups for {name}</DialogTitle>
-        <DialogDescription>
-          back up {name} now, or return them to an earlier point. a backup
-          pauses them for a few seconds.
-        </DialogDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-2 text-left">
+            <DialogTitle>backups for {name}</DialogTitle>
+            <DialogDescription>
+              back up {name} now, or return them to an earlier point. a backup
+              pauses them for a few seconds.
+            </DialogDescription>
+          </div>
+          <Button
+            size="sm"
+            className="-mt-2 mr-8 shrink-0"
+            disabled={isBusy}
+            onClick={backup}
+          >
+            back up
+          </Button>
+        </div>
       </DialogHeader>
       {points.length === 0 ? (
         // A read that failed and an agent with no history both leave the timeline empty, so the
@@ -214,7 +231,7 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
           {backupsFailed ? "couldn't load snapshots." : "no snapshots yet."}
         </p>
       ) : (
-        <ul className="grid max-h-[45vh] min-w-0 gap-4 overflow-y-auto">
+        <ul className="grid min-w-0 gap-4">
           {points.map((point) => (
             <TimelinePoint
               key={point.id}
@@ -230,11 +247,6 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
           ))}
         </ul>
       )}
-      <DialogFooter>
-        <Button disabled={isBusy} onClick={backup}>
-          back up now
-        </Button>
-      </DialogFooter>
     </>
   );
 }

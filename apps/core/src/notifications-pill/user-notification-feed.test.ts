@@ -3,6 +3,7 @@ import type { HttpClient } from "../transport/http"
 import {
   feedHasUnseen,
   fetchUserNotifications,
+  loggedFromDelta,
   markUserNotificationsSeen,
   splitBySeen,
 } from "./user-notification-feed"
@@ -43,6 +44,13 @@ describe("fetchUserNotifications", () => {
     const result = await fetchUserNotifications(httpReturning({}, seen))
     expect(seen).toEqual(["/notifications"])
     expect(result).toEqual([])
+  })
+})
+
+describe("loggedFromDelta", () => {
+  it("reads a user_notification delta as the log entry it mirrors, and nothing else", () => {
+    expect(loggedFromDelta({ type: "user_notification", ...entry })).toEqual(entry)
+    expect(loggedFromDelta({ type: "presence", anyFocused: true })).toBeNull()
   })
 })
 

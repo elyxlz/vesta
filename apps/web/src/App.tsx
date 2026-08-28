@@ -11,6 +11,7 @@ import { PresenceReporter } from "@/providers/PresenceReporter";
 import { InsetFrame } from "@/components/InsetFrame";
 import { Scrim } from "@/components/Scrim";
 import { WhatsNewDialog } from "@/components/WhatsNew";
+import { SwitchGatewayDialog } from "@/components/SwitchGatewayDialog";
 import { router } from "@/router";
 import { useAutoHideScrollbars } from "./hooks/use-auto-hide-scrollbars";
 import { useIsMobile } from "./hooks/use-mobile";
@@ -65,6 +66,7 @@ export default function App() {
                   <NotificationProvider onOpenAgent={openAgent}>
                     <PresenceReporter />
                     <Scrim />
+                    <SwitchGatewayDialog />
                     <AppContent />
                   </NotificationProvider>
                 </GatewayProvider>

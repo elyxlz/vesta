@@ -81,9 +81,9 @@ describe("agentOrbState", () => {
   )
 
   it.each<AgentStatus>(["not_authenticated", "unprovisioned"])(
-    "turns the orb off for %s, which only the user can resolve",
+    "flags the orb for attention on %s, which only the user can resolve",
     (status) => {
-      expect(agentOrbState(status, "idle")).toBe("off")
+      expect(agentOrbState(status, "idle")).toBe("attention")
     },
   )
 
@@ -142,7 +142,7 @@ describe("a binding rate limit", () => {
   it("never outranks an operation, a boot, or a non-alive status", () => {
     expect(agentOrbState("alive", "idle", "backing_up", false, window)).toBe("busy")
     expect(agentOrbState("alive", "idle", null, true, window)).toBe("busy")
-    expect(agentOrbState("not_authenticated", "idle", null, false, window)).toBe("off")
+    expect(agentOrbState("not_authenticated", "idle", null, false, window)).toBe("attention")
   })
 
   it("labels the agent with the reset countdown when the window carries one", () => {

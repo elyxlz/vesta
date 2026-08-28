@@ -54,7 +54,8 @@ export interface NativeBridge {
   connectionStore: ConnectionStore;
   openExternal(url: string): Promise<void>;
   focusWindow(): Promise<void>;
-  setNativeTheme(theme: "light" | "dark"): void;
+  /** Force the window's scheme, or hand it back to the OS with "system". */
+  setNativeTheme(theme: "light" | "dark" | "system"): void;
   /** Native window focus/blur events; returns an unsubscribe function. */
   onWindowFocusChange(cb: (focused: boolean) => void): () => void;
   /** Loopback server for the native PKCE login; null in the browser. */
@@ -74,7 +75,7 @@ export interface NativeBridge {
 export interface VestaNativeApi {
   platform: string; // node process.platform: "darwin" | "win32" | "linux"
   focusWindow(): Promise<void>;
-  setTheme(theme: "light" | "dark"): void;
+  setTheme(theme: "light" | "dark" | "system"): void;
   openExternal(url: string): Promise<void>;
   getAppUpdate(): Promise<unknown>;
   downloadAppUpdate(): Promise<void>;

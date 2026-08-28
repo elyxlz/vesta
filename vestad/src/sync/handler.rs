@@ -204,6 +204,8 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             }
             Wake::UserNotification(Ok(user_notification)) => {
                 let frame = Frame::UserNotification {
+                    id: user_notification.id,
+                    at: user_notification.at,
                     agent: user_notification.agent.clone(),
                     kind: user_notification.kind.clone(),
                     title: user_notification.title.clone(),
@@ -483,7 +485,7 @@ fn agent_info(
             svc.iter()
                 .map(|(svc_name, e)| {
                     let rev = agent_revs.and_then(|m| m.get(svc_name)).copied().unwrap_or(0);
-                    (svc_name.clone(), ServiceInfo { port: e.port, rev })
+                    (svc_name.clone(), ServiceInfo { port: e.port, rev, public: e.public })
                 })
                 .collect()
         })
@@ -588,7 +590,7 @@ mod tests {
 
         let info = agent_info(&entry("scout", AgentStatus::Alive), &activity, &svc, &revs, None, None);
         assert_eq!(info.activity_state, "thinking");
-        assert_eq!(info.services["dashboard"], ServiceInfo { port: 8080, rev: 3 });
+        assert_eq!(info.services["dashboard"], ServiceInfo { port: 8080, rev: 3, public: true });
 
         // An agent with no activity entry defaults to idle.
         let idle = agent_info(&entry("mona", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);

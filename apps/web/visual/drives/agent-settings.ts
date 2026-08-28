@@ -473,7 +473,9 @@ const HAPPY_ROUTES: RouteFixture[] = [
 function settingsAgent(
   status: Parameters<typeof agentNode>[0] = "alive",
 ): AgentNode {
-  return agentNode(status, { services: { voice: { port: 8765, rev: 1 } } });
+  return agentNode(status, {
+    services: { voice: { port: 8765, rev: 1, public: false } },
+  });
 }
 
 function settingsState(
@@ -920,23 +922,11 @@ export const AGENT_SETTINGS: Record<string, Scenario> = {
     await expect(page.getByText("tasks", { exact: true })).toBeVisible();
     await expect(page.getByText("memory", { exact: true })).toBeVisible();
   }),
-  "settings-files-advanced": filesTab(
-    { storage: { "vesta:mode": "advanced" } },
-    async (page) => {
-      await expect(page.getByText("/root", { exact: true })).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "MEMORY.md" }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "constitution.md" }),
-      ).toBeVisible();
-    },
-  ),
   "settings-files-editor": {
-    state: settingsState({ storage: { "vesta:mode": "advanced" } }),
+    state: settingsState(),
     drive: async (page) => {
       await openTab(page, "files");
-      await page.getByRole("button", { name: "MEMORY.md" }).click();
+      await page.getByText("memory", { exact: true }).click();
     },
     settle: async (page) => {
       await expect(page.getByRole("textbox")).toHaveValue(/# Memory/);

@@ -108,6 +108,14 @@ export function setHostedConnection(
   void native.connectionStore.write(config);
 }
 
+/** Write a whole stored config back as the active connection, so switching to a
+ * saved gateway restores its tokens verbatim (expiry included) rather than
+ * re-deriving them. The refresh flow revives an expired one on the next call. */
+export function restoreConnection(config: ConnectionConfig): void {
+  cached = config;
+  void native.connectionStore.write(config);
+}
+
 export function updateTokens(
   accessToken: string,
   refreshToken: string,

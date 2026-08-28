@@ -8,3 +8,9 @@ export function LogoText({ className }: { className?: string }) {
     </span>
   );
 }
+
+// The wordmark as a navbar center: one optical lift shared by every navbar, so
+// the mark sits at the same height on every page.
+export function NavbarLogoText() {
+  return <LogoText className="-translate-y-1" />;
+}

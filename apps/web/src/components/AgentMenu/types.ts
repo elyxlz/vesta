@@ -8,12 +8,12 @@ export interface MenuState {
   onServices: () => void;
   onAppSettings: () => void;
   onAgentSettings: () => void;
+  onSwitchGateway: () => void;
   onRestart: () => void;
   onBackup: () => void;
   onAuthenticate?: () => void;
   isAuthenticated?: boolean;
   onDelete: () => void;
-  onDebugInfo?: () => void;
 }
 
 export interface MenuProps {

@@ -10,26 +10,34 @@ import {
   SquareCheck,
   type LucideIcon,
 } from "lucide-react";
-import { Fragment, useContext, useLayoutEffect, useRef } from "react";
 import {
+  Fragment,
+  useContext,
+  useLayoutEffect,
+  useRef,
+  type MouseEvent,
+} from "react";
+import {
+  feedSections,
+  feedView,
   PILL_FALLBACK_ICON,
   PILL_KIND_ICONS,
   pillDisplayLine,
-  splitBySeen,
+  type FeedView,
   type LoggedUserNotification,
+  type NotificationFeed,
   type PillNotification,
 } from "@vesta/core";
 import {
-  isLivePillEntry,
   NotificationsPillContext,
   PILL_BUTTON_SIZE,
   PILL_EXPANDED_HEIGHT,
-  type NotificationHistory,
   type NotificationsPillState,
 } from "@/providers/NotificationsPillProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useRuntime } from "@/providers/RuntimeProvider";
 import { useOrbStatus } from "@/hooks/use-orb-state";
 import { Orb } from "@/components/Orb";
 import { cn } from "@/lib/utils";
@@ -43,13 +51,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Popover,
-  PopoverAnchor,
   PopoverContent,
+  PopoverTrigger,
 } from "@/components/ui/popover";
 
 // Layout and motion are this app's own (mobile renders the shared model its
 // own way): the idle button size, the resize/slide sequencing beat, the width
-// cap, and the history page size.
+// cap, and the popover's row budget.
 // Idle: the standard 40px navbar icon button (the home button's size); showing
 // a notification, the shell morphs to the slimmer pill height.
 const RESIZE_DELAY_S = 0.35;
@@ -80,11 +88,14 @@ const ICON_COMPONENTS: Record<string, LucideIcon> = {
 // the route layouts, so navigation never resets it); this component is only
 // the web rendering.
 
+type Sections = ReturnType<typeof feedSections>;
+
 // One rendering of the history (skeletons, rows, empty/error text) shared by
 // the compact popover and the full dialog; the surfaces differ only in row
 // budget, skeleton count, and footer.
 function HistoryList({
-  state,
+  view,
+  liveIds,
   entries,
   emptyLabel,
   skeletonCount,
@@ -94,10 +105,11 @@ function HistoryList({
   dimmed = false,
   onOpen,
 }: {
-  state: NotificationHistory;
+  view: FeedView;
+  liveIds: number[];
   /** The rows this surface renders (the popover passes only the unseen ones). */
   entries: LoggedUserNotification[];
-  /** Caption when there are no rows and nothing is loading; null captions nothing. */
+  /** Caption when there are no rows and the feed has answered; null captions nothing. */
   emptyLabel: string | null;
   skeletonCount: number;
   footer?: React.ReactNode;
@@ -107,27 +119,16 @@ function HistoryList({
   dimmed?: boolean;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
-  const { history, loading, failed } = state;
-  const shown = entries;
-  // A failed first load captions the list as unloadable; a failed "load older"
-  // under loaded rows keeps its button instead.
-  const emptyText =
-    shown.length > 0
-      ? null
-      : failed && history.length === 0
-        ? "couldn't load notifications"
-        : emptyLabel;
+  const emptyText = entries.length > 0 ? null : emptyCaption(view, emptyLabel);
   return (
     <>
-      {loading && history.length === 0 && (
-        <SkeletonRows count={skeletonCount} />
-      )}
+      {view === "loading" && <SkeletonRows count={skeletonCount} />}
       {/* The pill's rotary, as a list: a row arriving slides in from above
           while `layout` glides the rest down to make room. In the dialog
           (timestamps on), a date label opens each day's group, so the rows'
           own stamps carry the time alone. */}
-      {shown.map((entry, index) => {
-        const previous = index > 0 ? shown[index - 1] : undefined;
+      {entries.map((entry, index) => {
+        const previous = index > 0 ? entries[index - 1] : undefined;
         const opensDay =
           timestamps && (!previous || dayKey(previous.at) !== dayKey(entry.at));
         const dayLabel = opensDay ? formatDayLabel(entry.at) : "";
@@ -143,7 +144,7 @@ function HistoryList({
               // Only a live arrival slides in; rows loaded from the log (the
               // first page after the skeletons, and older pages) just appear.
               initial={
-                isLivePillEntry(entry.id) ? { y: -24, opacity: 0 } : false
+                liveIds.includes(entry.id) ? { y: -24, opacity: 0 } : false
               }
               animate={{ y: 0, opacity: 1 }}
               transition={{ type: "spring", duration: 0.35, bounce: 0 }}
@@ -159,7 +160,7 @@ function HistoryList({
           </Fragment>
         );
       })}
-      {emptyText && !loading && (
+      {emptyText && (
         <p
           className={cn(
             "px-2 text-center text-muted-foreground",
@@ -174,28 +175,29 @@ function HistoryList({
   );
 }
 
-type SeenSplit = ReturnType<typeof splitBySeen>;
-
-// Whether the archive holds more than the popover is showing, which is what
-// earns the "see all" footer. Before the first-ever catch-up (no split) the
-// popover caps at POPOVER_ROWS, so the archive extends past it sooner.
-function archiveExtendsBeyond(
-  feed: NotificationHistory,
-  split: SeenSplit | null,
-): boolean {
-  if (split) return feed.history.length > 0 || !feed.exhausted;
-  return (
-    feed.history.length > 0 &&
-    (feed.history.length > POPOVER_ROWS || !feed.exhausted)
-  );
+// A failed first load captions the list as unloadable; a failed "load older"
+// under loaded rows keeps its button instead (the view reads rows then).
+function emptyCaption(
+  view: FeedView,
+  emptyLabel: string | null,
+): string | null {
+  if (view === "loading") return null;
+  if (view === "failed") return "couldn't load notifications";
+  return emptyLabel;
 }
 
-function popoverEmptyLabel(
-  split: SeenSplit | null,
-  exhausted: boolean,
-): string | null {
-  if (split) return "you're all caught up";
-  return exhausted ? "no notifications yet" : null;
+// Whether the archive holds more than the popover is showing, which is what
+// earns the "see all" footer. Read from the cached rows alone, never the
+// refetch every open starts, so the footer is there the instant the popover
+// is. Before the first-ever catch-up (no sections) the popover caps at
+// POPOVER_ROWS, so the archive extends past it sooner.
+function archiveExtendsBeyond(
+  feed: NotificationFeed,
+  sections: Sections,
+): boolean {
+  if (feed.entries.length === 0) return false;
+  if (sections) return true;
+  return feed.entries.length > POPOVER_ROWS || feed.older !== "exhausted";
 }
 
 // The dialog's body: the unseen/seen sections while the session's watermark
@@ -203,21 +205,23 @@ function popoverEmptyLabel(
 // first-ever catch-up, where everything would be "new").
 function DialogHistory({
   feed,
-  split,
+  sections,
   footer,
   onOpen,
 }: {
-  feed: NotificationHistory;
-  split: SeenSplit | null;
+  feed: NotificationFeed;
+  sections: Sections;
   footer?: React.ReactNode;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
-  if (!split || split.unseen.length === 0) {
+  const view = feedView(feed);
+  if (!sections || sections.unseen.length === 0) {
     return (
       <HistoryList
-        state={feed}
-        entries={feed.history}
-        emptyLabel={feed.exhausted ? "no notifications yet" : null}
+        view={view}
+        liveIds={feed.liveIds}
+        entries={feed.entries}
+        emptyLabel="no notifications yet"
         skeletonCount={HISTORY_SKELETON_ROWS}
         footer={footer}
         timestamps
@@ -229,19 +233,21 @@ function DialogHistory({
     <>
       <SectionLabel text="new" />
       <HistoryList
-        state={feed}
-        entries={split.unseen}
+        view={view}
+        liveIds={feed.liveIds}
+        entries={sections.unseen}
         emptyLabel={null}
         skeletonCount={0}
         timestamps
         onOpen={onOpen}
       />
-      {(split.seen.length > 0 || !feed.exhausted) && (
+      {(sections.seen.length > 0 || feed.older !== "exhausted") && (
         <SectionLabel text="earlier" />
       )}
       <HistoryList
-        state={feed}
-        entries={split.seen}
+        view={view}
+        liveIds={feed.liveIds}
+        entries={sections.seen}
         emptyLabel={null}
         skeletonCount={0}
         footer={footer}
@@ -275,111 +281,94 @@ function ConnectedNotificationsPill({
   // Narrow layouts have no room for the morph: the bell stays a plain button
   // and arrivals raise a dot on it instead of rotating through a pill.
   const isMobile = useIsMobile();
+  const { isDesktopApp, isMacOS } = useRuntime();
   const {
     current,
     feed,
-    seenSnapshot,
-    popoverOpen,
-    setPopoverOpen,
-    dialogOpen,
-    setDialogOpen,
+    loadOlder,
+    surface,
+    showSurface,
     openAgent,
     openEntry,
   } = state;
 
-  // The awareness-feed split, against the watermark held for this catch-up
-  // session. A 0 watermark (the user never caught up) renders unsectioned:
-  // everything ever logged is "unseen", so a split would only add noise.
-  const caughtUpBefore = seenSnapshot !== null && seenSnapshot > 0;
-  const split = caughtUpBefore ? splitBySeen(feed.history, seenSnapshot) : null;
-
-  // The bell is a toggle: a click that began while the popover was open is
-  // the close half (Radix's outside-pointerdown already dismissed it), so it
-  // must not re-open, and must not touch the feed, or a failed first load
-  // would flash its skeletons into the closing popover.
-  const openWasOpenRef = useRef(false);
-  const onHistoryPointerDown = () => {
-    openWasOpenRef.current = popoverOpen;
-  };
-  const openPopover = () => {
-    if (openWasOpenRef.current) {
-      openWasOpenRef.current = false;
-      return;
-    }
-    feed.ensure();
-    setPopoverOpen(true);
-  };
+  // The awareness-feed split against the watermark the session holds (kept
+  // through close, so a surface animating out shows exactly what it showed).
+  const sections = feedSections(feed);
+  const view = feedView(feed);
 
   // The popover shows the whole unseen set (scrolling past its cap), or, before
   // the first-ever catch-up, the newest page the way the dialog would.
-  const popoverEntries = split
-    ? split.unseen
-    : feed.history.slice(0, POPOVER_ROWS);
+  const popoverEntries = sections
+    ? sections.unseen
+    : feed.entries.slice(0, POPOVER_ROWS);
 
   // "see all" opens the dialog over the full archive; it rides the same slide
   // the rows do, one block.
-  const seeAll = !feed.loading &&
-    !feed.failed &&
-    archiveExtendsBeyond(feed, split) && (
-      <motion.div layout>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="w-full text-[13px] text-muted-foreground"
-          onClick={() => {
-            // Dialog first, popover after: historyOpen never blips false, so the
-            // catch-up session (and its held watermark) carries over.
-            setDialogOpen(true);
-            setPopoverOpen(false);
-          }}
-        >
-          see all
-        </Button>
-      </motion.div>
-    );
+  const seeAll = archiveExtendsBeyond(feed, sections) && (
+    <motion.div layout>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="w-full text-[13px] text-muted-foreground"
+        onClick={() => {
+          showSurface("dialog");
+        }}
+      >
+        see all
+      </Button>
+    </motion.div>
+  );
 
-  const loadOlder = !feed.exhausted && feed.history.length > 0 && (
+  const olderFooter = feed.older !== "exhausted" && feed.entries.length > 0 && (
     <Button
       variant="ghost"
       className="w-full text-xs text-muted-foreground"
-      disabled={feed.loading}
-      onClick={() => {
-        const oldest = feed.history[feed.history.length - 1];
-        if (oldest) feed.loadPage(oldest.id);
-      }}
+      disabled={feed.older === "loading"}
+      onClick={loadOlder}
     >
-      {feed.loading ? "loading..." : "load older"}
+      {OLDER_LABELS[feed.older]}
     </Button>
   );
 
   return (
     <>
-      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-        <PopoverAnchor>
+      <Popover
+        open={surface === "popover"}
+        onOpenChange={(open) => {
+          showSurface(open ? "popover" : "none");
+        }}
+      >
+        {/* The bell is the popover's own trigger, so Radix owns the toggle: a
+            click on it while open is the close half, never a reopen. */}
+        <PopoverTrigger asChild>
           {isMobile ? (
-            <CompactBell
-              unseen={state.unseen}
-              onOpenHistory={openPopover}
-              onHistoryPointerDown={onHistoryPointerDown}
-            />
+            <CompactBell unseen={state.unseen} />
           ) : (
             <MorphingPill
               current={current}
+              unseen={state.unseen}
               morph={state.morph}
               onOpenAgent={openAgent}
-              onOpenHistory={openPopover}
-              onHistoryPointerDown={onHistoryPointerDown}
             />
           )}
-        </PopoverAnchor>
+        </PopoverTrigger>
         {/* Above the navbar layer (z-[99999]), where the toast lives: an open
             history must not have toasts floating over it. */}
-        <PopoverContent align="center" className="z-[100000] w-58 p-2">
+        {/* Under the bell's left edge everywhere, except the macOS desktop app,
+            whose traffic-light inset centers the bell on its own island. */}
+        <PopoverContent
+          align={isDesktopApp && isMacOS ? "center" : "start"}
+          className="z-[100000] w-58 p-2"
+        >
           <div className="max-h-[60vh] space-y-1 overflow-y-auto">
             <HistoryList
-              state={feed}
+              view={view}
+              liveIds={feed.liveIds}
               entries={popoverEntries}
-              emptyLabel={popoverEmptyLabel(split, feed.exhausted)}
+              emptyLabel={
+                sections ? "you're all caught up" : "no notifications yet"
+              }
               skeletonCount={POPOVER_ROWS}
               footer={seeAll}
               compact
@@ -388,7 +377,12 @@ function ConnectedNotificationsPill({
           </div>
         </PopoverContent>
       </Popover>
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={surface === "dialog"}
+        onOpenChange={(open) => {
+          showSurface(open ? "dialog" : "none");
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>notifications</DialogTitle>
@@ -396,8 +390,8 @@ function ConnectedNotificationsPill({
           <div className="space-y-1">
             <DialogHistory
               feed={feed}
-              split={split}
-              footer={loadOlder}
+              sections={sections}
+              footer={olderFooter}
               onOpen={openEntry}
             />
           </div>
@@ -406,6 +400,13 @@ function ConnectedNotificationsPill({
     </>
   );
 }
+
+const OLDER_LABELS: Record<NotificationFeed["older"], string> = {
+  more: "load older",
+  loading: "loading...",
+  failed: "couldn't load, try again",
+  exhausted: "",
+};
 
 // The dialog's unseen/seen boundary, styled as the day separators are.
 function SectionLabel({ text }: { text: string }) {
@@ -525,19 +526,21 @@ function SkeletonRows({ count }: { count: number }) {
   );
 }
 
+// Rendered as the popover trigger (`asChild`): Radix merges its toggle
+// handler and ref into the button; a click while a notification shows opens
+// its agent and skips the toggle.
 function MorphingPill({
   current,
+  unseen,
   morph,
   onOpenAgent,
-  onOpenHistory,
-  onHistoryPointerDown,
+  ...triggerProps
 }: {
   current: PillNotification | null;
+  unseen: boolean;
   morph: NotificationsPillState["morph"];
   onOpenAgent: (agent: string) => void;
-  onOpenHistory: () => void;
-  onHistoryPointerDown: () => void;
-}) {
+} & React.ComponentPropsWithoutRef<typeof motion.button>) {
   // Persistent (provider-owned) so a navbar remount resumes mid-morph.
   const { width, height } = morph;
   const contentRef = useRef<HTMLSpanElement | null>(null);
@@ -581,6 +584,7 @@ function MorphingPill({
 
   return (
     <motion.button
+      {...triggerProps}
       type="button"
       aria-label={current ? `open ${current.agent || "home"}` : "notifications"}
       // relative makes the shell the containing block for the popped (exiting)
@@ -589,10 +593,9 @@ function MorphingPill({
       // the shell's width lags the content.
       className="chrome-outline relative flex items-center justify-center overflow-hidden rounded-full"
       style={{ width, height }}
-      onPointerDown={onHistoryPointerDown}
-      onClick={() => {
+      onClick={(event: MouseEvent<HTMLButtonElement>) => {
         if (current) onOpenAgent(current.agent);
-        else onOpenHistory();
+        else triggerProps.onClick?.(event);
       }}
     >
       {/* The rotary: the shell holds while each item slides up and out as the
@@ -639,43 +642,50 @@ function MorphingPill({
           )}
         </motion.span>
       </AnimatePresence>
+      {/* The dot belongs to the idle bell: a rotating notification is its own
+          announcement, and the dot returns with the bell once the queue drains. */}
+      <UnseenDot shown={unseen && !current} />
     </motion.button>
   );
 }
 
-// The narrow-layout bell: never morphs, still opens the history popover, and
-// wears a dot while notifications have arrived unseen (cleared by opening).
+// The narrow-layout bell: never morphs, still opens the history popover (as
+// its trigger, `asChild`), and wears a dot while notifications have arrived
+// unseen (cleared by opening).
 function CompactBell({
   unseen,
-  onOpenHistory,
-  onHistoryPointerDown,
-}: {
-  unseen: boolean;
-  onOpenHistory: () => void;
-  onHistoryPointerDown: () => void;
-}) {
+  ...triggerProps
+}: { unseen: boolean } & React.ComponentPropsWithoutRef<"button">) {
   return (
     <button
+      {...triggerProps}
       type="button"
       aria-label="notifications"
       className="chrome-outline relative flex size-10 items-center justify-center rounded-full"
-      onPointerDown={onHistoryPointerDown}
-      onClick={onOpenHistory}
     >
       <Bell className="size-4 shrink-0" aria-hidden />
-      <AnimatePresence>
-        {unseen && (
-          <motion.span
-            aria-hidden
-            className="absolute top-2 right-2 size-2 rounded-full bg-orange-500"
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            exit={{ scale: 0 }}
-            transition={{ type: "spring", duration: 0.3, bounce: 0.4 }}
-          />
-        )}
-      </AnimatePresence>
+      <UnseenDot shown={unseen} />
     </button>
+  );
+}
+
+// The bell's unseen marker, the same on both shells: it pops in while
+// notifications have arrived past the seen watermark and out once the user
+// opens the history (or any device catches up).
+function UnseenDot({ shown }: { shown: boolean }) {
+  return (
+    <AnimatePresence>
+      {shown && (
+        <motion.span
+          aria-hidden
+          className="absolute top-2 right-2 size-2 rounded-full bg-orange-500"
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          exit={{ scale: 0 }}
+          transition={{ type: "spring", duration: 0.3, bounce: 0.4 }}
+        />
+      )}
+    </AnimatePresence>
   );
 }
 

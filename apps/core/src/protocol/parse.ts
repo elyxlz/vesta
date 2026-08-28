@@ -109,12 +109,18 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
       }
     }
     case "user_notification": {
+      const id = num(frame.id)
+      const at = num(frame.at)
       const agent = str(frame.agent)
       const kind = str(frame.kind)
       const title = str(frame.title)
       const body = str(frame.body)
-      if (agent === null || kind === null || title === null || body === null) return UNKNOWN
-      return { kind: "delta", delta: { type: "user_notification", agent, kind, title, body } }
+      if (id === null || at === null || agent === null) return UNKNOWN
+      if (kind === null || title === null || body === null) return UNKNOWN
+      return {
+        kind: "delta",
+        delta: { type: "user_notification", id, at, agent, kind, title, body },
+      }
     }
     case "presence": {
       const anyFocused = bool(frame.any_focused)

@@ -44,11 +44,11 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
             onBackup={state.onBackup}
             onAppSettings={state.onAppSettings}
             onAgentSettings={state.onAgentSettings}
+            onSwitchGateway={state.onSwitchGateway}
             onAuthenticate={
               state.isAuthenticated ? state.onAuthenticate : undefined
             }
             isAuthenticated={state.isAuthenticated}
-            onDebugInfo={state.onDebugInfo}
             wrapper={DrawerCloseWrapper}
           />
         </div>

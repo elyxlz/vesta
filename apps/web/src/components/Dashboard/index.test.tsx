@@ -7,7 +7,7 @@ const mintKey = vi.fn<(agent: string, service: string) => Promise<string>>();
 vi.mock("@/providers/SelectedAgentProvider", () => ({
   useSelectedAgent: () => ({
     name: "bob",
-    agent: { services: { dashboard: { port: 9100, rev: 0 } } },
+    agent: { services: { dashboard: { port: 9100, rev: 0, public: false } } },
   }),
 }));
 

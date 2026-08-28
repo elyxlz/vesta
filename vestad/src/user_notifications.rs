@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::docker::AgentStatus;
 use crate::mobile_app::MobileApp;
-use crate::sync::SyncHub;
+use crate::sync::{SyncHub, UserNotification};
 use crate::user_notification_log::UserNotificationLog;
 
 /// A new agent reply; agent-injectable.
@@ -88,8 +88,8 @@ impl UserNotifier {
     /// takes the default from `effective_title`.
     pub fn notify(&self, agent: &str, kind: &str, title: String, body: String) {
         let title = effective_title(agent, title);
-        self.log.append(agent, kind, &title, &body);
-        self.fan(agent, kind, title, body);
+        let identity = self.log.append(agent, kind, &title, &body);
+        self.fan(identity, agent, kind, title, body);
     }
 
     /// `notify`, delivered at most once ever: skipped when the durable log already holds an
@@ -97,12 +97,12 @@ impl UserNotifier {
     /// it (the update announcement).
     pub fn notify_once(&self, agent: &str, kind: &str, title: String, body: String) {
         let title = effective_title(agent, title);
-        if self.log.append_once(agent, kind, &title, &body) {
-            self.fan(agent, kind, title, body);
+        if let Some(identity) = self.log.append_once(agent, kind, &title, &body) {
+            self.fan(identity, agent, kind, title, body);
         }
     }
 
-    fn fan(&self, agent: &str, kind: &str, title: String, body: String) {
+    fn fan(&self, (id, at): (u64, u64), agent: &str, kind: &str, title: String, body: String) {
         tracing::info!(%agent, %kind, %title, "user notification");
         // The append just moved the feed's newest stamp, which rides the gateway branch: wake
         // sessions so their next gateway diff carries it.
@@ -118,7 +118,7 @@ impl UserNotifier {
                 );
             }
         }
-        self.sync_hub.publish_user_notification(agent, kind.to_string(), title, body);
+        self.sync_hub.publish_user_notification(UserNotification { id, at, agent: agent.to_string(), kind: kind.to_string(), title, body });
     }
 
     /// A device id's first sighting ever. The copy lives here beside the other gateway-minted
@@ -315,6 +315,20 @@ mod tests {
             logged.iter().map(|entry| (entry.id, entry.kind.as_str())).collect::<Vec<_>>(),
             vec![(2, KIND_UPDATE_AVAILABLE), (1, KIND_MESSAGE)]
         );
+    }
+
+    #[tokio::test]
+    async fn the_fanned_delta_carries_the_logged_entry_identity() {
+        let (delivery, sync_hub, _worker, _dir) = notifier(HashMap::new());
+        let mut deltas = sync_hub.subscribe_user_notifications();
+        delivery.notify("alex", KIND_MESSAGE, "alex".into(), "hi".into());
+        delivery.notify_once("", KIND_UPDATE_AVAILABLE, "gateway v0.3.0 available".into(), String::new());
+
+        let logged = delivery.log.page(None, 10);
+        let first = deltas.try_recv().expect("message delta");
+        let second = deltas.try_recv().expect("update delta");
+        assert_eq!((first.id, first.at), (logged[1].id, logged[1].at));
+        assert_eq!((second.id, second.at), (logged[0].id, logged[0].at));
     }
 
     #[tokio::test]

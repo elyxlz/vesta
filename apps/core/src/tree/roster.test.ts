@@ -113,10 +113,14 @@ describe("rostersEqual", () => {
     {
       name: "changed service revision is unequal",
       a: rosterFromTree(
-        tree({ aria: { info: agentInfo({ services: { web: { port: 1, rev: 1 } } }) } }),
+        tree({
+          aria: { info: agentInfo({ services: { web: { port: 1, rev: 1, public: false } } }) },
+        }),
       ),
       b: rosterFromTree(
-        tree({ aria: { info: agentInfo({ services: { web: { port: 1, rev: 2 } } }) } }),
+        tree({
+          aria: { info: agentInfo({ services: { web: { port: 1, rev: 2, public: false } } }) },
+        }),
       ),
       expected: false,
     },

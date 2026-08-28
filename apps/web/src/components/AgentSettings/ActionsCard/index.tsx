@@ -1,7 +1,12 @@
-import { useNavigate } from "react-router-dom";
-import { KeyRound } from "lucide-react";
+import { KeyRound, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { AgentActions } from "@/components/AgentMenu/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGateway } from "@/providers/GatewayProvider";
@@ -10,17 +15,8 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { agentIsDown, agentNeedsUser } from "@vesta/core";
 
 export function ActionsCard() {
-  const navigate = useNavigate();
-  const {
-    name: agentName,
-    agent,
-    isBusy,
-    start,
-    stop,
-    restart,
-  } = useSelectedAgent();
-  const { handleOpenAuth, setDeleteDialogOpen, setBackupDialogOpen } =
-    useModals();
+  const { agent, isBusy, start, stop, restart } = useSelectedAgent();
+  const { handleOpenAuth, setBackupDialogOpen } = useModals();
 
   const isRunning = !agentIsDown(agent.status);
   const showAliveActions = agent.status === "alive";
@@ -36,6 +32,15 @@ export function ActionsCard() {
 
   return (
     <Card size="sm">
+      <CardHeader>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
+          <SlidersHorizontal className="size-4 text-muted-foreground" />
+          agent
+        </CardTitle>
+        <CardDescription className="group-data-[size=sm]/card:text-sm">
+          start, restart, or back up this agent.
+        </CardDescription>
+      </CardHeader>
       <CardContent>
         {showTopSignIn && (
           <Button
@@ -52,16 +57,12 @@ export function ActionsCard() {
           isRunning={isRunning}
           showAliveActions={showAliveActions}
           isBusy={isBusy}
-          onLogs={() => {
-            void navigate(`/agent/${encodeURIComponent(agentName)}/logs`);
-          }}
           onToggle={() => {
             if (isRunning) stop();
             else start();
           }}
           onRestart={() => void restart()}
           onBackup={() => setBackupDialogOpen(true)}
-          onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>
     </Card>

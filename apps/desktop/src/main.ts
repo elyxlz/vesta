@@ -45,7 +45,10 @@ if (!gotLock) {
       () => mainWindow?.isMaximized() ?? false,
     );
     ipcMain.on("set-theme", (_event, theme: unknown) => {
-      if (theme === "light" || theme === "dark") nativeTheme.themeSource = theme;
+      // "system" hands the scheme back to the OS, so prefers-color-scheme in the renderer tracks it
+      // again instead of the last forced value.
+      if (theme === "light" || theme === "dark" || theme === "system")
+        nativeTheme.themeSource = theme;
     });
     ipcMain.handle("open-external", (_event, url: unknown) => {
       if (typeof url === "string" && /^https?:\/\//.test(url))

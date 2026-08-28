@@ -58,8 +58,8 @@ pub async fn get_status(
 
     let status = if rebuilding.is_rebuilding(name) {
         docker::AgentStatus::Rebuilding
-    } else if cache.operation(name) == Some(docker::AgentOperation::Restarting) {
-        docker::AgentStatus::Restarting
+    } else if let Some(projected) = cache.operation(name).and_then(projected_status) {
+        projected
     } else {
         combined_status(docker, http_client, agents_dir, cache, &cname, &info).await
     };
@@ -95,22 +95,39 @@ pub async fn list_agents(
             started_at: info.started_at.clone(),
         });
     }
+    let operations = cache.operations();
     let entries = overlay_status(
         entries,
-        restarting_names(cache.operations()),
+        operation_names(&operations, docker::AgentOperation::Restarting),
         docker::AgentStatus::Restarting,
+    );
+    let entries = overlay_status(
+        entries,
+        operation_names(&operations, docker::AgentOperation::Stopping),
+        docker::AgentStatus::Stopped,
     );
     overlay_status(entries, rebuilding.names(), docker::AgentStatus::Rebuilding)
 }
 
-/// The agents whose in-flight operation projects a status of its own. Only a restart does: it owns
-/// the whole stop/start cycle, while a backup or restore rides the roster's `operation` field and
-/// leaves the container's own status alone.
-fn restarting_names(operations: HashMap<String, docker::AgentOperation>) -> Vec<String> {
+/// The status an in-flight operation projects in place of the container's own reading, or None
+/// when it leaves that reading alone. A restart owns the whole stop/start cycle, and a stop owns
+/// the window between the agent exiting and Docker reporting the container stopped (which the
+/// container reading alone would call `Starting`); a backup or restore rides the roster's
+/// `operation` field instead.
+fn projected_status(operation: docker::AgentOperation) -> Option<docker::AgentStatus> {
+    match operation {
+        docker::AgentOperation::Restarting => Some(docker::AgentStatus::Restarting),
+        docker::AgentOperation::Stopping => Some(docker::AgentStatus::Stopped),
+        docker::AgentOperation::BackingUp | docker::AgentOperation::Restoring => None,
+    }
+}
+
+/// The agents currently under one kind of operation.
+fn operation_names(operations: &HashMap<String, docker::AgentOperation>, kind: docker::AgentOperation) -> Vec<String> {
     operations
-        .into_iter()
-        .filter(|(_, operation)| *operation == docker::AgentOperation::Restarting)
-        .map(|(name, _)| name)
+        .iter()
+        .filter(|(_, operation)| **operation == kind)
+        .map(|(name, _)| name.clone())
         .collect()
 }
 
@@ -1164,7 +1181,7 @@ mod tests {
         ]);
         let merged = overlay_status(
             entries,
-            restarting_names(operations),
+            operation_names(&operations, docker::AgentOperation::Restarting),
             docker::AgentStatus::Restarting,
         );
         assert_eq!(merged.len(), 3);
@@ -1172,6 +1189,29 @@ mod tests {
         assert_eq!(merged[1].status, docker::AgentStatus::Alive);
         assert_eq!(merged[2].name, "zeus");
         assert_eq!(merged[2].status, docker::AgentStatus::Restarting);
+    }
+
+    // Mid-stop the agent has exited (tap down) while Docker still reports the container running,
+    // which the container reading alone calls Starting; the in-flight stop must project Stopped.
+    #[test]
+    fn stopping_operation_projects_stopped_over_the_mid_stop_starting_reading() {
+        let entries = vec![
+            lifecycle_entry("apollo", docker::AgentStatus::Starting),
+            lifecycle_entry("hera", docker::AgentStatus::Alive),
+        ];
+        let operations = HashMap::from([
+            ("apollo".to_string(), docker::AgentOperation::Stopping),
+            ("hera".to_string(), docker::AgentOperation::BackingUp),
+        ]);
+        let merged = overlay_status(
+            entries,
+            operation_names(&operations, docker::AgentOperation::Stopping),
+            docker::AgentStatus::Stopped,
+        );
+        assert_eq!(merged[0].status, docker::AgentStatus::Stopped);
+        assert_eq!(merged[1].status, docker::AgentStatus::Alive);
+        assert_eq!(projected_status(docker::AgentOperation::Stopping), Some(docker::AgentStatus::Stopped));
+        assert_eq!(projected_status(docker::AgentOperation::BackingUp), None);
     }
 
     #[test]

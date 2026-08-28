@@ -81,23 +81,24 @@ impl UserNotificationLog {
         entries.last().map(|entry| entry.at)
     }
 
-    /// Append one delivered notification, assigning the next monotonic id. The
-    /// disk write is best-effort: a full disk costs history, never delivery.
-    pub(crate) fn append(&self, agent: &str, kind: &str, title: &str, body: &str) {
+    /// Append one delivered notification, assigning the next monotonic id, and return the entry's
+    /// `(id, at)` so the fanned delta carries the same identity the log serves. The disk write is
+    /// best-effort: a full disk costs history, never delivery.
+    pub(crate) fn append(&self, agent: &str, kind: &str, title: &str, body: &str) -> (u64, u64) {
         let mut entries = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        Self::push_entry(&self.path, &mut entries, agent, kind, title, body);
+        Self::push_entry(&self.path, &mut entries, agent, kind, title, body)
     }
 
     /// Append unless an entry with this kind and title is already logged, the check and the
     /// append under one lock: the log itself is the durable memory of "already delivered", so
     /// a producer that must notify once ever cannot repeat itself across restarts or races.
-    pub(crate) fn append_once(&self, agent: &str, kind: &str, title: &str, body: &str) -> bool {
+    /// Returns the new entry's `(id, at)`, or `None` when it was already logged.
+    pub(crate) fn append_once(&self, agent: &str, kind: &str, title: &str, body: &str) -> Option<(u64, u64)> {
         let mut entries = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if entries.iter().any(|entry| entry.kind == kind && entry.title == title) {
-            return false;
+            return None;
         }
-        Self::push_entry(&self.path, &mut entries, agent, kind, title, body);
-        true
+        Some(Self::push_entry(&self.path, &mut entries, agent, kind, title, body))
     }
 
     fn push_entry(
@@ -107,7 +108,7 @@ impl UserNotificationLog {
         kind: &str,
         title: &str,
         body: &str,
-    ) {
+    ) -> (u64, u64) {
         let entry = LoggedUserNotification {
             id: entries.last().map_or(1, |last| last.id + 1),
             at: now_epoch_secs(),
@@ -129,7 +130,9 @@ impl UserNotificationLog {
             }
             Err(error) => tracing::warn!(%error, "could not serialize a user notification"),
         }
+        let identity = (entry.id, entry.at);
         entries.push(entry);
+        identity
     }
 
     /// A newest-first page: entries with id below `before` (all when `None`),
@@ -184,12 +187,12 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         {
             let log = UserNotificationLog::load(directory.path());
-            assert!(log.append_once("", "update_available", "gateway v0.3.0 available", ""));
-            assert!(!log.append_once("", "update_available", "gateway v0.3.0 available", ""));
-            assert!(log.append_once("", "update_available", "gateway v0.4.0 available", ""));
+            assert!(log.append_once("", "update_available", "gateway v0.3.0 available", "").is_some());
+            assert!(log.append_once("", "update_available", "gateway v0.3.0 available", "").is_none());
+            assert!(log.append_once("", "update_available", "gateway v0.4.0 available", "").is_some());
         }
         let reloaded = UserNotificationLog::load(directory.path());
-        assert!(!reloaded.append_once("", "update_available", "gateway v0.3.0 available", ""));
+        assert!(reloaded.append_once("", "update_available", "gateway v0.3.0 available", "").is_none());
         assert_eq!(reloaded.page(None, 10).len(), 2);
     }
 

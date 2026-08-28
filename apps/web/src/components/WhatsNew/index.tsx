@@ -32,10 +32,10 @@ export function WhatsNewButton() {
   return (
     <Button
       type="button"
-      variant="ghost"
-      size="xs"
+      variant="outline"
+      size="lg"
       onClick={() => setOpen(true)}
-      className="text-muted-foreground"
+      className="text-xs"
     >
       <Sparkles data-icon="inline-start" className="size-3.5" />
       What's new

@@ -10,6 +10,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
 import { stepTransition } from "@/lib/motion";
 import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
@@ -101,20 +102,27 @@ function ChatSkeleton({ bottomPad }: { bottomPad: number }) {
   );
 }
 
-// One mask owns both fades. Fullscreen's top approximates the old stacked card+list
-// pair: near-invisible within the navbar's height, then a long dissolve (3.5x/1.75x
-// the navbar) so bubbles evaporate before reaching it. The bottom stop fades behind
+// One mask owns both fades, each shown only on the edge that can still scroll so the oldest
+// message at the top and the newest at the bottom stay crisp. Fullscreen's top approximates the
+// old stacked card+list pair: near-invisible within the navbar's height, then a long dissolve
+// (3.5x/1.75x the navbar) so bubbles evaporate before reaching it. The bottom stop fades behind
 // the composer.
 function scrollerMask(
   fullscreen: boolean,
   isMobile: boolean,
   navbarHeight: number,
   bottomInset: number,
+  edges: ScrollEdges,
 ): string {
-  const top = fullscreen
-    ? `rgb(0 0 0 / 0) 0px, rgb(0 0 0 / 0.25) ${String(navbarHeight)}px, black ${String(Math.round(navbarHeight * (isMobile ? 1.75 : 3.5)))}px`
-    : "transparent, black 48px";
-  return `linear-gradient(to bottom, ${top}, black calc(100% - ${String(bottomInset)}px), transparent)`;
+  const top = !edges.top
+    ? "black 0px"
+    : fullscreen
+      ? `rgb(0 0 0 / 0) 0px, rgb(0 0 0 / 0.25) ${String(navbarHeight)}px, black ${String(Math.round(navbarHeight * (isMobile ? 1.75 : 3.5)))}px`
+      : "transparent, black 48px";
+  const bottom = edges.bottom
+    ? `black calc(100% - ${String(bottomInset)}px), transparent`
+    : "black 100%";
+  return `linear-gradient(to bottom, ${top}, ${bottom})`;
 }
 
 function ChatEmptyState({
@@ -256,6 +264,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
     return "";
   }, [chatMessages]);
   const parentRef = useRef<HTMLDivElement>(null);
+  const scrollFade = useScrollFade<HTMLDivElement>({ ref: parentRef });
 
   const { handleScroll, scrollToBottom, waitingForOlder } = useChatScroll({
     parentRef,
@@ -326,6 +335,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
             isMobile,
             navbarHeight,
             bottomInset,
+            scrollFade.edges,
           ),
         }}
       >

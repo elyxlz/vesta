@@ -128,7 +128,7 @@ describe("BackupsDialog timeline", () => {
     const actions = screen
       .getAllByRole("button")
       .filter((button) =>
-        ["restore", "delete", "back up now"].includes(button.textContent),
+        ["restore", "delete", "back up"].includes(button.textContent),
       );
     expect(actions.length).toBe(7);
     for (const action of actions) {
@@ -138,7 +138,7 @@ describe("BackupsDialog timeline", () => {
 
   it("starts a new snapshot without leaving the timeline", async () => {
     renderDialog();
-    await userEvent.click(screen.getByRole("button", { name: "back up now" }));
+    await userEvent.click(screen.getByRole("button", { name: "back up" }));
     expect(backup).toHaveBeenCalledOnce();
     expect(onOpenChange).not.toHaveBeenCalled();
   });

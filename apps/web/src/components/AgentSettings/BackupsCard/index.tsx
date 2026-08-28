@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { DatabaseBackup } from "lucide-react";
 import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldLabel,
-} from "@/components/ui/field";
+  Card,
+  CardAction,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -53,18 +54,16 @@ export function BackupsCard() {
 
   return (
     <Card size="sm">
-      <CardContent>
-        <Field
-          orientation="horizontal"
-          className="items-center justify-between"
-        >
-          <FieldContent>
-            <FieldLabel className="text-sm">automatic backups</FieldLabel>
-            <FieldDescription>
-              snapshot this agent on a schedule and before every update, without
-              interrupting it
-            </FieldDescription>
-          </FieldContent>
+      <CardHeader>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
+          <DatabaseBackup className="size-4 text-muted-foreground" />
+          automatic backups
+        </CardTitle>
+        <CardDescription className="group-data-[size=sm]/card:text-sm">
+          snapshot this agent on a schedule and before every update, without
+          interrupting it.
+        </CardDescription>
+        <CardAction>
           {settings ? (
             <Switch
               checked={settings.enabled}
@@ -76,8 +75,8 @@ export function BackupsCard() {
           ) : (
             <Skeleton className="h-5 w-9" />
           )}
-        </Field>
-      </CardContent>
+        </CardAction>
+      </CardHeader>
     </Card>
   );
 }

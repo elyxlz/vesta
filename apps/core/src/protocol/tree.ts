@@ -28,6 +28,8 @@ export type ReleaseChannel = "stable" | "beta"
 export interface ServiceInfo {
   port: number
   rev: number
+  // Registered public: served with no gateway credential.
+  public: boolean
 }
 
 // The rate-limit window binding an alive agent: the agent serves, but its provider rejects work

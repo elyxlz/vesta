@@ -48,10 +48,21 @@ export {
 export {
   fetchUserNotifications,
   feedHasUnseen,
+  loggedFromDelta,
   markUserNotificationsSeen,
   splitBySeen,
   type LoggedUserNotification,
 } from "./notifications-pill/user-notification-feed"
+export {
+  EMPTY_FEED,
+  feedNeedsMarkSeen,
+  feedSections,
+  feedView,
+  reduceFeed,
+  type FeedAction,
+  type FeedView,
+  type NotificationFeed,
+} from "./notifications-pill/notification-feed"
 export { parseServerFrame } from "./protocol/parse"
 export type { ParsedFrame } from "./protocol/parse"
 export { selectDevices, devicesEqual } from "./tree/devices"

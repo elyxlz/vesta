@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { MoreVertical } from "lucide-react";
 import {
@@ -12,7 +12,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useGateway } from "@/providers/GatewayProvider";
-import { useAppMode } from "@/stores/use-app-mode";
+import { useSwitchGateway } from "@/stores/use-switch-gateway";
 import { AgentServicesList } from "@/components/AgentServices";
 import type { MenuState } from "./types";
 import { MobileMenu } from "./MobileMenu";
@@ -32,10 +32,9 @@ export function AgentMenu() {
   const { setDeleteDialogOpen, setBackupDialogOpen, handleOpenAuth } =
     useModals();
   const gateway = useGateway();
-  const appMode = useAppMode((s) => s.mode);
+  const openSwitchGateway = useSwitchGateway((s) => s.setOpen);
 
   const [open, setOpen] = useState(false);
-  const [debugOpen, setDebugOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
   const isMobile = useIsMobile();
 
@@ -59,12 +58,12 @@ export function AgentMenu() {
       void navigate("/settings");
     },
     onAgentSettings: () => goTo(`/agent/${encodeURIComponent(name)}/settings`),
+    onSwitchGateway: () => openSwitchGateway(true),
     onRestart: () => void restart(),
     onBackup: () => setBackupDialogOpen(true),
     onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
     isAuthenticated: !agentNeedsUser(agent.status),
     onDelete: () => setDeleteDialogOpen(true),
-    onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
   };
 
   const trigger = (
@@ -72,29 +71,6 @@ export function AgentMenu() {
       <MoreVertical />
     </Button>
   );
-
-  const debugJson = JSON.stringify(
-    {
-      gateway: {
-        reachable: gateway.reachable,
-        version: gateway.gatewayVersion,
-        port: gateway.gatewayPort,
-      },
-      agents: gateway.agents,
-    },
-    null,
-    2,
-  );
-  const [lastUpdated, setLastUpdated] = useState(() =>
-    new Date().toLocaleTimeString(),
-  );
-  const prevJsonRef = useRef(debugJson);
-  useEffect(() => {
-    if (debugJson !== prevJsonRef.current) {
-      prevJsonRef.current = debugJson;
-      setLastUpdated(new Date().toLocaleTimeString());
-    }
-  }, [debugJson]);
 
   return (
     <>
@@ -119,22 +95,6 @@ export function AgentMenu() {
             <DialogTitle>services</DialogTitle>
           </DialogHeader>
           <AgentServicesList />
-        </DialogContent>
-      </Dialog>
-      <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
-        <DialogContent
-          className="max-w-lg max-h-[80vh] overflow-auto"
-          aria-describedby={undefined}
-        >
-          <DialogHeader>
-            <DialogTitle>debug info</DialogTitle>
-          </DialogHeader>
-          <p className="text-xs text-muted-foreground mb-2">
-            last updated: {lastUpdated}
-          </p>
-          <pre className="text-xs whitespace-pre-wrap break-all">
-            {debugJson}
-          </pre>
         </DialogContent>
       </Dialog>
     </>

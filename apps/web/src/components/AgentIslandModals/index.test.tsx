@@ -39,6 +39,6 @@ describe("AgentIslandModals", () => {
   it("opens the backups timeline for the selected agent", async () => {
     render(<AgentIslandModals />);
     expect(await screen.findByText("backups for bob")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "back up now" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "back up" })).toBeTruthy();
   });
 });

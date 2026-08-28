@@ -56,20 +56,20 @@ export function KeybindsCard() {
           <div className="flex flex-col gap-1.5">
             {keybinds.map((bind) => (
               <div key={bind.label}>
-                <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-base text-muted-foreground">
                   {bind.icon}
                   <span className="flex-1">{bind.label}</span>
                   {bind.keys}
                 </div>
                 {bind.label === "voice activation" && (
-                  <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-base text-muted-foreground">
                     <Hand className="size-3.5" />
                     <span className="flex-1">activation mode</span>
                     <div className="inline-flex rounded-md bg-muted p-0.5">
                       {modeOptions.map((opt) => (
                         <button
                           key={opt.value}
-                          className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
+                          className={`rounded-sm px-2.5 py-1 text-sm transition-colors ${
                             activation === opt.value
                               ? "bg-background text-foreground shadow-sm"
                               : "text-muted-foreground hover:text-foreground"

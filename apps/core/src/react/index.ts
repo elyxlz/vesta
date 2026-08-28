@@ -13,3 +13,8 @@ export {
   type NotificationsPillOptions,
   type PillDeltaSource,
 } from "./use-notifications-pill"
+export {
+  useNotificationFeed,
+  type NotificationFeedHandle,
+  type NotificationFeedOptions,
+} from "./use-notification-feed"

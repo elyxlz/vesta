@@ -50,8 +50,10 @@ export function agentIsDown(status: AgentStatus): boolean {
 
 // The visual buckets the orb renders. `deleting` has no matching AgentStatus: it is a client-side
 // operation, mapped by the surface that tracks operations. `limited` is the rate-limited overlay:
-// alive but unable to work until the provider's window resets.
-export type OrbVisualState = "alive" | "thinking" | "busy" | "limited" | "off" | "deleting"
+// alive but unable to work until the provider's window resets. `attention` is a state only the
+// user can resolve (sign in, set up), kept apart from `off` so it never reads as merely stopped.
+export type OrbVisualState =
+  "alive" | "thinking" | "busy" | "limited" | "attention" | "off" | "deleting"
 
 // The one status-to-orb mapping both surfaces read, so a new AgentStatus is a compile error in
 // agentStatusKind rather than a silent `off` on web and mobile independently.
@@ -76,6 +78,7 @@ export function agentOrbState(
     case "working":
       return "busy"
     case "needs-user":
+      return "attention"
     case "down":
       return "off"
   }

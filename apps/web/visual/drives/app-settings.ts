@@ -286,10 +286,10 @@ export const APP_SETTINGS: Record<string, Scenario> = {
       native: { appUpdate: { available: true, version: "0.2.11" } },
     },
     drive: (page) =>
-      page.getByText("Vesta Desktop", { exact: true }).scrollIntoViewIfNeeded(),
+      page.getByText("Vesta desktop", { exact: true }).scrollIntoViewIfNeeded(),
     settle: async (page) => {
       await expect(page.getByText("Vesta gateway")).toBeVisible();
-      // Both rows expose an "update" action (Vesta Desktop and the gateway pill).
+      // Both rows expose an "update" action (Vesta desktop and the gateway pill).
       await expect(
         page.getByRole("button", { name: "update", exact: true }),
       ).toHaveCount(2);

@@ -13,6 +13,7 @@
         "services": {
           "dashboard": {
             "port": 8080,
+            "public": false,
             "rev": 3
           }
         },
@@ -102,7 +103,9 @@
     },
     "user_notification": {
       "agent": "sample-agent",
+      "at": 1700000400,
       "body": "hello",
+      "id": 3,
       "kind": "message",
       "title": "sample-agent",
       "type": "user_notification"
@@ -129,6 +132,7 @@
             "services": {
               "dashboard": {
                 "port": 8080,
+                "public": false,
                 "rev": 3
               }
             },

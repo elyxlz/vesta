@@ -173,7 +173,7 @@ async fn hello_then_snapshot_carries_agent_info_branch() {
 }
 
 /// (2) `POST /agents/{name}/user-notification {kind:"message",...}` carrying the agent's own
-/// `X-Agent-Token` fans a `user_notification` delta `{agent,kind,title,body}` to a connected `/sync`
+/// `X-Agent-Token` fans a `user_notification` delta `{id,at,agent,kind,title,body}` to a connected `/sync`
 /// session (the loopback path the app-chat reply hook and the rate-limit notice use). The kind is a
 /// closed set: an unknown kind is a 400.
 #[tokio::test]
@@ -198,6 +198,8 @@ async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
         .expect("a user_notification delta for the user notification");
     assert_eq!(user_notification["kind"].as_str(), Some("message"), "carries the kind");
     assert_eq!(user_notification["title"].as_str(), Some(agent.name.as_str()), "carries the title");
+    assert!(user_notification["id"].as_u64().is_some(), "carries the log entry's id");
+    assert!(user_notification["at"].as_u64().is_some(), "carries the log entry's stamp");
     assert_eq!(user_notification["body"].as_str(), Some("a fresh reply"), "carries the body");
 
     // The kind is a closed set: an unknown kind is rejected with 400 (mapped to the error string).

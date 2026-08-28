@@ -38,6 +38,8 @@ describe("parseServerFrame", () => {
       {
         raw: {
           type: "user_notification",
+          id: 1,
+          at: 1_700_000_000,
           agent: "scout",
           kind: "message",
           title: "scout",
@@ -53,10 +55,12 @@ describe("parseServerFrame", () => {
     }
   })
 
-  it("carries the user_notification agent, kind, title, and body through", () => {
+  it("carries the user_notification log identity, agent, kind, title, and body through", () => {
     const parsed = parseServerFrame(
       JSON.stringify({
         type: "user_notification",
+        id: 12,
+        at: 1_700_000_000,
         agent: "scout",
         kind: "message",
         title: "scout",
@@ -65,6 +69,8 @@ describe("parseServerFrame", () => {
     )
     expect(parsed.kind).toBe("delta")
     if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
+      expect(parsed.delta.id).toBe(12)
+      expect(parsed.delta.at).toBe(1_700_000_000)
       expect(parsed.delta.agent).toBe("scout")
       expect(parsed.delta.kind).toBe("message")
       expect(parsed.delta.title).toBe("scout")
@@ -76,6 +82,8 @@ describe("parseServerFrame", () => {
     const parsed = parseServerFrame(
       JSON.stringify({
         type: "user_notification",
+        id: 4,
+        at: 1_700_000_000,
         agent: "",
         kind: "gateway_updated",
         title: "Updated to v0.1.190",
@@ -86,6 +94,8 @@ describe("parseServerFrame", () => {
       kind: "delta",
       delta: {
         type: "user_notification",
+        id: 4,
+        at: 1_700_000_000,
         agent: "",
         kind: "gateway_updated",
         title: "Updated to v0.1.190",
@@ -94,17 +104,19 @@ describe("parseServerFrame", () => {
     })
   })
 
-  it("ignores a user_notification missing its kind, title, or body", () => {
-    const inputs = [
-      JSON.stringify({ type: "user_notification", agent: "scout", title: "scout", body: "hi" }),
-      JSON.stringify({ type: "user_notification", agent: "scout", kind: "message", body: "hi" }),
-      JSON.stringify({
-        type: "user_notification",
-        agent: "scout",
-        kind: "message",
-        title: "scout",
-      }),
-    ]
+  it("ignores a user_notification missing its log identity, kind, title, or body", () => {
+    const whole = {
+      type: "user_notification",
+      id: 1,
+      at: 1_700_000_000,
+      agent: "scout",
+      kind: "message",
+      title: "scout",
+      body: "hi",
+    }
+    const inputs = ["id", "at", "kind", "title", "body"].map((missing) =>
+      JSON.stringify(Object.fromEntries(Object.entries(whole).filter(([key]) => key !== missing))),
+    )
     for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
   })
 

@@ -14,7 +14,7 @@ describe("getAgentVisualStatus", () => {
     expect(orbState).toBe("busy");
   });
 
-  it("stops the orb when the agent is waiting on the user to sign in again", () => {
+  it("flags the orb for attention when the agent is waiting on the user to sign in again", () => {
     const { label, orbState } = getAgentVisualStatus(
       { status: "not_authenticated", operation: null },
       "idle",
@@ -22,10 +22,10 @@ describe("getAgentVisualStatus", () => {
       "idle",
     );
     expect(label).toBe("needs you to sign in");
-    expect(orbState).toBe("off");
+    expect(orbState).toBe("attention");
   });
 
-  it("stops the orb when the agent is waiting on the user to set it up", () => {
+  it("flags the orb for attention when the agent is waiting on the user to set it up", () => {
     const { label, orbState } = getAgentVisualStatus(
       { status: "unprovisioned", operation: null },
       "idle",
@@ -33,7 +33,7 @@ describe("getAgentVisualStatus", () => {
       "idle",
     );
     expect(label).toBe("needs to be set up");
-    expect(orbState).toBe("off");
+    expect(orbState).toBe("attention");
   });
 
   // The backup pauses the container, so the roster reports `stopped` while restic runs. This tab

@@ -91,7 +91,7 @@ export function ThemeProvider({
     root.style.colorScheme = resolved;
     setResolvedTheme(resolved);
 
-    native.setNativeTheme(resolved);
+    native.setNativeTheme(nextTheme === "system" ? "system" : resolved);
 
     if (restoreTransitions) {
       restoreTransitions();

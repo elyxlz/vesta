@@ -1,6 +1,6 @@
 import {
   Archive,
-  Bug,
+  ArrowLeftRight,
   Globe,
   KeyRound,
   Play,
@@ -16,7 +16,7 @@ export interface AgentActionsInput {
   isRunning: boolean;
   showAliveActions?: boolean;
   isBusy: boolean;
-  onLogs: () => void;
+  onLogs?: () => void;
   onServices?: () => void;
   onToggle: () => void;
   onRestart: () => void;
@@ -25,8 +25,8 @@ export interface AgentActionsInput {
   isAuthenticated?: boolean;
   onAppSettings?: () => void;
   onAgentSettings?: () => void;
+  onSwitchGateway?: () => void;
   onDelete?: () => void;
-  onDebugInfo?: () => void;
 }
 
 export interface ActionItem {
@@ -48,14 +48,15 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   const sections: ActionSection[] = [];
 
   if (input.isRunning) {
-    const toolItems: ActionItem[] = [
-      {
+    const toolItems: ActionItem[] = [];
+    if (input.onLogs) {
+      toolItems.push({
         key: "logs",
         icon: <ScrollText data-icon="inline-start" />,
         label: "logs",
         onClick: input.onLogs,
-      },
-    ];
+      });
+    }
     if (input.onServices) {
       toolItems.push({
         key: "services",
@@ -64,7 +65,9 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
         onClick: input.onServices,
       });
     }
-    sections.push({ key: "view", title: "Tools", items: toolItems });
+    if (toolItems.length > 0) {
+      sections.push({ key: "view", title: "tools", items: toolItems });
+    }
   }
 
   const controlItems: ActionItem[] = [
@@ -92,15 +95,41 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   controlItems.push({
     key: "backup",
     icon: <Archive data-icon="inline-start" />,
-    label: "backup",
+    label: "backups",
     onClick: input.onBackup,
     disabled: input.isBusy,
   });
-  sections.push({ key: "controls", title: "Controls", items: controlItems });
+  if (input.onAuthenticate) {
+    controlItems.push({
+      key: "authenticate",
+      icon: <KeyRound data-icon="inline-start" />,
+      label: input.isAuthenticated ? "switch provider" : "sign in",
+      onClick: input.onAuthenticate,
+    });
+  }
+  if (input.onSwitchGateway) {
+    controlItems.push({
+      key: "switch-gateway",
+      icon: <ArrowLeftRight data-icon="inline-start" />,
+      label: "switch gateway",
+      onClick: input.onSwitchGateway,
+    });
+  }
+  sections.push({ key: "controls", title: "controls", items: controlItems });
 
-  const generalItems: ActionItem[] = [];
+  const generalItems = buildOtherItems(input);
+  if (generalItems.length > 0) {
+    sections.push({ key: "general", title: "other", items: generalItems });
+  }
+
+  return sections;
+}
+
+// The "Other" section's items, each present only when its handler is supplied.
+function buildOtherItems(input: AgentActionsInput): ActionItem[] {
+  const items: ActionItem[] = [];
   if (input.onAgentSettings) {
-    generalItems.push({
+    items.push({
       key: "agent-settings",
       icon: <SlidersHorizontal data-icon="inline-start" />,
       label: "agent settings",
@@ -108,31 +137,15 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     });
   }
   if (input.onAppSettings) {
-    generalItems.push({
+    items.push({
       key: "app-settings",
       icon: <Settings data-icon="inline-start" />,
       label: "app settings",
       onClick: input.onAppSettings,
     });
   }
-  if (input.onDebugInfo) {
-    generalItems.push({
-      key: "debug",
-      icon: <Bug data-icon="inline-start" />,
-      label: "debug info",
-      onClick: input.onDebugInfo,
-    });
-  }
-  if (input.onAuthenticate) {
-    generalItems.push({
-      key: "authenticate",
-      icon: <KeyRound data-icon="inline-start" />,
-      label: input.isAuthenticated ? "switch provider" : "sign in",
-      onClick: input.onAuthenticate,
-    });
-  }
   if (input.onDelete) {
-    generalItems.push({
+    items.push({
       key: "delete",
       icon: <Trash2 data-icon="inline-start" />,
       label: "delete",
@@ -141,9 +154,5 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
       variant: "destructive",
     });
   }
-  if (generalItems.length > 0) {
-    sections.push({ key: "general", title: "Other", items: generalItems });
-  }
-
-  return sections;
+  return items;
 }

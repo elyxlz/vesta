@@ -127,6 +127,8 @@ describe("createController", () => {
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
     const userNotification: Delta = {
       type: "user_notification",
+      id: 1,
+      at: 1_700_000_000,
       agent: "scout",
       kind: "message",
       title: "scout",
@@ -148,6 +150,8 @@ describe("createController", () => {
     socket?.onmessage?.(
       JSON.stringify({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "scout",
         kind: "message",
         title: "scout",
