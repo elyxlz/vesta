@@ -43,10 +43,18 @@ html[data-platform="android"] {
 .desktop [data-drag-region] [role="button"] {
   -webkit-app-region: no-drag;
 }
-/* While a popover-like control in the titlebar is open (the expanded agent
-   island), the navbar stops dragging so an outside click on it dismisses,
-   the way a native popover closes when you click the title bar. */
-.desktop [data-drag-region]:has([aria-expanded="true"]) {
+/* While anything dismissable is open (the expanded agent island or another
+   control in the titlebar, or any portaled overlay: dialogs put a
+   data-state="open" element directly under body, popovers/dropdowns a popper
+   wrapper), every drag region stops dragging so a click on the titlebar
+   reaches the page and dismisses it, the way a native popover closes when
+   you click the title bar. */
+.desktop:has(
+    [data-drag-region] [aria-expanded="true"],
+    body > [data-state="open"],
+    body > [data-radix-popper-content-wrapper]
+  )
+  [data-drag-region] {
   -webkit-app-region: no-drag;
 }
 
