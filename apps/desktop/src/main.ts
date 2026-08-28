@@ -1,4 +1,11 @@
-import { BrowserWindow, Menu, app, ipcMain, nativeTheme, shell } from "electron";
+import {
+  BrowserWindow,
+  Menu,
+  app,
+  ipcMain,
+  nativeTheme,
+  shell,
+} from "electron";
 import path from "node:path";
 import { readNativeGeolocation } from "./geolocation";
 import { trackQuitIntent } from "./lifecycle";
@@ -46,7 +53,8 @@ if (!gotLock) {
       () => mainWindow?.isMaximized() ?? false,
     );
     ipcMain.on("set-theme", (_event, theme: unknown) => {
-      if (theme === "light" || theme === "dark") nativeTheme.themeSource = theme;
+      if (theme === "light" || theme === "dark")
+        nativeTheme.themeSource = theme;
     });
     ipcMain.handle("open-external", (_event, url: unknown) => {
       if (typeof url === "string" && /^https?:\/\//.test(url))
@@ -75,12 +83,21 @@ if (!gotLock) {
     );
     ipcMain.handle("store:clear", () => clearConnection());
     ipcMain.handle("oauth:start", () =>
-      startLoopback((url) => mainWindow?.webContents.send("oauth:callback", url)),
+      startLoopback((url) =>
+        mainWindow?.webContents.send("oauth:callback", url),
+      ),
     );
     ipcMain.handle("oauth:cancel", (_event, port: unknown) => {
       if (typeof port === "number") cancelLoopback(port);
     });
-    ipcMain.handle("geolocation:read", () => readNativeGeolocation());
+    // The macOS CoreLocation helper ships beside the web bundle in Resources; in dev it is the
+    // `native/` build output.
+    const macHelperPath = app.isPackaged
+      ? path.join(process.resourcesPath, "vesta-location")
+      : path.join(app.getAppPath(), "native", "vesta-location");
+    ipcMain.handle("geolocation:read", () =>
+      readNativeGeolocation(macHelperPath),
+    );
   };
 
   app.on("second-instance", () => {

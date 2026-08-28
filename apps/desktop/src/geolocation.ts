@@ -2,11 +2,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 // The one owner of native OS geolocation for the main process. The renderer's
-// navigator.geolocation resolves only on macOS (CoreLocation), so this module answers for the
-// other two platforms: Windows through the in-box WinRT Geolocator (PowerShell, no packaging or
-// API key needed), Linux through GeoClue2 over the system D-Bus (gdbus, present on most
-// desktops). macOS answers null so the renderer keeps its CoreLocation path. Every failure
-// (no provider, denied, timeout) resolves to null; the caller falls back to timezone-only.
+// navigator.geolocation cannot be relied on: Chromium's CoreLocation provider on macOS stalls
+// waiting for an authorization prompt Electron never raises, and the network provider needs a
+// Google API key. So every platform resolves here: macOS through the bundled Swift CoreLocation
+// helper (which raises the prompt itself, carrying the app's identity), Windows through the in-box
+// WinRT Geolocator (PowerShell), Linux through GeoClue2 over the system D-Bus (gdbus). Every
+// failure (no provider, denied, timeout) resolves to null; the caller falls back to timezone-only.
 
 export interface NativeFix {
   latitude: number;
@@ -23,16 +24,32 @@ type Run = (command: string, args: string[]) => Promise<string>;
 
 const execFileAsync = promisify(execFile);
 
+// A failing provider explains itself on stderr (the helper's reason, PowerShell's exception,
+// gdbus's D-Bus error); re-raise that text so the renderer can show why there is no fix.
 async function runWithTimeout(
   command: string,
   args: string[],
   timeoutMs: number,
 ): Promise<string> {
-  const { stdout } = await execFileAsync(command, args, {
-    timeout: timeoutMs,
-    windowsHide: true,
-  });
-  return stdout;
+  try {
+    const { stdout } = await execFileAsync(command, args, {
+      timeout: timeoutMs,
+      windowsHide: true,
+    });
+    return stdout;
+  } catch (error) {
+    const stderr =
+      typeof error === "object" &&
+      error !== null &&
+      "stderr" in error &&
+      typeof error.stderr === "string"
+        ? error.stderr.trim()
+        : "";
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(stderr === "" ? message : `${message}: ${stderr}`, {
+      cause: error,
+    });
+  }
 }
 
 // Culture-invariant "lat|lon|accuracy" so a comma-decimal locale cannot corrupt the numbers.
@@ -177,26 +194,38 @@ async function readLocation(
   return { latitude, longitude, accuracyM: accuracy };
 }
 
+// The helper prints the same invariant "lat|lon|accuracy" line as the Windows script and exits
+// non-zero on any failure, so the run rejecting is what a denied or timed-out fix looks like.
+async function macFix(run: Run, helperPath: string): Promise<NativeFix | null> {
+  return parseWindowsFix(await run(helperPath, []));
+}
+
+// Null means the platform has no provider or it answered nothing usable; a provider that failed
+// outright throws, carrying its own reason, and the renderer decides how to surface that.
 export async function resolveNativeFix(
   platform: NodeJS.Platform,
   run: Run,
   sleep?: (ms: number) => Promise<void>,
+  macHelperPath?: string,
 ): Promise<NativeFix | null> {
-  try {
-    if (platform === "win32") return await windowsFix(run);
-    if (platform === "linux") return await linuxFix(run, sleep);
-    return null;
-  } catch {
-    return null;
+  if (platform === "darwin" && macHelperPath !== undefined) {
+    return macFix(run, macHelperPath);
   }
+  if (platform === "win32") return windowsFix(run);
+  if (platform === "linux") return linuxFix(run, sleep);
+  return null;
 }
 
-export function readNativeGeolocation(): Promise<NativeFix | null> {
+// The one-shot providers (macOS helper, Windows script) own the full fix budget; the Linux walk is
+// many short gdbus calls, each bounded on its own.
+export function readNativeGeolocation(
+  macHelperPath: string,
+): Promise<NativeFix | null> {
   const run: Run = (command, args) =>
     runWithTimeout(
       command,
       args,
-      process.platform === "win32" ? NATIVE_FIX_TIMEOUT_MS : EXEC_TIMEOUT_MS,
+      process.platform === "linux" ? EXEC_TIMEOUT_MS : NATIVE_FIX_TIMEOUT_MS,
     );
-  return resolveNativeFix(process.platform, run);
+  return resolveNativeFix(process.platform, run, undefined, macHelperPath);
 }

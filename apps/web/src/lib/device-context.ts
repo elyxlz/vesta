@@ -69,6 +69,101 @@ async function readFix(): Promise<Fix | null> {
   return browserFix();
 }
 
+// TEMPORARY diagnostic (remove after debugging desktop location): on enable, report exactly why a
+// fix is null on this platform, both the native-provider outcome and the navigator.geolocation
+// error, so the failure the renderer actually sees can be pasted back.
+export interface GeoProbe {
+  ok: boolean;
+  detail: string;
+}
+
+function geoErrorName(code: number): string {
+  if (code === 1) return "PERMISSION_DENIED";
+  if (code === 2) return "POSITION_UNAVAILABLE";
+  if (code === 3) return "TIMEOUT";
+  return "UNKNOWN";
+}
+
+// Electron's macOS getCurrentPosition can hang with no callback and ignore its own timeout option,
+// so each step gets a hard cap and "hung" is itself a reported outcome.
+const PROBE_STEP_MS = 10_000;
+
+function probeTimeout<T>(value: T): Promise<T> {
+  return new Promise((resolve) =>
+    setTimeout(() => resolve(value), PROBE_STEP_MS),
+  );
+}
+
+function browserFixDetailed(): Promise<{
+  fix: Fix | null;
+  error: string | null;
+}> {
+  if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
+    return Promise.resolve({
+      fix: null,
+      error: "navigator.geolocation unavailable",
+    });
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({
+        fix: null,
+        error: "no callback within 10s (getCurrentPosition hung)",
+      });
+    }, PROBE_STEP_MS);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        clearTimeout(timer);
+        const { latitude, longitude, accuracy } = position.coords;
+        resolve({ fix: { latitude, longitude, accuracy }, error: null });
+      },
+      (error) => {
+        clearTimeout(timer);
+        resolve({
+          fix: null,
+          error: `code ${String(error.code)} ${geoErrorName(error.code)}: ${error.message}`,
+        });
+      },
+      { timeout: PROBE_STEP_MS },
+    );
+  });
+}
+
+export async function probeGeolocation(): Promise<GeoProbe> {
+  const lines: string[] = [
+    `runtime=${native.runtime} platform=${native.platform}`,
+  ];
+  if (native.readGeolocation) {
+    const outcome = await Promise.race([
+      native.readGeolocation().then(
+        (fix) => ({ kind: "fix" as const, fix }),
+        (error: unknown) => ({ kind: "throw" as const, error }),
+      ),
+      probeTimeout({ kind: "timeout" as const }),
+    ]);
+    if (outcome.kind === "fix") {
+      if (outcome.fix) return { ok: true, detail: "" };
+      lines.push("native provider: returned null");
+    } else if (outcome.kind === "throw") {
+      // Electron prefixes a main-process throw with the IPC channel; keep only the provider's reason.
+      const raw =
+        outcome.error instanceof Error
+          ? outcome.error.message
+          : String(outcome.error);
+      const reason = raw.replace(/^Error invoking remote method '[^']*': /, "");
+      lines.push(`native provider: threw ${reason}`);
+    } else {
+      lines.push("native provider: no response within 10s");
+    }
+  } else {
+    lines.push("native provider: not available (browser runtime)");
+  }
+  const browser = await browserFixDetailed();
+  if (browser.fix) return { ok: true, detail: "" };
+  lines.push(`navigator.geolocation: ${browser.error ?? "no fix"}`);
+  return { ok: false, detail: lines.join("\n") };
+}
+
 // With sharing off the report carries `position: null`, which retracts any position the gateway
 // holds for this device; with sharing on but no fix, the position is absent and the stored one
 // stands. The browser has no offline reverse geocoder, so the position names no place.

@@ -49,9 +49,27 @@ describe("gdbus parsing", () => {
 });
 
 describe("resolveNativeFix", () => {
-  it("answers null on macOS so the renderer keeps its CoreLocation path", async () => {
-    const run = () => Promise.reject(new Error("must not be called"));
-    expect(await resolveNativeFix("darwin", run)).toBeNull();
+  it("resolves a macOS fix through the bundled CoreLocation helper", async () => {
+    const commands: string[][] = [];
+    const run = (command: string, args: string[]) => {
+      commands.push([command, ...args]);
+      return Promise.resolve("39.2238|9.1217|25\n");
+    };
+    expect(
+      await resolveNativeFix("darwin", run, undefined, "/app/vesta-location"),
+    ).toEqual({
+      latitude: 39.2238,
+      longitude: 9.1217,
+      accuracyM: 25,
+    });
+    expect(commands).toEqual([["/app/vesta-location"]]);
+  });
+
+  it("raises the helper's own reason when it refuses on macOS", async () => {
+    const run = () => Promise.reject(new Error("Command failed: denied"));
+    await expect(
+      resolveNativeFix("darwin", run, undefined, "/app/vesta-location"),
+    ).rejects.toThrow("denied");
   });
 
   it("resolves a Windows fix through powershell", async () => {
@@ -101,9 +119,18 @@ describe("resolveNativeFix", () => {
     expect(calls.at(-1)).toContain("Client.Stop");
   });
 
-  it("resolves null when the provider is missing or refuses", async () => {
+  it("raises the provider's reason when it is missing or refuses", async () => {
     const run = () => Promise.reject(new Error("gdbus: command not found"));
-    expect(await resolveNativeFix("linux", run, instantSleep)).toBeNull();
-    expect(await resolveNativeFix("win32", run)).toBeNull();
+    await expect(resolveNativeFix("linux", run, instantSleep)).rejects.toThrow(
+      "gdbus: command not found",
+    );
+    await expect(resolveNativeFix("win32", run)).rejects.toThrow(
+      "gdbus: command not found",
+    );
+  });
+
+  it("answers null on a platform with no provider", async () => {
+    const run = () => Promise.reject(new Error("must not be called"));
+    expect(await resolveNativeFix("freebsd", run)).toBeNull();
   });
 });
