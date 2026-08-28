@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CHAT_CONTENT_COLUMN } from "./content-column";
 import { useToast } from "@/stores/use-toast";
-import { useLayout } from "@/stores/use-layout";
+import { useLayout, type ComposerVariant } from "@/stores/use-layout";
 import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
@@ -33,6 +33,17 @@ import { TRIM_HISTORY_SETTLE_MS, agentNeedsUser } from "@vesta/core";
 // the inset so the message list, skeleton, mask, and button all clear it.
 const COMPOSER_GAP_FULLSCREEN_PX = 12;
 const COMPOSER_GAP_PANEL_PX = 8;
+
+// The empty composer's height per layout, a CSS-deterministic baseline: the 50px
+// pill (a 36px button row plus its 6+6px padding and 2px border) plus the
+// wrapper's bottom gap (pb-3 12 / pb-4 16 / pb-1 4). Seeds a cold remount so the
+// list reserves the composer's space on its first render; the real measurement
+// then overwrites it.
+const COMPOSER_BASELINE_PX: Record<ComposerVariant, number> = {
+  panel: 62,
+  fullscreen: 66,
+  mobile: 54,
+};
 
 interface ChatProps {
   onCollapse?: () => void;
@@ -101,8 +112,22 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // Every chat floats the composer over the message list; the messages reserve
   // its live height plus the gap at the bottom so the last one always clears it,
   // and the scroll-to-bottom button parks just above it.
-  const [composerInset, setComposerInset] = useState(0);
-  const [composerHeight, setComposerHeight] = useState(0);
+  // Seed so a remounted chat (reopened from collapse) reserves the composer's space
+  // on its first render, before the async measure lands; measuring the same value
+  // then makes no re-pin, so bubbles don't snap. The cache holds the exact measured
+  // height once the composer has mounted this session; a cold mount falls back to the
+  // hardcoded baseline, which the real measurement overwrites.
+  const composerVariant: ComposerVariant = isMobile
+    ? "mobile"
+    : fullscreen
+      ? "fullscreen"
+      : "panel";
+  const setComposerBaseline = useLayout((s) => s.setComposerBaseline);
+  const seedBaseline = () =>
+    useLayout.getState().composerBaseline[composerVariant] ||
+    COMPOSER_BASELINE_PX[composerVariant];
+  const [composerInset, setComposerInset] = useState(seedBaseline);
+  const [composerHeight, setComposerHeight] = useState(seedBaseline);
   // The inset tracks the composer's collapsed baseline only: a growing draft
   // expands the pill over the (masked, opaque-covered) list instead of shifting
   // it, so measurements while a draft exists are ignored (a cleared inset, 0,
@@ -116,10 +141,18 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   });
   const composerRef = useMeasuredSize(
     "height",
-    useCallback((height: number) => {
-      setComposerHeight(height);
-      if (height === 0 || !hasDraftRef.current) setComposerInset(height);
-    }, []),
+    useCallback(
+      (height: number) => {
+        setComposerHeight(height);
+        if (height === 0 || !hasDraftRef.current) {
+          setComposerInset(height);
+          // Cache only a real, draft-free baseline; unmount reports 0, which must
+          // not overwrite the seed the next remount reads.
+          if (height > 0) setComposerBaseline(composerVariant, height);
+        }
+      },
+      [composerVariant, setComposerBaseline],
+    ),
   );
 
   const chatMessages = useMemo(
