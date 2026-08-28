@@ -6,11 +6,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Orb } from "@/components/Orb";
 import type { AgentRow } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
@@ -43,18 +38,13 @@ export function AgentCard({ agent }: AgentCardProps) {
         className="flex h-full w-full items-center justify-center rounded-squircle-md border border-transparent [corner-shape:squircle] outline-none transition-all hover:bg-muted/40 active:scale-[0.99] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
       >
         <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <Orb
-                  state={orbState}
-                  size={112}
-                  label={`${agent.name}: ${label}`}
-                />
-              </span>
-            </TooltipTrigger>
-            {label && <TooltipContent>{label}</TooltipContent>}
-          </Tooltip>
+          <span className="inline-flex">
+            <Orb
+              state={orbState}
+              size={112}
+              label={`${agent.name}: ${label}`}
+            />
+          </span>
           <CardTitle className="font-serif text-center text-2xl -mt-3 font-medium tracking-tight text-foreground">
             {agent.name}
           </CardTitle>
