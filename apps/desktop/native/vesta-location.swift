@@ -7,7 +7,9 @@ import Foundation
 // WinRT on Windows and GeoClue2 on Linux. Any failure exits non-zero with a reason on stderr; the
 // caller falls back to timezone-only.
 
-let TIMEOUT_SECONDS: TimeInterval = 15
+// Shorter than the caller's exec budget (NATIVE_FIX_TIMEOUT_MS in geolocation.ts), so a stall
+// ends with this reason on stderr rather than the caller's SIGTERM.
+let TIMEOUT_SECONDS: TimeInterval = 12
 
 func fail(_ reason: String) -> Never {
   FileHandle.standardError.write(Data("\(reason)\n".utf8))

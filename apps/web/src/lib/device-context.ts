@@ -52,19 +52,19 @@ function browserFix(): Promise<Fix | null> {
 }
 
 // A fix, or null when geolocation is unavailable, denied, or slow: the report then carries the OS
-// zone alone. In the desktop app the main process resolves through the OS provider first (WinRT on
-// Windows, GeoClue2 on Linux); a null answer (macOS, no provider, refused) falls through to the
-// renderer's own geolocation, whose prompt this call itself raises, so the opt-in toggle gates both.
+// zone alone. The desktop app resolves through the OS provider in its main process on every
+// platform, and that answer is final: the renderer's own geolocation is never a fallback there,
+// since in Electron it hangs on macOS and needs a Google API key elsewhere. Only a plain browser
+// asks navigator.geolocation, whose prompt this call itself raises, so the opt-in toggle gates it.
 async function readFix(): Promise<Fix | null> {
   if (native.readGeolocation) {
     const fix = await native.readGeolocation().catch(() => null);
-    if (fix) {
-      return {
-        latitude: fix.latitude,
-        longitude: fix.longitude,
-        accuracy: fix.accuracyM,
-      };
-    }
+    if (fix === null) return null;
+    return {
+      latitude: fix.latitude,
+      longitude: fix.longitude,
+      accuracy: fix.accuracyM,
+    };
   }
   return browserFix();
 }

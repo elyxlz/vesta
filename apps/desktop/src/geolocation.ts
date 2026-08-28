@@ -6,8 +6,9 @@ import { promisify } from "node:util";
 // waiting for an authorization prompt Electron never raises, and the network provider needs a
 // Google API key. So every platform resolves here: macOS through the bundled Swift CoreLocation
 // helper (which raises the prompt itself, carrying the app's identity), Windows through the in-box
-// WinRT Geolocator (PowerShell), Linux through GeoClue2 over the system D-Bus (gdbus). Every
-// failure (no provider, denied, timeout) resolves to null; the caller falls back to timezone-only.
+// WinRT Geolocator (PowerShell), Linux through GeoClue2 over the system D-Bus (gdbus). A
+// platform with no provider answers null; a provider that fails (denied, timeout, no service)
+// raises its own reason, and the renderer falls back to timezone-only either way.
 
 export interface NativeFix {
   latitude: number;
