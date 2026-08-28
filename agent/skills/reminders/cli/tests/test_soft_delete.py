@@ -83,4 +83,4 @@ def test_fire_callback_is_a_no_op_for_a_deleted_reminder(tmp_config: Config, tmp
     reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="do not fire", in_minutes=1))
     commands.remind_delete(tmp_config, reminder_id=reminder["id"])
     send_reminder_job(reminder["id"], message="do not fire", data_dir=str(tmp_config.data_dir), notif_dir=str(notif_dir))
-    assert list(notif_dir.glob("*-reminders-reminder.json")) == []
+    assert list(notif_dir.glob("*-reminders-reminder_*.json")) == []

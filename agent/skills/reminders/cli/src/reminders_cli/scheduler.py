@@ -41,13 +41,15 @@ def write_reminder_notification(
     reminder_id: str,
     message: str,
     *,
-    extra: dict | None = None,
+    notif_type: str = "reminder_due",
     snooze_hint: bool = False,
 ):
-    """Write a reminder notification JSON file. `snooze_hint` appends the snooze tip; set it for
-    one-shot reminders only (recurring ones fire again anyway)."""
+    """Write a reminder notification JSON file. `notif_type` names the event: `reminder_due` for a
+    reminder firing on schedule, `reminder_missed` for one replayed after its time passed while the
+    daemon was down. `snooze_hint` appends the snooze tip; set it for one-shot reminders only
+    (recurring ones fire again anyway)."""
     if not reminder_id or not message:
         raise ValueError("reminder_id and message required")
 
     full_message = f"{message}\n{_SNOOZE_HINT.format(rid=reminder_id)}" if snooze_hint else message
-    write_notification(notif_dir, "reminder", message=full_message, reminder_id=reminder_id, **(extra or {}))
+    write_notification(notif_dir, notif_type, message=full_message, reminder_id=reminder_id)
