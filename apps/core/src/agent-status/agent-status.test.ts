@@ -126,8 +126,39 @@ describe("orbIsLive", () => {
     expect(orbIsLive(state)).toBe(true)
   })
 
-  it.each<OrbVisualState>(["off", "deleting"])("holds the %s orb still", (state) => {
+  it.each<OrbVisualState>(["limited", "off", "deleting"])("holds the %s orb still", (state) => {
     expect(orbIsLive(state)).toBe(false)
+  })
+})
+
+describe("a binding rate limit", () => {
+  const window = { window: "seven_day", resetsAt: null }
+
+  it("dims an alive agent even while the CLI's retries read as thinking", () => {
+    expect(agentOrbState("alive", "idle", null, false, window)).toBe("limited")
+    expect(agentOrbState("alive", "thinking", null, false, window)).toBe("limited")
+  })
+
+  it("never outranks an operation, a boot, or a non-alive status", () => {
+    expect(agentOrbState("alive", "idle", "backing_up", false, window)).toBe("busy")
+    expect(agentOrbState("alive", "idle", null, true, window)).toBe("busy")
+    expect(agentOrbState("not_authenticated", "idle", null, false, window)).toBe("off")
+  })
+
+  it("labels the agent with the reset countdown when the window carries one", () => {
+    const inThreeHours = Math.round(Date.now() / 1000) + 3 * 3600
+    expect(
+      agentStatusLabel("alive", "idle", null, false, {
+        window: "seven_day",
+        resetsAt: inThreeHours,
+      }),
+    ).toBe("rate limited, back in 3h")
+    expect(agentStatusLabel("alive", "idle", null, false, window)).toBe("rate limited")
+  })
+
+  it("defaults to not limited so a caller without the field reads the status", () => {
+    expect(agentOrbState("alive", "idle")).toBe("alive")
+    expect(agentStatusLabel("alive", "idle")).toBe("alive")
   })
 })
 

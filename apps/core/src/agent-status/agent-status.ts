@@ -1,4 +1,9 @@
-import type { AgentActivityState, AgentOperation, AgentStatus } from "../protocol/tree"
+import type {
+  AgentActivityState,
+  AgentOperation,
+  AgentStatus,
+  RateLimitedInfo,
+} from "../protocol/tree"
 
 // What an AgentStatus means for the user, which is what every surface actually branches on: is the
 // agent working, is it waiting on me, is it down. The only exhaustive switch over AgentStatus in the
@@ -44,8 +49,9 @@ export function agentIsDown(status: AgentStatus): boolean {
 }
 
 // The visual buckets the orb renders. `deleting` has no matching AgentStatus: it is a client-side
-// operation, mapped by the surface that tracks operations.
-export type OrbVisualState = "alive" | "thinking" | "busy" | "off" | "deleting"
+// operation, mapped by the surface that tracks operations. `limited` is the rate-limited overlay:
+// alive but unable to work until the provider's window resets.
+export type OrbVisualState = "alive" | "thinking" | "busy" | "limited" | "off" | "deleting"
 
 // The one status-to-orb mapping both surfaces read, so a new AgentStatus is a compile error in
 // agentStatusKind rather than a silent `off` on web and mobile independently.
@@ -54,12 +60,16 @@ export function agentOrbState(
   activityState: AgentActivityState,
   operation: AgentOperation | null = null,
   booting = false,
+  rateLimited: RateLimitedInfo | null = null,
 ): OrbVisualState {
   // A running operation outranks the container's own status: a backup pauses the container, so the
   // status alone would read as a plainly stopped agent that the user has to restart.
   if (operation !== null) return "busy"
   // An alive agent still in its boot turns renders as the boot it is finishing, not as thinking.
   if (booting && status === "alive") return "busy"
+  // A binding rate limit outranks the activity: the CLI may still be retrying ("thinking"), but no
+  // work can land, and a green orb here is the lie this state exists to correct.
+  if (rateLimited != null && status === "alive") return "limited"
   switch (agentStatusKind(status)) {
     case "alive":
       return activityState === "thinking" ? "thinking" : "alive"
@@ -78,6 +88,17 @@ export function orbIsLive(state: OrbVisualState): boolean {
   return LIVE_STATES.has(state)
 }
 
+// Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
+// plenty of precision for "come back later" copy.
+export function formatResetTime(resetsAt: number): string {
+  const minutes = Math.round((resetsAt * 1000 - Date.now()) / 60_000)
+  if (minutes <= 1) return "in a minute"
+  if (minutes < 60) return `in ${String(minutes)}m`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `in ${String(hours)}h`
+  return `in ${String(Math.round(hours / 24))}d`
+}
+
 // The words for a status, shared so web's orb line and mobile's badge cannot drift apart. The two
 // waiting states name the user as the actor, matching the notification and push copy for them.
 export function agentStatusLabel(
@@ -85,10 +106,16 @@ export function agentStatusLabel(
   activityState: AgentActivityState,
   operation: AgentOperation | null = null,
   booting = false,
+  rateLimited: RateLimitedInfo | null = null,
 ): string {
   if (operation !== null) return agentOperationLabel(operation)
   // The boot reads as one continuous "waking up...": container start through the last boot turn.
   if (booting && status === "alive") return "waking up..."
+  if (rateLimited != null && status === "alive") {
+    return rateLimited.resetsAt != null
+      ? `rate limited, back ${formatResetTime(rateLimited.resetsAt)}`
+      : "rate limited"
+  }
   switch (status) {
     case "alive":
       return activityState === "thinking" ? "thinking" : "alive"

@@ -195,9 +195,7 @@ def _emit_parsed_content(texts: list[str], thinking_blocks: list[ThinkingBlock],
         state.event_bus.emit({"type": "error", "text": f"Turn failed upstream: {error_text[:500]}"})
 
 
-async def _note_rate_limited(
-    *, state: vm.State, config: cfg.VestaConfig, window: str | None, resets_at: int | None, text: str
-) -> None:
+async def _note_rate_limited(*, state: vm.State, config: cfg.VestaConfig, window: str | None, resets_at: int | None, text: str) -> None:
     """Record a rate-limit rejection, whatever shape it arrived in (structured RateLimitEvent, the
     CLI's retry paraphrase, an 'API Error: 429' body, a 429 result status). The persisted window is
     the one dedup key: a repeat of the recorded window is silent (the CLI re-reports on every retry,
@@ -205,8 +203,7 @@ async def _note_rate_limited(
     recorded window with its poorer information. GET /status projects the persisted state; vestad
     owns the user notification, minted from that projection's transition."""
     current = state.persisted.rate_limited
-    incoming = (window, resets_at)
-    if current is not None and (incoming == (None, None) or incoming == (current.window, current.resets_at)):
+    if current is not None and (window, resets_at) in ((None, None), (current.window, current.resets_at)):
         return
     state.persisted.rate_limited = state_store.RateLimitedWindow(window=window, resets_at=resets_at)
     await state_store.save_state_async(state.persisted, config)
@@ -221,13 +218,23 @@ async def _clear_rate_limited(*, state: vm.State, config: cfg.VestaConfig) -> No
     await state_store.save_state_async(state.persisted, config)
 
 
-async def _note_rate_limit_event(msg: RateLimitEvent, *, state: vm.State, config: cfg.VestaConfig) -> None:
-    """The structured classification: the CLI's synthesized text for the same rejection misnames the
-    window (issue #1071), so the wording comes from rate_limit_notice instead."""
-    info = msg.rate_limit_info
-    notice = sdk_parsing.rate_limit_notice(info, now=time.time())
-    if notice:
-        await _note_rate_limited(state=state, config=config, window=info.rate_limit_type, resets_at=info.resets_at, text=notice)
+async def _track_rate_limit(msg: Message, rate_limited_text: bool, *, state: vm.State, config: cfg.VestaConfig) -> None:
+    """Advance the persisted rate-limited state from one stream message. Three rejection shapes set
+    it: a rejected RateLimitEvent (the structured classification; the CLI's own text for the same
+    rejection misnames the window, issue #1071, so the wording comes from rate_limit_notice), a
+    parsed rate-limit error text, and a 429 result status. A result without error clears it."""
+    if rate_limited_text:
+        await _note_rate_limited(state=state, config=config, window=None, resets_at=None, text=sdk_parsing.GENERIC_RATE_LIMIT_NOTICE)
+    if isinstance(msg, RateLimitEvent):
+        info = msg.rate_limit_info
+        notice = sdk_parsing.rate_limit_notice(info, now=time.time())
+        if notice:
+            await _note_rate_limited(state=state, config=config, window=info.rate_limit_type, resets_at=info.resets_at, text=notice)
+    if isinstance(msg, ResultMessage):
+        if msg.api_error_status == RATE_LIMIT_HTTP_STATUS:
+            await _note_rate_limited(state=state, config=config, window=None, resets_at=None, text=sdk_parsing.GENERIC_RATE_LIMIT_NOTICE)
+        elif not msg.is_error:
+            await _clear_rate_limited(state=state, config=config)
 
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
@@ -262,15 +269,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
             logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
         await persist_session_id(session_id, state=state, config=config)
     _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
-    if rate_limited_text:
-        await _note_rate_limited(state=state, config=config, window=None, resets_at=None, text=sdk_parsing.GENERIC_RATE_LIMIT_NOTICE)
-    if isinstance(msg, RateLimitEvent):
-        await _note_rate_limit_event(msg, state=state, config=config)
-    if isinstance(msg, ResultMessage):
-        if msg.api_error_status == RATE_LIMIT_HTTP_STATUS:
-            await _note_rate_limited(state=state, config=config, window=None, resets_at=None, text=sdk_parsing.GENERIC_RATE_LIMIT_NOTICE)
-        elif not msg.is_error:
-            await _clear_rate_limited(state=state, config=config)
+    await _track_rate_limit(msg, rate_limited_text, state=state, config=config)
     # The SDK can surface a provider failure either on the assistant classification or the result's
     # HTTP status. Keep the decision provider-aware: Kimi uses 401 for tier/model/context permission
     # errors and a temporary 402, neither of which means its subscription key is dead.

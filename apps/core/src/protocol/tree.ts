@@ -30,6 +30,14 @@ export interface ServiceInfo {
   rev: number
 }
 
+// The rate-limit window binding an alive agent: the agent serves, but its provider rejects work
+// until the window resets. `window` names the provider's limit window ("five_hour", "seven_day",
+// ...); `resetsAt` is unix seconds. Both null when the rejection carried no classification.
+export interface RateLimitedInfo {
+  window: string | null
+  resetsAt: number | null
+}
+
 export interface AgentInfo {
   status: AgentStatus
   activityState: AgentActivityState
@@ -39,6 +47,8 @@ export interface AgentInfo {
   // serves and chat queues durably, but surfaces label it as still waking up. Absent on older
   // gateways, so readers treat undefined as false.
   booting?: boolean
+  // Present exactly while a rate limit binds the agent; absent on older gateways and while clear.
+  rateLimited?: RateLimitedInfo | null
   startedAt: string | null
   services: Record<string, ServiceInfo>
 }

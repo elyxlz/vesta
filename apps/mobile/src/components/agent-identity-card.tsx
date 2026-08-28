@@ -4,6 +4,7 @@ import type {
   AgentActivityState,
   AgentOperation,
   AgentStatus,
+  RateLimitedInfo,
 } from "@vesta/core";
 import { AgentOrb } from "@/components/AgentOrb";
 import { AgentStatusBadge } from "@/components/AgentStatus";
@@ -18,6 +19,7 @@ export function AgentIdentityCard({
   activityState,
   operation = null,
   booting = false,
+  rateLimited = null,
   orb,
   showStatus = true,
   /** Rendered under the name, for example the provider pill. */
@@ -29,6 +31,7 @@ export function AgentIdentityCard({
   activityState: AgentActivityState;
   operation?: AgentOperation | null;
   booting?: boolean;
+  rateLimited?: RateLimitedInfo | null;
   orb?: ReactNode;
   showStatus?: boolean;
   caption?: ReactNode;
@@ -44,6 +47,7 @@ export function AgentIdentityCard({
           activityState={activityState}
           operation={operation}
           booting={booting}
+          rateLimited={rateLimited}
           size={AGENT_IDENTITY_ORB_SIZE}
         />
       )}
@@ -54,6 +58,7 @@ export function AgentIdentityCard({
             activityState={activityState}
             operation={operation}
             booting={booting}
+            rateLimited={rateLimited}
             centered
           />
         ) : null}

@@ -3,6 +3,7 @@ import { bubbleRadiusStyle } from "../bubble-radius";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
+import { formatResetTime } from "@vesta/core";
 import type { InputMethod } from "@vesta/core";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -12,17 +13,6 @@ export type RetryHandler = (
   text: string,
   inputMethod?: InputMethod,
 ) => void;
-
-// Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
-// plenty of precision for "come back later" copy.
-function formatResetTime(resetsAt: number): string {
-  const minutes = Math.round((resetsAt * 1000 - Date.now()) / 60_000);
-  if (minutes <= 1) return "in a minute";
-  if (minutes < 60) return `in ${String(minutes)}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `in ${String(hours)}h`;
-  return `in ${String(Math.round(hours / 24))}d`;
-}
 
 function formatBubbleTime(ts: string | undefined): string {
   if (!ts) return "";
