@@ -27,13 +27,13 @@ func TestDetectMediaTypeDocuments(t *testing.T) {
 
 func TestDetectMediaTypeExistingPathsUnchanged(t *testing.T) {
 	cases := map[string]string{
-		"photo.jpg":  "image/jpeg",
-		"img.png":    "image/png",
-		"clip.mp4":   "video/mp4",
-		"voice.ogg":  "audio/ogg",
-		"audio.wav":  "audio/wav",
-		"noext":      "application/octet-stream",
-		"UPPER.PDF":  "application/pdf", // extension matching is case-insensitive
+		"photo.jpg": "image/jpeg",
+		"img.png":   "image/png",
+		"clip.mp4":  "video/mp4",
+		"voice.ogg": "audio/ogg",
+		"audio.wav": "audio/wav",
+		"noext":     "application/octet-stream",
+		"UPPER.PDF": "application/pdf", // extension matching is case-insensitive
 	}
 	for name, wantMime := range cases {
 		if _, gotMime := detectMediaType(name); gotMime != wantMime {
