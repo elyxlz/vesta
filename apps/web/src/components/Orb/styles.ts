@@ -7,6 +7,7 @@ import {
   type AgentActivityState,
   type AgentOperation as ServerOperation,
   type AgentStatus,
+  type RateLimitedInfo,
   type OrbVisualState,
 } from "@vesta/core";
 import { orbColors } from "@/design-tokens";
@@ -51,6 +52,7 @@ interface AgentLike {
   status: AgentStatus;
   operation: ServerOperation | null;
   booting?: boolean;
+  rateLimited?: RateLimitedInfo | null;
 }
 
 export function getAgentVisualStatus(
@@ -83,12 +85,14 @@ function resolveStatus(
       activityState,
       agent.operation,
       agent.booting,
+      agent.rateLimited ?? null,
     ),
     orbState: agentOrbState(
       agent.status,
       activityState,
       agent.operation,
       agent.booting,
+      agent.rateLimited ?? null,
     ),
   };
 }

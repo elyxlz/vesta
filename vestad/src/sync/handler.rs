@@ -21,7 +21,7 @@ use super::hub::UserNotification;
 use super::presence::PRESENCE_NOTIFY_DELAY;
 use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
-    NotificationsBranch, ServiceInfo, Tree,
+    NotificationsBranch, RateLimitedInfo, ServiceInfo, Tree,
 };
 use super::MIN_SUPPORTED_CLIENT_VERSION;
 
@@ -461,6 +461,7 @@ fn synthetic_building_info(phase: BuildPhase) -> AgentInfo {
         build_phase: Some(phase),
         operation: None,
         booting: false,
+        rate_limited: None,
         started_at: None,
         services: BTreeMap::new(),
     }
@@ -493,6 +494,10 @@ fn agent_info(
         build_phase,
         operation,
         booting: entry.booting,
+        rate_limited: entry.rate_limited.as_ref().map(|window| RateLimitedInfo {
+            window: window.window.clone(),
+            resets_at: window.resets_at,
+        }),
         started_at: entry.started_at.clone(),
         services,
     }
@@ -569,7 +574,7 @@ mod tests {
     use crate::agent_status::AgentStatusCache;
 
     fn entry(name: &str, status: AgentStatus) -> ListEntry {
-        ListEntry { name: name.to_string(), status, ws_port: 4200, booting: false, started_at: Some("2026-01-01T00:00:00Z".into()) }
+        ListEntry { name: name.to_string(), status, ws_port: 4200, booting: false, rate_limited: None, started_at: Some("2026-01-01T00:00:00Z".into()) }
     }
 
     #[test]
@@ -590,8 +595,25 @@ mod tests {
         assert_eq!(idle.activity_state, "idle");
     }
 
+    #[test]
+    fn agent_info_projects_the_rate_limit_overlay_camelcase_and_omits_it_when_clear() {
+        let mut limited = entry("scout", AgentStatus::Alive);
+        limited.rate_limited = Some(crate::docker::RateLimitedWindow {
+            window: Some("seven_day".to_string()),
+            resets_at: Some(1_787_986_800),
+        });
+        let info = agent_info(&limited, &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);
+        let value = serde_json::to_value(info).expect("serialize");
+        assert_eq!(value["rateLimited"]["window"], serde_json::json!("seven_day"));
+        assert_eq!(value["rateLimited"]["resetsAt"], serde_json::json!(1_787_986_800));
+
+        let clear = agent_info(&entry("scout", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);
+        let value = serde_json::to_value(clear).expect("serialize");
+        assert!(value.get("rateLimited").is_none(), "an unlimited agent carries no rateLimited key");
+    }
+
     fn info_of(status: AgentStatus) -> AgentInfo {
-        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, booting: false, started_at: None, services: BTreeMap::new() }
+        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, booting: false, rate_limited: None, started_at: None, services: BTreeMap::new() }
     }
 
     #[test]

@@ -556,6 +556,7 @@ async def test_status_reports_readiness_separate_from_provider(config):
         "provider_configured": True,
         "setup_complete": True,
         "boot_complete": True,
+        "rate_limited": None,
     }
 
     # Boot turns still pending flip only boot_complete: readiness is orthogonal to boot progress.
@@ -563,6 +564,20 @@ async def test_status_reports_readiness_separate_from_provider(config):
     booting_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
     assert json.loads(typing.cast("str", booting_resp.text))["boot_complete"] is False
     state.boot_turns_pending = 0
+
+    # A recorded rejection projects on /status so vestad overlays it on the roster; a window whose
+    # reset has passed reports null without waiting for the clearing turn.
+    from core.state_store import RateLimitedWindow
+
+    future_reset = int(time.time()) + 3_600
+    state.persisted.rate_limited = RateLimitedWindow(window="seven_day", resets_at=future_reset)
+    limited_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
+    assert json.loads(typing.cast("str", limited_resp.text))["rate_limited"] == {"window": "seven_day", "resets_at": future_reset}
+
+    state.persisted.rate_limited = RateLimitedWindow(window="seven_day", resets_at=int(time.time()) - 60)
+    expired_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
+    assert json.loads(typing.cast("str", expired_resp.text))["rate_limited"] is None
+    state.persisted.rate_limited = None
 
     provider_resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     provider_body = json.loads(typing.cast("str", provider_resp.text))
@@ -638,6 +653,7 @@ async def test_status_reports_unprovisioned_distinct_from_unauthenticated(config
         "provider_configured": False,
         "setup_complete": False,
         "boot_complete": True,
+        "rate_limited": None,
     }
 
 

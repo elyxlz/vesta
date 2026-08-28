@@ -31,6 +31,7 @@ export type {
   GatewayLan,
   GatewayOperation,
   GatewayOperationPhase,
+  RateLimitedInfo,
   ReleaseChannel,
   ServiceInfo,
   Tree,
@@ -143,6 +144,7 @@ export {
   agentOrbState,
   agentStatusKind,
   agentStatusLabel,
+  formatResetTime,
   orbIsLive,
 } from "./agent-status/agent-status"
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"

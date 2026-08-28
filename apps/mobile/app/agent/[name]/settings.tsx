@@ -103,6 +103,7 @@ function AgentSettingsContent() {
         activityState={activityState}
         operation={agent?.operation ?? null}
         booting={agent?.booting}
+        rateLimited={agent?.rateLimited ?? null}
         caption={
           providerIdentity ? (
             <Pressable

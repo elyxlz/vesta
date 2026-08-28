@@ -6,6 +6,7 @@ import type {
   AgentActivityState,
   AgentOperation,
   AgentStatus,
+  RateLimitedInfo,
 } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { AgentOrb } from "@/components/AgentOrb";
@@ -24,6 +25,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const status = agent?.status ?? "not_found";
   const operation = agent?.operation ?? null;
   const booting = agent?.booting;
+  const agentRateLimited = agent?.rateLimited ?? null;
   const openSettings = () =>
     router.push({
       pathname: "/agent/[name]/settings",
@@ -55,6 +57,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           activityState={activityState}
           operation={operation}
           booting={booting}
+          rateLimited={agentRateLimited}
           color={colors.text}
           onPress={openSettings}
         />
@@ -79,6 +82,7 @@ export function AgentIsland({
   activityState,
   operation,
   booting = false,
+  rateLimited = null,
   color,
   onPress,
 }: {
@@ -87,6 +91,7 @@ export function AgentIsland({
   activityState: AgentActivityState;
   operation: AgentOperation | null;
   booting?: boolean;
+  rateLimited?: RateLimitedInfo | null;
   color: string;
   onPress: () => void;
 }) {
@@ -110,6 +115,7 @@ export function AgentIsland({
           activityState={activityState}
           operation={operation}
           booting={booting}
+          rateLimited={rateLimited}
           size={24}
         />
       </BootTransitionTarget>

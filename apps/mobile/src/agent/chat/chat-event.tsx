@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as WebBrowser from "expo-web-browser";
 import Svg, { Path } from "react-native-svg";
+import { formatResetTime } from "@vesta/core";
 import type { ChatMessage } from "@vesta/core";
 import contentCopyIcon from "../../../assets/menu-icons/content-copy.xml";
 import editIcon from "../../../assets/menu-icons/edit.xml";
@@ -271,7 +272,9 @@ export const ChatEvent = memo(function ChatEvent({
   if (event.type === "error" || event.type === "rate_limited") {
     const text =
       event.type === "rate_limited"
-        ? "Rate limited. Vesta will be back soon."
+        ? event.resets_at != null
+          ? `Rate limited. Vesta will be back ${formatResetTime(event.resets_at)}.`
+          : "Rate limited. Vesta will be back soon."
         : "This message may not have gone through.";
     return (
       <Text style={[styles.systemMessage, { color: colors.tertiaryText }]}>

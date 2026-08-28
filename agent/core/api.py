@@ -24,6 +24,7 @@ import dataclasses as dc
 import json
 import logging
 import sqlite3
+import time
 import typing as tp
 import weakref
 
@@ -323,15 +324,21 @@ async def _status_handler(request: web.Request) -> web.Response:
     """The agent's operational readiness: whether the active provider is authenticated, whether one is
     configured at all (so vestad can tell unprovisioned from unauthenticated), whether first-start
     has finished, and whether this boot's non-interruptible boot turns are done. vestad polls this to
-    gate Alive / SettingUp / NotAuthenticated / Unprovisioned and to label a still-booting agent."""
+    gate Alive / SettingUp / NotAuthenticated / Unprovisioned and to label a still-booting agent.
+    `rate_limited` projects the persisted rejection so the roster can overlay it on an alive agent;
+    a window whose reset instant has passed reports null without waiting for the clearing turn."""
     state: State = request.app["state"]
     status = state.provider_status
+    limited = state.persisted.rate_limited
+    if limited is not None and limited.resets_at is not None and limited.resets_at <= time.time():
+        limited = None
     return web.json_response(
         {
             "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
             "provider_configured": status is not None and status.kind != "none",
             "setup_complete": state.persisted.first_start_done,
             "boot_complete": state.boot_turns_pending == 0,
+            "rate_limited": None if limited is None else {"window": limited.window, "resets_at": limited.resets_at},
         }
     )
 

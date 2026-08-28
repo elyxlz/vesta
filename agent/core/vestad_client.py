@@ -75,27 +75,6 @@ async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | N
         return False
 
 
-async def send_user_notification(kind: str, title: str, body: str) -> None:
-    """POST /agents/{me}/user-notification to vestad, which fans a `user_notification` delta to
-    connected clients and an Expo push to backgrounded mobile. Best-effort: any missing identity,
-    transport failure, non-2xx, or timeout is logged and swallowed, so surfacing a user notification
-    never disrupts the turn that emitted it (the durable work it describes already happened). `kind` is
-    one of "message"/"needs_user"/"task"."""
-    endpoint = _agent_endpoint("user-notification")
-    if endpoint is None:
-        return
-    url, token = endpoint
-    payload = {"kind": kind, "title": title, "body": body}
-    try:
-        async with _agent_session(token) as session:
-            resp = await session.post(url, json=payload)
-            resp.raise_for_status()
-    except aiohttp.ClientError as exc:
-        logger.warning(f"user notification to vestad failed ({kind}): {exc}")
-    except TimeoutError:
-        logger.warning(f"user notification to vestad timed out ({kind})")
-
-
 async def fetch_user_devices() -> pyd.JsonValue | None:
     """GET /agents/{me}/devices: every device the user has, with what each reported about itself (its
     IANA timezone; on a phone that shares it, its position plus the macro place). None (logged) when

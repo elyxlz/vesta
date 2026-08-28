@@ -3774,6 +3774,7 @@ mod tests {
                 status: AgentStatus::Alive,
                 ws_port: 4200,
                 booting: false,
+                rate_limited: None,
                 started_at: Some("2026-01-01T00:00:00Z".into()),
             },
             ListEntry {
@@ -3781,6 +3782,7 @@ mod tests {
                 status: AgentStatus::Stopped,
                 ws_port: 4201,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             },
         ];

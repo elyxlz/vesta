@@ -35,6 +35,7 @@ export function GeneralSection() {
             status={agent?.status ?? "not_found"}
             activityState={activityState}
             booting={agent?.booting}
+            rateLimited={agent?.rateLimited ?? null}
             size={84}
           />
           <View style={styles.identity}>

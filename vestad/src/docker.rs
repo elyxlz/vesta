@@ -425,6 +425,15 @@ pub struct StatusJson {
     pub ws_port: u16,
 }
 
+/// The provider rate-limit window binding an agent, exactly as its `GET /status` reports it
+/// (`snake_case`, the agent's JSON). `None` fields mean unknown, not unlimited: a bare 429 carries
+/// neither the window name nor the reset instant.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RateLimitedWindow {
+    pub window: Option<String>,
+    pub resets_at: Option<i64>,
+}
+
 #[derive(Serialize, Clone, PartialEq)]
 pub struct ListEntry {
     pub name: String,
@@ -434,6 +443,10 @@ pub struct ListEntry {
     /// API serves and chat queues durably, but clients label it as still waking up.
     #[serde(default)]
     pub booting: bool,
+    /// The rate-limit window binding this agent, from its readiness flags: alive but unable to
+    /// work until the window resets. Overlaid on the roster like `booting`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limited: Option<RateLimitedWindow>,
     // Container start time; the web app watches it change to retire a "restart to apply" flag.
     // camelCase on the wire to match the web's AgentInfo; omitted when the agent has never started.
     #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]

@@ -20,6 +20,15 @@ from .events import EVENTS_DB_FILENAME
 STATE_FILENAME = "state.json"
 
 
+class RateLimitedWindow(pyd.BaseModel):
+    """The provider rate-limit window currently binding, from the SDK's structured classification
+    when one arrived (window + reset instant) and empty for a bare 429. None fields mean unknown,
+    not unlimited."""
+
+    window: str | None = None
+    resets_at: int | None = None
+
+
 class PersistedState(pyd.BaseModel):
     first_start_done: bool = False
     last_restart_reason: str | None = None
@@ -29,6 +38,10 @@ class PersistedState(pyd.BaseModel):
     pending_boot_message: str | None = None
     session_id: str | None = None
     applied_migrations: list[str] = pyd.Field(default_factory=list)
+    # The rejection currently binding, cleared by the first turn that completes without error.
+    # Persisted so a restart neither forgets the condition (GET /status keeps projecting it) nor
+    # re-reports the same window as fresh news.
+    rate_limited: RateLimitedWindow | None = None
 
 
 def state_path(config: cfg.VestaConfig) -> pl.Path:

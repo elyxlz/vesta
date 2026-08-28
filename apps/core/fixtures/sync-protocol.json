@@ -6,6 +6,10 @@
         "booting": false,
         "buildPhase": null,
         "operation": "backing_up",
+        "rateLimited": {
+          "resetsAt": 1787986800,
+          "window": "seven_day"
+        },
         "services": {
           "dashboard": {
             "port": 8080,
@@ -118,6 +122,10 @@
             "booting": false,
             "buildPhase": null,
             "operation": "backing_up",
+            "rateLimited": {
+              "resetsAt": 1787986800,
+              "window": "seven_day"
+            },
             "services": {
               "dashboard": {
                 "port": 8080,

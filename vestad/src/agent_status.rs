@@ -83,12 +83,15 @@ pub async fn list_agents(
     for docker::ManagedAgent { cname, agent_name } in &agents {
         let info = docker::inspect_container(docker, cname, Some(agents_dir)).await;
         let status = combined_status(docker, http_client, agents_dir, cache, cname, &info).await;
+        // The readiness overlays (boot progress, a binding rate limit) only mean anything on an
+        // agent whose flags are current, which Alive is the proof of.
+        let readiness = (status == docker::AgentStatus::Alive).then(|| cache.readiness(agent_name)).flatten();
         entries.push(ListEntry {
             name: agent_name.clone(),
             status,
             ws_port: info.port.unwrap_or(0),
-            booting: status == docker::AgentStatus::Alive
-                && cache.readiness(agent_name).is_some_and(|r| !r.boot_complete),
+            booting: readiness.as_ref().is_some_and(|r| !r.boot_complete),
+            rate_limited: readiness.and_then(|r| r.rate_limited),
             started_at: info.started_at.clone(),
         });
     }
@@ -133,6 +136,7 @@ fn overlay_status(
                 status,
                 ws_port: 0,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             }),
         }
@@ -177,6 +181,7 @@ async fn combined_status(
                         Readiness {
                             status: status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
                             boot_complete: s.boot_complete,
+                            rate_limited: s.rate_limited,
                         },
                     );
                 }
@@ -287,6 +292,12 @@ pub struct AgentStatusCache {
     /// news, while a real change (died, stopped, signed out, recovered) reports exactly once.
     /// An agent's first stable observation seeds silently, which is what keeps every boot quiet.
     stable_statuses: Mutex<HashMap<String, docker::AgentStatus>>,
+    /// Per observed agent, the last rate-limit window seen (None: none yet). Sticky across the
+    /// window's disappearance: the agent clears its projection when a turn succeeds or the window
+    /// resets, and an old agent build re-reporting the same window after a restart is not fresh
+    /// news, so only a window differing from the sticky one notifies. A missing entry means never
+    /// observed, so a vestad boot seeds silently exactly as `stable_statuses` does.
+    rate_limits_notified: Mutex<HashMap<String, Option<docker::RateLimitedWindow>>>,
     /// Whether lifecycle observation is live. It runs between the two ends of vestad's own agent
     /// work: the boot reconcile stops, starts, and restarts agents as planned work (new agent
     /// code, desired-run state) and the shutdown stops every one of them, and the map above lives
@@ -296,11 +307,12 @@ pub struct AgentStatusCache {
 }
 
 /// What the last successful `GET /status` fetch resolved to: the readiness-derived reachable
-/// state, plus the boot-progress flag the roster labels with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// state, plus the boot-progress and rate-limit flags the roster labels with.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Readiness {
     pub status: docker::AgentStatus,
     pub boot_complete: bool,
+    pub rate_limited: Option<docker::RateLimitedWindow>,
 }
 
 impl AgentStatusCache {
@@ -331,6 +343,7 @@ impl AgentStatusCache {
             tap_connected: Mutex::new(HashSet::new()),
             readiness: Mutex::new(HashMap::new()),
             stable_statuses: Mutex::new(HashMap::new()),
+            rate_limits_notified: Mutex::new(HashMap::new()),
             observing: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -368,7 +381,7 @@ impl AgentStatusCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(name)
-            .copied()
+            .cloned()
     }
 
     /// Drop a destroyed agent's observation state (readiness, tap mark, last stable status), so
@@ -377,6 +390,10 @@ impl AgentStatusCache {
     /// against the dead predecessor.
     pub fn forget_agent(&self, name: &str) {
         self.stable_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
+        self.rate_limits_notified
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(name);
@@ -424,6 +441,51 @@ impl AgentStatusCache {
             }
         }
         transitions
+    }
+
+    /// Advance each agent's sticky last-seen rate-limit window from a fresh poll and return each
+    /// newly binding window, under the same discipline as `observe_transitions`: armed observation
+    /// only, stable unoperated agents only, first sight seeds silently. The caller routes every
+    /// returned window into exactly one `needs_user` notification.
+    pub fn observe_rate_limits(
+        &self,
+        agents: &[ListEntry],
+        operated: &HashSet<String>,
+        gateway_operation_running: bool,
+    ) -> Vec<(String, docker::RateLimitedWindow)> {
+        if !self.observing.load(std::sync::atomic::Ordering::Relaxed) {
+            return Vec::new();
+        }
+        let mut seen = self
+            .rate_limits_notified
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut binding = Vec::new();
+        for agent in agents {
+            if gateway_operation_running || operated.contains(&docker::normalize_name(&agent.name))
+            {
+                continue;
+            }
+            if !agent.status.is_stable() {
+                continue;
+            }
+            match seen.entry(agent.name.clone()) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(agent.rate_limited.clone());
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    // A None observation leaves the sticky window in place: clearing is not news,
+                    // and the same window coming back after an agent restart must stay silent.
+                    if let Some(window) = &agent.rate_limited {
+                        if entry.get().as_ref() != Some(window) {
+                            entry.insert(Some(window.clone()));
+                            binding.push((agent.name.clone(), window.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        binding
     }
 
     pub fn begin_observing(&self) {
@@ -706,15 +768,19 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             // agent EventBus's thinking/idle activity. Each observed transition is routed into
             // exactly one user notification: `needs_user` when only the user can fix it,
             // `agent_status` otherwise.
-            let transitions = cache.observe_transitions(
-                &agents,
-                &cache.operations().into_keys().collect(),
-                gateway_operation.running_phase().is_some(),
-            );
-            if !transitions.is_empty() {
+            let operated = cache.operations().into_keys().collect();
+            let gateway_busy = gateway_operation.running_phase().is_some();
+            let transitions = cache.observe_transitions(&agents, &operated, gateway_busy);
+            // A newly binding rate limit is agent news of the same rank as a status transition:
+            // the container stays Alive, so only the readiness overlay can carry it.
+            let rate_limits = cache.observe_rate_limits(&agents, &operated, gateway_busy);
+            if !transitions.is_empty() || !rate_limits.is_empty() {
                 let notifier = state.user_notifier().await;
                 for (agent, status) in transitions {
                     notifier.notify_status_transition(&agent, status);
+                }
+                for (agent, window) in rate_limits {
+                    notifier.notify_rate_limited(&agent, &window);
                 }
             }
 
@@ -976,6 +1042,7 @@ mod tests {
                 status: docker::AgentStatus::Alive,
                 ws_port: 4200,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             },
             ListEntry {
@@ -983,6 +1050,7 @@ mod tests {
                 status: docker::AgentStatus::Stopped,
                 ws_port: 4201,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             },
         ]);
@@ -1008,6 +1076,7 @@ mod tests {
                 status: docker::AgentStatus::Stopped,
                 ws_port: 4200,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             },
             ListEntry {
@@ -1015,6 +1084,7 @@ mod tests {
                 status: docker::AgentStatus::Alive,
                 ws_port: 4201,
                 booting: false,
+                rate_limited: None,
                 started_at: Some("2026-01-01T00:00:00Z".into()),
             },
         ];
@@ -1044,6 +1114,7 @@ mod tests {
             status,
             ws_port,
             booting: false,
+            rate_limited: None,
             started_at: None,
         };
         let dialed = tappable_agents(&[
@@ -1071,6 +1142,7 @@ mod tests {
                 status: docker::AgentStatus::Stopped,
                 ws_port: 4200,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             },
             ListEntry {
@@ -1078,6 +1150,7 @@ mod tests {
                 status: docker::AgentStatus::Alive,
                 ws_port: 4201,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             },
         ];
@@ -1157,11 +1230,11 @@ mod tests {
         let cache = AgentStatusCache::new();
         cache.agents_tx.send_modify(|agents| {
             agents.extend([
-                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, started_at: None },
-                ListEntry { name: "quiet".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, started_at: None },
-                ListEntry { name: "asleep".into(), status: docker::AgentStatus::Stopped, ws_port: 3, booting: false, started_at: None },
+                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, rate_limited: None, started_at: None },
+                ListEntry { name: "quiet".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, rate_limited: None, started_at: None },
+                ListEntry { name: "asleep".into(), status: docker::AgentStatus::Stopped, ws_port: 3, booting: false, rate_limited: None, started_at: None },
                 // Mid-restart: its tap is down, so its preference reads as the enabled default.
-                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 4, booting: false, started_at: None },
+                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 4, booting: false, rate_limited: None, started_at: None },
             ]);
         });
         cache.presence_notifications_tx.send_modify(|preferences| {
@@ -1184,9 +1257,9 @@ mod tests {
         let cache = AgentStatusCache::new();
         cache.agents_tx.send_modify(|agents| {
             agents.extend([
-                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, started_at: None },
-                ListEntry { name: "mute".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, started_at: None },
-                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 3, booting: false, started_at: None },
+                ListEntry { name: "scout".into(), status: docker::AgentStatus::Alive, ws_port: 1, booting: false, rate_limited: None, started_at: None },
+                ListEntry { name: "mute".into(), status: docker::AgentStatus::Alive, ws_port: 2, booting: false, rate_limited: None, started_at: None },
+                ListEntry { name: "booting".into(), status: docker::AgentStatus::Starting, ws_port: 3, booting: false, rate_limited: None, started_at: None },
             ]);
         });
         cache.timezones_tx.send_modify(|zones| {
@@ -1261,6 +1334,7 @@ mod tests {
             status,
             ws_port: 4200,
             booting: false,
+            rate_limited: None,
             started_at: None,
         }
     }
@@ -1287,6 +1361,90 @@ mod tests {
             vec![("luna".to_string(), docker::AgentStatus::Stopped)]
         );
         assert!(observe(&cache, &[lifecycle_entry("luna", docker::AgentStatus::Stopped)]).is_empty());
+    }
+
+    fn limited_entry(name: &str, window: Option<docker::RateLimitedWindow>) -> ListEntry {
+        ListEntry {
+            rate_limited: window,
+            ..lifecycle_entry(name, docker::AgentStatus::Alive)
+        }
+    }
+
+    fn weekly_window() -> docker::RateLimitedWindow {
+        docker::RateLimitedWindow {
+            window: Some("seven_day".to_string()),
+            resets_at: Some(1_787_986_800),
+        }
+    }
+
+    fn observe_limits(
+        cache: &AgentStatusCache,
+        agents: &[ListEntry],
+    ) -> Vec<(String, docker::RateLimitedWindow)> {
+        cache.observe_rate_limits(agents, &HashSet::new(), false)
+    }
+
+    #[test]
+    fn a_newly_binding_rate_limit_reports_exactly_once() {
+        let cache = lifecycle_cache();
+        assert!(observe_limits(&cache, &[limited_entry("luna", None)]).is_empty());
+        assert_eq!(
+            observe_limits(&cache, &[limited_entry("luna", Some(weekly_window()))]),
+            vec![("luna".to_string(), weekly_window())]
+        );
+        // The CLI re-reports the same window every poll; only the first sighting is news.
+        assert!(observe_limits(&cache, &[limited_entry("luna", Some(weekly_window()))]).is_empty());
+    }
+
+    #[test]
+    fn the_same_window_returning_after_a_clear_stays_silent_but_a_new_window_reports() {
+        let cache = lifecycle_cache();
+        assert!(observe_limits(&cache, &[limited_entry("luna", None)]).is_empty());
+        assert_eq!(observe_limits(&cache, &[limited_entry("luna", Some(weekly_window()))]).len(), 1);
+        // An agent restart on an older build briefly projects no window; the same window coming
+        // back is not fresh news.
+        assert!(observe_limits(&cache, &[limited_entry("luna", None)]).is_empty());
+        assert!(observe_limits(&cache, &[limited_entry("luna", Some(weekly_window()))]).is_empty());
+        // A different window (a later reset instant) is a new episode.
+        let next_window = docker::RateLimitedWindow {
+            window: Some("seven_day".to_string()),
+            resets_at: Some(1_788_000_000),
+        };
+        assert_eq!(
+            observe_limits(&cache, &[limited_entry("luna", Some(next_window.clone()))]),
+            vec![("luna".to_string(), next_window)]
+        );
+    }
+
+    #[test]
+    fn an_agent_already_limited_at_first_sight_seeds_silently() {
+        // A vestad boot with an already-limited agent must not repeat the notification the
+        // previous vestad process already delivered.
+        let cache = lifecycle_cache();
+        assert!(observe_limits(&cache, &[limited_entry("luna", Some(weekly_window()))]).is_empty());
+        assert!(observe_limits(&cache, &[limited_entry("luna", Some(weekly_window()))]).is_empty());
+    }
+
+    #[test]
+    fn rate_limit_observation_respects_operations_stability_and_arming() {
+        let cache = AgentStatusCache::new();
+        // Not armed yet: nothing observes.
+        assert!(observe_limits(&cache, &[limited_entry("luna", None)]).is_empty());
+        cache.begin_observing();
+        assert!(observe_limits(&cache, &[limited_entry("luna", None)]).is_empty());
+        // An operated agent's flags are the operation's doing.
+        let operated: HashSet<String> = HashSet::from(["luna".to_string()]);
+        assert!(cache
+            .observe_rate_limits(&[limited_entry("luna", Some(weekly_window()))], &operated, false)
+            .is_empty());
+        // A transient status carries stale flags.
+        let restarting = ListEntry {
+            rate_limited: Some(weekly_window()),
+            ..lifecycle_entry("luna", docker::AgentStatus::Restarting)
+        };
+        assert!(observe_limits(&cache, &[restarting]).is_empty());
+        // Stable, unoperated, armed: the pending window reports.
+        assert_eq!(observe_limits(&cache, &[limited_entry("luna", Some(weekly_window()))]).len(), 1);
     }
 
     #[test]

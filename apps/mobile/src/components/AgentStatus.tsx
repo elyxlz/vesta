@@ -5,6 +5,7 @@ import {
   type AgentActivityState,
   type AgentOperation,
   type AgentStatus,
+  type RateLimitedInfo,
 } from "@vesta/core";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { Text } from "@/components/ui/Typography";
@@ -14,19 +15,22 @@ export function AgentStatusBadge({
   activityState = "idle",
   operation = null,
   booting = false,
+  rateLimited = null,
   centered = false,
 }: {
   status: AgentStatus;
   activityState?: AgentActivityState;
   operation?: AgentOperation | null;
   booting?: boolean;
+  rateLimited?: RateLimitedInfo | null;
   centered?: boolean;
 }) {
   const { colors } = usePreferences();
   const active = status === "alive" && !booting;
-  const thinking = active && activityState === "thinking";
+  const limited = active && operation === null && rateLimited != null;
+  const thinking = active && !limited && activityState === "thinking";
   const attention = operation === null && agentNeedsUser(status);
-  const color = thinking
+  const color = limited || thinking
     ? colors.warning
     : active
       ? colors.success
@@ -43,7 +47,7 @@ export function AgentStatusBadge({
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
       <Text style={[styles.label, { color }]}>
-        {agentStatusLabel(status, activityState, operation, booting)}
+        {agentStatusLabel(status, activityState, operation, booting, rateLimited)}
       </Text>
     </View>
   );
