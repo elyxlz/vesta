@@ -12,7 +12,7 @@ import { useLocation } from "react-router-dom";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { CHAT_CONTENT_WIDTH } from "./content-width";
+import { CHAT_CONTENT_COLUMN } from "./content-column";
 import { useToast } from "@/stores/use-toast";
 import { useLayout } from "@/stores/use-layout";
 import { useAgentSocket } from "@/providers/AgentSocketProvider";
@@ -213,7 +213,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         <div
           ref={composerRef}
           // px-3 mirrors the message list's 12px scrollbar-gutter on each side, so the
-          // composer's w-3/5 column computes from the same width and lines up with the bubbles.
+          // composer's capped column computes from the same width and lines up with the bubbles.
           className={cn("absolute inset-x-0 bottom-0", !isMobile && "px-3")}
         >
           {chatMessages.length > 0 && (
@@ -236,8 +236,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           <div
             className={cn(
               "relative",
-              // 60% centered column is fullscreen-only; the split-panel composer fills its panel.
-              fullscreen && !isMobile && CHAT_CONTENT_WIDTH,
+              // The capped centered column is shared by both desktop chats; only mobile fills full width.
+              !isMobile && CHAT_CONTENT_COLUMN,
             )}
           >
             <BottomBanner error={voiceError} />

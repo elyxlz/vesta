@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { stepTransition } from "@/lib/motion";
 import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
-import { CHAT_CONTENT_WIDTH } from "../content-width";
+import { CHAT_CONTENT_COLUMN } from "../content-column";
 import { buildDecorated, lastSeenIndex, type DecoratedRow } from "./rows";
 import { useChatScroll } from "./use-chat-scroll";
 
@@ -239,14 +239,13 @@ export const ChatMessageArea = memo(function ChatMessageArea({
   bottomOverhang = 0,
   onAtBottomChange,
 }: ChatMessageAreaProps) {
-  // Desktop treatment (floating-composer inset, spacious gaps, sizes) applies to both the
-  // fullscreen and split-panel chats; only mobile keeps the plain layout. The narrow centered
-  // column is fullscreen-only, the split-panel chat fills its panel.
-  const floating = !isMobile;
-  const centered = Boolean(fullscreen) && !isMobile;
+  // Desktop treatment (floating-composer inset, spacious gaps, sizes, the capped centered
+  // column) applies to both the fullscreen and split-panel chats; only mobile keeps the plain,
+  // full-width layout.
+  const isDesktop = !isMobile;
   const decorated = useMemo(
-    () => buildDecorated(chatMessages, floating),
-    [chatMessages, floating],
+    () => buildDecorated(chatMessages, isDesktop),
+    [chatMessages, isDesktop],
   );
   const count = decorated.length;
   const lastAgentText = useMemo(() => {
@@ -316,7 +315,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
           "h-full overflow-y-auto overflow-x-hidden",
           // Reserve the scrollbar gutter on both sides so the centered message column
           // shares the same center as the (scrollbar-free) floating composer.
-          floating && "[scrollbar-gutter:stable_both-edges]",
+          isDesktop && "[scrollbar-gutter:stable_both-edges]",
         )}
         // The prepend restore owns anchoring; the browser's native scroll
         // anchoring would compensate the same prepend a second time.
@@ -331,7 +330,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
         }}
       >
         <div
-          className={cn(centered && CHAT_CONTENT_WIDTH)}
+          className={cn(isDesktop && CHAT_CONTENT_COLUMN)}
           style={{ paddingBottom: bottomInset }}
         >
           <div style={{ paddingTop: topPad }}>
