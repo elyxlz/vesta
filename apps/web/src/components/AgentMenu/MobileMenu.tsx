@@ -38,6 +38,7 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
             showAliveActions={state.showAliveActions}
             isBusy={state.isBusy}
             onLogs={state.onLogs}
+            onServices={state.onServices}
             onToggle={state.onToggle}
             onRestart={state.onRestart}
             onBackup={state.onBackup}

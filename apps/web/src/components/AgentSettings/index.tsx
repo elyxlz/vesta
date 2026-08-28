@@ -7,6 +7,7 @@ import { NotificationsCard } from "./NotificationsCard";
 import { FilesTab } from "./FilesTab";
 import { LogsTab } from "./LogsTab";
 import { ProviderCard } from "./ProviderCard";
+import { ServicesCard } from "./ServicesCard";
 import { SttCard, TtsCard } from "./VoiceSection";
 
 export function AgentSettings() {
@@ -30,6 +31,7 @@ export function AgentSettings() {
             </div>
             <div className="flex min-w-0 flex-col gap-4">
               <ProviderCard />
+              <ServicesCard />
               <BackupsCard />
               <SttCard />
               <TtsCard />

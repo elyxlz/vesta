@@ -5,6 +5,7 @@ export interface MenuState {
   isBusy: boolean;
   onToggle: () => void;
   onLogs: () => void;
+  onServices: () => void;
   onAppSettings: () => void;
   onAgentSettings: () => void;
   onRestart: () => void;

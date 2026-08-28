@@ -13,6 +13,7 @@ import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useAppMode } from "@/stores/use-app-mode";
+import { AgentServicesList } from "@/components/AgentServices";
 import type { MenuState } from "./types";
 import { MobileMenu } from "./MobileMenu";
 import { DesktopMenu } from "./DesktopMenu";
@@ -35,6 +36,7 @@ export function AgentMenu() {
 
   const [open, setOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [servicesOpen, setServicesOpen] = useState(false);
   const isMobile = useIsMobile();
 
   const isRunning =
@@ -52,6 +54,7 @@ export function AgentMenu() {
       else start();
     },
     onLogs: () => goTo(`/agent/${encodeURIComponent(name)}/logs`),
+    onServices: () => setServicesOpen(true),
     onAppSettings: () => {
       void navigate("/settings");
     },
@@ -110,6 +113,14 @@ export function AgentMenu() {
           trigger={trigger}
         />
       )}
+      <Dialog open={servicesOpen} onOpenChange={setServicesOpen}>
+        <DialogContent className="max-w-md" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>services</DialogTitle>
+          </DialogHeader>
+          <AgentServicesList />
+        </DialogContent>
+      </Dialog>
       <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
         <DialogContent
           className="max-w-lg max-h-[80vh] overflow-auto"
