@@ -97,16 +97,25 @@ describe("readBrowserDeviceContext", () => {
     expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 
-  it("falls through to the renderer's geolocation when the bridge answers null", async () => {
+  it("treats the desktop bridge's null as final and never asks the renderer", async () => {
     stubOsZone("America/New_York");
-    stubGeolocation((success) => {
-      success({
-        coords: { latitude: 39.2238, longitude: 9.1217, accuracy: 20 },
-      });
-    });
+    const getCurrentPosition = vi.fn();
+    stubGeolocation(getCurrentPosition);
     bridge.readGeolocation = () => Promise.resolve(null);
-    await expect(readBrowserDeviceContext(true)).resolves.toMatchObject({
-      timezone: "Europe/Rome",
+    await expect(readBrowserDeviceContext(true)).resolves.toEqual({
+      timezone: "America/New_York",
     });
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+  });
+
+  it("treats a refusing desktop provider as no fix and never asks the renderer", async () => {
+    stubOsZone("America/New_York");
+    const getCurrentPosition = vi.fn();
+    stubGeolocation(getCurrentPosition);
+    bridge.readGeolocation = () => Promise.reject(new Error("denied"));
+    await expect(readBrowserDeviceContext(true)).resolves.toEqual({
+      timezone: "America/New_York",
+    });
+    expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 });

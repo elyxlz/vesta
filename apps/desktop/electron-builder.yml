@@ -10,7 +10,11 @@ files:
 extraResources:
   - from: ../web/dist
     to: web
+beforePack: scripts/build-native.mjs
 mac:
+  extraResources:
+    - from: native/vesta-location
+      to: vesta-location
   category: public.app-category.productivity
   target:
     - target: dmg

@@ -17,8 +17,9 @@ export interface OauthLoopback {
   cancel(port: number): Promise<void>;
 }
 
-// A fix the desktop main process resolved through the OS location provider (WinRT on Windows,
-// GeoClue2 on Linux); macOS answers null and the renderer's own geolocation covers it.
+// A fix the desktop main process resolved through the OS location provider (CoreLocation on
+// macOS, WinRT on Windows, GeoClue2 on Linux); that answer is final, the renderer never falls
+// back to its own geolocation in the desktop app.
 export interface NativeGeolocationFix {
   latitude: number;
   longitude: number;
