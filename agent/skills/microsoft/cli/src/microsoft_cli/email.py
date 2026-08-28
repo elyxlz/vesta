@@ -4,6 +4,7 @@ import base64
 import dataclasses
 import html
 import pathlib as pl
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -580,6 +581,17 @@ def _reply_body_to_html(raw: str) -> str:
     return "".join(parts)
 
 
+def _quote_to_html(quoted: str) -> str:
+    """Make a createReply/createReplyAll quote safe to place inside an HTML body. Outlook's
+    quote often arrives as plain text (an `________ From: ... Sent: ...` block whose lines are
+    separated by newlines, not block-level tags), which collapses into one unreadable line when
+    concatenated as HTML. When no block-level tag is present, wrap it so the newlines survive; a
+    quote that already carries HTML is returned untouched."""
+    if re.search(r"<(?:div|p|br|table)\b", quoted, re.IGNORECASE):
+        return quoted
+    return '<pre style="white-space:pre-wrap;font-family:inherit">' + html.escape(quoted) + "</pre>"
+
+
 def reply_draft(
     config: Config,
     client: httpx.Client,
@@ -627,7 +639,7 @@ def reply_draft(
         "PATCH",
         f"/me/messages/{draft_id}",
         account_id,
-        json={"body": {"contentType": "HTML", "content": _reply_body_to_html(body) + "<br><br>" + quoted}},
+        json={"body": {"contentType": "HTML", "content": _reply_body_to_html(body) + "<br><br>" + _quote_to_html(quoted)}},
     )
 
     _attach_files(config, client, draft_id, attachments, account_id)

@@ -75,6 +75,22 @@ def test_reply_draft_escapes_body(patched):
     assert "<script>" not in content
 
 
+def test_quote_to_html_leaves_html_quote_untouched():
+    quoted = "<div>From: A</div><div>hello</div>"
+    assert email._quote_to_html(quoted) == quoted
+
+
+def test_quote_to_html_wraps_plain_text_quote_to_preserve_newlines():
+    quoted = "________________________________\nFrom: A\nSent: today\n\nbody line"
+    out = email._quote_to_html(quoted)
+    assert out.startswith("<pre")
+    assert "white-space:pre-wrap" in out
+    # the newlines that would collapse in a bare HTML body survive inside the wrapper
+    assert "\n" in out
+    # markup in a plain-text quote is escaped, never injected
+    assert email._quote_to_html("From: <b>A</b>") == '<pre style="white-space:pre-wrap;font-family:inherit">From: &lt;b&gt;A&lt;/b&gt;</pre>'
+
+
 def test_reply_draft_parser_and_dispatch(monkeypatch):
     parser = cli.build_parser()
     args = parser.parse_args(
