@@ -15,9 +15,6 @@ export interface RecentGateway {
   hosted: boolean;
   lastConnectedAt: number;
   connection: ConnectionConfig;
-  // The self-host connect key, kept so a switch can mint a fresh session even
-  // after the stored tokens die. Absent for hosted (vesta.run) gateways.
-  connectKey?: string;
 }
 
 // FNV-1a with two seeds: a stable id per gateway, so reconnecting the same
@@ -39,7 +36,7 @@ export function recentGatewayId(url: string): string {
 
 export function upsertRecentGateway(
   gateways: readonly RecentGateway[],
-  entry: { connection: ConnectionConfig; connectKey?: string },
+  entry: { connection: ConnectionConfig },
   options: { touch: boolean; now: number },
 ): RecentGateway[] {
   const id = recentGatewayId(entry.connection.url);
@@ -53,7 +50,6 @@ export function upsertRecentGateway(
     lastConnectedAt:
       options.touch || !existing ? options.now : existing.lastConnectedAt,
     connection: entry.connection,
-    connectKey: entry.connectKey ?? existing?.connectKey,
   };
   const remaining = gateways.filter(
     (gateway) => gateway.id !== id && gateway.url !== entry.connection.url,
@@ -77,7 +73,6 @@ function parseRecentGateway(value: unknown): RecentGateway | null {
     id?: unknown;
     lastConnectedAt?: unknown;
     connection?: unknown;
-    connectKey?: unknown;
   };
   const connection = parseConnectionConfig(record.connection);
   if (connection === null) return null;
@@ -91,8 +86,6 @@ function parseRecentGateway(value: unknown): RecentGateway | null {
     hosted: connection.hosted === true,
     lastConnectedAt: record.lastConnectedAt,
     connection,
-    connectKey:
-      typeof record.connectKey === "string" ? record.connectKey : undefined,
   };
 }
 
@@ -123,11 +116,11 @@ function writeRecentGateways(gateways: RecentGateway[]): void {
 
 export function rememberGateway(
   connection: ConnectionConfig,
-  options: { connectKey?: string; touch?: boolean } = {},
+  options: { touch?: boolean } = {},
 ): RecentGateway[] {
   const next = upsertRecentGateway(
     readRecentGateways(),
-    { connection, connectKey: options.connectKey },
+    { connection },
     { touch: options.touch ?? true, now: Date.now() },
   );
   writeRecentGateways(next);

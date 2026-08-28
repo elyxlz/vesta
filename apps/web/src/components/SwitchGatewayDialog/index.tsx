@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
 import { Cloud, Server, Trash2 } from "lucide-react";
-import { connectToServer } from "@/api";
 import { router } from "@/router";
 import { getConnection, restoreConnection } from "@/lib/connection";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
   forgetRecentGateway,
   readRecentGateways,
@@ -22,7 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ProgressBar } from "@/components/ProgressBar";
 
 function gatewayHost(url: string): string {
   try {
@@ -55,20 +53,14 @@ function currentGatewayId(): string | null {
   }
 }
 
-type Attempt =
-  | { gateway: RecentGateway; status: "connecting" }
-  | { gateway: RecentGateway; status: "error"; message: string };
-
 function GatewayRow({
   gateway,
   current,
-  disabled,
   onSwitch,
   onForget,
 }: {
   gateway: RecentGateway;
   current: boolean;
-  disabled: boolean;
   onSwitch: () => void;
   onForget: () => void;
 }) {
@@ -83,7 +75,7 @@ function GatewayRow({
     >
       <button
         type="button"
-        disabled={disabled || current}
+        disabled={current}
         onClick={onSwitch}
         aria-label={
           current ? undefined : `switch to ${gatewayHost(gateway.url)}`
@@ -108,7 +100,6 @@ function GatewayRow({
         <Button
           size="icon-sm"
           variant="ghost"
-          disabled={disabled}
           aria-label={`forget ${gatewayHost(gateway.url)}`}
           onClick={onForget}
           className="shrink-0 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-transparent hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
@@ -125,34 +116,21 @@ function GatewayRow({
 function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
   const reconnect = useControllerReconnect();
   const [gateways, setGateways] = useState<RecentGateway[]>(readRecentGateways);
-  const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [pendingForget, setPendingForget] = useState<RecentGateway | null>(
     null,
   );
   const currentId = useMemo(() => currentGatewayId(), []);
-  const isConnecting = attempt?.status === "connecting";
 
   const others = gateways.filter((gateway) => gateway.id !== currentId);
 
-  const switchTo = async (gateway: RecentGateway) => {
-    if (isConnecting) return;
-    setAttempt({ gateway, status: "connecting" });
-    try {
-      if (!gateway.hosted && gateway.connectKey) {
-        await connectToServer(gateway.url, gateway.connectKey);
-      } else {
-        restoreConnection(gateway.connection);
-      }
-      void router.navigate("/");
-      reconnect();
-      onClose();
-    } catch (cause) {
-      setAttempt({
-        gateway,
-        status: "error",
-        message: errorMessage(cause, "connection failed"),
-      });
-    }
+  // Restore the saved short-lived tokens and let the controller reconnect (the
+  // refresh flow revives them if they expired); a gateway whose tokens have
+  // fully lapsed lands on the app's reauth screen, same as any dead session.
+  const switchTo = (gateway: RecentGateway) => {
+    restoreConnection(gateway.connection);
+    void router.navigate("/");
+    reconnect();
+    onClose();
   };
 
   const confirmForget = () => {
@@ -161,44 +139,6 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
     if (!gateway) return;
     setGateways(forgetRecentGateway(gateway.id));
   };
-
-  if (attempt) {
-    const host = gatewayHost(attempt.gateway.url);
-    const Icon = attempt.gateway.hosted ? Cloud : Server;
-    return (
-      <>
-        <DialogHeader>
-          <DialogTitle>
-            {attempt.status === "connecting"
-              ? `connecting to ${host}`
-              : `couldn't connect to ${host}`}
-          </DialogTitle>
-          {attempt.status === "error" && (
-            <DialogDescription className="break-all">
-              {attempt.message}
-            </DialogDescription>
-          )}
-        </DialogHeader>
-        {attempt.status === "connecting" ? (
-          <div className="flex flex-col items-center gap-5 py-6">
-            <span className="flex size-11 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary animate-pulse">
-              <Icon className="size-5" />
-            </span>
-            <ProgressBar />
-          </div>
-        ) : (
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAttempt(null)}>
-              back
-            </Button>
-            <Button onClick={() => void switchTo(attempt.gateway)}>
-              retry
-            </Button>
-          </DialogFooter>
-        )}
-      </>
-    );
-  }
 
   if (pendingForget) {
     return (
@@ -247,8 +187,7 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
               key={gateway.id}
               gateway={gateway}
               current={gateway.id === currentId}
-              disabled={isConnecting}
-              onSwitch={() => void switchTo(gateway)}
+              onSwitch={() => switchTo(gateway)}
               onForget={() => setPendingForget(gateway)}
             />
           ))}

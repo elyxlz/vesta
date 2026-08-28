@@ -63,18 +63,17 @@ describe("upsertRecentGateway", () => {
     expect(back[0]?.lastConnectedAt).toBe(30);
   });
 
-  it("preserves the connect key when a later save omits it", () => {
-    const withKey = upsertRecentGateway(
+  it("refreshes the connection without bumping lastConnectedAt on an untouched save", () => {
+    const initial = upsertRecentGateway(
       [],
-      { connection: conn("https://a.example"), connectKey: "secret" },
+      { connection: conn("https://a.example") },
       { touch: true, now: 10 },
     );
     const refreshed = upsertRecentGateway(
-      withKey,
+      initial,
       { connection: conn("https://a.example", { accessToken: "new" }) },
       { touch: false, now: 20 },
     );
-    expect(refreshed[0]?.connectKey).toBe("secret");
     expect(refreshed[0]?.connection.accessToken).toBe("new");
     expect(refreshed[0]?.lastConnectedAt).toBe(10);
   });
@@ -109,11 +108,10 @@ describe("removeRecentGateway", () => {
 
 describe("localStorage round-trip", () => {
   it("remembers, reads back, and forgets a gateway", () => {
-    rememberGateway(conn("https://a.example"), { connectKey: "k" });
+    rememberGateway(conn("https://a.example"));
     const read = readRecentGateways();
     expect(read).toHaveLength(1);
     expect(read[0]?.url).toBe("https://a.example");
-    expect(read[0]?.connectKey).toBe("k");
 
     forgetRecentGateway(recentGatewayId("https://a.example"));
     expect(readRecentGateways()).toEqual([]);

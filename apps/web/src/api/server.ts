@@ -36,5 +36,5 @@ export async function connectToServer(
     data.expires_in,
   );
   const connection = getConnection();
-  if (connection) rememberGateway(connection, { connectKey: apiKey });
+  if (connection) rememberGateway(connection);
 }
