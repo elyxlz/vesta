@@ -1,4 +1,4 @@
-appId: com.vestarun.app
+appId: com.vesta.desktop
 productName: Vesta
 artifactName: "Vesta_${version}_${arch}.${ext}"
 directories:

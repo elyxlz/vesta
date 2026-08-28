@@ -1,6 +1,7 @@
 import { BrowserWindow, Menu, app, ipcMain, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { readNativeGeolocation } from "./geolocation";
+import { trackQuitIntent } from "./lifecycle";
 import { cancelLoopback, startLoopback } from "./oauth-loopback";
 import { clearConnection, readConnection, writeConnection } from "./store";
 import { createMainWindow, registerAppScheme, showMainWindow } from "./window";
@@ -12,7 +13,7 @@ if (!gotLock) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | null = null;
-  let quitting = false;
+  const isQuitting = trackQuitIntent(app);
 
   const buildMenu = () => {
     if (process.platform !== "darwin") {
@@ -89,10 +90,6 @@ if (!gotLock) {
     if (mainWindow) showMainWindow(mainWindow);
   });
 
-  app.on("before-quit", () => {
-    quitting = true;
-  });
-
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
@@ -112,7 +109,7 @@ if (!gotLock) {
     mainWindow = createMainWindow();
     // macOS convention: closing the window keeps Vesta in the dock.
     mainWindow.on("close", (event) => {
-      if (process.platform === "darwin" && !quitting) {
+      if (process.platform === "darwin" && !isQuitting()) {
         event.preventDefault();
         mainWindow?.hide();
       }
