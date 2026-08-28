@@ -12,8 +12,10 @@ import {
 } from "lucide-react";
 import {
   Fragment,
+  memo,
   useContext,
   useLayoutEffect,
+  useMemo,
   useRef,
   type MouseEvent,
 } from "react";
@@ -23,6 +25,7 @@ import {
   PILL_FALLBACK_ICON,
   PILL_KIND_ICONS,
   pillDisplayLine,
+  type FeedSections,
   type FeedView,
   type LoggedUserNotification,
   type NotificationFeed,
@@ -35,6 +38,7 @@ import {
   type NotificationsPillState,
 } from "@/providers/NotificationsPillProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
+import type { AgentRow } from "@/lib/types";
 import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useRuntime } from "@/providers/RuntimeProvider";
@@ -88,8 +92,6 @@ const ICON_COMPONENTS: Record<string, LucideIcon> = {
 // the route layouts, so navigation never resets it); this component is only
 // the web rendering.
 
-type Sections = ReturnType<typeof feedSections>;
-
 // One rendering of the history (skeletons, rows, empty/error text) shared by
 // the compact popover and the full dialog; the surfaces differ only in row
 // budget, skeleton count, and footer.
@@ -120,6 +122,14 @@ function HistoryList({
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
   const emptyText = entries.length > 0 ? null : emptyCaption(view, emptyLabel);
+  // Resolve the agent per row from one roster read, so rows don't each
+  // subscribe to the gateway and scan it; live only slides in fresh arrivals.
+  const { agents } = useGateway();
+  const agentByName = useMemo(
+    () => new Map(agents.map((agent) => [agent.name, agent])),
+    [agents],
+  );
+  const liveSet = useMemo(() => new Set(liveIds), [liveIds]);
   return (
     <>
       {view === "loading" && <SkeletonRows count={skeletonCount} />}
@@ -143,14 +153,13 @@ function HistoryList({
               layout
               // Only a live arrival slides in; rows loaded from the log (the
               // first page after the skeletons, and older pages) just appear.
-              initial={
-                liveIds.includes(entry.id) ? { y: -24, opacity: 0 } : false
-              }
+              initial={liveSet.has(entry.id) ? { y: -24, opacity: 0 } : false}
               animate={{ y: 0, opacity: 1 }}
               transition={{ type: "spring", duration: 0.35, bounce: 0 }}
             >
               <NotificationRow
                 entry={entry}
+                row={agentByName.get(entry.agent) ?? null}
                 timestamp={timestamps}
                 compact={compact}
                 dimmed={dimmed}
@@ -193,7 +202,7 @@ function emptyCaption(
 // POPOVER_ROWS, so the archive extends past it sooner.
 function archiveExtendsBeyond(
   feed: NotificationFeed,
-  sections: Sections,
+  sections: FeedSections,
 ): boolean {
   if (feed.entries.length === 0) return false;
   if (sections) return true;
@@ -210,7 +219,7 @@ function DialogHistory({
   onOpen,
 }: {
   feed: NotificationFeed;
-  sections: Sections;
+  sections: FeedSections;
   footer?: React.ReactNode;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
@@ -450,14 +459,17 @@ function formatDayLabel(atSeconds: number): string {
 // that width. Rotation order depends on direction: an expanding shell resizes
 // first and delays the incoming slide, a shrinking one slides first and delays
 // the resize, so the text is never clipped by a shell that has not made room.
-function NotificationRow({
+const NotificationRow = memo(function NotificationRow({
   entry,
+  row,
   timestamp,
   compact,
   dimmed,
   onOpen,
 }: {
   entry: LoggedUserNotification;
+  /** The roster agent this notification names, resolved by the list; null if none. */
+  row: AgentRow | null;
   timestamp: boolean;
   compact: boolean;
   /** Already-seen rows in the dialog sit back; hovering lifts them for reading. */
@@ -467,8 +479,6 @@ function NotificationRow({
   // The pill's leading-glyph rule, identically: the orb when the notification
   // names a roster agent (who, at their current state), the kind icon
   // otherwise (what).
-  const { agents } = useGateway();
-  const row = agents.find((agent) => agent.name === entry.agent) ?? null;
   const { orbState } = useOrbStatus(row, row?.activityState ?? "idle");
   return (
     <button
@@ -510,7 +520,7 @@ function NotificationRow({
       )}
     </button>
   );
-}
+});
 
 function SkeletonRows({ count }: { count: number }) {
   return (

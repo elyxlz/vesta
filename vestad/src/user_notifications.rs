@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::docker::AgentStatus;
 use crate::mobile_app::MobileApp;
 use crate::sync::{SyncHub, UserNotification};
-use crate::user_notification_log::UserNotificationLog;
+use crate::user_notification_log::{LoggedUserNotification, UserNotificationLog};
 
 /// A new agent reply; agent-injectable.
 pub const KIND_MESSAGE: &str = "message";
@@ -88,8 +88,7 @@ impl UserNotifier {
     /// takes the default from `effective_title`.
     pub fn notify(&self, agent: &str, kind: &str, title: String, body: String) {
         let title = effective_title(agent, title);
-        let identity = self.log.append(agent, kind, &title, &body);
-        self.fan(identity, agent, kind, title, body);
+        self.fan(self.log.append(agent, kind, &title, body));
     }
 
     /// `notify`, delivered at most once ever: skipped when the durable log already holds an
@@ -97,28 +96,35 @@ impl UserNotifier {
     /// it (the update announcement).
     pub fn notify_once(&self, agent: &str, kind: &str, title: String, body: String) {
         let title = effective_title(agent, title);
-        if let Some(identity) = self.log.append_once(agent, kind, &title, &body) {
-            self.fan(identity, agent, kind, title, body);
+        if let Some(entry) = self.log.append_once(agent, kind, &title, body) {
+            self.fan(entry);
         }
     }
 
-    fn fan(&self, (id, at): (u64, u64), agent: &str, kind: &str, title: String, body: String) {
-        tracing::info!(%agent, %kind, %title, "user notification");
+    fn fan(&self, entry: LoggedUserNotification) {
+        tracing::info!(agent = %entry.agent, kind = %entry.kind, title = %entry.title, "user notification");
         // The append just moved the feed's newest stamp, which rides the gateway branch: wake
         // sessions so their next gateway diff carries it.
         self.sync_hub.bump_user_feed();
         if let Some((_, subscription, event_type, default_on)) =
-            MOBILE_PUSH_ROUTES.iter().find(|(routed, _, _, _)| *routed == kind)
+            MOBILE_PUSH_ROUTES.iter().find(|(routed, _, _, _)| *routed == entry.kind.as_str())
         {
-            if self.push_overrides.get(kind).copied().unwrap_or(*default_on) {
+            if self.push_overrides.get(entry.kind.as_str()).copied().unwrap_or(*default_on) {
                 self.mobile_app.push_event(
-                    agent,
+                    &entry.agent,
                     subscription,
-                    serde_json::json!({ "type": event_type, "title": title, "body": body }),
+                    serde_json::json!({ "type": event_type, "title": &entry.title, "body": &entry.body }),
                 );
             }
         }
-        self.sync_hub.publish_user_notification(UserNotification { id, at, agent: agent.to_string(), kind: kind.to_string(), title, body });
+        self.sync_hub.publish_user_notification(UserNotification {
+            id: entry.id,
+            at: entry.at,
+            agent: entry.agent,
+            kind: entry.kind,
+            title: entry.title,
+            body: entry.body,
+        });
     }
 
     /// A device id's first sighting ever. The copy lives here beside the other gateway-minted

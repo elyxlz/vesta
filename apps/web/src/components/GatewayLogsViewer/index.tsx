@@ -9,15 +9,15 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { BOTTOM_FADE_PX } from "@/hooks/use-scroll-fade";
 import type { LogEvent } from "@/lib/types";
 import { LogLevelColors } from "./styles";
 
 // The floating header sits over the terminal like the fullscreen console's navbar. The
 // first line clears the header by HEADER_H, and the top fade dissolves the tail over
 // twice that, matching the native dialog mask (dialogScrollMask); the bottom softens by
-// BOTTOM_FADE, the native BOTTOM_FADE_PX.
+// the shared BOTTOM_FADE_PX.
 const HEADER_H = 68;
-const BOTTOM_FADE = 15;
 
 // vestad writes plain-text logs as `<timestamp>  <LEVEL>  <message>`. Split that
 // shape so the viewer can dim the timestamp and color the level; anything that
@@ -106,7 +106,7 @@ export function GatewayLogsViewer({
         <div className="relative h-full">
           <LogScroller
             lines={lines}
-            fade={{ top: HEADER_H * 2, bottom: BOTTOM_FADE }}
+            fade={{ top: HEADER_H * 2, bottom: BOTTOM_FADE_PX }}
             placeholder={<StreamingIndicator />}
             topSpacer={<div style={{ height: HEADER_H }} />}
             footer={<div className="h-4" />}

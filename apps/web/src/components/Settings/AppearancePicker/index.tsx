@@ -1,10 +1,10 @@
 import { schemeColors } from "@/design-tokens";
 import { cn } from "@/lib/utils";
+import type { Theme } from "@/providers/ThemeProvider/context";
 
-export type ThemeChoice = "system" | "light" | "dark";
 type Scheme = "light" | "dark";
 
-const OPTIONS: { value: ThemeChoice; label: string }[] = [
+const OPTIONS: { value: Theme; label: string }[] = [
   { value: "system", label: "system" },
   { value: "light", label: "light" },
   { value: "dark", label: "dark" },
@@ -44,7 +44,7 @@ function SchemeFrame({ scheme }: { scheme: Scheme }) {
 
 // The system tile shows light above and dark below the bottom-left to
 // top-right diagonal.
-function AppearancePreview({ theme }: { theme: ThemeChoice }) {
+function AppearancePreview({ theme }: { theme: Theme }) {
   if (theme !== "system") return <SchemeFrame scheme={theme} />;
   return (
     <div className="relative h-full w-full">
@@ -66,9 +66,9 @@ export function AppearancePicker({
   options = OPTIONS,
   onChange,
 }: {
-  value: ThemeChoice;
-  options?: readonly { value: ThemeChoice; label: string }[];
-  onChange: (value: ThemeChoice) => void;
+  value: Theme;
+  options?: readonly { value: Theme; label: string }[];
+  onChange: (value: Theme) => void;
 }) {
   return (
     <div

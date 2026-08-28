@@ -81,10 +81,10 @@ impl UserNotificationLog {
         entries.last().map(|entry| entry.at)
     }
 
-    /// Append one delivered notification, assigning the next monotonic id, and return the entry's
-    /// `(id, at)` so the fanned delta carries the same identity the log serves. The disk write is
+    /// Append one delivered notification, assigning the next monotonic id, and return the logged
+    /// entry so the fanned delta carries the same identity the log serves. The disk write is
     /// best-effort: a full disk costs history, never delivery.
-    pub(crate) fn append(&self, agent: &str, kind: &str, title: &str, body: &str) -> (u64, u64) {
+    pub(crate) fn append(&self, agent: &str, kind: &str, title: &str, body: String) -> LoggedUserNotification {
         let mut entries = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Self::push_entry(&self.path, &mut entries, agent, kind, title, body)
     }
@@ -92,8 +92,8 @@ impl UserNotificationLog {
     /// Append unless an entry with this kind and title is already logged, the check and the
     /// append under one lock: the log itself is the durable memory of "already delivered", so
     /// a producer that must notify once ever cannot repeat itself across restarts or races.
-    /// Returns the new entry's `(id, at)`, or `None` when it was already logged.
-    pub(crate) fn append_once(&self, agent: &str, kind: &str, title: &str, body: &str) -> Option<(u64, u64)> {
+    /// Returns the new logged entry, or `None` when it was already logged.
+    pub(crate) fn append_once(&self, agent: &str, kind: &str, title: &str, body: String) -> Option<LoggedUserNotification> {
         let mut entries = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if entries.iter().any(|entry| entry.kind == kind && entry.title == title) {
             return None;
@@ -107,15 +107,15 @@ impl UserNotificationLog {
         agent: &str,
         kind: &str,
         title: &str,
-        body: &str,
-    ) -> (u64, u64) {
+        body: String,
+    ) -> LoggedUserNotification {
         let entry = LoggedUserNotification {
             id: entries.last().map_or(1, |last| last.id + 1),
             at: now_epoch_secs(),
             agent: agent.to_string(),
             kind: kind.to_string(),
             title: title.to_string(),
-            body: body.to_string(),
+            body,
         };
         match serde_json::to_string(&entry) {
             Ok(line) => {
@@ -130,9 +130,8 @@ impl UserNotificationLog {
             }
             Err(error) => tracing::warn!(%error, "could not serialize a user notification"),
         }
-        let identity = (entry.id, entry.at);
-        entries.push(entry);
-        identity
+        entries.push(entry.clone());
+        entry
     }
 
     /// A newest-first page: entries with id below `before` (all when `None`),
@@ -158,9 +157,9 @@ mod tests {
     fn appends_page_newest_first_with_an_id_cursor() {
         let directory = tempfile::tempdir().expect("tempdir");
         let log = UserNotificationLog::load(directory.path());
-        log.append("aria", "message", "aria", "hi");
-        log.append("aria", "task", "aria added a task: x", "");
-        log.append("", "gateway_updated", "gateway updated to v0.2.10", "");
+        log.append("aria", "message", "aria", "hi".to_string());
+        log.append("aria", "task", "aria added a task: x", String::new());
+        log.append("", "gateway_updated", "gateway updated to v0.2.10", String::new());
 
         let newest = log.page(None, 2);
         assert_eq!(newest.iter().map(|entry| entry.id).collect::<Vec<_>>(), vec![3, 2]);
@@ -173,11 +172,11 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         {
             let log = UserNotificationLog::load(directory.path());
-            log.append("aria", "message", "aria", "hi");
-            log.append("aria", "message", "aria", "again");
+            log.append("aria", "message", "aria", "hi".to_string());
+            log.append("aria", "message", "aria", "again".to_string());
         }
         let reloaded = UserNotificationLog::load(directory.path());
-        reloaded.append("aria", "message", "aria", "after restart");
+        reloaded.append("aria", "message", "aria", "after restart".to_string());
         let ids: Vec<u64> = reloaded.page(None, 10).iter().map(|entry| entry.id).collect();
         assert_eq!(ids, vec![3, 2, 1]);
     }
@@ -187,12 +186,12 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         {
             let log = UserNotificationLog::load(directory.path());
-            assert!(log.append_once("", "update_available", "gateway v0.3.0 available", "").is_some());
-            assert!(log.append_once("", "update_available", "gateway v0.3.0 available", "").is_none());
-            assert!(log.append_once("", "update_available", "gateway v0.4.0 available", "").is_some());
+            assert!(log.append_once("", "update_available", "gateway v0.3.0 available", String::new()).is_some());
+            assert!(log.append_once("", "update_available", "gateway v0.3.0 available", String::new()).is_none());
+            assert!(log.append_once("", "update_available", "gateway v0.4.0 available", String::new()).is_some());
         }
         let reloaded = UserNotificationLog::load(directory.path());
-        assert!(reloaded.append_once("", "update_available", "gateway v0.3.0 available", "").is_none());
+        assert!(reloaded.append_once("", "update_available", "gateway v0.3.0 available", String::new()).is_none());
         assert_eq!(reloaded.page(None, 10).len(), 2);
     }
 
@@ -213,7 +212,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let log = UserNotificationLog::load(directory.path());
         assert_eq!(log.last_at(), None);
-        log.append("aria", "message", "aria", "hi");
+        log.append("aria", "message", "aria", "hi".to_string());
         let newest = log.page(None, 1);
         assert_eq!(log.last_at(), Some(newest[0].at));
     }
@@ -223,7 +222,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         {
             let log = UserNotificationLog::load(directory.path());
-            log.append("aria", "message", "aria", "hi");
+            log.append("aria", "message", "aria", "hi".to_string());
         }
         let path = directory.path().join(LOG_FILE);
         let mut content = std::fs::read_to_string(&path).expect("log file");

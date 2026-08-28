@@ -1,13 +1,12 @@
 import { type ReactNode } from "react";
 import { useLayout } from "@/stores/use-layout";
-import { useScrollFade } from "@/hooks/use-scroll-fade";
+import { BOTTOM_FADE_PX, useScrollFade } from "@/hooks/use-scroll-fade";
 import { cn } from "@/lib/utils";
 
 // A full-page scroll surface: content scrolls under the fixed navbar, dissolving into it
 // over twice its height at the top and softening at the bottom, and inset by the page
 // padding. The fade shows only on the edge that can still scroll, so a short page and the
 // very top and bottom never fade.
-const BOTTOM_FADE_PX = 15;
 
 export function PageScroll({
   children,

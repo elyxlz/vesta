@@ -100,8 +100,8 @@ export function useNotificationFeed(
   useEffect(() => {
     if (!feed.open || feed.seenAt === null || feed.seenAt === 0) return
     if (feed.newest !== "ready" || feed.older !== "more") return
-    if (oldestEntry !== undefined && oldestEntry.at > feed.seenAt) loadPage(oldestEntry.id)
-  }, [feed.open, feed.seenAt, feed.newest, feed.older, oldestEntry, loadPage])
+    if (oldestEntry !== undefined && oldestEntry.at > feed.seenAt) loadOlder()
+  }, [feed.open, feed.seenAt, feed.newest, feed.older, oldestEntry, loadOlder])
 
   return { feed, open, close, loadOlder }
 }

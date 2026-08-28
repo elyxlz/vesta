@@ -3,6 +3,7 @@ import { useLayout } from "@/stores/use-layout";
 import type { LogStreamState } from "@/lib/log-session";
 import { useAgentLogSession } from "@/providers/AgentLogStreamProvider";
 import { LogScroller, StreamingIndicator } from "@/components/LogScroller";
+import { BOTTOM_FADE_PX } from "@/hooks/use-scroll-fade";
 import { cn } from "@/lib/utils";
 
 const STREAM_NOTICE: Record<Exclude<LogStreamState, "live">, string> = {
@@ -47,7 +48,11 @@ export function Console({ fullscreen }: { fullscreen?: boolean }) {
     <LogScroller
       lines={lines}
       className={fullscreen ? "dark-overlay" : undefined}
-      fade={fullscreen ? { top: navbarHeight * 2, bottom: 15 } : undefined}
+      fade={
+        fullscreen
+          ? { top: navbarHeight * 2, bottom: BOTTOM_FADE_PX }
+          : undefined
+      }
       placeholder={<StreamingPlaceholder state={streamState} />}
       topSpacer={
         fullscreen ? (

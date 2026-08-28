@@ -97,14 +97,18 @@ export function feedNeedsMarkSeen(feed: NotificationFeed, lastAt: number | null)
   return feedHasUnseen(lastAt, seenAt) || feed.entries.some((item) => item.at > seenAt)
 }
 
+/** The unseen/seen split, or null when the feed renders as one plain list. */
+export type FeedSections = {
+  unseen: LoggedUserNotification[]
+  seen: LoggedUserNotification[]
+} | null
+
 /**
  * The unseen/seen split against the held watermark, or null when the feed
  * renders as one plain list: before the first session, and for a user who
  * never caught up (everything would be "new", so a split only adds noise).
  */
-export function feedSections(
-  feed: NotificationFeed,
-): { unseen: LoggedUserNotification[]; seen: LoggedUserNotification[] } | null {
+export function feedSections(feed: NotificationFeed): FeedSections {
   if (feed.seenAt === null || feed.seenAt === 0) return null
   return splitBySeen(feed.entries, feed.seenAt)
 }

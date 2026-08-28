@@ -7,6 +7,10 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 // caller building a bespoke mask), and an `update` for content changes it cannot observe.
 const DEFAULT_FADE = "28px";
 
+// The bottom fade shared by every scroll surface (the page, the console, the gateway log
+// viewer): the tail softens by this many px so the last line never cuts hard against the edge.
+export const BOTTOM_FADE_PX = 15;
+
 export interface ScrollEdges {
   top: boolean;
   bottom: boolean;

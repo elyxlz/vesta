@@ -60,6 +60,7 @@ export {
   feedView,
   reduceFeed,
   type FeedAction,
+  type FeedSections,
   type FeedView,
   type NotificationFeed,
 } from "./notifications-pill/notification-feed"
