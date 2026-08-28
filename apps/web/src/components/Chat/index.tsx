@@ -34,10 +34,11 @@ import { TRIM_HISTORY_SETTLE_MS, agentNeedsUser } from "@vesta/core";
 const COMPOSER_GAP_FULLSCREEN_PX = 12;
 const COMPOSER_GAP_PANEL_PX = 8;
 
-// The empty composer's height per layout, a CSS-deterministic baseline: the 36px
-// button row plus the pill's fixed padding and border (50px), plus the wrapper's
-// bottom gap (pb-3 / pb-4 / pb-1). Seeds a cold remount so the list reserves the
-// composer's space on its first render; the real measurement then overwrites it.
+// The empty composer's height per layout, a CSS-deterministic baseline: the 50px
+// pill (a 36px button row plus its 6+6px padding and 2px border) plus the
+// wrapper's bottom gap (pb-3 12 / pb-4 16 / pb-1 4). Seeds a cold remount so the
+// list reserves the composer's space on its first render; the real measurement
+// then overwrites it.
 const COMPOSER_BASELINE_PX: Record<ComposerVariant, number> = {
   panel: 62,
   fullscreen: 66,
