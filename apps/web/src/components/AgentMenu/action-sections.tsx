@@ -1,6 +1,7 @@
 import {
   Archive,
   Bug,
+  Globe,
   KeyRound,
   Play,
   RefreshCw,
@@ -16,6 +17,7 @@ export interface AgentActionsInput {
   showAliveActions?: boolean;
   isBusy: boolean;
   onLogs: () => void;
+  onServices?: () => void;
   onToggle: () => void;
   onRestart: () => void;
   onBackup: () => void;
@@ -46,18 +48,23 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   const sections: ActionSection[] = [];
 
   if (input.isRunning) {
-    sections.push({
-      key: "view",
-      title: "Tools",
-      items: [
-        {
-          key: "logs",
-          icon: <ScrollText data-icon="inline-start" />,
-          label: "logs",
-          onClick: input.onLogs,
-        },
-      ],
-    });
+    const toolItems: ActionItem[] = [
+      {
+        key: "logs",
+        icon: <ScrollText data-icon="inline-start" />,
+        label: "logs",
+        onClick: input.onLogs,
+      },
+    ];
+    if (input.onServices) {
+      toolItems.push({
+        key: "services",
+        icon: <Globe data-icon="inline-start" />,
+        label: "services",
+        onClick: input.onServices,
+      });
+    }
+    sections.push({ key: "view", title: "Tools", items: toolItems });
   }
 
   const controlItems: ActionItem[] = [
