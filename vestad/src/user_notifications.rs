@@ -133,6 +133,19 @@ impl UserNotifier {
         );
     }
 
+    /// A rate-limit window newly binding an alive agent: only the user can wait it out or
+    /// reconfigure the provider, so it notifies as `needs_user`. Minted here from the roster
+    /// overlay's transition (`observe_rate_limits`), never injected by the agent, so a dropped
+    /// request cannot lose it and a restarted agent cannot repeat it.
+    pub fn notify_rate_limited(&self, agent: &str, window: &crate::docker::RateLimitedWindow) {
+        self.notify(
+            agent,
+            KIND_NEEDS_USER,
+            format!("{agent} is rate limited"),
+            rate_limited_body(window, crate::time_utils::now_epoch_secs()),
+        );
+    }
+
     /// Route one observed stable-status transition into exactly one notification: a status only
     /// the user can fix notifies as `needs_user`, every other real change as `agent_status`.
     pub fn notify_status_transition(&self, agent: &str, status: AgentStatus) {
@@ -156,6 +169,35 @@ fn effective_title(agent: &str, title: String) -> String {
     } else {
         title
     }
+}
+
+/// The window names the agent's structured classification can carry; anything else (or a bare 429
+/// with no classification) takes the generic line. Duplicated from the agent's own wording on
+/// purpose: the two sides of this seam share no library.
+fn rate_limited_body(window: &crate::docker::RateLimitedWindow, now_epoch_secs: u64) -> String {
+    let name = match window.window.as_deref() {
+        Some("five_hour") => "The 5-hour usage window is exhausted",
+        Some("seven_day") => "The weekly usage window is exhausted",
+        Some("seven_day_opus") => "The weekly Opus usage window is exhausted",
+        Some("seven_day_sonnet") => "The weekly Sonnet usage window is exhausted",
+        Some("overage") => "The extra usage budget is exhausted",
+        _ => "The provider rejected new work",
+    };
+    let reset = window
+        .resets_at
+        .and_then(|resets_at| u64::try_from(resets_at).ok())
+        .filter(|resets_at| *resets_at > now_epoch_secs)
+        .map(|resets_at| {
+            let remaining = resets_at - now_epoch_secs;
+            let (hours, minutes) = (remaining / 3600, remaining % 3600 / 60);
+            if hours > 0 {
+                format!(", resets in {hours}h {minutes}m")
+            } else {
+                format!(", resets in {minutes}m")
+            }
+        })
+        .unwrap_or_default();
+    format!("{name}{reset}.")
 }
 
 /// The notification a status owes the user, if that status needs one at all.
@@ -333,6 +375,51 @@ mod tests {
                 ("status".to_string(), "needs_user".to_string()),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_binding_rate_limit_notifies_as_needs_user_with_the_window_and_reset() {
+        let (delivery, sync_hub, worker, _dir) = notifier(HashMap::new());
+        let mut deltas = sync_hub.subscribe_user_notifications();
+
+        delivery.notify_rate_limited(
+            "luna",
+            &crate::docker::RateLimitedWindow {
+                window: Some("seven_day".to_string()),
+                resets_at: Some(i64::MAX),
+            },
+        );
+
+        let delta = deltas.try_recv().expect("rate limit delta");
+        assert_eq!(delta.kind, KIND_NEEDS_USER);
+        assert_eq!(delta.title, "luna is rate limited");
+        assert!(delta.body.starts_with("The weekly usage window is exhausted, resets in"));
+        assert_eq!(
+            drain_pushes(delivery, worker).await,
+            vec![("status".to_string(), "needs_user".to_string())]
+        );
+    }
+
+    #[test]
+    fn rate_limited_body_names_the_window_and_omits_a_past_or_missing_reset() {
+        let window = |name: Option<&str>, resets_at: Option<i64>| crate::docker::RateLimitedWindow {
+            window: name.map(str::to_string),
+            resets_at,
+        };
+        let now = 1_000_000;
+        assert_eq!(
+            rate_limited_body(&window(Some("five_hour"), Some(1_012_000)), now),
+            "The 5-hour usage window is exhausted, resets in 3h 20m."
+        );
+        assert_eq!(
+            rate_limited_body(&window(Some("seven_day"), None), now),
+            "The weekly usage window is exhausted."
+        );
+        assert_eq!(
+            rate_limited_body(&window(Some("overage"), Some(999_999)), now),
+            "The extra usage budget is exhausted."
+        );
+        assert_eq!(rate_limited_body(&window(None, None), now), "The provider rejected new work.");
     }
 
     #[tokio::test]

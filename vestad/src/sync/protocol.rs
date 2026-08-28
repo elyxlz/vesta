@@ -137,6 +137,15 @@ pub(crate) struct ServiceInfo {
     pub rev: u64,
 }
 
+/// The rate-limit window binding an alive agent: the agent serves but its provider rejects work
+/// until the window resets. Clients overlay it on the status the way they overlay `booting`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RateLimitedInfo {
+    pub window: Option<String>,
+    pub resets_at: Option<i64>,
+}
+
 /// The per-agent `info` branch. camelCase to match `AgentInfo`. `activity_state` is a plain string
 /// ("idle"/"thinking") sourced from the activity cache; the TS union narrows it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -149,6 +158,9 @@ pub(crate) struct AgentInfo {
     /// An `Alive` agent still working through its boot turns; clients label it as waking up.
     #[serde(default)]
     pub booting: bool,
+    /// Present exactly while a rate limit binds the agent. Absent on older gateways.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limited: Option<RateLimitedInfo>,
     pub started_at: Option<String>,
     pub services: BTreeMap<String, ServiceInfo>,
 }
@@ -284,6 +296,10 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         build_phase: None,
         operation: Some(AgentOperation::BackingUp),
         booting: false,
+        rate_limited: Some(RateLimitedInfo {
+            window: Some("seven_day".into()),
+            resets_at: Some(1_787_986_800),
+        }),
         started_at: Some("2026-01-01T00:00:00Z".into()),
         services,
     };
@@ -443,6 +459,7 @@ mod tests {
             build_phase: None,
             operation: None,
             booting: false,
+            rate_limited: None,
             started_at: Some("2026-07-18T00:00:00Z".into()),
             services: std::collections::BTreeMap::new(),
         };
@@ -461,6 +478,7 @@ mod tests {
             build_phase: None,
             operation: None,
             booting: false,
+            rate_limited: None,
             started_at: None,
             services: BTreeMap::new(),
         }
