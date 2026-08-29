@@ -13,7 +13,10 @@ import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { RecentGateway } from "@/storage/recent-gateway-model";
+import {
+  recentGatewayId,
+  type RecentGateway,
+} from "@/storage/recent-gateway-model";
 import { radii } from "@/theme/layout";
 
 const CONNECTION_PROGRESS_DELAY_MS = 150;
@@ -48,6 +51,8 @@ function lastConnectedLabel(timestamp: number): string {
 
 export default function RecentGatewaysScreen() {
   const {
+    status,
+    connection,
     recentGateways,
     connectRecentGateway,
     forgetRecentGateway,
@@ -67,6 +72,7 @@ export default function RecentGatewaysScreen() {
   const isConnecting = connectionAttempt?.status === "connecting";
   const showsConnectionState =
     showConnectionState && connectionAttempt !== null;
+  const currentGatewayId = connection ? recentGatewayId(connection.url) : null;
 
   useEffect(
     () => () => {
@@ -79,6 +85,7 @@ export default function RecentGatewaysScreen() {
 
   const connect = async (gateway: RecentGateway, showImmediately = false) => {
     if (isConnecting) return;
+    const dismissAfterConnect = status === "connected";
     if (connectionProgressTimer.current) {
       clearTimeout(connectionProgressTimer.current);
       connectionProgressTimer.current = null;
@@ -97,6 +104,7 @@ export default function RecentGatewaysScreen() {
 
     try {
       await connectRecentGateway(gateway.id);
+      if (dismissAfterConnect) router.dismissTo("/");
     } catch (cause) {
       if (connectionProgressTimer.current) {
         clearTimeout(connectionProgressTimer.current);
@@ -132,7 +140,13 @@ export default function RecentGatewaysScreen() {
   return (
     <AuthSheet
       mode={showsConnectionState ? "plain" : "scroll"}
-      title={showsConnectionState ? undefined : "Recent gateways"}
+      title={
+        showsConnectionState
+          ? undefined
+          : status === "connected"
+            ? "Switch gateway"
+            : "Recent gateways"
+      }
       hasGrabber
     >
       {showsConnectionState ? (
@@ -212,35 +226,24 @@ export default function RecentGatewaysScreen() {
           exiting={FadeOut.duration(CONTENT_TRANSITION_MS)}
         >
           {recentGateways === null ? (
-            <LoadingSpinner
-              style={styles.loading}
-              color={colors.interactive}
-            />
+            <LoadingSpinner style={styles.loading} color={colors.interactive} />
           ) : recentGateways.length === 0 ? (
             <Text style={[styles.empty, { color: colors.secondaryText }]}>
               No saved gateways.
             </Text>
           ) : (
             <View style={styles.listContent}>
-              {recentGateways.map((gateway) => (
-                <NativeDeleteRow
-                  key={gateway.id}
-                  containerStyle={[
-                    styles.gateway,
-                    {
-                      backgroundColor: colors.input,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                  deleteAccessibilityLabel={`Forget ${gatewayName(gateway)}`}
-                  dangerColor={colors.danger}
-                  disabled={isConnecting}
-                  onDelete={() => confirmForget(gateway)}
-                >
+              {recentGateways.map((gateway) => {
+                const current = gateway.id === currentGatewayId;
+                const row = (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`Connect to ${gatewayName(gateway)}`}
-                    disabled={isConnecting}
+                    accessibilityLabel={
+                      current
+                        ? `${gatewayName(gateway)}, current gateway`
+                        : `Connect to ${gatewayName(gateway)}`
+                    }
+                    disabled={isConnecting || current}
                     onPress={() => void connect(gateway)}
                     style={({ pressed }) => [
                       styles.gatewayMain,
@@ -279,14 +282,51 @@ export default function RecentGatewaysScreen() {
                         {lastConnectedLabel(gateway.lastConnectedAt)}
                       </Text>
                     </View>
-                    <Ionicons
-                      name="chevron-forward"
-                      size={17}
-                      color={colors.tertiaryText}
-                    />
+                    {current ? (
+                      <Text
+                        style={[
+                          styles.currentLabel,
+                          {
+                            backgroundColor: colors.accentSoft,
+                            color: colors.accent,
+                          },
+                        ]}
+                      >
+                        Current
+                      </Text>
+                    ) : (
+                      <Ionicons
+                        name="chevron-forward"
+                        size={17}
+                        color={colors.tertiaryText}
+                      />
+                    )}
                   </Pressable>
-                </NativeDeleteRow>
-              ))}
+                );
+                const containerStyle = [
+                  styles.gateway,
+                  {
+                    backgroundColor: colors.input,
+                    borderColor: colors.border,
+                  },
+                ];
+                return current ? (
+                  <View key={gateway.id} style={containerStyle}>
+                    {row}
+                  </View>
+                ) : (
+                  <NativeDeleteRow
+                    key={gateway.id}
+                    containerStyle={containerStyle}
+                    deleteAccessibilityLabel={`Forget ${gatewayName(gateway)}`}
+                    dangerColor={colors.danger}
+                    disabled={isConnecting}
+                    onDelete={() => confirmForget(gateway)}
+                  >
+                    {row}
+                  </NativeDeleteRow>
+                );
+              })}
             </View>
           )}
 
@@ -381,6 +421,15 @@ const styles = StyleSheet.create({
   gatewayCopy: { flex: 1, gap: 2 },
   gatewayName: { fontSize: 16, lineHeight: 20, fontWeight: "500" },
   gatewayDetail: { fontSize: 13, lineHeight: 18 },
+  currentLabel: {
+    borderRadius: radii.pill,
+    overflow: "hidden",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "600",
+  },
   footerActions: { marginTop: 16 },
   footerActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
 });

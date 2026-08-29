@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Cloud, Server, Trash2 } from "lucide-react";
 import { router } from "@/router";
 import { getConnection, restoreConnection } from "@/lib/connection";
@@ -115,13 +115,28 @@ function GatewayRow({
 // pending confirm survives a close.
 function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
   const reconnect = useControllerReconnect();
-  const [gateways, setGateways] = useState<RecentGateway[]>(readRecentGateways);
+  const [gateways, setGateways] = useState<RecentGateway[] | null>(null);
   const [pendingForget, setPendingForget] = useState<RecentGateway | null>(
     null,
   );
   const currentId = useMemo(() => currentGatewayId(), []);
 
-  const others = gateways.filter((gateway) => gateway.id !== currentId);
+  const others = gateways?.filter((gateway) => gateway.id !== currentId) ?? [];
+
+  useEffect(() => {
+    let active = true;
+    void readRecentGateways()
+      .then((saved) => {
+        if (active) setGateways(saved);
+      })
+      .catch((cause: unknown) => {
+        console.warn("could not read saved gateways", cause);
+        if (active) setGateways([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Restore the saved short-lived tokens and let the controller reconnect (the
   // refresh flow revives them if they expired); a gateway whose tokens have
@@ -137,7 +152,11 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
     const gateway = pendingForget;
     setPendingForget(null);
     if (!gateway) return;
-    setGateways(forgetRecentGateway(gateway.id));
+    void forgetRecentGateway(gateway.id)
+      .then(setGateways)
+      .catch((cause: unknown) =>
+        console.warn("could not forget saved gateway", cause),
+      );
   };
 
   if (pendingForget) {
@@ -158,6 +177,22 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
             forget
           </Button>
         </DialogFooter>
+      </>
+    );
+  }
+
+  if (gateways === null) {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>switch gateway</DialogTitle>
+          <DialogDescription>
+            reconnect to a gateway you've used before.
+          </DialogDescription>
+        </DialogHeader>
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          loading saved gateways...
+        </p>
       </>
     );
   }

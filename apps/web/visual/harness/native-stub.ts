@@ -15,6 +15,9 @@ interface VestaNativeApi {
   storeRead(): Promise<unknown>;
   storeWrite(value: unknown): Promise<void>;
   storeClear(): Promise<void>;
+  recentStoreRead(): Promise<unknown>;
+  recentStoreWrite(value: unknown): Promise<void>;
+  recentStoreClear(): Promise<void>;
   oauthStart(): Promise<number>;
   onOauthCallback(cb: (url: string) => void): () => void;
   oauthCancel(port: number): Promise<void>;
@@ -55,6 +58,7 @@ export async function installNativeStub(
         });
       }
       let stored: unknown = connection;
+      let recentStored: unknown = null;
       const noop = (): void => undefined;
       const resolved = (): Promise<void> => Promise.resolve();
       window.vestaNative = {
@@ -74,6 +78,15 @@ export async function installNativeStub(
         },
         storeClear: () => {
           stored = null;
+          return Promise.resolve();
+        },
+        recentStoreRead: () => Promise.resolve(recentStored),
+        recentStoreWrite: (value: unknown) => {
+          recentStored = value;
+          return Promise.resolve();
+        },
+        recentStoreClear: () => {
+          recentStored = null;
           return Promise.resolve();
         },
         oauthStart: () => Promise.resolve(0),

@@ -4,6 +4,18 @@ import { parseConnectionConfig } from "./parse-connection-config";
 import type { NativeBridge } from "./types";
 
 const STORAGE_KEY = "vesta-connection";
+const RECENT_GATEWAYS_STORAGE_KEY = "vesta-recent-gateways";
+
+function readStoredJson(key: string): unknown {
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(key);
+    return null;
+  }
+}
 
 export function parseConnection(raw: string): ConnectionConfig | null {
   try {
@@ -28,6 +40,22 @@ export function createBrowserBridge(): NativeBridge {
       },
       clear() {
         localStorage.removeItem(STORAGE_KEY);
+        return Promise.resolve();
+      },
+    },
+    recentGatewayStore: {
+      read() {
+        return Promise.resolve(readStoredJson(RECENT_GATEWAYS_STORAGE_KEY));
+      },
+      write(value) {
+        localStorage.setItem(
+          RECENT_GATEWAYS_STORAGE_KEY,
+          JSON.stringify(value),
+        );
+        return Promise.resolve();
+      },
+      clear() {
+        localStorage.removeItem(RECENT_GATEWAYS_STORAGE_KEY);
         return Promise.resolve();
       },
     },

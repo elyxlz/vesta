@@ -9,6 +9,12 @@ export interface ConnectionStore {
   clear(): Promise<void>;
 }
 
+export interface ValueStore {
+  read(): Promise<unknown>;
+  write(value: unknown): Promise<void>;
+  clear(): Promise<void>;
+}
+
 export interface OauthLoopback {
   /** Start the loopback HTTP server; resolves with the bound port. */
   start(): Promise<number>;
@@ -53,6 +59,7 @@ export interface NativeBridge {
   runtime: Runtime;
   platform: Platform;
   connectionStore: ConnectionStore;
+  recentGatewayStore: ValueStore;
   openExternal(url: string): Promise<void>;
   focusWindow(): Promise<void>;
   /** Force the window's scheme, or hand it back to the OS with "system". */
@@ -85,6 +92,9 @@ export interface VestaNativeApi {
   storeRead(): Promise<unknown>;
   storeWrite(value: unknown): Promise<void>;
   storeClear(): Promise<void>;
+  recentStoreRead(): Promise<unknown>;
+  recentStoreWrite(value: unknown): Promise<void>;
+  recentStoreClear(): Promise<void>;
   oauthStart(): Promise<number>;
   onOauthCallback(cb: (url: string) => void): () => void;
   oauthCancel(port: number): Promise<void>;

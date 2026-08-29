@@ -1,11 +1,12 @@
 // Exercises localStorage, so it runs in the jsdom project (.test.tsx include).
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionConfig } from "@/lib/connection";
 import {
   forgetRecentGateway,
   readRecentGateways,
   recentGatewayId,
   rememberGateway,
+  rememberGatewayAfterConnect,
   removeRecentGateway,
   upsertRecentGateway,
   type RecentGateway,
@@ -26,6 +27,7 @@ function conn(
 
 afterEach(() => {
   localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe("recentGatewayId", () => {
@@ -107,17 +109,17 @@ describe("removeRecentGateway", () => {
 });
 
 describe("localStorage round-trip", () => {
-  it("remembers, reads back, and forgets a gateway", () => {
-    rememberGateway(conn("https://a.example"));
-    const read = readRecentGateways();
+  it("remembers, reads back, and forgets a gateway", async () => {
+    await rememberGateway(conn("https://a.example"));
+    const read = await readRecentGateways();
     expect(read).toHaveLength(1);
     expect(read[0]?.url).toBe("https://a.example");
 
-    forgetRecentGateway(recentGatewayId("https://a.example"));
-    expect(readRecentGateways()).toEqual([]);
+    await forgetRecentGateway(recentGatewayId("https://a.example"));
+    expect(await readRecentGateways()).toEqual([]);
   });
 
-  it("drops invalid records and survives corrupt json", () => {
+  it("drops invalid records and survives corrupt json", async () => {
     localStorage.setItem(
       "vesta-recent-gateways",
       JSON.stringify([
@@ -130,11 +132,28 @@ describe("localStorage round-trip", () => {
         { nonsense: true },
       ]),
     );
-    expect(readRecentGateways().map((g) => g.url)).toEqual([
+    expect((await readRecentGateways()).map((g) => g.url)).toEqual([
       "https://good.example",
     ]);
 
     localStorage.setItem("vesta-recent-gateways", "{ broken");
-    expect(readRecentGateways()).toEqual([]);
+    expect(await readRecentGateways()).toEqual([]);
+  });
+
+  it("does not fail a successful connection when saving recents throws", async () => {
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error("storage unavailable");
+    });
+
+    await expect(
+      rememberGatewayAfterConnect(conn("https://a.example")),
+    ).resolves.toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(
+      "could not save the recent gateway",
+      expect.any(Error),
+    );
   });
 });

@@ -14,6 +14,18 @@ const NODE_PLATFORM_MAP: Record<string, Platform> = {
   win32: "windows",
   linux: "linux",
 };
+const LEGACY_RECENT_GATEWAYS_KEY = "vesta-recent-gateways";
+
+function readLegacyRecentGateways(): unknown {
+  const raw = localStorage.getItem(LEGACY_RECENT_GATEWAYS_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(LEGACY_RECENT_GATEWAYS_KEY);
+    return null;
+  }
+}
 
 // Parse at the boundary: the preload answer is untyped IPC, so validate the shape here.
 export function parseNativeFix(value: unknown): NativeGeolocationFix | null {
@@ -57,6 +69,21 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
       async clear() {
         await api.storeClear();
       },
+    },
+    recentGatewayStore: {
+      async read() {
+        const stored = await api.recentStoreRead();
+        if (stored !== null) return stored;
+        // LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION exceeds 0.2.13):
+        // Move renderer records into the encrypted main-process store.
+        const legacy = readLegacyRecentGateways();
+        if (legacy === null) return null;
+        await api.recentStoreWrite(legacy);
+        localStorage.removeItem(LEGACY_RECENT_GATEWAYS_KEY);
+        return legacy;
+      },
+      write: (value) => api.recentStoreWrite(value),
+      clear: () => api.recentStoreClear(),
     },
     openExternal: (url) => api.openExternal(url),
     focusWindow: () => api.focusWindow(),

@@ -1,13 +1,12 @@
 import type { ConnectionConfig } from "./connection";
+import { native } from "./native";
 import { parseConnectionConfig } from "./native/parse-connection-config";
 
 // Recently connected gateways, so the app can switch between them without
 // re-pasting a connect link. A client convenience list (like the theme and
-// mode prefs) held in localStorage, separate from the single active connection
-// the native bridge owns. Web has no keychain, so the credential rides in the
-// same record; that matches the plaintext tier the active connection already
-// lives in.
-const STORAGE_KEY = "vesta-recent-gateways";
+// mode prefs) held separately from the single active connection. The native
+// bridge protects credentials with the OS credential store on desktop and
+// uses the browser's same-origin storage for the web app.
 
 export interface RecentGateway {
   id: string;
@@ -89,19 +88,10 @@ function parseRecentGateway(value: unknown): RecentGateway | null {
   };
 }
 
-export function readRecentGateways(): RecentGateway[] {
-  if (typeof localStorage === "undefined") return [];
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
-    return [];
-  }
+export async function readRecentGateways(): Promise<RecentGateway[]> {
+  const parsed = await native.recentGatewayStore.read();
   if (!Array.isArray(parsed)) {
-    localStorage.removeItem(STORAGE_KEY);
+    if (parsed !== null) await native.recentGatewayStore.clear();
     return [];
   }
   return parsed
@@ -109,26 +99,37 @@ export function readRecentGateways(): RecentGateway[] {
     .filter((gateway): gateway is RecentGateway => gateway !== null);
 }
 
-function writeRecentGateways(gateways: RecentGateway[]): void {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(gateways));
+function writeRecentGateways(gateways: RecentGateway[]): Promise<void> {
+  return native.recentGatewayStore.write(gateways);
 }
 
-export function rememberGateway(
+export async function rememberGateway(
   connection: ConnectionConfig,
   options: { touch?: boolean } = {},
-): RecentGateway[] {
+): Promise<RecentGateway[]> {
   const next = upsertRecentGateway(
-    readRecentGateways(),
+    await readRecentGateways(),
     { connection },
     { touch: options.touch ?? true, now: Date.now() },
   );
-  writeRecentGateways(next);
+  await writeRecentGateways(next);
   return next;
 }
 
-export function forgetRecentGateway(id: string): RecentGateway[] {
-  const next = removeRecentGateway(readRecentGateways(), id);
-  writeRecentGateways(next);
+export async function rememberGatewayAfterConnect(
+  connection: ConnectionConfig,
+): Promise<void> {
+  try {
+    await rememberGateway(connection);
+  } catch (cause) {
+    console.warn("could not save the recent gateway", cause);
+  }
+}
+
+export async function forgetRecentGateway(
+  id: string,
+): Promise<RecentGateway[]> {
+  const next = removeRecentGateway(await readRecentGateways(), id);
+  await writeRecentGateways(next);
   return next;
 }

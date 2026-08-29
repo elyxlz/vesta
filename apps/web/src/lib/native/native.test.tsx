@@ -27,6 +27,15 @@ describe("browser bridge", () => {
     expect(await bridge.connectionStore.read()).toBeNull();
   });
 
+  it("round-trips recent gateways through localStorage", async () => {
+    const bridge = createBrowserBridge();
+    const gateways = [{ connection: CONFIG, lastConnectedAt: 1 }];
+    await bridge.recentGatewayStore.write(gateways);
+    expect(await bridge.recentGatewayStore.read()).toEqual(gateways);
+    await bridge.recentGatewayStore.clear();
+    expect(await bridge.recentGatewayStore.read()).toBeNull();
+  });
+
   it("rejects a stored connection missing tokens", async () => {
     localStorage.setItem("vesta-connection", JSON.stringify({ url: "x" }));
     expect(await createBrowserBridge().connectionStore.read()).toBeNull();
@@ -82,6 +91,9 @@ describe("electron bridge", () => {
       storeRead: vi.fn(() => Promise.resolve(null)),
       storeWrite: vi.fn(() => Promise.resolve()),
       storeClear: vi.fn(() => Promise.resolve()),
+      recentStoreRead: vi.fn(() => Promise.resolve(null)),
+      recentStoreWrite: vi.fn(() => Promise.resolve()),
+      recentStoreClear: vi.fn(() => Promise.resolve()),
       oauthStart: vi.fn(() => Promise.resolve(4242)),
       onOauthCallback: vi.fn(() => noopUnsubscribe),
       oauthCancel: vi.fn(() => Promise.resolve()),
@@ -115,6 +127,22 @@ describe("electron bridge", () => {
     expect(await createElectronBridge(good).connectionStore.read()).toEqual(
       CONFIG,
     );
+  });
+
+  it("migrates plaintext renderer gateway records to the native store", async () => {
+    const gateways = [{ connection: CONFIG, lastConnectedAt: 1 }];
+    localStorage.setItem("vesta-recent-gateways", JSON.stringify(gateways));
+    const recentStoreWrite = vi.fn(() => Promise.resolve());
+    const bridge = createElectronBridge(
+      fakeApi({
+        recentStoreRead: vi.fn(() => Promise.resolve(null)),
+        recentStoreWrite,
+      }),
+    );
+
+    expect(await bridge.recentGatewayStore.read()).toEqual(gateways);
+    expect(recentStoreWrite).toHaveBeenCalledWith(gateways);
+    expect(localStorage.getItem("vesta-recent-gateways")).toBeNull();
   });
 
   it("rejects a stored connection whose url is not an http origin", async () => {
