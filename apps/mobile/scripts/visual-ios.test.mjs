@@ -46,11 +46,11 @@ describe("visual Metro agent fixtures", () => {
     const fallback = vi.fn(() => ({ type: "empty" }));
     const fixture = path.resolve(
       scriptDirectory,
-      "../visual/harness/agent-holds-provider.tsx",
+      "../visual/harness/agent-holds.ts",
     );
 
     for (const origin of [
-      "../app/_layout.tsx",
+      "../src/agent/ChatPage.tsx",
       "../src/chat/useAgentSocket.ts",
     ]) {
       expect(
@@ -59,7 +59,7 @@ describe("visual Metro agent fixtures", () => {
             originModulePath: path.resolve(scriptDirectory, origin),
             resolveRequest: fallback,
           },
-          "@/holds/AgentHoldsProvider",
+          "@/holds/agent-holds",
           "ios",
         ),
       ).toEqual({ type: "sourceFile", filePath: fixture });

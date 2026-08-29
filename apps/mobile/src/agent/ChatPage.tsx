@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TRIM_HISTORY_SETTLE_MS } from "@vesta/core";
+import { agentHoldKey, TRIM_HISTORY_SETTLE_MS } from "@vesta/core";
 import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -34,8 +34,7 @@ import { ComposerActionButton, ReplyPreview } from "@/agent/chat/chat-composer";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
 import { ScrollToBottomButton } from "@/agent/chat/scroll-to-bottom-button";
 import { useTranscriptWordHaptics } from "@/agent/chat/use-transcript-word-haptics";
-import { useAgentHolds } from "@/holds/AgentHoldsProvider";
-import { agentHoldKey } from "@/holds/keyed-hold";
+import { agentHolds } from "@/holds/agent-holds";
 import { connectionKeyOf } from "@/session/session-model";
 
 const COMPOSER_RESIZE_DURATION = 250;
@@ -58,37 +57,36 @@ export default function ChatPage() {
   const { colors } = usePreferences();
   // The draft and armed reply live in a per-agent hold, so popping back to home (or switching
   // agents) never discards half-typed input; a successful send clears the cell via setInput("").
-  const holds = useAgentHolds();
   const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
   const [input, setInputState] = useState(
-    () => holds.composer.read(holdKey)?.draft ?? "",
+    () => agentHolds.composer.read(holdKey)?.draft ?? "",
   );
   const inputValueRef = useRef(input);
   const [replyTarget, setReplyTargetState] = useState<ReplyTarget | null>(
-    () => holds.composer.read(holdKey)?.replyTarget ?? null,
+    () => agentHolds.composer.read(holdKey)?.replyTarget ?? null,
   );
   const replyTargetRef = useRef(replyTarget);
   const setInput = useCallback(
     (value: string) => {
       inputValueRef.current = value;
       setInputState(value);
-      holds.composer.persist(holdKey, {
+      agentHolds.composer.persist(holdKey, {
         draft: value,
         replyTarget: replyTargetRef.current,
       });
     },
-    [holds, holdKey],
+    [holdKey],
   );
   const setReplyTarget = useCallback(
     (target: ReplyTarget | null) => {
       replyTargetRef.current = target;
       setReplyTargetState(target);
-      holds.composer.persist(holdKey, {
+      agentHolds.composer.persist(holdKey, {
         draft: inputValueRef.current,
         replyTarget: target,
       });
     },
-    [holds, holdKey],
+    [holdKey],
   );
   const notifyTranscriptWords = useTranscriptWordHaptics();
   const handleTranscript = useCallback(

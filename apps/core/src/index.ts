@@ -87,6 +87,9 @@ export type { ForegroundSignal } from "./adapters/types"
 
 export { PACING, typingDelay } from "./pacing/pacing"
 
+export { agentHoldKey, createKeyedHoldStore } from "./holds/keyed-hold"
+export type { HeldCells, KeyedHoldStore } from "./holds/keyed-hold"
+
 export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons"
 export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons"
 

@@ -12,6 +12,7 @@ import {
   seedTail,
   sendMessage,
   trimTail,
+  agentHoldKey,
   typingDelay,
   type ChatMessage,
   type ChatState,
@@ -33,8 +34,7 @@ import {
   agentActivitySnapshotsEqual,
   selectAgentActivitySnapshot,
 } from "./agent-activity-model";
-import { useAgentHolds } from "@/holds/AgentHoldsProvider";
-import { agentHoldKey } from "@/holds/keyed-hold";
+import { agentHolds } from "@/holds/agent-holds";
 
 interface HistoryPage {
   events: VestaEvent[];
@@ -65,7 +65,6 @@ export function useAgentSocket(
   useEffect(() => {
     apiRef.current = api;
   }, [api]);
-  const holds = useAgentHolds();
   const key = agentHoldKey(name, connectionKeyOf(connection) ?? "");
   const naturalPacing = preferences.naturalChatPacingForAgent(name);
   const naturalPacingRef = useRef(naturalPacing);
@@ -116,7 +115,7 @@ export function useAgentSocket(
   // instead of blanking to a skeleton; seedTail refetches and merges by id. Every commit persists the
   // render slice back to the hold under the current key, so a background/foreground survives it.
   const [state, setState] = useState<ChatState>(
-    () => holds.chat.read(key) ?? initialChatState(),
+    () => agentHolds.chat.read(key) ?? initialChatState(),
   );
   const stateRef = useRef<ChatState>(state);
   // The key is captured here, not read from a ref, so a paced-typing timer from a previous
@@ -125,9 +124,9 @@ export function useAgentSocket(
     (fold: (current: ChatState) => ChatState) => {
       stateRef.current = fold(stateRef.current);
       setState(stateRef.current);
-      holds.chat.persist(key, stateRef.current);
+      agentHolds.chat.persist(key, stateRef.current);
     },
-    [holds, key],
+    [key],
   );
 
   const [isTyping, setIsTyping] = useState(false);
@@ -225,7 +224,7 @@ export function useAgentSocket(
 
     // Seed from this key's hold cell (survives the controller epoch and screen pops); a missing
     // cell means a never-visited agent or gateway, which starts empty.
-    const seeded = holds.chat.read(key) ?? initialChatState();
+    const seeded = agentHolds.chat.read(key) ?? initialChatState();
     stateRef.current = seeded;
     setState(seeded);
     resetTyping();
@@ -304,7 +303,6 @@ export function useAgentSocket(
     controller,
     name,
     key,
-    holds,
     commit,
     resetTyping,
     enqueueChat,

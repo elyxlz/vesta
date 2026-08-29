@@ -43,7 +43,6 @@ import {
   useRoster,
 } from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
-import { AgentHoldsProvider } from "@/holds/AgentHoldsProvider";
 import { AndroidBottomInset } from "@/components/layout/android-bottom-inset";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
@@ -409,16 +408,14 @@ export default function RootLayout() {
                   <SessionProvider>
                     <PrivacyGate>
                       <RosterHoldProvider>
-                        <AgentHoldsProvider>
-                          <ControllerProvider>
-                            <RosterProvider>
-                              <UserNotifications />
-                              <PresenceReporter />
-                              <PushCoordinator />
-                              <SessionNavigation />
-                            </RosterProvider>
-                          </ControllerProvider>
-                        </AgentHoldsProvider>
+                        <ControllerProvider>
+                          <RosterProvider>
+                            <UserNotifications />
+                            <PresenceReporter />
+                            <PushCoordinator />
+                            <SessionNavigation />
+                          </RosterProvider>
+                        </ControllerProvider>
                       </RosterHoldProvider>
                     </PrivacyGate>
                   </SessionProvider>
