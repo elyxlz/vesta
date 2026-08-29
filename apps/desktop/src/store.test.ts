@@ -7,6 +7,7 @@ import {
   clearRecentGateways,
   readConnection,
   readRecentGateways,
+  storageBackendIsSecure,
   writeConnection,
   writeRecentGateways,
 } from "./store";
@@ -22,7 +23,42 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete process.env.VESTA_TEST_USER_DATA;
+  delete process.env.VESTA_TEST_ENCRYPTION_AVAILABLE;
+  delete process.env.VESTA_TEST_STORAGE_BACKEND;
   await fs.rm(userDataDir, { recursive: true, force: true });
+});
+
+describe("secure storage availability", () => {
+  it.each<[string, string, boolean, string, boolean]>([
+    [
+      "rejects an unavailable encryption service",
+      "darwin",
+      false,
+      "unknown",
+      false,
+    ],
+    [
+      "rejects Electron's Linux plaintext fallback",
+      "linux",
+      true,
+      "basic_text",
+      false,
+    ],
+    ["rejects an unknown Linux backend", "linux", true, "unknown", false],
+    ["accepts a Linux secret store", "linux", true, "gnome_libsecret", true],
+    ["accepts Keychain encryption", "darwin", true, "unknown", true],
+    ["accepts DPAPI encryption", "win32", true, "unknown", true],
+  ])("%s", (_name, platform, available, backend, expected) => {
+    expect(storageBackendIsSecure(platform, available, backend)).toBe(expected);
+  });
+
+  it("rejects writes when encryption is unavailable", async () => {
+    process.env.VESTA_TEST_ENCRYPTION_AVAILABLE = "false";
+
+    await expect(writeConnection(CONNECTION)).rejects.toThrow(
+      "secure credential storage is unavailable",
+    );
+  });
 });
 
 describe("connection store", () => {

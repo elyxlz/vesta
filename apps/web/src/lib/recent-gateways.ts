@@ -116,6 +116,16 @@ export async function rememberGateway(
   return next;
 }
 
+export async function rememberGatewayAfterConnect(
+  connection: ConnectionConfig,
+): Promise<void> {
+  try {
+    await rememberGateway(connection);
+  } catch (cause) {
+    console.warn("could not save the recent gateway", cause);
+  }
+}
+
 export async function forgetRecentGateway(
   id: string,
 ): Promise<RecentGateway[]> {

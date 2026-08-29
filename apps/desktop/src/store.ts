@@ -15,8 +15,32 @@ function storePath(filename: string): string {
   return path.join(app.getPath("userData"), filename);
 }
 
+export function storageBackendIsSecure(
+  platform: string,
+  encryptionAvailable: boolean,
+  linuxBackend: string,
+): boolean {
+  if (!encryptionAvailable) return false;
+  if (platform !== "linux") return true;
+  return ["gnome_libsecret", "kwallet", "kwallet5", "kwallet6"].includes(
+    linuxBackend,
+  );
+}
+
+function secureStorageAvailable(): boolean {
+  const linuxBackend =
+    process.platform === "linux"
+      ? safeStorage.getSelectedStorageBackend()
+      : "unknown";
+  return storageBackendIsSecure(
+    process.platform,
+    safeStorage.isEncryptionAvailable(),
+    linuxBackend,
+  );
+}
+
 function encryptedPayload(value: unknown): EncryptedStore {
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!secureStorageAvailable()) {
     throw new Error("secure credential storage is unavailable");
   }
   return {
@@ -72,7 +96,7 @@ async function readStore(filename: string): Promise<unknown> {
 
   // LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION exceeds 0.2.13):
   // Re-encrypt stores written by desktop releases that persisted plain JSON.
-  if (safeStorage.isEncryptionAvailable()) {
+  if (secureStorageAvailable()) {
     try {
       await writeStore(filename, parsed);
     } catch (cause) {

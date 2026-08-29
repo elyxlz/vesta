@@ -1,11 +1,12 @@
 // Exercises localStorage, so it runs in the jsdom project (.test.tsx include).
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionConfig } from "@/lib/connection";
 import {
   forgetRecentGateway,
   readRecentGateways,
   recentGatewayId,
   rememberGateway,
+  rememberGatewayAfterConnect,
   removeRecentGateway,
   upsertRecentGateway,
   type RecentGateway,
@@ -26,6 +27,7 @@ function conn(
 
 afterEach(() => {
   localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe("recentGatewayId", () => {
@@ -136,5 +138,22 @@ describe("localStorage round-trip", () => {
 
     localStorage.setItem("vesta-recent-gateways", "{ broken");
     expect(await readRecentGateways()).toEqual([]);
+  });
+
+  it("does not fail a successful connection when saving recents throws", async () => {
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error("storage unavailable");
+    });
+
+    await expect(
+      rememberGatewayAfterConnect(conn("https://a.example")),
+    ).resolves.toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(
+      "could not save the recent gateway",
+      expect.any(Error),
+    );
   });
 });

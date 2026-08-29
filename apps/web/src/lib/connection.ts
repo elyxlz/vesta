@@ -45,6 +45,12 @@ export interface ConnectionConfig {
 // AuthProvider awaits initConnection before anything reads it.
 let cached: ConnectionConfig | null | undefined;
 
+function persist(operation: () => Promise<void>, failureMessage: string): void {
+  void Promise.resolve()
+    .then(operation)
+    .catch((cause: unknown) => console.warn(failureMessage, cause));
+}
+
 // ── Public API ─────────────────────────────────────────────────
 
 export async function initConnection(): Promise<void> {
@@ -83,7 +89,10 @@ export function setConnection(
     expiresAt,
   };
   cached = config;
-  void native.connectionStore.write(config);
+  persist(
+    () => native.connectionStore.write(config),
+    "could not save the active gateway",
+  );
 }
 
 /**
@@ -105,7 +114,10 @@ export function setHostedConnection(
     hosted: true,
   };
   cached = config;
-  void native.connectionStore.write(config);
+  persist(
+    () => native.connectionStore.write(config),
+    "could not save the active gateway",
+  );
 }
 
 /** Write a whole stored config back as the active connection, so switching to a
@@ -113,7 +125,10 @@ export function setHostedConnection(
  * re-deriving them. The refresh flow revives an expired one on the next call. */
 export function restoreConnection(config: ConnectionConfig): void {
   cached = config;
-  void native.connectionStore.write(config);
+  persist(
+    () => native.connectionStore.write(config),
+    "could not save the active gateway",
+  );
 }
 
 export function updateTokens(
@@ -128,7 +143,10 @@ export function updateTokens(
 
 export function clearConnection(): void {
   cached = null;
-  void native.connectionStore.clear();
+  persist(
+    () => native.connectionStore.clear(),
+    "could not clear the active gateway",
+  );
 }
 
 export function isTokenExpiringSoon(): boolean {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { getConnection, setHostedConnection } from "@/lib/connection";
-import { rememberGateway } from "@/lib/recent-gateways";
+import { rememberGatewayAfterConnect } from "@/lib/recent-gateways";
 import { completeHostedLogin } from "@/lib/pkce";
 
 // OAuth redirect target for the hosted login handoff (issue #19). The control
@@ -34,7 +34,7 @@ export function Callback() {
         );
         setHostedConnection(window.location.origin, accessToken, expiresIn);
         const connection = getConnection();
-        if (connection) await rememberGateway(connection);
+        if (connection) await rememberGatewayAfterConnect(connection);
         // Strip the code/state from the URL, then enter the app with a full
         // load so providers re-read the now-present connection.
         window.history.replaceState(null, "", "/");

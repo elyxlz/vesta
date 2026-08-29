@@ -7,7 +7,10 @@ export const app = {
 const ENCRYPTION_PREFIX = "encrypted:";
 
 export const safeStorage = {
-  isEncryptionAvailable: (): boolean => true,
+  isEncryptionAvailable: (): boolean =>
+    process.env.VESTA_TEST_ENCRYPTION_AVAILABLE !== "false",
+  getSelectedStorageBackend: (): string =>
+    process.env.VESTA_TEST_STORAGE_BACKEND ?? "unknown",
   encryptString: (value: string): Buffer =>
     Buffer.from(`${ENCRYPTION_PREFIX}${value}`, "utf8"),
   decryptString: (value: Buffer): string => {

@@ -85,6 +85,7 @@ export default function RecentGatewaysScreen() {
 
   const connect = async (gateway: RecentGateway, showImmediately = false) => {
     if (isConnecting) return;
+    const dismissAfterConnect = status === "connected";
     if (connectionProgressTimer.current) {
       clearTimeout(connectionProgressTimer.current);
       connectionProgressTimer.current = null;
@@ -103,7 +104,7 @@ export default function RecentGatewaysScreen() {
 
     try {
       await connectRecentGateway(gateway.id);
-      if (status === "connected") router.dismissTo("/");
+      if (dismissAfterConnect) router.dismissTo("/");
     } catch (cause) {
       if (connectionProgressTimer.current) {
         clearTimeout(connectionProgressTimer.current);
