@@ -1,6 +1,10 @@
 import { KeyRound } from "lucide-react";
-import { DrawerClose } from "@/components/ui/drawer";
-import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerTrigger,
+} from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { AgentActions } from "./AgentActions";
 import type { MenuProps } from "./types";
@@ -19,39 +23,37 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerTrigger asChild>{trigger}</DrawerTrigger>
       <DrawerContent>
-        <div className="px-4 pb-8 max-h-[min(70vh,480px)] overflow-y-auto">
-          {needsAuth && (
-            <DrawerClose asChild>
-              <Button
-                variant="default"
-                size="lg"
-                className="mb-4 w-full"
-                onClick={() => state.onAuthenticate?.()}
-              >
-                <KeyRound data-icon="inline-start" />
-                sign in
-              </Button>
-            </DrawerClose>
-          )}
-          <AgentActions
-            isRunning={state.isRunning}
-            showAliveActions={state.showAliveActions}
-            isBusy={state.isBusy}
-            onLogs={state.onLogs}
-            onServices={state.onServices}
-            onToggle={state.onToggle}
-            onRestart={state.onRestart}
-            onBackup={state.onBackup}
-            onAppSettings={state.onAppSettings}
-            onAgentSettings={state.onAgentSettings}
-            onSwitchGateway={state.onSwitchGateway}
-            onAuthenticate={
-              state.isAuthenticated ? state.onAuthenticate : undefined
-            }
-            isAuthenticated={state.isAuthenticated}
-            wrapper={DrawerCloseWrapper}
-          />
-        </div>
+        {needsAuth && (
+          <DrawerClose asChild>
+            <Button
+              variant="default"
+              size="lg"
+              className="mb-4 w-full"
+              onClick={() => state.onAuthenticate?.()}
+            >
+              <KeyRound data-icon="inline-start" />
+              sign in
+            </Button>
+          </DrawerClose>
+        )}
+        <AgentActions
+          isRunning={state.isRunning}
+          showAliveActions={state.showAliveActions}
+          isBusy={state.isBusy}
+          onLogs={state.onLogs}
+          onServices={state.onServices}
+          onToggle={state.onToggle}
+          onRestart={state.onRestart}
+          onBackup={state.onBackup}
+          onAppSettings={state.onAppSettings}
+          onAgentSettings={state.onAgentSettings}
+          onSwitchGateway={state.onSwitchGateway}
+          onAuthenticate={
+            state.isAuthenticated ? state.onAuthenticate : undefined
+          }
+          isAuthenticated={state.isAuthenticated}
+          wrapper={DrawerCloseWrapper}
+        />
       </DrawerContent>
     </Drawer>
   );

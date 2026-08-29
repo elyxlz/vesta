@@ -24,6 +24,7 @@ vi.mock("@/providers/SelectedAgentProvider", () => ({
     backups: selected.backups,
     backupsFailed: selected.backupsFailed,
     isBusy: selected.isBusy,
+    operation: "idle",
     backup,
     refreshBackups,
     restore,
@@ -96,7 +97,7 @@ describe("BackupsDialog timeline", () => {
     expect(labels[0]).toContain("Automatic");
     expect(labels[1]).toContain("Manual");
     expect(labels[2]).toContain("Before update v0.2.0");
-    expect(within(pointAt(0)).getByText("2.3 GB")).toBeTruthy();
+    expect(pointAt(0).textContent).toContain("2.3 GB");
   });
 
   it("shows each moment as a date and a time, never the raw stamp", () => {
@@ -118,18 +119,20 @@ describe("BackupsDialog timeline", () => {
     ).toBe(true);
     expect(refused.getByText(/made by a newer vestad/)).toBeTruthy();
     expect(
-      refused.getByRole("button", { name: "delete" }).hasAttribute("disabled"),
+      refused
+        .getByRole("button", { name: "delete snapshot" })
+        .hasAttribute("disabled"),
     ).toBe(false);
   });
 
   it("disables every action while the agent is already working", () => {
     selected.isBusy = true;
     renderDialog();
-    const actions = screen
-      .getAllByRole("button")
-      .filter((button) =>
-        ["restore", "delete", "back up"].includes(button.textContent),
-      );
+    const actions = [
+      ...screen.getAllByRole("button", { name: "restore" }),
+      ...screen.getAllByRole("button", { name: "delete snapshot" }),
+      screen.getByRole("button", { name: "back up" }),
+    ];
     expect(actions.length).toBe(7);
     for (const action of actions) {
       expect(action.hasAttribute("disabled")).toBe(true);
@@ -191,7 +194,7 @@ describe("BackupsDialog confirm step", () => {
   it("deletes the chosen point only once confirmed, and stays open", async () => {
     renderDialog();
     await userEvent.click(
-      within(pointAt(0)).getByRole("button", { name: "delete" }),
+      within(pointAt(0)).getByRole("button", { name: "delete snapshot" }),
     );
     expect(screen.getByText(/can't be undone/)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "delete" }));

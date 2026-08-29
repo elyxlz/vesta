@@ -138,16 +138,12 @@ export function SelectedAgentProvider({
     );
   };
 
-  const removeBackup = (backupId: string) => {
-    void withOp(
-      name,
-      "deleting",
-      async () => {
-        await deleteBackup(name, backupId);
-        await refreshBackups();
-      },
-      "delete backup failed",
-    );
+  // Deleting a snapshot is not an agent lifecycle operation (vestad publishes none for it), so it
+  // stays off the agent op that "backing-up"/"restoring" ride: the dialog owns its own pending
+  // state, and the agent orb never reads as "deleting" while a snapshot is removed.
+  const removeBackup = async (backupId: string) => {
+    await deleteBackup(name, backupId);
+    await refreshBackups();
   };
 
   // Delete is terminal: unlike the other ops it hands off to the agent's

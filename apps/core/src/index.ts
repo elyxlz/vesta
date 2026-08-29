@@ -80,7 +80,7 @@ export { ApiError, createHttpClient } from "./transport/http"
 export type { FetchLike, HttpClient, HttpDeps } from "./transport/http"
 export type { SocketLike, SyncSocketDeps, SyncState } from "./transport/socket"
 export type { DeviceContext } from "./protocol/frames"
-export { readSse } from "./transport/sse"
+export { readSse, drainSsePipeline } from "./transport/sse"
 export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse"
 
 export type { ForegroundSignal } from "./adapters/types"

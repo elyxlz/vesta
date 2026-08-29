@@ -21,6 +21,7 @@ export function PageScroll({
   const { ref: scrollRef, style: fadeStyle } = useScrollFade<HTMLDivElement>({
     top: `${String(navbarHeight * 2)}px`,
     bottom: `${String(BOTTOM_FADE_PX)}px`,
+    topChrome: true,
   });
 
   return (

@@ -61,6 +61,8 @@ export function LogScroller<T extends { id: number }>({
     ref: parentRef,
     top: fade ? `${String(fade.top)}px` : undefined,
     bottom: fade ? `${String(fade.bottom)}px` : undefined,
+    // The top offset both callers pass clears a floating header, so it uses the under-chrome curve.
+    topChrome: true,
   });
   const maskStyle = fade ? scrollFade.style : undefined;
 

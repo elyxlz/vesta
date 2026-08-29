@@ -1,5 +1,6 @@
 import {
   RESTART_REASONS,
+  drainSsePipeline,
   normalizeProviderInfo,
   providerPutBody,
   restartBody,
@@ -213,10 +214,12 @@ export async function deleteAgent(api: ApiClient, name: string): Promise<void> {
 export async function createBackup(
   api: ApiClient,
   name: string,
-): Promise<BackupInfo> {
-  return api.json(`/agents/${encodeURIComponent(name)}/backups`, {
-    method: "POST",
-  });
+): Promise<void> {
+  await drainSsePipeline(
+    await api.request(`/agents/${encodeURIComponent(name)}/backups`, {
+      method: "POST",
+    }),
+  );
 }
 
 export async function listBackups(
@@ -231,9 +234,11 @@ export async function restoreBackup(
   name: string,
   backupId: string,
 ): Promise<void> {
-  await api.request(
-    `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}/restore`,
-    { method: "POST" },
+  await drainSsePipeline(
+    await api.request(
+      `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}/restore`,
+      { method: "POST" },
+    ),
   );
 }
 

@@ -45,7 +45,7 @@ const KIND_TINT: Record<ToastKind, string> = {
     "border border-destructive/25 bg-red-100 shadow-sm dark:border-red-400/25 dark:bg-red-950",
   success:
     "border border-emerald-600/25 bg-emerald-100 shadow-sm dark:border-emerald-400/25 dark:bg-emerald-950",
-  info: "chrome-outline backdrop-blur-md",
+  info: "chrome-outline",
 };
 const KIND_TEXT: Record<ToastKind, string> = {
   error: "text-destructive",

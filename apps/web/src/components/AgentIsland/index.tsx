@@ -16,12 +16,11 @@ const springTransition = {
 
 const BORDER_RADIUS = 22;
 
-// The container springs its size between the two states; the active view scales +
-// unblurs in. No exit animation — the outgoing view is simply replaced.
+// The container springs its size between the two states; the active view fades
+// in. No exit animation — the outgoing view is simply replaced.
 const enterVariants = {
-  initial: { filter: "blur(12px)", opacity: 0.6 },
+  initial: { opacity: 0.6 },
   animate: {
-    filter: "blur(0px)",
     opacity: 1,
     transition: { delay: 0.05 },
   },

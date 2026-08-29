@@ -198,6 +198,7 @@ function Sidebar({
     return (
       <Drawer open={openMobile} onOpenChange={setOpenMobile}>
         <DrawerContent
+          bare
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
