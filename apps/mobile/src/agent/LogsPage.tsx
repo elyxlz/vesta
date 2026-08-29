@@ -15,8 +15,8 @@ import { subscribeLogs } from "@/agent/log-stream-subscription";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
-import { useAgentHolds, type AgentHolds } from "@/holds/AgentHoldsProvider";
-import { agentHoldKey } from "@/holds/keyed-hold";
+import { agentHoldKey } from "@vesta/core";
+import { agentHolds } from "@/holds/agent-holds";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -46,7 +46,6 @@ export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
   const { api, connection } = useSession();
   const { reachable } = useRoster();
   const { name } = useAgent();
-  const holds = useAgentHolds();
   const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
   // Stream whenever the gateway is reachable: vestad serves a stopped agent's log-file tail and
   // ends the stream cleanly, so a dead agent's last lines stay diagnosable. The held buffer keeps
@@ -56,13 +55,12 @@ export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
       key={holdKey}
       api={api}
       name={name}
-      holds={holds}
       holdKey={holdKey}
       presentation={presentation}
     />
   ) : (
     <LogList
-      logs={holds.logs.read(holdKey) ?? []}
+      logs={agentHolds.logs.read(holdKey) ?? []}
       logError=""
       presentation={presentation}
     />
@@ -72,13 +70,11 @@ export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
 function LiveLogs({
   api,
   name,
-  holds,
   holdKey,
   presentation,
 }: {
   api: ApiClient;
   name: string;
-  holds: AgentHolds;
   holdKey: string;
   presentation: NonNullable<LogsPageProps["presentation"]>;
 }) {
@@ -101,13 +97,13 @@ function LiveLogs({
           const next = addLatestLogLine(logsRef.current, { id, text });
           logsRef.current = next;
           setLogs(next);
-          holds.logs.persist(holdKey, next);
+          agentHolds.logs.persist(holdKey, next);
         },
         onError: setLogError,
         retryDelayMs: LOG_RETRY_DELAY_MS,
         maxRetryDelayMs: LOG_RETRY_MAX_DELAY_MS,
       }),
-    [api, name, holds, holdKey],
+    [api, name, holdKey],
   );
 
   return (

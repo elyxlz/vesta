@@ -23,8 +23,8 @@ import LogsPage from "@/agent/LogsPage";
 import NotificationsPage from "@/agent/NotificationsPage";
 import { getAgentPageKeys, type AgentPageKey } from "@/agent/pager-model";
 import { AgentStackHeader } from "@/components/AgentHeader";
-import { useAgentHolds } from "@/holds/AgentHoldsProvider";
-import { agentHoldKey } from "@/holds/keyed-hold";
+import { agentHoldKey } from "@vesta/core";
+import { agentHolds } from "@/holds/agent-holds";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
 import {
@@ -80,7 +80,6 @@ function AgentPages() {
   const parameters = useLocalSearchParams<{ name?: string }>();
   const name = typeof parameters.name === "string" ? parameters.name : "";
   const { connection } = useSession();
-  const holds = useAgentHolds();
   const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
   const pager = useRef<PagerView>(null);
   const [pagerScrollLocked, setPagerScrollLocked] = useState(false);
@@ -104,7 +103,7 @@ function AgentPages() {
   // Reopen on the page the user last used for this agent (held above navigation), falling back to
   // chat when the held page is hidden by preferences.
   const [activePageKey, setActivePageKey] = useState<AgentPageKey>(() => {
-    const held = holds.page.read(holdKey);
+    const held = agentHolds.page.read(holdKey);
     return held !== null && pages.includes(held) ? held : "chat";
   });
   // Non-chat pages mount on their first visit (or as a drag approaches them) and stay mounted, so
@@ -263,14 +262,14 @@ function AgentPages() {
       if (page) {
         setActivePageKey(page);
         markVisited([page]);
-        holds.page.persist(holdKey, page);
+        agentHolds.page.persist(holdKey, page);
         if (page !== hapticPageKey.current) {
           hapticPageKey.current = page;
           void Haptics.selectionAsync().catch(() => undefined);
         }
       }
     },
-    [holdKey, holds, markVisited, pageProgress, pages],
+    [holdKey, markVisited, pageProgress, pages],
   );
 
   const selectPage = useCallback(
