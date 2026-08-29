@@ -73,6 +73,53 @@ def test_dead_daemon_record_goes_red(tmp_path):
     assert "RED daemon ghost" in run.stdout
 
 
+_STALE = 1_000_000_000  # far past the 24h freshness window
+
+
+def test_running_daemon_with_a_stale_log_goes_red(tmp_path):
+    # The gap this closes is silent by construction: the error-storm loop skips logs untouched for
+    # 24h, so a live daemon whose logging has broken produces no line at all rather than a RED, and
+    # an absent check is indistinguishable from one fewer thing to check.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "data" / "daemons" / "mute.pid").write_text(f"{os.getpid()} 12345")
+    log = home / "agent" / "logs" / "mute.log"
+    log.write_text("INFO fine\n")
+    os.utime(log, (_STALE, _STALE))
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED daemon mute is running but mute.log has not been written in over 24h" in run.stdout
+
+
+def test_running_daemon_with_a_fresh_log_stays_green(tmp_path):
+    # The healthy direction: a cross-reference that cannot stay quiet turns every live daemon RED.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "data" / "daemons" / "chatty.pid").write_text(f"{os.getpid()} 12345")
+    (home / "agent" / "logs" / "chatty.log").write_text("INFO fine\n")
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  daemon chatty is running" in run.stdout
+
+
+def test_dead_daemon_with_a_stale_log_is_only_reported_once(tmp_path):
+    # A dead daemon's log is stale too. It belongs to the died-and-nothing-restarted-it branch, and
+    # reporting it twice would train the reader to skim the daemon section.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "data" / "daemons" / "ghost.pid").write_text("99999999 12345")
+    log = home / "agent" / "logs" / "ghost.log"
+    log.write_text("INFO fine\n")
+    os.utime(log, (_STALE, _STALE))
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED daemon ghost has a record but no process" in run.stdout
+    assert "has not been written in over 24h" not in run.stdout
+
+
 def test_error_storm_in_a_recent_log_goes_red(tmp_path):
     # The RED must survive the loop: a counter incremented in a pipeline subshell is lost by the
     # time the exit code is computed, which turns a red probe into a green exit.

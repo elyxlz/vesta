@@ -25,7 +25,16 @@ for pid_file in "$HOME"/agent/data/daemons/*.pid; do
     name=$(basename "$pid_file" .pid)
     record=$(cat "$pid_file" 2>/dev/null)
     if kill -0 "${record%% *}" 2>/dev/null; then
-        ok "daemon $name is running"
+        # The error-storm loop below skips any log untouched for 24h, so a dead daemon's stale log
+        # does not nag. A RUNNING daemon whose logging has broken falls into that gap: nothing
+        # reports a problem, the log simply stops appearing, and a check that disappears looks
+        # identical to a system with one fewer thing to check. Cross-reference the two here.
+        dlog="$HOME/agent/logs/$name.log"
+        if [ -e "$dlog" ] && [ -z "$(find "$dlog" -mmin -1440 2>/dev/null)" ]; then
+            bad "daemon $name is running but $name.log has not been written in over 24h: the error check below skips it, so you are blind to that daemon"
+        else
+            ok "daemon $name is running"
+        fi
     else
         bad "daemon $name has a record but no process: it died and nothing restarted it"
     fi
