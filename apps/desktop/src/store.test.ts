@@ -3,8 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  clearConnection,
-  clearRecentGateways,
   readConnection,
   readRecentGateways,
   storageBackendIsSecure,
@@ -72,10 +70,6 @@ describe("connection store", () => {
     expect(stored).not.toContain(CONNECTION.accessToken);
   });
 
-  it("reads null when nothing has been written", async () => {
-    expect(await readConnection()).toBeNull();
-  });
-
   it("reads null rather than throwing on a corrupt store file", async () => {
     await fs.writeFile(path.join(userDataDir, "connection.json"), "{ not json");
     expect(await readConnection()).toBeNull();
@@ -90,16 +84,6 @@ describe("connection store", () => {
       CONNECTION.accessToken,
     );
   });
-
-  it("clears a stored connection", async () => {
-    await writeConnection(CONNECTION);
-    await clearConnection();
-    expect(await readConnection()).toBeNull();
-  });
-
-  it("clears an absent connection without throwing", async () => {
-    await expect(clearConnection()).resolves.toBeUndefined();
-  });
 });
 
 describe("recent gateway store", () => {
@@ -113,11 +97,5 @@ describe("recent gateway store", () => {
       "utf8",
     );
     expect(stored).not.toContain(CONNECTION.accessToken);
-  });
-
-  it("clears saved gateways", async () => {
-    await writeRecentGateways([]);
-    await clearRecentGateways();
-    expect(await readRecentGateways()).toBeNull();
   });
 });

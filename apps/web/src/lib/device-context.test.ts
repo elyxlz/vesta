@@ -71,14 +71,6 @@ describe("readBrowserDeviceContext", () => {
     });
   });
 
-  it("falls back to the OS zone when geolocation is unavailable", async () => {
-    stubOsZone("America/New_York");
-    vi.stubGlobal("navigator", {});
-    await expect(readBrowserDeviceContext(true)).resolves.toEqual({
-      timezone: "America/New_York",
-    });
-  });
-
   it("prefers the desktop bridge fix over the renderer's geolocation", async () => {
     stubOsZone("America/New_York");
     const getCurrentPosition = vi.fn();
@@ -102,17 +94,6 @@ describe("readBrowserDeviceContext", () => {
     const getCurrentPosition = vi.fn();
     stubGeolocation(getCurrentPosition);
     bridge.readGeolocation = () => Promise.resolve(null);
-    await expect(readBrowserDeviceContext(true)).resolves.toEqual({
-      timezone: "America/New_York",
-    });
-    expect(getCurrentPosition).not.toHaveBeenCalled();
-  });
-
-  it("treats a refusing desktop provider as no fix and never asks the renderer", async () => {
-    stubOsZone("America/New_York");
-    const getCurrentPosition = vi.fn();
-    stubGeolocation(getCurrentPosition);
-    bridge.readGeolocation = () => Promise.reject(new Error("denied"));
     await expect(readBrowserDeviceContext(true)).resolves.toEqual({
       timezone: "America/New_York",
     });

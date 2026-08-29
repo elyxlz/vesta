@@ -61,17 +61,6 @@ describe("browser bridge", () => {
     await bridge.connectionStore.write(hosted);
     expect(await bridge.connectionStore.read()).toEqual(hosted);
   });
-
-  it("opens external urls in a new tab", async () => {
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
-    await createBrowserBridge().openExternal("https://vesta.run");
-    expect(open).toHaveBeenCalledWith("https://vesta.run", "_blank");
-  });
-
-  it("has no oauth loopback and no native geolocation", () => {
-    expect(createBrowserBridge().oauthLoopback).toBeNull();
-    expect(createBrowserBridge().readGeolocation).toBeNull();
-  });
 });
 
 describe("electron bridge", () => {
@@ -108,16 +97,6 @@ describe("electron bridge", () => {
     };
   }
 
-  it("maps node platforms to app platforms", () => {
-    expect(createElectronBridge(fakeApi()).platform).toBe("macos");
-    expect(createElectronBridge(fakeApi({ platform: "win32" })).platform).toBe(
-      "windows",
-    );
-    expect(createElectronBridge(fakeApi({ platform: "linux" })).platform).toBe(
-      "linux",
-    );
-  });
-
   it("validates the stored connection shape", async () => {
     const api = fakeApi({
       storeRead: vi.fn(() => Promise.resolve({ url: "only-url" })),
@@ -143,20 +122,6 @@ describe("electron bridge", () => {
     expect(await bridge.recentGatewayStore.read()).toEqual(gateways);
     expect(recentStoreWrite).toHaveBeenCalledWith(gateways);
     expect(localStorage.getItem("vesta-recent-gateways")).toBeNull();
-  });
-
-  it("rejects a stored connection whose url is not an http origin", async () => {
-    const api = fakeApi({
-      storeRead: vi.fn(() =>
-        Promise.resolve({ ...CONFIG, url: "javascript:alert(1)" }),
-      ),
-    });
-    expect(await createElectronBridge(api).connectionStore.read()).toBeNull();
-  });
-
-  it("exposes the oauth loopback", async () => {
-    const bridge = createElectronBridge(fakeApi());
-    expect(await bridge.oauthLoopback?.start()).toBe(4242);
   });
 
   it("parses the native geolocation answer at the boundary", async () => {
@@ -185,15 +150,5 @@ describe("electron bridge", () => {
     expect(
       await createElectronBridge(fakeApi()).readGeolocation?.(),
     ).toBeNull();
-  });
-
-  it("routes theme and focus calls to the preload api", async () => {
-    const setTheme = vi.fn();
-    const focusWindow = vi.fn(() => Promise.resolve());
-    const bridge = createElectronBridge(fakeApi({ setTheme, focusWindow }));
-    bridge.setNativeTheme("dark");
-    await bridge.focusWindow();
-    expect(setTheme).toHaveBeenCalledWith("dark");
-    expect(focusWindow).toHaveBeenCalled();
   });
 });

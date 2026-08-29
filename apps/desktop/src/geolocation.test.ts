@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  parseObjectPath,
-  parseVariantNumber,
-  parseWindowsFix,
-  resolveNativeFix,
-} from "./geolocation";
+import { parseWindowsFix, resolveNativeFix } from "./geolocation";
 
 const instantSleep = () => Promise.resolve();
 
@@ -32,22 +27,6 @@ describe("parseWindowsFix", () => {
   });
 });
 
-describe("gdbus parsing", () => {
-  it("extracts an object path from a call reply", () => {
-    expect(
-      parseObjectPath("(objectpath '/org/freedesktop/GeoClue2/Client/1',)\n"),
-    ).toBe("/org/freedesktop/GeoClue2/Client/1");
-    expect(parseObjectPath("(<objectpath '/'>,)\n")).toBe("/");
-    expect(parseObjectPath("()")).toBeNull();
-  });
-
-  it("extracts a number from a variant reply", () => {
-    expect(parseVariantNumber("(<39.2238>,)\n")).toBe(39.2238);
-    expect(parseVariantNumber("(<double -0.1278>,)\n")).toBe(-0.1278);
-    expect(parseVariantNumber("(<'text'>,)")).toBeNull();
-  });
-});
-
 describe("resolveNativeFix", () => {
   it("resolves a macOS fix through the bundled CoreLocation helper", async () => {
     const commands: string[][] = [];
@@ -63,13 +42,6 @@ describe("resolveNativeFix", () => {
       accuracyM: 25,
     });
     expect(commands).toEqual([["/app/vesta-location"]]);
-  });
-
-  it("raises the helper's own reason when it refuses on macOS", async () => {
-    const run = () => Promise.reject(new Error("Command failed: denied"));
-    await expect(
-      resolveNativeFix("darwin", run, undefined, "/app/vesta-location"),
-    ).rejects.toThrow("denied");
   });
 
   it("resolves a Windows fix through powershell", async () => {
@@ -119,14 +91,29 @@ describe("resolveNativeFix", () => {
     expect(calls.at(-1)).toContain("Client.Stop");
   });
 
-  it("raises the provider's reason when it is missing or refuses", async () => {
-    const run = () => Promise.reject(new Error("gdbus: command not found"));
-    await expect(resolveNativeFix("linux", run, instantSleep)).rejects.toThrow(
-      "gdbus: command not found",
-    );
-    await expect(resolveNativeFix("win32", run)).rejects.toThrow(
-      "gdbus: command not found",
-    );
+  it.each<{
+    name: string;
+    reason: string;
+    call: (run: (command: string, args: string[]) => Promise<string>) => Promise<unknown>;
+  }>([
+    {
+      name: "the macOS helper refuses",
+      reason: "denied",
+      call: (run) => resolveNativeFix("darwin", run, undefined, "/app/vesta-location"),
+    },
+    {
+      name: "the Linux provider is missing or refuses",
+      reason: "gdbus: command not found",
+      call: (run) => resolveNativeFix("linux", run, instantSleep),
+    },
+    {
+      name: "the Windows provider is missing or refuses",
+      reason: "gdbus: command not found",
+      call: (run) => resolveNativeFix("win32", run),
+    },
+  ])("raises the provider's own reason when $name", async ({ reason, call }) => {
+    const run = () => Promise.reject(new Error(reason));
+    await expect(call(run)).rejects.toThrow(reason);
   });
 
   it("answers null on a platform with no provider", async () => {

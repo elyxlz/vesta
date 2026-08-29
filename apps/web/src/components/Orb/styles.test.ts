@@ -3,71 +3,61 @@ import { describe, expect, it } from "vitest";
 import { getAgentVisualStatus } from "./styles";
 
 describe("getAgentVisualStatus", () => {
-  it("shows a busy updating orb for a server-side rebuilding agent", () => {
-    const { label, orbState } = getAgentVisualStatus(
-      { status: "rebuilding", operation: null },
-      "idle",
-      "",
-      "idle",
-    );
-    expect(label).toBe("updating...");
-    expect(orbState).toBe("busy");
-  });
-
-  it("flags the orb for attention when the agent is waiting on the user to sign in again", () => {
-    const { label, orbState } = getAgentVisualStatus(
-      { status: "not_authenticated", operation: null },
-      "idle",
-      "",
-      "idle",
-    );
-    expect(label).toBe("needs you to sign in");
-    expect(orbState).toBe("attention");
-  });
-
-  it("flags the orb for attention when the agent is waiting on the user to set it up", () => {
-    const { label, orbState } = getAgentVisualStatus(
-      { status: "unprovisioned", operation: null },
-      "idle",
-      "",
-      "idle",
-    );
-    expect(label).toBe("needs to be set up");
-    expect(orbState).toBe("attention");
-  });
-
-  // The backup pauses the container, so the roster reports `stopped` while restic runs. This tab
-  // started no operation of its own, which is exactly the case the local store cannot cover.
-  it("shows a backup another client started rather than a stopped agent", () => {
-    const { label, orbState } = getAgentVisualStatus(
-      { status: "stopped", operation: "backing_up" },
-      "idle",
-      "",
-      "idle",
-    );
-    expect(label).toBe("backing up...");
-    expect(orbState).toBe("busy");
-  });
-
-  it("lets this tab's own operation win over the roster", () => {
-    const { label, orbState } = getAgentVisualStatus(
-      { status: "alive", operation: null },
-      "stopping",
-      "",
-      "idle",
-    );
-    expect(label).toBe("stopping...");
-    expect(orbState).toBe("busy");
-  });
-
-  it("keeps the stopped label distinct from the waiting-on-user labels", () => {
-    const { label, orbState } = getAgentVisualStatus(
-      { status: "stopped", operation: null },
-      "idle",
-      "",
-      "idle",
-    );
-    expect(label).toBe("stopped");
-    expect(orbState).toBe("off");
+  // The backup pauses the container, so the roster reports `stopped` while restic runs. A tab that
+  // started no operation of its own is exactly the case the local store cannot cover, so the roster
+  // operation must win over the bare `stopped` status.
+  it.each<{
+    name: string;
+    roster: Parameters<typeof getAgentVisualStatus>[0];
+    localOp: Parameters<typeof getAgentVisualStatus>[1];
+    label: string;
+    orbState: string;
+  }>([
+    {
+      name: "busy updating orb for a server-side rebuilding agent",
+      roster: { status: "rebuilding", operation: null },
+      localOp: "idle",
+      label: "updating...",
+      orbState: "busy",
+    },
+    {
+      name: "attention when the agent needs the user to sign in again",
+      roster: { status: "not_authenticated", operation: null },
+      localOp: "idle",
+      label: "needs you to sign in",
+      orbState: "attention",
+    },
+    {
+      name: "attention when the agent needs the user to set it up",
+      roster: { status: "unprovisioned", operation: null },
+      localOp: "idle",
+      label: "needs to be set up",
+      orbState: "attention",
+    },
+    {
+      name: "a roster operation beats a stopped status",
+      roster: { status: "stopped", operation: "backing_up" },
+      localOp: "idle",
+      label: "backing up...",
+      orbState: "busy",
+    },
+    {
+      name: "this tab's own operation beats the roster",
+      roster: { status: "alive", operation: null },
+      localOp: "stopping",
+      label: "stopping...",
+      orbState: "busy",
+    },
+    {
+      name: "the stopped label stays distinct from waiting-on-user labels",
+      roster: { status: "stopped", operation: null },
+      localOp: "idle",
+      label: "stopped",
+      orbState: "off",
+    },
+  ])("$name", ({ roster, localOp, label, orbState }) => {
+    const result = getAgentVisualStatus(roster, localOp, "", "idle");
+    expect(result.label).toBe(label);
+    expect(result.orbState).toBe(orbState);
   });
 });

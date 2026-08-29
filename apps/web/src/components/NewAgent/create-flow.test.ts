@@ -3,29 +3,50 @@ import { ApiError } from "@/api/client";
 import { classifyCreateFailure, isCredentialRejection } from "./create-flow";
 
 describe("classifyCreateFailure", () => {
-  it("treats a 409 on the first attempt as a name rejection", () => {
-    const conflict = new ApiError(409, "agent 'luna' already exists");
-    expect(classifyCreateFailure(conflict, true)).toBe("name-rejected");
-  });
-
-  it("treats a 409 on a retry as phase 1 already done", () => {
-    const conflict = new ApiError(409, "agent 'luna' already exists");
-    expect(classifyCreateFailure(conflict, false)).toBe("already-created");
-  });
-
-  it("treats a 400 as a name rejection on any attempt", () => {
-    const invalid = new ApiError(400, "agent name must be 1-32 characters");
-    expect(classifyCreateFailure(invalid, true)).toBe("name-rejected");
-    expect(classifyCreateFailure(invalid, false)).toBe("name-rejected");
-  });
-
-  it("treats server errors and network failures as retryable in place", () => {
-    expect(
-      classifyCreateFailure(new ApiError(500, "docker error"), false),
-    ).toBe("retryable");
-    expect(classifyCreateFailure(new TypeError("failed to fetch"), true)).toBe(
-      "retryable",
-    );
+  it.each<{
+    name: string;
+    error: () => unknown;
+    firstAttempt: boolean;
+    expected: string;
+  }>([
+    {
+      name: "a 409 on the first attempt is a name rejection",
+      error: () => new ApiError(409, "agent 'luna' already exists"),
+      firstAttempt: true,
+      expected: "name-rejected",
+    },
+    {
+      name: "a 409 on a retry is phase 1 already done",
+      error: () => new ApiError(409, "agent 'luna' already exists"),
+      firstAttempt: false,
+      expected: "already-created",
+    },
+    {
+      name: "a 400 is a name rejection on the first attempt",
+      error: () => new ApiError(400, "agent name must be 1-32 characters"),
+      firstAttempt: true,
+      expected: "name-rejected",
+    },
+    {
+      name: "a 400 is a name rejection on a retry",
+      error: () => new ApiError(400, "agent name must be 1-32 characters"),
+      firstAttempt: false,
+      expected: "name-rejected",
+    },
+    {
+      name: "a server error is retryable in place",
+      error: () => new ApiError(500, "docker error"),
+      firstAttempt: false,
+      expected: "retryable",
+    },
+    {
+      name: "a network failure is retryable in place",
+      error: () => new TypeError("failed to fetch"),
+      firstAttempt: true,
+      expected: "retryable",
+    },
+  ])("$name", ({ error, firstAttempt, expected }) => {
+    expect(classifyCreateFailure(error(), firstAttempt)).toBe(expected);
   });
 });
 

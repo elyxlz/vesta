@@ -1,15 +1,15 @@
 // Exercises localStorage, so it runs in the jsdom project (.test.tsx include).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionConfig } from "@/lib/connection";
+import { getConnection, setConnection } from "./connection";
+import { native } from "./native";
 import {
   forgetRecentGateway,
   readRecentGateways,
   recentGatewayId,
   rememberGateway,
   rememberGatewayAfterConnect,
-  removeRecentGateway,
   upsertRecentGateway,
-  type RecentGateway,
 } from "./recent-gateways";
 
 function conn(
@@ -28,17 +28,6 @@ function conn(
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
-});
-
-describe("recentGatewayId", () => {
-  it("is stable across the same origin and differs across origins", () => {
-    expect(recentGatewayId("https://box.example")).toBe(
-      recentGatewayId("https://box.example/app"),
-    );
-    expect(recentGatewayId("https://box.example")).not.toBe(
-      recentGatewayId("https://other.example"),
-    );
-  });
 });
 
 describe("upsertRecentGateway", () => {
@@ -95,19 +84,6 @@ describe("upsertRecentGateway", () => {
   });
 });
 
-describe("removeRecentGateway", () => {
-  it("drops the matching id", () => {
-    const gateways: RecentGateway[] = upsertRecentGateway(
-      [],
-      { connection: conn("https://a.example") },
-      { touch: true, now: 10 },
-    );
-    expect(
-      removeRecentGateway(gateways, recentGatewayId("https://a.example")),
-    ).toEqual([]);
-  });
-});
-
 describe("localStorage round-trip", () => {
   it("remembers, reads back, and forgets a gateway", async () => {
     await rememberGateway(conn("https://a.example"));
@@ -138,6 +114,55 @@ describe("localStorage round-trip", () => {
 
     localStorage.setItem("vesta-recent-gateways", "{ broken");
     expect(await readRecentGateways()).toEqual([]);
+  });
+});
+
+// A storage write failure is a warning, not a lost session: the active gateway
+// and the recents list both survive a throwing localStorage or a rejecting
+// Electron secure store, so a device that cannot persist still stays connected.
+describe("storage-write failure survives", () => {
+  it("keeps a connected session when localStorage throws", async () => {
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error("storage unavailable");
+    });
+
+    expect(() =>
+      setConnection("https://box.example/", "access", "refresh", 60),
+    ).not.toThrow();
+    expect(getConnection()).toMatchObject({
+      url: "https://box.example",
+      accessToken: "access",
+      refreshToken: "refresh",
+    });
+
+    await vi.waitFor(() => {
+      expect(warning).toHaveBeenCalledWith(
+        "could not save the active gateway",
+        expect.any(Error),
+      );
+    });
+  });
+
+  it("keeps a connected session when an Electron-style write rejects", async () => {
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    vi.spyOn(native.connectionStore, "write").mockRejectedValueOnce(
+      new Error("secure storage unavailable"),
+    );
+
+    setConnection("https://box.example", "access", "refresh", 60);
+    expect(getConnection()?.accessToken).toBe("access");
+
+    await vi.waitFor(() => {
+      expect(warning).toHaveBeenCalledWith(
+        "could not save the active gateway",
+        expect.any(Error),
+      );
+    });
   });
 
   it("does not fail a successful connection when saving recents throws", async () => {

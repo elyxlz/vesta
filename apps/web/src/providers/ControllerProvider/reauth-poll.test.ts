@@ -32,22 +32,43 @@ afterEach(() => {
 });
 
 describe("runReauthCheck", () => {
-  it("refreshes and reauths the live socket when the token is expiring soon", async () => {
+  // With the token expiring soon, the reauth carries the freshly refreshed token, and only when the
+  // refresh actually succeeds: a transient failure or a definitively expired session sends nothing.
+  it.each<{ name: string; result: RefreshResult; reauthedWith: string | null }>(
+    [
+      {
+        name: "the fresh token when the refresh succeeds",
+        result: "ok",
+        reauthedWith: "fresh",
+      },
+      {
+        name: "nothing when the refresh is transiently unavailable",
+        result: "transient",
+        reauthedWith: null,
+      },
+      {
+        name: "nothing when the session is definitively expired",
+        result: "expired",
+        reauthedWith: null,
+      },
+    ],
+  )("reauths $name", async ({ result, reauthedWith }) => {
     mocks.expiring = true;
     mocks.connection = fakeConnection("old");
     mocks.ensureFreshToken.mockImplementation(() => {
-      mocks.connection = fakeConnection("fresh");
-      return Promise.resolve("ok");
+      if (result === "ok") mocks.connection = fakeConnection("fresh");
+      return Promise.resolve(result);
     });
     const reauth = vi.fn();
 
     await runReauthCheck(reauth);
 
     expect(mocks.ensureFreshToken).toHaveBeenCalledOnce();
-    expect(reauth).toHaveBeenCalledWith("fresh");
+    if (reauthedWith === null) expect(reauth).not.toHaveBeenCalled();
+    else expect(reauth).toHaveBeenCalledWith(reauthedWith);
   });
 
-  it("does nothing while the token is still fresh", async () => {
+  it("does not attempt a refresh while the token is still fresh", async () => {
     mocks.expiring = false;
     mocks.connection = fakeConnection("tok");
     const reauth = vi.fn();
@@ -55,28 +76,6 @@ describe("runReauthCheck", () => {
     await runReauthCheck(reauth);
 
     expect(mocks.ensureFreshToken).not.toHaveBeenCalled();
-    expect(reauth).not.toHaveBeenCalled();
-  });
-
-  it("skips reauth when the refresh cannot complete", async () => {
-    mocks.expiring = true;
-    mocks.connection = fakeConnection("old");
-    mocks.ensureFreshToken.mockResolvedValue("transient");
-    const reauth = vi.fn();
-
-    await runReauthCheck(reauth);
-
-    expect(reauth).not.toHaveBeenCalled();
-  });
-
-  it("skips reauth when the session is definitively expired", async () => {
-    mocks.expiring = true;
-    mocks.connection = fakeConnection("old");
-    mocks.ensureFreshToken.mockResolvedValue("expired");
-    const reauth = vi.fn();
-
-    await runReauthCheck(reauth);
-
     expect(reauth).not.toHaveBeenCalled();
   });
 });

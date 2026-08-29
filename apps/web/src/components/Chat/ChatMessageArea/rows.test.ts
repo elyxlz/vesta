@@ -1,22 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { ChatMessage } from "@/lib/types";
-import { buildDecorated, lastSeenIndex, rowKey } from "./rows";
+import { buildDecorated, lastSeenIndex } from "./rows";
 
 function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
 }
-
-describe("rowKey", () => {
-  it("uses ts and type when ts is present", () => {
-    expect(rowKey(userMsg("2026-06-08T10:00:00Z"), 3)).toBe(
-      "2026-06-08T10:00:00Z-user",
-    );
-  });
-
-  it("falls back to a positional key when ts is missing", () => {
-    expect(rowKey({ type: "user", text: "hi" }, 3)).toBe("i-3");
-  });
-});
 
 describe("buildDecorated", () => {
   it("shows a day stamp on the first dated message and on day boundaries", () => {

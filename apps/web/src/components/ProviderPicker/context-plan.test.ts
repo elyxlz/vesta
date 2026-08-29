@@ -13,47 +13,62 @@ const claudeContext: ProviderContext = {
   ],
 };
 
+const openrouterContext: ProviderContext = {
+  default: 200000,
+  max: 200000,
+  presets: [
+    { tokens: 200000, label: "200K", note: "full window" },
+    { tokens: 64000, label: "64K", note: "cheapest" },
+  ],
+};
+
 describe("planContextOptions", () => {
-  it("offers every window and defaults to 1M for max", () => {
-    const { presets, initial } = planContextOptions(claudeContext, "max");
-    expect(presets.map((preset) => preset.tokens)).toEqual([
-      1000000, 500000, 200000,
-    ]);
-    expect(initial).toBe(1000000);
-  });
-
-  it("hides >200K windows and defaults to 200K for pro", () => {
-    const { presets, initial } = planContextOptions(claudeContext, "pro");
-    expect(presets.map((preset) => preset.tokens)).toEqual([200000]);
-    expect(initial).toBe(200000);
-  });
-
-  it("hides >200K windows and defaults to 200K for free", () => {
-    const { presets, initial } = planContextOptions(claudeContext, "free");
-    expect(presets.map((preset) => preset.tokens)).toEqual([200000]);
-    expect(initial).toBe(200000);
-  });
-
-  it("is permissive when the plan is unknown", () => {
-    const { presets, initial } = planContextOptions(claudeContext, null);
-    expect(presets.map((preset) => preset.tokens)).toEqual([
-      1000000, 500000, 200000,
-    ]);
-    expect(initial).toBe(1000000);
-  });
-
-  it("leaves an ungated provider unchanged", () => {
-    const openrouter: ProviderContext = {
-      default: 200000,
-      max: 200000,
-      presets: [
-        { tokens: 200000, label: "200K", note: "full window" },
-        { tokens: 64000, label: "64K", note: "cheapest" },
-      ],
-    };
-    const { presets, initial } = planContextOptions(openrouter, null);
-    expect(presets.map((preset) => preset.tokens)).toEqual([200000, 64000]);
-    expect(initial).toBe(200000);
+  it.each<{
+    name: string;
+    context: ProviderContext;
+    plan: "max" | "pro" | "free" | null;
+    tokens: number[];
+    initial: number;
+  }>([
+    {
+      name: "offers every window and defaults to 1M for max",
+      context: claudeContext,
+      plan: "max",
+      tokens: [1000000, 500000, 200000],
+      initial: 1000000,
+    },
+    {
+      name: "hides >200K windows and defaults to 200K for pro",
+      context: claudeContext,
+      plan: "pro",
+      tokens: [200000],
+      initial: 200000,
+    },
+    {
+      name: "hides >200K windows and defaults to 200K for free",
+      context: claudeContext,
+      plan: "free",
+      tokens: [200000],
+      initial: 200000,
+    },
+    {
+      name: "is permissive when the plan is unknown",
+      context: claudeContext,
+      plan: null,
+      tokens: [1000000, 500000, 200000],
+      initial: 1000000,
+    },
+    {
+      name: "leaves an ungated provider unchanged",
+      context: openrouterContext,
+      plan: null,
+      tokens: [200000, 64000],
+      initial: 200000,
+    },
+  ])("$name", ({ context, plan, tokens, initial }) => {
+    const result = planContextOptions(context, plan);
+    expect(result.presets.map((preset) => preset.tokens)).toEqual(tokens);
+    expect(result.initial).toBe(initial);
   });
 });
 
@@ -66,11 +81,11 @@ describe("planFromCredentials", () => {
     ).toBe("max");
   });
 
-  it("returns null when the field, blob, or JSON is absent", () => {
-    expect(
-      planFromCredentials(JSON.stringify({ claudeAiOauth: {} })),
-    ).toBeNull();
-    expect(planFromCredentials(JSON.stringify({}))).toBeNull();
-    expect(planFromCredentials("not json")).toBeNull();
+  it.each([
+    ["the field is absent", JSON.stringify({ claudeAiOauth: {} })],
+    ["the blob is absent", JSON.stringify({})],
+    ["the JSON is unparseable", "not json"],
+  ])("returns null when %s", (_name, blob) => {
+    expect(planFromCredentials(blob)).toBeNull();
   });
 });

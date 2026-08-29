@@ -1,22 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { ApiError, createReplica } from "@vesta/core";
-import type {
-  Controller,
-  Delta,
-  SocketLike,
-  Tree,
-  VestaEvent,
-} from "@vesta/core";
+import { ApiError } from "@vesta/core";
+import type { Controller, SocketLike, Tree, VestaEvent } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { fetchHistory } from "@/api/agents";
+import { fakeController, fakeTree } from "@/test/fake-controller";
 import { useAgentSocketState } from "./use-agent-socket";
 
 vi.mock("@/api/agents", () => ({ fetchHistory: vi.fn() }));
-// The socket dials with the refreshed access token in the query. A fresh value per build makes it
-// observable that the URL is re-derived on every connect rather than captured at mount.
+// The socket dials with the refreshed access token in the query; a fresh value per build lets the
+// mount case pin that the token reaches the URL. Re-derivation on reconnect is covered at the owner
+// (chat-socket.test.ts).
 let tokenBuilds = 0;
 vi.mock("@/lib/authed-url", () => ({
   websocketUrl: (path: string) => {
@@ -60,19 +56,7 @@ const fetchHistoryMock = vi.mocked(fetchHistory);
 const AGENT = "ada";
 
 function tree(): Tree {
-  return {
-    gateway: {
-      version: "0.0.0",
-      channel: "stable",
-      autoUpdate: true,
-      port: 7777,
-      lan: { exposed: false, url: null },
-      tunnelUrl: null,
-      updateAvailable: false,
-      latestVersion: null,
-      managed: false,
-      operation: null,
-    },
+  return fakeTree({
     agents: {
       [AGENT]: {
         info: {
@@ -86,33 +70,11 @@ function tree(): Tree {
         notifications: { pending: [] },
       },
     },
-    devices: [],
-  };
+  });
 }
 
 function makeController() {
-  const replica = createReplica();
-  replica.applySnapshot(tree());
-  const listeners = new Set<(delta: Delta) => void>();
-  const json = vi.fn().mockResolvedValue({});
-  const controller: Controller = {
-    replica,
-    http: { request: vi.fn(), json },
-    reauth: vi.fn(),
-    subscribeDeltas: (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getSyncState: () => "open",
-    subscribeSyncState: () => () => undefined,
-    reportPresence: () => undefined,
-    reportViewing: () => undefined,
-    reportDeviceContext: () => undefined,
-    getAnyFocused: () => false,
-    subscribeAnyFocused: () => () => undefined,
-    close: () => undefined,
-  };
-  return { controller, json };
+  return fakeController(tree());
 }
 
 function wrapper(controller: Controller) {
@@ -234,70 +196,6 @@ describe("useAgentSocketState", () => {
 
     expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
     expect(result.current.historyLoaded).toBe(true);
-  });
-
-  it("keeps loaded older rows before the newest tail after a reconnect", async () => {
-    vi.useFakeTimers();
-    fetchHistoryMock
-      .mockResolvedValueOnce({
-        events: [chat(3, "c"), chat(4, "d")],
-        cursor: 3,
-      })
-      .mockResolvedValueOnce({
-        events: [chat(1, "a"), chat(2, "b")],
-        cursor: null,
-      })
-      .mockResolvedValueOnce({
-        events: [chat(3, "c"), chat(4, "d"), chat(5, "e")],
-        cursor: 3,
-      });
-    const { controller } = makeController();
-    const { result } = render(controller);
-    await openAndFlush();
-
-    await act(async () => {
-      await result.current.loadMore();
-    });
-    expect(result.current.messages.map((message) => message.id)).toEqual([
-      1, 2, 3, 4,
-    ]);
-
-    act(() => {
-      chatSockets[0]?.onclose?.();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
-    await openAndFlush();
-
-    expect(result.current.messages.map((message) => message.id)).toEqual([
-      1, 2, 3, 4, 5,
-    ]);
-    expect(result.current.messages.at(-1)?.id).toBe(5);
-    expect(result.current.hasMore).toBe(false);
-  });
-
-  // The URL is re-derived on every connect, never captured at mount: a token that aged out while
-  // the app was away is refreshed by the builder before a reconnect dials.
-  it("re-derives the socket URL on a reconnect", async () => {
-    vi.useFakeTimers();
-    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
-    const { controller } = makeController();
-    render(controller);
-    await openAndFlush();
-
-    act(() => {
-      chatSockets[0]?.onclose?.();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
-    await openAndFlush();
-
-    expect(chatSockets.map((socket) => socket.url)).toEqual([
-      "wss://vestad.test/agents/ada/app-chat/ws?token=access-1",
-      "wss://vestad.test/agents/ada/app-chat/ws?token=access-2",
-    ]);
   });
 
   it("sends an optimistic bubble and confirms it on the chat-socket echo", async () => {

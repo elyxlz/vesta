@@ -13,39 +13,22 @@ describe("linkify", () => {
     ["renders inline code", "`code`", "<code>code</code>"],
     ["escapes ampersands in text", "a & b", "a &amp; b"],
     ["handles empty string", "", ""],
+    [
+      "converts a URL to an anchor carrying target and rel",
+      "visit https://example.com today",
+      'visit <a href="https://example.com" target="_blank" rel="noopener">https://example.com</a> today',
+    ],
+    [
+      "escapes ampersands in both the href and the display text",
+      "https://example.com?a=1&b=2",
+      '<a href="https://example.com?a=1&amp;b=2" target="_blank" rel="noopener">https://example.com?a=1&amp;b=2</a>',
+    ],
+    [
+      "escapes HTML in the surrounding text around a link",
+      '<script> https://example.com "test"',
+      '&lt;script&gt; <a href="https://example.com" target="_blank" rel="noopener">https://example.com</a> &quot;test&quot;',
+    ],
   ])("%s", (_name, input, expected) => {
     expect(linkify(input)).toBe(expected);
-  });
-
-  it("converts URLs to anchor tags", () => {
-    const result = linkify("visit https://example.com today");
-    expect(result).toContain('<a href="https://example.com"');
-    expect(result).toContain("https://example.com</a>");
-    expect(result).toContain('target="_blank"');
-  });
-
-  it("handles multiple URLs", () => {
-    const result = linkify("a https://a.com b http://b.com c");
-    expect(result).toContain("https://a.com</a>");
-    expect(result).toContain("http://b.com</a>");
-  });
-
-  it("escapes HTML in surrounding text and URL href", () => {
-    const result = linkify('<script> https://example.com "test"');
-    expect(result).toContain("&lt;script&gt;");
-    expect(result).toContain("&quot;test&quot;");
-    expect(result).toContain("https://example.com");
-    expect(result).toContain('target="_blank"');
-  });
-
-  it("escapes ampersands in both URL href and display text", () => {
-    const result = linkify("https://example.com?a=1&b=2");
-    expect(result).toContain('href="https://example.com?a=1&amp;b=2"');
-    expect(result).toContain("&amp;b=2</a>");
-  });
-
-  it("includes rel=noopener on links", () => {
-    const result = linkify("https://example.com");
-    expect(result).toContain('rel="noopener"');
   });
 });

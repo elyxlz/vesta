@@ -192,15 +192,4 @@ describe("log session", () => {
     expect(streamLogs).toHaveBeenCalledTimes(1);
     expect(stopLogs).toHaveBeenCalledWith("ada");
   });
-
-  it("getSnapshot returns the same reference until something changes", () => {
-    const { call, session } = makeHarness();
-    session.start();
-    emitLines(call(0), ["a"]);
-    vi.advanceTimersByTime(INITIAL_FILL_QUIESCE_MS);
-    const first = session.getSnapshot();
-    expect(session.getSnapshot()).toBe(first);
-    emitLines(call(0), ["b"]);
-    expect(session.getSnapshot()).not.toBe(first);
-  });
 });

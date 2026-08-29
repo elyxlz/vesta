@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { createElement, useEffect, type ReactNode } from "react";
-import { createReplica } from "@vesta/core";
-import type { Controller, Delta, NotificationEvent, Tree } from "@vesta/core";
+import type { Controller, NotificationEvent, Tree } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import {
   GatewayContext,
@@ -12,6 +11,7 @@ import {
 import type { AgentRow } from "@/lib/types";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
+import { fakeController, fakeTree } from "@/test/fake-controller";
 import { NotificationProvider, useNotifications } from "./index";
 
 vi.mock("@/lib/native", () => ({
@@ -74,53 +74,7 @@ function tree(statuses: Record<string, AgentRow["status"]>): Tree {
   const agents: Tree["agents"] = {};
   for (const [name, status] of Object.entries(statuses))
     agents[name] = node(status);
-  return {
-    gateway: {
-      version: "0.0.0",
-      channel: "stable",
-      autoUpdate: true,
-      port: 7777,
-      lan: { exposed: false, url: null },
-      tunnelUrl: null,
-      updateAvailable: false,
-      latestVersion: null,
-      managed: false,
-      operation: null,
-    },
-    agents,
-    devices: [],
-  };
-}
-
-function makeController(
-  statuses: Record<string, AgentRow["status"]>,
-  anyFocused = false,
-) {
-  const replica = createReplica();
-  replica.applySnapshot(tree(statuses));
-  const listeners = new Set<(delta: Delta) => void>();
-  const controller: Controller = {
-    replica,
-    http: { request: vi.fn(), json: vi.fn() },
-    reauth: vi.fn(),
-    subscribeDeltas: (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getSyncState: () => "open",
-    subscribeSyncState: () => () => undefined,
-    reportPresence: () => undefined,
-    reportViewing: () => undefined,
-    reportDeviceContext: () => undefined,
-    getAnyFocused: () => anyFocused,
-    subscribeAnyFocused: () => () => undefined,
-    close: () => undefined,
-  };
-  const emit = (delta: Delta): void => {
-    replica.applyDelta(delta);
-    for (const listener of listeners) listener(delta);
-  };
-  return { controller, emit };
+  return fakeTree({ agents });
 }
 
 function gatewayValue(agents: AgentRow[]): GatewayContextValue {
@@ -167,15 +121,9 @@ async function flush() {
   });
 }
 
-function blur() {
+function setWindowFocus(focused: boolean) {
   act(() => {
-    window.dispatchEvent(new Event("blur"));
-  });
-}
-
-function focus() {
-  act(() => {
-    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event(focused ? "focus" : "blur"));
   });
 }
 
@@ -201,191 +149,137 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+interface ToastCase {
+  name: string;
+  kind: string;
+  focused: boolean;
+  anyFocused?: boolean;
+  chatting?: string;
+  agent?: string;
+  title: string;
+  body: string;
+  expected: { title: string; body?: string }[];
+}
+
+// The one rule this suite pins: which kinds surface an OS notification, and how the client's own focus
+// (this window, or any client via anyFocused) and an in-view chat suppress it. `rate_limited` is the
+// legacy alias for a needs-user nudge and toasts on the same terms as needs_user.
+const toastCases: ToastCase[] = [
+  {
+    name: "toasts a background chat alert with the server preview when unfocused",
+    kind: "message",
+    focused: false,
+    agent: "ada",
+    title: "ada",
+    body: "pong",
+    expected: [{ title: "ada", body: "pong" }],
+  },
+  {
+    name: "defers the actively-chatted agent's chat alert to the chat surface",
+    kind: "message",
+    focused: false,
+    chatting: "ada",
+    agent: "ada",
+    title: "ada",
+    body: "hi",
+    expected: [],
+  },
+  {
+    name: "does not toast a chat alert while focused",
+    kind: "message",
+    focused: true,
+    title: "ada",
+    body: "hi",
+    expected: [],
+  },
+  {
+    name: "does not toast a chat alert while another client is focused",
+    kind: "message",
+    focused: false,
+    anyFocused: true,
+    title: "ada",
+    body: "hi",
+    expected: [],
+  },
+  {
+    name: "toasts a needs-user alert with the server title even while focused",
+    kind: "needs_user",
+    focused: true,
+    title: "ada needs to be set up",
+    body: "Choose a provider and sign in.",
+    expected: [
+      {
+        title: "ada needs to be set up",
+        body: "Choose a provider and sign in.",
+      },
+    ],
+  },
+  {
+    name: "toasts an older gateway's rate-limit alert even while focused",
+    kind: "rate_limited",
+    focused: true,
+    title: "ada",
+    body: "resets at 3pm",
+    expected: [{ title: "ada", body: "resets at 3pm" }],
+  },
+  {
+    name: "announces a gateway update with the gateway's chosen title when blurred",
+    kind: "gateway_updated",
+    focused: false,
+    agent: "",
+    title: "Updated to v0.1.190",
+    body: "Your gateway updated to v0.1.190.",
+    expected: [
+      {
+        title: "Updated to v0.1.190",
+        body: "Your gateway updated to v0.1.190.",
+      },
+    ],
+  },
+  {
+    name: "does not announce a gateway update to a focused client",
+    kind: "gateway_updated",
+    focused: true,
+    agent: "",
+    title: "Updated to v0.1.190",
+    body: "Your gateway updated to v0.1.190.",
+    expected: [],
+  },
+];
+
 describe("NotificationProvider", () => {
-  it("toasts a background chat alert with the server preview when unfocused", async () => {
-    const { controller, emit } = makeController({ ada: "alive", bob: "alive" });
-    mount(controller, [agentInfo("ada", "alive"), agentInfo("bob", "alive")]);
-    await flush();
-    blur();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "bob",
-        kind: "message",
-        title: "bob",
-        body: "pong",
-      });
+  it.each(toastCases)("$name", async (row) => {
+    const agent = row.agent ?? "ada";
+    const { controller, emit } = fakeController(tree({ ada: "alive" }), {
+      anyFocused: row.anyFocused ?? false,
     });
-
-    expect(built).toEqual([{ title: "bob", body: "pong" }]);
-  });
-
-  it("defers the actively-chatted agent's chat alert to the chat surface", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
     mount(
       controller,
       [agentInfo("ada", "alive")],
-      createElement(ChattingWith, { agent: "ada" }),
+      row.chatting
+        ? createElement(ChattingWith, { agent: row.chatting })
+        : null,
     );
     await flush();
-    blur();
+    setWindowFocus(row.focused);
 
     act(() => {
       emit({
         type: "user_notification",
         id: 1,
         at: 1_700_000_000,
-        agent: "ada",
-        kind: "message",
-        title: "ada",
-        body: "hi",
+        agent,
+        kind: row.kind,
+        title: row.title,
+        body: row.body,
       });
     });
 
-    expect(built).toEqual([]);
-  });
-
-  it("does not toast a background chat alert while focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "message",
-        title: "ada",
-        body: "hi",
-      });
-    });
-
-    expect(built).toEqual([]);
-  });
-
-  it("does not toast a background chat alert while another client is focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" }, true);
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    blur();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "message",
-        title: "ada",
-        body: "hi",
-      });
-    });
-
-    expect(built).toEqual([]);
-  });
-
-  it("toasts a needs-user alert with the server title even while focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "needs_user",
-        title: "ada needs to be set up",
-        body: "Choose a provider and sign in.",
-      });
-    });
-
-    expect(built).toEqual([
-      {
-        title: "ada needs to be set up",
-        body: "Choose a provider and sign in.",
-      },
-    ]);
-  });
-
-  it("toasts an older gateway's rate-limit alert even while focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "rate_limited",
-        title: "ada",
-        body: "resets at 3pm",
-      });
-    });
-
-    expect(built).toEqual([{ title: "ada", body: "resets at 3pm" }]);
-  });
-
-  it("toasts the gateway's update announcement with the title the gateway chose", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    blur();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "",
-        kind: "gateway_updated",
-        title: "Updated to v0.1.190",
-        body: "Your gateway updated to v0.1.190.",
-      });
-    });
-
-    expect(built).toEqual([
-      {
-        title: "Updated to v0.1.190",
-        body: "Your gateway updated to v0.1.190.",
-      },
-    ]);
-  });
-
-  it("does not announce a gateway update to a client that is focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "",
-        kind: "gateway_updated",
-        title: "Updated to v0.1.190",
-        body: "Your gateway updated to v0.1.190.",
-      });
-    });
-
-    expect(built).toEqual([]);
+    expect(built).toEqual(row.expected);
   });
 
   it("lights the unseen badge when the fleet's pending count grows while hidden", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
+    const { controller, emit } = fakeController(tree({ ada: "alive" }));
     mount(controller, [agentInfo("ada", "alive")]);
     await flush();
     setHidden(true);

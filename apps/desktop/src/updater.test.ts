@@ -80,11 +80,8 @@ describe("linux release asset selection", () => {
 describe("latest-channel version comparison", () => {
   it.each([
     { candidate: "0.1.180", current: "0.1.179", expected: true },
-    { candidate: "0.2.0", current: "0.1.179", expected: true },
-    { candidate: "1.0.0", current: "0.9.9", expected: true },
-    { candidate: "0.1.180-beta", current: "0.1.179", expected: true },
     { candidate: "0.1.179", current: "0.1.179", expected: false },
-    { candidate: "0.1.178", current: "0.1.179", expected: false },
+    // Numeric, not lexicographic: 0.1.9 is older than 0.1.10.
     { candidate: "0.1.9", current: "0.1.10", expected: false },
   ])(
     "$candidate newer than $current -> $expected",

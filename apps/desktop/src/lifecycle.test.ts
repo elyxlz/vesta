@@ -14,23 +14,15 @@ function fakeApp() {
 }
 
 describe("trackQuitIntent", () => {
-  it("starts not quitting", () => {
-    const app = fakeApp();
-    const isQuitting = trackQuitIntent(app);
-    expect(isQuitting()).toBe(false);
-  });
-
-  it("flips on before-quit", () => {
-    const app = fakeApp();
-    const isQuitting = trackQuitIntent(app);
-    app.emit("before-quit");
-    expect(isQuitting()).toBe(true);
-  });
-
-  it("flips on before-quit-for-update, so an update relaunch lifts the macOS close guard", () => {
-    const app = fakeApp();
-    const isQuitting = trackQuitIntent(app);
-    app.emit("before-quit-for-update");
-    expect(isQuitting()).toBe(true);
-  });
+  // `before-quit-for-update` is the update relaunch, and it must lift the macOS close guard too.
+  it.each(["before-quit", "before-quit-for-update"])(
+    "flips from not-quitting to quitting on %s",
+    (event) => {
+      const app = fakeApp();
+      const isQuitting = trackQuitIntent(app);
+      expect(isQuitting()).toBe(false);
+      app.emit(event);
+      expect(isQuitting()).toBe(true);
+    },
+  );
 });
