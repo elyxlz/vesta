@@ -210,6 +210,33 @@ async function submitLink(page: Page): Promise<void> {
 
 const SIGNED_OUT: ScenarioState = { route: "/connect", connection: false };
 
+const RECENT_GATEWAYS = [
+  {
+    id: "gateway-luna",
+    url: "https://luna.example.com",
+    hosted: false,
+    lastConnectedAt: FIXED_TIME.getTime(),
+    connection: {
+      url: "https://luna.example.com",
+      accessToken: "visual-access-token",
+      refreshToken: "visual-refresh-token",
+      expiresAt: FIXED_TIME.getTime() + 3_600_000,
+    },
+  },
+  {
+    id: "gateway-home",
+    url: "https://home.example.com",
+    hosted: false,
+    lastConnectedAt: FIXED_TIME.getTime() - 86_400_000,
+    connection: {
+      url: "https://home.example.com",
+      accessToken: "visual-access-token",
+      refreshToken: "visual-refresh-token",
+      expiresAt: FIXED_TIME.getTime() + 3_600_000,
+    },
+  },
+];
+
 export const APP_SETTINGS: Record<string, Scenario> = {
   "app-settings": {
     state: settingsState(),
@@ -355,6 +382,25 @@ export const APP_SETTINGS: Record<string, Scenario> = {
       await expect(
         page.getByRole("button", { name: "connect", exact: true }),
       ).toBeVisible();
+    },
+  },
+  "connect-recent-gateways": {
+    state: {
+      ...SIGNED_OUT,
+      storage: {
+        "vesta-recent-gateways": JSON.stringify(RECENT_GATEWAYS),
+      },
+    },
+    drive: async (page) => {
+      const trigger = page.getByRole("button", { name: "recent gateways" });
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+    },
+    settle: async (page) => {
+      const dialog = page.getByRole("dialog", { name: "recent gateways" });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByText("luna.example.com")).toBeVisible();
+      await expect(dialog.getByText("home.example.com")).toBeVisible();
     },
   },
   "connect-connecting": {

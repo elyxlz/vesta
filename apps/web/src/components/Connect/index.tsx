@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
@@ -12,7 +12,9 @@ import { errorMessage } from "@/lib/utils";
 import { startHostedLogin } from "@/lib/pkce";
 import { native } from "@/lib/native";
 import { parseConnectLink } from "@/lib/connection";
+import { readRecentGateways } from "@/lib/recent-gateways";
 import { useAuth } from "@/providers/AuthProvider";
+import { useSwitchGateway } from "@/stores/use-switch-gateway";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
 // window.location.origin already points at the right vestad instance.
@@ -35,12 +37,16 @@ function HostedSignInCard({
   error,
   onSignIn,
   onSelfHost,
+  hasRecentGateways,
+  onRecentGateways,
 }: {
   sessionExpired: boolean;
   busy: boolean;
   error: string;
   onSignIn: () => void;
   onSelfHost: () => void;
+  hasRecentGateways: boolean;
+  onRecentGateways: () => void;
 }) {
   return (
     <div className="flex h-full flex-col p-page">
@@ -78,6 +84,9 @@ function HostedSignInCard({
               </motion.p>
             )}
           </AnimatePresence>
+          {hasRecentGateways && (
+            <RecentGatewaysButton onClick={onRecentGateways} />
+          )}
           {isDesktopApp && (
             <button
               type="button"
@@ -93,6 +102,28 @@ function HostedSignInCard({
   );
 }
 
+function RecentGatewaysButton({
+  onClick,
+  visible = true,
+}: {
+  onClick: () => void;
+  visible?: boolean;
+}) {
+  if (!visible) return null;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={onClick}
+      className="text-xs text-muted-foreground"
+    >
+      <History />
+      recent gateways
+    </Button>
+  );
+}
+
 function ConnectHeader() {
   return (
     <div className="flex flex-col items-center gap-1.5">
@@ -104,12 +135,37 @@ function ConnectHeader() {
   );
 }
 
+function useHasRecentGateways(dialogOpen: boolean): boolean {
+  const [hasRecentGateways, setHasRecentGateways] = useState(false);
+
+  useEffect(() => {
+    if (dialogOpen) return;
+    let active = true;
+    void readRecentGateways()
+      .then((gateways) => {
+        if (active) setHasRecentGateways(gateways.length > 0);
+      })
+      .catch((cause: unknown) => {
+        console.warn("could not read saved gateways", cause);
+        if (active) setHasRecentGateways(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [dialogOpen]);
+
+  return hasRecentGateways;
+}
+
 export function Connect() {
   const { connected, connect, sessionExpired } = useAuth();
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const switchGatewayOpen = useSwitchGateway((state) => state.open);
+  const setSwitchGatewayOpen = useSwitchGateway((state) => state.setOpen);
+  const hasRecentGateways = useHasRecentGateways(switchGatewayOpen);
   const inputRef = useRef<HTMLInputElement>(null);
   // In the desktop app (and any vesta-account surface) we lead with "continue
   // with vesta account"; `selfHost` flips to the connect-link form for people
@@ -223,6 +279,8 @@ export function Connect() {
           setError("");
           setSelfHost(true);
         }}
+        hasRecentGateways={hasRecentGateways}
+        onRecentGateways={() => setSwitchGatewayOpen(true)}
       />
     );
   }
@@ -284,6 +342,11 @@ export function Connect() {
           >
             {busy ? "connecting..." : "connect"}
           </Button>
+
+          <RecentGatewaysButton
+            visible={hasRecentGateways}
+            onClick={() => setSwitchGatewayOpen(true)}
+          />
 
           {isDesktopApp && selfHost && (
             <button

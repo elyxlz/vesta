@@ -9,6 +9,7 @@ import {
   recentGatewayId,
   type RecentGateway,
 } from "@/lib/recent-gateways";
+import { useAuth } from "@/providers/AuthProvider";
 import { useControllerReconnect } from "@/providers/ControllerProvider";
 import { useSwitchGateway } from "@/stores/use-switch-gateway";
 import { Badge } from "@/components/ui/badge";
@@ -56,11 +57,13 @@ function currentGatewayId(): string | null {
 function GatewayRow({
   gateway,
   current,
+  action,
   onSwitch,
   onForget,
 }: {
   gateway: RecentGateway;
   current: boolean;
+  action: "connect" | "switch";
   onSwitch: () => void;
   onForget: () => void;
 }) {
@@ -78,7 +81,7 @@ function GatewayRow({
         disabled={current}
         onClick={onSwitch}
         aria-label={
-          current ? undefined : `switch to ${gatewayHost(gateway.url)}`
+          current ? undefined : `${action} to ${gatewayHost(gateway.url)}`
         }
         className="flex min-w-0 flex-1 items-center gap-3 rounded-xl py-2.5 pl-3 text-left disabled:cursor-default"
       >
@@ -115,6 +118,7 @@ function GatewayRow({
 // pending confirm survives a close.
 function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
   const reconnect = useControllerReconnect();
+  const { connected, connectSavedGateway } = useAuth();
   const [gateways, setGateways] = useState<RecentGateway[] | null>(null);
   const [pendingForget, setPendingForget] = useState<RecentGateway | null>(
     null,
@@ -142,9 +146,13 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
   // refresh flow revives them if they expired); a gateway whose tokens have
   // fully lapsed lands on the app's reauth screen, same as any dead session.
   const switchTo = (gateway: RecentGateway) => {
-    restoreConnection(gateway.connection);
+    if (connected) {
+      restoreConnection(gateway.connection);
+      reconnect();
+    } else {
+      connectSavedGateway(gateway.connection);
+    }
     void router.navigate("/");
-    reconnect();
     onClose();
   };
 
@@ -185,7 +193,9 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
     return (
       <>
         <DialogHeader>
-          <DialogTitle>switch gateway</DialogTitle>
+          <DialogTitle>
+            {connected ? "switch gateway" : "recent gateways"}
+          </DialogTitle>
           <DialogDescription>
             reconnect to a gateway you've used before.
           </DialogDescription>
@@ -200,7 +210,9 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>switch gateway</DialogTitle>
+        <DialogTitle>
+          {connected ? "switch gateway" : "recent gateways"}
+        </DialogTitle>
         <DialogDescription>
           reconnect to a gateway you've used before.
         </DialogDescription>
@@ -210,7 +222,9 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
           <span className="flex size-11 items-center justify-center rounded-xl bg-muted text-muted-foreground">
             <Server className="size-5" />
           </span>
-          <p className="text-sm font-medium">no other gateways yet</p>
+          <p className="text-sm font-medium">
+            {connected ? "no other gateways yet" : "no saved gateways"}
+          </p>
           <p className="max-w-[15rem] text-xs text-muted-foreground">
             connect to another with its connect link and it'll show up here.
           </p>
@@ -222,6 +236,7 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
               key={gateway.id}
               gateway={gateway}
               current={gateway.id === currentId}
+              action={connected ? "switch" : "connect"}
               onSwitch={() => switchTo(gateway)}
               onForget={() => setPendingForget(gateway)}
             />

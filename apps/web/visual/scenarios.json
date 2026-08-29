@@ -768,6 +768,12 @@
       "group": "Connect"
     },
     {
+      "id": "connect-recent-gateways",
+      "title": "Connect, recent gateways",
+      "description": "The disconnected gateway picker with previously used gateways available to reconnect.",
+      "group": "Connect"
+    },
+    {
       "id": "connect-connecting",
       "title": "Connect, connecting",
       "description": "The connect page while the health check runs.",
