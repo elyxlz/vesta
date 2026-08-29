@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld("vestaNative", {
   storeRead: () => ipcRenderer.invoke("store:read"),
   storeWrite: (value: unknown) => ipcRenderer.invoke("store:write", value),
   storeClear: () => ipcRenderer.invoke("store:clear"),
+  recentStoreRead: () => ipcRenderer.invoke("recent-store:read"),
+  recentStoreWrite: (value: unknown) =>
+    ipcRenderer.invoke("recent-store:write", value),
+  recentStoreClear: () => ipcRenderer.invoke("recent-store:clear"),
   oauthStart: () => ipcRenderer.invoke("oauth:start"),
   onOauthCallback: (cb: (url: string) => void) =>
     subscribe("oauth:callback", (_event, url: string) => {

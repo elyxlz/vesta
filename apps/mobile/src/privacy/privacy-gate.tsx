@@ -23,6 +23,7 @@ const NATIVE_SHEET_ROUTES = new Set([
   "recent-gateways",
   "scan",
   "settings",
+  "switch-gateway",
   "whats-new",
 ]);
 

@@ -107,17 +107,17 @@ describe("removeRecentGateway", () => {
 });
 
 describe("localStorage round-trip", () => {
-  it("remembers, reads back, and forgets a gateway", () => {
-    rememberGateway(conn("https://a.example"));
-    const read = readRecentGateways();
+  it("remembers, reads back, and forgets a gateway", async () => {
+    await rememberGateway(conn("https://a.example"));
+    const read = await readRecentGateways();
     expect(read).toHaveLength(1);
     expect(read[0]?.url).toBe("https://a.example");
 
-    forgetRecentGateway(recentGatewayId("https://a.example"));
-    expect(readRecentGateways()).toEqual([]);
+    await forgetRecentGateway(recentGatewayId("https://a.example"));
+    expect(await readRecentGateways()).toEqual([]);
   });
 
-  it("drops invalid records and survives corrupt json", () => {
+  it("drops invalid records and survives corrupt json", async () => {
     localStorage.setItem(
       "vesta-recent-gateways",
       JSON.stringify([
@@ -130,11 +130,11 @@ describe("localStorage round-trip", () => {
         { nonsense: true },
       ]),
     );
-    expect(readRecentGateways().map((g) => g.url)).toEqual([
+    expect((await readRecentGateways()).map((g) => g.url)).toEqual([
       "https://good.example",
     ]);
 
     localStorage.setItem("vesta-recent-gateways", "{ broken");
-    expect(readRecentGateways()).toEqual([]);
+    expect(await readRecentGateways()).toEqual([]);
   });
 });

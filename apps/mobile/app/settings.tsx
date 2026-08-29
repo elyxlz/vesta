@@ -374,6 +374,11 @@ export default function SettingsScreen() {
               }
             />
             <FormRow
+              label="Switch gateway"
+              detail="Connect to a gateway saved on this device."
+              onPress={() => router.push("/switch-gateway")}
+            />
+            <FormRow
               label="Version"
               value={roster.gatewayVersion ?? "unknown"}
             />

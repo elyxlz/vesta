@@ -274,6 +274,17 @@ function SessionNavigation() {
                 }}
               />
               <Stack.Screen
+                name="switch-gateway"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  ...formSheetCorners,
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: true,
+                  contentStyle: { backgroundColor: colors.card },
+                }}
+              />
+              <Stack.Screen
                 name="whats-new"
                 options={{
                   title: "What’s new",

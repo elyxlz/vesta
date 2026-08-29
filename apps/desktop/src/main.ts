@@ -10,7 +10,14 @@ import path from "node:path";
 import { readNativeGeolocation } from "./geolocation";
 import { trackQuitIntent } from "./lifecycle";
 import { cancelLoopback, startLoopback } from "./oauth-loopback";
-import { clearConnection, readConnection, writeConnection } from "./store";
+import {
+  clearConnection,
+  clearRecentGateways,
+  readConnection,
+  readRecentGateways,
+  writeConnection,
+  writeRecentGateways,
+} from "./store";
 import { createMainWindow, registerAppScheme, showMainWindow } from "./window";
 
 registerAppScheme();
@@ -84,6 +91,11 @@ if (!gotLock) {
       writeConnection(value),
     );
     ipcMain.handle("store:clear", () => clearConnection());
+    ipcMain.handle("recent-store:read", () => readRecentGateways());
+    ipcMain.handle("recent-store:write", (_event, value: unknown) =>
+      writeRecentGateways(value),
+    );
+    ipcMain.handle("recent-store:clear", () => clearRecentGateways());
     ipcMain.handle("oauth:start", () =>
       startLoopback((url) =>
         mainWindow?.webContents.send("oauth:callback", url),

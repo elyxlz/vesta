@@ -34,7 +34,7 @@ export function Callback() {
         );
         setHostedConnection(window.location.origin, accessToken, expiresIn);
         const connection = getConnection();
-        if (connection) rememberGateway(connection);
+        if (connection) await rememberGateway(connection);
         // Strip the code/state from the URL, then enter the app with a full
         // load so providers re-read the now-present connection.
         window.history.replaceState(null, "", "/");
