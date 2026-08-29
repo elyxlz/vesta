@@ -86,6 +86,8 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 Simulating it yourself tends to approve your own fixes, so for a failure that has already recurred, hand a fresh subagent (no knowledge of the fix) the original failing exchange plus the updated skill or prompt and see if it independently produces the right behavior. If it doesn't, flag the fix unresolved.
 
+**Clean up test data by TRUNCATING IN PLACE, never by replacing the file.** If you injected lines into a file a running process holds open, removing them with `grep -v ... > tmp && mv tmp file` (or any rewrite) creates a NEW inode. The process keeps writing to the old one, which now has no directory entry, and its output vanishes into unreachable disk. Use `: > file`, `truncate -s 0`, or `sed -i` instead, then confirm with `ls -l /proc/<pid>/fd/1` that the target does not say `(deleted)`.
+
 **When the fix is a check, a detector, a threshold, or a monitor, also simulate the HEALTHY case.** Replaying the failure it was built for only proves it fires. Ask literally: what does this print when everything is fine? If the answer is "the last bad value", "nothing, so the previous reading stands", or "I cannot tell the difference", the check is a high-water mark that pins you to a stale state, and it looks healthy the whole time because it still returns a plausible number.
 
 ### 5. Upstream
