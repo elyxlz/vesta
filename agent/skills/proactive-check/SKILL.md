@@ -9,7 +9,19 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 ## Preflight: daemon liveness (do this first, every tick)
 
-Before anything else, confirm the daemons the `restart` skill starts are actually alive: ask each one it starts with the matching `<skill> daemon status`. Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring a dead daemon back with its own `<skill> daemon start`, or re-run the `restart` skill, which is idempotent and a no-op when everything is already up.
+Before anything else, confirm the daemons the `restart` skill starts are actually alive. **Read the list off disk, never from a copy of it in your context.** It is the same list `~/agent/skills/restart/start-daemons.sh` runs, one `<skill> daemon start` per line:
+
+```bash
+while read -r line; do
+  case "$line" in ''|'#'*) continue;; esac
+  skill=${line%% *}
+  printf '%-12s ' "$skill"; $skill daemon status
+done < ~/agent/skills/restart/daemons.sh
+```
+
+Taking the list from context instead fails invisibly: a name you typed returns a green line, and a daemon missing from your list returns **no line at all, rather than a red one**, so the check reports healthy and the omission is indistinguishable from a system with one fewer daemon. A check that takes its scope as an input can only ever speak about its input.
+
+Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring dead ones back with `~/agent/skills/restart/start-daemons.sh`, which parses the same file, or re-run the `restart` skill; both are idempotent and a no-op when everything is already up.
 
 This check is your duty and stays yours: never build a watchdog, cron job, or auto-restarting script to do it for you. An automation restarts blindly, hides the cause from you, and becomes one more thing that breaks silently; you can read the log, fix the cause, and judge when the user must be involved. When a daemon you brought back died for a reason worth fixing, fix it in that skill, not with a new layer of machinery on top.
 
