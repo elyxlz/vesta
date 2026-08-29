@@ -17,14 +17,12 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { connectionHostname } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
-import { Switch } from "@/components/ui/switch";
 import {
   Field,
   FieldContent,
   FieldDescription,
   FieldLabel,
 } from "@/components/ui/field";
-import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useSwitchGateway } from "@/stores/use-switch-gateway";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
@@ -48,8 +46,6 @@ export function AppSettings() {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
   const { reachable, managed, gatewayVersion } = useGateway();
-  const naturalPacing = useChatPacing((s) => s.natural);
-  const setNaturalPacing = useChatPacing((s) => s.setNatural);
   const hostname = connectionHostname();
   const gatewaySetup = useGatewaySetup();
   const openSwitchGateway = useSwitchGateway((s) => s.setOpen);
@@ -61,28 +57,6 @@ export function AppSettings() {
         <CardContent>
           <MenuSection title="appearance">
             <AppearancePicker value={theme} onChange={setTheme} />
-          </MenuSection>
-        </CardContent>
-      </Card>
-
-      <Card size="sm">
-        <CardContent>
-          <MenuSection title="chat">
-            <Field
-              orientation="horizontal"
-              className="items-center justify-between"
-            >
-              <FieldContent>
-                <FieldLabel className="text-base">natural pacing</FieldLabel>
-                <FieldDescription>
-                  simulate typing delay before assistant messages appear
-                </FieldDescription>
-              </FieldContent>
-              <Switch
-                checked={naturalPacing}
-                onCheckedChange={setNaturalPacing}
-              />
-            </Field>
           </MenuSection>
         </CardContent>
       </Card>
