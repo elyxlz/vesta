@@ -26,16 +26,18 @@ export interface AgentNotificationsDelta {
   pending: NotificationEvent[]
 }
 
-// The always-on, server-decided user-facing notification, carrying the display triple directly. Chat
-// leaves the event union, so the user notification no longer embeds an event: the client routes on
-// `kind` and renders `title`/`body`. Agent-injected kinds: `message` (a reply), `needs_user` (the
-// agent needs the user: set up, sign in, rate limited), `task` (task activity). Gateway-minted
-// kinds, `agent` empty where no agent is behind them: `gateway_updated`, `update_available`,
-// `agent_status` (stopped, died, recovered), `device_connected`. `kind` stays a plain string so an
-// unknown one is rendered rather than dropped, which is what keeps a new kind additive.
-// Independent of any subscription; clients toast it.
+// The always-on, server-decided user-facing notification: the client routes on `kind` and renders
+// `title`/`body`. Agent-injected kinds: `message` (a reply), `needs_user` (the agent needs the
+// user: set up, sign in, rate limited), `task` (task activity). Gateway-minted kinds, `agent` empty
+// where no agent is behind them: `gateway_updated`, `update_available`, `agent_status` (stopped,
+// died, recovered), `device_connected`. `kind` stays a plain string so an unknown one is rendered
+// rather than dropped, which is what keeps a new kind additive. `id` and `at` are the durable
+// log's own (GET /notifications serves the same entry), so a feed joins the live edge by id.
 export interface UserNotificationDelta {
   type: "user_notification"
+  id: number
+  /** Unix seconds at delivery, the gateway's clock. */
+  at: number
   agent: string
   kind: string
   title: string

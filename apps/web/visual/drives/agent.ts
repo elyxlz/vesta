@@ -28,7 +28,7 @@ const CLAUDE_PROVIDER: ProviderInfoFixture = {
 };
 
 const DASHBOARD_SERVICE: Partial<AgentInfo> = {
-  services: { dashboard: { port: 8321, rev: 1 } },
+  services: { dashboard: { port: 8321, rev: 1, public: false } },
 };
 
 const RESTART_PENDING_STORAGE = {
@@ -342,16 +342,6 @@ export const AGENT: Record<string, Scenario> = {
       await expect(
         page.getByRole("button", { name: "switch provider" }),
       ).toBeVisible();
-      await expectChatEmpty(page);
-    },
-  },
-  "agent-menu-debug-info": {
-    state: agentPage({ storage: { "vesta:mode": "advanced" } }),
-    drive: (page) => pickAgentAction(page, "debug info"),
-    settle: async (page) => {
-      const dialog = page.getByRole("dialog", { name: "debug info" });
-      await expect(dialog).toBeVisible();
-      await expect(dialog.getByText(`"${AGENT_NAME}"`)).toBeVisible();
       await expectChatEmpty(page);
     },
   },

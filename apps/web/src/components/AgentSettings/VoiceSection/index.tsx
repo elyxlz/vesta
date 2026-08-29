@@ -12,7 +12,14 @@ import {
   FieldDescription,
   FieldLabel,
 } from "@/components/ui/field";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -85,7 +92,7 @@ export function SttCard() {
       onSettingChange={(settings) => patchStt({ settings })}
       usageContent={
         <UsageCollapsible onOpen={loadUsage}>
-          <div className="flex items-center justify-between text-xs px-6 pt-2">
+          <div className="flex items-center justify-between text-sm px-6 pt-2">
             <span className="text-muted-foreground">hours this month</span>
             <span className="text-foreground tabular-nums">
               {sttUsageSummary(usageData)}
@@ -123,7 +130,7 @@ function ToggleIdleTimeoutSetting() {
         {idleOptions.map((opt) => (
           <button
             key={String(opt.value)}
-            className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
+            className={`rounded-sm px-2.5 py-1 text-sm transition-colors ${
               idleTimeoutMs === opt.value
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
@@ -174,7 +181,7 @@ export function TtsCard() {
       onSettingChange={(settings) => patchTts({ settings })}
       usageContent={
         <UsageCollapsible onOpen={loadUsage}>
-          <div className="flex items-center justify-between text-xs px-6 pt-2">
+          <div className="flex items-center justify-between text-sm px-6 pt-2">
             <span className="text-muted-foreground">characters this month</span>
             <span className="text-foreground tabular-nums">
               {chars &&
@@ -198,7 +205,7 @@ function CollapsibleChevronButton({ children }: { children: React.ReactNode }) {
       <Button
         variant="ghost"
         size="sm"
-        className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
+        className="w-full justify-start gap-2 px-0 text-base text-muted-foreground hover:text-foreground"
       >
         <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
         {children}
@@ -259,50 +266,45 @@ function DomainSection({
 }) {
   return (
     <Card size="sm">
-      <CardContent>
-        <Field orientation="vertical" className="gap-3">
-          <Field
-            orientation="horizontal"
-            className="items-center justify-between"
-          >
-            <FieldContent>
-              <FieldLabel className="flex items-center gap-2">
-                {icon}
-                {title}
-                {provider && (
-                  <span className="text-xs text-muted-foreground font-normal">
-                    {provider}
-                  </span>
-                )}
-              </FieldLabel>
-            </FieldContent>
-            <Switch
-              checked={enabled && configured}
-              disabled={!configured}
-              onCheckedChange={onToggleEnabled}
-            />
+      <CardHeader>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
+          {icon}
+          {title}
+          {provider && (
+            <span className="text-sm text-muted-foreground font-normal">
+              {provider}
+            </span>
+          )}
+        </CardTitle>
+        {!configured && (
+          <CardDescription className="text-warning group-data-[size=sm]/card:text-sm">
+            not configured, ask the agent to set it up
+          </CardDescription>
+        )}
+        <CardAction>
+          <Switch
+            checked={enabled && configured}
+            disabled={!configured}
+            onCheckedChange={onToggleEnabled}
+          />
+        </CardAction>
+      </CardHeader>
+      {configured && enabled && (
+        <CardContent>
+          <Field orientation="vertical" className="gap-3">
+            {usageContent}
+            {settings && settings.length > 0 && (
+              <DynamicSettings
+                settings={settings}
+                domain={domain}
+                agentName={agentName}
+                onSettingChange={onSettingChange}
+              />
+            )}
+            {extraSettings}
           </Field>
-
-          {!configured ? (
-            <p className="text-xs text-warning">
-              not configured — ask the agent to set it up
-            </p>
-          ) : enabled ? (
-            <>
-              {usageContent}
-              {settings && settings.length > 0 && (
-                <DynamicSettings
-                  settings={settings}
-                  domain={domain}
-                  agentName={agentName}
-                  onSettingChange={onSettingChange}
-                />
-              )}
-              {extraSettings}
-            </>
-          ) : null}
-        </Field>
-      </CardContent>
+        </CardContent>
+      )}
     </Card>
   );
 }
@@ -416,7 +418,7 @@ function BoolSetting({
   return (
     <Field orientation="horizontal" className="items-center justify-between">
       <FieldContent>
-        <FieldLabel className="text-sm">{setting.label}</FieldLabel>
+        <FieldLabel className="text-base">{setting.label}</FieldLabel>
         {setting.description && (
           <FieldDescription>{setting.description}</FieldDescription>
         )}
@@ -466,8 +468,8 @@ function NumberSetting({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
-        <span className="text-sm text-foreground">{setting.label}</span>
-        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+        <span className="text-base text-foreground">{setting.label}</span>
+        <span className="text-xs text-muted-foreground/70 tabular-nums">
           {formatValue(localValue)}
         </span>
       </div>
@@ -481,7 +483,7 @@ function NumberSetting({
         }}
       />
       {setting.description && (
-        <p className="text-xs text-muted-foreground">{setting.description}</p>
+        <p className="text-sm text-muted-foreground">{setting.description}</p>
       )}
     </div>
   );
@@ -513,7 +515,7 @@ function SelectSetting({
           {options.map((opt) => (
             <button
               key={opt.value}
-              className={`text-left text-sm px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
+              className={`text-left text-base px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
               onClick={() => onChange(opt.value)}
             >
               {opt.label}
@@ -600,7 +602,7 @@ function VoicePicker({
                   aria-pressed={selected}
                 >
                   <div
-                    className={`size-9 rounded-full flex items-center justify-center text-xs font-medium ${
+                    className={`size-9 rounded-full flex items-center justify-center text-sm font-medium ${
                       selected
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted text-muted-foreground"
@@ -609,7 +611,7 @@ function VoicePicker({
                     {opt.label[0]}
                   </div>
                   <span
-                    className={`text-[10px] leading-tight text-center truncate max-w-full ${
+                    className={`text-xs leading-tight text-center truncate max-w-full ${
                       selected
                         ? "text-primary font-medium"
                         : "text-muted-foreground"
@@ -618,7 +620,7 @@ function VoicePicker({
                     {opt.label}
                   </span>
                   {typeof opt.description === "string" && opt.description && (
-                    <span className="text-[11px] leading-tight text-center text-muted-foreground truncate max-w-full">
+                    <span className="text-xs leading-tight text-center text-muted-foreground truncate max-w-full">
                       {opt.description}
                     </span>
                   )}

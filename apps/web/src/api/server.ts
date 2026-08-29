@@ -1,4 +1,5 @@
-import { setConnection } from "@/lib/connection";
+import { getConnection, setConnection } from "@/lib/connection";
+import { rememberGateway } from "@/lib/recent-gateways";
 import { jsonInit } from "./client";
 
 export async function connectToServer(
@@ -34,4 +35,6 @@ export async function connectToServer(
     data.refresh_token,
     data.expires_in,
   );
+  const connection = getConnection();
+  if (connection) rememberGateway(connection);
 }

@@ -3,12 +3,22 @@ import type { UserNotificationDelta } from "@vesta/core";
 import { shouldPresentUserNotification } from "./user-notification-presentation";
 
 function chatUserNotification(agent: string): UserNotificationDelta {
-  return { type: "user_notification", agent, kind: "message", title: agent, body: "hi" };
+  return {
+    type: "user_notification",
+    id: 1,
+    at: 1_700_000_000,
+    agent,
+    kind: "message",
+    title: agent,
+    body: "hi",
+  };
 }
 
 function rateLimitedUserNotification(agent: string): UserNotificationDelta {
   return {
     type: "user_notification",
+    id: 1,
+    at: 1_700_000_000,
     agent,
     kind: "rate_limited",
     title: agent,
@@ -19,6 +29,8 @@ function rateLimitedUserNotification(agent: string): UserNotificationDelta {
 function needsUserNotification(agent: string): UserNotificationDelta {
   return {
     type: "user_notification",
+    id: 1,
+    at: 1_700_000_000,
     agent,
     kind: "needs_user",
     title: `${agent} needs to be set up`,
@@ -29,6 +41,8 @@ function needsUserNotification(agent: string): UserNotificationDelta {
 // The gateway's own announcement names no agent, so it can never be the one on screen.
 const gatewayUpdatedNotification: UserNotificationDelta = {
   type: "user_notification",
+  id: 1,
+  at: 1_700_000_000,
   agent: "",
   kind: "gateway_updated",
   title: "Updated to v0.1.190",

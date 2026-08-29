@@ -34,10 +34,12 @@ describe("sync protocol contract (vestad fixtures)", () => {
     }
   })
 
-  it("carries the server-decided kind, title, and body through the user_notification delta", () => {
+  it("carries the log identity, kind, title, and body through the user_notification delta", () => {
     const parsed = parseServerFrame(JSON.stringify(fixtures.deltas.user_notification))
     expect(parsed.kind).toBe("delta")
     if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
+      expect(parsed.delta.id).toBe(3)
+      expect(parsed.delta.at).toBe(1_700_000_400)
       expect(parsed.delta.agent).toBe("sample-agent")
       expect(parsed.delta.kind).toBe("message")
       expect(parsed.delta.title).toBe("sample-agent")

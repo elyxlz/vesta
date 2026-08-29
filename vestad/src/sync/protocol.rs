@@ -135,6 +135,8 @@ pub(crate) struct GatewayLan {
 pub(crate) struct ServiceInfo {
     pub port: u16,
     pub rev: u64,
+    /// Registered `--public`: served with no gateway credential (see `register-service`).
+    pub public: bool,
 }
 
 /// The rate-limit window binding an alive agent: the agent serves but its provider rejects work
@@ -207,7 +209,7 @@ pub(crate) enum Frame {
     Agent { name: String, info: AgentInfo },
     AgentRemoved { name: String },
     AgentNotifications { agent: String, pending: Vec<serde_json::Value> },
-    UserNotification { agent: String, kind: String, title: String, body: String },
+    UserNotification { id: u64, at: u64, agent: String, kind: String, title: String, body: String },
     Presence { any_focused: bool },
     Devices { devices: Vec<DeviceInfo> },
 }
@@ -289,7 +291,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         last_user_notification_at: Some(1_700_000_400),
     };
     let mut services = BTreeMap::new();
-    services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3 });
+    services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3, public: false });
     let info = AgentInfo {
         status: AgentStatus::Alive,
         activity_state: "thinking".into(),
@@ -346,7 +348,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "agent_removed": to_value(Frame::AgentRemoved { name: "stopped-agent".into() }).expect("serialize agent_removed"),
             "agent_notifications": to_value(Frame::AgentNotifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize agent_notifications"),
             "user_notification": to_value(Frame::UserNotification {
-                agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
+                id: 3, at: 1_700_000_400, agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize user_notification"),
             "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
             "devices": to_value(Frame::Devices { devices }).expect("serialize devices"),
@@ -493,7 +495,7 @@ mod tests {
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::AgentNotifications { agent: "scout".into(), pending: vec![] }, "agent_notifications"),
-            (Frame::UserNotification { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
+            (Frame::UserNotification { id: 1, at: 1_700_000_000, agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
             (Frame::Presence { any_focused: true }, "presence"),
         ];
         for (frame, tag) in cases {

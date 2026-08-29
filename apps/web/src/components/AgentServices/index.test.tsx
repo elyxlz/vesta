@@ -15,19 +15,19 @@ vi.mock("@/providers/SelectedAgentProvider", () => ({
 describe("AgentServicesList", () => {
   afterEach(cleanup);
 
-  it("renders one row per service, sorted by name, with its port", () => {
+  it("renders one row per service, sorted by name, with its exposure", () => {
     services = {
-      whatsapp: { port: 9200, rev: 1 },
-      dashboard: { port: 9100, rev: 0 },
+      whatsapp: { port: 9200, rev: 1, public: true },
+      dashboard: { port: 9100, rev: 0, public: false },
     };
     render(<AgentServicesList />);
 
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(rows[0]?.textContent).toContain("dashboard");
-    expect(rows[0]?.textContent).toContain("9100");
+    expect(rows[0]?.textContent).toContain("private");
     expect(rows[1]?.textContent).toContain("whatsapp");
-    expect(rows[1]?.textContent).toContain("9200");
+    expect(rows[1]?.textContent).toContain("public");
   });
 
   it("shows an empty state when the agent has no services", () => {
@@ -36,12 +36,5 @@ describe("AgentServicesList", () => {
 
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
     expect(screen.getByText(/no services yet/i)).toBeTruthy();
-  });
-
-  it("explains the list in plain words, naming the agent", () => {
-    services = { dashboard: { port: 9100, rev: 0 } };
-    render(<AgentServicesList />);
-
-    expect(screen.getByText(/ask bob/i)).toBeTruthy();
   });
 });

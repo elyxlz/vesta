@@ -9,7 +9,7 @@ import { useGateway } from "@/providers/GatewayProvider";
 import { useAppUpdate } from "@/hooks/use-app-update";
 
 // The App Settings home for updates, replacing the navbar pill. One row per updatable component:
-// Vesta Desktop (the app, desktop only, driven by the manual native updater) and the gateway
+// Vesta desktop (the app, desktop only, driven by the manual native updater) and the gateway
 // (vestad's own self-update). Nothing here surfaces in the chrome; a mismatch screen forces the
 // blocking cases instead.
 export function UpdatesCard() {
@@ -33,8 +33,8 @@ export function UpdatesCard() {
   };
 
   return (
-    <Card size="sm" className="md:col-span-2">
-      <CardContent>
+    <Card size="sm">
+      <CardContent className="lowercase">
         <MenuSection
           title="updates"
           trailing={
@@ -42,7 +42,7 @@ export function UpdatesCard() {
               type="button"
               variant="ghost"
               size="xs"
-              className="ml-auto text-muted-foreground"
+              className="ml-auto text-sm text-muted-foreground"
               disabled={checking}
               onClick={() => {
                 void onCheck();
@@ -57,7 +57,7 @@ export function UpdatesCard() {
           }
         >
           {appUpdate.supported && (
-            <UpdateRow label="Vesta Desktop" version={__APP_VERSION__}>
+            <UpdateRow label="Vesta desktop" version={__APP_VERSION__}>
               <DesktopAction appUpdate={appUpdate} />
             </UpdateRow>
           )}
@@ -86,11 +86,11 @@ function UpdateRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mt-2 flex items-center justify-between gap-3 text-sm leading-none">
+    <div className="mt-3 flex items-center justify-between gap-3 text-base leading-none">
       <div className="flex min-w-0 items-baseline gap-2">
         <span className="truncate font-medium text-foreground">{label}</span>
         {version && (
-          <span className="text-xs text-muted-foreground">v{version}</span>
+          <span className="text-sm text-muted-foreground">v{version}</span>
         )}
       </div>
       <div className="shrink-0">{children}</div>
@@ -99,7 +99,7 @@ function UpdateRow({
 }
 
 function OnLatest() {
-  return <span className="text-xs text-muted-foreground">on latest</span>;
+  return <span className="text-sm text-muted-foreground">on latest</span>;
 }
 
 function DesktopAction({

@@ -8,8 +8,9 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { cn } from "@/lib/utils";
 
-// The Tabs container's pb-6 sits below the card, so reserve it when filling.
-const BOTTOM_GAP = 24;
+// Reserve the floating nav pill's height so the filled panel clears it (matches
+// the flowing tabs' max-md:pb-28 in AgentSettings).
+const BOTTOM_GAP = 112;
 
 // Desktop: a fixed h-[70vh] matching the files tab. Mobile: fill the space left
 // down to the viewport bottom (floored to a min by useFillHeight), since logs is

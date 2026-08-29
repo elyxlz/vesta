@@ -2284,6 +2284,10 @@ pub enum AgentOperation {
     /// as the nightly dream). Internal only: it exists to mark the cycle as planned work for
     /// the lifecycle push, and `on_wire` keeps it off the roster shipped clients parse.
     Restarting,
+    /// A user stop in flight. The agent process exits (its tap drops) before Docker reports the
+    /// container stopped, a window the container reading alone would project as `Starting`.
+    /// Internal only, like `Restarting`: the roster projects `Stopped` for its duration.
+    Stopping,
 }
 
 impl AgentOperation {

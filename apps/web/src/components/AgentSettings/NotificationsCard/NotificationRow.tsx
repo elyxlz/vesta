@@ -179,7 +179,7 @@ export function NotificationRow({
         </div>
 
         {event.sender ? (
-          <span className="truncate text-xs text-muted-foreground/80">
+          <span className="truncate text-sm text-muted-foreground/80">
             {event.sender}
           </span>
         ) : null}
@@ -188,7 +188,7 @@ export function NotificationRow({
           <p
             ref={textRef}
             className={cn(
-              "text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground",
+              "text-base leading-relaxed whitespace-pre-wrap text-muted-foreground",
               expanded ? "" : "line-clamp-2",
             )}
           >
@@ -197,7 +197,7 @@ export function NotificationRow({
           {overflows ? (
             <button
               type="button"
-              className="self-start text-xs font-medium text-primary"
+              className="self-start text-sm font-medium text-primary"
               onClick={() => setExpanded((value) => !value)}
             >
               {expanded ? "show less" : "show more"}
@@ -206,18 +206,18 @@ export function NotificationRow({
         </div>
 
         {content.body ? (
-          <p className="text-xs text-muted-foreground/80">{content.body}</p>
+          <p className="text-sm text-muted-foreground/80">{content.body}</p>
         ) : null}
 
         {content.context ? (
-          <span className="text-[11px] text-muted-foreground/70">
+          <span className="text-xs text-muted-foreground/70">
             {content.context}
           </span>
         ) : null}
       </ItemContent>
 
       <ItemActions className="self-start">
-        <time className="text-xs text-muted-foreground/70">
+        <time className="text-sm text-muted-foreground/70">
           {relativeTime(event.ts)}
         </time>
         <Disposition event={event} />

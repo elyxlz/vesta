@@ -373,12 +373,6 @@
       "platforms": ["web-narrow"]
     },
     {
-      "id": "agent-menu-debug-info",
-      "title": "Debug info",
-      "description": "The debug information dialog from advanced mode.",
-      "group": "Agent"
-    },
-    {
       "id": "mobile-navbar-dashboard",
       "title": "Mobile navbar, dashboard",
       "description": "The narrow-screen bottom navbar on the dashboard tab.",
@@ -682,12 +676,6 @@
       "group": "Agent settings"
     },
     {
-      "id": "settings-files-advanced",
-      "title": "Files, advanced",
-      "description": "The advanced file tree.",
-      "group": "Agent settings"
-    },
-    {
       "id": "settings-files-editor",
       "title": "Files, editor",
       "description": "A file open in the editor.",
@@ -732,7 +720,7 @@
     {
       "id": "app-settings-updates",
       "title": "Updates available",
-      "description": "The updates card with a Vesta Desktop and a gateway update available.",
+      "description": "The updates card with a Vesta desktop and a gateway update available.",
       "group": "App settings",
       "platforms": ["desktop", "desktop-dark"]
     },

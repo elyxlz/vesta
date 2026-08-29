@@ -755,6 +755,11 @@ async fn stop_agent_handler(
     tracing::info!(name = %name, "stopping agent");
     ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
+    // The agent exits before Docker reports the container stopped; for that window the roster
+    // projects Stopped instead of the container reading's Starting, and the lifecycle push treats
+    // the transition as the planned work it is.
+    let _operation =
+        agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &name, docker::AgentOperation::Stopping);
 
     {
         let mut settings = state.settings.write().await;

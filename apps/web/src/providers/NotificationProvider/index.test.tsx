@@ -211,6 +211,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "bob",
         kind: "message",
         title: "bob",
@@ -234,6 +236,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "ada",
         kind: "message",
         title: "ada",
@@ -253,6 +257,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "ada",
         kind: "message",
         title: "ada",
@@ -272,6 +278,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "ada",
         kind: "message",
         title: "ada",
@@ -291,6 +299,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "ada",
         kind: "needs_user",
         title: "ada needs to be set up",
@@ -315,6 +325,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "ada",
         kind: "rate_limited",
         title: "ada",
@@ -334,6 +346,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "",
         kind: "gateway_updated",
         title: "Updated to v0.1.190",
@@ -358,6 +372,8 @@ describe("NotificationProvider", () => {
     act(() => {
       emit({
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "",
         kind: "gateway_updated",
         title: "Updated to v0.1.190",

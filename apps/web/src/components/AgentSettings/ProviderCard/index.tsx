@@ -1,15 +1,21 @@
 import { useState } from "react";
 import {
-  ArrowLeftRight,
   MoreHorizontal,
   RefreshCw,
   LogOut,
   Plug,
+  SlidersHorizontal,
   Unplug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -100,15 +106,15 @@ function AccountSection({ account }: { account: Account }) {
 
   return (
     <div className="flex flex-col gap-2.5">
-      <span className="text-xs font-medium text-muted-foreground">account</span>
-      <div className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium text-muted-foreground">account</span>
+      <div className="flex flex-col">
         {rows.map((row) => (
           <div
             key={row.label}
-            className="flex items-center justify-between gap-4 text-xs"
+            className="-mx-2 flex items-center justify-between gap-4 rounded-md px-2 py-1.5 text-sm odd:bg-foreground/[0.07]"
           >
             <span className="text-muted-foreground">{row.label}</span>
-            <span className="text-foreground truncate">{row.value}</span>
+            <span className="truncate text-foreground">{row.value}</span>
           </div>
         ))}
       </div>
@@ -125,15 +131,15 @@ function UsageBar({ meter }: { meter: UsageMeter }) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">{meter.label}</span>
-        <span className="text-xs text-muted-foreground tabular-nums">
+        <span className="text-sm text-muted-foreground">{meter.label}</span>
+        <span className="text-sm text-muted-foreground tabular-nums">
           {pct.toFixed(0)}%
         </span>
       </div>
       <Progress value={pct} className="h-1.5" />
       {resetsAt && (
-        <span className="text-[10px] text-muted-foreground/60">
-          Resets {resetsAt}
+        <span className="text-xs text-muted-foreground/60">
+          resets {resetsAt}
         </span>
       )}
     </div>
@@ -170,12 +176,14 @@ function NotConnectedCard({
             <Unplug className="size-6 text-muted-foreground" />
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-xs text-muted-foreground">provider</span>
-            <span className="truncate text-sm font-medium">not connected</span>
+            <span className="text-sm text-muted-foreground">provider</span>
+            <span className="truncate text-base font-medium">
+              not connected
+            </span>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">
-          {name} needs a provider before it can respond. Connect one to get
+        <p className="text-sm text-muted-foreground">
+          {name} needs a provider before it can respond. connect one to get
           started.
         </p>
         <Button size="sm" className="self-start" onClick={onSetup}>
@@ -225,12 +233,12 @@ function ProviderIdentity({
         <Logo className="size-6" />
       </div>
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-xs text-muted-foreground">
+        <span className="text-sm text-muted-foreground">
           {manifest?.providers[kind]?.display ?? kind}
         </span>
         <div className="flex min-w-0 items-center gap-2">
           <span
-            className="truncate text-sm font-medium"
+            className="truncate text-base font-medium"
             title={provider.model ?? "unknown"}
           >
             {provider.model ?? "unknown"}
@@ -268,12 +276,12 @@ function UsageBody({
   }
   if (error) {
     return (
-      <p className="text-xs text-muted-foreground">failed to load usage data</p>
+      <p className="text-sm text-muted-foreground">failed to load usage data</p>
     );
   }
   if (meters.length === 0 && !credits) {
     return (
-      <p className="text-xs text-muted-foreground">no usage data available</p>
+      <p className="text-sm text-muted-foreground">no usage data available</p>
     );
   }
   return (
@@ -282,7 +290,7 @@ function UsageBody({
         <UsageBar key={m.label} meter={m} />
       ))}
       {credits && (
-        <div className="flex items-center justify-between text-xs">
+        <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">credits</span>
           <span className="text-foreground tabular-nums">
             {credits.used != null
@@ -315,7 +323,7 @@ function UsageSection({
       {account && <AccountSection account={account} />}
       <div className="flex flex-col gap-2.5">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground">
+          <span className="text-sm font-medium text-muted-foreground">
             plan usage
           </span>
           <button
@@ -393,7 +401,7 @@ function ModelDialog({
               onSubmit={onSubmit}
             />
             {error && (
-              <p className="text-xs text-destructive text-center">{error}</p>
+              <p className="text-sm text-destructive text-center">{error}</p>
             )}
           </div>
         )}
@@ -465,7 +473,7 @@ function ContextDialog({
               );
             })()}
             {error && (
-              <p className="text-xs text-destructive text-center">{error}</p>
+              <p className="text-sm text-destructive text-center">{error}</p>
             )}
           </div>
         )}
@@ -505,7 +513,7 @@ function SignOutDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && (
-          <p className="text-xs text-destructive text-center">{error}</p>
+          <p className="text-sm text-destructive text-center">{error}</p>
         )}
         <AlertDialogFooter>
           <AlertDialogCancel>cancel</AlertDialogCancel>
@@ -603,7 +611,16 @@ export function ProviderCard() {
 
   return (
     <Card size="sm">
-      <CardContent className="flex flex-col gap-3">
+      <CardHeader>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
+          <Plug className="size-4 text-muted-foreground" />
+          provider
+        </CardTitle>
+        <CardDescription className="group-data-[size=sm]/card:text-sm">
+          the model {name} runs on, plus your plan usage and account.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
         <ProviderIdentity
           provider={provider}
           kind={provider.kind}
@@ -619,8 +636,8 @@ export function ProviderCard() {
             onRefresh={refreshUsage}
           />
         ) : (
-          <p className="text-xs text-muted-foreground">
-            {name}&apos;s credentials expired or were rejected. Sign in again to
+          <p className="text-sm text-muted-foreground">
+            {name}&apos;s credentials expired or were rejected. sign in again to
             reconnect.
           </p>
         )}
@@ -632,20 +649,18 @@ export function ProviderCard() {
                 variant="outline"
                 size="sm"
                 className="flex-1"
+                onClick={() => handleOpenAuth()}
+              >
+                change provider
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
                 onClick={() => setModelOpen(true)}
               >
                 change model
               </Button>
-              {provider.kind !== "openrouter" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => setContextOpen(true)}
-                >
-                  change context
-                </Button>
-              )}
             </>
           ) : (
             <Button
@@ -668,10 +683,12 @@ export function ProviderCard() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleOpenAuth()}>
-                <ArrowLeftRight className="size-4" />
-                switch provider
-              </DropdownMenuItem>
+              {ready && provider.kind !== "openrouter" && (
+                <DropdownMenuItem onClick={() => setContextOpen(true)}>
+                  <SlidersHorizontal className="size-4" />
+                  change context
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 variant="destructive"
                 onClick={() => setSignOutOpen(true)}

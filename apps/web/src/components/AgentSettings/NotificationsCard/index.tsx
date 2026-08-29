@@ -111,18 +111,18 @@ export function NotificationsCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
           <BellRing className="size-4 text-muted-foreground" />
           recent notifications
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="group-data-[size=sm]/card:text-sm">
           everything the agent has received, and whether each interrupted the
           agent or was snoozed until it was free.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {error ? (
-          <p className="text-xs text-destructive">failed to load: {error}</p>
+          <p className="text-sm text-destructive">failed to load: {error}</p>
         ) : items === null ? (
           <ItemGroup>
             {Array.from({ length: 4 }).map((_, i) => (

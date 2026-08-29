@@ -228,3 +228,27 @@ html[data-platform="android"] {
       calc(100% - var(--scroll-fade-size)) 100%;
   }
 }
+
+/* A card in a horizontal snap carousel scales with its distance from the scrollport's center:
+   full size centered, --carousel-edge-scale one stride (--carousel-stride) away and beyond. The
+   scroller sets both variables. Runs on the scroll timeline, no per-frame script; where scroll-driven
+   animations aren't supported the cards stay full size. */
+@keyframes carousel-card-scale {
+  from {
+    scale: var(--carousel-edge-scale);
+  }
+  50% {
+    scale: 1;
+  }
+  to {
+    scale: var(--carousel-edge-scale);
+  }
+}
+@utility carousel-card {
+  @supports (animation-timeline: view()) {
+    animation: carousel-card-scale linear both;
+    animation-timeline: view(inline);
+    animation-range: cover calc(50% - var(--carousel-stride)) cover
+      calc(50% + var(--carousel-stride));
+  }
+}

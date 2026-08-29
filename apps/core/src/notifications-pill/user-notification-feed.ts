@@ -1,16 +1,24 @@
 import { record } from "../protocol/parse"
+import type { Delta } from "../protocol/deltas"
 import type { HttpClient } from "../transport/http"
 import type { PillContent } from "./notifications-pill"
 
 // The durable user-notification history behind the ephemeral delta: vestad logs
 // every delivered notification and serves it at GET /notifications, newest
-// first, id-cursored. A feed renders a page of these and joins the live
-// `user_notification` edge on top; `before` walks arbitrarily far back.
+// first, id-cursored. The delta carries the same id and stamp, so a feed joins
+// the live edge to its pages by id; `before` walks arbitrarily far back.
 
 export interface LoggedUserNotification extends PillContent {
   id: number
   /** Unix seconds at delivery. */
   at: number
+}
+
+/** The `user_notification` delta as the log entry it mirrors, or null for any other delta. */
+export function loggedFromDelta(delta: Delta): LoggedUserNotification | null {
+  if (delta.type !== "user_notification") return null
+  const { id, at, agent, kind, title, body } = delta
+  return { id, at, agent, kind, title, body }
 }
 
 export async function fetchUserNotifications(

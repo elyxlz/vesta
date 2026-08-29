@@ -39,6 +39,6 @@ export function deviceIdentity(): { id: string; descriptor: string } {
   const ua = navigator.userAgent;
   const os = osName(ua);
   const surface =
-    native.runtime === "electron" ? "Vesta Desktop" : browserName(ua);
+    native.runtime === "electron" ? "Vesta desktop" : browserName(ua);
   return { id: installationId(), descriptor: `${surface} on ${os}` };
 }

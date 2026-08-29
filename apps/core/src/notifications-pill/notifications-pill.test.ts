@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
   enqueuePillNotification,
-  pillContentFromDelta,
   pillDisplayLine,
   pillVisibleWhileViewing,
   type PillNotification,
@@ -57,20 +56,5 @@ describe("pillDisplayLine", () => {
 
   it("renders a bodiless notification as the title alone", () => {
     expect(pillDisplayLine({ title: "aria stopped", body: "" })).toBe("aria stopped")
-  })
-})
-
-describe("pillContentFromDelta", () => {
-  it("maps a user_notification delta and ignores every other delta", () => {
-    expect(
-      pillContentFromDelta({
-        type: "user_notification",
-        agent: "aria",
-        kind: "message",
-        title: "aria",
-        body: "hi",
-      }),
-    ).toEqual({ agent: "aria", kind: "message", title: "aria", body: "hi" })
-    expect(pillContentFromDelta({ type: "presence", anyFocused: true })).toBeNull()
   })
 })

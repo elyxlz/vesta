@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { useToast } from "@/stores/use-toast";
-import { LogoText } from "@/components/Logo/LogoText";
+import { NavbarLogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "..";
 
 function Leading() {
@@ -66,7 +66,7 @@ export function HomeNavbar() {
   return (
     <Navbar
       leading={<Leading />}
-      center={<LogoText className="-translate-y-1" />}
+      center={<NavbarLogoText />}
       trailing={
         <>
           <StatusPill showHostname={false} />

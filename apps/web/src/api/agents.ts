@@ -204,6 +204,20 @@ export async function deleteAgent(name: string): Promise<void> {
   });
 }
 
+/// Rename an agent (`PATCH /agents/{name}`). Vestad recreates the container on the new name's
+/// network, carries the backup repo and settings across, and normalizes the name server-side;
+/// the normalized final name is returned so the caller can navigate to it.
+export async function renameAgent(
+  name: string,
+  newName: string,
+): Promise<string> {
+  const resp = await apiJson<{ name: string }>(
+    `/agents/${encodeURIComponent(name)}`,
+    jsonInit("PATCH", { new_name: newName }),
+  );
+  return resp.name;
+}
+
 export interface BackupInfo {
   id: string;
   agent_name: string;

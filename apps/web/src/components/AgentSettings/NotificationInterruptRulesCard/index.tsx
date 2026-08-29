@@ -206,11 +206,11 @@ export function NotificationInterruptRulesCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
           <ListFilter className="size-4 text-muted-foreground" />
           interrupt rules
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="group-data-[size=sm]/card:text-sm">
           what interrupts {agentName || "the agent"}, and what can wait for a
           quiet moment.
         </CardDescription>
@@ -218,7 +218,7 @@ export function NotificationInterruptRulesCard() {
       <CardContent>
         <div className="flex flex-col gap-3">
           {loadError ? (
-            <p className="text-xs text-destructive">
+            <p className="text-sm text-destructive">
               failed to load: {loadError}
             </p>
           ) : rules === null ? (
@@ -280,7 +280,7 @@ export function NotificationInterruptRulesCard() {
                         ) : null}
                         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                           {conditions.length === 0 ? (
-                            <span className="text-[11px] text-muted-foreground/60">
+                            <span className="text-xs text-muted-foreground/60">
                               any notification
                             </span>
                           ) : (
@@ -340,7 +340,7 @@ export function NotificationInterruptRulesCard() {
               </Item>
 
               {saveError ? (
-                <p className="text-xs text-destructive">{saveError}</p>
+                <p className="text-sm text-destructive">{saveError}</p>
               ) : null}
             </>
           )}

@@ -58,8 +58,12 @@ const aria: AgentRow = {
   startedAt:
     (ariaStatus ?? "alive") === "alive" ? "2026-07-31T08:41:00.000Z" : null,
   services: {
-    ...(showsDashboard ? { dashboard: { port: 4310, rev: 7 } } : {}),
-    ...(hasVoiceService ? { voice: { port: 4320, rev: 2 } } : {}),
+    ...(showsDashboard
+      ? { dashboard: { port: 4310, rev: 7, public: false } }
+      : {}),
+    ...(hasVoiceService
+      ? { voice: { port: 4320, rev: 2, public: false } }
+      : {}),
   },
 };
 export const fixtureAgents: AgentRow[] = startsEmpty

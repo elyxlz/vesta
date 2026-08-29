@@ -4,6 +4,7 @@ export {
   stopAgent,
   restartAgent,
   deleteAgent,
+  renameAgent,
   createBackup,
   listBackups,
   restoreBackup,

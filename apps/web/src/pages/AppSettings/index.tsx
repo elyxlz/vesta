@@ -2,16 +2,14 @@ import { useNavigate } from "react-router-dom";
 import { Home } from "lucide-react";
 import { AppSettings } from "@/components/Settings";
 import { WhatsNewButton } from "@/components/WhatsNew";
-import { LogoText } from "@/components/Logo/LogoText";
+import { NavbarLogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
-import { SettingsScrollArea } from "@/components/SettingsScrollArea";
+import { PageScroll } from "@/components/PageScroll";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
-import { useLayout } from "@/stores/use-layout";
 
 export function AppSettingsPage() {
   const navigate = useNavigate();
-  const navbarHeight = useLayout((s) => s.navbarHeight);
 
   return (
     <>
@@ -28,7 +26,7 @@ export function AppSettingsPage() {
             <Home />
           </Button>
         }
-        center={<LogoText />}
+        center={<NavbarLogoText />}
         trailing={
           <div className="flex items-center gap-2">
             <StatusPill showHostname={false} />
@@ -36,16 +34,10 @@ export function AppSettingsPage() {
           </div>
         }
       />
-      <div
-        className="flex min-h-0 flex-1 flex-col"
-        style={{ paddingTop: navbarHeight }}
-      >
-        <div className="flex min-h-11 shrink-0 items-center justify-center pt-6 pb-2">
-          <h1 className="text-lg font-semibold">app settings</h1>
-        </div>
-        <SettingsScrollArea>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PageScroll>
           <AppSettings />
-        </SettingsScrollArea>
+        </PageScroll>
       </div>
     </>
   );

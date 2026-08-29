@@ -133,6 +133,8 @@ describe("reduceDelta", () => {
     expect(
       reduceDelta(tree, {
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "scout",
         kind: "message",
         title: "scout",
@@ -196,6 +198,8 @@ describe("reduceDelta", () => {
       name: "user_notification",
       delta: {
         type: "user_notification",
+        id: 1,
+        at: 1_700_000_000,
         agent: "scout",
         kind: "message",
         title: "scout",
