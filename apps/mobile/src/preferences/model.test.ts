@@ -9,7 +9,6 @@ describe("preference persistence", () => {
   it("uses first-run defaults only when no preferences exist", () => {
     expect(readStoredPreferences(null)).toEqual(initialPreferences);
     expect(initialPreferences.remoteNotifications).toBe(true);
-    expect(initialPreferences.naturalChatPacingDefault).toBe(true);
     expect(initialPreferences.naturalChatPacingByAgent).toEqual({});
     expect(initialPreferences.showNotificationsPage).toBe(false);
     expect(initialPreferences.showLogsPage).toBe(false);
@@ -69,7 +68,6 @@ describe("preference persistence", () => {
   it("restores natural chat pacing independently for each agent", () => {
     const preferences = readStoredPreferences(
       JSON.stringify({
-        naturalChatPacingDefault: true,
         naturalChatPacingByAgent: {
           Ada: false,
           Ben: true,
@@ -85,14 +83,5 @@ describe("preference persistence", () => {
     expect(getNaturalChatPacingForAgent(preferences, "Ada")).toBe(false);
     expect(getNaturalChatPacingForAgent(preferences, "Ben")).toBe(true);
     expect(getNaturalChatPacingForAgent(preferences, "New agent")).toBe(true);
-  });
-
-  it("migrates the global natural chat pacing preference", () => {
-    const preferences = readStoredPreferences(
-      JSON.stringify({ naturalChatPacing: false }),
-    );
-
-    expect(preferences.naturalChatPacingDefault).toBe(false);
-    expect(getNaturalChatPacingForAgent(preferences, "Ada")).toBe(false);
   });
 });

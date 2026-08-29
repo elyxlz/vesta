@@ -146,7 +146,7 @@ beforeEach(() => {
   tokenBuilds = 0;
   fetchHistoryMock.mockReset();
   fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
-  useChatPacing.setState({ natural: true });
+  useChatPacing.setState({ byAgent: {} });
 });
 
 afterEach(() => {
@@ -389,7 +389,7 @@ describe("useAgentSocketState", () => {
   // Pacing is a feel, not a contract: with natural pacing off every event commits at once, and a
   // burst past the flush threshold is dumped after the first delay rather than typed out one by one.
   it("commits at once with natural pacing off", async () => {
-    useChatPacing.setState({ natural: false });
+    useChatPacing.setState({ byAgent: { [AGENT]: false } });
     const { controller } = makeController();
     const { result } = render(controller);
     await openAndFlush();

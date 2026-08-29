@@ -118,7 +118,7 @@ export function useAgentSocketState({
       }
       if (
         queue.length > PACING.flushThreshold ||
-        !useChatPacing.getState().natural
+        !useChatPacing.getState().naturalFor(name ?? "")
       ) {
         flushQueue();
         return;

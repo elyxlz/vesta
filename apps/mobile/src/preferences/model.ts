@@ -5,7 +5,6 @@ export const PREFERENCES_KEY = "vesta.preferences.v1";
 
 export interface PreferencesState {
   theme: ThemePreference;
-  naturalChatPacingDefault: boolean;
   naturalChatPacingByAgent: Record<string, boolean>;
   showChatPage: boolean;
   showDashboardPage: boolean;
@@ -22,7 +21,6 @@ export interface PreferencesState {
 
 export const initialPreferences: PreferencesState = {
   theme: "system",
-  naturalChatPacingDefault: true,
   naturalChatPacingByAgent: {},
   showChatPage: true,
   showDashboardPage: true,
@@ -49,16 +47,10 @@ function readBooleanRecord(value: unknown): Record<string, boolean> {
 }
 
 export function getNaturalChatPacingForAgent(
-  preferences: Pick<
-    PreferencesState,
-    "naturalChatPacingDefault" | "naturalChatPacingByAgent"
-  >,
+  preferences: Pick<PreferencesState, "naturalChatPacingByAgent">,
   agentName: string,
 ): boolean {
-  return (
-    preferences.naturalChatPacingByAgent[agentName] ??
-    preferences.naturalChatPacingDefault
-  );
+  return preferences.naturalChatPacingByAgent[agentName] ?? true;
 }
 
 export function readStoredPreferences(value: string | null): PreferencesState {
@@ -67,12 +59,6 @@ export function readStoredPreferences(value: string | null): PreferencesState {
     const parsed: Record<string, unknown> = JSON.parse(value);
     return {
       theme: isThemePreference(parsed.theme) ? parsed.theme : "system",
-      naturalChatPacingDefault:
-        typeof parsed.naturalChatPacingDefault === "boolean"
-          ? parsed.naturalChatPacingDefault
-          : typeof parsed.naturalChatPacing === "boolean"
-            ? parsed.naturalChatPacing
-            : true,
       naturalChatPacingByAgent: readBooleanRecord(
         parsed.naturalChatPacingByAgent,
       ),

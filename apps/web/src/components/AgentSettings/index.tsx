@@ -14,6 +14,7 @@ import { useLayout } from "@/stores/use-layout";
 import { cn } from "@/lib/utils";
 import { ActionsCard } from "./ActionsCard";
 import { BackupsCard } from "./BackupsCard";
+import { ChatCard } from "./ChatCard";
 import { DeleteCard } from "./DeleteCard";
 import { NotificationInterruptRulesCard } from "./NotificationInterruptRulesCard";
 import { NotificationsCard } from "./NotificationsCard";
@@ -58,6 +59,7 @@ export function AgentSettings() {
       >
         <ActionsCard />
         <ProviderCard />
+        <ChatCard />
         <ServicesCard />
         <BackupsCard />
         <SttCard />
