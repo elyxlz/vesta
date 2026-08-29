@@ -569,7 +569,13 @@
     {
       "id": "agent-general",
       "title": "General section",
-      "description": "The agent's identity hero with status rows.",
+      "description": "The agent's identity hero with rename controls and status rows.",
+      "group": "Agent settings"
+    },
+    {
+      "id": "agent-rename",
+      "title": "Rename agent",
+      "description": "The native rename form previewing the canonical name before its restart-backed mutation.",
       "group": "Agent settings"
     },
     {

@@ -121,6 +121,7 @@ function AgentSettingsContent() {
       />
       <FormGroup>
         <FormSection title="Agent">
+          <FormRow label="Name" value={name} onPress={() => open("general")} />
           <FormRow
             label={sectionTitle("provider")}
             onPress={() => open("provider")}
