@@ -568,7 +568,7 @@ def main():
 
         if args.group == "auth":
             result = _dispatch_auth(args, config)
-            print(json.dumps(fmt.strip_odata(result), indent=2))
+            print(json.dumps(fmt.strip_odata(result)))
         elif args.group in ("email", "calendar", "folder", "notify", "teams"):
             _guard_read_only(args.group, args.command)
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
@@ -618,7 +618,11 @@ def _print_result(args, result) -> None:
         print(formatter(result))
         return
 
-    print(json.dumps(fmt.strip_odata(result), indent=2))
+    # Single line, not indent=2. Agents truncate output (`| tail -1`), and a pretty-printed
+    # envelope's last line is "}" whether the call succeeded or failed, so the two outcomes are
+    # literally the same character. `--json-pretty` above still indents, because that is an
+    # explicit request from someone reading it.
+    print(json.dumps(fmt.strip_odata(result)))
 
 
 _AUTH_HANDLERS = {
