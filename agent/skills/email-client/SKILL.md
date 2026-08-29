@@ -251,4 +251,6 @@ email-client notify remove --folder INBOX             # stop notifying on INBOX
 
 `notify add --folder` validates the folder exists on the server before saving; `notify add --all` replaces the watch list with every folder on the server (handy as a default, but it includes noisy ones like Sent/Spam/Trash; prune with `notify remove`). Removing every folder mutes the account. The watch list lives in `accounts/<name>/config.json` under `notify_folders`.
 
+**Double-watch dedup (when a Microsoft account is on both this skill and the `microsoft` skill).** A work Microsoft 365 mailbox can be watched by BOTH email-client (IMAP) and the `microsoft` skill (Graph), which double-notifies every new mail. Resolve it by giving each skill one job for that account: let email-client own the mail notifications, and empty the `microsoft` skill's notify list for that same address (its `~/.microsoft/notify.json`) so `microsoft` keeps only Teams/calendar/reply-draft. Sending still goes through Graph (`microsoft email reply/send`) since the tenant blocks SMTP; only the NOTIFY side is deduped.
+
 State layout, the full environment-variable list, and Microsoft 365 custom-domain setup live in [SETUP.md](SETUP.md).
