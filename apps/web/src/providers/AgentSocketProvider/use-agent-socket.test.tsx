@@ -1,22 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { ApiError, createReplica } from "@vesta/core";
-import type {
-  Controller,
-  Delta,
-  SocketLike,
-  Tree,
-  VestaEvent,
-} from "@vesta/core";
+import { ApiError, PACING } from "@vesta/core";
+import type { Controller, SocketLike, VestaEvent } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { fetchHistory } from "@/api/agents";
+import {
+  fakeAgentNode,
+  fakeController,
+  fakeTree,
+} from "@/test/fake-controller";
 import { useAgentSocketState } from "./use-agent-socket";
 
 vi.mock("@/api/agents", () => ({ fetchHistory: vi.fn() }));
-// The socket dials with the refreshed access token in the query. A fresh value per build makes it
-// observable that the URL is re-derived on every connect rather than captured at mount.
+// The socket dials with the refreshed access token in the query; a fresh value per build lets the
+// mount case pin that the token reaches the URL. Re-derivation on reconnect is covered at the owner
+// (chat-socket.test.ts).
 let tokenBuilds = 0;
 vi.mock("@/lib/authed-url", () => ({
   websocketUrl: (path: string) => {
@@ -59,60 +59,14 @@ const fetchHistoryMock = vi.mocked(fetchHistory);
 
 const AGENT = "ada";
 
-function tree(): Tree {
-  return {
-    gateway: {
-      version: "0.0.0",
-      channel: "stable",
-      autoUpdate: true,
-      port: 7777,
-      lan: { exposed: false, url: null },
-      tunnelUrl: null,
-      updateAvailable: false,
-      latestVersion: null,
-      managed: false,
-      operation: null,
-    },
-    agents: {
-      [AGENT]: {
-        info: {
-          status: "alive",
-          activityState: "idle",
-          buildPhase: null,
-          operation: null,
-          startedAt: null,
-          services: {},
-        },
-        notifications: { pending: [] },
-      },
-    },
-    devices: [],
-  };
-}
+// The longest typing delay pacing can produce, so a paced message is guaranteed to have landed
+// after it whatever the randomised jitter chose.
+const MAX_TYPING_DELAY_MS = PACING.max * (1 + PACING.variance);
 
 function makeController() {
-  const replica = createReplica();
-  replica.applySnapshot(tree());
-  const listeners = new Set<(delta: Delta) => void>();
-  const json = vi.fn().mockResolvedValue({});
-  const controller: Controller = {
-    replica,
-    http: { request: vi.fn(), json },
-    reauth: vi.fn(),
-    subscribeDeltas: (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getSyncState: () => "open",
-    subscribeSyncState: () => () => undefined,
-    reportPresence: () => undefined,
-    reportViewing: () => undefined,
-    reportDeviceContext: () => undefined,
-    getAnyFocused: () => false,
-    subscribeAnyFocused: () => () => undefined,
-    close: () => undefined,
-  };
-  return { controller, json };
+  return fakeController(
+    fakeTree({ agents: { ada: fakeAgentNode(), grace: fakeAgentNode() } }),
+  );
 }
 
 function wrapper(controller: Controller) {
@@ -120,30 +74,44 @@ function wrapper(controller: Controller) {
     createElement(ControllerContext.Provider, { value: controller }, children);
 }
 
-function render(controller: Controller) {
-  return renderHook(() => useAgentSocketState({ name: AGENT, active: true }), {
+interface HookProps {
+  name: string | null;
+  active: boolean;
+  onAssistantMessage?: (text: string) => void;
+}
+
+function render(controller: Controller, initial: Partial<HookProps> = {}) {
+  return renderHook((props: HookProps) => useAgentSocketState(props), {
     wrapper: wrapper(controller),
+    initialProps: { name: AGENT, active: true, ...initial },
   });
 }
 
-// Open the newest chat socket (the reseed trigger) and flush the async history seed so the hook
-// settles.
+// Drain every pending microtask (the async URL build, the history seed, a settled POST), under real
+// or fake timers alike, without counting awaits.
+async function settle() {
+  await act(async () => {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    else await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+// Open the newest chat socket (the reseed trigger) and let the hook settle.
 async function openAndFlush() {
-  // The URL builder is async, so the socket lands a microtask after the hook renders.
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+  await settle();
+  const socket = chatSockets.at(-1);
+  if (!socket?.onopen) throw new Error("chat socket not constructed");
+  act(() => {
+    socket.onopen?.();
   });
-  await act(async () => {
-    chatSockets.at(-1)?.onopen?.();
-    await Promise.resolve();
-    await Promise.resolve();
-  });
+  await settle();
 }
 
 // Deliver one live event on the chat socket, as a JSON text frame.
 function deliver(event: VestaEvent): void {
-  chatSockets.at(-1)?.onmessage?.(JSON.stringify(event));
+  act(() => {
+    chatSockets.at(-1)?.onmessage?.(JSON.stringify(event));
+  });
 }
 
 function chat(id: number, text: string): VestaEvent {
@@ -161,10 +129,23 @@ function userEcho(id: number, text: string, intentId: string): VestaEvent {
   } as unknown as VestaEvent;
 }
 
+function postedIntentId(
+  json: ReturnType<typeof makeController>["json"],
+  call = 0,
+): string {
+  const args = json.mock.calls[call];
+  if (!args) throw new Error("send did not POST");
+  const body = JSON.parse((args[1] as { body: string }).body) as {
+    intent_id: string;
+  };
+  return body.intent_id;
+}
+
 beforeEach(() => {
   chatSockets.length = 0;
   tokenBuilds = 0;
   fetchHistoryMock.mockReset();
+  fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
   useChatPacing.setState({ natural: true });
 });
 
@@ -194,6 +175,16 @@ describe("useAgentSocketState", () => {
     expect(result.current.connected).toBe(true);
   });
 
+  it("opens no socket and fetches nothing while inactive", async () => {
+    const { controller } = makeController();
+
+    render(controller, { active: false });
+    await settle();
+
+    expect(chatSockets).toHaveLength(0);
+    expect(fetchHistoryMock).not.toHaveBeenCalled();
+  });
+
   // The history fetch needs only the Bearer header, so it runs in parallel with the socket
   // handshake instead of waiting for "open": the tail renders after one round trip.
   it("seeds history at mount without waiting for the socket to open", async () => {
@@ -204,17 +195,14 @@ describe("useAgentSocketState", () => {
     const { controller } = makeController();
 
     const { result } = render(controller);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
 
-    expect(result.current.historyLoaded).toBe(true);
+    await waitFor(() => {
+      expect(result.current.historyLoaded).toBe(true);
+    });
     expect(chatSockets.at(-1)?.onopen).not.toBeNull();
   });
 
   it("does not refetch on the first open after the mount seed landed", async () => {
-    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
     const { controller } = makeController();
 
     render(controller);
@@ -236,72 +224,30 @@ describe("useAgentSocketState", () => {
     expect(result.current.historyLoaded).toBe(true);
   });
 
-  it("keeps loaded older rows before the newest tail after a reconnect", async () => {
-    vi.useFakeTimers();
-    fetchHistoryMock
-      .mockResolvedValueOnce({
-        events: [chat(3, "c"), chat(4, "d")],
-        cursor: 3,
-      })
-      .mockResolvedValueOnce({
-        events: [chat(1, "a"), chat(2, "b")],
-        cursor: null,
-      })
-      .mockResolvedValueOnce({
-        events: [chat(3, "c"), chat(4, "d"), chat(5, "e")],
-        cursor: 3,
-      });
+  // Switching the viewed agent is a fresh session: the old socket closes, the rows reset, and the new
+  // agent's tail is fetched and dialled.
+  it("resets and re-dials when the agent changes", async () => {
+    fetchHistoryMock.mockResolvedValue({
+      events: [chat(1, "hello")],
+      cursor: null,
+    });
     const { controller } = makeController();
-    const { result } = render(controller);
+    const { result, rerender } = render(controller);
     await openAndFlush();
+    expect(result.current.messages).toHaveLength(1);
 
-    await act(async () => {
-      await result.current.loadMore();
-    });
-    expect(result.current.messages.map((message) => message.id)).toEqual([
-      1, 2, 3, 4,
-    ]);
-
-    act(() => {
-      chatSockets[0]?.onclose?.();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
-    await openAndFlush();
-
-    expect(result.current.messages.map((message) => message.id)).toEqual([
-      1, 2, 3, 4, 5,
-    ]);
-    expect(result.current.messages.at(-1)?.id).toBe(5);
-    expect(result.current.hasMore).toBe(false);
-  });
-
-  // The URL is re-derived on every connect, never captured at mount: a token that aged out while
-  // the app was away is refreshed by the builder before a reconnect dials.
-  it("re-derives the socket URL on a reconnect", async () => {
-    vi.useFakeTimers();
     fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
-    const { controller } = makeController();
-    render(controller);
-    await openAndFlush();
+    rerender({ name: "grace", active: true });
 
-    act(() => {
-      chatSockets[0]?.onclose?.();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
+    expect(chatSockets[0]?.closed).toBe(true);
+    expect(result.current.messages).toHaveLength(0);
     await openAndFlush();
-
-    expect(chatSockets.map((socket) => socket.url)).toEqual([
-      "wss://vestad.test/agents/ada/app-chat/ws?token=access-1",
-      "wss://vestad.test/agents/ada/app-chat/ws?token=access-2",
-    ]);
+    expect(chatSockets).toHaveLength(2);
+    expect(chatSockets[1]?.url).toContain("/agents/grace/app-chat/ws");
+    expect(fetchHistoryMock).toHaveBeenLastCalledWith("grace", "app-chat");
   });
 
   it("sends an optimistic bubble and confirms it on the chat-socket echo", async () => {
-    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
     const { controller, json } = makeController();
     const { result } = render(controller);
     await openAndFlush();
@@ -309,9 +255,7 @@ describe("useAgentSocketState", () => {
     act(() => {
       expect(result.current.send("hi")).toBe(true);
     });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await settle();
 
     // Delivery truth is the echo, so the bubble is optimistic ("sending") until it returns.
     const users = () =>
@@ -319,50 +263,14 @@ describe("useAgentSocketState", () => {
     expect(users()).toHaveLength(1);
     expect(users()[0]).toMatchObject({ text: "hi", send_state: "sending" });
 
-    const call = json.mock.calls[0];
-    if (!call) throw new Error("send did not POST");
-    const body = JSON.parse((call[1] as { body: string }).body) as {
-      intent_id: string;
-    };
-
-    act(() => {
-      deliver(userEcho(5, "hi", body.intent_id));
-    });
+    deliver(userEcho(5, "hi", postedIntentId(json)));
 
     // The echo confirms the existing bubble rather than appending a second.
     expect(users()).toHaveLength(1);
     expect(users()[0]?.send_state).toBeUndefined();
   });
 
-  it("paces a live chat event and toggles isTyping", async () => {
-    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
-    vi.useFakeTimers();
-    const { controller } = makeController();
-    const { result } = render(controller);
-    await act(async () => {
-      chatSockets.at(-1)?.onopen?.();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    act(() => {
-      deliver(chat(7, "pong"));
-    });
-
-    // Paced: typing indicator on, message withheld until the typing delay elapses.
-    expect(result.current.isTyping).toBe(true);
-    expect(result.current.messages).toHaveLength(0);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(8000);
-    });
-
-    expect(result.current.messages.map((m) => m.type)).toEqual(["chat"]);
-    expect(result.current.isTyping).toBe(false);
-  });
-
   it("keeps the bubble and marks it retry when the send POST returns 503", async () => {
-    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
     const { controller, json } = makeController();
     json.mockRejectedValueOnce(new ApiError(503, "unavailable"));
     const { result } = render(controller);
@@ -371,12 +279,142 @@ describe("useAgentSocketState", () => {
     act(() => {
       expect(result.current.send("retryable")).toBe(true);
     });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await settle();
 
     const users = result.current.messages.filter((m) => m.type === "user");
     expect(users).toHaveLength(1);
     expect(users[0]).toMatchObject({ text: "retryable", send_state: "retry" });
+  });
+
+  // A retry re-posts under the ORIGINAL intent id, so the agent dedups it instead of receiving the
+  // message twice; the bubble goes back to sending and the same echo confirms it.
+  it("retries a failed send under its original intent id and confirms on the echo", async () => {
+    const { controller, json } = makeController();
+    json.mockRejectedValueOnce(new ApiError(503, "unavailable"));
+    const { result } = render(controller);
+    await openAndFlush();
+    act(() => {
+      result.current.send("again");
+    });
+    await settle();
+    const intentId = postedIntentId(json);
+    const users = () =>
+      result.current.messages.filter((m) => m.type === "user");
+
+    act(() => {
+      result.current.retry(intentId, "again");
+    });
+    expect(users()[0]).toMatchObject({ send_state: "sending" });
+    await settle();
+
+    expect(json).toHaveBeenCalledTimes(2);
+    expect(postedIntentId(json, 1)).toBe(intentId);
+    deliver(userEcho(9, "again", intentId));
+    expect(users()).toHaveLength(1);
+    expect(users()[0]?.send_state).toBeUndefined();
+  });
+
+  // Older history pages prepend above the tail and advance the cursor; trimming waits out an
+  // in-flight load so it never cuts a hole between the landing page and the kept tail.
+  it("prepends older history on loadMore and defers trimming while a load is in flight", async () => {
+    const seeded = Array.from({ length: 120 }, (_, i) =>
+      chat(100 + i, `m${String(i)}`),
+    );
+    fetchHistoryMock.mockResolvedValue({ events: seeded, cursor: 100 });
+    const { controller } = makeController();
+    const { result } = render(controller);
+    await openAndFlush();
+    expect(result.current.hasMore).toBe(true);
+
+    let resolveOlder: (page: {
+      events: VestaEvent[];
+      cursor: null;
+    }) => void = () => undefined;
+    fetchHistoryMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOlder = resolve;
+      }),
+    );
+    let load: Promise<void> = Promise.resolve();
+    act(() => {
+      load = result.current.loadMore();
+    });
+    expect(fetchHistoryMock).toHaveBeenLastCalledWith(AGENT, "app-chat", 100);
+    expect(result.current.loadingMore).toBe(true);
+
+    act(() => {
+      result.current.trimHistory();
+    });
+    expect(result.current.messages).toHaveLength(120);
+
+    await act(async () => {
+      resolveOlder({ events: [chat(50, "old")], cursor: null });
+      await load;
+    });
+    expect(result.current.messages[0]).toMatchObject({ id: 50, text: "old" });
+    expect(result.current.messages).toHaveLength(121);
+    expect(result.current.hasMore).toBe(false);
+    expect(result.current.loadingMore).toBe(false);
+
+    act(() => {
+      result.current.trimHistory();
+    });
+    expect(result.current.messages.length).toBeLessThan(121);
+    expect(result.current.hasMore).toBe(true);
+  });
+
+  it("paces a live chat event, toggling isTyping and firing onAssistantMessage on commit", async () => {
+    vi.useFakeTimers();
+    const onAssistantMessage = vi.fn();
+    const { controller } = makeController();
+    const { result } = render(controller, { onAssistantMessage });
+    await openAndFlush();
+
+    deliver(chat(7, "pong"));
+
+    // Paced: typing indicator on, message withheld until the typing delay elapses.
+    expect(result.current.isTyping).toBe(true);
+    expect(result.current.messages).toHaveLength(0);
+    expect(onAssistantMessage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MAX_TYPING_DELAY_MS);
+    });
+
+    expect(result.current.messages.map((m) => m.type)).toEqual(["chat"]);
+    expect(result.current.isTyping).toBe(false);
+    expect(onAssistantMessage).toHaveBeenCalledWith("pong");
+  });
+
+  // Pacing is a feel, not a contract: with natural pacing off every event commits at once, and a
+  // burst past the flush threshold is dumped after the first delay rather than typed out one by one.
+  it("commits at once with natural pacing off", async () => {
+    useChatPacing.setState({ natural: false });
+    const { controller } = makeController();
+    const { result } = render(controller);
+    await openAndFlush();
+
+    deliver(chat(7, "pong"));
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.isTyping).toBe(false);
+  });
+
+  it("flushes a burst past the threshold after one typing delay", async () => {
+    vi.useFakeTimers();
+    const { controller } = makeController();
+    const { result } = render(controller);
+    await openAndFlush();
+
+    const burst = PACING.flushThreshold + 2;
+    for (let i = 0; i < burst; i++) deliver(chat(10 + i, `m${String(i)}`));
+    expect(result.current.messages).toHaveLength(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MAX_TYPING_DELAY_MS);
+    });
+
+    expect(result.current.messages).toHaveLength(burst);
+    expect(result.current.isTyping).toBe(false);
   });
 });

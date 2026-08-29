@@ -1,22 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { ChatMessage } from "@/lib/types";
-import { buildDecorated, lastSeenIndex, rowKey } from "./rows";
+import { buildDecorated, lastSeenIndex } from "./rows";
 
 function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
 }
-
-describe("rowKey", () => {
-  it("uses ts and type when ts is present", () => {
-    expect(rowKey(userMsg("2026-06-08T10:00:00Z"), 3)).toBe(
-      "2026-06-08T10:00:00Z-user",
-    );
-  });
-
-  it("falls back to a positional key when ts is missing", () => {
-    expect(rowKey({ type: "user", text: "hi" }, 3)).toBe("i-3");
-  });
-});
 
 describe("buildDecorated", () => {
   it("shows a day stamp on the first dated message and on day boundaries", () => {
@@ -64,6 +52,16 @@ describe("buildDecorated", () => {
       userMsg("not-a-date"),
     ]);
     expect(rows[1]?.gap).toBe("mt-1.5");
+  });
+
+  it("marks only the last bubble of each group as the group end", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("2026-06-08T10:01:00"),
+      { type: "assistant", text: "hey", ts: "2026-06-08T10:02:00" },
+      userMsg("2026-06-08T10:03:00"),
+    ]);
+    expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
   });
 });
 

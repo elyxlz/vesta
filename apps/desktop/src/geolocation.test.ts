@@ -1,12 +1,47 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
-  parseObjectPath,
-  parseVariantNumber,
   parseWindowsFix,
+  readNativeGeolocation,
   resolveNativeFix,
 } from "./geolocation";
 
 const instantSleep = () => Promise.resolve();
+
+const CLIENT = "/org/freedesktop/GeoClue2/Client/7";
+const LOCATION = "/org/freedesktop/GeoClue2/Location/0";
+
+// A GeoClue daemon fake: `location` is what the Location property answers, and `coordinates`
+// the location object's properties, each keyed by the tail of the gdbus call.
+function geoclue(
+  calls: string[],
+  location: (polls: number) => string,
+  coordinates: Record<string, string> = {
+    Latitude: "(<39.2238>,)",
+    Longitude: "(<9.1217>,)",
+    Accuracy: "(<25.0>,)",
+  },
+) {
+  return (_command: string, args: string[]) => {
+    const call = args.join(" ");
+    calls.push(call);
+    if (call.includes("Manager.GetClient")) {
+      return Promise.resolve(`(objectpath '${CLIENT}',)`);
+    }
+    if (call.endsWith("Client Location")) {
+      const polls = calls.filter((c) => c.endsWith("Client Location")).length;
+      return Promise.resolve(`(<objectpath '${location(polls)}'>,)`);
+    }
+    const property = Object.keys(coordinates).find((name) =>
+      call.endsWith(name),
+    );
+    return Promise.resolve(
+      property === undefined ? "()" : (coordinates[property] ?? "()"),
+    );
+  };
+}
 
 describe("parseWindowsFix", () => {
   it("parses the invariant lat|lon|accuracy line", () => {
@@ -32,22 +67,6 @@ describe("parseWindowsFix", () => {
   });
 });
 
-describe("gdbus parsing", () => {
-  it("extracts an object path from a call reply", () => {
-    expect(
-      parseObjectPath("(objectpath '/org/freedesktop/GeoClue2/Client/1',)\n"),
-    ).toBe("/org/freedesktop/GeoClue2/Client/1");
-    expect(parseObjectPath("(<objectpath '/'>,)\n")).toBe("/");
-    expect(parseObjectPath("()")).toBeNull();
-  });
-
-  it("extracts a number from a variant reply", () => {
-    expect(parseVariantNumber("(<39.2238>,)\n")).toBe(39.2238);
-    expect(parseVariantNumber("(<double -0.1278>,)\n")).toBe(-0.1278);
-    expect(parseVariantNumber("(<'text'>,)")).toBeNull();
-  });
-});
-
 describe("resolveNativeFix", () => {
   it("resolves a macOS fix through the bundled CoreLocation helper", async () => {
     const commands: string[][] = [];
@@ -63,13 +82,6 @@ describe("resolveNativeFix", () => {
       accuracyM: 25,
     });
     expect(commands).toEqual([["/app/vesta-location"]]);
-  });
-
-  it("raises the helper's own reason when it refuses on macOS", async () => {
-    const run = () => Promise.reject(new Error("Command failed: denied"));
-    await expect(
-      resolveNativeFix("darwin", run, undefined, "/app/vesta-location"),
-    ).rejects.toThrow("denied");
   });
 
   it("resolves a Windows fix through powershell", async () => {
@@ -90,26 +102,8 @@ describe("resolveNativeFix", () => {
 
   it("walks the GeoClue client to a fix on Linux and stops it after", async () => {
     const calls: string[] = [];
-    const client = "/org/freedesktop/GeoClue2/Client/7";
-    const location = "/org/freedesktop/GeoClue2/Location/0";
-    const run = (_command: string, args: string[]) => {
-      const call = args.join(" ");
-      calls.push(call);
-      if (call.includes("Manager.GetClient")) {
-        return Promise.resolve(`(objectpath '${client}',)`);
-      }
-      if (call.endsWith("Client Location")) {
-        // First poll: no fix yet; second poll: the location object exists.
-        const polls = calls.filter((c) => c.endsWith("Client Location")).length;
-        return Promise.resolve(
-          polls === 1 ? "(<objectpath '/'>,)" : `(<objectpath '${location}'>,)`,
-        );
-      }
-      if (call.endsWith("Latitude")) return Promise.resolve("(<39.2238>,)");
-      if (call.endsWith("Longitude")) return Promise.resolve("(<9.1217>,)");
-      if (call.endsWith("Accuracy")) return Promise.resolve("(<25.0>,)");
-      return Promise.resolve("()");
-    };
+    // First poll: no fix yet; second poll: the location object exists.
+    const run = geoclue(calls, (polls) => (polls === 1 ? "/" : LOCATION));
     expect(await resolveNativeFix("linux", run, instantSleep)).toEqual({
       latitude: 39.2238,
       longitude: 9.1217,
@@ -119,18 +113,87 @@ describe("resolveNativeFix", () => {
     expect(calls.at(-1)).toContain("Client.Stop");
   });
 
-  it("raises the provider's reason when it is missing or refuses", async () => {
-    const run = () => Promise.reject(new Error("gdbus: command not found"));
-    await expect(resolveNativeFix("linux", run, instantSleep)).rejects.toThrow(
-      "gdbus: command not found",
-    );
-    await expect(resolveNativeFix("win32", run)).rejects.toThrow(
-      "gdbus: command not found",
-    );
+  it("gives up on Linux when the daemon never answers a fix, and still stops the client", async () => {
+    const calls: string[] = [];
+    const run = geoclue(calls, () => "/");
+    expect(await resolveNativeFix("linux", run, instantSleep)).toBeNull();
+    expect(calls.at(-1)).toContain("Client.Stop");
   });
+
+  it("answers null on Linux when the location object has no latitude", async () => {
+    const calls: string[] = [];
+    const run = geoclue(calls, () => LOCATION, { Longitude: "(<9.1217>,)" });
+    expect(await resolveNativeFix("linux", run, instantSleep)).toBeNull();
+  });
+
+  it("answers null on macOS with no helper bundled", async () => {
+    const run = () => Promise.reject(new Error("must not be called"));
+    expect(await resolveNativeFix("darwin", run)).toBeNull();
+  });
+
+  it.each<{
+    name: string;
+    reason: string;
+    call: (
+      run: (command: string, args: string[]) => Promise<string>,
+    ) => Promise<unknown>;
+  }>([
+    {
+      name: "the macOS helper refuses",
+      reason: "denied",
+      call: (run) =>
+        resolveNativeFix("darwin", run, undefined, "/app/vesta-location"),
+    },
+    {
+      name: "the Linux provider is missing or refuses",
+      reason: "gdbus: command not found",
+      call: (run) => resolveNativeFix("linux", run, instantSleep),
+    },
+    {
+      name: "the Windows provider is missing or refuses",
+      reason: "gdbus: command not found",
+      call: (run) => resolveNativeFix("win32", run),
+    },
+  ])(
+    "raises the provider's own reason when $name",
+    async ({ reason, call }) => {
+      const run = () => Promise.reject(new Error(reason));
+      await expect(call(run)).rejects.toThrow(reason);
+    },
+  );
 
   it("answers null on a platform with no provider", async () => {
     const run = () => Promise.reject(new Error("must not be called"));
     expect(await resolveNativeFix("freebsd", run)).toBeNull();
+  });
+});
+
+describe("readNativeGeolocation", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  let helperDir = "";
+
+  afterEach(async () => {
+    if (platform) Object.defineProperty(process, "platform", platform);
+    await fs.rm(helperDir, { recursive: true, force: true });
+  });
+
+  it("re-raises a failing provider's stderr as the reason", async () => {
+    helperDir = await fs.mkdtemp(path.join(os.tmpdir(), "vesta-geo-test-"));
+    const helper = path.join(helperDir, "vesta-location");
+    await fs.writeFile(
+      helper,
+      "#!/bin/sh\necho 'location access denied' >&2\nexit 1\n",
+      {
+        mode: 0o755,
+      },
+    );
+    Object.defineProperty(process, "platform", {
+      value: "darwin",
+      configurable: true,
+    });
+
+    await expect(readNativeGeolocation(helper)).rejects.toThrow(
+      "location access denied",
+    );
   });
 });

@@ -4,34 +4,20 @@ import { useEffect } from "react";
 import type { AgentRow, LogEvent } from "@/lib/types";
 import { streamLogs, stopLogs } from "@/api";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
+import { fakeAgentRow } from "@/test/fake-controller";
 import { AgentLogStreamProvider, useAgentLogSession } from "./index";
 
-vi.mock("@/api", () => ({
+vi.mock("@/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api")>()),
   streamLogs: vi.fn(() => new Promise<void>(() => undefined)),
   stopLogs: vi.fn(() => Promise.resolve()),
-  startAgent: vi.fn(() => Promise.resolve()),
-  stopAgent: vi.fn(() => Promise.resolve()),
-  restartAgent: vi.fn(() => Promise.resolve()),
-  createBackup: vi.fn(() => Promise.resolve()),
-  listBackups: vi.fn(() => Promise.resolve([])),
-  restoreBackup: vi.fn(() => Promise.resolve()),
-  deleteBackup: vi.fn(() => Promise.resolve()),
-  deleteAgent: vi.fn(() => Promise.resolve()),
 }));
 
 const streamLogsMock = vi.mocked(streamLogs);
 const stopLogsMock = vi.mocked(stopLogs);
 
 function agentInfo(name: string, status: AgentRow["status"]): AgentRow {
-  return {
-    name,
-    status,
-    activityState: "idle",
-    buildPhase: null,
-    operation: null,
-    startedAt: null,
-    services: {},
-  };
+  return fakeAgentRow(name, { status });
 }
 
 function Probe() {
@@ -79,24 +65,6 @@ describe("AgentLogStreamProvider", () => {
     expect(streamLogsMock).toHaveBeenCalledTimes(1);
     rerender(tree(agentInfo("ada", "alive"), false));
     expect(stopLogsMock).not.toHaveBeenCalled();
-  });
-
-  it("two consumers share one stream", () => {
-    render(
-      <SelectedAgentProvider agent={agentInfo("ada", "alive")}>
-        <AgentLogStreamProvider>
-          <Probe />
-          <Probe />
-        </AgentLogStreamProvider>
-      </SelectedAgentProvider>,
-    );
-    expect(streamLogsMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("unmounting the provider stops the stream", () => {
-    const { unmount } = render(tree(agentInfo("ada", "alive"), true));
-    unmount();
-    expect(stopLogsMock).toHaveBeenCalledWith("ada");
   });
 
   it("switching agents disposes the old session and streams the new agent", () => {

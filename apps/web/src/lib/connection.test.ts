@@ -39,6 +39,11 @@ describe("parseConnectLink", () => {
       { host: "https://fox.vesta.run", key: "abc123" },
     ],
     [
+      "keeps a path other than /app as part of the host",
+      "https://fox.vesta.run/proxy/#k=abc123",
+      { host: "https://fox.vesta.run/proxy", key: "abc123" },
+    ],
+    [
       "returns null for a bare host with no key fragment",
       "https://fox.vesta.run",
       null,

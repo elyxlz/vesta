@@ -1,27 +1,19 @@
 import { cleanup, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import type { AgentRow, GatewayOperation } from "@vesta/core";
+import type { GatewayOperation } from "@vesta/core";
 import {
   GatewayContext,
   disconnectedValue,
   type GatewayContextValue,
 } from "@/providers/GatewayProvider/context";
+import { fakeAgentRow } from "@/test/fake-controller";
 import { NavigationGuard } from "./index";
 
+const auth = vi.hoisted(() => ({ connected: true }));
 vi.mock("@/providers/AuthProvider", () => ({
-  useAuth: () => ({ connected: true, initialized: true }),
+  useAuth: () => ({ connected: auth.connected, initialized: true }),
 }));
-
-const ADA: AgentRow = {
-  name: "ada",
-  status: "alive",
-  activityState: "idle",
-  buildPhase: null,
-  operation: null,
-  startedAt: null,
-  services: {},
-};
 
 const RUNNING: GatewayOperation = {
   kind: "update",
@@ -38,15 +30,17 @@ function renderAt(path: string, overrides: Partial<GatewayContextValue>) {
   const value: GatewayContextValue = {
     ...disconnectedValue,
     agentsFetched: true,
-    agents: [ADA],
+    agents: [fakeAgentRow("ada")],
     ...overrides,
   };
   return render(
     <GatewayContext.Provider value={value}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
+          <Route path="connect" element={<p>connect</p>} />
           <Route element={<NavigationGuard />}>
             <Route index element={<p>home</p>} />
+            <Route path="new" element={<p>new</p>} />
             <Route path="settings" element={<p>settings</p>} />
             <Route path="agent/:name" element={<p>agent</p>} />
           </Route>
@@ -56,15 +50,24 @@ function renderAt(path: string, overrides: Partial<GatewayContextValue>) {
   );
 }
 
+beforeEach(() => {
+  auth.connected = true;
+});
+
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
 });
 
 describe("NavigationGuard", () => {
   it("leaves navigation alone while the gateway is idle", () => {
     const { getByText } = renderAt("/agent/ada", {});
     expect(getByText("agent")).toBeTruthy();
+  });
+
+  it("sends a disconnected client to the connect screen", () => {
+    auth.connected = false;
+    const { getByText } = renderAt("/agent/ada", {});
+    expect(getByText("connect")).toBeTruthy();
   });
 
   it("sends agent pages home while a gateway update runs", () => {
@@ -75,6 +78,17 @@ describe("NavigationGuard", () => {
   it("keeps settings reachable during an update, since that is where a stuck one is diagnosed", () => {
     const { getByText } = renderAt("/settings", { gatewayOperation: RUNNING });
     expect(getByText("settings")).toBeTruthy();
+  });
+
+  it("sends an empty, fetched roster to the new-agent page", () => {
+    const { getByText } = renderAt("/", { agents: [] });
+    expect(getByText("new")).toBeTruthy();
+  });
+
+  // Before the snapshot lands the roster is unknown, not empty: no redirect flashes on a fresh socket.
+  it("stays put while the roster is not yet fetched", () => {
+    const { getByText } = renderAt("/", { agents: [], agentsFetched: false });
+    expect(getByText("home")).toBeTruthy();
   });
 
   it("stays home during an update with zero agents instead of ping-ponging with the /new redirect", () => {

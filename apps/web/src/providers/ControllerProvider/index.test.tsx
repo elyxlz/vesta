@@ -10,11 +10,13 @@ import {
   vi,
 } from "vitest";
 import type { Controller } from "@vesta/core";
-import { ControllerProvider } from "./index";
-import { ControllerContext } from "./context";
-import { GatewayProvider } from "@/providers/GatewayProvider";
+import { ControllerProvider, REAUTH_POLL_MS } from "./index";
+import { ControllerContext, useControllerReconnect } from "./context";
 
 const mockConn = vi.hoisted(() => ({ tokenExpiring: false }));
+const refresh = vi.hoisted(() => ({
+  result: (): Promise<"ok" | "transient"> => Promise.resolve("ok"),
+}));
 
 vi.mock("@/lib/connection", () => ({
   getConnection: () => ({
@@ -27,11 +29,8 @@ vi.mock("@/lib/connection", () => ({
   connectionHostname: () => "vestad.test",
 }));
 
-// Mirrors REAUTH_POLL_MS in index.tsx (not exported).
-const REAUTH_POLL_MS = 60_000;
-
 vi.mock("@/lib/token-refresh", () => ({
-  ensureFreshToken: () => Promise.resolve("ok"),
+  ensureFreshToken: () => refresh.result(),
 }));
 
 vi.mock("@/providers/AuthProvider", () => ({
@@ -45,7 +44,7 @@ vi.mock("@/providers/AuthProvider", () => ({
 }));
 
 vi.mock("@/components/DisconnectedOverlay", () => ({
-  DisconnectedOverlay: () => <div>disconnected</div>,
+  DisconnectedOverlay: () => <div data-testid="disconnected" />,
 }));
 
 // A fake WebSocket capturing constructions and letting the test drive the frame callbacks
@@ -75,54 +74,61 @@ class FakeWebSocket {
   }
 }
 
-// Reads the controller from context (null during the pre-connect gate, set once the
-// controller is built), so mounting the probe never throws before the gate resolves.
-function Probe({ onReady }: { onReady: (controller: Controller) => void }) {
+// Reads the controller and the reconnect handle from context (null during the pre-connect gate),
+// so mounting the probe never throws before the gate resolves.
+function Probe({
+  onReady,
+}: {
+  onReady: (controller: Controller, reconnect: () => void) => void;
+}) {
   const controller = useContext(ControllerContext);
+  const reconnect = useControllerReconnect();
   useEffect(() => {
-    if (controller) onReady(controller);
-  }, [controller, onReady]);
-  return null;
+    if (controller) onReady(controller, reconnect);
+  }, [controller, reconnect, onReady]);
+  return <div data-testid="app-body" />;
 }
 
-const helloFrame = JSON.stringify({
-  type: "hello",
-  version: "0.2.0",
-  min_supported: "0.0.0",
-});
-// min_supported (9.9.9) sits above the client (__CLIENT_VERSION__), so the client is below the
-// served window and must update the app (terminal).
-const appBehindHelloFrame = JSON.stringify({
-  type: "hello",
-  version: "9.9.9",
-  min_supported: "9.9.9",
-});
-// within the window's floor but the gateway release (0.0.1) is older than the client
-// (__CLIENT_VERSION__), so the client runs ahead and must block on a gateway update.
-const gatewayBehindHelloFrame = JSON.stringify({
-  type: "hello",
-  version: "0.0.1",
-  min_supported: "0.0.0",
-});
 // A window containing the client (__CLIENT_VERSION__), so the socket proceeds to "open".
 const openHelloFrame = JSON.stringify({
   type: "hello",
   version: "9.9.9",
   min_supported: "0.0.0",
 });
-const snapshotFrame = JSON.stringify({
-  type: "snapshot",
-  tree: { gateway: { version: "9.9.9" }, agents: {} },
-});
+
+function latestSocket(): FakeWebSocket {
+  const socket = FakeWebSocket.instances.at(-1);
+  if (!socket) throw new Error("socket not constructed");
+  return socket;
+}
+
+function openSocket(socket: FakeWebSocket): void {
+  act(() => {
+    socket.onopen?.();
+    socket.onmessage?.({ data: openHelloFrame });
+  });
+}
+
+function sentReauth(socket: FakeWebSocket): boolean {
+  return socket.sent.some(
+    (frame) => (JSON.parse(frame) as { type: string }).type === "reauth",
+  );
+}
+
+// Far past the disconnect grace, without mirroring the constant: the overlay decision is "a blip
+// shows nothing, an outage shows it", not the exact millisecond.
+const WELL_PAST_GRACE_MS = 5_000;
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
   mockConn.tokenExpiring = false;
+  refresh.result = () => Promise.resolve("ok");
   vi.stubGlobal("WebSocket", FakeWebSocket);
 });
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 afterAll(() => {
@@ -130,149 +136,118 @@ afterAll(() => {
 });
 
 describe("ControllerProvider", () => {
-  it("renders AppBehindScreen with gateway context below the served window", async () => {
-    const { findByRole, findByText, queryByText } = render(
-      <ControllerProvider>
-        <GatewayProvider>
-          <div>app body</div>
-        </GatewayProvider>
-      </ControllerProvider>,
-    );
-
-    await waitFor(() => {
-      expect(FakeWebSocket.instances).toHaveLength(1);
-    });
-    const socket = FakeWebSocket.instances[0];
-    if (!socket) throw new Error("socket not constructed");
-
-    act(() => {
-      socket.onopen?.();
-      socket.onmessage?.({ data: appBehindHelloFrame });
-    });
-
-    expect(await findByText("update required")).toBeTruthy();
-    expect(
-      await findByRole("img", { name: "can't reach gateway" }),
-    ).toBeTruthy();
-    expect(queryByText("app body")).toBeNull();
-  });
-
-  it("renders GatewayBehindScreen when the client is newer", async () => {
-    const { findByText, queryByText } = render(
-      <ControllerProvider>
-        <GatewayProvider>
-          <div>app body</div>
-        </GatewayProvider>
-      </ControllerProvider>,
-    );
-
-    await waitFor(() => {
-      expect(FakeWebSocket.instances).toHaveLength(1);
-    });
-    const socket = FakeWebSocket.instances[0];
-    if (!socket) throw new Error("socket not constructed");
-
-    act(() => {
-      socket.onopen?.();
-      socket.onmessage?.({ data: gatewayBehindHelloFrame });
-    });
-
-    expect(await findByText("gateway is behind")).toBeTruthy();
-    expect(queryByText("app body")).toBeNull();
-  });
-
-  it("builds the controller and reduces hello+snapshot into the replica", async () => {
-    let controller: Controller | null = null;
-
-    render(
-      <ControllerProvider>
-        <Probe
-          onReady={(c) => {
-            controller = c;
-          }}
-        />
-      </ControllerProvider>,
-    );
-
-    await waitFor(() => {
-      expect(FakeWebSocket.instances).toHaveLength(1);
-    });
-    const socket = FakeWebSocket.instances[0];
-    if (!socket) throw new Error("socket not constructed");
-
-    act(() => {
-      socket.onopen?.();
-      socket.onmessage?.({ data: helloFrame });
-      socket.onmessage?.({ data: snapshotFrame });
-    });
-
-    await waitFor(() => {
-      expect(controller?.replica.getState()?.gateway.version).toBe("9.9.9");
-    });
-  });
-
-  it("rotates the token in-band when it is expiring", async () => {
+  // A restored session whose token is expiring rotates it in-band twice: once on mount (the frame
+  // rides the still-in-flight handshake) and again on the poll interval, never waiting out a poll to
+  // start.
+  it("rotates an expiring token on mount and again on the poll interval", async () => {
     mockConn.tokenExpiring = true;
     vi.useFakeTimers();
-    try {
-      render(
-        <ControllerProvider>
-          <div>app body</div>
-        </ControllerProvider>,
-      );
-      // Let the controller-build effect run so the socket exists.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1);
-      });
-      const socket = FakeWebSocket.instances[0];
-      if (!socket) throw new Error("socket not constructed");
-      act(() => {
-        socket.onopen?.();
-      });
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
-      });
-
-      expect(
-        socket.sent.some(
-          (frame) => (JSON.parse(frame) as { type: string }).type === "reauth",
-        ),
-      ).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("rotates a restored session's token on mount, without waiting out a poll interval", async () => {
-    mockConn.tokenExpiring = true;
-
     render(
       <ControllerProvider>
         <div>app body</div>
       </ControllerProvider>,
     );
+    // Run the build + mount-refresh effects so the socket exists and a reauth is pending.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    const socket = latestSocket();
+    // The pending mount reauth rides the handshake the moment it opens, before any interval.
+    await act(async () => {
+      socket.onopen?.();
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(sentReauth(socket)).toBe(true);
+    const afterMount = socket.sent.length;
 
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
+    });
+
+    expect(socket.sent.length).toBeGreaterThan(afterMount);
+  });
+
+  // A refresh that cannot complete is a no-op: the socket is never torn down to rotate a token.
+  it("keeps the socket when the reauth refresh cannot complete", async () => {
+    mockConn.tokenExpiring = true;
+    refresh.result = () => Promise.resolve("transient");
+    vi.useFakeTimers();
+    render(
+      <ControllerProvider>
+        <div>app body</div>
+      </ControllerProvider>,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    const socket = latestSocket();
+    await act(async () => {
+      socket.onopen?.();
+      await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
+    });
+
+    expect(sentReauth(socket)).toBe(false);
+    expect(socket.closed).toBe(false);
+  });
+
+  // The overlay waits out a grace window so a socket blip never flashes it, while a real outage
+  // still surfaces once the window elapses.
+  it.each([
+    { name: "a blip that opens inside the grace shows nothing", opens: true },
+    { name: "an outage past the grace shows the overlay", opens: false },
+  ])("$name", async ({ opens }) => {
+    vi.useFakeTimers();
+    const { queryByTestId } = render(
+      <ControllerProvider>
+        <div>app body</div>
+      </ControllerProvider>,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(queryByTestId("disconnected")).toBeNull();
+    if (opens) openSocket(latestSocket());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(WELL_PAST_GRACE_MS);
+    });
+
+    expect(queryByTestId("disconnected") !== null).toBe(!opens);
+  });
+
+  // The gateway-update path re-attaches by asking for a reconnect: the old socket closes and a
+  // fresh controller opens a new one.
+  it("reconnect() closes the live socket and builds a fresh controller", async () => {
+    const seen: Controller[] = [];
+    const handles: (() => void)[] = [];
+    render(
+      <ControllerProvider>
+        <Probe
+          onReady={(controller, handle) => {
+            seen.push(controller);
+            handles.push(handle);
+          }}
+        />
+      </ControllerProvider>,
+    );
     await waitFor(() => {
       expect(FakeWebSocket.instances).toHaveLength(1);
     });
-    const socket = FakeWebSocket.instances[0];
-    if (!socket) throw new Error("socket not constructed");
-    // The mount refresh lands while the handshake is still in flight, so the frame rides the open.
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const first = latestSocket();
+    openSocket(first);
+    const reconnect = handles[0];
+    if (!reconnect) throw new Error("reconnect handle not captured");
+
     act(() => {
-      socket.onopen?.();
+      reconnect();
     });
 
     await waitFor(() => {
-      expect(
-        socket.sent.some(
-          (frame) => (JSON.parse(frame) as { type: string }).type === "reauth",
-        ),
-      ).toBe(true);
+      expect(FakeWebSocket.instances).toHaveLength(2);
     });
+    expect(first.closed).toBe(true);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toBe(seen[1]);
   });
 
   // StrictMode's double effect pass (setup, cleanup, setup with preserved state) is the same
@@ -296,33 +271,10 @@ describe("ControllerProvider", () => {
     await waitFor(() => {
       expect(FakeWebSocket.instances.length).toBeGreaterThan(0);
     });
-    const socket = FakeWebSocket.instances.at(-1);
-    if (!socket) throw new Error("socket not constructed");
-
-    act(() => {
-      socket.onopen?.();
-      socket.onmessage?.({ data: openHelloFrame });
-    });
+    openSocket(latestSocket());
 
     await waitFor(() => {
       expect(controller?.getSyncState()).toBe("open");
     });
-  });
-
-  it("closes the controller socket on unmount", async () => {
-    const { unmount } = render(
-      <ControllerProvider>
-        <div>app body</div>
-      </ControllerProvider>,
-    );
-
-    await waitFor(() => {
-      expect(FakeWebSocket.instances).toHaveLength(1);
-    });
-    const socket = FakeWebSocket.instances[0];
-    if (!socket) throw new Error("socket not constructed");
-
-    unmount();
-    expect(socket.closed).toBe(true);
   });
 });

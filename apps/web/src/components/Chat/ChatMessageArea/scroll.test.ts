@@ -22,45 +22,58 @@ describe("distanceFromEnd", () => {
 });
 
 describe("onScrollTick while idle", () => {
-  it("reports pinned within the bottom threshold", () => {
-    const tick = onScrollTick(
-      metrics(1400 - AT_BOTTOM_THRESHOLD_PX),
-      IDLE_LATCH,
-      true,
-    );
-    expect(tick.atBottom).toBe(true);
-    expect(tick.loadOlder).toBe(false);
-  });
-
-  it("reports unpinned deep in the list without loading", () => {
-    const tick = onScrollTick(metrics(5000, 10000), IDLE_LATCH, true);
-    expect(tick.atBottom).toBe(false);
-    expect(tick.loadOlder).toBe(false);
-    expect(tick.nearTop).toBe(false);
-  });
-
-  it("preloads older history while the user still has scroll runway", () => {
-    const tick = onScrollTick(metrics(1700, 10000), IDLE_LATCH, true);
-    expect(tick.loadOlder).toBe(true);
-    expect(tick.nearTop).toBe(false);
-  });
-
-  it("flags the user as waiting at the top of loaded history", () => {
-    const tick = onScrollTick(metrics(40, 10000), IDLE_LATCH, true);
-    expect(tick.loadOlder).toBe(true);
-    expect(tick.nearTop).toBe(true);
-  });
-
-  it("does not load older history when the caller cannot load", () => {
-    const tick = onScrollTick(metrics(40), IDLE_LATCH, false);
-    expect(tick.loadOlder).toBe(false);
-  });
-
-  it("does not load older history while pinned in a short conversation", () => {
-    // Content barely taller than the viewport: at-bottom and near-top at once.
-    const tick = onScrollTick(metrics(50, 700, 600), IDLE_LATCH, true);
-    expect(tick.atBottom).toBe(true);
-    expect(tick.loadOlder).toBe(false);
+  it.each<{
+    name: string;
+    metrics: { scrollTop: number; scrollHeight: number; clientHeight: number };
+    canLoad: boolean;
+    expected: Partial<{
+      atBottom: boolean;
+      loadOlder: boolean;
+      nearTop: boolean;
+    }>;
+  }>([
+    {
+      name: "reports pinned within the bottom threshold",
+      metrics: metrics(1400 - AT_BOTTOM_THRESHOLD_PX),
+      canLoad: true,
+      expected: { atBottom: true, loadOlder: false },
+    },
+    {
+      name: "reports unpinned deep in the list without loading",
+      metrics: metrics(5000, 10000),
+      canLoad: true,
+      expected: { atBottom: false, loadOlder: false, nearTop: false },
+    },
+    {
+      name: "preloads older history while the user still has scroll runway",
+      metrics: metrics(1700, 10000),
+      canLoad: true,
+      expected: { loadOlder: true, nearTop: false },
+    },
+    {
+      name: "flags the user as waiting at the top of loaded history",
+      metrics: metrics(40, 10000),
+      canLoad: true,
+      expected: { loadOlder: true, nearTop: true },
+    },
+    {
+      name: "does not load older history when the caller cannot load",
+      metrics: metrics(40),
+      canLoad: false,
+      expected: { loadOlder: false },
+    },
+    {
+      // Content barely taller than the viewport: at-bottom and near-top at once.
+      name: "does not load older history while pinned in a short conversation",
+      metrics: metrics(50, 700, 600),
+      canLoad: true,
+      expected: { atBottom: true, loadOlder: false },
+    },
+  ])("$name", ({ metrics: m, canLoad, expected }) => {
+    const tick = onScrollTick(m, IDLE_LATCH, canLoad);
+    for (const [key, value] of Object.entries(expected)) {
+      expect(tick[key as keyof typeof expected]).toBe(value);
+    }
   });
 });
 

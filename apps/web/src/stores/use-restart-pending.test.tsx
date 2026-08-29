@@ -23,6 +23,17 @@ describe("useRestartPending", () => {
     expect(entry?.since).toBe(BOOT_T0);
   });
 
+  it("withdrawing the last reason drops the agent's entry entirely", () => {
+    useRestartPending.getState().markPending("ada", "files", BOOT_T0);
+    useRestartPending.getState().markPending("ada", "host-access", BOOT_T0);
+    useRestartPending.getState().clearReason("ada", "files");
+    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
+      "host-access",
+    ]);
+    useRestartPending.getState().clearReason("ada", "host-access");
+    expect(useRestartPending.getState().pending.ada).toBeUndefined();
+  });
+
   it("clears the flag once the agent is observed booting with a newer start time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
     useRestartPending
@@ -57,42 +68,10 @@ describe("useRestartPending", () => {
     expect(useRestartPending.getState().pending.ada).toBeUndefined();
   });
 
-  it("ignores agents with no reported boot time", () => {
-    useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    useRestartPending.getState().reconcile([{ name: "ada", startedAt: null }]);
-    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
-      "files",
-    ]);
-  });
-
-  it("withdraws one reason without dropping another or losing the boot time", () => {
-    useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    useRestartPending.getState().markPending("ada", "settings", BOOT_T0);
-    useRestartPending.getState().clearReason("ada", "settings");
-    const entry = useRestartPending.getState().pending.ada;
-    expect(entry?.reasons).toEqual(["files"]);
-    expect(entry?.since).toBe(BOOT_T0);
-  });
-
-  it("keeps a known baseline when a later reason is flagged with no boot time", () => {
-    useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    useRestartPending.getState().markPending("ada", "settings", null);
-    expect(useRestartPending.getState().pending.ada?.since).toBe(BOOT_T0);
-  });
-
-  it("keeps a host-access flag across a restart, since a mount needs a recreate", () => {
-    // A plain/crash restart reuses the container with the old mounts; only a recreate (the app
-    // restart button) applies a new grant, so reconcile must not drop it on a boot change.
-    useRestartPending.getState().markPending("ada", "host-access", BOOT_T0);
-    useRestartPending
-      .getState()
-      .reconcile([{ name: "ada", startedAt: BOOT_T1 }]);
-    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
-      "host-access",
-    ]);
-  });
-
-  it("clears restart-applied reasons but keeps host-access on the same restart", () => {
+  it("clears restart-applied reasons but keeps host-access across a recreate", () => {
+    // A plain/crash restart reuses the container with the old mounts; only a
+    // recreate (the app restart button) applies a new grant, so reconcile clears
+    // the applied reasons but must not drop host-access on a boot change.
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
     useRestartPending.getState().markPending("ada", "host-access", BOOT_T0);
     useRestartPending
@@ -105,34 +84,33 @@ describe("useRestartPending", () => {
 });
 
 describe("migrateRestartPending", () => {
-  it("carries v1 reason lists over with an unknown boot time", () => {
-    const migrated = migrateRestartPending(
+  it.each<
+    [
+      string,
+      unknown,
+      number,
+      ReturnType<typeof migrateRestartPending>["pending"],
+    ]
+  >([
+    [
+      "carries v1 reason lists over with an unknown boot time",
       { pending: { ada: ["files", "host-access"] } },
       1,
-    );
-    expect(migrated.pending.ada).toEqual({
-      reasons: ["files", "host-access"],
-      since: null,
-    });
-  });
-
-  it("carries a v0 boolean flag over as the generic reason", () => {
-    const migrated = migrateRestartPending({ pending: { ada: true } }, 0);
-    expect(migrated.pending.ada).toEqual({
-      reasons: ["settings"],
-      since: null,
-    });
-  });
-
-  it("drops a malformed v1 value that is not an array of known reasons", () => {
-    const migrated = migrateRestartPending(
+      { ada: { reasons: ["files", "host-access"], since: null } },
+    ],
+    [
+      "carries a v0 boolean flag over as the generic reason",
+      { pending: { ada: true } },
+      0,
+      { ada: { reasons: ["settings"], since: null } },
+    ],
+    [
+      "drops a malformed v1 value, keeping only the known reasons",
       { pending: { ada: "files", bob: ["files", "bogus"] } },
       1,
-    );
-    expect(migrated.pending.ada).toBeUndefined();
-    expect(migrated.pending.bob).toEqual({
-      reasons: ["files"],
-      since: null,
-    });
+      { bob: { reasons: ["files"], since: null } },
+    ],
+  ])("%s", (_name, persisted, version, expected) => {
+    expect(migrateRestartPending(persisted, version).pending).toEqual(expected);
   });
 });

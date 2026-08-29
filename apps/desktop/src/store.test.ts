@@ -3,8 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  clearConnection,
-  clearRecentGateways,
   readConnection,
   readRecentGateways,
   storageBackendIsSecure,
@@ -72,12 +70,19 @@ describe("connection store", () => {
     expect(stored).not.toContain(CONNECTION.accessToken);
   });
 
-  it("reads null when nothing has been written", async () => {
+  it("reads null rather than throwing on a corrupt store file", async () => {
+    await fs.writeFile(path.join(userDataDir, "connection.json"), "{ not json");
     expect(await readConnection()).toBeNull();
   });
 
-  it("reads null rather than throwing on a corrupt store file", async () => {
-    await fs.writeFile(path.join(userDataDir, "connection.json"), "{ not json");
+  it("reads null rather than throwing when the ciphertext does not decrypt", async () => {
+    await fs.writeFile(
+      path.join(userDataDir, "connection.json"),
+      JSON.stringify({
+        version: 1,
+        encrypted: Buffer.from("garbage").toString("base64"),
+      }),
+    );
     expect(await readConnection()).toBeNull();
   });
 
@@ -91,14 +96,13 @@ describe("connection store", () => {
     );
   });
 
-  it("clears a stored connection", async () => {
-    await writeConnection(CONNECTION);
-    await clearConnection();
-    expect(await readConnection()).toBeNull();
-  });
+  it("still reads a plaintext connection when it cannot be re-encrypted", async () => {
+    process.env.VESTA_TEST_ENCRYPTION_AVAILABLE = "false";
+    const target = path.join(userDataDir, "connection.json");
+    await fs.writeFile(target, JSON.stringify(CONNECTION));
 
-  it("clears an absent connection without throwing", async () => {
-    await expect(clearConnection()).resolves.toBeUndefined();
+    expect(await readConnection()).toEqual(CONNECTION);
+    expect(await fs.readFile(target, "utf8")).toContain(CONNECTION.accessToken);
   });
 });
 
@@ -113,11 +117,5 @@ describe("recent gateway store", () => {
       "utf8",
     );
     expect(stored).not.toContain(CONNECTION.accessToken);
-  });
-
-  it("clears saved gateways", async () => {
-    await writeRecentGateways([]);
-    await clearRecentGateways();
-    expect(await readRecentGateways()).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
+import { compareReleaseVersions } from "@vesta/core";
 import { useGateway } from "@/providers/GatewayProvider";
-import { compareVersions } from "@/lib/version";
 import {
   fetchReleaseNotes,
   filterReleaseNotes,
@@ -41,7 +41,7 @@ export function useWhatsNewAutoOpen(
         channel: gatewayChannel,
       });
       const hasCurrent = visible.some(
-        (entry) => compareVersions(entry.version, gatewayVersion) === 0,
+        (entry) => compareReleaseVersions(entry.version, gatewayVersion) === 0,
       );
       if (!hasCurrent) return;
       localStorage.setItem(LAST_SEEN_VERSION_KEY, gatewayVersion);

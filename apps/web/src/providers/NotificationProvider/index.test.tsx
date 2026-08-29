@@ -1,17 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { createElement, useEffect, type ReactNode } from "react";
-import { createReplica } from "@vesta/core";
-import type { Controller, Delta, NotificationEvent, Tree } from "@vesta/core";
+import type { Controller, NotificationEvent, Tree } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
-import {
-  GatewayContext,
-  disconnectedValue,
-  type GatewayContextValue,
-} from "@/providers/GatewayProvider/context";
-import type { AgentRow } from "@/lib/types";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
+import {
+  fakeAgentNode,
+  fakeController,
+  fakeTree,
+} from "@/test/fake-controller";
 import { NotificationProvider, useNotifications } from "./index";
 
 vi.mock("@/lib/native", () => ({
@@ -28,103 +26,34 @@ const setFaviconUnseenMock = vi.mocked(setFaviconUnseen);
 
 // A fake OS Notification that records each construction, so the provider's OS-notification firing is
 // observable without a real browser.
-const built: { title: string; body?: string }[] = [];
+const built: FakeNotification[] = [];
 class FakeNotification {
   static permission: NotificationPermission = "granted";
   static requestPermission = vi.fn((): Promise<NotificationPermission> =>
     Promise.resolve("granted"),
   );
+  readonly title: string;
+  readonly body: string | undefined;
   onclick: (() => void) | null = null;
   onclose: (() => void) | null = null;
   close(): void {
     /* noop */
   }
   constructor(title: string, options?: NotificationOptions) {
-    built.push({ title, body: options?.body });
+    this.title = title;
+    this.body = options?.body;
+    built.push(this);
   }
 }
 
-function agentInfo(name: string, status: AgentRow["status"]): AgentRow {
-  return {
-    name,
-    status,
-    activityState: "idle",
-    buildPhase: null,
-    operation: null,
-    startedAt: null,
-    services: {},
-  };
+const ASKED_KEY = "vesta-notifications-asked";
+
+function tree(pending: NotificationEvent[] = []): Tree {
+  return fakeTree({ agents: { ada: fakeAgentNode({}, pending) } });
 }
 
-function node(status: AgentRow["status"]) {
-  return {
-    info: {
-      status,
-      activityState: "idle" as const,
-      buildPhase: null,
-      operation: null,
-      startedAt: null,
-      services: {},
-    },
-    notifications: { pending: [] as NotificationEvent[] },
-  };
-}
-
-function tree(statuses: Record<string, AgentRow["status"]>): Tree {
-  const agents: Tree["agents"] = {};
-  for (const [name, status] of Object.entries(statuses))
-    agents[name] = node(status);
-  return {
-    gateway: {
-      version: "0.0.0",
-      channel: "stable",
-      autoUpdate: true,
-      port: 7777,
-      lan: { exposed: false, url: null },
-      tunnelUrl: null,
-      updateAvailable: false,
-      latestVersion: null,
-      managed: false,
-      operation: null,
-    },
-    agents,
-    devices: [],
-  };
-}
-
-function makeController(
-  statuses: Record<string, AgentRow["status"]>,
-  anyFocused = false,
-) {
-  const replica = createReplica();
-  replica.applySnapshot(tree(statuses));
-  const listeners = new Set<(delta: Delta) => void>();
-  const controller: Controller = {
-    replica,
-    http: { request: vi.fn(), json: vi.fn() },
-    reauth: vi.fn(),
-    subscribeDeltas: (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getSyncState: () => "open",
-    subscribeSyncState: () => () => undefined,
-    reportPresence: () => undefined,
-    reportViewing: () => undefined,
-    reportDeviceContext: () => undefined,
-    getAnyFocused: () => anyFocused,
-    subscribeAnyFocused: () => () => undefined,
-    close: () => undefined,
-  };
-  const emit = (delta: Delta): void => {
-    replica.applyDelta(delta);
-    for (const listener of listeners) listener(delta);
-  };
-  return { controller, emit };
-}
-
-function gatewayValue(agents: AgentRow[]): GatewayContextValue {
-  return { ...disconnectedValue, reachable: true, agents, agentsFetched: true };
+function toasts(): { title: string; body?: string }[] {
+  return built.map(({ title, body }) => ({ title, body }));
 }
 
 // Registers the actively-chatted agent through the public useNotifications contract, standing in for
@@ -140,42 +69,29 @@ function ChattingWith({ agent }: { agent: string | null }) {
 
 function mount(
   controller: Controller,
-  agents: AgentRow[],
   child: ReactNode = null,
+  onOpenAgent: (agent: string) => void = () => undefined,
 ) {
   return render(
     createElement(
-      GatewayContext.Provider,
-      { value: gatewayValue(agents) },
-      createElement(
-        ControllerContext.Provider,
-        { value: controller },
-        createElement(NotificationProvider, {
-          onOpenAgent: () => undefined,
-          children: child,
-        }),
-      ),
+      ControllerContext.Provider,
+      { value: controller },
+      createElement(NotificationProvider, { onOpenAgent, children: child }),
     ),
   );
 }
 
-// Flush the async permission probe so permissionRef settles to granted before deltas arrive.
-async function flush() {
+// Let the async permission probe settle, however many awaits it takes: a macrotask boundary drains
+// every pending microtask.
+async function settle() {
   await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
-function blur() {
+function setWindowFocus(focused: boolean) {
   act(() => {
-    window.dispatchEvent(new Event("blur"));
-  });
-}
-
-function focus() {
-  act(() => {
-    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event(focused ? "focus" : "blur"));
   });
 }
 
@@ -186,10 +102,36 @@ function setHidden(hidden: boolean) {
   });
 }
 
+function pendingNotification(id: number): NotificationEvent {
+  return {
+    type: "notification",
+    source: "whatsapp",
+    summary: '<channel source="whatsapp">hey</channel>',
+    notif_id: `n-${String(id)}`,
+    id,
+  };
+}
+
+function userNotification(
+  kind: string,
+  fields: { agent?: string; title?: string; body?: string } = {},
+) {
+  return {
+    type: "user_notification" as const,
+    id: 1,
+    at: 1_700_000_000,
+    agent: fields.agent ?? "ada",
+    kind,
+    title: fields.title ?? "ada",
+    body: fields.body ?? "hi",
+  };
+}
+
 beforeEach(() => {
   built.length = 0;
   setAppBadgeMock.mockClear();
   setFaviconUnseenMock.mockClear();
+  FakeNotification.requestPermission.mockClear();
   vi.stubGlobal("Notification", FakeNotification);
   FakeNotification.permission = "granted";
   localStorage.clear();
@@ -199,214 +141,265 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  // `hidden` lives on Document.prototype; the own override must not leak into other suites.
+  Reflect.deleteProperty(document, "hidden");
 });
 
+interface ToastCase {
+  name: string;
+  kind: string;
+  focused: boolean;
+  anyFocused?: boolean;
+  chatting?: string;
+  agent?: string;
+  title: string;
+  body: string;
+  expected: { title: string; body?: string }[];
+}
+
+// The one rule this suite pins: which kinds surface an OS notification, and how the client's own focus
+// (this window, or any client via anyFocused) and an in-view chat suppress it. `rate_limited` is the
+// legacy alias for a needs-user nudge and toasts on the same terms as needs_user.
+const toastCases: ToastCase[] = [
+  {
+    name: "toasts a background chat alert with the server preview when unfocused",
+    kind: "message",
+    focused: false,
+    title: "ada",
+    body: "pong",
+    expected: [{ title: "ada", body: "pong" }],
+  },
+  {
+    name: "defers the actively-chatted agent's chat alert to the chat surface",
+    kind: "message",
+    focused: false,
+    chatting: "ada",
+    title: "ada",
+    body: "hi",
+    expected: [],
+  },
+  {
+    name: "does not toast a chat alert while focused",
+    kind: "message",
+    focused: true,
+    title: "ada",
+    body: "hi",
+    expected: [],
+  },
+  {
+    name: "does not toast a chat alert while another client is focused",
+    kind: "message",
+    focused: false,
+    anyFocused: true,
+    title: "ada",
+    body: "hi",
+    expected: [],
+  },
+  {
+    name: "skips a chat alert whose preview is blank",
+    kind: "message",
+    focused: false,
+    title: "ada",
+    body: "   ",
+    expected: [],
+  },
+  {
+    name: "toasts a needs-user alert with the server title even while focused",
+    kind: "needs_user",
+    focused: true,
+    title: "ada needs to be set up",
+    body: "Choose a provider and sign in.",
+    expected: [
+      {
+        title: "ada needs to be set up",
+        body: "Choose a provider and sign in.",
+      },
+    ],
+  },
+  {
+    name: "toasts an older gateway's rate-limit alert even while focused",
+    kind: "rate_limited",
+    focused: true,
+    title: "ada",
+    body: "resets at 3pm",
+    expected: [{ title: "ada", body: "resets at 3pm" }],
+  },
+  {
+    name: "announces a gateway update with the gateway's chosen title when blurred",
+    kind: "gateway_updated",
+    focused: false,
+    agent: "",
+    title: "Updated to v0.1.190",
+    body: "Your gateway updated to v0.1.190.",
+    expected: [
+      {
+        title: "Updated to v0.1.190",
+        body: "Your gateway updated to v0.1.190.",
+      },
+    ],
+  },
+  {
+    name: "does not announce a gateway update to a focused client",
+    kind: "gateway_updated",
+    focused: true,
+    agent: "",
+    title: "Updated to v0.1.190",
+    body: "Your gateway updated to v0.1.190.",
+    expected: [],
+  },
+];
+
 describe("NotificationProvider", () => {
-  it("toasts a background chat alert with the server preview when unfocused", async () => {
-    const { controller, emit } = makeController({ ada: "alive", bob: "alive" });
-    mount(controller, [agentInfo("ada", "alive"), agentInfo("bob", "alive")]);
-    await flush();
-    blur();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "bob",
-        kind: "message",
-        title: "bob",
-        body: "pong",
-      });
+  it.each(toastCases)("$name", async (row) => {
+    const { controller, emit } = fakeController(tree(), {
+      anyFocused: row.anyFocused ?? false,
     });
-
-    expect(built).toEqual([{ title: "bob", body: "pong" }]);
-  });
-
-  it("defers the actively-chatted agent's chat alert to the chat surface", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
     mount(
       controller,
-      [agentInfo("ada", "alive")],
-      createElement(ChattingWith, { agent: "ada" }),
+      row.chatting
+        ? createElement(ChattingWith, { agent: row.chatting })
+        : null,
     );
-    await flush();
-    blur();
+    await settle();
+    setWindowFocus(row.focused);
 
     act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "message",
-        title: "ada",
-        body: "hi",
-      });
+      emit(userNotification(row.kind, row));
     });
 
-    expect(built).toEqual([]);
+    expect(toasts()).toEqual(row.expected);
   });
 
-  it("does not toast a background chat alert while focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
+  // The OS permission gates every toast: denied is final, and an undecided permission is asked for
+  // exactly once per install, so a dismissed prompt never nags on every launch.
+  it.each<{
+    name: string;
+    permission: NotificationPermission;
+    asked: boolean;
+    prompts: number;
+    toasts: number;
+    marked: string | null;
+  }>([
+    {
+      name: "denied permission",
+      permission: "denied",
+      asked: false,
+      prompts: 0,
+      toasts: 0,
+      marked: null,
+    },
+    {
+      name: "undecided, never asked",
+      permission: "default",
+      asked: false,
+      prompts: 1,
+      toasts: 1,
+      marked: "1",
+    },
+    {
+      name: "undecided, already asked",
+      permission: "default",
+      asked: true,
+      prompts: 0,
+      toasts: 0,
+      marked: "1",
+    },
+  ])("$name: prompts $prompts time(s) and toasts $toasts", async (row) => {
+    FakeNotification.permission = row.permission;
+    if (row.asked) localStorage.setItem(ASKED_KEY, "1");
+    const { controller, emit } = fakeController(tree());
+    mount(controller);
+    await settle();
+    setWindowFocus(false);
 
     act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "message",
-        title: "ada",
-        body: "hi",
-      });
+      emit(userNotification("message"));
     });
 
-    expect(built).toEqual([]);
+    expect(FakeNotification.requestPermission).toHaveBeenCalledTimes(
+      row.prompts,
+    );
+    expect(built).toHaveLength(row.toasts);
+    expect(localStorage.getItem(ASKED_KEY)).toBe(row.marked);
   });
 
-  it("does not toast a background chat alert while another client is focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" }, true);
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    blur();
+  // A toast is the one way an OS notification reaches its agent: tapping it opens that agent's page.
+  it("opens the agent when its toast is clicked", async () => {
+    const onOpenAgent = vi.fn();
+    const { controller, emit } = fakeController(tree());
+    mount(controller, null, onOpenAgent);
+    await settle();
+    setWindowFocus(false);
+    act(() => {
+      emit(userNotification("message", { agent: "ada", body: "pong" }));
+    });
 
     act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "message",
-        title: "ada",
-        body: "hi",
-      });
+      built[0]?.onclick?.();
     });
 
-    expect(built).toEqual([]);
-  });
-
-  it("toasts a needs-user alert with the server title even while focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "needs_user",
-        title: "ada needs to be set up",
-        body: "Choose a provider and sign in.",
-      });
+    await waitFor(() => {
+      expect(onOpenAgent).toHaveBeenCalledWith("ada");
     });
-
-    expect(built).toEqual([
-      {
-        title: "ada needs to be set up",
-        body: "Choose a provider and sign in.",
-      },
-    ]);
   });
 
-  it("toasts an older gateway's rate-limit alert even while focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "ada",
-        kind: "rate_limited",
-        title: "ada",
-        body: "resets at 3pm",
-      });
-    });
-
-    expect(built).toEqual([{ title: "ada", body: "resets at 3pm" }]);
-  });
-
-  it("toasts the gateway's update announcement with the title the gateway chose", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    blur();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "",
-        kind: "gateway_updated",
-        title: "Updated to v0.1.190",
-        body: "Your gateway updated to v0.1.190.",
-      });
-    });
-
-    expect(built).toEqual([
-      {
-        title: "Updated to v0.1.190",
-        body: "Your gateway updated to v0.1.190.",
-      },
-    ]);
-  });
-
-  it("does not announce a gateway update to a client that is focused", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
-    focus();
-
-    act(() => {
-      emit({
-        type: "user_notification",
-        id: 1,
-        at: 1_700_000_000,
-        agent: "",
-        kind: "gateway_updated",
-        title: "Updated to v0.1.190",
-        body: "Your gateway updated to v0.1.190.",
-      });
-    });
-
-    expect(built).toEqual([]);
-  });
-
+  // The fleet-wide pending count is the replica's truth for unprocessed notifications: a rise while
+  // hidden lights the unseen badge, a fall never does, and coming back to a visible window clears it.
   it("lights the unseen badge when the fleet's pending count grows while hidden", async () => {
-    const { controller, emit } = makeController({ ada: "alive" });
-    mount(controller, [agentInfo("ada", "alive")]);
-    await flush();
+    const { controller, emit } = fakeController(tree());
+    mount(controller);
+    await settle();
     setHidden(true);
 
     act(() => {
       emit({
         type: "agent_notifications",
         agent: "ada",
-        pending: [
-          {
-            type: "notification",
-            source: "whatsapp",
-            summary: '<channel source="whatsapp">hey</channel>',
-            notif_id: "n-1",
-            id: 4,
-          },
-        ],
+        pending: [pendingNotification(4)],
       });
     });
 
     expect(setAppBadgeMock).toHaveBeenCalledWith(true);
     expect(setFaviconUnseenMock).toHaveBeenCalledWith(true);
+  });
+
+  it("does not light the unseen badge when the pending count falls", async () => {
+    const { controller, emit } = fakeController(
+      tree([pendingNotification(4), pendingNotification(5)]),
+    );
+    mount(controller);
+    await settle();
+    setHidden(true);
+
+    act(() => {
+      emit({ type: "agent_notifications", agent: "ada", pending: [] });
+    });
+
+    expect(setAppBadgeMock).not.toHaveBeenCalledWith(true);
+    expect(setFaviconUnseenMock).not.toHaveBeenCalledWith(true);
+  });
+
+  it("clears the unseen badge when the window becomes visible again", async () => {
+    const { controller, emit } = fakeController(tree());
+    mount(controller);
+    await settle();
+    setHidden(true);
+    act(() => {
+      emit({
+        type: "agent_notifications",
+        agent: "ada",
+        pending: [pendingNotification(4)],
+      });
+    });
+    setAppBadgeMock.mockClear();
+    setFaviconUnseenMock.mockClear();
+
+    setHidden(false);
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(setAppBadgeMock).toHaveBeenCalledWith(false);
+    expect(setFaviconUnseenMock).toHaveBeenCalledWith(false);
   });
 });

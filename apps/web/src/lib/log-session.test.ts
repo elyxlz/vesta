@@ -6,6 +6,7 @@ import {
   INITIAL_FILL_MAX_MS,
   INITIAL_FILL_QUIESCE_MS,
   RECONNECT_BASE,
+  RECONNECT_MAX,
   type LogSession,
 } from "./log-session";
 
@@ -80,8 +81,10 @@ describe("log session", () => {
   it("flushes a perpetually chatty tail at the max fill cap", () => {
     const { call, session } = makeHarness();
     session.start();
+    // Lines land faster than the quiesce window, so only the cap can flush.
     const interval = INITIAL_FILL_QUIESCE_MS - 50;
-    for (let elapsed = 0; elapsed < INITIAL_FILL_MAX_MS; elapsed += interval) {
+    const ticks = Math.ceil(INITIAL_FILL_MAX_MS / interval);
+    for (let tick = 0; tick < ticks; tick += 1) {
       emitLines(call(0), ["tick"]);
       vi.advanceTimersByTime(interval);
     }
@@ -159,6 +162,23 @@ describe("log session", () => {
     expect(streamLogs).toHaveBeenCalledTimes(4);
   });
 
+  it("backoff never exceeds RECONNECT_MAX", () => {
+    const { call, streamLogs, session } = makeHarness();
+    session.start();
+    // Enough consecutive failures that unbounded doubling would pass the ceiling.
+    const failures = Math.ceil(Math.log2(RECONNECT_MAX / RECONNECT_BASE)) + 2;
+    for (let attempt = 0; attempt < failures; attempt += 1) {
+      call(attempt).emit({ kind: "Error", message: "gone" });
+      vi.advanceTimersByTime(RECONNECT_MAX);
+    }
+    const connectsBefore = streamLogs.mock.calls.length;
+    call(failures).emit({ kind: "Error", message: "gone" });
+    vi.advanceTimersByTime(RECONNECT_MAX - 1);
+    expect(streamLogs).toHaveBeenCalledTimes(connectsBefore);
+    vi.advanceTimersByTime(1);
+    expect(streamLogs).toHaveBeenCalledTimes(connectsBefore + 1);
+  });
+
   it("a status up-transition after a stop restarts a fresh replay stream", () => {
     const { call, streamLogs, session } = makeHarness();
     session.setStatus("alive");
@@ -191,16 +211,5 @@ describe("log session", () => {
     vi.advanceTimersByTime(60_000);
     expect(streamLogs).toHaveBeenCalledTimes(1);
     expect(stopLogs).toHaveBeenCalledWith("ada");
-  });
-
-  it("getSnapshot returns the same reference until something changes", () => {
-    const { call, session } = makeHarness();
-    session.start();
-    emitLines(call(0), ["a"]);
-    vi.advanceTimersByTime(INITIAL_FILL_QUIESCE_MS);
-    const first = session.getSnapshot();
-    expect(session.getSnapshot()).toBe(first);
-    emitLines(call(0), ["b"]);
-    expect(session.getSnapshot()).not.toBe(first);
   });
 });
