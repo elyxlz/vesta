@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Scan the events DB and every channel store on the box for secrets, then scrub the real leaks in place.
+"""Scan the events DB, every channel store, and every session transcript for secrets, then scrub
+the real leaks in place. Transcripts are DETECT-ONLY: they are held open by the running session, so
+the remedy for a hit there is credential rotation, not a file edit.
 A hit reference is a bare event id for the events store, or store:table:rowid for a channel store,
 exactly as the scan prints it.
 Usage: redact_secrets.py            # scan every store present, printing each hit with the value masked
@@ -706,6 +708,15 @@ def _scrub_store(conn: sqlite3.Connection, store: Store, refs: list[tuple[str, i
 
 
 def _run_scrub(tokens: list[str]) -> int:
+    transcript_refs = [ref for ref in tokens if ref.startswith("transcript/")]
+    if transcript_refs:
+        print(
+            f"Refusing to scrub {len(transcript_refs)} transcript ref(s). A session transcript is held\n"
+            "open for append by the running session; rewriting it races the live writer and can\n"
+            "corrupt the record. Rotate the credential instead, which invalidates every copy.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         refs = [_parse_ref(token) for token in tokens]
     except ValueError as exc:
@@ -888,8 +899,81 @@ def _scan_one_channel(store: Store) -> StoreReport:
         return StoreReport(store, f"FAILED ({exc}): NOT scanned", [])
 
 
+
+# ---------------------------------------------------------------------------------------------
+# Session transcripts. DETECT ONLY, never scrubbed.
+#
+# Why this exists: every other probe here takes its scope as an INPUT (a hardcoded list of stores),
+# so an artefact nobody thought to list is invisible to the whole scanner by construction. The
+# session transcript is exactly that artefact. It is a JSONL file rather than a SQLite store, so
+# not one line of the code above can see it, and a scan that reports "No secrets found" was only
+# ever speaking about the databases. On this box a real agent token sat in the transcript, in
+# several places, while events.db was genuinely clean and the scanner said so.
+#
+# Why DETECT and not SCRUB, which is a deliberate asymmetry rather than an omission:
+# the transcript is held open for append by the RUNNING session. Rewriting it under a live writer
+# races the append and can truncate or corrupt the session's own record. The correct remedy for a
+# credential in a transcript is to ROTATE THE CREDENTIAL, which invalidates every copy anywhere,
+# not to edit one file and feel finished. So this reports and refuses to touch.
+#
+# Scope is DERIVED, not listed: glob the transcript roots and take what is there. A new project
+# directory is picked up without anyone remembering to add it.
+TRANSCRIPT_ROOTS = (Path.home() / ".claude" / "projects",)
+TRANSCRIPT_GLOB = "*/*.jsonl"
+# Transcripts run to tens of megabytes. Same policy as the stores: a file that outruns its budget
+# is reported TRUNCATED and loudly, never silently half-read and called clean.
+TRANSCRIPT_SCAN_BUDGET_SECS = 60
+
+
+def transcript_files() -> list[Store]:
+    """Every session transcript on the box, discovered rather than enumerated."""
+    found: list[Store] = []
+    for root in TRANSCRIPT_ROOTS:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob(TRANSCRIPT_GLOB)):
+            if path.is_file():
+                found.append(Store(f"transcript/{path.parent.name}/{path.name}", path))
+    return found
+
+
+def _scan_one_transcript(store: Store, deadline: float) -> StoreReport:
+    """Line-by-line so a 40MB transcript never lands in memory. Each line is one JSON event; if it
+    parses we walk its strings, and if it does not we scan the raw line anyway, because a truncated
+    final line (the live session mid-append) is precisely where the newest secret would sit."""
+    hits: list[tuple[str, str]] = []
+    truncated = False
+    lines = 0
+    try:
+        with store.path.open("r", encoding="utf-8", errors="replace") as handle:
+            for number, line in enumerate(handle, start=1):
+                if time.monotonic() > deadline:
+                    truncated = True
+                    break
+                lines = number
+                decoded = _decoded(line)
+                if decoded is None:
+                    texts = [line]
+                else:
+                    texts = []
+                    map_json_strings(decoded, lambda text: texts.append(text) or text)
+                for text in texts:
+                    hits.extend((f"{store.name}:{number}", snippet) for snippet in find_matches(text))
+    except OSError as exc:
+        return StoreReport(store, f"FAILED ({exc}): NOT scanned", [])
+    status = f"TRUNCATED at line {lines} (budget {TRANSCRIPT_SCAN_BUDGET_SECS}s): NOT fully scanned" if truncated else f"scanned {lines} line(s), read-only"
+    return StoreReport(store, status, hits)
+
+
+def scan_transcripts() -> list[StoreReport]:
+    deadline = time.monotonic() + TRANSCRIPT_SCAN_BUDGET_SECS
+    return [_scan_one_transcript(store, deadline) for store in transcript_files()]
+
 def _run_scan() -> int:
     reports = [_scan_events_store(), *(_scan_one_channel(store) for store in channel_stores())]
+    # Transcripts are reported alongside the stores but are never scrubbable; see the block above.
+    transcripts = scan_transcripts()
+    reports += transcripts
     if all(report.status == "absent" for report in reports):
         print(f"No database at {DB}", file=sys.stderr)
         return 1
@@ -907,9 +991,34 @@ def _run_scan() -> int:
     refs = {token for token, _ in hits}
     print(f"Found {len(refs)} record(s) with potential secrets (value masked below).")
     print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <ref> <ref> ...")
+    if any(hit[0].startswith("transcript/") for hit in hits):
+        print(
+            "NOTE: refs beginning transcript/ are in session transcripts, which are held open for\n"
+            "append by the running session and are therefore NOT scrubbable. Editing one races the\n"
+            "live writer. The remedy for a credential in a transcript is to ROTATE THE CREDENTIAL,\n"
+            "which invalidates every copy everywhere; a file edit only moves the problem."
+        )
     # Never cap this list: matches arrive in row order, so any cap hides the newest rows' leaks.
-    for token, snippet in hits:
+    # Transcript hits are GROUPED by snippet rather than capped. Nothing is hidden and every distinct
+    # snippet is still printed; identical ones collapse to one line with a count and their first ref.
+    # This is a legibility fix with teeth: the first real transcript scan on this box produced 322
+    # hits, of which 72 were the same WhatsApp chat_name field and a further handful were the
+    # scanner's own pattern documentation matching itself (writing "a bare 15-digit run" makes the
+    # text match the rule it describes, the same way a hook that blocks a verb blocks the sentence
+    # explaining the verb). A detector whose real finding sits on line 200 of 322 identical-looking
+    # lines trains you to skim, and skimming is how the leak this scanner exists to catch survived.
+    store_hits = [hit for hit in hits if not hit[0].startswith("transcript/")]
+    transcript_hits = [hit for hit in hits if hit[0].startswith("transcript/")]
+    for token, snippet in store_hits:
         print(f"{token}|{snippet}")
+    grouped: dict[str, list[str]] = {}
+    for token, snippet in transcript_hits:
+        grouped.setdefault(snippet, []).append(token)
+    if grouped:
+        print(f"{len(grouped)} distinct transcript snippet(s) across {len(transcript_hits)} match(es):")
+    for snippet, tokens in grouped.items():
+        suffix = f"  [x{len(tokens)}, first of {len(tokens)}]" if len(tokens) > 1 else ""
+        print(f"{tokens[0]}|{snippet}{suffix}")
     return 0
 
 
