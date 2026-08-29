@@ -899,25 +899,13 @@ def _scan_one_channel(store: Store) -> StoreReport:
         return StoreReport(store, f"FAILED ({exc}): NOT scanned", [])
 
 
-
-# ---------------------------------------------------------------------------------------------
-# Session transcripts. DETECT ONLY, never scrubbed.
-#
-# Why this exists: every other probe here takes its scope as an INPUT (a hardcoded list of stores),
-# so an artefact nobody thought to list is invisible to the whole scanner by construction. The
-# session transcript is exactly that artefact. It is a JSONL file rather than a SQLite store, so
-# not one line of the code above can see it, and a scan that reports "No secrets found" was only
-# ever speaking about the databases. On this box a real agent token sat in the transcript, in
-# several places, while events.db was genuinely clean and the scanner said so.
-#
-# Why DETECT and not SCRUB, which is a deliberate asymmetry rather than an omission:
-# the transcript is held open for append by the RUNNING session. Rewriting it under a live writer
-# races the append and can truncate or corrupt the session's own record. The correct remedy for a
-# credential in a transcript is to ROTATE THE CREDENTIAL, which invalidates every copy anywhere,
-# not to edit one file and feel finished. So this reports and refuses to touch.
-#
-# Scope is DERIVED, not listed: glob the transcript roots and take what is there. A new project
-# directory is picked up without anyone remembering to add it.
+# Session transcripts. DETECT ONLY.
+# Every other probe here takes its scope as a hardcoded input, so an artefact nobody listed is
+# unreachable by construction; transcripts are JSONL, not SQLite, so the store code cannot see one.
+# Scope is derived by glob instead, so a new project directory needs no edit here.
+# Never scrubbed: the file is held open for append by the running session, so rewriting it races the
+# live writer. The remedy for a credential in a transcript is to rotate the credential, which
+# invalidates every copy; editing one file only relocates it.
 TRANSCRIPT_ROOTS = (Path.home() / ".claude" / "projects",)
 TRANSCRIPT_GLOB = "*/*.jsonl"
 # Transcripts run to tens of megabytes. Same policy as the stores: a file that outruns its budget
@@ -931,10 +919,15 @@ def transcript_files() -> list[Store]:
     for root in TRANSCRIPT_ROOTS:
         if not root.is_dir():
             continue
-        for path in sorted(root.glob(TRANSCRIPT_GLOB)):
-            if path.is_file():
-                found.append(Store(f"transcript/{path.parent.name}/{path.name}", path))
+        found.extend(Store(f"transcript/{path.parent.name}/{path.name}", path) for path in sorted(root.glob(TRANSCRIPT_GLOB)) if path.is_file())
     return found
+
+
+def _json_strings(value: JsonValue) -> list[str]:
+    """Every string in a decoded JSON value, collected without closing over a caller's local."""
+    collected: list[str] = []
+    map_json_strings(value, lambda text: (collected.append(text), text)[1])
+    return collected
 
 
 def _scan_one_transcript(store: Store, deadline: float) -> StoreReport:
@@ -952,22 +945,23 @@ def _scan_one_transcript(store: Store, deadline: float) -> StoreReport:
                     break
                 lines = number
                 decoded = _decoded(line)
-                if decoded is None:
-                    texts = [line]
-                else:
-                    texts = []
-                    map_json_strings(decoded, lambda text: texts.append(text) or text)
+                texts = [line] if decoded is None else _json_strings(decoded)
                 for text in texts:
                     hits.extend((f"{store.name}:{number}", snippet) for snippet in find_matches(text))
     except OSError as exc:
         return StoreReport(store, f"FAILED ({exc}): NOT scanned", [])
-    status = f"TRUNCATED at line {lines} (budget {TRANSCRIPT_SCAN_BUDGET_SECS}s): NOT fully scanned" if truncated else f"scanned {lines} line(s), read-only"
+    status = (
+        f"TRUNCATED at line {lines} (budget {TRANSCRIPT_SCAN_BUDGET_SECS}s): NOT fully scanned"
+        if truncated
+        else f"scanned {lines} line(s), read-only"
+    )
     return StoreReport(store, status, hits)
 
 
 def scan_transcripts() -> list[StoreReport]:
     deadline = time.monotonic() + TRANSCRIPT_SCAN_BUDGET_SECS
     return [_scan_one_transcript(store, deadline) for store in transcript_files()]
+
 
 def _run_scan() -> int:
     reports = [_scan_events_store(), *(_scan_one_channel(store) for store in channel_stores())]
@@ -999,14 +993,10 @@ def _run_scan() -> int:
             "which invalidates every copy everywhere; a file edit only moves the problem."
         )
     # Never cap this list: matches arrive in row order, so any cap hides the newest rows' leaks.
-    # Transcript hits are GROUPED by snippet rather than capped. Nothing is hidden and every distinct
-    # snippet is still printed; identical ones collapse to one line with a count and their first ref.
-    # This is a legibility fix with teeth: the first real transcript scan on this box produced 322
-    # hits, of which 72 were the same WhatsApp chat_name field and a further handful were the
-    # scanner's own pattern documentation matching itself (writing "a bare 15-digit run" makes the
-    # text match the rule it describes, the same way a hook that blocks a verb blocks the sentence
-    # explaining the verb). A detector whose real finding sits on line 200 of 322 identical-looking
-    # lines trains you to skim, and skimming is how the leak this scanner exists to catch survived.
+    # Transcript hits are GROUPED by snippet, never capped: every distinct snippet still prints,
+    # identical ones collapse to one line with a count. A real transcript yields hundreds of matches
+    # dominated by structured identifiers and by pattern documentation matching the rules it
+    # describes, and a finding buried mid-list trains you to skim past it.
     store_hits = [hit for hit in hits if not hit[0].startswith("transcript/")]
     transcript_hits = [hit for hit in hits if hit[0].startswith("transcript/")]
     for token, snippet in store_hits:
