@@ -55,9 +55,34 @@ describe("getAgentVisualStatus", () => {
       label: "stopped",
       orbState: "off",
     },
+    {
+      name: "a local delete shows the deleting orb, not the generic busy one",
+      roster: { status: "alive", operation: null },
+      localOp: "deleting",
+      label: "deleting...",
+      orbState: "deleting",
+    },
   ])("$name", ({ roster, localOp, label, orbState }) => {
     const result = getAgentVisualStatus(roster, localOp, "", "idle");
     expect(result.label).toBe(label);
     expect(result.orbState).toBe(orbState);
+  });
+
+  it("a failure message replaces the label but keeps the orb state", () => {
+    const result = getAgentVisualStatus(
+      { status: "alive", operation: null },
+      "idle",
+      "docker down",
+      "idle",
+    );
+    expect(result.label).toBe("docker down");
+    expect(result.orbState).toBe(
+      getAgentVisualStatus(
+        { status: "alive", operation: null },
+        "idle",
+        "",
+        "idle",
+      ).orbState,
+    );
   });
 });

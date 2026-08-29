@@ -154,8 +154,8 @@ describe("speak() — the assistant-message TTS trigger", () => {
       setup();
 
       useVoice.getState().speak("hello there");
-      // Give any errant async queue work a chance to fire.
-      await Promise.resolve();
+      // The gate is decided synchronously before the queue's first await, so a
+      // registration would already have fired here.
       await Promise.resolve();
 
       expect(apiJsonMock).not.toHaveBeenCalled();
@@ -179,6 +179,33 @@ describe("speak() — the assistant-message TTS trigger", () => {
       "https://host:8443/agents/test-agent/voice/tts/stream/a?token=tok",
       "https://host:8443/agents/test-agent/voice/tts/stream/b?token=tok",
     ]);
+  });
+
+  it("stopSpeech mid-queue drops the unplayed rest and ends speaking", async () => {
+    useVoice.getState()._setTtsStatus(ENABLED_TTS);
+    // Hold the first registration open so "second" is still queued when we stop.
+    let release: (value: { id: string }) => void = () => undefined;
+    apiJsonMock.mockReturnValueOnce(
+      new Promise<{ id: string }>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    useVoice.getState().speak("first");
+    useVoice.getState().speak("second");
+    expect(useVoice.getState().isSpeaking).toBe(true);
+
+    useVoice.getState().stopSpeech();
+    release({ id: "a" });
+    await vi.waitFor(() => expect(useVoice.getState().isSpeaking).toBe(false));
+    // Let the superseded loop run to completion before asserting nothing more played.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(apiJsonMock).toHaveBeenCalledTimes(1);
+    expect(FakeAudio.created.map((a) => a.src)).not.toContain(
+      expect.stringContaining("/stream/b"),
+    );
+    expect(useVoice.getState().isSpeaking).toBe(false);
   });
 });
 

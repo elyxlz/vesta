@@ -64,11 +64,13 @@ describe("browser bridge", () => {
 });
 
 describe("electron bridge", () => {
+  // `satisfies` so a preload field added to the contract fails to compile here
+  // until the fake grows with it.
   function fakeApi(overrides: Partial<VestaNativeApi> = {}): VestaNativeApi {
     const noopUnsubscribe = () => {
       /* noop */
     };
-    return {
+    const base = {
       platform: "darwin",
       focusWindow: vi.fn(() => Promise.resolve()),
       setTheme: vi.fn(),
@@ -93,8 +95,8 @@ describe("electron bridge", () => {
       windowClose: vi.fn(() => Promise.resolve()),
       windowIsMaximized: vi.fn(() => Promise.resolve(false)),
       onWindowMaximizedChange: vi.fn(() => noopUnsubscribe),
-      ...overrides,
-    };
+    } satisfies VestaNativeApi;
+    return { ...base, ...overrides };
   }
 
   it("validates the stored connection shape", async () => {
@@ -150,5 +152,50 @@ describe("electron bridge", () => {
     expect(
       await createElectronBridge(fakeApi()).readGeolocation?.(),
     ).toBeNull();
+  });
+
+  it.each<[string, unknown, { available: boolean; version: string | null }]>([
+    [
+      "an available release carries its version",
+      { available: true, version: "0.3.0" },
+      { available: true, version: "0.3.0" },
+    ],
+    [
+      "an available answer with no version is still an update",
+      { available: true },
+      { available: true, version: null },
+    ],
+    [
+      "a not-available answer drops any version",
+      { available: false, version: "0.3.0" },
+      { available: false, version: null },
+    ],
+    [
+      "a malformed answer reads as no update",
+      "nope",
+      {
+        available: false,
+        version: null,
+      },
+    ],
+  ])("parses the app update answer: %s", async (_name, answer, expected) => {
+    const api = fakeApi({
+      getAppUpdate: vi.fn(() => Promise.resolve<unknown>(answer)),
+    });
+    expect(await createElectronBridge(api).appUpdate?.check()).toEqual(
+      expected,
+    );
+  });
+
+  it("unsubscribes from download progress even when the download throws", async () => {
+    const unsubscribe = vi.fn();
+    const api = fakeApi({
+      onAppUpdateProgress: vi.fn(() => unsubscribe),
+      downloadAppUpdate: vi.fn(() => Promise.reject(new Error("offline"))),
+    });
+    await expect(
+      createElectronBridge(api).appUpdate?.download(() => undefined),
+    ).rejects.toThrow("offline");
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 });

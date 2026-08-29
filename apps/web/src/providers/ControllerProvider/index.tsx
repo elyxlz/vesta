@@ -21,7 +21,7 @@ export { useSyncState };
 
 // Brief grace before the disconnect overlay appears, so quick socket blips don't flash it.
 const DISCONNECT_GRACE_MS = 750;
-const REAUTH_POLL_MS = 60000;
+export const REAUTH_POLL_MS = 60000;
 
 function buildController(): Controller {
   return createController({

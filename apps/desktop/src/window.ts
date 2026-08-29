@@ -25,6 +25,24 @@ export function registerAppScheme(): void {
   ]);
 }
 
+/**
+ * The bundle file a request path maps to: null when the path escapes the bundle dir, and
+ * index.html for any extension-less path so client-side routes deep-link.
+ */
+export function resolveBundlePath(
+  webDist: string,
+  pathname: string,
+): string | null {
+  const resolved = path.normalize(
+    path.join(webDist, decodeURIComponent(pathname)),
+  );
+  const relative = path.relative(webDist, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return path.extname(resolved) === ""
+    ? path.join(webDist, "index.html")
+    : resolved;
+}
+
 /** Serve the bundled SPA with an index.html fallback so client-side routes deep-link. */
 function handleAppProtocol(): void {
   const webDist = app.isPackaged
@@ -33,13 +51,8 @@ function handleAppProtocol(): void {
 
   protocol.handle(APP_SCHEME, (request) => {
     const { pathname } = new URL(request.url);
-    const resolved = path.normalize(
-      path.join(webDist, decodeURIComponent(pathname)),
-    );
     const target =
-      resolved.startsWith(webDist) && path.extname(resolved) !== ""
-        ? resolved
-        : path.join(webDist, "index.html");
+      resolveBundlePath(webDist, pathname) ?? path.join(webDist, "index.html");
     return net.fetch(pathToFileURL(target).toString());
   });
 }

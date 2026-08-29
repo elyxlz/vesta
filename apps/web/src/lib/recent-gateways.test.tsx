@@ -115,19 +115,44 @@ describe("localStorage round-trip", () => {
     localStorage.setItem("vesta-recent-gateways", "{ broken");
     expect(await readRecentGateways()).toEqual([]);
   });
+
+  it("clears a store holding a non-list value so the garbage is gone next read", async () => {
+    localStorage.setItem("vesta-recent-gateways", JSON.stringify({ a: 1 }));
+    expect(await readRecentGateways()).toEqual([]);
+    expect(localStorage.getItem("vesta-recent-gateways")).toBeNull();
+  });
 });
 
 // A storage write failure is a warning, not a lost session: the active gateway
 // and the recents list both survive a throwing localStorage or a rejecting
 // Electron secure store, so a device that cannot persist still stays connected.
 describe("storage-write failure survives", () => {
-  it("keeps a connected session when localStorage throws", async () => {
+  // The connection store's write is deferred one promise hop (`persist` in
+  // connection.ts), so its warning lands after exactly that many microtasks.
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  it.each<[string, () => void]>([
+    [
+      "localStorage throws",
+      () => {
+        vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+          throw new Error("storage unavailable");
+        });
+      },
+    ],
+    [
+      "an Electron-style write rejects",
+      () => {
+        vi.spyOn(native.connectionStore, "write").mockRejectedValueOnce(
+          new Error("secure storage unavailable"),
+        );
+      },
+    ],
+  ])("keeps a connected session when %s", async (_name, breakStore) => {
     const warning = vi
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
-    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
-      throw new Error("storage unavailable");
-    });
+    breakStore();
 
     expect(() =>
       setConnection("https://box.example/", "access", "refresh", 60),
@@ -138,40 +163,20 @@ describe("storage-write failure survives", () => {
       refreshToken: "refresh",
     });
 
-    await vi.waitFor(() => {
-      expect(warning).toHaveBeenCalledWith(
-        "could not save the active gateway",
-        expect.any(Error),
-      );
-    });
-  });
-
-  it("keeps a connected session when an Electron-style write rejects", async () => {
-    const warning = vi
-      .spyOn(console, "warn")
-      .mockImplementation(() => undefined);
-    vi.spyOn(native.connectionStore, "write").mockRejectedValueOnce(
-      new Error("secure storage unavailable"),
+    await settle();
+    expect(warning).toHaveBeenCalledWith(
+      "could not save the active gateway",
+      expect.any(Error),
     );
-
-    setConnection("https://box.example", "access", "refresh", 60);
-    expect(getConnection()?.accessToken).toBe("access");
-
-    await vi.waitFor(() => {
-      expect(warning).toHaveBeenCalledWith(
-        "could not save the active gateway",
-        expect.any(Error),
-      );
-    });
   });
 
   it("does not fail a successful connection when saving recents throws", async () => {
     const warning = vi
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
-    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
-      throw new Error("storage unavailable");
-    });
+    vi.spyOn(native.recentGatewayStore, "write").mockRejectedValueOnce(
+      new Error("storage unavailable"),
+    );
 
     await expect(
       rememberGatewayAfterConnect(conn("https://a.example")),

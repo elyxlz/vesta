@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import type { AgentRow, LogEvent } from "@/lib/types";
 import { streamLogs, stopLogs } from "@/api";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
+import { fakeAgentRow } from "@/test/fake-controller";
 import { AgentLogStreamProvider, useAgentLogSession } from "./index";
 
 vi.mock("@/api", async (importOriginal) => ({
@@ -16,15 +17,7 @@ const streamLogsMock = vi.mocked(streamLogs);
 const stopLogsMock = vi.mocked(stopLogs);
 
 function agentInfo(name: string, status: AgentRow["status"]): AgentRow {
-  return {
-    name,
-    status,
-    activityState: "idle",
-    buildPhase: null,
-    operation: null,
-    startedAt: null,
-    services: {},
-  };
+  return fakeAgentRow(name, { status });
 }
 
 function Probe() {

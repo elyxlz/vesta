@@ -23,6 +23,17 @@ describe("useRestartPending", () => {
     expect(entry?.since).toBe(BOOT_T0);
   });
 
+  it("withdrawing the last reason drops the agent's entry entirely", () => {
+    useRestartPending.getState().markPending("ada", "files", BOOT_T0);
+    useRestartPending.getState().markPending("ada", "host-access", BOOT_T0);
+    useRestartPending.getState().clearReason("ada", "files");
+    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
+      "host-access",
+    ]);
+    useRestartPending.getState().clearReason("ada", "host-access");
+    expect(useRestartPending.getState().pending.ada).toBeUndefined();
+  });
+
   it("clears the flag once the agent is observed booting with a newer start time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
     useRestartPending

@@ -75,6 +75,17 @@ describe("connection store", () => {
     expect(await readConnection()).toBeNull();
   });
 
+  it("reads null rather than throwing when the ciphertext does not decrypt", async () => {
+    await fs.writeFile(
+      path.join(userDataDir, "connection.json"),
+      JSON.stringify({
+        version: 1,
+        encrypted: Buffer.from("garbage").toString("base64"),
+      }),
+    );
+    expect(await readConnection()).toBeNull();
+  });
+
   it("migrates a plaintext connection to encrypted storage", async () => {
     const target = path.join(userDataDir, "connection.json");
     await fs.writeFile(target, JSON.stringify(CONNECTION));
@@ -83,6 +94,15 @@ describe("connection store", () => {
     expect(await fs.readFile(target, "utf8")).not.toContain(
       CONNECTION.accessToken,
     );
+  });
+
+  it("still reads a plaintext connection when it cannot be re-encrypted", async () => {
+    process.env.VESTA_TEST_ENCRYPTION_AVAILABLE = "false";
+    const target = path.join(userDataDir, "connection.json");
+    await fs.writeFile(target, JSON.stringify(CONNECTION));
+
+    expect(await readConnection()).toEqual(CONNECTION);
+    expect(await fs.readFile(target, "utf8")).toContain(CONNECTION.accessToken);
   });
 });
 

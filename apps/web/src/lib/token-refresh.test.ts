@@ -77,6 +77,27 @@ describe("ensureFreshToken", () => {
     expect(await ensureFreshToken()).toBe("transient");
   });
 
+  it("refreshes on force even while the token is still fresh", async () => {
+    isTokenExpiringSoonMock.mockReturnValue(false);
+    fetchMock.mockResolvedValue(new Response("{}", { status: 401 }));
+    expect(await ensureFreshToken(true)).toBe("expired");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedups overlapping calls into one refresh request that both callers share", async () => {
+    let release: (response: Response) => void = () => undefined;
+    fetchMock.mockReturnValue(
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+    );
+    const first = ensureFreshToken();
+    const second = ensureFreshToken();
+    release(new Response("{}", { status: 401 }));
+    expect(await Promise.all([first, second])).toEqual(["expired", "expired"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("bounces hosted connections through the PKCE flow as transient", async () => {
     getConnectionMock.mockReturnValue({ ...conn, hosted: true });
     expect(await ensureFreshToken()).toBe("transient");

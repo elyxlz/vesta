@@ -53,6 +53,16 @@ describe("buildDecorated", () => {
     ]);
     expect(rows[1]?.gap).toBe("mt-1.5");
   });
+
+  it("marks only the last bubble of each group as the group end", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("2026-06-08T10:01:00"),
+      { type: "assistant", text: "hey", ts: "2026-06-08T10:02:00" },
+      userMsg("2026-06-08T10:03:00"),
+    ]);
+    expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
+  });
 });
 
 describe("lastSeenIndex", () => {
