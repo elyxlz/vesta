@@ -18,6 +18,7 @@ import { useLayout, type ComposerVariant } from "@/stores/use-layout";
 import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
+import { useChatDraft } from "@/stores/use-chat-draft";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { cn } from "@/lib/utils";
@@ -81,7 +82,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     retry,
   } = useAgentSocket();
 
-  const [input, setInput] = useState("");
+  const [input, setInput] = useChatDraft(name);
   const [atBottom, setAtBottom] = useState(true);
 
   useEffect(() => {
@@ -92,7 +93,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   useEffect(() => {
     registerChatCallbacks(send, setInput);
-  }, [registerChatCallbacks, send]);
+  }, [registerChatCallbacks, send, setInput]);
 
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
