@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
 
-import { readSse } from "./sse"
+import { drainSsePipeline, readSse } from "./sse"
 import type { SseDeps, StreamEvent } from "./sse"
+import { ApiError } from "./http"
 import type { FetchLike } from "./http"
 
 function fetchReturning(body: string, status = 200): FetchLike {
@@ -106,5 +107,25 @@ describe("readSse", () => {
     handle.cancel()
     await new Promise<void>((resolve) => setTimeout(resolve, 20))
     expect(events).toEqual([{ kind: "line", text: "one" }])
+  })
+})
+
+describe("drainSsePipeline", () => {
+  it("resolves the done payload past keep-alive comment lines", async () => {
+    const body = ':\n\n:\n\nevent: done\ndata: {"id":"snap-1"}\n\n'
+    await expect(drainSsePipeline(new Response(body))).resolves.toBe('{"id":"snap-1"}')
+  })
+
+  it("rejects an error event as an ApiError carrying its status and message", async () => {
+    const body = 'event: error\ndata: {"status":409,"error":"made by a newer vestad"}\n\n'
+    await expect(drainSsePipeline(new Response(body))).rejects.toMatchObject({
+      status: 409,
+      message: "made by a newer vestad",
+    })
+    await expect(drainSsePipeline(new Response(body))).rejects.toBeInstanceOf(ApiError)
+  })
+
+  it("rejects when the stream closes without a terminal event", async () => {
+    await expect(drainSsePipeline(new Response(":\n\n"))).rejects.toBeInstanceOf(ApiError)
   })
 })

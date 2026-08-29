@@ -31,7 +31,7 @@ export interface SelectedAgentContextValue {
   backupsFailed: boolean;
   refreshBackups: () => Promise<void>;
   restore: (backupId: string) => void;
-  removeBackup: (backupId: string) => void;
+  removeBackup: (backupId: string) => Promise<void>;
   remove: () => Promise<void>;
 }
 

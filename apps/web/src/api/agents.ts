@@ -1,5 +1,6 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
 import {
+  drainSsePipeline,
   RESTART_REASONS,
   normalizeProviderInfo,
   agentIsConnectable,
@@ -230,10 +231,12 @@ export interface BackupInfo {
   vestad_version?: string | null;
 }
 
-export async function createBackup(name: string): Promise<BackupInfo> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/backups`, {
-    method: "POST",
-  });
+export async function createBackup(name: string): Promise<void> {
+  await drainSsePipeline(
+    await apiFetch(`/agents/${encodeURIComponent(name)}/backups`, {
+      method: "POST",
+    }),
+  );
 }
 
 export async function listBackups(name: string): Promise<BackupInfo[]> {
@@ -244,9 +247,11 @@ export async function restoreBackup(
   name: string,
   backupId: string,
 ): Promise<void> {
-  await apiJson(
-    `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}/restore`,
-    { method: "POST" },
+  await drainSsePipeline(
+    await apiFetch(
+      `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}/restore`,
+      { method: "POST" },
+    ),
   );
 }
 

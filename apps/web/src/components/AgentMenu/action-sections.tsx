@@ -97,7 +97,9 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     icon: <Archive data-icon="inline-start" />,
     label: "backups",
     onClick: input.onBackup,
-    disabled: input.isBusy,
+    // Only opens the dialog to view and manage snapshots, so it stays reachable during an
+    // operation; the create-backup and restore actions inside the dialog own their own gating.
+    disabled: false,
   });
   if (input.onAuthenticate) {
     controlItems.push({

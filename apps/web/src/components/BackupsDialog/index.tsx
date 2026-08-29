@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Trash2 } from "lucide-react";
 import {
   buildBackupTimeline,
   formatSnapshotStamp,
@@ -7,8 +8,8 @@ import {
   type BackupTimelineRow,
 } from "@vesta/core";
 import type { BackupInfo } from "@/api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { errorMessage } from "@/lib/utils";
 import { formatSnapshotSize } from "./format";
 
 // The gateway refuses a snapshot a newer vestad wrote, so the point says why before the user asks.
@@ -55,15 +57,13 @@ function TimelinePoint({
 }) {
   const refused = point.eligibility === "newer";
   return (
-    <li className="flex min-w-0 items-center gap-3">
+    <li className="-mx-2 flex min-w-0 items-center gap-3 rounded-md px-2 py-2 odd:bg-foreground/[0.07]">
       <div className="flex min-w-0 flex-col gap-1">
         <span className="truncate font-medium">
           {formatSnapshotStamp(point.createdAt)}
         </span>
-        <span className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="secondary" className="lowercase">
-            {point.label}
-          </Badge>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          <span className="lowercase">{point.label}</span> ·{" "}
           {formatSnapshotSize(point.size)}
         </span>
         {refused && (
@@ -80,12 +80,13 @@ function TimelinePoint({
           restore
         </Button>
         <Button
-          size="sm"
+          size="icon-sm"
           variant="ghost"
           disabled={disabled}
           onClick={onDelete}
+          aria-label="delete snapshot"
         >
-          delete
+          <Trash2 />
         </Button>
       </div>
     </li>
@@ -160,6 +161,7 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
     backups,
     backupsFailed,
     isBusy,
+    operation,
     backup,
     refreshBackups,
     restore,
@@ -167,10 +169,24 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
   } = useSelectedAgent();
   const { gatewayVersion } = useGateway();
   const [pending, setPending] = useState<PendingAction | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     void refreshBackups();
   }, [refreshBackups]);
+
+  const confirmDelete = async (id: string) => {
+    setDeletingId(id);
+    setDeleteError("");
+    try {
+      await removeBackup(id);
+    } catch (e: unknown) {
+      setDeleteError(errorMessage(e, "delete backup failed"));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const points = useMemo(
     () =>
@@ -196,7 +212,7 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
             restore(pending.point.id);
             onClose();
           } else {
-            removeBackup(pending.point.id);
+            void confirmDelete(pending.point.id);
           }
         }}
       />
@@ -210,8 +226,8 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
           <div className="flex flex-col gap-2 text-left">
             <DialogTitle>backups for {name}</DialogTitle>
             <DialogDescription>
-              back up {name} now, or return them to an earlier point. a backup
-              pauses them for a few seconds.
+              back up now, or restore an earlier point. a backup pauses them
+              briefly.
             </DialogDescription>
           </div>
           <Button
@@ -220,7 +236,11 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
             disabled={isBusy}
             onClick={backup}
           >
-            back up
+            {operation === "backing-up" ? (
+              <Spinner className="size-4" />
+            ) : (
+              "back up"
+            )}
           </Button>
         </div>
       </DialogHeader>
@@ -231,12 +251,12 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
           {backupsFailed ? "couldn't load snapshots." : "no snapshots yet."}
         </p>
       ) : (
-        <ul className="grid min-w-0 gap-4">
+        <ul className="flex min-w-0 flex-col">
           {points.map((point) => (
             <TimelinePoint
               key={point.id}
               point={point}
-              disabled={isBusy}
+              disabled={isBusy || deletingId !== null}
               onRestore={() => {
                 setPending({ point, kind: "restore" });
               }}
@@ -247,6 +267,7 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
           ))}
         </ul>
       )}
+      {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
     </>
   );
 }
@@ -260,7 +281,7 @@ export function BackupsDialog({
 }) {
   return (
     <Dialog drawerOnMobile open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg" showCloseButton>
+      <DialogContent className="max-h-[60vh] sm:max-w-lg" showCloseButton>
         <BackupsDialogBody
           onClose={() => {
             onOpenChange(false);
