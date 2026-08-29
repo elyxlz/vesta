@@ -5,6 +5,8 @@ import {
   getConnection,
   initConnection,
   parseConnectKey,
+  restoreConnection,
+  type ConnectionConfig,
 } from "@/lib/connection";
 import { AuthContext } from "./context";
 
@@ -70,6 +72,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setConnected(true);
   };
 
+  const connectSavedGateway = useCallback((connection: ConnectionConfig) => {
+    restoreConnection(connection);
+    setSessionExpired(false);
+    setConnected(true);
+  }, []);
+
   const disconnect = () => {
     clearConnection();
     setSessionExpired(false);
@@ -90,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionExpired,
     setLoading,
     connect,
+    connectSavedGateway,
     disconnect,
     expireSession,
   };
