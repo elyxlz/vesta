@@ -2,6 +2,7 @@ import * as React from "react";
 import { Drawer as DrawerPrimitive } from "vaul";
 
 import { cn } from "@/lib/utils";
+import { ScrollShell, ShellChrome } from "@/components/ui/scroll-shell";
 
 function Drawer({
   shouldScaleBackground = false,
@@ -45,7 +46,7 @@ function DrawerOverlay({
     <DrawerPrimitive.Overlay
       data-slot="drawer-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-background/55 dark:bg-background/40 supports-backdrop-filter:backdrop-blur-md data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 z-50 bg-background/70 dark:bg-background/55 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       onPointerDown={(e) => {
@@ -66,12 +67,16 @@ function DrawerContent({
   children,
   container,
   showHandle = true,
+  bare = false,
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Content> & {
   container?: Element | null;
   // Off when a consumer floats the handle inside its own sticky header instead
   // (the Dialog drawer path), so content scrolls flush under handle and title.
   showHandle?: boolean;
+  // Skip the floating scroll shell: the child owns its own scroll and layout (the sidebar, a menu
+  // that caps its own height). Every other drawer gets the floating header/footer + edge fades.
+  bare?: boolean;
 }) {
   return (
     <DrawerPortal data-slot="drawer-portal" container={container}>
@@ -86,20 +91,42 @@ function DrawerContent({
         )}
         {...props}
       >
-        {showHandle && (
-          <div className="hidden w-full py-5 shrink-0 cursor-grab active:cursor-grabbing group-data-[vaul-drawer-direction=bottom]/drawer-content:flex items-center justify-center">
-            <div className="h-1.5 w-[100px] rounded-full bg-muted-foreground/40" />
-          </div>
+        {bare ? (
+          <>
+            {showHandle && <DrawerHandle />}
+            {children}
+          </>
+        ) : (
+          <ScrollShell>
+            {showHandle && <DrawerHandle />}
+            {children}
+          </ScrollShell>
         )}
-        {children}
       </DrawerPrimitive.Content>
     </DrawerPortal>
   );
 }
 
-function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
+// The grab handle floats over the shell's top (bottom drawers only), measured so the scroll reserves
+// its height and content dissolves beneath it while scrolling flush to the edge. In a bare drawer it
+// renders in normal flow above the content.
+function DrawerHandle() {
   return (
-    <div
+    <ShellChrome
+      edge="top"
+      className="hidden w-full py-5 shrink-0 cursor-grab items-center justify-center active:cursor-grabbing group-data-[vaul-drawer-direction=bottom]/drawer-content:flex"
+    >
+      <div className="h-1.5 w-[100px] rounded-full bg-muted-foreground/40" />
+    </ShellChrome>
+  );
+}
+
+function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
+  // Floats over the shell's top when inside a floating DrawerContent, and renders in place inside a
+  // bare drawer.
+  return (
+    <ShellChrome
+      edge="top"
       data-slot="drawer-header"
       className={cn(
         "flex flex-col gap-0.5 p-4 group-data-[vaul-drawer-direction=bottom]/drawer-content:text-center group-data-[vaul-drawer-direction=top]/drawer-content:text-center md:gap-1.5 md:text-left",
@@ -111,8 +138,11 @@ function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function DrawerFooter({ className, ...props }: React.ComponentProps<"div">) {
+  // The mirror of DrawerHeader: floats over the shell's bottom, or pins to the bottom in normal flow
+  // (mt-auto) inside a bare drawer.
   return (
-    <div
+    <ShellChrome
+      edge="bottom"
       data-slot="drawer-footer"
       className={cn("mt-auto flex flex-col gap-2 p-4", className)}
       {...props}

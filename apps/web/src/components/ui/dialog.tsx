@@ -1,13 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { createPortal } from "react-dom";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { Drawer as DrawerPrimitive } from "vaul";
 
 import { cn } from "@/lib/utils";
 import { useOverlayScrim } from "@/hooks/use-scrim-hold";
-import { useScrollFade } from "@/hooks/use-scroll-fade";
+import { ScrollShell, ShellChrome } from "@/components/ui/scroll-shell";
 import { Button } from "@/components/ui/button";
 import { DrawerContent } from "@/components/ui/drawer";
 import { XIcon } from "lucide-react";
@@ -83,7 +82,7 @@ function DialogOverlay({
       <DrawerPrimitive.Overlay
         data-slot="dialog-overlay"
         className={cn(
-          "fixed inset-0 z-50 bg-black/30 will-change-[opacity,backdrop-filter] supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+          "fixed inset-0 z-50 bg-black/50 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className,
         )}
         {...props}
@@ -94,15 +93,13 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/30 duration-100 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-black/50 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       {...props}
     />
   );
 }
-
-const BOTTOM_FADE_PX = 15;
 
 // The floating close affordance shared by the padded body and the bare full-bleed
 // content: a ghost button pinned to the shell's top-right corner.
@@ -121,16 +118,8 @@ function DialogCloseButton() {
   );
 }
 
-interface DialogHeaderChrome {
-  slot: HTMLElement | null;
-  reportHeight: (height: number) => void;
-}
-// null default = no DialogBody above (standalone DialogHeader renders in place).
-const DialogHeaderChromeContext =
-  React.createContext<DialogHeaderChrome | null>(null);
-
-// The scroll fills the whole shell; the header is floated over it (measured), so the scroll's fade
-// mask sizes to the header and the scrollbar dissolves with the content, like PageScroll.
+// The dialog sheet's floating scroll shell; it passes its own close button. The drawer path uses
+// DrawerContent's own shell instead of this.
 function DialogBody({
   children,
   showCloseButton,
@@ -138,33 +127,12 @@ function DialogBody({
   children: React.ReactNode;
   showCloseButton: boolean;
 }) {
-  const [slot, setSlot] = React.useState<HTMLDivElement | null>(null);
-  const [headerHeight, setHeaderHeight] = React.useState(0);
-  const chrome = React.useMemo(
-    () => ({ slot, reportHeight: setHeaderHeight }),
-    [slot],
-  );
-  // The fade dissolves content into the floated header over twice its height and softens at the
-  // bottom, but only on the edge that can still scroll, so a short dialog and the very top and
-  // bottom stay crisp.
-  const { ref: scrollRef, style: fadeStyle } = useScrollFade<HTMLDivElement>({
-    top: `${String(headerHeight * 2)}px`,
-    bottom: `${String(BOTTOM_FADE_PX)}px`,
-  });
-
   return (
-    <DialogHeaderChromeContext.Provider value={chrome}>
-      <div
-        ref={scrollRef}
-        data-slot="dialog-scroll"
-        className="flex min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-contain px-6 pb-6 [scrollbar-gutter:stable]"
-        style={{ ...fadeStyle, paddingTop: headerHeight }}
-      >
-        {children}
-      </div>
-      <div ref={setSlot} className="absolute inset-x-0 top-0 z-10" />
-      {showCloseButton && <DialogCloseButton />}
-    </DialogHeaderChromeContext.Provider>
+    <ScrollShell
+      closeButton={showCloseButton ? <DialogCloseButton /> : undefined}
+    >
+      {children}
+    </ScrollShell>
   );
 }
 
@@ -183,12 +151,10 @@ function DialogContent({
   const isDrawer = React.useContext(DrawerModeContext);
 
   // className is the desktop sheet's (widths like sm:max-w-md); the drawer spans the viewport.
+  // DrawerContent brings its own floating shell, so the children (with DialogHeader/DialogFooter)
+  // go straight in, and the header carries the grab handle instead of DrawerContent.
   if (isDrawer) {
-    return (
-      <DrawerContent showHandle={false}>
-        <DialogBody showCloseButton={false}>{children}</DialogBody>
-      </DrawerContent>
-    );
+    return <DrawerContent showHandle={false}>{children}</DrawerContent>;
   }
 
   return (
@@ -221,21 +187,12 @@ function DialogHeader({
   children,
   ...props
 }: React.ComponentProps<"div">) {
-  // Floated over the scroll by DialogBody. Measures itself and reports its height so the scroll's
-  // mask and top padding size to it. In the drawer it also carries the grab handle.
-  const chrome = React.useContext(DialogHeaderChromeContext);
+  // Floats over the shell's top (measured so the scroll's mask and top padding size to it). In the
+  // drawer it also carries the grab handle.
   const isDrawer = React.useContext(DrawerModeContext);
-  const [node, setNode] = React.useState<HTMLDivElement | null>(null);
-  React.useLayoutEffect(() => {
-    const report = chrome?.reportHeight;
-    if (!report || !node) return;
-    const observer = new ResizeObserver(() => report(node.offsetHeight));
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [chrome, node]);
-  const content = (
-    <div
-      ref={setNode}
+  return (
+    <ShellChrome
+      edge="top"
       data-slot="dialog-header"
       className={cn(
         "flex flex-col gap-1.5 px-6 pb-4 text-left",
@@ -248,11 +205,8 @@ function DialogHeader({
         <div className="mx-auto mb-1.5 h-1.5 w-[100px] shrink-0 rounded-full bg-muted-foreground/40" />
       )}
       {children}
-    </div>
+    </ShellChrome>
   );
-  // Standalone (no DialogBody): render in place. Inside one: portal into its header slot once mounted.
-  if (!chrome) return content;
-  return chrome.slot ? createPortal(content, chrome.slot) : null;
 }
 
 function DialogFooter({
@@ -263,30 +217,25 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean;
 }) {
-  // Pinned to the bottom with no background of its own: the fade sits behind the buttons
-  // (a gradient covering the footer and tailing off above it), so the content dissolves as
-  // it scrolls down behind the buttons while they stay crisp on top. Shared by the desktop
-  // sheet and the mobile drawer; the close acts through the mode-aware DialogClose.
+  // The mirror of DialogHeader: floats crisp and full-width over the shell's bottom edge. Shared by
+  // the desktop sheet and the mobile drawer; the close acts through the mode-aware DialogClose.
   return (
-    <div
+    <ShellChrome
+      edge="bottom"
       data-slot="dialog-footer"
       className={cn(
-        "sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-col-reverse gap-2 px-6 pt-4 pb-6 sm:flex-row sm:justify-end",
+        "flex flex-col-reverse gap-2 px-6 pt-4 pb-6 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 -top-5 bottom-0 -z-10 bg-popover/90 backdrop-blur-sm [mask-image:linear-gradient(to_top,black_58%,rgba(0,0,0,0.85)_70%,rgba(0,0,0,0.5)_82%,rgba(0,0,0,0.2)_92%,transparent)]"
-      />
       {children}
       {showCloseButton && (
         <DialogClose asChild>
           <Button variant="outline">Close</Button>
         </DialogClose>
       )}
-    </div>
+    </ShellChrome>
   );
 }
 

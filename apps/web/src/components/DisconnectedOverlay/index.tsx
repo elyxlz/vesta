@@ -23,7 +23,7 @@ export function DisconnectedOverlay() {
       aria-label="disconnected from gateway"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-muted/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-muted/85"
     >
       <Empty className="border-none">
         <EmptyHeader className="max-w-md">
