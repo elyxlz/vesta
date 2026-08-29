@@ -74,6 +74,15 @@ page. The builder runs the real check before every build; if you ever check by h
 `npx tsc --noEmit -p tsconfig.app.json` from `~/agent/skills/dashboard/app`. Never `-p .`: the root
 tsconfig is solution-style, so that compiles zero files and always passes.
 
+## Static page data files
+
+A page that renders a bundled JSON/TS data file (a saved-links list, reference values) must NOT
+put it under `src/data/`: `agent/.gitignore` ignores every `data/` directory, so the file is
+silently untracked and never committed, and a clean checkout or reset loses it while the local
+build still works (it fooled a build that imported `@/data/saved.json`). Put such files under
+`src/content/` (or another non-`data` name) and confirm with `git check-ignore <path>` that git
+tracks them before relying on them.
+
 ## Verify and relay
 
 When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `dashboard daemon status` reports `running` and a port that answers, or reload the app. If the builder exercised pages backed by a live store (tasks, anything wired to a skill), also confirm that store is unchanged; a browser pass that clicked a control can silently write real user data. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
