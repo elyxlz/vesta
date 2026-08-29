@@ -211,6 +211,18 @@ export async function deleteAgent(api: ApiClient, name: string): Promise<void> {
   });
 }
 
+export async function renameAgent(
+  api: ApiClient,
+  name: string,
+  newName: string,
+): Promise<string> {
+  const response = await api.json<{ name: string }>(
+    `/agents/${encodeURIComponent(name)}`,
+    api.jsonInit("PATCH", { new_name: newName }),
+  );
+  return response.name;
+}
+
 export async function createBackup(
   api: ApiClient,
   name: string,

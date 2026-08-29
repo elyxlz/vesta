@@ -3,6 +3,7 @@ import { RESTART_REASONS, restartBody } from "@vesta/core";
 import type { ApiClient } from "./client";
 import {
   fetchClaudeModels,
+  renameAgent,
   restartAgent,
   setAgentBackupSettings,
 } from "./endpoints";
@@ -40,6 +41,29 @@ describe("restartAgent", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(restartBody(RESTART_REASONS.context)),
+    });
+  });
+});
+
+describe("renameAgent", () => {
+  it("PATCHes the encoded agent path and returns the canonical name", async () => {
+    const json = vi.fn().mockResolvedValue({ name: "luna-prime" });
+    const api = {
+      json,
+      jsonInit: (method: string, body: unknown) => ({
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    } as unknown as ApiClient;
+
+    await expect(renameAgent(api, "luna one", "Luna Prime")).resolves.toBe(
+      "luna-prime",
+    );
+    expect(json).toHaveBeenCalledWith("/agents/luna%20one", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_name: "Luna Prime" }),
     });
   });
 });

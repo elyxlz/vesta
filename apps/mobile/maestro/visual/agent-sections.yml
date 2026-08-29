@@ -60,6 +60,17 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: agent-general.png
+- tapOn:
+    text: "New agent name"
+- eraseText: 4
+- inputText: "Nova_Prime"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-rename
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-rename.png
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/voice?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualVoice=unconfigured"
