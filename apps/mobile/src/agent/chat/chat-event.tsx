@@ -17,7 +17,7 @@ import * as Clipboard from "expo-clipboard";
 import * as WebBrowser from "expo-web-browser";
 import Svg, { Path } from "react-native-svg";
 import { formatResetTime } from "@vesta/core";
-import type { ChatMessage } from "@vesta/core";
+import type { ChatAttachment, ChatMessage, InputMethod } from "@vesta/core";
 import contentCopyIcon from "../../../assets/menu-icons/content-copy.xml";
 import editIcon from "../../../assets/menu-icons/edit.xml";
 import replyIcon from "../../../assets/menu-icons/reply.xml";
@@ -31,7 +31,10 @@ import {
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { shareVestaMessage } from "@/sharing/share-message";
 import { radii } from "@/theme/layout";
-import { messageActionIds, type MessageActionId } from "@/agent/message-actions";
+import {
+  messageActionIds,
+  type MessageActionId,
+} from "@/agent/message-actions";
 import { chatMarkdownStyleSet } from "@/agent/chat/chat-markdown";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
 import {
@@ -171,7 +174,12 @@ export const ChatEvent = memo(function ChatEvent({
   onReply: (text: string, user: boolean) => void;
   onEditAndResend: (text: string) => void;
   onReadAloud: (text: string) => void;
-  onRetry: (intentId: string, text: string) => void;
+  onRetry: (
+    intentId: string,
+    text: string,
+    inputMethod?: InputMethod,
+    attachments?: ChatAttachment[],
+  ) => void;
 }) {
   const { colors } = usePreferences();
   // Memoized because toLocaleTimeString builds an Intl formatter per call and
@@ -361,7 +369,14 @@ export const ChatEvent = memo(function ChatEvent({
           accessibilityLabel="Retry sending message"
           accessibilityRole="button"
           hitSlop={6}
-          onPress={() => onRetry(intentId, messageText)}
+          onPress={() =>
+            onRetry(
+              intentId,
+              messageText,
+              event.type === "user" ? event.input_method : undefined,
+              event.type === "user" ? event.attachments : undefined,
+            )
+          }
           style={styles.sendRetry}
         >
           <Ionicons name="alert-circle" size={13} color={colors.danger} />

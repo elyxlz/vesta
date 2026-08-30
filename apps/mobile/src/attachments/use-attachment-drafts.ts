@@ -178,8 +178,9 @@ export async function acceptAsset(
     ...(asset.height ? { height: asset.height } : {}),
     ...(asset.durationSecs ? { duration_secs: asset.durationSecs } : {}),
   });
-  if (asset.mime.startsWith("image/") || asset.mime.startsWith("video/"))
-    previewUris.set(localId, asset.uri);
+  // Images only: expo-image on iOS cannot decode a frame out of a file:// video, so a video chip
+  // takes the kind-icon tile on both platforms instead of an inconsistent blank square.
+  if (asset.mime.startsWith("image/")) previewUris.set(localId, asset.uri);
   startUpload(key, agent, http, localId, notify);
   return true;
 }

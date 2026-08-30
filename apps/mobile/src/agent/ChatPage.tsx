@@ -30,7 +30,14 @@ import { quotedReply, type ReplyTarget } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 import { usePagerScrollLock } from "@/agent/pager-scroll-lock";
 import { GlassSurface } from "@/components/ui/glass-surface";
-import { ComposerActionButton, ReplyPreview } from "@/agent/chat/chat-composer";
+import {
+  AttachButton,
+  ComposerActionButton,
+  ReplyPreview,
+} from "@/agent/chat/chat-composer";
+import { AttachmentChips } from "@/agent/chat/attachment-chips";
+import { showAttachMenu } from "@/agent/chat/attach-menu";
+import { useAttachmentDrafts } from "@/attachments/use-attachment-drafts";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
 import { ScrollToBottomButton } from "@/agent/chat/scroll-to-bottom-button";
 import { useTranscriptWordHaptics } from "@/agent/chat/use-transcript-word-haptics";
@@ -167,20 +174,35 @@ export default function ChatPage() {
   const stopSpeech = speech.stop;
   const canSend = socket.connected && agent?.status === "alive";
   const sendChat = socket.send;
-  // Reads the draft and armed reply from their refs, so the voice socket's captured
-  // onTurnEnd sends what is armed at turn end, not what was armed at start().
+  const attachments = useAttachmentDrafts(name, holdKey, api, showError);
+  const attachmentsRef = useRef(attachments);
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+  // Reads the draft, armed reply, and attachments from refs, so the voice socket's captured
+  // onTurnEnd sends what is armed at turn end, not what was armed at start(). With chips
+  // present, every one must finish uploading first; the text becomes an optional caption.
   const sendCurrentInput = useCallback(
     (source?: "voice") => {
       const text = inputValueRef.current.trim();
-      if (!text || !canSend) return;
+      const drafts = attachmentsRef.current;
+      const withFiles = drafts.drafts.length > 0 && drafts.ready;
+      if (!canSend) return;
+      if (drafts.drafts.length > 0 && !drafts.ready) {
+        // Reachable from voice turn-end and Enter, where no disabled button explains the no-op.
+        showError("Wait for attachments to finish uploading, or remove them");
+        return;
+      }
+      if (!text && !withFiles) return;
       const reply = replyTargetRef.current;
       const outgoing = reply ? `${quotedReply(reply.text)}${text}` : text;
-      if (sendChat(outgoing, source)) {
+      if (sendChat(outgoing, source, withFiles ? drafts.uploaded : undefined)) {
         setInput("");
         setReplyTarget(null);
+        if (withFiles) drafts.clear();
       }
     },
-    [canSend, sendChat, setInput, setReplyTarget],
+    [canSend, sendChat, setInput, setReplyTarget, showError],
   );
   const voice = useLiveVoice({
     name,
@@ -219,7 +241,16 @@ export default function ChatPage() {
     sendCurrentInput();
   };
 
-  const hasDraft = input.trim().length > 0;
+  const hasChips = attachments.drafts.length > 0;
+  const hasDraft = input.trim().length > 0 || hasChips;
+  // The action button flips to send once anything is attached, but stays disabled until every
+  // chip has uploaded; the chips themselves show the progress.
+  const canSendNow = canSend && (!hasChips || attachments.ready);
+  const openAttachMenu = useCallback(() => {
+    showAttachMenu((assets) => {
+      void attachmentsRef.current.addAssets(assets);
+    });
+  }, []);
 
   const toggleVoice = () => {
     if (process.env.EXPO_OS === "ios") {
@@ -284,7 +315,14 @@ export default function ChatPage() {
               {replyTarget ? (
                 <ReplyPreview target={replyTarget} onCancel={cancelReply} />
               ) : null}
+              <AttachmentChips
+                drafts={attachments.drafts}
+                previewUri={attachments.previewUri}
+                onRetry={attachments.retry}
+                onRemove={attachments.remove}
+              />
               <View style={styles.composerRow}>
+                <AttachButton disabled={!canSend} onPress={openAttachMenu} />
                 <ChatComposerInput
                   ref={inputRef}
                   maxLength={20_000}
@@ -292,9 +330,11 @@ export default function ChatPage() {
                   placeholder={
                     voice.active
                       ? "Listening…"
-                      : canSend
-                        ? `Message ${name}`
-                        : "Waiting for agent…"
+                      : !canSend
+                        ? "Waiting for agent…"
+                        : hasChips && input.length === 0
+                          ? "Add a caption…"
+                          : `Message ${name}`
                   }
                   placeholderTextColor={colors.tertiaryText}
                   selectionColor={colors.accent}
@@ -302,7 +342,7 @@ export default function ChatPage() {
                   value={input}
                 />
                 <ComposerActionButton
-                  canSend={canSend}
+                  canSend={canSendNow}
                   hasDraft={hasDraft}
                   voiceActive={voice.active}
                   voiceEnabled={voiceEnabled}

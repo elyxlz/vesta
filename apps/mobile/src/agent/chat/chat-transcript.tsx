@@ -13,6 +13,7 @@ import Reanimated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { LinearGradient } from "expo-linear-gradient";
+import type { ChatAttachment, InputMethod } from "@vesta/core";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChatLoadingSkeleton } from "@/components/chat-loading-skeleton";
 import { LoadingSpinner } from "@/components/loading-spinner";
@@ -66,7 +67,12 @@ export const ChatTranscript = memo(function ChatTranscript({
   onReply: (text: string, user: boolean) => void;
   onEditAndResend: (text: string) => void;
   onReadAloud: (text: string) => void;
-  onRetry: (intentId: string, text: string) => void;
+  onRetry: (
+    intentId: string,
+    text: string,
+    inputMethod?: InputMethod,
+    attachments?: ChatAttachment[],
+  ) => void;
 }) {
   const insets = useSafeAreaInsets();
   const { colors } = usePreferences();
