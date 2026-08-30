@@ -32,10 +32,24 @@ function clampValue(value: number, bound: number): number {
 
 // Pan bounds: half the overhang of the scaled content beyond the container, per axis; content
 // smaller than the container on an axis stays centered there.
-export function clampPan(state: ZoomState, container: Size, content: Size): ZoomState {
-  const boundX = Math.max(0, (content.width * state.scale - container.width) / 2);
-  const boundY = Math.max(0, (content.height * state.scale - container.height) / 2);
-  return { ...state, x: clampValue(state.x, boundX), y: clampValue(state.y, boundY) };
+export function clampPan(
+  state: ZoomState,
+  container: Size,
+  content: Size,
+): ZoomState {
+  const boundX = Math.max(
+    0,
+    (content.width * state.scale - container.width) / 2,
+  );
+  const boundY = Math.max(
+    0,
+    (content.height * state.scale - container.height) / 2,
+  );
+  return {
+    ...state,
+    x: clampValue(state.x, boundX),
+    y: clampValue(state.y, boundY),
+  };
 }
 
 // Cursor-anchored zoom: the content point under the cursor stays put while the scale changes.
@@ -63,7 +77,11 @@ export function panBy(
   container: Size,
   content: Size,
 ): ZoomState {
-  return clampPan({ ...state, x: state.x + dx, y: state.y + dy }, container, content);
+  return clampPan(
+    { ...state, x: state.x + dx, y: state.y + dy },
+    container,
+    content,
+  );
 }
 
 // Double-click: zoomed in any amount returns to fit; fitted jumps to 2x anchored at the cursor.

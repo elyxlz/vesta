@@ -14,6 +14,7 @@ import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
 import { stepTransition } from "@/lib/motion";
 import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
+import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
 import { CHAT_CONTENT_COLUMN } from "../content-column";
 import { buildDecorated, lastSeenIndex, type DecoratedRow } from "./rows";
 import { useChatScroll } from "./use-chat-scroll";
@@ -37,6 +38,7 @@ interface ChatMessageAreaProps {
   isTyping: boolean;
   isMobile: boolean;
   onRetry?: RetryHandler;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
   // Space reserved at the end of the list so the last message clears the floating composer.
   bottomInset?: number;
   // A tall draft's extra composer height beyond the baseline inset. It extends the scroll
@@ -166,12 +168,16 @@ function MessageRow({
   isMobile,
   isNewAppend,
   onRetry,
+  agentName,
+  onOpenAttachment,
 }: {
   row: DecoratedRow;
   index: number;
   isMobile: boolean;
   isNewAppend: boolean;
   onRetry?: RetryHandler;
+  agentName: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
   const bubble = (
     <ChatBubble
@@ -180,6 +186,8 @@ function MessageRow({
       isMobile={isMobile}
       hasTail={row.isGroupEnd}
       onRetry={onRetry}
+      agentName={agentName}
+      onOpenAttachment={onOpenAttachment}
     />
   );
   return (
@@ -243,6 +251,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
   isTyping,
   isMobile,
   onRetry,
+  onOpenAttachment,
   bottomInset = 0,
   bottomOverhang = 0,
   onAtBottomChange,
@@ -361,6 +370,8 @@ export const ChatMessageArea = memo(function ChatMessageArea({
                 isMobile={isMobile}
                 isNewAppend={prevLastIndex >= 0 && index > prevLastIndex}
                 onRetry={onRetry}
+                agentName={agentName}
+                onOpenAttachment={onOpenAttachment}
               />
             ))}
           </div>

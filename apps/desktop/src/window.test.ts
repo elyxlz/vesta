@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveBundlePath } from "./window";
+import { downloadDefaultPath, resolveBundlePath } from "./window";
 
 const WEB_DIST = path.join(path.sep, "app", "web");
 const INDEX = path.join(WEB_DIST, "index.html");
@@ -19,5 +19,19 @@ describe("resolveBundlePath", () => {
     { pathname: "/../webX/secrets.txt", expected: null },
   ])("$pathname -> $expected", ({ pathname, expected }) => {
     expect(resolveBundlePath(WEB_DIST, pathname)).toBe(expected);
+  });
+});
+
+describe("downloadDefaultPath", () => {
+  it("preselects the Downloads folder under the item's filename", () => {
+    expect(downloadDefaultPath("/home/u/Downloads", "photo.jpg")).toBe(
+      "/home/u/Downloads/photo.jpg",
+    );
+  });
+
+  it("never produces a bare directory for a nameless item", () => {
+    expect(downloadDefaultPath("/home/u/Downloads", "")).toBe(
+      "/home/u/Downloads/file",
+    );
   });
 });

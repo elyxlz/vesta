@@ -208,6 +208,8 @@ export interface RouteFixture {
   status?: number;
   json?: unknown;
   body?: string;
+  // Binary payloads (fixture media blobs) ride base64 so fixtures stay plain JSON-safe strings.
+  bodyBase64?: string;
   contentType?: string;
   hang?: boolean;
 }
@@ -269,6 +271,13 @@ async function installRoute(page: Page, fixture: RouteFixture): Promise<void> {
       return route.fallback();
     }
     if (fixture.hang) return;
+    if (fixture.bodyBase64 !== undefined) {
+      return route.fulfill({
+        status: fixture.status ?? 200,
+        contentType: fixture.contentType ?? "application/octet-stream",
+        body: Buffer.from(fixture.bodyBase64, "base64"),
+      });
+    }
     if (fixture.body !== undefined) {
       return route.fulfill({
         status: fixture.status ?? 200,

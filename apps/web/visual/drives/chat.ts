@@ -4,7 +4,10 @@ import {
   CONVERSATION,
   MARKDOWN_REPLY,
   agentMessage,
+  attachmentConversation,
   attachmentRoutes,
+  attachmentServeRoutes,
+  attachmentStatesConversation,
   chatRoutes,
   errorLine,
   rateLimitedLine,
@@ -468,6 +471,72 @@ export const CHAT: Record<string, Scenario> = {
       await expect(chatText(page, "drop to send to luna").first()).toBeVisible(
         LOADED,
       );
+    },
+  },
+
+  "chat-attachment-bubbles": chatScenario(
+    { events: attachmentConversation() },
+    async (page) => {
+      await expect(
+        page.getByAltText("beach.png").filter({ visible: true }).first(),
+      ).toBeVisible(LOADED);
+      await expect(chatText(page, "340.3 kB").first()).toBeVisible();
+      await expect(chatText(page, "memo.wav · 52 B").first()).toBeVisible();
+    },
+    { routes: attachmentServeRoutes(AGENT) },
+  ),
+  "chat-attachment-bubble-states": chatScenario(
+    { events: attachmentStatesConversation() },
+    async (page) => {
+      await expect(chatText(page, "no longer available").first()).toBeVisible(
+        LOADED,
+      );
+      await expect(
+        chatText(page, "couldn't load · tap to retry").first(),
+      ).toBeVisible();
+    },
+    { routes: attachmentServeRoutes(AGENT) },
+  ),
+  "chat-attachment-viewer": {
+    state: chatState(
+      { events: attachmentConversation() },
+      { routes: attachmentServeRoutes(AGENT) },
+    ),
+    drive: async (page) => {
+      await page
+        .getByRole("button", { name: "view beach.png" })
+        .filter({ visible: true })
+        .first()
+        .click();
+    },
+    settle: async (page) => {
+      await expect(
+        chatText(page, "beach.png · 640×480 · 2.3 MB").first(),
+      ).toBeVisible(LOADED);
+      await expect(
+        page.getByRole("button", { name: "close viewer" }).first(),
+      ).toBeVisible();
+    },
+  },
+  "chat-attachment-viewer-zoomed": {
+    state: chatState(
+      { events: attachmentConversation() },
+      { routes: attachmentServeRoutes(AGENT) },
+    ),
+    drive: async (page) => {
+      await page
+        .getByRole("button", { name: "view beach.png" })
+        .filter({ visible: true })
+        .first()
+        .click();
+      const stage = page.locator("[data-viewer-stage]").first();
+      await expect(stage.locator("img")).toBeVisible(LOADED);
+      await stage.locator("img").dblclick();
+    },
+    settle: async (page) => {
+      await expect(
+        page.locator('[data-viewer-stage] img[data-zoom-scale="2"]'),
+      ).toBeVisible(LOADED);
     },
   },
 };

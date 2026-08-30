@@ -67,9 +67,31 @@ function allowRendererPermissions(): void {
   );
 }
 
+/** Where a renderer-triggered download (a chat attachment blob) lands by default. */
+export function downloadDefaultPath(
+  downloadsDir: string,
+  filename: string,
+): string {
+  return path.join(downloadsDir, filename || "file");
+}
+
+// Chat attachment downloads come through as renderer blob anchors; keep the native
+// save dialog but preselect the OS Downloads folder under the attachment's name.
+function routeDownloadsToDisk(): void {
+  session.defaultSession.on("will-download", (_event, item) => {
+    item.setSaveDialogOptions({
+      defaultPath: downloadDefaultPath(
+        app.getPath("downloads"),
+        item.getFilename(),
+      ),
+    });
+  });
+}
+
 export function createMainWindow(): BrowserWindow {
   handleAppProtocol();
   allowRendererPermissions();
+  routeDownloadsToDisk();
 
   const window = new BrowserWindow({
     title: "Vesta",

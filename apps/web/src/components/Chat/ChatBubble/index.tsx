@@ -7,6 +7,7 @@ import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, InputMethod } from "@vesta/core";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { AttachmentContent, type OpenViewerRequest } from "./AttachmentContent";
 
 export type RetryHandler = (
   intentId: string,
@@ -40,12 +41,16 @@ export const ChatBubble = memo(function ChatBubble({
   isMobile,
   hasTail = true,
   onRetry,
+  agentName,
+  onOpenAttachment,
 }: {
   event: ChatMessage;
   className?: string;
   isMobile: boolean;
   hasTail?: boolean;
   onRetry?: RetryHandler;
+  agentName?: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
   // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
   const large = !isMobile;
@@ -87,6 +92,9 @@ export const ChatBubble = memo(function ChatBubble({
           ts={ts}
           large={large}
           hasTail={hasTail}
+          attachments={attachments}
+          agentName={agentName}
+          onOpenAttachment={onOpenAttachment}
         />
         <div className="mt-0.5 flex justify-end pr-1">
           <button
@@ -111,6 +119,9 @@ export const ChatBubble = memo(function ChatBubble({
       className={className}
       large={large}
       hasTail={hasTail}
+      attachments={event.attachments}
+      agentName={agentName}
+      onOpenAttachment={onOpenAttachment}
     />
   );
 });
@@ -122,6 +133,9 @@ function MessageBubble({
   className,
   large,
   hasTail,
+  attachments,
+  agentName,
+  onOpenAttachment,
 }: {
   isUser: boolean;
   text: string;
@@ -131,7 +145,11 @@ function MessageBubble({
   large: boolean;
   // Only the last bubble of a group carries the tighter tail corner.
   hasTail: boolean;
+  attachments?: ChatAttachment[];
+  agentName?: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
+  const blocks = agentName && attachments ? attachments : [];
   return (
     <Message align={isUser ? "end" : "start"} className={className}>
       <Bubble
@@ -145,8 +163,20 @@ function MessageBubble({
           // corner for the conversation look.
           style={bubbleRadiusStyle(isUser, hasTail)}
         >
-          <div className="min-w-0 break-words">
-            <Markdown>{text}</Markdown>
+          <div className="flex min-w-0 flex-col gap-1.5 break-words">
+            {blocks.length > 0 && (
+              <div className={cn("flex flex-col gap-1.5", text && "pt-1")}>
+                {blocks.map((attachment) => (
+                  <AttachmentContent
+                    key={attachment.id}
+                    agent={agentName ?? ""}
+                    attachment={attachment}
+                    onOpen={onOpenAttachment}
+                  />
+                ))}
+              </div>
+            )}
+            {text && <Markdown>{text}</Markdown>}
           </div>
           {ts && (
             <span

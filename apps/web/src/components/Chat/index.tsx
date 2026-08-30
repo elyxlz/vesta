@@ -23,6 +23,8 @@ import { useChatDraft } from "@/stores/use-chat-draft";
 import { useAttachmentDrafts } from "@/stores/use-attachment-drafts";
 import { DropOverlay } from "./DropZone";
 import { useFileDrop } from "./DropZone/use-file-drop";
+import { AttachmentViewer } from "./AttachmentViewer";
+import type { OpenViewerRequest } from "./ChatBubble/AttachmentContent";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { cn } from "@/lib/utils";
@@ -93,6 +95,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     attachments.addFiles,
   );
   const [atBottom, setAtBottom] = useState(true);
+  const [viewer, setViewer] = useState<OpenViewerRequest | null>(null);
+  const openAttachment = useCallback((request: OpenViewerRequest) => {
+    setViewer(request);
+  }, []);
+  const closeViewer = useCallback(() => {
+    setViewer(null);
+  }, []);
 
   useEffect(() => {
     if (!atBottom) return;
@@ -242,6 +251,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         )}
       >
         <DropOverlay active={dragActive} agentName={name} />
+        <AttachmentViewer agent={name} request={viewer} onClose={closeViewer} />
         <ChatHeaderActions
           fullscreen={fullscreen}
           onCollapse={onCollapse}
@@ -263,6 +273,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           isTyping={isTyping}
           isMobile={isMobile}
           onRetry={retry}
+          onOpenAttachment={openAttachment}
           bottomInset={
             composerInset +
             (fullscreen ? COMPOSER_GAP_FULLSCREEN_PX : COMPOSER_GAP_PANEL_PX)

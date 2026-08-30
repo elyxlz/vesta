@@ -18,13 +18,18 @@ describe("viewer zoom", () => {
     const state = zoomAt(resetZoom(), cursor, 2, CONTAINER, CONTENT);
     expect(state.scale).toBe(2);
     // The content point that was at the cursor: c = (cursor - x)/scale must map back to cursor.
-    const contentPoint = { x: (cursor.x - state.x) / state.scale, y: (cursor.y - state.y) / state.scale };
+    const contentPoint = {
+      x: (cursor.x - state.x) / state.scale,
+      y: (cursor.y - state.y) / state.scale,
+    };
     expect(state.x + contentPoint.x * state.scale).toBeCloseTo(cursor.x);
     expect(state.y + contentPoint.y * state.scale).toBeCloseTo(cursor.y);
   });
 
   it("clamps the scale between fit and the max", () => {
-    expect(zoomAt(resetZoom(), { x: 0, y: 0 }, 0.5, CONTAINER, CONTENT).scale).toBe(1);
+    expect(
+      zoomAt(resetZoom(), { x: 0, y: 0 }, 0.5, CONTAINER, CONTENT).scale,
+    ).toBe(1);
     let state = resetZoom();
     for (let step = 0; step < 10; step += 1)
       state = zoomAt(state, { x: 0, y: 0 }, 2, CONTAINER, CONTENT);
@@ -43,8 +48,15 @@ describe("viewer zoom", () => {
   });
 
   it("double-click toggles fit and 2x", () => {
-    const zoomed = toggleZoom(resetZoom(), { x: 100, y: 0 }, CONTAINER, CONTENT);
+    const zoomed = toggleZoom(
+      resetZoom(),
+      { x: 100, y: 0 },
+      CONTAINER,
+      CONTENT,
+    );
     expect(zoomed.scale).toBe(2);
-    expect(toggleZoom(zoomed, { x: 100, y: 0 }, CONTAINER, CONTENT)).toEqual(resetZoom());
+    expect(toggleZoom(zoomed, { x: 100, y: 0 }, CONTAINER, CONTENT)).toEqual(
+      resetZoom(),
+    );
   });
 });
