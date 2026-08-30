@@ -8,65 +8,82 @@ import {
   type PointerEvent,
   type RefObject,
 } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { Mic, SendHorizontal, Square, VolumeX } from "lucide-react";
+import {
+  AudioLines,
+  Check,
+  Mic,
+  SendHorizontal,
+  Square,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useVoice } from "@/stores/use-voice";
-import { useVoiceActivation } from "@/stores/use-voice-activation";
+import { useVoice, type VoiceMode } from "@/stores/use-voice";
+import {
+  useVoiceActivation,
+  type VoiceActivationMode,
+} from "@/stores/use-voice-activation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { AttachmentDrafts } from "@/stores/use-attachment-drafts";
 import { AttachmentChips } from "../AttachmentChips";
 import { AttachMenu } from "./AttachMenu";
+import { rightSlot } from "./right-slot";
 
-interface VoiceButtonHandlers {
+interface MicHandlers {
   onClick?: () => void;
   onPointerDown?: (e: PointerEvent<HTMLButtonElement>) => void;
-  onPointerUp?: () => void;
-  onKeyDown?: (e: KeyboardEvent<HTMLButtonElement>) => void;
-  onKeyUp?: (e: KeyboardEvent<HTMLButtonElement>) => void;
-  onBlur?: () => void;
 }
 
-function holdVoiceHandlers(toggleVoice: () => void): VoiceButtonHandlers {
+// Toggle: a click starts dictation and the confirm button sends it. Hold: pressing starts it
+// and letting go anywhere confirms, so the release listens on the window because the mic
+// itself gives way to the confirm/discard pair while dictating.
+function micHandlers(
+  activation: VoiceActivationMode,
+  startVoice: (mode: VoiceMode) => void,
+  stopVoice: () => void,
+): MicHandlers {
+  if (activation === "toggle") {
+    return {
+      onClick: () => {
+        startVoice("dictation");
+      },
+    };
+  }
   return {
     onPointerDown: (e: PointerEvent<HTMLButtonElement>) => {
       e.preventDefault();
-      e.currentTarget.setPointerCapture(e.pointerId);
-      if (!useVoice.getState().isRecording) toggleVoice();
-    },
-    onPointerUp: () => {
-      if (useVoice.getState().isRecording) toggleVoice();
-    },
-    onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => {
-      if (e.repeat || (e.key !== " " && e.key !== "Enter")) return;
-      e.preventDefault();
-      if (!useVoice.getState().isRecording) toggleVoice();
-    },
-    onKeyUp: (e: KeyboardEvent<HTMLButtonElement>) => {
-      if (e.key !== " " && e.key !== "Enter") return;
-      if (useVoice.getState().isRecording) toggleVoice();
-    },
-    onBlur: () => {
-      if (useVoice.getState().isRecording) toggleVoice();
+      startVoice("dictation");
+      const release = () => {
+        window.removeEventListener("pointerup", release);
+        window.removeEventListener("pointercancel", release);
+        if (useVoice.getState().recordingMode === "dictation") stopVoice();
+      };
+      window.addEventListener("pointerup", release);
+      window.addEventListener("pointercancel", release);
     },
   };
 }
 
-// Snappy, low-bounce spring for the composer's collapse/expand layout animation.
-const LAYOUT_TRANSITION = {
-  type: "spring",
-  stiffness: 650,
-  damping: 50,
-} as const;
-
-function placeholderText(
-  isRecording: boolean,
-  notAuthenticated: boolean,
-  agentName: string,
-  hasAttachments: boolean,
-) {
-  if (isRecording) return "listening...";
+function placeholderText({
+  recordingMode,
+  listening,
+  isSpeaking,
+  notAuthenticated,
+  agentName,
+  hasAttachments,
+}: {
+  recordingMode: VoiceMode | null;
+  listening: boolean;
+  isSpeaking: boolean;
+  notAuthenticated: boolean;
+  agentName: string;
+  hasAttachments: boolean;
+}) {
+  if (recordingMode !== null) {
+    if (!listening) return "connecting...";
+    if (recordingMode === "conversation" && isSpeaking) return "speaking...";
+    return "listening...";
+  }
   if (notAuthenticated) return "sign in to chat";
   if (hasAttachments) return "add a caption";
   return `message ${agentName}`.toLowerCase();
@@ -88,12 +105,13 @@ interface ChatComposerProps {
   agentName: string;
   notAuthenticated: boolean;
   sttAvailable: boolean;
-  isRecording: boolean;
-  voiceAutoSend: boolean;
-  liveTranscript: string;
-  toggleVoice: () => void;
+  recordingMode: VoiceMode | null;
+  listening: boolean;
   isSpeaking: boolean;
-  onStopSpeech: () => void;
+  liveTranscript: string;
+  startVoice: (mode: VoiceMode) => void;
+  stopVoice: () => void;
+  cancelVoice: () => void;
   input: string;
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: KeyboardEvent) => void;
@@ -109,12 +127,13 @@ export function ChatComposer({
   agentName,
   notAuthenticated,
   sttAvailable,
-  isRecording,
-  voiceAutoSend,
-  liveTranscript,
-  toggleVoice,
+  recordingMode,
+  listening,
   isSpeaking,
-  onStopSpeech,
+  liveTranscript,
+  startVoice,
+  stopVoice,
+  cancelVoice,
   input,
   onInputChange,
   onKeyDown,
@@ -124,35 +143,35 @@ export function ChatComposer({
   attachments,
   textareaRef,
 }: ChatComposerProps) {
-  const activation = useVoiceActivation((s) => s.mode);
   const isMobile = useIsMobile();
-
-  const voiceButtonHandlers: VoiceButtonHandlers =
-    activation === "hold"
-      ? holdVoiceHandlers(toggleVoice)
-      : { onClick: toggleVoice };
-
-  const showSend = !isRecording || !voiceAutoSend;
-  const useLiveTranscript =
-    isRecording && (voiceAutoSend || activation === "hold");
+  const activation = useVoiceActivation((s) => s.mode);
+  // The input shows what dictation has captured so far, or a conversation's live turn.
+  const useLiveTranscript = recordingMode !== null;
   // Only sign-in disables the field; a dropped connection still lets you type (a send while
   // disconnected is blocked with a toast in the parent instead).
   const inputDisabled = notAuthenticated;
   const value = useLiveTranscript ? liveTranscript : input;
-  const placeholder = placeholderText(
-    isRecording,
+  const hasAttachments = attachments.drafts.length > 0;
+  const placeholder = placeholderText({
+    recordingMode,
+    listening,
+    isSpeaking,
     notAuthenticated,
     agentName,
-    attachments.drafts.length > 0,
-  );
-  const controls = {
+    hasAttachments,
+  });
+  const controls: ComposerControls = {
     sttAvailable,
-    isSpeaking,
-    isRecording,
+    recordingMode,
     inputDisabled,
-    voiceButtonHandlers,
-    onStopSpeech,
-    showSend,
+    slot: rightSlot({ input, recordingMode, hasAttachments }),
+    micHandlers: micHandlers(activation, startVoice, stopVoice),
+    onConfirm: stopVoice,
+    onCancel: cancelVoice,
+    onConversation: () => {
+      if (recordingMode === "conversation") stopVoice();
+      else startVoice("conversation");
+    },
     onSend,
     canSend,
   };
@@ -175,12 +194,13 @@ export function ChatComposer({
 
 interface ComposerControls {
   sttAvailable: boolean;
-  isSpeaking: boolean;
-  isRecording: boolean;
+  recordingMode: VoiceMode | null;
   inputDisabled: boolean;
-  voiceButtonHandlers: VoiceButtonHandlers;
-  onStopSpeech: () => void;
-  showSend: boolean;
+  slot: "conversation" | "send";
+  micHandlers: MicHandlers;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onConversation: () => void;
   onSend: () => void;
   canSend: boolean;
 }
@@ -208,28 +228,14 @@ function FloatingComposer({
   controls: ComposerControls;
   attachments: AttachmentDrafts;
 }) {
-  const {
-    sttAvailable,
-    isSpeaking,
-    isRecording,
-    inputDisabled,
-    voiceButtonHandlers,
-    onStopSpeech,
-    showSend,
-    onSend,
-    canSend,
-  } = controls;
+  const { inputDisabled, recordingMode } = controls;
 
   // Expand (input onto its own full-width row above the buttons) once the text would wrap
   // past one line in the collapsed inline width. A hidden single-line mirror measured against
   // the cached collapsed input width keeps the decision stable, so it can't oscillate.
   const measureRef = useRef<HTMLSpanElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const collapsedWidthRef = useRef(0);
   const [expanded, setExpanded] = useState(false);
-  // Radius = half the collapsed height, so it's a true pill when collapsed and holds those same
-  // corners as a rounded rectangle once it grows. Measured while collapsed and kept fixed.
-  const [pillRadius, setPillRadius] = useState(24);
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!expanded && el) {
@@ -239,9 +245,6 @@ function FloatingComposer({
       const padX =
         parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
       collapsedWidthRef.current = el.clientWidth - padX;
-    }
-    if (!expanded && containerRef.current) {
-      setPillRadius(containerRef.current.offsetHeight / 2);
     }
   }, [expanded, textareaRef]);
   useLayoutEffect(() => {
@@ -261,20 +264,16 @@ function FloatingComposer({
 
   return (
     <div className={paddingClass}>
-      <motion.div
-        ref={containerRef}
-        layout
-        transition={LAYOUT_TRANSITION}
-        // Radius in style (not className) so motion counter-scales it during the layout
-        // animation instead of warping the corners.
-        style={{ borderRadius: pillRadius }}
+      <div
         className={cn(
-          "flex flex-wrap items-end gap-1 border border-border bg-popover px-2 pb-1.5 shadow-sm",
+          // rounded-3xl is half the collapsed height (48px): a true pill when collapsed, the same
+          // corners as a rounded rectangle once it grows.
+          "flex flex-wrap items-end gap-1 rounded-3xl border border-border bg-popover px-2 pb-1.5 shadow-sm",
           // Sides + bottom stay fixed so the bottom-row buttons don't move; only the top grows
           // to give the input its own breathing room once it moves onto its own row.
           expanded ? "pt-3" : "pt-1.5",
           "has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/30",
-          isRecording && "ring-2 ring-red-500",
+          recordingMode !== null && "border-red-500",
         )}
       >
         {/* Off-screen single-line mirror of the text, to detect the wrap point. */}
@@ -293,17 +292,11 @@ function FloatingComposer({
           onRemove={attachments.remove}
         />
 
-        <motion.div
-          layout
-          transition={LAYOUT_TRANSITION}
-          className={cn("shrink-0", expanded ? "order-2" : "order-1")}
-        >
+        <div className={cn("shrink-0", expanded ? "order-2" : "order-1")}>
           <AttachMenu disabled={inputDisabled} onFiles={attachments.addFiles} />
-        </motion.div>
+        </div>
 
-        <motion.div
-          layout
-          transition={LAYOUT_TRANSITION}
+        <div
           className={cn(
             "flex min-w-0 items-center self-stretch",
             expanded ? "order-1 basis-full" : "order-2 flex-1",
@@ -322,104 +315,128 @@ function FloatingComposer({
             enterKeyHint="send"
             className="field-sizing-content max-h-[240px] w-full resize-none bg-transparent px-1 py-1.5 leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-50 md:text-base"
           />
-        </motion.div>
+        </div>
 
-        <motion.div
-          layout
-          transition={LAYOUT_TRANSITION}
+        <div
           className={cn(
             "flex shrink-0 items-end gap-1 order-3",
             expanded && "ml-auto",
           )}
         >
-          <VoiceButtons
-            sttAvailable={sttAvailable}
-            isSpeaking={isSpeaking}
-            isRecording={isRecording}
-            inputDisabled={inputDisabled}
-            handlers={voiceButtonHandlers}
-            onStopSpeech={onStopSpeech}
-          />
-          {showSend && (
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              aria-label="send message"
-              disabled={inputDisabled || !canSend}
-              onClick={onSend}
-              className="size-9 rounded-full [&_svg]:size-4"
-            >
-              <SendHorizontal />
-            </Button>
-          )}
-        </motion.div>
-      </motion.div>
+          <VoiceButtons controls={controls} />
+        </div>
+      </div>
     </div>
   );
 }
 
-function VoiceButtons({
-  sttAvailable,
-  isSpeaking,
-  isRecording,
-  inputDisabled,
-  handlers,
-  onStopSpeech,
-}: {
-  sttAvailable: boolean;
-  isSpeaking: boolean;
-  isRecording: boolean;
-  inputDisabled: boolean;
-  handlers: VoiceButtonHandlers;
-  onStopSpeech: () => void;
-}) {
-  if (!sttAvailable && !isSpeaking) return null;
+const ACTION_BUTTON = "size-9 rounded-full [&_svg]:size-4";
+const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";
 
-  const sizeClass = "size-9 [&_svg]:size-4";
+function VoiceButtons({ controls }: { controls: ComposerControls }) {
+  const {
+    sttAvailable,
+    recordingMode,
+    inputDisabled,
+    slot,
+    micHandlers,
+    onConfirm,
+    onCancel,
+    onConversation,
+    onSend,
+    canSend,
+  } = controls;
 
-  return (
-    <div className="relative shrink-0">
-      {sttAvailable && (
+  if (!sttAvailable) {
+    return <SendButton disabled={inputDisabled || !canSend} onSend={onSend} />;
+  }
+
+  if (recordingMode === "dictation") {
+    return (
+      <>
         <Button
           type="button"
           size="icon"
           variant="secondary"
-          disabled={inputDisabled}
-          aria-label={isRecording ? "Stop recording" : "Start recording"}
-          {...handlers}
-          className={cn(
-            "touch-none rounded-full",
-            sizeClass,
-            isRecording && "bg-red-500 text-white hover:bg-red-600",
-          )}
+          onClick={onCancel}
+          aria-label="discard dictation"
+          title="discard dictation"
+          className={ACTION_BUTTON}
         >
-          {isRecording ? <Square fill="currentColor" /> : <Mic />}
+          <X />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="default"
+          onClick={onConfirm}
+          aria-label="send dictation"
+          title="send dictation"
+          className={ACTION_BUTTON}
+        >
+          <Check />
+        </Button>
+      </>
+    );
+  }
+
+  const inConversation = recordingMode === "conversation";
+  return (
+    <>
+      <div className="shrink-0">
+        <Button
+          type="button"
+          size="icon"
+          variant="secondary"
+          disabled={inputDisabled || inConversation}
+          {...micHandlers}
+          aria-label="dictate"
+          title="dictate"
+          className={cn("touch-none", ACTION_BUTTON)}
+        >
+          <Mic />
+        </Button>
+      </div>
+      {slot === "send" ? (
+        <SendButton disabled={inputDisabled || !canSend} onSend={onSend} />
+      ) : (
+        <Button
+          type="button"
+          size="icon"
+          variant="default"
+          disabled={inputDisabled}
+          onClick={onConversation}
+          aria-label={
+            inConversation ? "end conversation" : "start conversation"
+          }
+          title={inConversation ? "end conversation" : "start conversation"}
+          className={cn(ACTION_BUTTON, inConversation && RECORDING_BUTTON)}
+        >
+          {inConversation ? <Square fill="currentColor" /> : <AudioLines />}
         </Button>
       )}
-      <AnimatePresence>
-        {isSpeaking && (
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 16 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className={cn(sttAvailable && "absolute left-0 -top-11")}
-          >
-            <Button
-              type="button"
-              size="icon"
-              variant="secondary"
-              onClick={onStopSpeech}
-              aria-label="Stop voice playback"
-              title="Stop voice playback"
-              className={cn("rounded-full", sizeClass)}
-            >
-              <VolumeX />
-            </Button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    </>
+  );
+}
+
+function SendButton({
+  disabled,
+  onSend,
+}: {
+  disabled: boolean;
+  onSend: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      size="icon"
+      variant="ghost"
+      aria-label="send message"
+      disabled={disabled}
+      onClick={onSend}
+      className={ACTION_BUTTON}
+    >
+      <SendHorizontal />
+    </Button>
   );
 }

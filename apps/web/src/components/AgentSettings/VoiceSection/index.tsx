@@ -35,7 +35,6 @@ import {
 import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
-import { useVoiceActivation } from "@/stores/use-voice-activation";
 
 const DEBOUNCE_MS = 400;
 
@@ -100,48 +99,7 @@ export function SttCard() {
           </div>
         </UsageCollapsible>
       }
-      extraSettings={<ToggleIdleTimeoutSetting />}
     />
-  );
-}
-
-const idleOptions: { value: number | null; label: string }[] = [
-  { value: null, label: "off" },
-  { value: 3000, label: "3s" },
-  { value: 5000, label: "5s" },
-  { value: 10000, label: "10s" },
-  { value: 30000, label: "30s" },
-];
-
-function ToggleIdleTimeoutSetting() {
-  const idleTimeoutMs = useVoiceActivation((s) => s.toggleIdleTimeoutMs);
-  const setIdleTimeoutMs = useVoiceActivation((s) => s.setToggleIdleTimeoutMs);
-
-  return (
-    <Field orientation="horizontal" className="items-center justify-between">
-      <FieldContent>
-        <FieldLabel>auto stop after silence</FieldLabel>
-        <FieldDescription>
-          end the listening session if no speech is detected for this long
-          (toggle mode only)
-        </FieldDescription>
-      </FieldContent>
-      <div className="inline-flex rounded-md bg-muted p-0.5">
-        {idleOptions.map((opt) => (
-          <button
-            key={String(opt.value)}
-            className={`rounded-sm px-2.5 py-1 text-sm transition-colors ${
-              idleTimeoutMs === opt.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setIdleTimeoutMs(opt.value)}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-    </Field>
   );
 }
 
@@ -249,7 +207,6 @@ function DomainSection({
   agentName,
   onSettingChange,
   usageContent,
-  extraSettings,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -262,7 +219,6 @@ function DomainSection({
   agentName: string | null;
   onSettingChange: (settings: SettingDef[]) => void;
   usageContent: React.ReactNode;
-  extraSettings?: React.ReactNode;
 }) {
   return (
     <Card size="sm">
@@ -301,7 +257,6 @@ function DomainSection({
                 onSettingChange={onSettingChange}
               />
             )}
-            {extraSettings}
           </Field>
         </CardContent>
       )}

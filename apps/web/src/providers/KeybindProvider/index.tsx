@@ -4,27 +4,32 @@ import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 import { useTheme } from "@/providers/ThemeProvider";
 
+function isButtonTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("button") !== null;
+}
+
 export function KeybindProvider({ children }: { children: ReactNode }) {
   const { cycleTheme } = useTheme();
-  const spacebarMode = useVoiceActivation((s) => s.mode);
+  const activation = useVoiceActivation((s) => s.mode);
 
   useEffect(() => {
+    // Space is the keyboard twin of the mic: it starts a dictation and confirms it, on
+    // release (hold) or on the next press (toggle).
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isEditableTarget(event.target)) return;
 
       if (event.key === " ") {
-        const { sttAvailable, toggleVoice } = useVoice.getState();
+        const { sttAvailable, recordingMode, startVoice, stopVoice } =
+          useVoice.getState();
         if (!sttAvailable) return;
+        // A focused composer button (discard, confirm, end conversation) owns its own Space.
+        if (recordingMode !== null && isButtonTarget(event.target)) return;
         event.preventDefault();
-        if (spacebarMode === "hold") {
-          if (!useVoice.getState().isRecording) {
-            toggleVoice();
-          }
-        } else {
-          toggleVoice();
-        }
+        if (recordingMode === null) startVoice("dictation");
+        else if (recordingMode === "dictation" && activation === "toggle")
+          stopVoice();
         return;
       }
 
@@ -35,14 +40,10 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
-      if (event.key !== " ") return;
-      if (spacebarMode !== "hold") return;
+      if (event.key !== " " || activation !== "hold") return;
       if (isEditableTarget(event.target)) return;
-
-      const { isRecording, toggleVoice } = useVoice.getState();
-      if (isRecording) {
-        toggleVoice();
-      }
+      const { recordingMode, stopVoice } = useVoice.getState();
+      if (recordingMode === "dictation") stopVoice();
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -51,7 +52,7 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [cycleTheme, spacebarMode]);
+  }, [cycleTheme, activation]);
 
   return <>{children}</>;
 }

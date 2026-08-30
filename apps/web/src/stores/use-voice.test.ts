@@ -19,7 +19,12 @@ vi.mock("@/lib/authed-url", () => ({
 }));
 
 import { apiJson } from "@/api/client";
-import { useVoice } from "@/stores/use-voice";
+import {
+  CONVERSATION_INACTIVITY_MS,
+  useVoice,
+  type VoiceMode,
+} from "@/stores/use-voice";
+import { useToastStore } from "@/stores/use-toast";
 import { Transcriber, type TtsStatus } from "@/lib/voice";
 
 const apiJsonMock = vi.mocked(apiJson);
@@ -84,9 +89,7 @@ beforeEach(() => {
       getUserMedia: () => Promise.resolve({ getTracks: () => [] }),
     },
   });
-  // Node has no Web Audio, so the microphone pipeline is where start() gives up.
-  // The socket url is already recorded by then, which is what the STT assertion
-  // reads.
+  // Node has no Web Audio; tests that record stub it in.
   vi.stubGlobal("AudioContext", function AudioContextStub(): never {
     throw new Error("no Web Audio in node");
   });
@@ -209,20 +212,222 @@ describe("speak() — the assistant-message TTS trigger", () => {
   });
 });
 
+// A Web Audio stand-in that lets Transcriber.start() run to completion, so the
+// recording-mode tests reach the socket message handler that routes transcripts.
+class FakeAudioContext {
+  audioWorklet = { addModule: () => Promise.resolve() };
+  destination = {};
+  createMediaStreamSource() {
+    return { connect: () => undefined };
+  }
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+class FakeWorkletNode {
+  port = { onmessage: null };
+  connect(): void {
+    /* noop */
+  }
+}
+
 describe("STT socket url", () => {
   it("dials the authed URL on the ws scheme", async () => {
-    await expect(
-      new Transcriber({
-        agentName: "my-agent",
-        onTranscript: () => undefined,
-        onTurnEnd: () => undefined,
-        onTurnStart: () => undefined,
-        onError: () => undefined,
-      }).start(),
-    ).rejects.toThrow(/Could not initialize audio/);
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    vi.stubGlobal("AudioWorkletNode", FakeWorkletNode);
+    const stt = new Transcriber({
+      agentName: "my-agent",
+      onTranscript: () => undefined,
+      onTurnEnd: () => undefined,
+      onTurnStart: () => undefined,
+      onError: () => undefined,
+    });
+    await stt.start();
+    stt.stop();
 
     expect(FakeSocket.urls).toEqual([
       "wss://host:8443/agents/my-agent/voice/stt/listen?token=tok",
     ]);
+  });
+});
+
+class RecordingSocket extends FakeSocket {
+  static instances: RecordingSocket[] = [];
+  constructor(url: string) {
+    super(url);
+    RecordingSocket.instances.push(this);
+  }
+  emit(event: "StartOfTurn" | "Update" | "EndOfTurn", transcript: string) {
+    this.onmessage?.({
+      data: JSON.stringify({ type: "TurnInfo", event, transcript }),
+    });
+  }
+}
+
+const ENABLED_STT = { configured: true, provider: "deepgram", enabled: true };
+
+async function startRecording(mode: VoiceMode) {
+  useVoice.getState().startVoice(mode);
+  await vi.waitFor(() => {
+    expect(RecordingSocket.instances.length).toBeGreaterThan(0);
+  });
+  // start() finishes on the microtasks after the socket opens.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const socket = RecordingSocket.instances.at(-1);
+  if (!socket) throw new Error("no socket");
+  return socket;
+}
+
+describe("recording modes", () => {
+  let send: ReturnType<typeof vi.fn<(text: string) => void>>;
+  let clearInput: ReturnType<typeof vi.fn<() => void>>;
+
+  beforeEach(() => {
+    useVoice.getState()._cleanup();
+    RecordingSocket.instances = [];
+    vi.stubGlobal("WebSocket", RecordingSocket);
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    vi.stubGlobal("AudioWorkletNode", FakeWorkletNode);
+    useVoice.getState()._setSttStatus(ENABLED_STT);
+    send = vi.fn<(text: string) => void>();
+    clearInput = vi.fn<() => void>();
+    useVoice.getState().registerChat(send, clearInput);
+  });
+
+  it("marks the mode at press time, drops typed text, and clears on stop", async () => {
+    useVoice.getState().startVoice("dictation");
+    expect(useVoice.getState().recordingMode).toBe("dictation");
+    expect(clearInput).toHaveBeenCalledTimes(1);
+    await startRecording("dictation");
+    useVoice.getState().stopVoice();
+    expect(useVoice.getState().recordingMode).toBeNull();
+  });
+
+  it("dictation accumulates turns and sends them all on confirm", async () => {
+    const socket = await startRecording("dictation");
+    socket.emit("StartOfTurn", "");
+    socket.emit("Update", "hello");
+    socket.emit("EndOfTurn", "hello");
+    expect(send).not.toHaveBeenCalled();
+    socket.emit("StartOfTurn", "");
+    socket.emit("Update", "there");
+    expect(useVoice.getState().liveTranscript).toBe("hello there");
+    useVoice.getState().stopVoice();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("hello there", "voice");
+    expect(useVoice.getState().liveTranscript).toBe("");
+  });
+
+  it("a conversation sends each turn as it ends and keeps listening", async () => {
+    const socket = await startRecording("conversation");
+    socket.emit("StartOfTurn", "");
+    socket.emit("Update", "first");
+    socket.emit("EndOfTurn", "first");
+    expect(send).toHaveBeenCalledWith("first", "voice");
+    expect(useVoice.getState().recordingMode).toBe("conversation");
+    socket.emit("StartOfTurn", "");
+    socket.emit("EndOfTurn", "second");
+    expect(send).toHaveBeenLastCalledWith("second", "voice");
+    useVoice.getState().stopVoice();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("discarding a dictation sends nothing", async () => {
+    const socket = await startRecording("dictation");
+    socket.emit("StartOfTurn", "");
+    socket.emit("EndOfTurn", "never mind");
+    useVoice.getState().cancelVoice();
+    expect(send).not.toHaveBeenCalled();
+    expect(useVoice.getState().recordingMode).toBeNull();
+    expect(useVoice.getState().liveTranscript).toBe("");
+  });
+
+  it("reports listening once the microphone and socket are up", async () => {
+    useVoice.getState().startVoice("conversation");
+    expect(useVoice.getState().listening).toBe(false);
+    await startRecording("conversation");
+    expect(useVoice.getState().listening).toBe(true);
+    useVoice.getState().stopVoice();
+    expect(useVoice.getState().listening).toBe(false);
+  });
+
+  it("a user turn always cuts playback in a conversation, whatever interrupt_tts says", async () => {
+    useVoice.getState()._setSttStatus({
+      ...ENABLED_STT,
+      settings: [
+        { key: "interrupt_tts", type: "bool", label: "", value: false },
+      ],
+    });
+    useVoice.getState()._setTtsStatus(ENABLED_TTS);
+    const socket = await startRecording("conversation");
+    useVoice.getState().speak("a long reply");
+    await vi.waitFor(() => {
+      expect(useVoice.getState().isSpeaking).toBe(true);
+    });
+    socket.emit("StartOfTurn", "");
+    expect(useVoice.getState().isSpeaking).toBe(false);
+  });
+
+  it("a conversation silent for the inactivity budget ends with a toast", async () => {
+    const socket = await startRecording("conversation");
+    vi.useFakeTimers();
+    try {
+      socket.emit("StartOfTurn", "");
+      socket.emit("EndOfTurn", "last words");
+      vi.advanceTimersByTime(CONVERSATION_INACTIVITY_MS - 1);
+      expect(useVoice.getState().recordingMode).toBe("conversation");
+      vi.advanceTimersByTime(1);
+      expect(useVoice.getState().recordingMode).toBeNull();
+      expect(useToastStore.getState().current?.title).toBe(
+        "conversation ended after 15 minutes of silence",
+      );
+    } finally {
+      vi.useRealTimers();
+      useToastStore.getState().dismiss();
+    }
+  });
+
+  it("a transcription error mid-conversation resets the session and disarms the inactivity toast", async () => {
+    const socket = await startRecording("conversation");
+    vi.useFakeTimers();
+    try {
+      socket.onmessage?.({ data: JSON.stringify({ type: "Error" }) });
+      expect(useVoice.getState()).toMatchObject({
+        recordingMode: null,
+        listening: false,
+        liveTranscript: "",
+        voiceError: "Transcription service error",
+      });
+      vi.advanceTimersByTime(CONVERSATION_INACTIVITY_MS);
+      expect(useToastStore.getState().current).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a microphone failure of a session already ended never reports", async () => {
+    let denyMicrophone: (reason: Error) => void = () => undefined;
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: () =>
+          new Promise((_resolve, reject) => {
+            denyMicrophone = reject;
+          }),
+      },
+    });
+    useVoice.getState().startVoice("dictation");
+    useVoice.getState().cancelVoice();
+    denyMicrophone(new DOMException("denied", "NotAllowedError"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useVoice.getState().voiceError).toBeNull();
+  });
+
+  it("a release before the microphone opens still ends the session", async () => {
+    useVoice.getState().startVoice("dictation");
+    useVoice.getState().stopVoice();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useVoice.getState().recordingMode).toBeNull();
+    expect(RecordingSocket.instances).toHaveLength(0);
   });
 });

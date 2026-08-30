@@ -2,6 +2,9 @@ import { apiJson } from "@/api/client";
 import { authedUrl, websocketUrl } from "@/lib/authed-url";
 
 const SAMPLE_RATE = 16000;
+// About two seconds of 16 kHz 16-bit mono: audio captured before the socket opens is kept up
+// to this, oldest frames dropped first.
+export const MAX_PENDING_AUDIO_BYTES = SAMPLE_RATE * 2 * 2;
 
 function voicePost(
   agentName: string,
@@ -235,6 +238,8 @@ export class Transcriber {
   private transcript = "";
   private committed = "";
   private active = false;
+  private pending: ArrayBuffer[] = [];
+  private pendingBytes = 0;
 
   constructor(opts: TranscriberOptions) {
     this.opts = opts;
@@ -245,6 +250,8 @@ export class Transcriber {
     this.active = true;
     this.transcript = "";
     this.committed = "";
+    this.pending = [];
+    this.pendingBytes = 0;
 
     if (!("mediaDevices" in navigator)) {
       this.active = false;
@@ -273,6 +280,38 @@ export class Transcriber {
       }
       throw new Error("Could not access microphone", { cause: err });
     }
+    if (this.stoppedMidStart()) return;
+
+    try {
+      this.audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    } catch {
+      this.cleanup();
+      throw new Error(
+        "Could not initialize audio: browser may not support AudioContext",
+      );
+    }
+
+    try {
+      await this.audioCtx.audioWorklet.addModule(WORKLET_URL);
+    } catch {
+      this.cleanup();
+      throw new Error("Could not load audio worklet");
+    }
+    if (this.stoppedMidStart()) return;
+
+    // The microphone runs before the socket dials, so the first words after the press are
+    // kept (up to the pending cap) and flushed the moment the socket opens.
+    const source = this.audioCtx.createMediaStreamSource(this.stream);
+    const workletNode = new AudioWorkletNode(this.audioCtx, "pcm-processor", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+    });
+    workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+      if (this.active) this.sendOrBuffer(floatTo16BitPCM(e.data));
+    };
+    source.connect(workletNode);
+    workletNode.connect(this.audioCtx.destination);
 
     let socket: WebSocket;
     try {
@@ -288,6 +327,10 @@ export class Transcriber {
     } catch {
       this.cleanup();
       throw new Error("Could not connect to transcription service");
+    }
+    if (this.stoppedMidStart()) {
+      socket.close();
+      return;
     }
 
     socket.onmessage = (ev) => {
@@ -351,60 +394,50 @@ export class Transcriber {
     };
 
     this.socket = socket;
+    for (const frame of this.pending) socket.send(frame);
+    this.pending = [];
+    this.pendingBytes = 0;
+  }
 
-    try {
-      this.audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    } catch {
-      this.cleanup();
-      throw new Error(
-        "Could not initialize audio — browser may not support AudioContext",
-      );
-    }
-
-    try {
-      await this.audioCtx.audioWorklet.addModule(WORKLET_URL);
-    } catch {
-      this.cleanup();
-      throw new Error("Could not load audio worklet");
-    }
-
-    const source = this.audioCtx.createMediaStreamSource(this.stream);
-    const workletNode = new AudioWorkletNode(this.audioCtx, "pcm-processor", {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: 1,
-    });
-
-    workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      if (!this.active || this.socket?.readyState !== WebSocket.OPEN) return;
+  private sendOrBuffer(frame: ArrayBuffer): void {
+    if (this.socket) {
       try {
-        const pcm = floatTo16BitPCM(e.data);
-        this.socket.send(pcm);
+        this.socket.send(frame);
       } catch {
         // socket may have closed between check and send — ignore
       }
-    };
-
-    source.connect(workletNode);
-    workletNode.connect(this.audioCtx.destination);
+      return;
+    }
+    while (
+      this.pending.length > 0 &&
+      this.pendingBytes + frame.byteLength > MAX_PENDING_AUDIO_BYTES
+    ) {
+      const dropped = this.pending.shift();
+      this.pendingBytes -= dropped?.byteLength ?? 0;
+    }
+    if (frame.byteLength > MAX_PENDING_AUDIO_BYTES) return;
+    this.pending.push(frame);
+    this.pendingBytes += frame.byteLength;
   }
 
   stop(): void {
     if (!this.active) return;
     this.active = false;
-
-    const text = this.transcript.trim();
-    if (text) {
-      this.opts.onTurnEnd(text);
-      this.transcript = "";
-      this.opts.onTranscript("");
-    }
-
+    // An in-flight partial is not a turn: the caller read what it wants before stopping.
+    this.transcript = "";
     this.cleanup();
   }
 
   isActive(): boolean {
     return this.active;
+  }
+
+  // stop() during one of start()'s awaits flips `active`; the rest of start() must then
+  // release whatever it just acquired instead of wiring it up.
+  private stoppedMidStart(): boolean {
+    if (this.active) return false;
+    this.cleanup();
+    return true;
   }
 
   private buildWsUrl(): Promise<string> {
@@ -414,6 +447,8 @@ export class Transcriber {
   }
 
   private cleanup(): void {
+    this.pending = [];
+    this.pendingBytes = 0;
     if (this.socket) {
       try {
         this.socket.close();

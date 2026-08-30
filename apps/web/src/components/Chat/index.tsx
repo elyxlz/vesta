@@ -66,14 +66,15 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
     sttAvailable,
-    voiceAutoSend,
-    isRecording,
-    liveTranscript,
-    toggleVoice,
-    voiceError,
-    registerChatCallbacks,
+    recordingMode,
+    listening,
     isSpeaking,
-    stopSpeech,
+    liveTranscript,
+    startVoice,
+    stopVoice,
+    cancelVoice,
+    voiceError,
+    registerChat,
   } = useVoice();
 
   const {
@@ -122,8 +123,10 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     [send, attachments],
   );
   useEffect(() => {
-    registerChatCallbacks(sendWithDrafts, setInput);
-  }, [registerChatCallbacks, sendWithDrafts, setInput]);
+    registerChat(sendWithDrafts, () => {
+      setInput("");
+    });
+  }, [registerChat, sendWithDrafts, setInput]);
 
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -244,9 +247,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      // While recording, the field shows the live transcript (not `input`); Enter must not fire
-      // a send whose contents differ from what the screen shows.
-      if (isRecording) return;
+      // While a voice mode runs, the field shows the live transcript (not `input`); Enter must
+      // not fire a send whose contents differ from what the screen shows.
+      if (recordingMode !== null) return;
       handleSend();
     }
   };
@@ -343,12 +346,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
               agentName={name}
               notAuthenticated={notAuthenticated}
               sttAvailable={sttAvailable}
-              isRecording={isRecording}
-              voiceAutoSend={voiceAutoSend}
-              liveTranscript={liveTranscript}
-              toggleVoice={toggleVoice}
+              recordingMode={recordingMode}
+              listening={listening}
               isSpeaking={isSpeaking}
-              onStopSpeech={stopSpeech}
+              liveTranscript={liveTranscript}
+              startVoice={startVoice}
+              stopVoice={stopVoice}
+              cancelVoice={cancelVoice}
               input={input}
               onInputChange={handleInput}
               onKeyDown={handleKeyDown}
