@@ -47,4 +47,5 @@ app-chat history --limit 20
 - Send multiple short messages instead of one long one (like texting)
 - Lowercase, no bullets, keep messages tight, texting feel, not document feel
 - Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work
+- **Quote the message body with SINGLE quotes.** In a double-quoted `--message "..."`, the shell expands `$`: `"$200"` becomes `00`, `"$2.2m"` drops the `$2`. That silently corrupts what the user sees. Use single quotes (`--message '$200 saved'`); if the text needs a literal apostrophe, close/reopen (`'it'\''s'`).
 - The app reconnects its chat socket automatically if the daemon or agent restarts
