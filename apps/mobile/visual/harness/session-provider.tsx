@@ -436,9 +436,14 @@ function createVisualApi(): ApiClient {
   });
   return {
     ...base,
-    request: async () => {
+    request: async (path: string) => {
       await visualDelay();
       if (apiFails) throw new Error("The gateway did not answer.");
+      // The attachment probes: a removed blob is a stable 410, the broken one a server error.
+      if (path.includes("/attachments/att-removed"))
+        return new Response(null, { status: 410 });
+      if (path.includes("/attachments/att-broken"))
+        return new Response(null, { status: 500 });
       return new Response(null, { status: 204 });
     },
     json: async <ResponseBody,>(path: string): Promise<ResponseBody> => {

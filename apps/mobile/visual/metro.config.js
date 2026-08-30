@@ -50,6 +50,10 @@ const harnessModules = new Map([
     "@/releases/release-notes-query",
     path.resolve(__dirname, "harness/release-notes-query.ts"),
   ],
+  [
+    "@/lib/authed-media-uri",
+    path.resolve(__dirname, "harness/authed-media-uri.ts"),
+  ],
   ["react-native-reanimated", path.resolve(__dirname, "harness/reanimated.js")],
   ["expo-web-browser", path.resolve(__dirname, "harness/web-browser.ts")],
   ["@/controller/rn-socket", path.resolve(__dirname, "harness/rn-socket.ts")],
