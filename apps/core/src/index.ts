@@ -131,6 +131,19 @@ export type {
   ChatSocketState,
 } from "./chat/chat-socket"
 
+export { createVoiceSession } from "./voice/voice-session"
+export type {
+  VoiceMode,
+  VoiceSession,
+  VoiceSessionCallbacks,
+  VoiceSessionDeps,
+  VoiceSessionSettings,
+} from "./voice/voice-session"
+export { createSttSession, MAX_PENDING_AUDIO_BYTES } from "./voice/stt-session"
+export type { AudioCapture, SttSession, VoiceSocketLike } from "./voice/stt-session"
+export { createTtsQueue } from "./voice/tts-queue"
+export type { SpeechPlayer, TtsQueue } from "./voice/tts-queue"
+
 export { sendMessage } from "./intents/send-message"
 export type { IdGenerator, SendFailure, SendMessageBody, SentMessage } from "./intents/send-message"
 
