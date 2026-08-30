@@ -100,7 +100,7 @@ def _dir(root: pl.Path, attachment_id: str) -> pl.Path:
     # The id format already forbids traversal; this normalized containment check is the guard at
     # the path-construction owner itself, so no caller can reach disk outside the store root.
     base = os.path.normpath(str(root))
-    normalized = os.path.normpath(os.path.join(base, attachment_id))
+    normalized = os.path.normpath(str(root / attachment_id))
     if not normalized.startswith(base + os.sep):
         raise UnknownAttachmentError(attachment_id)
     return pl.Path(normalized)
