@@ -194,7 +194,7 @@ A new full-width flex row inside the existing `flex-wrap` pill (the pill's `moti
 
 Rules: max `MAX_ATTACHMENTS_PER_MESSAGE = 10` chips (further adds toast); files over `MAX_ATTACHMENT_BYTES` are rejected at pick time with a toast naming the file and its size, never uploaded; image dims measured client-side via `createImageBitmap` before session create; video dims/duration best-effort via a metadata probe, skipped on failure. When chips exist and the input is empty, the textarea placeholder becomes "Add a caption". Enter sends only when the send gate is open.
 
-**Size is always visible.** Every chip shows its file's human size next to the name from the moment it appears (so the user knows what they are about to send before any byte moves), and with two or more chips a muted footer line under the row totals them: "3 files · 48 MB". `formatBytes` in `@vesta/core` is the one formatter behind chips, footer, bubbles, and lightbox, so the same file never reads as two different sizes.
+**Size is always visible.** Every chip shows its file's human size next to the name from the moment it appears (so the user knows what they are about to send before any byte moves), and with two or more chips a muted footer line under the row totals them: "3 files · 48 MB". `formatBytes` in `@vesta/core` is the one formatter behind chips, footer, bubbles, and the viewer, so the same file never reads as two different sizes.
 
 ### 4. Send states
 
@@ -220,9 +220,25 @@ One `AttachmentContent` block per attachment, stacked vertically inside the bubb
 | file (everything else) | horizontal tile: kind icon, name (middle-truncated), size, download icon | idle; fetching (determinate ring: the proxy strips `Content-Length`, so progress reads the response stream against the metadata `size`); saved; failed (toast + retry) |
 | removed (any kind) | muted tile: name, size, "no longer available" | terminal: a 410 from the serve route; no retry, no auto-reload |
 
-Size appears on every rendered form: the file tile inline, the lightbox caption (name + dimensions + size), video/audio via a small size badge in the corner until playback starts, and the download toast on completion. The metadata `size` is wire truth, so every display works even while bytes are still loading or after they are removed.
+Size appears on every rendered form: the file tile inline, the viewer caption (name + dimensions + size), video/audio via a small size badge in the corner until playback starts, and the download toast on completion. The metadata `size` is wire truth, so every display works even while bytes are still loading or after they are removed.
 
-Image click opens a lightbox (existing `Dialog`): full image, filename, size, download action, Esc/backdrop closes. Video/audio play inline; file tiles download on click. `useAuthedSrc(path)` (small web hook wrapping the async `authedUrl`) feeds every media element and rebuilds per mount, so the token is always fresh.
+Clicking an image, or a video's corner expand button, opens the in-chat viewer below. Audio plays inline; file tiles download on click. `useAuthedSrc(path)` (small web hook wrapping the async `authedUrl`) feeds every media element and rebuilds per mount, so the token is always fresh.
+
+### 5b. In-chat attachment viewer
+
+A media viewer that goes "full screen" **within the Chat container**, never over the whole window: an absolute inset overlay on the Chat card with a local scrim (`bg-background/80`), so the rest of the app (roster, navbar, the other pane) stays visible and interactive-looking behind it. Each mounted `Chat` instance owns its own viewer state; opening one in the panel does not touch the fullscreen chat.
+
+| Aspect | Design |
+|---|---|
+| containment | absolute overlay inside the Chat card (the card is already `relative overflow-hidden`); deliberately **not** a body portal. Implementation note: Radix `Dialog` primitives composed without the `Portal` give the focus trap, Esc handling, and `role="dialog"`/`aria-modal` for free while staying inside the container |
+| framing | media centered, capped at ~88% of the container's width and height, `object-contain`, rounded corners, shadow; never edge-to-edge, the scrim always shows around it |
+| image | native `<img>` rendering; **wheel zooms anchored at the cursor** (a trackpad pinch arrives as ctrl+wheel, so pinch works natively); double-click toggles fit ↔ 2×; drag pans while zoomed; zoom clamped fit–4×; state resets on close. Pure clamp/anchor math lives in a tested model (`viewer-zoom.ts`), pointer events only, no zoom library |
+| video | fresh `<video controls autoplay>` with the browser's native controls (play, seek via the Range-capable endpoint, volume, PiP where the browser offers it); the inline bubble's expand button hands over `currentTime` best-effort so playback continues where it was |
+| audio / file | no viewer: audio's native inline player is already the whole experience, and a file opens nothing (click downloads) |
+| chrome | X top-right, download action, caption bottom (name, size, dimensions for images); click on the scrim or Esc closes; focus returns to the opening bubble |
+| motion | scale-and-fade in from ~0.96 with `stepTransition`; honored by the app-wide `MotionConfig reducedMotion="user"` |
+
+Deferred (recorded): arrow-key gallery navigation across all media in the conversation, and a swipe-down-to-dismiss gesture (mobile-first concern).
 
 ### 6. Downloads
 
@@ -254,7 +270,8 @@ The duplicate `ChatMessage` in `apps/web/src/lib/types.ts` picks up the same opt
 | `components/Chat/ChatComposer/AttachMenu.tsx` (new) | popover + hidden file inputs, wired to the existing Plus button |
 | `components/Chat/AttachmentChips/index.tsx` (new) | the draft chips row |
 | `components/Chat/DropZone/index.tsx` (new) | per-instance overlay + counter-pattern handlers on the Chat root |
-| `components/Chat/ChatBubble/AttachmentContent/index.tsx` (new) | the four typed blocks + lightbox |
+| `components/Chat/ChatBubble/AttachmentContent/index.tsx` (new) | the four typed blocks |
+| `components/Chat/AttachmentViewer/index.tsx` (new) | the in-chat viewer overlay (portal-less Dialog composition, image zoom/pan, video handoff) + `viewer-zoom.ts`, the pure zoom/pan clamp model with tests |
 | `components/Chat/use-attachment-drafts.ts` (new) | per-Chat hook: draft reducer + upload engine + local-preview object-URL map + old-agent 404 handling |
 | `hooks/use-authed-src.ts` (new) | async `authedUrl` → `src` string for media elements |
 | `lib/download.ts` (new) | `downloadAttachment(agent, attachment)` blob-anchor flow |

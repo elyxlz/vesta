@@ -272,7 +272,7 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 
 ---
 
-## Phase 4 (PR 4): bubbles, lightbox, downloads, desktop save
+## Phase 4 (PR 4): bubbles, in-chat viewer, downloads, desktop save
 
 ### Task 4.1: authed media src + download lib
 
@@ -285,11 +285,30 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 ### Task 4.2: attachment bubble content
 
 **Files:**
-- Create: `apps/web/src/components/Chat/ChatBubble/AttachmentContent/index.tsx` (routes on `attachmentKind`: image with `aspect-ratio` pre-size + skeleton + broken-fallback with manual retry and one auto-retry per `connected` reconnect edge; video `controls preload="metadata"`; audio compact; file tile with download states, progress read from the response stream against metadata `size`; the removed tile on a 410, terminal with no retry; `formatBytes(size)` on the file tile, the lightbox caption, and the video/audio corner badge)
+- Create: `apps/web/src/components/Chat/ChatBubble/AttachmentContent/index.tsx` (routes on `attachmentKind`: image with `aspect-ratio` pre-size + skeleton + broken-fallback with manual retry and one auto-retry per `connected` reconnect edge; video `controls preload="metadata"` with the corner expand button; audio compact; file tile with download states, progress read from the response stream against metadata `size`; the removed tile on a 410, terminal with no retry; `formatBytes(size)` on the file tile, the viewer caption, and the video/audio corner badge)
 - Modify: `ChatBubble/index.tsx` (render attachment blocks stacked above the markdown caption inside `BubbleContent`; optimistic rows read `previewUrl` from the Chat-level map before the echo)
 - Test: render tests for each kind and for caption-less messages; visual-qa scenarios for all four bubble kinds in both user and agent variants, loading and error states
 
 - [ ] Failing tests → implement → visual verify (scroll stability with a loading image: pre-size must hold) → commit
+
+### Task 4.2b: in-chat attachment viewer
+
+**Files:**
+- Create: `apps/web/src/components/Chat/AttachmentViewer/index.tsx`, `apps/web/src/components/Chat/AttachmentViewer/viewer-zoom.ts`, `viewer-zoom.test.ts`
+- Modify: `Chat/index.tsx` (per-instance `viewer` state: `{attachment, source} | null`; the overlay mounts inside the Chat card root)
+
+**Interfaces (produces):**
+```ts
+// viewer-zoom.ts: pure, fully table-tested
+export interface ZoomState { scale: number; x: number; y: number }
+export function zoomAt(state: ZoomState, cursor: {x; y}, factor: number, bounds: {fit: number; max: number}): ZoomState  // cursor-anchored, clamped
+export function panBy(state: ZoomState, dx: number, dy: number, container: Size, content: Size): ZoomState  // clamped so content never detaches from view
+export function toggleZoom(state: ZoomState, cursor: {x; y}, bounds): ZoomState  // fit <-> 2x (double-click)
+```
+
+Component behavior per the spec's viewer table: contained overlay on the Chat card (Radix Dialog primitives without `Portal` for focus trap + Esc + aria), local `bg-background/80` scrim, media capped at ~88% of container, wheel/ctrl+wheel zoom, drag pan, double-click toggle, video with native controls and best-effort `currentTime` handoff from the inline element, X + download + name/size/dimensions caption, scrim click and Esc close, focus return, `stepTransition` scale-fade honoring reduced motion.
+
+- [ ] Failing `viewer-zoom.ts` tests (cursor-anchored zoom math, clamp bounds at fit and 4×, pan clamps at edges, double-click toggle) → implement model → implement component → visual verify in both panel and fullscreen Chat instances (containment: the overlay must never cover the roster or navbar) → add visual-qa scenarios (image open, image zoomed, video open) → commit
 
 ### Task 4.3: desktop will-download
 
@@ -297,7 +316,7 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 - Modify: `apps/desktop/src/window.ts` (`session.on("will-download")`: default to the OS Downloads dir with a native save dialog)
 - Test: `apps/desktop` unit test around the handler wiring; manual verify via the `apps/desktop:verify` skill
 
-- [ ] Implement → `./check.sh app-desktop` → commit → run `./check.sh web` whole chain → open PR 4 (`feat(web,desktop): attachment bubbles, lightbox, and downloads`)
+- [ ] Implement → `./check.sh app-desktop` → commit → run `./check.sh web` whole chain → open PR 4 (`feat(web,desktop): attachment bubbles, viewer, and downloads`)
 
 ---
 
@@ -322,4 +341,5 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 | send body + optimistic echo | `send-message.test.ts`, `chat-stream-model.test.ts` |
 | drop counter, drafts hook, download | web vitest |
 | bubble kinds + chip states | render tests + visual-qa gallery |
+| viewer zoom/pan math + containment | `viewer-zoom.test.ts` + visual-qa scenarios |
 | end-to-end (later, optional) | extend `vestad/tests/server/sync.rs` app-chat coverage with an upload → message → history round-trip |
