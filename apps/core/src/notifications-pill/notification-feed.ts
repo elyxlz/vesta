@@ -15,6 +15,8 @@ export interface NotificationFeed {
   entries: LoggedUserNotification[]
   /** Rows that arrived over the socket during this session (the ones a view animates in). */
   liveIds: number[]
+  /** Rows the user watched arrive in the chat, which is why they never raise the bell's dot. */
+  readIds: number[]
   newest: NewestPageStatus
   older: OlderPagesStatus
   /** A history surface is on screen. */
@@ -30,6 +32,7 @@ export interface NotificationFeed {
 export const EMPTY_FEED: NotificationFeed = {
   entries: [],
   liveIds: [],
+  readIds: [],
   newest: "idle",
   older: "more",
   open: false,
@@ -39,7 +42,7 @@ export const EMPTY_FEED: NotificationFeed = {
 export type FeedAction =
   | { type: "open"; seenAt: number }
   | { type: "close" }
-  | { type: "arrived"; entry: LoggedUserNotification }
+  | { type: "arrived"; entry: LoggedUserNotification; readInPlace: boolean }
   | { type: "page_loading"; before?: number }
   | { type: "page_loaded"; page: LoggedUserNotification[]; before?: number; pageSize: number }
   | { type: "page_failed"; before?: number }
@@ -47,8 +50,10 @@ export type FeedAction =
 export function reduceFeed(feed: NotificationFeed, action: FeedAction): NotificationFeed {
   switch (action.type) {
     case "open":
+      // Both annotations are dropped: closing this session marks the whole feed
+      // seen, so nothing loaded now can raise the dot again.
       if (feed.open) return feed
-      return { ...feed, open: true, seenAt: action.seenAt, liveIds: [] }
+      return { ...feed, open: true, seenAt: action.seenAt, liveIds: [], readIds: [] }
     case "close":
       return { ...feed, open: false }
     case "arrived":
@@ -57,6 +62,7 @@ export function reduceFeed(feed: NotificationFeed, action: FeedAction): Notifica
         ...feed,
         entries: merge(feed.entries, [action.entry]),
         liveIds: [...feed.liveIds, action.entry.id],
+        readIds: action.readInPlace ? [...feed.readIds, action.entry.id] : feed.readIds,
       }
     case "page_loading":
       return action.before === undefined
@@ -95,6 +101,27 @@ export function feedNeedsMarkSeen(feed: NotificationFeed, lastAt: number | null)
   if (feed.seenAt === null) return false
   const seenAt = feed.seenAt
   return feedHasUnseen(lastAt, seenAt) || feed.entries.some((item) => item.at > seenAt)
+}
+
+/**
+ * Whether the bell wears its dot: something past the gateway's watermark that the
+ * user has not already read where it happened. The gateway's two scalars answer
+ * first, and the loaded rows then discount the ones read in the chat. Anything the
+ * client cannot account for (the newest page not loaded yet, or a stamp above every
+ * row it holds) keeps the dot, so the derivation only ever hides a row it has.
+ */
+export function feedUnseen(
+  feed: NotificationFeed,
+  lastAt: number | null | undefined,
+  seenAt: number | undefined,
+): boolean {
+  if (!feedHasUnseen(lastAt, seenAt)) return false
+  if (feed.newest !== "ready") return true
+  const newest = feed.entries[0]
+  if ((lastAt ?? 0) > (newest === undefined ? 0 : newest.at)) return true
+  const read = new Set(feed.readIds)
+  const watermark = seenAt ?? 0
+  return feed.entries.some((item) => item.at > watermark && !read.has(item.id))
 }
 
 /** The unseen/seen split, or null when the feed renders as one plain list. */

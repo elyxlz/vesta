@@ -52,6 +52,21 @@ export function pillVisibleWhileViewing(item: PillContent, viewedAgent: string |
 }
 
 /**
+ * Whether the user watched this notification arrive where it happened: a message
+ * from the agent whose page is open on a focused window is read in the chat as it
+ * lands, so it is not news. The window must be focused, which is what separates it
+ * from the pill's rule: an app left open on an agent's page behind another window
+ * shows nobody anything.
+ */
+export function notificationReadInPlace(
+  item: PillContent,
+  viewedAgent: string | null,
+  focused: boolean,
+): boolean {
+  return focused && item.kind === "message" && item.agent === viewedAgent
+}
+
+/**
  * Insert after the last queued item of the same kind, so pending notifications
  * cluster by kind: the pill rotates through one kind per open, and a late
  * arrival of a kind already pending joins its group instead of splitting it.

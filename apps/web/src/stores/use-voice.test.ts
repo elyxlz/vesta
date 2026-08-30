@@ -25,7 +25,7 @@ import {
   type VoiceMode,
 } from "@/stores/use-voice";
 import { useToastStore } from "@/stores/use-toast";
-import { Transcriber, type TtsStatus } from "@/lib/voice";
+import type { TtsStatus } from "@/lib/voice";
 
 const apiJsonMock = vi.mocked(apiJson);
 
@@ -232,26 +232,6 @@ class FakeWorkletNode {
   }
 }
 
-describe("STT socket url", () => {
-  it("dials the authed URL on the ws scheme", async () => {
-    vi.stubGlobal("AudioContext", FakeAudioContext);
-    vi.stubGlobal("AudioWorkletNode", FakeWorkletNode);
-    const stt = new Transcriber({
-      agentName: "my-agent",
-      onTranscript: () => undefined,
-      onTurnEnd: () => undefined,
-      onTurnStart: () => undefined,
-      onError: () => undefined,
-    });
-    await stt.start();
-    stt.stop();
-
-    expect(FakeSocket.urls).toEqual([
-      "wss://host:8443/agents/my-agent/voice/stt/listen?token=tok",
-    ]);
-  });
-});
-
 class RecordingSocket extends FakeSocket {
   static instances: RecordingSocket[] = [];
   constructor(url: string) {
@@ -293,6 +273,15 @@ describe("recording modes", () => {
     send = vi.fn<(text: string) => void>();
     clearInput = vi.fn<() => void>();
     useVoice.getState().registerChat(send, clearInput);
+  });
+
+  it("dials the authed STT socket url on the ws scheme", async () => {
+    const socket = await startRecording("dictation");
+    expect(RecordingSocket.urls).toContain(
+      "wss://host:8443/agents/test-agent/voice/stt/listen?token=tok",
+    );
+    useVoice.getState().stopVoice();
+    expect(socket).toBeDefined();
   });
 
   it("marks the mode at press time, drops typed text, and clears on stop", async () => {
