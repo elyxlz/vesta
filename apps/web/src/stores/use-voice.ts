@@ -38,6 +38,9 @@ interface VoiceState {
   ttsStatus: TtsStatus | null;
   sttAvailable: boolean;
   speechEnabled: boolean;
+  // Voice has been set up at all (either service configured), the gate for showing the
+  // composer's voice buttons; being configured but off is a per-click toast, not a hide.
+  voiceConfigured: boolean;
 
   // Recording (set at press time so a release that beats the microphone still lands).
   recordingMode: VoiceMode | null;
@@ -48,6 +51,9 @@ interface VoiceState {
 
   // TTS
   isSpeaking: boolean;
+  // A per-device mute of spoken replies. A conversation speaks regardless; this silences the
+  // ambient read-aloud of replies outside one.
+  muted: boolean;
 
   // Actions
   startVoice: (mode: VoiceMode) => void;
@@ -58,6 +64,7 @@ interface VoiceState {
   prefetch: (text: string) => void;
   speak: (text: string) => void;
   stopSpeech: () => void;
+  toggleMuted: () => void;
   // The chat's send, and its input reset: a voice mode takes the composer over, so typed
   // text is dropped when one starts.
   registerChat: (
@@ -88,6 +95,12 @@ let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
   null;
 let clearInputCallback: (() => void) | null = null;
 
+const MUTE_STORAGE_KEY = "voice-muted";
+function loadMuted(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  return localStorage.getItem(MUTE_STORAGE_KEY) === "1";
+}
+
 function boolSetting(
   status: SttStatus | TtsStatus | null,
   key: string,
@@ -100,7 +113,20 @@ function boolSetting(
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
   const sttAvailable = (stt?.configured && stt.enabled) ?? false;
   const speechEnabled = (tts?.configured && tts.enabled) ?? false;
-  return { sttAvailable, speechEnabled };
+  const voiceConfigured =
+    (stt?.configured ?? false) || (tts?.configured ?? false);
+  return { sttAvailable, speechEnabled, voiceConfigured };
+}
+
+// A reply is spoken when text-to-speech is available and either a conversation is running (it
+// always speaks) or the user has not muted the ambient read-aloud.
+function speakable(state: {
+  speechEnabled: boolean;
+  muted: boolean;
+  recordingMode: VoiceMode | null;
+}): boolean {
+  if (!state.speechEnabled) return false;
+  return state.recordingMode === "conversation" || !state.muted;
 }
 
 export const useVoice = create<VoiceState>((set, get) => {
@@ -147,6 +173,7 @@ export const useVoice = create<VoiceState>((set, get) => {
     ttsStatus: null,
     sttAvailable: false,
     speechEnabled: false,
+    voiceConfigured: false,
 
     recordingMode: null,
     listening: false,
@@ -154,14 +181,36 @@ export const useVoice = create<VoiceState>((set, get) => {
     voiceError: null,
 
     isSpeaking: false,
+    muted: loadMuted(),
 
     startVoice: (mode) => {
       if (session.mode() !== null) return;
-      const { sttAvailable, agentName } = get();
-      if (!sttAvailable || !agentName) {
-        set({
-          voiceError: "Voice input not configured — ask the agent to set it up",
-        });
+      const { sttAvailable, speechEnabled, agentName, sttStatus, ttsStatus } =
+        get();
+      if (!agentName) return;
+      // The voice buttons always show; a mode the settings do not allow points the user at the
+      // fix (set up, or enable) with a toast rather than starting a silent or dead session.
+      if (!sttAvailable) {
+        useToastStore
+          .getState()
+          .show(
+            "error",
+            sttStatus?.configured
+              ? "enable speech-to-text in the settings"
+              : "set up speech-to-text in the settings",
+          );
+        return;
+      }
+      // A conversation speaks back, so it also needs text-to-speech ready.
+      if (mode === "conversation" && !speechEnabled) {
+        useToastStore
+          .getState()
+          .show(
+            "error",
+            ttsStatus?.configured
+              ? "enable text-to-speech in the settings"
+              : "set up text-to-speech in the settings",
+          );
         return;
       }
       set({ voiceError: null });
@@ -178,14 +227,21 @@ export const useVoice = create<VoiceState>((set, get) => {
     cancelVoice: () => session.cancel(),
 
     prefetch: (text) => {
-      if (!get().speechEnabled) return;
+      if (!speakable(get())) return;
       session.prefetch(text);
     },
     speak: (text) => {
-      if (!get().speechEnabled) return;
+      if (!speakable(get())) return;
       session.speak(text);
     },
     stopSpeech: () => session.stopSpeech(),
+    toggleMuted: () => {
+      const next = !get().muted;
+      if (typeof localStorage !== "undefined")
+        localStorage.setItem(MUTE_STORAGE_KEY, next ? "1" : "0");
+      if (next) session.stopSpeech();
+      set({ muted: next });
+    },
 
     registerChat: (send, clearInput) => {
       sendCallback = send;

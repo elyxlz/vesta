@@ -13,6 +13,23 @@ public final class VestaAudioSessionModule: Module {
         .setAllowHapticsAndSystemSoundsDuringRecording(enabled)
     }
 
+    // Hands-free voice: playAndRecord with voice processing (echo cancellation)
+    // and Bluetooth routing, so a session works over a car or headset and
+    // playback does not re-enter the microphone as a fake user turn.
+    AsyncFunction("setHandsFreeSessionActiveAsync") { (active: Bool) in
+      let session = AVAudioSession.sharedInstance()
+      if active {
+        try session.setCategory(
+          .playAndRecord,
+          mode: .voiceChat,
+          options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
+        )
+        try session.setActive(true)
+      } else {
+        try session.setActive(false, options: [.notifyOthersOnDeactivation])
+      }
+    }
+
     AsyncFunction("transcriptHapticAsync") {
       let session = AVAudioSession.sharedInstance()
       if !session.allowHapticsAndSystemSoundsDuringRecording {
