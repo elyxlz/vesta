@@ -260,7 +260,7 @@ States per spec: idle / valid drag-over overlay / non-file drag ignored (`dataTr
 
 Chip states per spec (uploading ring with determinate progress, waiting with the wifi-off glyph and auto-resume, uploaded, terminal error + retry, remove). Every chip shows name + `formatBytes(size)` from the moment it appears; two or more chips add the muted totals footer ("3 files · 48 MB"). Thumbnails from `previewUrl`, kind icon tiles otherwise (lucide `FileText`/`Film`/`Music`/`File`, `WifiOff` for waiting). Verify the composer height measurement (`hasDraftRef` rule) still behaves with the taller pill.
 
-- [ ] Implement; add a visual-qa scenario for the chip states; commit
+- [ ] Implement; commit (gallery scenarios for these states land in Task 3.6)
 
 ### Task 3.5: send wiring
 
@@ -268,7 +268,23 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 - Modify: `Chat/index.tsx` (`handleSend` gates on `input.trim() || ready`, passes `uploaded` through, clears drafts on accept), `providers/AgentSocketProvider/use-agent-socket.ts` (`send(text, inputMethod?, attachments?: ChatAttachment[])` → `sendMessage(http, name, { text, input_method, attachments: ids })` + `beginSend(..., attachments)`; `retry` re-carries them; on the socket's reconnect edge, a message in `send_state: "retry"` is re-posted automatically once, safe under intent dedup), `apps/web/src/lib/types.ts` (mirror field)
 - Test: extend `use-agent-socket` tests for the extended send/retry, the one-shot reconnect re-post (and that it fires only once per reconnect), and keyboard Enter no-op while gate closed
 
-- [ ] Failing tests → implement → run `./check.sh app-web` → visual verify → open PR 3 (`feat(web): attachment composer with drag-drop, paste, and upload chips`)
+- [ ] Failing tests → implement → run `./check.sh app-web` → visual verify → commit
+
+### Task 3.6: visual QA harness, composer states
+
+Follow the visual-qa skill (`apps/visual/.agents/skills/visual-qa/SKILL.md`): production routes rendered as-is, no capture logic in `web/src/`, fixtures model infrastructure only, `settle` asserts the captured state.
+
+**Files:**
+- Modify: `apps/web/visual/harness/http-fixtures.ts` (fixture routes for the app-chat attachment contract: `POST .../attachments` → fixed id; `PUT .../data` with a **stall variant** for one designated id, accepting the first chunk then never answering, which is the sanctioned deterministic delay for a real loading state; `POST .../complete`; a 413 route for the oversize case)
+- Modify: `apps/web/visual/drives.ts` + `apps/web/visual/scenarios.json` (group `"Chat"`)
+
+Scenarios (ids unique across both families):
+- `chat-attach-menu`: open the composer Plus popover; settle on the two options.
+- `chat-attachment-chips`: `setInputFiles` with three fixture files: one that completes (uploaded chip), one routed to the stalling id (uploading chip frozen at a known progress), one oversized (rejected via toast, so the shot also proves the guard); settle on the totals footer text.
+- `chat-attachment-chips-offline`: add a file, then `context.setOffline(true)`; settle on the "waiting for network" chip.
+- `chat-attachment-dropzone`: dispatch `dragenter` with a `DataTransfer` carrying the `Files` type; settle on the "Drop to send" overlay.
+
+- [ ] Add fixtures, drives, and registry entries → `./check.sh app-visual` → `npm run web:visual:capture` → inspect the gallery pixels (both themes, `web`, `desktop`, `web-narrow`) → commit → open PR 3 (`feat(web): attachment composer with drag-drop, paste, and upload chips`)
 
 ---
 
@@ -287,7 +303,7 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 **Files:**
 - Create: `apps/web/src/components/Chat/ChatBubble/AttachmentContent/index.tsx` (routes on `attachmentKind`: image with `aspect-ratio` pre-size + skeleton + broken-fallback with manual retry and one auto-retry per `connected` reconnect edge; video `controls preload="metadata"` with the corner expand button; audio compact; file tile with download states, progress read from the response stream against metadata `size`; the removed tile on a 410, terminal with no retry; `formatBytes(size)` on the file tile, the viewer caption, and the video/audio corner badge)
 - Modify: `ChatBubble/index.tsx` (render attachment blocks stacked above the markdown caption inside `BubbleContent`; optimistic rows read `previewUrl` from the Chat-level map before the echo)
-- Test: render tests for each kind and for caption-less messages; visual-qa scenarios for all four bubble kinds in both user and agent variants, loading and error states
+- Test: render tests for each kind and for caption-less messages (gallery scenarios land in Task 4.3)
 
 - [ ] Failing tests → implement → visual verify (scroll stability with a loading image: pre-size must hold) → commit
 
@@ -308,9 +324,26 @@ export function toggleZoom(state: ZoomState, cursor: {x; y}, bounds): ZoomState 
 
 Component behavior per the spec's viewer table: contained overlay on the Chat card (Radix Dialog primitives without `Portal` for focus trap + Esc + aria), local `bg-background/80` scrim, media capped at ~88% of container, wheel/ctrl+wheel zoom, drag pan, double-click toggle, video with native controls and best-effort `currentTime` handoff from the inline element, X + download + name/size/dimensions caption, scrim click and Esc close, focus return, `stepTransition` scale-fade honoring reduced motion.
 
-- [ ] Failing `viewer-zoom.ts` tests (cursor-anchored zoom math, clamp bounds at fit and 4×, pan clamps at edges, double-click toggle) → implement model → implement component → visual verify in both panel and fullscreen Chat instances (containment: the overlay must never cover the roster or navbar) → add visual-qa scenarios (image open, image zoomed, video open) → commit
+- [ ] Failing `viewer-zoom.ts` tests (cursor-anchored zoom math, clamp bounds at fit and 4×, pan clamps at edges, double-click toggle) → implement model → implement component → visual verify in both panel and fullscreen Chat instances (containment: the overlay must never cover the roster or navbar) → commit (gallery scenarios land in Task 4.3)
 
-### Task 4.3: desktop will-download
+### Task 4.3: visual QA harness, bubbles + viewer
+
+Same rules as Task 3.6 (visual-qa skill; fixtures only, production rendering untouched).
+
+**Files:**
+- Modify: `apps/web/visual/harness/http-fixtures.ts` (app-chat `history` fixture gains attachment events on both `user` and `chat` rows; `GET .../attachments/{id}` routes serving deterministic fixture bytes: a small solid-color PNG with known dimensions, a tiny fixture mp4 whose first frame is a solid color, a short wav, a plain file; one id answering 410; one image id behind the sanctioned deterministic delay for the skeleton state)
+- Modify: `apps/web/visual/drives.ts` + `apps/web/visual/scenarios.json` (group `"Chat"`)
+
+Scenarios:
+- `chat-attachment-bubbles`: history with all four kinds across user and agent sides, captions and sizes visible; settle on the file tile's size text.
+- `chat-attachment-bubble-states`: loading skeleton (delayed image), broken fallback, removed tile (410) in one conversation; settle on "no longer available".
+- `chat-attachment-viewer`: click the image bubble; settle on the viewer caption; the shot proves containment (roster and navbar visible around the scrim).
+- `chat-attachment-viewer-zoomed`: wheel-zoom then pan via dispatched pointer events; settle on the zoom state (e.g. the caption plus a translated img transform).
+- `chat-attachment-viewer-video`: expand the video bubble; settle on the viewer's video element being ready (`readyState`), first frame deterministic by fixture.
+
+- [ ] Add fixtures, drives, and registry entries → `./check.sh app-visual` → `npm run web:visual:capture` → inspect gallery pixels in both themes and all three web-family platforms → commit
+
+### Task 4.4: desktop will-download
 
 **Files:**
 - Modify: `apps/desktop/src/window.ts` (`session.on("will-download")`: default to the OS Downloads dir with a native save dialog)
@@ -340,6 +373,6 @@ Component behavior per the spec's viewer table: contained overlay on the Chat ca
 | draft reducer | `attachment-draft.test.ts` |
 | send body + optimistic echo | `send-message.test.ts`, `chat-stream-model.test.ts` |
 | drop counter, drafts hook, download | web vitest |
-| bubble kinds + chip states | render tests + visual-qa gallery |
-| viewer zoom/pan math + containment | `viewer-zoom.test.ts` + visual-qa scenarios |
+| bubble kinds + chip states | render tests + gallery scenarios (Tasks 3.6, 4.3) |
+| viewer zoom/pan math + containment | `viewer-zoom.test.ts` + gallery scenarios (Task 4.3) |
 | end-to-end (later, optional) | extend `vestad/tests/server/sync.rs` app-chat coverage with an upload → message → history round-trip |
