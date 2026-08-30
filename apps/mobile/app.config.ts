@@ -56,6 +56,8 @@ const config: ExpoConfig = {
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription: "Scan a Vesta connection QR code.",
       NSMicrophoneUsageDescription: "Talk to your Vesta agent.",
+      // Keeps a hands-free voice conversation alive with the screen locked.
+      UIBackgroundModes: ["audio"],
     },
   },
   android: {
@@ -70,6 +72,10 @@ const config: ExpoConfig = {
       "android.permission.CAMERA",
       "android.permission.RECORD_AUDIO",
       "android.permission.POST_NOTIFICATIONS",
+      // The microphone foreground service that keeps a hands-free voice conversation alive
+      // while the app is backgrounded or the screen is locked.
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_MICROPHONE",
     ],
     intentFilters: [
       {

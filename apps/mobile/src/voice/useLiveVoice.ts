@@ -6,351 +6,286 @@ import {
   useAudioPlayer,
   useAudioStream,
 } from "expo-audio";
-import type { ApiClient } from "@/api/client";
+import {
+  createVoiceSession,
+  type VoiceMode,
+  type VoiceSession,
+  type VoiceSocketLike,
+} from "@vesta/core";
 import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
+import type { SettingDef, VoiceStatus } from "@/api/types";
 import { useSession } from "@/session/SessionProvider";
+import { setHandsFreeSessionActive } from "@/voice/hands-free-session";
 import { setRecordingHapticsEnabled } from "@/voice/recording-haptics";
-
-interface TurnInfo {
-  type?: string;
-  event?: string;
-  transcript?: string;
-}
+import {
+  startVoiceForegroundService,
+  stopVoiceForegroundService,
+} from "@/voice/voice-service";
 
 interface LiveVoiceOptions {
   name: string;
   enabled: boolean;
+  sttStatus: VoiceStatus | null;
   onTranscript: (text: string) => void;
-  onTurnEnd: () => void;
+  onSend: (text: string) => void;
   onError: (message: string) => void;
+  onInactivityStop: () => void;
 }
 
-const MAX_PENDING_AUDIO_BYTES = 16_000 * 2 * 2;
+// A conversation with no user turn for this long ends itself, bounding the battery and
+// transcription spend of a session the user forgot.
+const CONVERSATION_INACTIVITY_MS = 15 * 60_000;
+
 const RECORDING_AUDIO_MODE = {
   allowsRecording: true,
   playsInSilentMode: true,
   interruptionMode: "doNotMix",
 } as const;
+// Restored when a listening session ends, so playback-only use never keeps the
+// record-category audio session active.
+const PLAYBACK_AUDIO_MODE = {
+  allowsRecording: false,
+  playsInSilentMode: true,
+} as const;
 
+function boolSetting(
+  status: VoiceStatus | null,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const value = status?.settings?.find((s: SettingDef) => s.key === key)?.value;
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function createVoiceSocket(url: string): VoiceSocketLike {
+  const socket = new WebSocket(url);
+  socket.binaryType = "arraybuffer";
+  const like: VoiceSocketLike = {
+    send: (data) => {
+      try {
+        socket.send(data);
+      } catch {
+        // socket may have closed between the session's check and this send — ignore
+      }
+    },
+    close: () => socket.close(),
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+  };
+  socket.onopen = () => like.onopen?.();
+  socket.onmessage = (message) => {
+    if (typeof message.data === "string") like.onmessage?.(message.data);
+  };
+  socket.onclose = (event) => like.onclose?.(event.reason);
+  return like;
+}
+
+// The mobile adapter over @vesta/core's voice session: expo-audio capture and playback as the
+// ports, the session as the behavior (dictation vs conversation, barge-in, the TTS queue). A
+// conversation additionally holds the native hands-free session (Bluetooth routing, echo
+// cancellation, and the Android microphone foreground service) around the microphone.
 export function useLiveVoice({
   name,
   enabled,
+  sttStatus,
   onTranscript,
-  onTurnEnd,
+  onSend,
   onError,
+  onInactivityStop,
 }: LiveVoiceOptions) {
   const { api } = useSession();
-  const socketRef = useRef<WebSocket | null>(null);
-  const mountedRef = useRef(true);
-  const activeRef = useRef(false);
-  const sessionRef = useRef(0);
+  const [recordingMode, setRecordingMode] = useState<VoiceMode | null>(null);
+  const [listening, setListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+
+  // Live-updated refs, so the session (created once per agent) always reads the current
+  // callbacks and settings.
+  const callbacksRef = useRef({ onTranscript, onSend, onError, onInactivityStop });
+  const sttStatusRef = useRef(sttStatus);
+  const ttsEnabledRef = useRef(false);
+
+  const frameSinkRef = useRef<((pcm: ArrayBuffer) => void) | null>(null);
   const permissionGrantedRef = useRef(false);
-  const audioModeReadyRef = useRef(false);
-  const audioModePromiseRef = useRef<Promise<void> | null>(null);
-  const pendingAudioRef = useRef<ArrayBuffer[]>([]);
-  const pendingAudioBytesRef = useRef(0);
-  const [active, setActive] = useState(false);
-
-  const clearPendingAudio = useCallback(() => {
-    pendingAudioRef.current = [];
-    pendingAudioBytesRef.current = 0;
-  }, []);
-
-  const prepareAudioMode = useCallback(async (): Promise<void> => {
-    if (audioModeReadyRef.current) return;
-    let pending = audioModePromiseRef.current;
-    if (!pending) {
-      pending = setAudioModeAsync(RECORDING_AUDIO_MODE)
-        .then(() => {
-          audioModeReadyRef.current = true;
-        })
-        .finally(() => {
-          audioModePromiseRef.current = null;
-        });
-      audioModePromiseRef.current = pending;
-    }
-    await pending;
-  }, []);
-
-  const flushPendingAudio = useCallback((socket: WebSocket) => {
-    const pending = pendingAudioRef.current;
-    pendingAudioRef.current = [];
-    pendingAudioBytesRef.current = 0;
-    for (const data of pending) socket.send(data);
-  }, []);
+  const sessionRef = useRef<VoiceSession | null>(null);
 
   const { stream } = useAudioStream({
     sampleRate: 16_000,
     channels: 1,
     encoding: "int16",
-    onBuffer: (buffer) => {
-      if (!activeRef.current) return;
-      const socket = socketRef.current;
-      if (socket?.readyState === WebSocket.OPEN) {
-        socket.send(buffer.data);
-        return;
-      }
+    onBuffer: (buffer) => frameSinkRef.current?.(buffer.data.slice(0)),
+  });
+  const streamRef = useRef(stream);
 
-      const data = buffer.data.slice(0);
-      while (
-        pendingAudioRef.current.length > 0 &&
-        pendingAudioBytesRef.current + data.byteLength >
-          MAX_PENDING_AUDIO_BYTES
-      ) {
-        const discarded = pendingAudioRef.current.shift();
-        pendingAudioBytesRef.current -= discarded?.byteLength ?? 0;
-      }
-      if (data.byteLength <= MAX_PENDING_AUDIO_BYTES) {
-        pendingAudioRef.current.push(data);
-        pendingAudioBytesRef.current += data.byteLength;
-      }
-    },
+  const player = useAudioPlayer(null);
+  const playerRef = useRef(player);
+
+  useEffect(() => {
+    callbacksRef.current = { onTranscript, onSend, onError, onInactivityStop };
+    sttStatusRef.current = sttStatus;
+    ttsEnabledRef.current = ttsEnabled;
+    streamRef.current = stream;
+    playerRef.current = player;
   });
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      activeRef.current = false;
-      sessionRef.current += 1;
-      clearPendingAudio();
-      const socket = socketRef.current;
-      socketRef.current = null;
-      socket?.close();
-      void setRecordingHapticsEnabled(false).catch(() => undefined);
-    };
-  }, [clearPendingAudio]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    void getRecordingPermissionsAsync()
-      .then(async (permission) => {
-        if (cancelled || !permission.granted) return;
-        permissionGrantedRef.current = true;
-        await prepareAudioMode();
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, prepareAudioMode]);
-
-  const stop = useCallback(() => {
-    if (!mountedRef.current) return;
-    sessionRef.current += 1;
-    activeRef.current = false;
-    setActive(false);
-    clearPendingAudio();
-    const socket = socketRef.current;
-    socketRef.current = null;
-    stream.stop();
-    void setRecordingHapticsEnabled(false).catch(() => undefined);
-    socket?.close();
-    onTurnEnd();
-  }, [clearPendingAudio, onTurnEnd, stream]);
-
-  const start = useCallback(async (): Promise<void> => {
-    if (activeRef.current || !mountedRef.current) return;
-    const session = sessionRef.current + 1;
-    sessionRef.current = session;
-    activeRef.current = true;
-    setActive(true);
-    onTranscript("");
-    clearPendingAudio();
-
-    const isCurrent = () =>
-      mountedRef.current &&
-      activeRef.current &&
-      sessionRef.current === session;
-
-    try {
-      if (!permissionGrantedRef.current) {
-        const permission = await requestRecordingPermissionsAsync();
-        if (!isCurrent()) return;
-        if (!permission.granted) {
-          activeRef.current = false;
-          setActive(false);
-          onError("Microphone permission is needed for live voice.");
-          return;
-        }
-        permissionGrantedRef.current = true;
-      }
-
-      await prepareAudioMode();
-      if (!isCurrent()) return;
-
-      const listenUrl = await api.websocketUrl(
-        `/agents/${encodeURIComponent(name)}/voice/stt/listen`,
-      );
-      if (!isCurrent()) return;
-
-      const socket = new WebSocket(listenUrl);
-      socket.binaryType = "arraybuffer";
-      socketRef.current = socket;
-
-      let opened = false;
-      const socketReady = new Promise<void>((resolve, reject) => {
-        socket.onopen = () => {
-          if (!isCurrent()) {
-            socket.close();
-            reject(new Error("Live transcription start was cancelled."));
-            return;
-          }
-          opened = true;
-          flushPendingAudio(socket);
-          resolve();
-        };
-        socket.onerror = () => {
-          if (!opened) {
-            reject(new Error("Could not connect to live transcription."));
-            return;
-          }
-          if (!isCurrent()) return;
-          onError("Connection to live transcription was lost.");
-          stop();
-        };
-        socket.onclose = (event) => {
-          if (!opened) {
-            reject(
-              new Error(
-                event.reason || "Live transcription closed before starting.",
-              ),
-            );
-            return;
-          }
-          if (!isCurrent() || socketRef.current !== socket) return;
-          socketRef.current = null;
-          activeRef.current = false;
-          clearPendingAudio();
-          stream.stop();
-          void setRecordingHapticsEnabled(false).catch(() => undefined);
-          setActive(false);
-        };
-      });
-
-      socket.onmessage = (message) => {
-        if (!isCurrent() || typeof message.data !== "string") return;
-        let event: TurnInfo;
-        try {
-          event = JSON.parse(message.data);
-        } catch {
-          return;
-        }
-        if (event.type === "TurnInfo") {
-          if (event.transcript !== undefined) {
-            onTranscript(event.transcript);
-          }
-          if (event.event === "EndOfTurn") {
-            onTurnEnd();
-          }
-        } else if (
-          event.type === "ConfigureFailure" ||
-          event.type === "Error"
-        ) {
-          onError("The transcription service reported an error.");
-          stop();
-        }
-      };
-
-      const captureReady = stream.start().then(() =>
-        setRecordingHapticsEnabled(true).catch(() => undefined),
-      );
-      await Promise.all([captureReady, socketReady]);
-    } catch (cause) {
-      if (!isCurrent()) return;
-      activeRef.current = false;
-      setActive(false);
-      clearPendingAudio();
-      stream.stop();
-      void setRecordingHapticsEnabled(false).catch(() => undefined);
-      const socket = socketRef.current;
-      socketRef.current = null;
-      socket?.close();
-      throw cause;
-    }
-  }, [
-    api,
-    clearPendingAudio,
-    flushPendingAudio,
-    name,
-    onError,
-    onTranscript,
-    onTurnEnd,
-    prepareAudioMode,
-    stop,
-    stream,
-  ]);
-
-  return { start, stop, active };
-}
-
-// The URL the audio player streams a prepared utterance from, carrying the access token in
-// the query: a media element sends no header. Null when the session has no gateway to
-// stream from.
-async function ttsStreamUrl(
-  api: ApiClient,
-  name: string,
-  identifier: string,
-): Promise<string | null> {
-  if (!api.getConnection()) return null;
-  return api.authedUrl(
-    `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
-  );
-}
-
-export function useSpeechPlayer(name: string, latestText: string | null) {
-  const { api } = useSession();
-  const player = useAudioPlayer(null);
-  const [enabled, setEnabled] = useState(false);
-
-  useEffect(() => {
-    let active = true;
+    let live = true;
     void fetchVoiceStatus(api, name, "tts")
       .then((status) => {
-        if (active) setEnabled(status.configured && status.enabled !== false);
+        if (live) setTtsEnabled(status.configured && status.enabled !== false);
       })
       .catch(() => {
-        if (active) setEnabled(false);
+        if (live) setTtsEnabled(false);
       });
     return () => {
-      active = false;
+      live = false;
     };
   }, [api, name]);
 
   useEffect(() => {
-    if (!enabled || !latestText) return;
-    let active = true;
-    void prepareSpeech(api, name, latestText)
-      .then(async (identifier) => {
-        if (!active) return;
-        const url = await ttsStreamUrl(api, name, identifier);
-        if (!active || !url) return;
-        player.replace(url);
-        player.play();
+    if (!enabled) return;
+    let live = true;
+    void getRecordingPermissionsAsync()
+      .then((permission) => {
+        if (live && permission.granted) permissionGrantedRef.current = true;
       })
       .catch(() => undefined);
     return () => {
-      active = false;
+      live = false;
     };
-  }, [api, enabled, latestText, name, player]);
+  }, [enabled]);
 
-  const play = useCallback(
-    async (text: string): Promise<void> => {
-      if (!enabled || !text.trim()) return;
-      if (!api.getConnection()) return;
-      const identifier = await prepareSpeech(api, name, text);
-      const url = await ttsStreamUrl(api, name, identifier);
-      if (!url) return;
-      player.replace(url);
-      player.play();
+  const playPrepared = useCallback(
+    async (identifier: string, signal: AbortSignal) => {
+      const url = await api.authedUrl(
+        `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
+      );
+      if (signal.aborted) return;
+      const target = playerRef.current;
+      await new Promise<void>((resolve) => {
+        let played = false;
+        const settle = () => {
+          subscription.remove();
+          resolve();
+        };
+        const subscription = target.addListener(
+          "playbackStatusUpdate",
+          (status) => {
+            if (status.isLoaded && status.playing) played = true;
+            // Resolve on a natural finish, or on the source dropping out of the loaded state
+            // after it had loaded (a failed or interrupted stream). Either way the queue must
+            // advance instead of blocking on a promise that never settles.
+            if (status.didJustFinish || (played && !status.isLoaded)) settle();
+          },
+        );
+        signal.addEventListener("abort", () => {
+          target.pause();
+          settle();
+        });
+        target.replace(url);
+        target.play();
+      });
     },
-    [api, enabled, name, player],
+    [api, name],
   );
 
+  // Created in an effect rather than during render: the session's ports close over refs, and
+  // only post-render code may read them.
+  useEffect(() => {
+    const session = createVoiceSession(
+      {
+        buildUrl: () =>
+          api.websocketUrl(
+            `/agents/${encodeURIComponent(name)}/voice/stt/listen`,
+          ),
+        createSocket: createVoiceSocket,
+        capture: {
+          start: async (onFrame) => {
+            if (!permissionGrantedRef.current) {
+              const permission = await requestRecordingPermissionsAsync();
+              if (!permission.granted)
+                throw new Error("Microphone permission is needed for live voice.");
+              permissionGrantedRef.current = true;
+            }
+            await setAudioModeAsync(RECORDING_AUDIO_MODE);
+            if (sessionRef.current?.mode() === "conversation") {
+              // After the expo-audio mode so the native override wins: voice processing plus
+              // Bluetooth routing on iOS, and the microphone foreground service that keeps a
+              // locked-screen mic alive on Android.
+              await setHandsFreeSessionActive(true);
+              await startVoiceForegroundService(
+                "Voice session",
+                `${name} is listening`,
+              );
+            }
+            frameSinkRef.current = onFrame;
+            await streamRef.current.start();
+            await setRecordingHapticsEnabled(true).catch(() => undefined);
+          },
+          stop: () => {
+            frameSinkRef.current = null;
+            streamRef.current.stop();
+            void setRecordingHapticsEnabled(false).catch(() => undefined);
+            void setHandsFreeSessionActive(false).catch(() => undefined);
+            void stopVoiceForegroundService().catch(() => undefined);
+            void setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => undefined);
+          },
+        },
+        player: {
+          prepare: (text) => prepareSpeech(api, name, text),
+          play: playPrepared,
+        },
+        setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+        clearTimer: (handle) => clearTimeout(handle),
+      },
+      {
+        onTranscript: (text) => callbacksRef.current.onTranscript(text),
+        onSend: (text) => callbacksRef.current.onSend(text),
+        onError: (message) => callbacksRef.current.onError(message),
+        onModeChange: setRecordingMode,
+        onListeningChange: setListening,
+        onSpeakingChange: setSpeaking,
+        onInactivityStop: () => callbacksRef.current.onInactivityStop(),
+      },
+      () => ({
+        interruptTts: boolSetting(sttStatusRef.current, "interrupt_tts", true),
+        inactivityMs: CONVERSATION_INACTIVITY_MS,
+      }),
+    );
+    sessionRef.current = session;
+    return () => {
+      sessionRef.current = null;
+      session.cancel();
+      session.stopSpeech();
+    };
+  }, [api, name, playPrepared]);
+
+  const start = useCallback(
+    (mode: VoiceMode) =>
+      sessionRef.current?.start(mode) ?? Promise.resolve(),
+    [],
+  );
+  const stop = useCallback(() => sessionRef.current?.stop(), []);
+  const cancel = useCallback(() => sessionRef.current?.cancel(), []);
+  const speak = useCallback((text: string) => {
+    if (ttsEnabledRef.current) sessionRef.current?.speak(text);
+  }, []);
+  const prefetch = useCallback((text: string) => {
+    if (ttsEnabledRef.current) sessionRef.current?.prefetch(text);
+  }, []);
+  const stopSpeech = useCallback(() => sessionRef.current?.stopSpeech(), []);
+
   return {
-    stop: () => player.pause(),
-    play,
-    enabled,
+    recordingMode,
+    listening,
+    speaking,
+    ttsEnabled,
+    start,
+    stop,
+    cancel,
+    speak,
+    prefetch,
+    stopSpeech,
   };
 }
