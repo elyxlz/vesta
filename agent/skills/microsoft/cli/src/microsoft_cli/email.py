@@ -4,7 +4,7 @@ import base64
 import dataclasses
 import html
 import pathlib as pl
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -257,6 +257,113 @@ def list_emails(
         graph.localize_datetime_fields(email)
 
     return emails
+
+
+def stalled_threads(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    days: int = 4,
+    lookback_days: int = 120,
+    scan: int = 400,
+) -> dict[str, Any]:
+    """Conversations that have gone quiet, and WHICH SIDE they are quiet on.
+
+    A mailbox check that only asks "has anything new arrived?" confirms an absence and says nothing
+    about what is already sitting in the thread. A thread can be correctly reported as quiet for
+    days while its last message is a live offer, a request for a callback, or a question addressed
+    to the user. This answers the other question: who spoke last, and how long ago.
+
+    Correspondence is DERIVED, never a list of important senders: a thread counts if the account has
+    ever sent a message into it. Everything else is broadcast. A list of senders can only speak about
+    its own contents, so the correspondent nobody thought to add would be silently out of scope.
+    """
+    me = account_email.strip().lower()
+    cutoff_day = (datetime.now(UTC) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+
+    per_folder: dict[str, list[dict[str, Any]]] = {}
+    folder_errors = []
+    for folder in ("inbox", "sentitems"):
+        try:
+            per_folder[folder] = list_emails(config, client, account_email=account_email, folder=folder, limit=scan, since=cutoff_day)
+        except Exception:
+            # One unreachable folder must not look like a clean result, so it is reported.
+            per_folder[folder] = []
+            folder_errors.append(folder)
+    if len(folder_errors) == len(per_folder):
+        # Every folder failed, so this run learned nothing. Returning an empty `stalled` list with a
+        # zero exit code would be indistinguishable from a genuinely quiet mailbox, which is the one
+        # answer this check must never give by accident.
+        raise RuntimeError(f"could not read any mail folder ({', '.join(folder_errors)}); no conclusion can be drawn about stalled threads")
+    messages = [m for msgs in per_folder.values() for m in msgs]
+
+    def _sender(m: dict[str, Any]) -> str:
+        return ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").strip().lower()
+
+    def _when(m: dict[str, Any]) -> str:
+        return m.get("receivedDateTime") or m.get("sentDateTime") or ""
+
+    threads: dict[str, list[dict[str, Any]]] = {}
+    for m in messages:
+        threads.setdefault(m.get("conversationId") or m.get("id"), []).append(m)
+
+    # The scan cap is the trap in this whole check. A busy inbox holds far more mail in the lookback
+    # window than `scan` fetches, so the oldest message actually retrieved is the real horizon. Past
+    # it, a thread's replies were simply never fetched, and the join reports "nobody answered" for a
+    # conversation that was answered. That absence is indistinguishable from a genuine one, so the
+    # horizon is computed and enforced rather than hoped about, and it is returned in the output.
+    inbox = per_folder.get("inbox", [])
+    horizon = min((_when(m) for m in inbox if _when(m)), default="") if len(inbox) >= scan else ""
+    truncated = bool(horizon)
+
+    now = datetime.now(UTC)
+    out = []
+    for convo, msgs in threads.items():
+        if not any(_sender(m) == me for m in msgs):
+            continue  # broadcast, not correspondence
+        last = max(msgs, key=_when)
+        stamp = _when(last)
+        try:
+            age = (now - datetime.fromisoformat(stamp)).total_seconds() / 86400
+        except ValueError:
+            continue
+        if age < days:
+            continue
+        if horizon and stamp < horizon:
+            continue  # older than what the inbox scan actually reached; silence here proves nothing
+        from_me = _sender(last) == me
+        counterparts = sorted({_sender(m) for m in msgs if _sender(m) and _sender(m) != me})
+        out.append(
+            {
+                "conversationId": convo,
+                "subject": last.get("subject", ""),
+                "waiting_on": "them" if from_me else "the user",
+                "last_from": "the user" if from_me else _sender(last),
+                "last_at": stamp,
+                "days_quiet": round(age, 1),
+                "messages": len(msgs),
+                "counterparts": counterparts,
+            }
+        )
+
+    out.sort(key=lambda r: (r["waiting_on"] != "them", -r["days_quiet"]))
+    return {
+        "threshold_days": days,
+        "lookback_days": lookback_days,
+        "threads_examined": len(threads),
+        "coverage_from": horizon or f"full {lookback_days}d window",
+        "truncated_by_scan": truncated,
+        "stalled": out,
+        "folder_errors": folder_errors,
+        "note": (
+            "waiting_on=them means the user sent the last message and nobody replied. "
+            "Read the last message's TEXT before acting: a count is not a content check. "
+            "When truncated_by_scan is true, threads older than coverage_from are NOT reported, "
+            "because their replies were never fetched and their silence would be an artefact. "
+            "Raise --scan to widen the horizon."
+        ),
+    }
 
 
 def get_email(

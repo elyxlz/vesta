@@ -18,6 +18,39 @@ microsoft email search --account user@example.com --query "invoice" --since 2021
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
 
+## Which conversations have gone quiet, and on whose side
+
+```bash
+microsoft email threads --account <addr>                      # quiet 4+ days, default scan
+microsoft email threads --account <addr> --days 7 --scan 800  # stricter threshold, wider horizon
+```
+
+Asking "has anything new arrived?" confirms an absence and tells you nothing about what is already
+sitting in a thread. A conversation can be correctly reported as quiet for days while its last
+message is a live offer or a question waiting on an answer. This answers the other question: who
+spoke last, and how long ago.
+
+- `waiting_on: them` means the account sent the last message and nobody replied.
+- `waiting_on: the user` means the last word was someone else's and it is unanswered.
+
+**What counts as correspondence is derived, not configured.** A thread qualifies if the account has
+ever sent a message into it; everything else is broadcast. There is deliberately no list of
+important senders, because a list can only speak about its own contents and the correspondent
+nobody thought to add would be silently out of scope.
+
+**Read `coverage_from` before trusting a quiet result.** A busy mailbox holds far more mail in the
+lookback window than `--scan` fetches, so the oldest message actually retrieved is the real horizon.
+Threads older than it are excluded rather than reported, because past that point a missing reply was
+never fetched and its silence is an artefact of the scan, not a fact about the thread. When
+`truncated_by_scan` is true, raise `--scan` to see further back.
+
+If no folder can be read the command exits non-zero rather than returning an empty list, so a total
+failure cannot be mistaken for a quiet mailbox. A partial failure returns results with the failed
+folder named in `folder_errors`.
+
+The output is a starting point, not a finding. Open the flagged threads and read the last message's
+text before acting on any of them.
+
 ## Delayed send and undo
 
 Send, reply, and forward operations wait 30 seconds by default across all Microsoft accounts and both email backends. The delay is one persisted setting for the Microsoft client and cannot be overridden on an individual send:

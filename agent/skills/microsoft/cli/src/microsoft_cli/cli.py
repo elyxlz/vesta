@@ -239,6 +239,16 @@ def _add_email_read_parsers(email_sub) -> None:
     p_search.add_argument("--until", default=None, help="Restrict to mail received on/before this date (YYYY-MM-DD, inclusive).")
     _add_format_flags(p_search)
 
+    p_threads = email_sub.add_parser(
+        "threads",
+        help="Conversations that have gone quiet, and which side they are quiet on.",
+    )
+    p_threads.add_argument("--account", required=True)
+    p_threads.add_argument("--days", type=int, default=4, help="Report threads quiet for at least this many days (default 4).")
+    p_threads.add_argument("--lookback-days", type=int, default=120, help="How far back to reconstruct threads (default 120).")
+    p_threads.add_argument("--scan", type=int, default=400, help="Messages to pull per folder (default 400).")
+    _add_format_flags(p_threads)
+
     p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--account", required=True)
     p_attachment.add_argument("--id", "--email-id", required=True, dest="email_id")
@@ -769,7 +779,7 @@ def _dispatch_email(args, config, client):
             lambda: email.search_emails(config, client, **kw),
             lambda: owa_rest_commands.search_emails(config, client, **kw),
         )
-    if args.command in ("reply-draft", "attachment", "block", "unblock"):
+    if args.command in ("reply-draft", "attachment", "block", "unblock", "threads"):
         return _dispatch_special_email(args, config, client)
     routes = _email_routes()
     if args.command in routes:
@@ -780,6 +790,15 @@ def _dispatch_email(args, config, client):
 
 
 def _dispatch_special_email(args, config, client):
+    if args.command == "threads":
+        return email.stalled_threads(
+            config,
+            client,
+            account_email=args.account,
+            days=args.days,
+            lookback_days=args.lookback_days,
+            scan=args.scan,
+        )
     if args.command == "reply-draft":
         return email.reply_draft(
             config,

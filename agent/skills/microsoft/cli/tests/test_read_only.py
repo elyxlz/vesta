@@ -51,6 +51,7 @@ _READS = [
     ("email", "list"),
     ("email", "get"),
     ("email", "search"),
+    ("email", "threads"),
     ("email", "attachment"),
     ("email", "pending"),
     ("email", "send-delay"),
