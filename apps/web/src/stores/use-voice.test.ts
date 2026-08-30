@@ -452,12 +452,20 @@ describe("recording modes", () => {
     useToastStore.getState().dismiss();
   });
 
-  it("mute silences an ambient reply but a conversation speaks anyway", async () => {
+  it("mute fires no TTS pipeline at all: no prepare, no stream", async () => {
     useVoice.setState({ muted: true });
+    apiJsonMock.mockClear();
+    useVoice.getState().prefetch("would warm");
     useVoice.getState().speak("silent while idle");
     await new Promise((resolve) => setTimeout(resolve, 0));
+    // The gate is at the store's entry, before the queue: a muted reply reaches neither the
+    // prepare POST nor a streamed <audio>, rather than preparing and staying silent.
+    expect(apiJsonMock).not.toHaveBeenCalled();
     expect(FakeAudio.created).toHaveLength(0);
+  });
 
+  it("a conversation speaks even while muted", async () => {
+    useVoice.setState({ muted: true });
     await startRecording("conversation");
     useVoice.getState().speak("a conversation reply");
     await vi.waitFor(() => {
