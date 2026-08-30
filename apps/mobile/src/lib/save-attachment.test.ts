@@ -15,7 +15,11 @@ const ATTACHMENT: ChatAttachment = {
 
 function io(overrides: Partial<SaveAttachmentIo> = {}): SaveAttachmentIo {
   return {
-    authedUrl: (path) => Promise.resolve(`https://gw.example${path}&token=t`),
+    // Mirrors the real client: the token joins the caller's query and both ride one `?`.
+    authedUrl: (path, query) => {
+      query.set("token", "t");
+      return Promise.resolve(`https://gw.example${path}?${query.toString()}`);
+    },
     probe: () => Promise.resolve(200),
     download: () => Promise.resolve("file:///cache/report.pdf"),
     share: () => Promise.resolve(),
@@ -46,9 +50,9 @@ describe("saveAttachment", () => {
       ATTACHMENT,
     );
     const url = download.mock.calls[0]?.[0] ?? "";
-    expect(url).toContain("/agents/apollo/app-chat/attachments/att1");
-    expect(url).toContain("download=1");
-    expect(url).toContain("token=t");
+    expect(url).toBe(
+      "https://gw.example/agents/apollo/app-chat/attachments/att1?download=1&token=t",
+    );
     expect(share).toHaveBeenCalledTimes(1);
   });
 

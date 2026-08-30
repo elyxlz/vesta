@@ -37,7 +37,7 @@ describe("viewer gesture model", () => {
       CONTAINER,
       CONTENT,
     );
-    expect(next.x).toBe(100 - (100 - 0) * 2);
+    expect(next.x).toBe(-100);
     expect(next.y).toBeCloseTo(0);
   });
 

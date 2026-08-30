@@ -12,7 +12,7 @@ export class AttachmentRemovedError extends Error {
 }
 
 export interface SaveAttachmentIo {
-  authedUrl: (path: string) => Promise<string>;
+  authedUrl: (path: string, query: URLSearchParams) => Promise<string>;
   probe: (path: string) => Promise<number>;
   download: (
     url: string,
@@ -28,8 +28,10 @@ export async function saveAttachment(
   attachment: ChatAttachment,
   onProgress?: (written: number, total: number) => void,
 ): Promise<void> {
-  const path = appChatAttachmentPath(agent, attachment.id, true);
-  const url = await io.authedUrl(path);
+  // The query rides authedUrl's params (the token joins them there); a `?` baked into the path
+  // would produce a second `?` and an unauthenticated URL.
+  const path = appChatAttachmentPath(agent, attachment.id);
+  const url = await io.authedUrl(path, new URLSearchParams({ download: "1" }));
   let uri: string;
   try {
     uri = await io.download(url, attachment.name, onProgress);

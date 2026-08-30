@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import type { ReactElement, Ref } from "react";
 import type {
   ColorValue,
   NativeSyntheticEvent,
@@ -9,7 +9,13 @@ import { requireNativeViewManager } from "expo-modules-core";
 import {
   MenuView,
   type MenuAction as ExpoMenuAction,
+  type MenuComponentRef,
 } from "@expo/ui/community/menu";
+
+// The Android menu is a Pressable wrapper, so a pressable child (an attachment block) wins the
+// long-press. `menuRef.show()` lets that child reopen the menu itself; on iOS the native
+// UIContextMenuInteraction already recognizes over subviews and the ref is ignored.
+export type MessageMenuHandle = MenuComponentRef;
 
 export interface MessageMenuAction<Id extends string = string> {
   id: Id;
@@ -26,6 +32,7 @@ interface MessageContextMenuProps<Id extends string> {
   actions: MessageMenuAction<Id>[];
   children: ReactElement;
   onAction: (id: Id) => void;
+  menuRef?: Ref<MessageMenuHandle>;
   style?: StyleProp<ViewStyle>;
   tailSide?: TailSide;
   tailOverhang?: number;
@@ -35,11 +42,11 @@ interface MessageContextMenuProps<Id extends string> {
   bubbleStrokeWidth?: number;
 }
 
-interface NativeMessageContextMenuProps
-  extends Omit<MessageContextMenuProps<string>, "onAction"> {
-  onAction: (
-    event: NativeSyntheticEvent<{ id: string }>,
-  ) => void;
+interface NativeMessageContextMenuProps extends Omit<
+  MessageContextMenuProps<string>,
+  "onAction"
+> {
+  onAction: (event: NativeSyntheticEvent<{ id: string }>) => void;
 }
 
 const NativeMessageContextMenu =
@@ -54,6 +61,7 @@ export function MessageContextMenu<Id extends string = string>({
   actions,
   children,
   onAction,
+  menuRef,
   style,
   tailSide = "none",
   tailOverhang = 0,
@@ -95,6 +103,7 @@ export function MessageContextMenu<Id extends string = string>({
 
   return (
     <MenuView
+      ref={menuRef}
       actions={actions.map((action) => ({
         id: action.id,
         title: action.title,

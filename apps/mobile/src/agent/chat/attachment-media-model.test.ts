@@ -22,14 +22,14 @@ describe("mediaSize", () => {
   it("scales a landscape photo down to the width cap, keeping aspect", () => {
     expect(mediaSize(attachment(4000, 3000))).toEqual({
       width: MEDIA_MAX_WIDTH,
-      height: Math.round((MEDIA_MAX_WIDTH * 3000) / 4000),
+      height: 195,
     });
   });
 
   it("scales a tall portrait down to the height cap", () => {
     const size = mediaSize(attachment(1080, 2400));
     expect(size.height).toBe(MEDIA_MAX_HEIGHT);
-    expect(size.width).toBe(Math.round((MEDIA_MAX_HEIGHT * 1080) / 2400));
+    expect(size.width).toBe(153);
   });
 
   it("never upscales a small image", () => {
@@ -43,9 +43,10 @@ describe("mediaSize", () => {
 
 describe("throttledProgress", () => {
   it("holds until a meaningful step, then commits", () => {
-    const total = 100 * 1024 * 1024;
+    // 100 MiB total: the step floor is total/100 = 1 MiB.
+    const total = 104_857_600;
     expect(throttledProgress(0, 1024, total)).toBe(0);
-    expect(throttledProgress(0, total / 100, total)).toBe(total / 100);
+    expect(throttledProgress(0, 1_048_576, total)).toBe(1_048_576);
   });
 
   it("always commits the final byte count", () => {

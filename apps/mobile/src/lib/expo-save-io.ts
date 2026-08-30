@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import type { ApiClient } from "@/api/client";
+import { probeAttachmentStatus } from "./attachment-probe";
 import type { SaveAttachmentIo } from "./save-attachment";
 
 // The expo edges behind saveAttachment. The download streams to disk natively (an attachment can
@@ -8,8 +9,8 @@ import type { SaveAttachmentIo } from "./save-attachment";
 // not through the buffering http client.
 export function expoSaveIo(api: ApiClient): SaveAttachmentIo {
   return {
-    authedUrl: (path) => api.authedUrl(path),
-    probe: async (path) => (await api.request(path, { method: "HEAD" })).status,
+    authedUrl: (path, query) => api.authedUrl(path, query),
+    probe: (path) => probeAttachmentStatus(api, path),
     download: async (url, name, onProgress) => {
       const directory = new Directory(Paths.cache, "attachments");
       directory.create({ intermediates: true, idempotent: true });

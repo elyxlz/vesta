@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -27,6 +27,7 @@ import { Text } from "@/components/ui/Typography";
 import {
   MessageContextMenu,
   type MessageMenuAction,
+  type MessageMenuHandle,
 } from "@/components/message-context-menu";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { shareVestaMessage } from "@/sharing/share-message";
@@ -192,6 +193,11 @@ export const ChatEvent = memo(function ChatEvent({
 }) {
   const { colors } = usePreferences();
   const { api } = useSession();
+  // Android's menu wrapper loses the long-press to a pressable attachment block, so blocks get
+  // a handler that reopens the menu; iOS's native interaction needs none.
+  const menuRef = useRef<MessageMenuHandle | null>(null);
+  const openMenuFromBlock =
+    process.env.EXPO_OS === "ios" ? undefined : () => menuRef.current?.show?.();
   // Memoized because toLocaleTimeString builds an Intl formatter per call and
   // rows legitimately re-render (bubble-group flips on each appended message).
   const timestamp = useMemo(
@@ -336,6 +342,7 @@ export const ChatEvent = memo(function ChatEvent({
           user={user}
           attachment={attachment}
           onOpen={onOpenAttachment}
+          onLongPress={openMenuFromBlock}
         />
       ))}
       {hasCaption ? (
@@ -387,6 +394,7 @@ export const ChatEvent = memo(function ChatEvent({
     >
       <MessageContextMenu
         actions={actions}
+        menuRef={menuRef}
         bubbleFillColor={bubbleColor}
         bubbleStrokeColor={user ? "transparent" : colors.border}
         bubbleStrokeWidth={user ? 0 : StyleSheet.hairlineWidth}

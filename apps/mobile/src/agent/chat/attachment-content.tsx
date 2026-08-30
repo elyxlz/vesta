@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Image } from "expo-image";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
@@ -10,6 +10,7 @@ import {
   type ChatAttachment,
 } from "@vesta/core";
 import type { ApiClient } from "@/api/client";
+import { probeAttachmentStatus } from "@/lib/attachment-probe";
 import { useAuthedMediaUri } from "@/lib/authed-media-uri";
 import { expoSaveIo } from "@/lib/expo-save-io";
 import { AttachmentRemovedError, saveAttachment } from "@/lib/save-attachment";
@@ -37,6 +38,9 @@ interface BlockContext {
   api: ApiClient;
   agent: string;
   user: boolean;
+  // Android only: reopens the message menu, which the block's own Pressable would otherwise
+  // swallow the long-press from.
+  onLongPress?: () => void;
 }
 
 // Tiles sit inside a saturated accent bubble (user) or a card bubble (agent), so the palette is
@@ -64,6 +68,7 @@ function Tile({
   name,
   detail,
   onPress,
+  onLongPress,
   accessibilityLabel,
   trailing,
 }: {
@@ -72,6 +77,7 @@ function Tile({
   name: string;
   detail: string;
   onPress?: () => void;
+  onLongPress?: () => void;
   accessibilityLabel: string;
   trailing?: keyof typeof Ionicons.glyphMap;
 }) {
@@ -81,8 +87,9 @@ function Tile({
     <Pressable
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      disabled={!onPress}
+      disabled={!onPress && !onLongPress}
       onPress={onPress}
+      onLongPress={onLongPress}
       style={({ pressed }) => [
         styles.tile,
         { backgroundColor: palette.background, opacity: pressed ? 0.72 : 1 },
@@ -137,6 +144,7 @@ function RemovedTile({
       name={attachment.name}
       detail={`${formatBytes(attachment.size)} · no longer available`}
       accessibilityLabel={`${attachment.name}, no longer available`}
+      onLongPress={context.onLongPress}
     />
   );
 }
@@ -176,6 +184,7 @@ function ImageBlock({
           setEpoch((current) => current + 1);
           setPhase("loading");
         }}
+        onLongPress={context.onLongPress}
       />
     );
   }
@@ -186,11 +195,13 @@ function ImageBlock({
       onPress={() => {
         onOpen({ attachment });
       }}
+      onLongPress={context.onLongPress}
       style={[styles.media, size, { backgroundColor: colors.input }]}
     >
       {uri !== null && (
         <Image
-          source={{ uri }}
+          // The cache key pins on the id: the uri's token rotates, the bytes never do.
+          source={{ uri, cacheKey: attachment.id }}
           contentFit="cover"
           style={StyleSheet.absoluteFill}
           onLoad={() => {
@@ -198,12 +209,12 @@ function ImageBlock({
           }}
           onError={() => {
             // An image error carries no status; a bodyless HEAD tells removed from transient.
-            void context.api
-              .request(appChatAttachmentPath(context.agent, attachment.id), {
-                method: "HEAD",
-              })
-              .then((response) => {
-                setPhase(response.status === 410 ? "removed" : "error");
+            void probeAttachmentStatus(
+              context.api,
+              appChatAttachmentPath(context.agent, attachment.id),
+            )
+              .then((status) => {
+                setPhase(status === 410 ? "removed" : "error");
               })
               .catch(() => {
                 setPhase("error");
@@ -216,9 +227,11 @@ function ImageBlock({
 }
 
 function VideoBlock({
+  onLongPress,
   attachment,
   onOpen,
 }: {
+  onLongPress?: () => void;
   attachment: ChatAttachment;
   onOpen: (request: OpenViewerRequest) => void;
 }) {
@@ -230,6 +243,7 @@ function VideoBlock({
       onPress={() => {
         onOpen({ attachment });
       }}
+      onLongPress={onLongPress}
       style={[styles.media, styles.videoPoster, size]}
     >
       <View style={styles.playBadge}>
@@ -249,15 +263,66 @@ function AudioBlock({
   context: BlockContext;
   attachment: ChatAttachment;
 }) {
+  // The native player mounts only after the first tap: a voice-note-heavy history would
+  // otherwise construct a buffering player (and, on Android, a MediaSession) per visible row.
+  const [active, setActive] = useState(false);
+  const [removed, setRemoved] = useState(false);
+  if (removed) return <RemovedTile context={context} attachment={attachment} />;
+  if (!active) {
+    return (
+      <Tile
+        context={context}
+        icon="play"
+        name={attachment.name}
+        detail={audioIdleDetail(attachment)}
+        accessibilityLabel={`Play ${attachment.name}`}
+        onPress={() => {
+          setActive(true);
+        }}
+        onLongPress={context.onLongPress}
+      />
+    );
+  }
+  return (
+    <ActiveAudioTile
+      context={context}
+      attachment={attachment}
+      onRemoved={() => {
+        setRemoved(true);
+      }}
+    />
+  );
+}
+
+function audioIdleDetail(attachment: ChatAttachment): string {
+  return `${formatBytes(attachment.size)}${attachment.duration_secs ? ` · ${Math.round(attachment.duration_secs)}s` : ""}`;
+}
+
+function ActiveAudioTile({
+  context,
+  attachment,
+  onRemoved,
+}: {
+  context: BlockContext;
+  attachment: ChatAttachment;
+  onRemoved: () => void;
+}) {
   const uri = useAuthedMediaUri(
     context.api,
     appChatAttachmentPath(context.agent, attachment.id),
   );
   const player = useAudioPlayer(uri ? { uri } : null);
   const status = useAudioPlayerStatus(player);
+  // The tap that mounted this tile meant "play": start once the source has loaded.
+  const autoplayed = useRef(false);
+  useEffect(() => {
+    if (!status.isLoaded || autoplayed.current) return;
+    autoplayed.current = true;
+    player.play();
+  }, [player, status.isLoaded]);
   const detail = status.playing
     ? `${Math.floor(status.currentTime)}s / ${Math.floor(status.duration)}s`
-    : `${formatBytes(attachment.size)}${attachment.duration_secs ? ` · ${Math.round(attachment.duration_secs)}s` : ""}`;
+    : audioIdleDetail(attachment);
   return (
     <Tile
       context={context}
@@ -272,11 +337,24 @@ function AudioBlock({
           player.pause();
           return;
         }
+        if (!status.isLoaded) {
+          // The player load failed silently; a bodyless HEAD tells removed from transient.
+          void probeAttachmentStatus(
+            context.api,
+            appChatAttachmentPath(context.agent, attachment.id),
+          )
+            .then((probed) => {
+              if (probed === 410) onRemoved();
+            })
+            .catch(() => undefined);
+          return;
+        }
         // A finished player sits at the end; replay from the top.
         if (status.currentTime >= status.duration && status.duration > 0)
           player.seekTo(0);
         player.play();
       }}
+      onLongPress={context.onLongPress}
     />
   );
 }
@@ -337,6 +415,7 @@ function FileBlock({
       detail={detail}
       accessibilityLabel={`Save ${attachment.name}`}
       onPress={phase === "fetching" ? undefined : start}
+      onLongPress={context.onLongPress}
       trailing="download-outline"
     />
   );
@@ -348,21 +427,29 @@ export function AttachmentContent({
   user,
   attachment,
   onOpen,
+  onLongPress,
 }: {
   api: ApiClient;
   agent: string;
   user: boolean;
   attachment: ChatAttachment;
   onOpen: (request: OpenViewerRequest) => void;
+  onLongPress?: () => void;
 }) {
-  const context: BlockContext = { api, agent, user };
+  const context: BlockContext = { api, agent, user, onLongPress };
   const kind = attachmentKind(attachment.mime);
   if (kind === "image")
     return (
       <ImageBlock context={context} attachment={attachment} onOpen={onOpen} />
     );
   if (kind === "video")
-    return <VideoBlock attachment={attachment} onOpen={onOpen} />;
+    return (
+      <VideoBlock
+        onLongPress={onLongPress}
+        attachment={attachment}
+        onOpen={onOpen}
+      />
+    );
   if (kind === "audio")
     return <AudioBlock context={context} attachment={attachment} />;
   return <FileBlock context={context} attachment={attachment} />;

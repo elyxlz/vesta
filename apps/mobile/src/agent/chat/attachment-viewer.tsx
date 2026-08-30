@@ -46,8 +46,8 @@ import {
 } from "@/agent/chat/viewer-gesture";
 
 // The fullscreen media viewer: pinch-zoom + pan + double-tap for images (all on the UI thread
-// through the pure viewer-gesture model), native-controls video, swipe-down or tap-away
-// dismiss, and the share sheet. Keyed by attachment id, so switching media resets everything.
+// through the pure viewer-gesture model), native-controls video, swipe-down dismiss, and the
+// share sheet. Keyed by attachment id, so switching media resets everything.
 
 const DISMISS_MS = 160;
 
@@ -116,10 +116,13 @@ function ZoomableImage({
       // Fitted: a downward drag tracks toward dismissal instead of panning.
       dismissY.set(Math.max(0, event.translationY));
     })
-    .onEnd(() => {
-      if (dismissY.get() > DISMISS_DRAG_PX) {
-        dismissY.set(withTiming(container.height, { duration: DISMISS_MS }));
-        runOnJS(onClose)();
+    .onEnd((_event, success) => {
+      if (success && dismissY.get() > DISMISS_DRAG_PX) {
+        dismissY.set(
+          withTiming(container.height, { duration: DISMISS_MS }, (finished) => {
+            if (finished) runOnJS(onClose)();
+          }),
+        );
         return;
       }
       dismissY.set(withTiming(0, { duration: DISMISS_MS }));
@@ -158,15 +161,17 @@ function ZoomableImage({
 
   return (
     <GestureDetector gesture={gesture}>
-      <Animated.View style={[styles.mediaLayer, animatedStyle]}>
-        {uri !== null && (
-          <Image
-            source={{ uri }}
-            contentFit="contain"
-            style={{ width: fitted.width, height: fitted.height }}
-          />
-        )}
-      </Animated.View>
+      <View style={styles.gestureSurface}>
+        <Animated.View style={animatedStyle}>
+          {uri !== null && (
+            <Image
+              source={{ uri, cacheKey: attachment.id }}
+              contentFit="contain"
+              style={{ width: fitted.width, height: fitted.height }}
+            />
+          )}
+        </Animated.View>
+      </View>
     </GestureDetector>
   );
 }
@@ -210,8 +215,8 @@ export function AttachmentViewer({
   const share = () => {
     setSharing(true);
     saveAttachment(expoSaveIo(api), agent, attachment)
-      .catch((error: unknown) => {
-        showError(error, `Couldn't share ${attachment.name}`);
+      .catch(() => {
+        showError(`Couldn't share ${attachment.name}`);
       })
       .finally(() => {
         setSharing(false);
@@ -284,7 +289,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  mediaLayer: { alignItems: "center", justifyContent: "center" },
+  // The gesture surface spans the whole screen (untransformed), so focal/tap coordinates stay
+  // in container space and a swipe-down can start on the letterbox, not only on the image.
+  gestureSurface: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   video: { width: "100%", height: "70%" },
   topBar: {
     position: "absolute",
