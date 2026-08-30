@@ -2,9 +2,6 @@ import { apiJson } from "@/api/client";
 import { authedUrl, websocketUrl } from "@/lib/authed-url";
 
 const SAMPLE_RATE = 16000;
-// About two seconds of 16 kHz 16-bit mono: audio captured before the socket opens is kept up
-// to this, oldest frames dropped first.
-export const MAX_PENDING_AUDIO_BYTES = SAMPLE_RATE * 2 * 2;
 
 function voicePost(
   agentName: string,
@@ -147,46 +144,49 @@ function ttsStreamUrl(agentName: string, id: string): Promise<string> {
   );
 }
 
-export async function streamSpeech(
-  text: string,
-  agentName: string,
-  signal?: AbortSignal,
-  preparedId?: string,
-): Promise<void> {
-  const id = preparedId ?? (await prepareSpeech(text, agentName, signal));
-  if (signal?.aborted) return;
+import type { AudioCapture, SpeechPlayer, VoiceSocketLike } from "@vesta/core";
 
-  const src = await ttsStreamUrl(agentName, id);
-  if (signal?.aborted) return;
-
-  const audio = new Audio(src);
-  audio.preload = "auto";
-
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = () => {
-      audio.onended = null;
-      audio.onerror = null;
-    };
-    if (signal) {
-      // Resolve (not reject) on abort so the caller's await completes instead
-      // of hanging when playback is cancelled mid-stream.
-      signal.addEventListener("abort", () => {
-        cleanup();
-        audio.pause();
-        audio.src = "";
-        resolve();
+// The SpeechPlayer port the TTS queue drives: prepare registers the text, play streams one
+// prepared utterance through a native <audio> element (the media stack streams from the first
+// byte on every webview and owns Bluetooth routing).
+export function browserPlayer(agentName: () => string | null): SpeechPlayer {
+  return {
+    prepare: (text) => {
+      const name = agentName();
+      if (!name) return Promise.reject(new Error("no agent selected"));
+      return prepareSpeech(text, name);
+    },
+    play: async (id, signal) => {
+      const name = agentName();
+      if (!name || signal.aborted) return;
+      const src = await ttsStreamUrl(name, id);
+      const audio = new Audio(src);
+      audio.preload = "auto";
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          audio.onended = null;
+          audio.onerror = null;
+        };
+        // Resolve (not reject) on abort so the queue's await completes instead of hanging
+        // when playback is cancelled mid-stream.
+        signal.addEventListener("abort", () => {
+          cleanup();
+          audio.pause();
+          audio.src = "";
+          resolve();
+        });
+        audio.onended = () => {
+          cleanup();
+          resolve();
+        };
+        audio.onerror = () => {
+          cleanup();
+          reject(new Error("Audio playback failed"));
+        };
+        audio.play().catch(reject);
       });
-    }
-    audio.onended = () => {
-      cleanup();
-      resolve();
-    };
-    audio.onerror = () => {
-      cleanup();
-      reject(new Error("Audio playback failed"));
-    };
-    audio.play().catch(reject);
-  });
+    },
+  };
 }
 
 // --- Audio preload ---
@@ -213,262 +213,110 @@ export function preloadAudio(): Promise<void> {
   return preloadPromise;
 }
 
-// --- STT streaming ---
+// --- STT capture and socket (the ports the shared STT session drives) ---
 
-export interface TranscriberOptions {
-  agentName: string;
-  accumulate?: boolean;
-  onTranscript: (text: string) => void;
-  onTurnEnd: (text: string) => void;
-  onTurnStart: () => void;
-  onError: (error: string) => void;
+export function voiceWsUrl(agentName: string): Promise<string> {
+  return websocketUrl(
+    `/agents/${encodeURIComponent(agentName)}/voice/stt/listen`,
+  );
 }
 
-interface DeepgramEvent {
-  type: string;
-  event?: string;
-  transcript?: string;
+// The socket port over a browser WebSocket. The shared session assigns the callbacks
+// synchronously after this returns, before the browser can fire an event, so no open is lost.
+export function browserSocket(url: string): VoiceSocketLike {
+  const ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+  const adapter: VoiceSocketLike = {
+    send: (data) => {
+      try {
+        ws.send(data);
+      } catch {
+        // socket may have closed between the session's check and this send — ignore
+      }
+    },
+    close: () => {
+      try {
+        ws.close();
+      } catch {
+        /* already closed */
+      }
+    },
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+  };
+  ws.onopen = () => adapter.onopen?.();
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") adapter.onmessage?.(ev.data);
+  };
+  ws.onclose = (ev) => adapter.onclose?.(ev.reason);
+  return adapter;
 }
 
-export class Transcriber {
-  private opts: TranscriberOptions;
-  private stream: MediaStream | null = null;
-  private audioCtx: AudioContext | null = null;
-  private socket: WebSocket | null = null;
-  private transcript = "";
-  private committed = "";
-  private active = false;
-  private pending: ArrayBuffer[] = [];
-  private pendingBytes = 0;
+// The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped.
+export function browserCapture(): AudioCapture {
+  let stream: MediaStream | null = null;
+  let audioCtx: AudioContext | null = null;
 
-  constructor(opts: TranscriberOptions) {
-    this.opts = opts;
-  }
-
-  async start(): Promise<void> {
-    if (this.active) return;
-    this.active = true;
-    this.transcript = "";
-    this.committed = "";
-    this.pending = [];
-    this.pendingBytes = 0;
-
-    if (!("mediaDevices" in navigator)) {
-      this.active = false;
-      throw new Error("Microphone requires a secure connection");
-    }
-
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-    } catch (err) {
-      this.active = false;
-      if (err instanceof DOMException) {
-        if (err.name === "NotAllowedError")
-          throw new Error("Microphone permission denied", { cause: err });
-        if (err.name === "NotFoundError")
-          throw new Error("No microphone found", { cause: err });
-        if (err.name === "NotReadableError")
-          throw new Error("Microphone is in use by another app", {
-            cause: err,
-          });
-      }
-      throw new Error("Could not access microphone", { cause: err });
-    }
-    if (this.stoppedMidStart()) return;
-
-    try {
-      this.audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    } catch {
-      this.cleanup();
-      throw new Error(
-        "Could not initialize audio: browser may not support AudioContext",
-      );
-    }
-
-    try {
-      await this.audioCtx.audioWorklet.addModule(WORKLET_URL);
-    } catch {
-      this.cleanup();
-      throw new Error("Could not load audio worklet");
-    }
-    if (this.stoppedMidStart()) return;
-
-    // The microphone runs before the socket dials, so the first words after the press are
-    // kept (up to the pending cap) and flushed the moment the socket opens.
-    const source = this.audioCtx.createMediaStreamSource(this.stream);
-    const workletNode = new AudioWorkletNode(this.audioCtx, "pcm-processor", {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: 1,
-    });
-    workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      if (this.active) this.sendOrBuffer(floatTo16BitPCM(e.data));
-    };
-    source.connect(workletNode);
-    workletNode.connect(this.audioCtx.destination);
-
-    let socket: WebSocket;
-    try {
-      const url = await this.buildWsUrl();
-      socket = new WebSocket(url);
-      socket.binaryType = "arraybuffer";
-      await new Promise<void>((resolve, reject) => {
-        socket.onopen = () => resolve();
-        socket.onerror = () => reject(new Error("websocket error"));
-        socket.onclose = (ev) =>
-          reject(new Error(ev.reason || "closed before open"));
-      });
-    } catch {
-      this.cleanup();
-      throw new Error("Could not connect to transcription service");
-    }
-    if (this.stoppedMidStart()) {
-      socket.close();
-      return;
-    }
-
-    socket.onmessage = (ev) => {
-      if (typeof ev.data !== "string") return;
-      let data: DeepgramEvent;
-      try {
-        data = JSON.parse(ev.data) as DeepgramEvent;
-      } catch {
-        return;
-      }
-      if (data.type === "TurnInfo") {
-        if (data.event === "StartOfTurn") {
-          this.transcript = "";
-          this.opts.onTurnStart();
-        }
-        if (data.transcript) {
-          this.transcript = data.transcript;
-          const display =
-            this.opts.accumulate && this.committed
-              ? `${this.committed} ${this.transcript}`
-              : this.transcript;
-          this.opts.onTranscript(display);
-        }
-        if (data.event === "EndOfTurn") {
-          const text = this.transcript.trim();
-          this.transcript = "";
-          if (!text) return;
-          this.opts.onTurnEnd(text);
-          if (this.opts.accumulate) {
-            this.committed = this.committed
-              ? `${this.committed} ${text}`
-              : text;
-            this.opts.onTranscript(this.committed);
-          } else {
-            this.opts.onTranscript("");
-          }
-        }
-        return;
-      }
-      if (data.type === "ConfigureFailure") {
-        this.opts.onError("Transcription configuration error");
-        this.stop();
-      }
-      if (data.type === "Error") {
-        this.opts.onError("Transcription service error");
-        this.stop();
-      }
-    };
-
-    socket.onerror = () => {
-      this.opts.onError("Connection to transcription service lost");
-      this.stop();
-    };
-
-    socket.onclose = () => {
-      if (this.active) {
-        this.active = false;
-        this.opts.onError("Transcription connection closed unexpectedly");
-        this.cleanup();
-      }
-    };
-
-    this.socket = socket;
-    for (const frame of this.pending) socket.send(frame);
-    this.pending = [];
-    this.pendingBytes = 0;
-  }
-
-  private sendOrBuffer(frame: ArrayBuffer): void {
-    if (this.socket) {
-      try {
-        this.socket.send(frame);
-      } catch {
-        // socket may have closed between check and send — ignore
-      }
-      return;
-    }
-    while (
-      this.pending.length > 0 &&
-      this.pendingBytes + frame.byteLength > MAX_PENDING_AUDIO_BYTES
-    ) {
-      const dropped = this.pending.shift();
-      this.pendingBytes -= dropped?.byteLength ?? 0;
-    }
-    if (frame.byteLength > MAX_PENDING_AUDIO_BYTES) return;
-    this.pending.push(frame);
-    this.pendingBytes += frame.byteLength;
-  }
-
-  stop(): void {
-    if (!this.active) return;
-    this.active = false;
-    // An in-flight partial is not a turn: the caller read what it wants before stopping.
-    this.transcript = "";
-    this.cleanup();
-  }
-
-  isActive(): boolean {
-    return this.active;
-  }
-
-  // stop() during one of start()'s awaits flips `active`; the rest of start() must then
-  // release whatever it just acquired instead of wiring it up.
-  private stoppedMidStart(): boolean {
-    if (this.active) return false;
-    this.cleanup();
-    return true;
-  }
-
-  private buildWsUrl(): Promise<string> {
-    return websocketUrl(
-      `/agents/${encodeURIComponent(this.opts.agentName)}/voice/stt/listen`,
-    );
-  }
-
-  private cleanup(): void {
-    this.pending = [];
-    this.pendingBytes = 0;
-    if (this.socket) {
-      try {
-        this.socket.close();
-      } catch {
-        /* ignore */
-      }
-      this.socket = null;
-    }
-    if (this.audioCtx) {
-      this.audioCtx.close().catch(() => {
+  const teardown = (): void => {
+    if (audioCtx) {
+      audioCtx.close().catch(() => {
         /* already closed */
       });
-      this.audioCtx = null;
+      audioCtx = null;
     }
-    if (this.stream) {
-      this.stream.getTracks().forEach((t) => t.stop());
-      this.stream = null;
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      stream = null;
     }
-    this.active = false;
-  }
+  };
+
+  return {
+    start: async (onFrame) => {
+      if (!("mediaDevices" in navigator))
+        throw new Error("Microphone requires a secure connection");
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      } catch (err) {
+        if (err instanceof DOMException) {
+          if (err.name === "NotAllowedError")
+            throw new Error("Microphone permission denied", { cause: err });
+          if (err.name === "NotFoundError")
+            throw new Error("No microphone found", { cause: err });
+          if (err.name === "NotReadableError")
+            throw new Error("Microphone is in use by another app", {
+              cause: err,
+            });
+        }
+        throw new Error("Could not access microphone", { cause: err });
+      }
+      try {
+        audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+        await audioCtx.audioWorklet.addModule(WORKLET_URL);
+      } catch {
+        teardown();
+        throw new Error("Could not initialize audio capture");
+      }
+      const source = audioCtx.createMediaStreamSource(stream);
+      const workletNode = new AudioWorkletNode(audioCtx, "pcm-processor", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        channelCount: 1,
+      });
+      workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+        onFrame(floatTo16BitPCM(e.data));
+      };
+      source.connect(workletNode);
+      workletNode.connect(audioCtx.destination);
+    },
+    stop: teardown,
+  };
 }
 
 function floatTo16BitPCM(float32: Float32Array): ArrayBuffer {

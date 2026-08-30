@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer } from "react"
+import { useCallback, useEffect, useReducer, useRef } from "react"
 import type { Controller } from "../controller/controller"
 import type { Delta } from "../protocol/deltas"
 import {
@@ -12,14 +12,14 @@ import {
   loggedFromDelta,
   markUserNotificationsSeen,
 } from "../notifications-pill/user-notification-feed"
+import { notificationReadInPlace } from "../notifications-pill/notifications-pill"
 
 export interface NotificationFeedOptions {
   pageSize: number
-  /**
-   * A newest page loaded into an empty feed shows its skeletons for at least
-   * this long, so a near-instant answer reads as a loading state, not a flash.
-   */
-  minLoadingMs: number
+  /** The agent whose page is open, if any. */
+  viewedAgent: string | null
+  /** Whether this client's window has the user's attention right now. */
+  focused: boolean
 }
 
 export interface NotificationFeedHandle {
@@ -34,42 +34,63 @@ export interface NotificationFeedHandle {
 /**
  * The feed's whole behavior, shared by every view: the live edge always flows
  * in (open or closed, so a reopened surface is current before its refresh
- * lands), each open refetches the newest page and merges it by id, and the
- * gateway's watermark is what "seen" means.
+ * lands), the newest page is prefetched the moment the controller exists (so
+ * the first open renders from memory, never a skeleton), each open refetches
+ * that page and merges it by id, and the gateway's watermark is what "seen"
+ * means. Each arrival is also judged against where the user was standing when
+ * it landed, which is what `feedUnseen` reads to keep the dot honest.
  */
 export function useNotificationFeed(
   controller: Controller | null,
-  { pageSize, minLoadingMs }: NotificationFeedOptions,
+  options: NotificationFeedOptions,
 ): NotificationFeedHandle {
+  const { pageSize } = options
   const [feed, dispatch] = useReducer(reduceFeed, EMPTY_FEED)
+
+  // Read through a ref, as the pill does: the subscription outlives every route
+  // and focus change, and each arrival is judged against the moment it landed.
+  const optionsRef = useRef(options)
+  useEffect(() => {
+    optionsRef.current = options
+  })
 
   useEffect(() => {
     if (!controller) return
     return controller.subscribeDeltas((delta: Delta) => {
       const entry = loggedFromDelta(delta)
-      if (entry) dispatch({ type: "arrived", entry })
+      if (!entry) return
+      const { viewedAgent, focused } = optionsRef.current
+      dispatch({
+        type: "arrived",
+        entry,
+        readInPlace: notificationReadInPlace(entry, viewedAgent, focused),
+      })
     })
   }, [controller])
 
-  const empty = feed.entries.length === 0
   const loadPage = useCallback(
     (before?: number) => {
       if (!controller) return
       dispatch({ type: "page_loading", before })
-      const hold = before === undefined && empty ? minLoadingMs : 0
-      const held = new Promise((resolve) => setTimeout(resolve, hold))
-      const page = fetchUserNotifications(controller.http, { before, limit: pageSize })
-      // allSettled, never all: a failing fetch still waits out the skeletons' hold.
-      void Promise.allSettled([page, held]).then(([result]) => {
-        if (result.status === "fulfilled") {
-          dispatch({ type: "page_loaded", page: result.value, before, pageSize })
-        } else {
+      void fetchUserNotifications(controller.http, { before, limit: pageSize }).then(
+        (page) => {
+          dispatch({ type: "page_loaded", page, before, pageSize })
+        },
+        () => {
           dispatch({ type: "page_failed", before })
-        }
-      })
+        },
+      )
     },
-    [controller, empty, minLoadingMs, pageSize],
+    [controller, pageSize],
   )
+
+  // The prefetch: one newest-page load as soon as the controller is there,
+  // before any surface opens. A failed prefetch stays "failed" (no retry loop);
+  // the next open refetches as every open does.
+  const newestStatus = feed.newest
+  useEffect(() => {
+    if (newestStatus === "idle") loadPage()
+  }, [newestStatus, loadPage])
 
   const open = useCallback(
     (seenAt: number) => {
