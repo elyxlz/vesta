@@ -7,8 +7,11 @@ import { ApiError, type HttpClient } from "../transport/http"
 export type IdGenerator = () => string
 
 export interface SendMessageBody {
-  text: string
+  // The caption; may be empty when attachments carry the message.
+  text?: string
   input_method?: InputMethod
+  // Finalized attachment ids (uploaded ahead of the send; the service embeds their metadata).
+  attachments?: string[]
 }
 
 // The send POST's disposition once it settles. `null` means accepted (persisted by the service;
@@ -36,7 +39,12 @@ export function sendMessage(
     .json(`/agents/${encodeURIComponent(agent)}/app-chat/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: body.text, input_method: body.input_method, intent_id: id }),
+      body: JSON.stringify({
+        text: body.text,
+        input_method: body.input_method,
+        attachments: body.attachments,
+        intent_id: id,
+      }),
     })
     .then((): SendFailure | null => null)
     .catch((error: unknown): SendFailure =>

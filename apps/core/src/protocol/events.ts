@@ -1,3 +1,5 @@
+import type { ChatAttachment } from "../attachments/attachment-model"
+
 export type InputMethod = "voice" | "typed"
 
 // Every event carries the events.db rowid as `id`; the snapshot is a frame, not
@@ -23,10 +25,15 @@ export type NotificationEvent = EventBase & NotificationFields
 
 export type VestaEvent =
   | (EventBase & { type: "status"; state: "idle" | "thinking" })
-  | (EventBase & { type: "user"; text: string; input_method?: InputMethod })
+  | (EventBase & {
+      type: "user"
+      text: string
+      input_method?: InputMethod
+      attachments?: ChatAttachment[]
+    })
   | (EventBase & { type: "assistant"; text: string })
   | (EventBase & { type: "thinking"; text: string; signature: string })
-  | (EventBase & { type: "chat"; text: string })
+  | (EventBase & { type: "chat"; text: string; attachments?: ChatAttachment[] })
   | (EventBase & { type: "tool_start"; tool: string; input: string; subagent?: boolean })
   | (EventBase & { type: "tool_end"; tool: string; subagent?: boolean })
   | (EventBase & { type: "error"; text: string })

@@ -252,3 +252,33 @@ describe("chat-stream-model", () => {
     expect(trimTail(state, 1)).toBe(state)
   })
 })
+
+describe("attachments on the stream", () => {
+  const ATTACHMENT = { id: "srv1", name: "photo.jpg", mime: "image/jpeg", size: 9 }
+
+  it("beginSend carries attachment metadata onto the optimistic bubble", () => {
+    const state = beginSend(initialChatState(), "look", "typed", "i-att", [ATTACHMENT])
+    const bubble = state.messages[0]
+    if (bubble?.type !== "user") throw new Error("expected a user bubble")
+    expect(bubble.attachments).toEqual([ATTACHMENT])
+    expect(bubble.send_state).toBe("sending")
+  })
+
+  it("the echo's attachment metadata is authoritative on confirmation", () => {
+    const begun = beginSend(initialChatState(), "look", "typed", "i-att", [ATTACHMENT])
+    const echoed = { ...ATTACHMENT, width: 100, height: 50 }
+    const { state } = foldLiveEvent(begun, {
+      type: "user",
+      id: 7,
+      ts: "2026-08-30T00:00:00Z",
+      text: "look",
+      intent_id: "i-att",
+      attachments: [echoed],
+    })
+    const bubble = state.messages[0]
+    if (bubble?.type !== "user") throw new Error("expected a user bubble")
+    expect(bubble.attachments).toEqual([echoed])
+    expect(bubble.id).toBe(7)
+    expect(bubble.send_state).toBeUndefined()
+  })
+})

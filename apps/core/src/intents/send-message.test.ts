@@ -49,3 +49,29 @@ describe("sendMessage", () => {
     expect(id).toBe("existing")
   })
 })
+
+describe("sendMessage with attachments", () => {
+  it("carries finalized attachment ids and an optional caption", async () => {
+    const json = vi.fn().mockResolvedValue({})
+    const { outcome } = sendMessage(
+      httpWith(json),
+      "scout",
+      { text: "", attachments: ["att1", "att2"] },
+      () => "i-a",
+    )
+    const call = json.mock.calls[0]
+    if (!call) throw new Error("no POST")
+    const body = JSON.parse((call[1] as { body: string }).body) as unknown
+    expect(body).toEqual({ text: "", attachments: ["att1", "att2"], intent_id: "i-a" })
+    expect(await outcome).toBeNull()
+  })
+
+  it("omits the attachments key entirely for plain text sends", () => {
+    const json = vi.fn().mockResolvedValue({})
+    sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-b")
+    const call = json.mock.calls[0]
+    if (!call) throw new Error("no POST")
+    const body = JSON.parse((call[1] as { body: string }).body) as Record<string, unknown>
+    expect("attachments" in body).toBe(false)
+  })
+})

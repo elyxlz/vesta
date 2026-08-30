@@ -1,3 +1,4 @@
+import type { ChatAttachment } from "../attachments/attachment-model"
 import type { InputMethod, VestaEvent } from "../protocol/events"
 import { PACING } from "../pacing/pacing"
 
@@ -132,6 +133,8 @@ export function foldLiveEvent(
             send_state: undefined,
             id: event.id ?? message.id,
             ts: event.ts ?? message.ts,
+            // The persisted echo's attachment metadata is authoritative over the optimistic copy.
+            ...(event.attachments ? { attachments: event.attachments } : {}),
           }
         : message,
     )
@@ -163,12 +166,14 @@ export function commitPacedChat(state: ChatState, event: ChatMessage): ChatState
 }
 
 // Optimistic send: register the intent and push a user bubble tagged { intent_id, send_state:
-// "sending" } that its append echo will later confirm.
+// "sending" } that its append echo will later confirm. Attachment metadata (already finalized
+// server-side before any send) rides the bubble so media renders during the in-flight window.
 export function beginSend(
   state: ChatState,
   text: string,
   inputMethod: InputMethod,
   intentId: string,
+  attachments?: ChatAttachment[],
 ): ChatState {
   const pendingIntents = new Set(state.pendingIntents)
   pendingIntents.add(intentId)
@@ -179,6 +184,7 @@ export function beginSend(
     intent_id: intentId,
     send_state: "sending",
     ts: new Date().toISOString(),
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
   }
   return { ...state, pendingIntents, messages: capTail([...state.messages, bubble]) }
 }
