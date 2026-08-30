@@ -5,6 +5,7 @@ import { ApiError, PACING } from "@vesta/core";
 import type { Controller, SocketLike, VestaEvent } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { useChatPacing } from "@/stores/use-chat-pacing";
+import { useVoice } from "@/stores/use-voice";
 import { fetchHistory } from "@/api/agents";
 import {
   fakeAgentNode,
@@ -398,6 +399,23 @@ describe("useAgentSocketState", () => {
 
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.isTyping).toBe(false);
+  });
+
+  it("commits at once during a voice conversation", async () => {
+    useVoice.setState({ recordingMode: "conversation" });
+    try {
+      const onAssistantMessage = vi.fn();
+      const { controller } = makeController();
+      const { result } = render(controller, { onAssistantMessage });
+      await openAndFlush();
+
+      deliver(chat(7, "pong"));
+
+      expect(result.current.messages).toHaveLength(1);
+      expect(onAssistantMessage).toHaveBeenCalledWith("pong");
+    } finally {
+      useVoice.setState({ recordingMode: null });
+    }
   });
 
   it("flushes a burst past the threshold after one typing delay", async () => {

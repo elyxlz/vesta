@@ -23,7 +23,6 @@ def create_app() -> web.Application:
     app.router.add_get("/stt/status", handlers.stt_status)
     app.router.add_get("/stt/usage", handlers.stt_usage)
     app.router.add_post("/stt/set-enabled", handlers.stt_set_enabled)
-    app.router.add_post("/stt/set-auto-send", handlers.stt_set_auto_send)
     app.router.add_post("/stt/set-eot", handlers.stt_set_eot)
     app.router.add_get("/stt/listen", handlers.stt_listen)
 

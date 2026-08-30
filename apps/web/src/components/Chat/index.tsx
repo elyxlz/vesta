@@ -59,14 +59,15 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
     sttAvailable,
-    voiceAutoSend,
-    isRecording,
-    liveTranscript,
-    toggleVoice,
-    voiceError,
-    registerChatCallbacks,
+    recordingMode,
+    listening,
     isSpeaking,
-    stopSpeech,
+    liveTranscript,
+    startVoice,
+    stopVoice,
+    cancelVoice,
+    voiceError,
+    registerChat,
   } = useVoice();
 
   const {
@@ -92,8 +93,10 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   }, [atBottom, trimHistory]);
 
   useEffect(() => {
-    registerChatCallbacks(send, setInput);
-  }, [registerChatCallbacks, send, setInput]);
+    registerChat(send, () => {
+      setInput("");
+    });
+  }, [registerChat, send, setInput]);
 
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -280,12 +283,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
               agentName={name}
               notAuthenticated={notAuthenticated}
               sttAvailable={sttAvailable}
-              isRecording={isRecording}
-              voiceAutoSend={voiceAutoSend}
-              liveTranscript={liveTranscript}
-              toggleVoice={toggleVoice}
+              recordingMode={recordingMode}
+              listening={listening}
               isSpeaking={isSpeaking}
-              onStopSpeech={stopSpeech}
+              liveTranscript={liveTranscript}
+              startVoice={startVoice}
+              stopVoice={stopVoice}
+              cancelVoice={cancelVoice}
               input={input}
               onInputChange={handleInput}
               onKeyDown={handleKeyDown}
