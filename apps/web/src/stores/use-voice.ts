@@ -179,16 +179,24 @@ export const useVoice = create<VoiceState>((set, get) => {
 
     startVoice: (mode) => {
       if (session.mode() !== null) return;
-      const { sttAvailable, agentName, ttsStatus } = get();
-      if (!sttAvailable || !agentName) {
-        set({
-          voiceError: "Voice input not configured — ask the agent to set it up",
-        });
+      const { sttAvailable, speechEnabled, agentName, sttStatus, ttsStatus } =
+        get();
+      if (!agentName) return;
+      // The voice buttons always show; a mode the settings do not allow points the user at the
+      // fix (set up, or enable) with a toast rather than starting a silent or dead session.
+      if (!sttAvailable) {
+        useToastStore
+          .getState()
+          .show(
+            "error",
+            sttStatus?.configured
+              ? "enable speech-to-text in the settings"
+              : "set up speech-to-text in the settings",
+          );
         return;
       }
-      // A conversation speaks back, so it needs text-to-speech ready. Point the user at the
-      // fix (set up, or enable) rather than starting a session that stays silent.
-      if (mode === "conversation" && !get().speechEnabled) {
+      // A conversation speaks back, so it also needs text-to-speech ready.
+      if (mode === "conversation" && !speechEnabled) {
         useToastStore
           .getState()
           .show(

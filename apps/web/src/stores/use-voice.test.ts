@@ -422,6 +422,16 @@ describe("recording modes", () => {
     expect(RecordingSocket.instances).toHaveLength(0);
   });
 
+  it("refuses dictation and points at speech-to-text when STT is off", () => {
+    useVoice.getState()._setSttStatus({ ...ENABLED_STT, enabled: false });
+    useVoice.getState().startVoice("dictation");
+    expect(useVoice.getState().recordingMode).toBeNull();
+    expect(useToastStore.getState().current?.title).toBe(
+      "enable speech-to-text in the settings",
+    );
+    useToastStore.getState().dismiss();
+  });
+
   it("refuses a conversation and points at setup when TTS is not configured", () => {
     useVoice.getState()._setTtsStatus(null);
     useVoice.getState().startVoice("conversation");

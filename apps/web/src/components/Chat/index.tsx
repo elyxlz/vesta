@@ -58,7 +58,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const toast = useToast();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
-    sttAvailable,
     recordingMode,
     listening,
     isSpeaking,
@@ -282,7 +281,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
               fullscreen={fullscreen}
               agentName={name}
               notAuthenticated={notAuthenticated}
-              sttAvailable={sttAvailable}
               recordingMode={recordingMode}
               listening={listening}
               isSpeaking={isSpeaking}

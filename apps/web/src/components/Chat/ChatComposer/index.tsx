@@ -99,7 +99,6 @@ interface ChatComposerProps {
   fullscreen?: boolean;
   agentName: string;
   notAuthenticated: boolean;
-  sttAvailable: boolean;
   recordingMode: VoiceMode | null;
   listening: boolean;
   isSpeaking: boolean;
@@ -118,7 +117,6 @@ export function ChatComposer({
   fullscreen,
   agentName,
   notAuthenticated,
-  sttAvailable,
   recordingMode,
   listening,
   isSpeaking,
@@ -148,7 +146,6 @@ export function ChatComposer({
     agentName,
   });
   const controls: ComposerControls = {
-    sttAvailable,
     recordingMode,
     inputDisabled,
     slot: rightSlot({ input, recordingMode }),
@@ -177,7 +174,6 @@ export function ChatComposer({
 }
 
 interface ComposerControls {
-  sttAvailable: boolean;
   recordingMode: VoiceMode | null;
   inputDisabled: boolean;
   slot: "conversation" | "send";
@@ -315,7 +311,6 @@ const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";
 
 function VoiceButtons({ controls }: { controls: ComposerControls }) {
   const {
-    sttAvailable,
     recordingMode,
     inputDisabled,
     slot,
@@ -325,10 +320,6 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
     onConversation,
     onSend,
   } = controls;
-
-  if (!sttAvailable) {
-    return <SendButton disabled={inputDisabled} onSend={onSend} />;
-  }
 
   if (recordingMode === "dictation") {
     return (
