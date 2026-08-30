@@ -62,10 +62,14 @@ fi
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    # -a because a log picks up NUL bytes from an unclean write or a killed process: grep then
-    # treats the stream as binary, and what it writes to stdout depends on the grep and on whether
-    # anything filters between the two, so the count can come back empty.
-    errors=$(tail -n 2000 "$log" | grep -aicE 'error|traceback')
+    # A healthy summary line such as "45 matching, 0 new, 0 error(s)" carries the word without
+    # reporting a failure, so drop lines whose error or warning count is zero before counting.
+    # -a on BOTH greps, because a log picks up NUL bytes from an unclean write or a killed process.
+    # grep then reads the stream as binary and writes nothing to stdout, so the FIRST grep passes on
+    # an empty stream and the second counts 0, and the log reports healthy forever.
+    errors=$(tail -n 2000 "$log" \
+        | grep -aivE '(^|[^0-9])0 (error|warning)s?\(?s?\)?|no errors' \
+        | grep -aicE 'error|traceback')
     # An uncomputable count is not zero. Without this the arithmetic test below errors on it and
     # takes the else branch, so a probe that has stopped working reports its log as healthy.
     case "$errors" in

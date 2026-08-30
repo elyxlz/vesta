@@ -290,3 +290,32 @@ def test_a_missing_dreamer_directory_goes_red(tmp_path):
 
     assert run.returncode == 1, run.stdout + run.stderr
     assert "no dreamer directory" in run.stdout
+
+
+def test_healthy_zero_error_summary_lines_stay_green(tmp_path):
+    # A daemon that ends each poll with "0 error(s)" carries the word without reporting a failure.
+    # Counting those lines makes a perfectly healthy daemon look like an error storm, and a probe
+    # that cries wolf on a healthy box is a probe nobody reads, which would defeat every other
+    # check in this file. Real case: 241 such lines in one daemon's recent tail, all healthy.
+    home = _healthy_home(tmp_path)
+    log = home / "agent" / "logs" / "flat-watch.log"
+    log.write_text("".join(f"[00:0{i % 10}:00] poll: 92 matching, 0 new, 0 error(s)\n" for i in range(300)))
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "flat-watch.log: 0 error lines" in run.stdout
+
+
+def test_a_real_error_storm_still_goes_red_alongside_zero_error_summaries(tmp_path):
+    # The filter must drop only the zero-count lines, never suppress real ones sharing the file.
+    home = _healthy_home(tmp_path)
+    log = home / "agent" / "logs" / "flat-watch.log"
+    healthy = "".join(f"[00:0{i % 10}:00] poll: 92 matching, 0 new, 0 error(s)\n" for i in range(300))
+    storm = "".join(f"[00:00:00] ERROR fetching page {i}\n" for i in range(250))
+    log.write_text(healthy + storm)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "error lines in its recent tail" in run.stdout
