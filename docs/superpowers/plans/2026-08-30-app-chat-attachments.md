@@ -52,12 +52,14 @@ def read_meta(root: Path, attachment_id: str) -> AttachmentMeta | None  # None u
 def blob_path(root: Path, attachment_id: str) -> Path
 def ingest_file(root: Path, source: Path, mime: str | None) -> AttachmentMeta  # copy-in for agent sends; mime guessed via mimetypes when None
 def sweep(root: Path, now: float, referenced: cabc.Callable[[str], bool]) -> list[str]  # removes stale .part sessions and unreferenced finalized dirs older than the max age
+def remove_blob(root: Path, attachment_id: str) -> int  # deletes the blob, keeps meta.json, returns freed bytes; idempotent (already-removed returns 0); raises UnknownAttachment
+def is_removed(root: Path, attachment_id: str) -> bool  # meta.json present, blob absent: the 410 condition
 def sanitize_filename(name: str) -> str  # strips path separators/control chars, caps length, never empty
 ```
 
 Disk layout per spec: `<root>/<id>/meta.json` + `<root>/<id>/<sanitized-name>` (staging suffix `.part`). Appends are offset-checked: a write at a stale offset raises with the true staged size, so a client that lost a response resyncs instead of corrupting the stage.
 
-- [ ] Write failing tests: session create rejects size over cap; sequential offset appends accumulate; a stale offset raises with `received` and stages nothing; a replayed append whose bytes already landed raises with `received == offset + len` (the lost-response case); `staged_size` tracks; finalize rejects size mismatch, renames the blob, and is an idempotent no-op when already finalized; `read_meta` is `None` pre-finalize; `ingest_file` copies and guesses mime; `sanitize_filename` strips `../` and slashes; `sweep` removes a stale `.part` and an old unreferenced dir but keeps a referenced one
+- [ ] Write failing tests: session create rejects size over cap; sequential offset appends accumulate; a stale offset raises with `received` and stages nothing; a replayed append whose bytes already landed raises with `received == offset + len` (the lost-response case); `staged_size` tracks; finalize rejects size mismatch, renames the blob, and is an idempotent no-op when already finalized; `read_meta` is `None` pre-finalize; `ingest_file` copies and guesses mime; `sanitize_filename` strips `../` and slashes; `sweep` removes a stale `.part` and an old unreferenced dir but keeps a referenced one and keeps a removed-blob dir (meta only); `remove_blob` frees and reports bytes, is idempotent, and flips `is_removed`
 - [ ] Implement `attachments.py` minimally to pass
 - [ ] Run the suite; commit `feat(app-chat): attachment blob store`
 
@@ -69,7 +71,7 @@ Disk layout per spec: `<root>/<id>/meta.json` + `<root>/<id>/<sanitized-name>` (
 
 **Interfaces (produces):** the five routes exactly as the spec's wire contract: `POST /attachments`, `PUT /attachments/{id}/data?offset={n}`, `GET /attachments/{id}/status`, `POST /attachments/{id}/complete`, `GET /attachments/{id}` (via `web.FileResponse` with `Content-Disposition` from `sanitize_filename`, `?download=1` toggling `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, max-age=31536000, immutable`). `web.Application(client_max_size=MAX_CHUNK_BYTES + 1024 * 1024)`. `ServiceState` gains `attachments_root: Path` (default `data_dir / "attachments"`); daemon start runs `sweep` with a referenced-check that scans `events.data` for the candidate id.
 
-- [ ] Write failing aiohttp test-client tests: full happy path (create → 2 offset PUTs → complete → GET bytes round-trip with correct headers); 413 on oversize declare; 409 on a stale offset carries `received`; status reports `{received, size, finalized}` mid-stage and post-finalize; complete is idempotent (second call returns the same metadata); 409 on complete with missing bytes; 404 on unknown id; Range request returns 206; `?download=1` flips disposition
+- [ ] Write failing aiohttp test-client tests: full happy path (create → 2 offset PUTs → complete → GET bytes round-trip with correct headers); 413 on oversize declare; 409 on a stale offset carries `received`; status reports `{received, size, finalized}` mid-stage and post-finalize; complete is idempotent (second call returns the same metadata); 409 on complete with missing bytes; 404 on unknown id; 410 on a removed blob (meta present, blob absent); Range request returns 206; `?download=1` flips disposition
 - [ ] Implement routes; run; commit `feat(app-chat): chunked attachment upload and download routes`
 
 ### Task 1.3: message intake with attachments
@@ -92,12 +94,23 @@ Validation order inside the handler, preserving at-most-once: parse body → req
 - [ ] Write failing tests: `send` with one attach path ingests the file, appends a `chat` event with `attachments`, and the reply carries the event id; missing source path errors on stderr with non-zero exit; empty message + attach passes lint; user-notification preview falls back to the attachment name when text is empty
 - [ ] Implement; run; commit `feat(app-chat): send --attach`
 
-### Task 1.5: SKILL.md + checks
+### Task 1.5: `app-chat attachments` CLI (list, rm)
+
+**Files:**
+- Modify: `cli.py` (subparser), `commands.py` (`cmd_attachments_list`, `cmd_attachments_rm`)
+- Test: `agent/skills/app-chat/cli/tests/test_attachments_cli.py`
+
+**Interfaces (produces):** the spec's CLI contract. `list` reads the attachments dir plus the store db directly (largest-first default, `--sort size|date`, `--limit`, `--min-size`), joining each id to its referencing event for `ts` and `direction` (`user` event → `received`, `chat` → `sent`) and marking `removed` via `is_removed`; prints one line: `{"attachments": [...], "count": n, "total_bytes": n}`. `rm` calls `remove_blob` per id, prints `{"removed": [...], "freed_bytes": n}`, and fails on stderr with non-zero exit for an unknown id. No daemon socket involved; works with the daemon up or down.
+
+- [ ] Write failing tests: list sorts largest-first with correct `total_bytes`; `--sort date`, `--limit`, and `--min-size` filter; `direction` and `ts` join correctly; a removed id lists with `removed: true` and its size excluded from `total_bytes`; rm frees the blob, keeps `meta.json`, reports `freed_bytes`, is idempotent, and exits non-zero on an unknown id with a single-line JSON error on stderr
+- [ ] Implement; run; commit `feat(app-chat): attachments list and rm`
+
+### Task 1.6: SKILL.md + checks
 
 **Files:**
 - Modify: `agent/skills/app-chat/SKILL.md`
 
-The spec's "Agent side" section carries the draft copy: the description gains "send files with --attach" as a discovery trigger, and a new `## Attachments` body section covers receiving (the `attachments` notification attribute with absolute paths, `Read` for images/PDFs, shell tools otherwise, never delete under `~/.app-chat/attachments/`), sending (`--attach` examples with and without `--message`, temp files safe to remove after, 512 MB cap, lint on text only), and the preference to attach real artifacts instead of pasting them as text. Rules: invoke vesta-prompt-guide before writing, state mechanism only (no changelog prose), concrete command examples over descriptions, no dash separators (the SKILL.md dash guard covers this file).
+The spec's "Agent side" section carries the draft copy: the description gains "send files with --attach" as a discovery trigger, and a new `## Attachments` body section covers receiving (the `attachments` notification attribute with absolute paths and sizes, `Read` for images/PDFs, shell tools otherwise), sending (`--attach` examples with and without `--message`, temp files safe to remove after, 512 MB cap, lint on text only), disk management (`app-chat attachments list|rm`, never raw-delete under `~/.app-chat/attachments/`), and the preference to attach real artifacts instead of pasting them as text. Rules: invoke vesta-prompt-guide before writing, state mechanism only (no changelog prose), concrete command examples over descriptions, no dash separators (the SKILL.md dash guard covers this file).
 
 - [ ] Write the section following the draft; verify against the guide's checklist (description states when, not how; no old-design prose)
 - [ ] Confirm zero `agent/core/` diffs in the PR (the spec's designed property: notification rendering and interrupt policy are generic)
@@ -245,7 +258,7 @@ States per spec: idle / valid drag-over overlay / non-file drag ignored (`dataTr
 - Create: `apps/web/src/components/Chat/AttachmentChips/index.tsx`
 - Modify: `ChatComposer/index.tsx` (render the row as a `basis-full` child of the existing flex-wrap pill so the `layout` spring animates growth)
 
-Chip states per spec (uploading ring with determinate progress, waiting with the wifi-off glyph and auto-resume, uploaded, terminal error + retry, remove). Thumbnails from `previewUrl`, kind icon tiles otherwise (lucide `FileText`/`Film`/`Music`/`File`, `WifiOff` for waiting). Verify the composer height measurement (`hasDraftRef` rule) still behaves with the taller pill.
+Chip states per spec (uploading ring with determinate progress, waiting with the wifi-off glyph and auto-resume, uploaded, terminal error + retry, remove). Every chip shows name + `formatBytes(size)` from the moment it appears; two or more chips add the muted totals footer ("3 files · 48 MB"). Thumbnails from `previewUrl`, kind icon tiles otherwise (lucide `FileText`/`Film`/`Music`/`File`, `WifiOff` for waiting). Verify the composer height measurement (`hasDraftRef` rule) still behaves with the taller pill.
 
 - [ ] Implement; add a visual-qa scenario for the chip states; commit
 
@@ -272,7 +285,7 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 ### Task 4.2: attachment bubble content
 
 **Files:**
-- Create: `apps/web/src/components/Chat/ChatBubble/AttachmentContent/index.tsx` (routes on `attachmentKind`: image with `aspect-ratio` pre-size + skeleton + broken-fallback with manual retry and one auto-retry per `connected` reconnect edge; video `controls preload="metadata"`; audio compact; file tile with download states, progress read from the response stream against metadata `size`)
+- Create: `apps/web/src/components/Chat/ChatBubble/AttachmentContent/index.tsx` (routes on `attachmentKind`: image with `aspect-ratio` pre-size + skeleton + broken-fallback with manual retry and one auto-retry per `connected` reconnect edge; video `controls preload="metadata"`; audio compact; file tile with download states, progress read from the response stream against metadata `size`; the removed tile on a 410, terminal with no retry; `formatBytes(size)` on the file tile, the lightbox caption, and the video/audio corner badge)
 - Modify: `ChatBubble/index.tsx` (render attachment blocks stacked above the markdown caption inside `BubbleContent`; optimistic rows read `previewUrl` from the Chat-level map before the echo)
 - Test: render tests for each kind and for caption-less messages; visual-qa scenarios for all four bubble kinds in both user and agent variants, loading and error states
 
@@ -302,6 +315,7 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 | routes incl. status, Range, dispositions | `test_service.py` |
 | intake invariant + notification line | `test_service.py` |
 | `send --attach` | `test_daemon.py` |
+| `attachments list`/`rm` + 410 serve state | `test_attachments_cli.py`, `test_service.py` |
 | engine: adaptive sizing, 409 resync, offline parking, status-probe resume, timeout, abort | `upload.test.ts` |
 | reconnect re-post of a retry-state send | `use-agent-socket` tests |
 | draft reducer | `attachment-draft.test.ts` |

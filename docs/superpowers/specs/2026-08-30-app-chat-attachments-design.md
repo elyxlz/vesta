@@ -76,6 +76,9 @@ GET /attachments/{id}                        # streams the blob
      Accept-Ranges/Range supported (web.FileResponse)
   ?download=1 -> Content-Disposition: attachment
   -> 404 unknown id
+  -> 410 { "error": "attachment removed" }   # meta exists but the blob was cleaned up
+                                             # (app-chat attachments rm); clients render
+                                             # "no longer available", terminal, no retry
 
 POST /message                                # extended
   { "text"?: string, "attachments"?: [string], "input_method"?, "intent_id"? }
@@ -189,7 +192,9 @@ A new full-width flex row inside the existing `flex-wrap` pill (the pill's `moti
 | error (terminal) | red ring + short reason ("too large", "agent needs update"); tap to retry, X to remove |
 | removing | chip exits via layout animation |
 
-Rules: max `MAX_ATTACHMENTS_PER_MESSAGE = 10` chips (further adds toast); files over `MAX_ATTACHMENT_BYTES` are rejected at pick time with a toast, never uploaded; image dims measured client-side via `createImageBitmap` before session create; video dims/duration best-effort via a metadata probe, skipped on failure. When chips exist and the input is empty, the textarea placeholder becomes "Add a caption". Enter sends only when the send gate is open.
+Rules: max `MAX_ATTACHMENTS_PER_MESSAGE = 10` chips (further adds toast); files over `MAX_ATTACHMENT_BYTES` are rejected at pick time with a toast naming the file and its size, never uploaded; image dims measured client-side via `createImageBitmap` before session create; video dims/duration best-effort via a metadata probe, skipped on failure. When chips exist and the input is empty, the textarea placeholder becomes "Add a caption". Enter sends only when the send gate is open.
+
+**Size is always visible.** Every chip shows its file's human size next to the name from the moment it appears (so the user knows what they are about to send before any byte moves), and with two or more chips a muted footer line under the row totals them: "3 files · 48 MB". `formatBytes` in `@vesta/core` is the one formatter behind chips, footer, bubbles, and lightbox, so the same file never reads as two different sizes.
 
 ### 4. Send states
 
@@ -209,10 +214,13 @@ One `AttachmentContent` block per attachment, stacked vertically inside the bubb
 
 | Kind | Render | States |
 |---|---|---|
-| image | `<img>` via `authedUrl`, pre-sized with CSS `aspect-ratio` from `width`/`height` (prevents scroll jitter; the chat ResizeObserver otherwise fires on load), max ~320×400 | skeleton shimmer while loading; loaded; broken-image fallback tile with retry |
+| image | `<img>` via `authedUrl`, pre-sized with CSS `aspect-ratio` from `width`/`height` (prevents scroll jitter; the chat ResizeObserver otherwise fires on load), max ~320×400 | skeleton shimmer while loading; loaded; broken-image fallback tile with retry; removed (410) shows the "no longer available" tile |
 | video | `<video controls preload="metadata">` via `authedUrl`, pre-sized; Range gives seeking | poster-less first frame; native controls |
 | audio | compact `<audio controls>` | native |
 | file (everything else) | horizontal tile: kind icon, name (middle-truncated), size, download icon | idle; fetching (determinate ring: the proxy strips `Content-Length`, so progress reads the response stream against the metadata `size`); saved; failed (toast + retry) |
+| removed (any kind) | muted tile: name, size, "no longer available" | terminal: a 410 from the serve route; no retry, no auto-reload |
+
+Size appears on every rendered form: the file tile inline, the lightbox caption (name + dimensions + size), video/audio via a small size badge in the corner until playback starts, and the download toast on completion. The metadata `size` is wire truth, so every display works even while bytes are still loading or after they are removed.
 
 Image click opens a lightbox (existing `Dialog`): full image, filename, size, download action, Esc/backdrop closes. Video/audio play inline; file tiles download on click. `useAuthedSrc(path)` (small web hook wrapping the async `authedUrl`) feeds every media element and rebuilds per mount, so the token is always fresh.
 
@@ -269,7 +277,7 @@ No preload/native-bridge change, so `preload-parity.test.ts` is untouched.
 | `cli/src/app_chat_cli/attachments.py` (new) | store: session create, offset-checked append, staged-size read, idempotent finalize, GC sweep, meta read, path/filename sanitization |
 | `cli/src/app_chat_cli/service.py` (modify) | the five attachment routes (create, data PUT, status, complete, serve); `client_max_size` raised to `MAX_CHUNK_BYTES` + slack; `/message` gains id validation + metadata embedding + notification attachment line |
 | `cli/src/app_chat_cli/daemon.py` (modify) | unix-socket `send` accepts `attach` paths; ingest-by-copy into the store |
-| `cli/src/app_chat_cli/commands.py` + `cli.py` (modify) | `app-chat send --attach <path>` (repeatable) |
+| `cli/src/app_chat_cli/commands.py` + `cli.py` (modify) | `app-chat send --attach <path>` (repeatable); `app-chat attachments list|rm` (direct disk readers, largest-first sizing, blob-only removal) |
 | `SKILL.md` (modify) | the Attachments section and description update below |
 
 ## Agent side
@@ -287,7 +295,28 @@ The notification hands the agent an absolute path inside its own container. From
 - Images and PDFs: the `Read` tool presents them visually (pages for PDFs).
 - Text, code, spreadsheets, archives: `Read` and ordinary shell tools.
 - Audio and video: shell tools (`ffprobe`/`ffmpeg` ship in the box); transcription rides whatever the agent's voice tooling offers.
-- The blob is durable: GC never touches a referenced attachment, and `app-chat history` returns the metadata, so the agent can revisit a file the user sent weeks ago. The agent must never delete files under `~/.app-chat/attachments/`, because the app streams bubbles and downloads from there for as long as the message exists.
+- The blob is durable: GC never touches a referenced attachment, and `app-chat history` returns the metadata, so the agent can revisit a file the user sent weeks ago. Every surface the agent reads carries the byte size: the notification line (human size), `meta.json` (`size` in bytes), history events, and the CLI below.
+- Disk management goes through the CLI, never `rm` on the directory: a raw delete leaves the app with an unexplained broken bubble, while `app-chat attachments rm` removes the blob and keeps `meta.json`, which is exactly what makes the serve route answer 410 and the app render a clean "no longer available" tile.
+
+### Attachment CLI (agent-facing disk management)
+
+Two subcommands under `app-chat attachments`, both direct disk readers (store db + attachments dir; sqlite WAL allows the concurrent read, and a POSIX unlink under an in-flight `FileResponse` is safe), so they work whether or not the daemon is up:
+
+```
+app-chat attachments list [--sort size|date] [--limit N] [--min-size BYTES]
+  -> single-line JSON on stdout:
+     { "attachments": [ { "id", "name", "mime", "size", "ts", "direction": "received"|"sent",
+                          "removed": bool } ... ],
+       "count": int, "total_bytes": int }
+  # sorted largest-first by default; ts and direction joined from the event that references it
+
+app-chat attachments rm <id> [<id> ...]
+  -> { "removed": ["<id>", ...], "freed_bytes": int }
+  # deletes the blob, keeps meta.json; idempotent (an already-removed id is a no-op);
+  # unknown id fails on stderr with non-zero exit
+```
+
+The pair covers "how much space, what is biggest, clean it up" with two verbs and no daemon coupling. Output follows the skill output contract: single-line JSON envelope, errors on stderr, non-zero exit on failure.
 
 ### How the agent sends one
 
@@ -301,7 +330,7 @@ New body section, after How it works:
 
 > ## Attachments
 >
-> Files the user sends from the app arrive on the message notification: the `attachments` attribute lists each file's name, type, size, and an absolute path. Open the path directly: `Read` shows images and PDFs, shell tools handle everything else. The files persist under `~/.app-chat/attachments/` and `app-chat history` returns their metadata, so you can come back to one later. Never delete anything under that directory: the app loads those files whenever the user views or downloads the message.
+> Files the user sends from the app arrive on the message notification: the `attachments` attribute lists each file's name, type, size, and an absolute path. Open the path directly: `Read` shows images and PDFs, shell tools handle everything else. The files persist under `~/.app-chat/attachments/` (each in an id directory with a `meta.json` carrying name, type, and exact byte size) and `app-chat history` returns their metadata, so you can come back to one later.
 >
 > Send a file with `--attach` (repeat it for several), with or without a message:
 >
@@ -311,6 +340,14 @@ New body section, after How it works:
 > ```
 >
 > The daemon copies the file into its own store, so a temp file can be removed right after sending. The app renders by type: images and videos inline, audio as a player, anything else as a download tile. Limit 512 MB per file. The short-bubble lint applies to the message text only. When the user asks for a real document, a chart, or anything they will keep, attach the file instead of pasting its contents as text.
+>
+> Manage the disk they use with the CLI, never by deleting files under `~/.app-chat/attachments/` yourself (a raw delete leaves the user a broken bubble; `rm` here leaves a clean "no longer available" tile):
+>
+> ```bash
+> app-chat attachments list              # largest first, with count and total_bytes
+> app-chat attachments list --sort date --limit 20
+> app-chat attachments rm <id> [<id>...] # frees the bytes, keeps the chat history intact
+> ```
 
 The existing longform note gains that same last preference (attach real artifacts rather than sending walls of text), phrased once, in one place.
 
