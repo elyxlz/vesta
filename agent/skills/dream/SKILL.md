@@ -41,9 +41,25 @@ Run `~/agent/skills/dream/scripts/reality_check.sh` before the retrospective. **
 
 ### 1. Retrospective
 
+**START by re-reading the PREVIOUS summary's "Unresolved" section, item by item, and give each one an outcome tonight: fixed, still blocked (say on what), or consciously dropped (say why).** The retrospective grades FIXES, so an item that never got fixed produces no fix to grade and **exits the loop in silence**. The failure is invisible from inside it: the lists stay roughly the same length night after night while their contents quietly rotate out, which reads as progress and is not. An item may only leave the list by being resolved or explicitly abandoned, never by not being mentioned.
+
+An item can also exit the loop by being WRONG rather than unfixed, and a wrong item survives an audit that only grades fixes. So when an entry has sat unresolved for several nights, re-check that the problem it describes is real before spending anything on it: "the thing does not exist" is often "the thing has not happened yet".
+
 Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
 
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
+
+**Premise audit: re-verify the load-bearing FACTS, not just the fixes.** Pick the three claims most driving action right now (from active task titles, the morning brief, and User State: a deadline, a status, someone's location, who owes whom what) and re-check each against a PRIMARY source, meaning the actual email, the live page, the API response, the delivery receipt. Not your own notes, and not a task title, which is where an inference goes to harden into a fact.
+
+**For any claim of the form "X is silent" or "X still owes us", OPEN THE THREAD AND READ THE LAST MESSAGE IN IT.** "Has anything new arrived?" and "what does the existing record actually say?" are different questions, and the first is cheap to run and easy to mistake for the second. A freshness check confirms an absence; it says nothing about the content already sitting there, so a thread can be correctly reported as quiet for days while the last message in it is a live offer, a request for a callback, or a question addressed to the user.
+
+The tell that you are auditing freshness rather than content: the evidence you write down is a count or a date ("zero inbound in 200 messages", "nothing since the 19th") rather than a sentence somebody actually wrote. When the claim is about a relationship or an obligation, the primary source is the last message's TEXT, not its timestamp. Read who is waiting on whom, in their words.
+
+Do this even when nothing feels wrong; the whole failure mode is that nothing feels wrong. An inference written down on Monday is indistinguishable from a verified fact by Wednesday, and by Friday it is in a message to the user or, worse, in a draft going out over their name. Budget for it: it is cheap next to acting on a stale premise for days.
+
+For each claim record the source and the date checked, so the next audit can tell a verified fact from a confident guess. Anything that fails is not just a correction to that item: hunt every other place the same claim was copied, because it will be in several.
+
+**Do that hunt with the tool, not by remembering:** `~/agent/skills/dream/scripts/claim-sites '<string>'` (or `--regex`). It searches the stores grep cannot reach as well as the ones it can, and it prints anything that will FIRE AT THE USER first: task titles and reminder bodies live in sqlite, and a stale claim there is not an embarrassing note, it is a false statement on a timer. Exit 0 means sites found, 1 means none, and an empty result is only as good as the string you searched for, so try the distinctive token (an id, a price, a proper noun) rather than a phrase. It does not reach calendar entries, and says so in its own output; check those by hand when the claim is a date or a place.
 
 Calendar audit: every dated appointment, however informally arranged (mentioned in passing, set up via a family member, a verbal plan, an email with no formal invite), must live on the user's actual calendar to trigger an automatic reminder. One that lives only in a note, a task-metadata file, or the morning brief fires no timed nudge, so the user misses it. Walk the day for any dated thing that never reached the calendar; each is a reminder-strategy failure. Fix it upstream: add events the moment they are known, not once in a brief.
 

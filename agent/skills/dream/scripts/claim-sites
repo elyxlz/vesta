@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Find every place a claim is written down, so correcting it once corrects it everywhere.
+
+A wrong fact does not sit still. It gets copied into a task title, a reminder that will fire at the
+user, a note, a contact file and MEMORY, and then the correction reaches only one of them. Hunting
+those copies from memory reliably misses some, because the copy you forget is the copy you did not
+know you made.
+
+The stores that matter are NOT all files. Task titles and reminder bodies live in sqlite and are
+invisible to grep over the tree, and they are exactly where a claim goes to fire at someone later.
+A stale note is embarrassing; a stale reminder is a false statement on a timer, which is why those
+are searched first and labelled.
+
+Usage:
+    claim-sites '1565057189025326262'
+    claim-sites --regex 'foo|bar'
+Exit 0 if any site found, 1 if none.
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path.home()
+
+# Scope is DERIVED by globbing, never a hand-written list of filenames. A list can only ever speak
+# about its own contents: a note file this box happens not to have yet is silently out of scope, and
+# its absence from the results looks exactly like a clean search.
+FILE_STORES = [
+    ("MEMORY", [HOME / "agent/MEMORY.md"]),
+    ("agent notes", sorted((HOME / "agent").glob("*.md"))),
+    ("staged notes", sorted((HOME / "agent/data").glob("*.md"))),
+    ("task metadata", sorted((HOME / ".tasks/metadata").glob("*.md"))),
+    ("contacts", sorted((HOME / ".contacts").glob("*.md"))),
+    ("deep dives", sorted((HOME / "agent/deep-dives").glob("*.md"))),
+]
+
+
+def _run(cmd: list[str]) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout
+    except Exception:
+        return ""
+
+
+def _live_stores(pattern: re.Pattern) -> list[tuple[str, str]]:
+    """Task titles and reminder bodies. These fire at the user, so they are the expensive half, and
+    neither is a file that grep would reach.
+
+    Calendar entries are NOT covered here, because reaching them means knowing which calendar skill
+    this box has connected. That gap is printed in the summary rather than left for the reader to
+    assume away.
+    """
+    hits = []
+    # Parse the JSON per task. Line-matching a single-line JSON blob makes every task match as soon
+    # as any one of them does, which reports unrelated tasks as sites.
+    raw = _run(["tasks", "list", "--json"])
+    try:
+        for task in json.loads(raw):
+            title = str(task.get("title", "") or task.get("subject", ""))
+            if pattern.search(title):
+                hits.append(("TASK TITLE (fires at the user)", f"{task.get('id')} {title[:170]}"))
+    except Exception:
+        for line in _run(["tasks", "list"]).splitlines():
+            if pattern.search(line):
+                hits.append(("TASK TITLE (fires at the user)", line.strip()[:180]))
+    for line in _run(["tasks", "remind", "list", "--limit", "100"]).splitlines():
+        if pattern.search(line):
+            hits.append(("REMINDER (fires at the user)", line.strip()[:200]))
+    return hits
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Find every stored copy of a claim.")
+    ap.add_argument("pattern", help="Literal string, or a regex with --regex.")
+    ap.add_argument("--regex", action="store_true", help="Treat the pattern as a regex.")
+    args = ap.parse_args()
+    pattern = re.compile(args.pattern if args.regex else re.escape(args.pattern), re.I)
+
+    found = 0
+    for kind, text in _live_stores(pattern):
+        print(f"{kind}: {text}")
+        found += 1
+
+    seen: set[Path] = set()
+    for label, paths in FILE_STORES:
+        for path in paths:
+            if not path.is_file() or path in seen:
+                continue
+            seen.add(path)
+            for n, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+                if pattern.search(line):
+                    print(f"{label}: {path}:{n}: {line.strip()[:160]}")
+                    found += 1
+
+    print(f"\n{found} site(s). Correct EVERY one, starting with anything marked 'fires at the user'.")
+    print("NOT searched: calendar entries. Check those by hand if the claim is a date or a place.")
+    if not found:
+        print("If you expected sites, check the pattern: an absence here is only as good as the string.")
+    return 0 if found else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
