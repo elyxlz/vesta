@@ -248,6 +248,18 @@
       "group": "Home"
     },
     {
+      "id": "notifications-popover",
+      "title": "Notifications, popover",
+      "description": "The bell's taster of the newest unseen notifications.",
+      "group": "Home"
+    },
+    {
+      "id": "notifications-dialog",
+      "title": "Notifications, dialog",
+      "description": "The full history behind \"see all\", split on the seen watermark.",
+      "group": "Home"
+    },
+    {
       "id": "update-snapshotting",
       "title": "Update, backing up all",
       "description": "The update screen while every agent is snapshotted.",

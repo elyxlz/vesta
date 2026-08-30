@@ -57,6 +57,7 @@ export {
   EMPTY_FEED,
   feedNeedsMarkSeen,
   feedSections,
+  feedUnseen,
   feedView,
   reduceFeed,
   type FeedAction,

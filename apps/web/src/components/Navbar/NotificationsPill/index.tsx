@@ -67,8 +67,9 @@ import {
 const RESIZE_DELAY_S = 0.35;
 const PILL_MAX_WIDTH = 340;
 const HISTORY_SKELETON_ROWS = 5;
-// The compact popover under the bell shows this many before "see more".
-const POPOVER_ROWS = 6;
+// The compact popover under the bell is a taster: at most this many rows,
+// with "see all" opening the full dialog.
+const POPOVER_ROWS = 4;
 
 // This app's rendering of the core icon names (PILL_KIND_ICONS): the shared
 // vocabulary is view-independent, and each view maps it onto its own icon set.
@@ -163,6 +164,7 @@ function HistoryList({
                 timestamp={timestamps}
                 compact={compact}
                 dimmed={dimmed}
+                banded={timestamps && index % 2 === 0}
                 onOpen={onOpen}
               />
             </motion.div>
@@ -195,11 +197,10 @@ function emptyCaption(
   return emptyLabel;
 }
 
-// Whether the archive holds more than the popover is showing, which is what
+// Whether the archive holds more than the popover's taster, which is what
 // earns the "see all" footer. Read from the cached rows alone, never the
 // refetch every open starts, so the footer is there the instant the popover
-// is. Before the first-ever catch-up (no sections) the popover caps at
-// POPOVER_ROWS, so the archive extends past it sooner.
+// is.
 function archiveExtendsBeyond(
   feed: NotificationFeed,
   sections: FeedSections,
@@ -306,11 +307,12 @@ function ConnectedNotificationsPill({
   const sections = feedSections(feed);
   const view = feedView(feed);
 
-  // The popover shows the whole unseen set (scrolling past its cap), or, before
-  // the first-ever catch-up, the newest page the way the dialog would.
-  const popoverEntries = sections
-    ? sections.unseen
-    : feed.entries.slice(0, POPOVER_ROWS);
+  // The popover is a taster: the newest unseen rows (or, before the first-ever
+  // catch-up, the newest rows), capped; "see all" is where the rest lives.
+  const popoverEntries = (sections ? sections.unseen : feed.entries).slice(
+    0,
+    POPOVER_ROWS,
+  );
 
   // "see all" opens the dialog over the full archive; it rides the same slide
   // the rows do, one block.
@@ -368,9 +370,9 @@ function ConnectedNotificationsPill({
             whose traffic-light inset centers the bell on its own island. */}
         <PopoverContent
           align={isDesktopApp && isMacOS ? "center" : "start"}
-          className="z-[100000] w-58 p-2"
+          className="z-[100000] w-72 p-2"
         >
-          <div className="max-h-[60vh] space-y-1 overflow-y-auto">
+          <div className="space-y-1">
             <HistoryList
               view={view}
               liveIds={feed.liveIds}
@@ -392,7 +394,7 @@ function ConnectedNotificationsPill({
           showSurface(open ? "dialog" : "none");
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>notifications</DialogTitle>
           </DialogHeader>
@@ -465,6 +467,7 @@ const NotificationRow = memo(function NotificationRow({
   timestamp,
   compact,
   dimmed,
+  banded,
   onOpen,
 }: {
   entry: LoggedUserNotification;
@@ -474,6 +477,8 @@ const NotificationRow = memo(function NotificationRow({
   compact: boolean;
   /** Already-seen rows in the dialog sit back; hovering lifts them for reading. */
   dimmed: boolean;
+  /** Alternating dialog rows carry a faint band, as the backups list does. */
+  banded: boolean;
   onOpen: (entry: LoggedUserNotification) => void;
 }) {
   // The pill's leading-glyph rule, identically: the orb when the notification
@@ -484,9 +489,10 @@ const NotificationRow = memo(function NotificationRow({
     <button
       type="button"
       className={cn(
-        "flex w-full items-center gap-2.5 overflow-hidden rounded-xl px-2 text-left hover:bg-muted",
-        compact ? "py-1.5" : "py-2",
+        "flex w-full gap-2.5 overflow-hidden rounded-xl px-2 text-left hover:bg-muted",
+        compact ? "items-center py-1.5" : "items-start py-2.5",
         dimmed && "opacity-60 transition-opacity hover:opacity-100",
+        banded && "bg-foreground/[0.07]",
       )}
       onClick={() => {
         onOpen(entry);
@@ -505,16 +511,24 @@ const NotificationRow = memo(function NotificationRow({
       ) : (
         <PillKindIcon kind={entry.kind} />
       )}
-      <div
-        className={cn(
-          "min-w-0 flex-1 truncate",
-          compact ? "text-[13px]" : "text-sm",
-        )}
-      >
-        {pillDisplayLine(entry)}
-      </div>
+      {compact ? (
+        <div className="min-w-0 flex-1 truncate text-[13px]">
+          {pillDisplayLine(entry)}
+        </div>
+      ) : (
+        // The dialog reads in full: the title on its own line, the body
+        // wrapping below it up to a few lines.
+        <div className="min-w-0 flex-1 text-sm">
+          <div className="truncate font-medium">{entry.title}</div>
+          {entry.body && (
+            <div className="mt-0.5 line-clamp-3 text-[13px] text-muted-foreground">
+              {entry.body}
+            </div>
+          )}
+        </div>
+      )}
       {timestamp && (
-        <span className="shrink-0 text-[10px] text-muted-foreground">
+        <span className="shrink-0 pt-0.5 text-[10px] text-muted-foreground">
           {formatTimestamp(entry.at)}
         </span>
       )}

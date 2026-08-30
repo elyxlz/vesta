@@ -9,8 +9,9 @@ import {
 } from "react";
 import { useMotionValue } from "motion/react";
 import { useMatch, useNavigate } from "react-router-dom";
-import { feedHasUnseen, type LoggedUserNotification } from "@vesta/core";
+import { feedUnseen, type LoggedUserNotification } from "@vesta/core";
 import { useNotificationFeed, useNotificationsPill } from "@vesta/core/react";
+import { useWindowFocus } from "@/hooks/use-window-focus";
 import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
@@ -22,9 +23,6 @@ import {
 } from "./context";
 
 const HISTORY_PAGE_SIZE = 50;
-// A near-instant first fetch still shows the skeletons for at least this long,
-// so they read as a loading state instead of a flash.
-const HISTORY_MIN_LOADING_MS = 500;
 
 // Owns every piece of the notifications pill's state, mounted once above the
 // route layouts (NavigationGuard): the queue survives page navigation even
@@ -41,11 +39,14 @@ export function NotificationsPillProvider({
   const [surface, setSurface] = useState<HistorySurface>("none");
   const historyOpen = surface !== "none";
 
+  const focused = useWindowFocus();
+
   const { agents, userNotificationsSeenAt, lastUserNotificationAt } =
     useGateway();
   const { feed, open, close, loadOlder } = useNotificationFeed(controller, {
     pageSize: HISTORY_PAGE_SIZE,
-    minLoadingMs: HISTORY_MIN_LOADING_MS,
+    viewedAgent,
+    focused,
   });
 
   // One catch-up session spans both surfaces: it opens with the first surface
@@ -63,11 +64,12 @@ export function NotificationsPillProvider({
   );
 
   // The bell's dot is derived, never stored: anything logged past the synced
-  // watermark is unseen, so another device catching up clears it here too. It
-  // hides the moment a history surface opens (the user is looking); the synced
-  // truth catches up when the session closes and marks seen.
+  // watermark that the user has not already read in the chat, so another device
+  // catching up clears it here too. It hides the moment a history surface opens
+  // (the user is looking); the synced truth catches up when the session closes
+  // and marks seen.
   const unseen =
-    feedHasUnseen(lastUserNotificationAt, userNotificationsSeenAt) &&
+    feedUnseen(feed, lastUserNotificationAt, userNotificationsSeenAt) &&
     !historyOpen;
 
   const agentsRef = useRef(agents);
