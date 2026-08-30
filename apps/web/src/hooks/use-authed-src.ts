@@ -20,10 +20,11 @@ export function useAuthedSrc(path: string | null, epoch = 0): string | null {
       authedUrl(path)
         .then((url) => {
           // The gateway base URL is user-entered at connect time; media elements only ever get
-          // http(s) URLs from here.
-          const scheme = new URL(url).protocol;
-          if (scheme !== "http:" && scheme !== "https:") return;
-          if (!cancelled) setSrc(url);
+          // http(s) URLs, re-serialized through the URL parser.
+          const parsed = new URL(url);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+            return;
+          if (!cancelled) setSrc(parsed.href);
         })
         .catch(() => {
           if (!cancelled) timer = window.setTimeout(build, REBUILD_RETRY_MS);

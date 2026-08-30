@@ -7,6 +7,7 @@ breaks chat history. Everything is a pure function over the root path; no daemon
 
 import json
 import mimetypes
+import os
 import pathlib as pl
 import re
 import shutil
@@ -96,12 +97,13 @@ def is_valid_id(attachment_id: str) -> bool:
 def _dir(root: pl.Path, attachment_id: str) -> pl.Path:
     if not is_valid_id(attachment_id):
         raise UnknownAttachmentError(attachment_id)
-    directory = root / attachment_id
     # The id format already forbids traversal; this normalized containment check is the guard at
     # the path-construction owner itself, so no caller can reach disk outside the store root.
-    if not directory.resolve().is_relative_to(root.resolve()):
+    base = os.path.normpath(str(root))
+    normalized = os.path.normpath(os.path.join(base, attachment_id))
+    if not normalized.startswith(base + os.sep):
         raise UnknownAttachmentError(attachment_id)
-    return directory
+    return pl.Path(normalized)
 
 
 def _read_json(path: pl.Path) -> AttachmentMeta | None:
