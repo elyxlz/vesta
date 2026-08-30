@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
 import { useLocation } from "react-router-dom";
@@ -19,6 +20,9 @@ import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useChatDraft } from "@/stores/use-chat-draft";
+import { useAttachmentDrafts } from "@/stores/use-attachment-drafts";
+import { DropOverlay } from "./DropZone";
+import { useFileDrop } from "./DropZone/use-file-drop";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { cn } from "@/lib/utils";
@@ -83,6 +87,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   } = useAgentSocket();
 
   const [input, setInput] = useChatDraft(name);
+  const attachments = useAttachmentDrafts(name);
+  const { dragActive, handlers: dropHandlers } = useFileDrop(
+    !notAuthenticated,
+    attachments.addFiles,
+  );
   const [atBottom, setAtBottom] = useState(true);
 
   useEffect(() => {
@@ -138,7 +147,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // reachable by scrolling without the list ever shifting under the typist.
   const hasDraftRef = useRef(false);
   useLayoutEffect(() => {
-    hasDraftRef.current = input.length > 0;
+    // Attachment chips grow the pill exactly like typed text: both are drafts the
+    // inset must ignore so the list never shifts under the composer.
+    hasDraftRef.current = input.length > 0 || attachments.drafts.length > 0;
   });
   const composerRef = useMeasuredSize(
     "height",
@@ -177,15 +188,22 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     void loadMore();
   }, [loadMore]);
 
+  // The send gate: text alone sends as before; with drafts present, every one must be uploaded
+  // (chips show progress) and the text becomes the optional caption.
+  const canSend =
+    attachments.drafts.length > 0 ? attachments.ready : input.trim().length > 0;
+
   const handleSend = () => {
     const text = input.trim();
-    if (!text) return;
+    if (!canSend) return;
     if (!connected) {
       toast.error(`can't reach ${name} right now, message not sent`);
       return;
     }
-    if (send(text)) {
+    const uploaded = attachments.uploaded;
+    if (send(text, "typed", uploaded.length > 0 ? uploaded : undefined)) {
       setInput("");
+      attachments.clear();
       const ta = textareaRef.current;
       if (ta) ta.style.height = "auto";
       requestAnimationFrame(scrollToBottom);
@@ -199,6 +217,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     }
   };
 
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...e.clipboardData.files];
+    if (files.length === 0) return;
+    e.preventDefault();
+    attachments.addFiles(files);
+  };
+
   const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     const ta = e.target;
@@ -209,12 +234,14 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Card
+        {...dropHandlers}
         className={cn(
           "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base shadow-none",
           fullscreen && "ring-0",
           isMobile && "bg-transparent overflow-visible",
         )}
       >
+        <DropOverlay active={dragActive} agentName={name} />
         <ChatHeaderActions
           fullscreen={fullscreen}
           onCollapse={onCollapse}
@@ -289,7 +316,10 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
               input={input}
               onInputChange={handleInput}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               onSend={handleSend}
+              canSend={canSend}
+              attachments={attachments}
               textareaRef={textareaRef}
             />
           </div>

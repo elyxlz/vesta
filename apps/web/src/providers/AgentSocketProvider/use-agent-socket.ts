@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  ChatAttachment,
   ChatMessage,
   ChatState,
   InputMethod,
@@ -74,6 +75,12 @@ export function useAgentSocketState({
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connected = useSyncState(controller) === "open";
+
+  // On a reconnect, a bubble parked in the retryable state re-posts itself once under its original
+  // intent id: the 200 was never seen but dedup makes a double-send impossible, so a flaky link
+  // never strands a tap-to-retry the user walked away from. Ref-routed (like the callbacks above)
+  // so the socket effect never re-runs for it.
+  const repostRef = useRef<() => void>(() => undefined);
 
   const activitySelector = useCallback(
     (tree: Tree | null) =>
@@ -221,6 +228,7 @@ export function useAgentSocketState({
             // reseeds, and a first open racing a still-inflight mount seed reseeds too, so a
             // mount fetch that fails after this check cannot strand the tail.
             if (sawOpen || !mountSeedSucceeded) runSeed();
+            if (sawOpen) repostRef.current();
             sawOpen = true;
           }
         },
@@ -235,15 +243,26 @@ export function useAgentSocketState({
   }, [active, name, commit, enqueueChatMessage]);
 
   const send = useCallback(
-    (text: string, inputMethod: InputMethod = "typed"): boolean => {
+    (
+      text: string,
+      inputMethod: InputMethod = "typed",
+      attachments?: ChatAttachment[],
+    ): boolean => {
       if (!name) return false;
+      const ids = attachments?.map((attachment) => attachment.id);
       const { id, outcome } = sendMessage(
         controller.http,
         name,
-        { text, input_method: inputMethod },
+        {
+          text,
+          input_method: inputMethod,
+          attachments: ids && ids.length > 0 ? ids : undefined,
+        },
         () => crypto.randomUUID(),
       );
-      commit((current) => beginSend(current, text, inputMethod, id));
+      commit((current) =>
+        beginSend(current, text, inputMethod, id, attachments),
+      );
       applyOutcome(id, outcome);
       return true;
     },
@@ -251,21 +270,48 @@ export function useAgentSocketState({
   );
 
   // Re-post a failed/retryable bubble under its ORIGINAL intent id (idempotent): the bubble returns to
-  // "sending" and confirms on the same echo. Text + input method come from the bubble the user tapped.
+  // "sending" and confirms on the same echo. Text, input method, and attachment ids come from the
+  // bubble the user tapped (the uploads are already finalized server-side).
   const retry = useCallback(
-    (intentId: string, text: string, inputMethod: InputMethod = "typed") => {
+    (
+      intentId: string,
+      text: string,
+      inputMethod: InputMethod = "typed",
+      attachments?: ChatAttachment[],
+    ) => {
       if (!name) return;
       commit((current) => markSend(current, intentId, "sending"));
+      const ids = attachments?.map((attachment) => attachment.id);
       const { outcome } = sendMessage(
         controller.http,
         name,
-        { text, input_method: inputMethod },
+        {
+          text,
+          input_method: inputMethod,
+          attachments: ids && ids.length > 0 ? ids : undefined,
+        },
         () => intentId,
       );
       applyOutcome(intentId, outcome);
     },
     [name, controller, commit, applyOutcome],
   );
+
+  repostRef.current = () => {
+    for (const message of stateRef.current.messages) {
+      if (
+        message.type === "user" &&
+        message.send_state === "retry" &&
+        message.intent_id != null
+      )
+        retry(
+          message.intent_id,
+          message.text,
+          message.input_method ?? "typed",
+          message.attachments,
+        );
+    }
+  };
 
   const hasMore = state.cursor !== null;
 

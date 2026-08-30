@@ -4,7 +4,7 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
 import { formatResetTime } from "@vesta/core";
-import type { InputMethod } from "@vesta/core";
+import type { ChatAttachment, InputMethod } from "@vesta/core";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ export type RetryHandler = (
   intentId: string,
   text: string,
   inputMethod?: InputMethod,
+  attachments?: ChatAttachment[],
 ) => void;
 
 function formatBubbleTime(ts: string | undefined): string {
@@ -77,7 +78,7 @@ export const ChatBubble = memo(function ChatBubble({
     (event.send_state === "retry" || event.send_state === "failed")
   ) {
     const intentId = event.intent_id;
-    const { text, input_method } = event;
+    const { text, input_method, attachments } = event;
     return (
       <div className={className}>
         <MessageBubble
@@ -91,7 +92,7 @@ export const ChatBubble = memo(function ChatBubble({
           <button
             type="button"
             onClick={() => {
-              onRetry?.(intentId, text, input_method);
+              onRetry?.(intentId, text, input_method, attachments);
             }}
             className="text-[10px] text-destructive/70 transition-colors select-none hover:text-destructive"
           >

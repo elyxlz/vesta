@@ -3,17 +3,21 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent,
   type KeyboardEvent,
   type PointerEvent,
   type RefObject,
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Mic, Plus, SendHorizontal, Square, VolumeX } from "lucide-react";
+import { Mic, SendHorizontal, Square, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 import { useIsMobile } from "@/hooks/use-mobile";
+import type { AttachmentDrafts } from "@/stores/use-attachment-drafts";
+import { AttachmentChips } from "../AttachmentChips";
+import { AttachMenu } from "./AttachMenu";
 
 interface VoiceButtonHandlers {
   onClick?: () => void;
@@ -60,11 +64,12 @@ function placeholderText(
   isRecording: boolean,
   notAuthenticated: boolean,
   agentName: string,
+  hasAttachments: boolean,
 ) {
   if (isRecording) return "listening...";
-  return notAuthenticated
-    ? "sign in to chat"
-    : `message ${agentName}`.toLowerCase();
+  if (notAuthenticated) return "sign in to chat";
+  if (hasAttachments) return "add a caption";
+  return `message ${agentName}`.toLowerCase();
 }
 
 function composerPadding(fullscreen: boolean | undefined, isMobile: boolean) {
@@ -92,7 +97,10 @@ interface ChatComposerProps {
   input: string;
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: KeyboardEvent) => void;
+  onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
+  canSend: boolean;
+  attachments: AttachmentDrafts;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
@@ -110,7 +118,10 @@ export function ChatComposer({
   input,
   onInputChange,
   onKeyDown,
+  onPaste,
   onSend,
+  canSend,
+  attachments,
   textareaRef,
 }: ChatComposerProps) {
   const activation = useVoiceActivation((s) => s.mode);
@@ -128,7 +139,12 @@ export function ChatComposer({
   // disconnected is blocked with a toast in the parent instead).
   const inputDisabled = notAuthenticated;
   const value = useLiveTranscript ? liveTranscript : input;
-  const placeholder = placeholderText(isRecording, notAuthenticated, agentName);
+  const placeholder = placeholderText(
+    isRecording,
+    notAuthenticated,
+    agentName,
+    attachments.drafts.length > 0,
+  );
   const controls = {
     sttAvailable,
     isSpeaking,
@@ -138,6 +154,7 @@ export function ChatComposer({
     onStopSpeech,
     showSend,
     onSend,
+    canSend,
   };
 
   return (
@@ -148,8 +165,10 @@ export function ChatComposer({
       readOnly={useLiveTranscript}
       onInputChange={onInputChange}
       onKeyDown={onKeyDown}
+      onPaste={onPaste}
       textareaRef={textareaRef}
       controls={controls}
+      attachments={attachments}
     />
   );
 }
@@ -163,6 +182,7 @@ interface ComposerControls {
   onStopSpeech: () => void;
   showSend: boolean;
   onSend: () => void;
+  canSend: boolean;
 }
 
 function FloatingComposer({
@@ -172,8 +192,10 @@ function FloatingComposer({
   readOnly,
   onInputChange,
   onKeyDown,
+  onPaste,
   textareaRef,
   controls,
+  attachments,
 }: {
   paddingClass: string;
   value: string;
@@ -181,8 +203,10 @@ function FloatingComposer({
   readOnly: boolean;
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: KeyboardEvent) => void;
+  onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   controls: ComposerControls;
+  attachments: AttachmentDrafts;
 }) {
   const {
     sttAvailable,
@@ -193,6 +217,7 @@ function FloatingComposer({
     onStopSpeech,
     showSend,
     onSend,
+    canSend,
   } = controls;
 
   // Expand (input onto its own full-width row above the buttons) once the text would wrap
@@ -261,20 +286,19 @@ function FloatingComposer({
           {value || " "}
         </span>
 
+        <AttachmentChips
+          drafts={attachments.drafts}
+          previewUrl={attachments.previewUrl}
+          onRetry={attachments.retry}
+          onRemove={attachments.remove}
+        />
+
         <motion.div
           layout
           transition={LAYOUT_TRANSITION}
           className={cn("shrink-0", expanded ? "order-2" : "order-1")}
         >
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            aria-label="add attachment"
-            className="size-9 rounded-full text-muted-foreground [&_svg]:size-5"
-          >
-            <Plus />
-          </Button>
+          <AttachMenu disabled={inputDisabled} onFiles={attachments.addFiles} />
         </motion.div>
 
         <motion.div
@@ -290,6 +314,7 @@ function FloatingComposer({
             value={value}
             onChange={onInputChange}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             readOnly={readOnly}
             placeholder={placeholder}
             disabled={inputDisabled}
@@ -321,7 +346,7 @@ function FloatingComposer({
               size="icon"
               variant="ghost"
               aria-label="send message"
-              disabled={inputDisabled}
+              disabled={inputDisabled || !canSend}
               onClick={onSend}
               className="size-9 rounded-full [&_svg]:size-4"
             >

@@ -130,3 +130,50 @@ export const MARKDOWN_REPLY: VestaEvent[] = [
     11,
   ),
 ];
+
+// The chunked-upload contract as the composer drives it. One static id per scenario is enough:
+// the chips render from client draft state, so a shot needs only the routes its files exercise.
+export const ATTACHMENT_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+export interface AttachmentRoutesFixture {
+  stallData?: boolean;
+  failCreate?: boolean;
+  // Routed fixtures still answer under Playwright's offline emulation, so the
+  // parked-upload state needs the create to fail retryably instead.
+  unreachableCreate?: boolean;
+}
+
+export function attachmentRoutes(
+  agent: string,
+  options: AttachmentRoutesFixture = {},
+): RouteFixture[] {
+  return [
+    {
+      path: `/agents/${agent}/app-chat/attachments`,
+      method: "POST",
+      ...(options.failCreate
+        ? { status: 400, json: { error: "invalid mime type" } }
+        : options.unreachableCreate
+          ? { status: 503, json: { error: "proxy down" } }
+          : { json: { id: ATTACHMENT_ID } }),
+    },
+    {
+      path: `/agents/${agent}/app-chat/attachments/${ATTACHMENT_ID}/data`,
+      method: "PUT",
+      json: { ok: true, received: 4 },
+      hang: options.stallData,
+    },
+    {
+      path: `/agents/${agent}/app-chat/attachments/${ATTACHMENT_ID}/complete`,
+      method: "POST",
+      json: {
+        attachment: {
+          id: ATTACHMENT_ID,
+          name: "notes.txt",
+          mime: "text/plain",
+          size: 4,
+        },
+      },
+    },
+  ];
+}
