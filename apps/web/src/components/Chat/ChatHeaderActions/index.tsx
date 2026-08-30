@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { cn } from "@/lib/utils";
-import { setTtsEnabled } from "@/lib/voice";
 import { useLayout } from "@/stores/use-layout";
 import { useVoice } from "@/stores/use-voice";
 
@@ -19,10 +18,10 @@ export function ChatHeaderActions({
   agentName,
 }: ChatHeaderActionsProps) {
   const navigate = useNavigate();
-  const ttsConfigured = useVoice((s) => s.ttsStatus?.configured ?? false);
+  const speechEnabled = useVoice((s) => s.speechEnabled);
   const navbarHeight = useLayout((s) => s.navbarHeight);
 
-  if (fullscreen && !ttsConfigured) return null;
+  if (fullscreen && !speechEnabled) return null;
 
   // The fullscreen chat sits under the absolute navbar, so the actions start below it.
   return (
@@ -31,7 +30,7 @@ export function ChatHeaderActions({
       style={{ top: fullscreen ? navbarHeight + 12 : 12 }}
     >
       <ButtonGroup>
-        {ttsConfigured && <SpeechButton agentName={agentName} />}
+        {speechEnabled && <SpeechButton />}
         {!fullscreen && (
           <>
             <Button
@@ -59,36 +58,28 @@ export function ChatHeaderActions({
   );
 }
 
-// Mutes and unmutes the agent's voice. Muting also cuts the reply being read out, and the
-// store's patch is the optimistic write, with a failed save re-read from the agent.
-function SpeechButton({ agentName }: { agentName: string }) {
-  const enabled = useVoice((s) => s.speechEnabled);
+// A per-device mute of spoken replies: red while muted. A conversation speaks regardless, so
+// this only silences the ambient read-aloud outside one.
+function SpeechButton() {
+  const muted = useVoice((s) => s.muted);
   const speaking = useVoice((s) => s.isSpeaking);
-  const { patchTts, refreshVoiceStatus, stopSpeech } = useVoice.getState();
-
-  const toggle = () => {
-    const next = !enabled;
-    if (!next) stopSpeech();
-    patchTts({ enabled: next });
-    setTtsEnabled(agentName, next).catch(() => {
-      refreshVoiceStatus();
-    });
-  };
+  const toggleMuted = useVoice((s) => s.toggleMuted);
 
   return (
     <Button
       variant="outline"
       size="icon-sm"
-      aria-pressed={enabled}
-      aria-label={enabled ? "mute voice" : "unmute voice"}
-      title={enabled ? "mute voice" : "unmute voice"}
+      aria-pressed={muted}
+      aria-label={muted ? "unmute voice" : "mute voice"}
+      title={muted ? "unmute voice" : "mute voice"}
       className={cn(
-        "text-muted-foreground",
-        enabled && speaking && "text-foreground",
+        muted
+          ? "text-red-500 hover:text-red-600"
+          : cn("text-muted-foreground", speaking && "text-foreground"),
       )}
-      onClick={toggle}
+      onClick={toggleMuted}
     >
-      {enabled ? <Volume2 /> : <VolumeX />}
+      {muted ? <VolumeX /> : <Volume2 />}
     </Button>
   );
 }

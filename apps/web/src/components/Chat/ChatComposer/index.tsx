@@ -288,6 +288,7 @@ function FloatingComposer({
             onChange={onInputChange}
             onKeyDown={onKeyDown}
             readOnly={readOnly}
+            data-voice-dictate="true"
             placeholder={placeholder}
             disabled={inputDisabled}
             rows={1}
