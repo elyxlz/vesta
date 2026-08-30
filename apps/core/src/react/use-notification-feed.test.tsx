@@ -49,15 +49,22 @@ function harness(pages: Record<string, LoggedUserNotification[] | Error>) {
   const emit = (item: LoggedUserNotification): void => {
     for (const listener of listeners) listener({ type: "user_notification", ...item })
   }
-  const hook = renderHook(() =>
-    useNotificationFeed(controller, { pageSize: PAGE_SIZE, minLoadingMs: 0 }),
-  )
+  const hook = renderHook(() => useNotificationFeed(controller, { pageSize: PAGE_SIZE }))
   return { ...hook, emit, requests }
 }
 
 afterEach(cleanup)
 
 describe("useNotificationFeed", () => {
+  it("prefetches the newest page before any surface opens", async () => {
+    const h = harness({ "/notifications?limit=2": [entry(3), entry(2)] })
+    await waitFor(() => {
+      expect(h.result.current.feed.newest).toBe("ready")
+    })
+    expect(h.result.current.feed.entries.map((item) => item.id)).toEqual([3, 2])
+    expect(h.result.current.feed.open).toBe(false)
+  })
+
   it("joins a live arrival to the page that later contains it", async () => {
     const h = harness({ "/notifications?limit=2": [entry(3), entry(2)] })
     act(() => {

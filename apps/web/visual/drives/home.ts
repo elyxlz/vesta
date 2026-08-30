@@ -6,7 +6,11 @@ import type {
   GatewayOperation,
 } from "@vesta/core";
 import { AGENT } from "../harness/http-fixtures";
-import type { Scenario, ScenarioState } from "../harness/scenario-state";
+import {
+  FIXED_TIME,
+  type Scenario,
+  type ScenarioState,
+} from "../harness/scenario-state";
 import { agentNode, gatewayDelta } from "../harness/sync-fixtures";
 
 const HOME_ROUTE = "/";
@@ -88,6 +92,86 @@ function updateScreen(
 }
 
 const UPDATE_TITLE = `updating to v${LATEST_VERSION}`;
+
+// The notification history, both surfaces: the bell's popover taster and the
+// "see all" dialog over the same log. The watermark sits between entry 4 and
+// 3, so three rows are unseen and the dialog carries the new/earlier split.
+const NOTIFICATIONS_SEEN_AT = FIXED_TIME.getTime() / 1000 - 5400;
+const NEWEST_NOTIFICATION_AT = NOTIFICATIONS_SEEN_AT + 5100;
+const LOGGED_NOTIFICATIONS = [
+  {
+    id: 6,
+    at: NEWEST_NOTIFICATION_AT,
+    agent: AGENT,
+    kind: "message",
+    title: AGENT,
+    body: "the flight to lisbon moved to 6:40am, so i pushed the taxi to 4:15 and told the hotel you land early. the boarding pass is in your email.",
+  },
+  {
+    id: 5,
+    at: NOTIFICATIONS_SEEN_AT + 3300,
+    agent: AGENT,
+    kind: "task",
+    title: AGENT,
+    body: "finished the quarterly expense report and filed it. two receipts were missing, so i flagged them in the sheet for you.",
+  },
+  {
+    id: 4,
+    at: NOTIFICATIONS_SEEN_AT + 900,
+    agent: AGENT,
+    kind: "needs_user",
+    title: AGENT,
+    body: "the calendar sign-in expired, so i cannot read your week. sign in again when you have a minute.",
+  },
+  {
+    id: 3,
+    at: NOTIFICATIONS_SEEN_AT - 1800,
+    agent: "",
+    kind: "update_available",
+    title: "Vesta",
+    body: `version ${LATEST_VERSION} is ready to install`,
+  },
+  {
+    id: 2,
+    at: NOTIFICATIONS_SEEN_AT - 7200,
+    agent: AGENT,
+    kind: "message",
+    title: AGENT,
+    body: "your mother called while you were in the review. she asked about sunday lunch and i said you would call back tonight.",
+  },
+  {
+    id: 1,
+    at: NOTIFICATIONS_SEEN_AT - 90000,
+    agent: AGENT,
+    kind: "agent_status",
+    title: AGENT,
+    body: "recovered and back online",
+  },
+];
+
+function notificationsState(): ScenarioState {
+  return {
+    route: HOME_ROUTE,
+    sync: {
+      agents: { [AGENT]: agentNode() },
+      gateway: {
+        userNotificationsSeenAt: NOTIFICATIONS_SEEN_AT,
+        lastUserNotificationAt: NEWEST_NOTIFICATION_AT,
+      },
+    },
+    routes: [
+      {
+        path: "/notifications",
+        method: "GET",
+        json: { notifications: LOGGED_NOTIFICATIONS },
+      },
+    ],
+  };
+}
+
+function openNotifications(page: Page): Promise<void> {
+  return page.getByRole("button", { name: "notifications" }).click();
+}
 
 // The navbar pill repeats the operation's word, so the screen's own copy is
 // read inside the operation body.
@@ -179,6 +263,24 @@ export const HOME: Record<string, Scenario> = {
       const card = page.getByRole("button", { name: `open ${AGENT}` });
       await expect(card).toBeVisible();
       await expect(card.getByText(START_REFUSED)).toBeVisible();
+    },
+  },
+  "notifications-popover": {
+    state: notificationsState(),
+    drive: openNotifications,
+    settle: async (page) => {
+      await expect(page.getByRole("button", { name: "see all" })).toBeVisible();
+    },
+  },
+  "notifications-dialog": {
+    state: notificationsState(),
+    drive: async (page) => {
+      await openNotifications(page);
+      await page.getByRole("button", { name: "see all" }).click();
+    },
+    settle: async (page) => {
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByText("earlier")).toBeVisible();
     },
   },
   "update-snapshotting": updateScreen(gatewayOperation(), async (page) => {

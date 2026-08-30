@@ -22,9 +22,6 @@ import {
 } from "./context";
 
 const HISTORY_PAGE_SIZE = 50;
-// A near-instant first fetch still shows the skeletons for at least this long,
-// so they read as a loading state instead of a flash.
-const HISTORY_MIN_LOADING_MS = 500;
 
 // Owns every piece of the notifications pill's state, mounted once above the
 // route layouts (NavigationGuard): the queue survives page navigation even
@@ -45,7 +42,6 @@ export function NotificationsPillProvider({
     useGateway();
   const { feed, open, close, loadOlder } = useNotificationFeed(controller, {
     pageSize: HISTORY_PAGE_SIZE,
-    minLoadingMs: HISTORY_MIN_LOADING_MS,
   });
 
   // One catch-up session spans both surfaces: it opens with the first surface
