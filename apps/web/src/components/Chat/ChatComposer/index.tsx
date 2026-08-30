@@ -104,7 +104,7 @@ interface ChatComposerProps {
   fullscreen?: boolean;
   agentName: string;
   notAuthenticated: boolean;
-  sttAvailable: boolean;
+  voiceConfigured: boolean;
   recordingMode: VoiceMode | null;
   listening: boolean;
   isSpeaking: boolean;
@@ -126,7 +126,7 @@ export function ChatComposer({
   fullscreen,
   agentName,
   notAuthenticated,
-  sttAvailable,
+  voiceConfigured,
   recordingMode,
   listening,
   isSpeaking,
@@ -161,7 +161,7 @@ export function ChatComposer({
     hasAttachments,
   });
   const controls: ComposerControls = {
-    sttAvailable,
+    voiceConfigured,
     recordingMode,
     inputDisabled,
     slot: rightSlot({ input, recordingMode, hasAttachments }),
@@ -193,7 +193,7 @@ export function ChatComposer({
 }
 
 interface ComposerControls {
-  sttAvailable: boolean;
+  voiceConfigured: boolean;
   recordingMode: VoiceMode | null;
   inputDisabled: boolean;
   slot: "conversation" | "send";
@@ -309,6 +309,7 @@ function FloatingComposer({
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             readOnly={readOnly}
+            data-voice-dictate="true"
             placeholder={placeholder}
             disabled={inputDisabled}
             rows={1}
@@ -335,7 +336,7 @@ const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";
 
 function VoiceButtons({ controls }: { controls: ComposerControls }) {
   const {
-    sttAvailable,
+    voiceConfigured,
     recordingMode,
     inputDisabled,
     slot,
@@ -347,7 +348,8 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
     canSend,
   } = controls;
 
-  if (!sttAvailable) {
+  // Voice never set up: the composer is a plain send box.
+  if (!voiceConfigured) {
     return <SendButton disabled={inputDisabled || !canSend} onSend={onSend} />;
   }
 

@@ -80,6 +80,7 @@ beforeEach(() => {
   useVoice.getState()._setAgentContext("test-agent", {}, undefined);
   useVoice.getState()._setSttStatus(null);
   useVoice.getState()._setTtsStatus(null);
+  useVoice.setState({ muted: false });
   FakeAudio.created = [];
   FakeSocket.urls = [];
   vi.stubGlobal("Audio", FakeAudio);
@@ -270,6 +271,7 @@ describe("recording modes", () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     vi.stubGlobal("AudioWorkletNode", FakeWorkletNode);
     useVoice.getState()._setSttStatus(ENABLED_STT);
+    useVoice.getState()._setTtsStatus(ENABLED_TTS);
     send = vi.fn<(text: string) => void>();
     clearInput = vi.fn<() => void>();
     useVoice.getState().registerChat(send, clearInput);
@@ -418,5 +420,48 @@ describe("recording modes", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(useVoice.getState().recordingMode).toBeNull();
     expect(RecordingSocket.instances).toHaveLength(0);
+  });
+
+  it("refuses dictation and points at speech-to-text when STT is off", () => {
+    useVoice.getState()._setSttStatus({ ...ENABLED_STT, enabled: false });
+    useVoice.getState().startVoice("dictation");
+    expect(useVoice.getState().recordingMode).toBeNull();
+    expect(useToastStore.getState().current?.title).toBe(
+      "enable speech-to-text in the settings",
+    );
+    useToastStore.getState().dismiss();
+  });
+
+  it("refuses a conversation and points at setup when TTS is not configured", () => {
+    useVoice.getState()._setTtsStatus(null);
+    useVoice.getState().startVoice("conversation");
+    expect(useVoice.getState().recordingMode).toBeNull();
+    expect(useToastStore.getState().current?.title).toBe(
+      "set up text-to-speech in the settings",
+    );
+    useToastStore.getState().dismiss();
+  });
+
+  it("refuses a conversation and points at enabling when TTS is off", () => {
+    useVoice.getState()._setTtsStatus({ ...ENABLED_TTS, enabled: false });
+    useVoice.getState().startVoice("conversation");
+    expect(useVoice.getState().recordingMode).toBeNull();
+    expect(useToastStore.getState().current?.title).toBe(
+      "enable text-to-speech in the settings",
+    );
+    useToastStore.getState().dismiss();
+  });
+
+  it("mute silences an ambient reply but a conversation speaks anyway", async () => {
+    useVoice.setState({ muted: true });
+    useVoice.getState().speak("silent while idle");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(FakeAudio.created).toHaveLength(0);
+
+    await startRecording("conversation");
+    useVoice.getState().speak("a conversation reply");
+    await vi.waitFor(() => {
+      expect(FakeAudio.created.length).toBeGreaterThan(0);
+    });
   });
 });

@@ -24,7 +24,7 @@ import { CHAT_COMPOSER_CONTROL_HEIGHT } from "@/components/chat-composer-input.t
 import { useToast } from "@/components/native-toast";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
+import { useLiveVoice } from "@/voice/useLiveVoice";
 import { createInvertedChatRows, type ChatRow } from "@/agent/chat-list-model";
 import { quotedReply, type ReplyTarget } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
@@ -32,7 +32,7 @@ import { usePagerScrollLock } from "@/agent/pager-scroll-lock";
 import { GlassSurface } from "@/components/ui/glass-surface";
 import {
   AttachButton,
-  ComposerActionButton,
+  ComposerActions,
   ReplyPreview,
 } from "@/agent/chat/chat-composer";
 import { AttachmentChips } from "@/agent/chat/attachment-chips";
@@ -40,6 +40,7 @@ import { AttachmentViewer } from "@/agent/chat/attachment-viewer";
 import type { OpenViewerRequest } from "@/agent/chat/attachment-content";
 import { showAttachMenu } from "@/agent/chat/attach-menu";
 import { useAttachmentDrafts } from "@/attachments/use-attachment-drafts";
+import { VoiceConversationPanel } from "@/agent/chat/voice-conversation-panel";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
 import { ScrollToBottomButton } from "@/agent/chat/scroll-to-bottom-button";
 import { useTranscriptWordHaptics } from "@/agent/chat/use-transcript-word-haptics";
@@ -170,45 +171,78 @@ export default function ChatPage() {
   const voiceEnabled = Boolean(
     speechToText.data?.configured && speechToText.data.enabled,
   );
-  const speech = useSpeechPlayer(name, socket.latestLiveChat);
-  const speechEnabled = speech.enabled;
-  const playSpeech = speech.play;
-  const stopSpeech = speech.stop;
   const canSend = socket.connected && agent?.status === "alive";
+  const canSendRef = useRef(canSend);
+  useEffect(() => {
+    canSendRef.current = canSend;
+  });
   const sendChat = socket.send;
   const attachments = useAttachmentDrafts(name, holdKey, api, showError);
   const attachmentsRef = useRef(attachments);
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
-  // Reads the draft, armed reply, and attachments from refs, so the voice socket's captured
-  // onTurnEnd sends what is armed at turn end, not what was armed at start(). Ready chips ride
-  // along and clear; chips still uploading stay put while a dictated caption sends alone, so a
-  // voice turn is never silently dropped.
-  const sendCurrentInput = useCallback(
-    (source?: "voice") => {
-      const text = inputValueRef.current.trim();
+  const [conversationTranscript, setConversationTranscript] = useState("");
+  const modeRef = useRef<"dictation" | "conversation" | null>(null);
+  // Reads the armed reply and attachments from refs, so a captured turn is sent with whatever is
+  // armed at turn end, not at start. Ready chips ride along and clear on any send (typed,
+  // dictation confirm, or a conversation turn); chips still uploading stay put while the text
+  // sends alone, so no turn is ever silently dropped.
+  const sendText = useCallback(
+    (text: string, source?: "voice") => {
+      const trimmed = text.trim();
+      if (!canSendRef.current) return;
       const drafts = attachmentsRef.current;
-      if (!canSend) return;
       const uploaded = drafts.ready ? drafts.uploaded : undefined;
-      if (!text && !uploaded) return;
+      if (!trimmed && !uploaded) return;
       const reply = replyTargetRef.current;
-      const outgoing = reply ? `${quotedReply(reply.text)}${text}` : text;
+      const outgoing = reply ? `${quotedReply(reply.text)}${trimmed}` : trimmed;
       if (sendChat(outgoing, source, uploaded)) {
         setInput("");
         setReplyTarget(null);
         if (uploaded) drafts.clear();
       }
     },
-    [canSend, sendChat, setInput, setReplyTarget],
+    [sendChat, setInput, setReplyTarget],
+  );
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      if (modeRef.current === "conversation") setConversationTranscript(text);
+      else handleTranscript(text);
+    },
+    [handleTranscript],
   );
   const voice = useLiveVoice({
     name,
     enabled: voiceEnabled,
-    onTranscript: handleTranscript,
-    onTurnEnd: () => sendCurrentInput("voice"),
+    sttStatus: speechToText.data ?? null,
+    onTranscript: handleVoiceTranscript,
+    // A conversation sends each turn as it ends; dictation sends the composer on confirm
+    // (below), so a manual edit made during dictation rides along.
+    onSend: (text) => {
+      if (modeRef.current === "conversation") sendText(text, "voice");
+    },
     onError: showError,
+    onInactivityStop: () =>
+      showError(
+        "Conversation ended after 15 minutes of silence.",
+        "Voice conversation",
+      ),
   });
+  const recordingMode = voice.recordingMode;
+  useEffect(() => {
+    modeRef.current = recordingMode;
+  }, [recordingMode]);
+  const speechEnabled = voice.ttsEnabled;
+  const speakLatest = voice.speak;
+  const spokenRef = useRef<string | null>(null);
+  useEffect(() => {
+    const latest = socket.latestLiveChat;
+    if (latest && latest !== spokenRef.current) {
+      spokenRef.current = latest;
+      speakLatest(latest);
+    }
+  }, [socket.latestLiveChat, speakLatest]);
 
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
@@ -231,19 +265,18 @@ export default function ChatPage() {
   );
   const readAloud = useCallback(
     (text: string) => {
-      void playSpeech(text).catch(() => undefined);
+      speakLatest(text);
     },
-    [playSpeech],
+    [speakLatest],
   );
   const send = () => {
-    sendCurrentInput();
+    sendText(inputValueRef.current);
   };
 
   const hasChips = attachments.drafts.length > 0;
-  const hasDraft = input.trim().length > 0 || hasChips;
-  // The action button flips to send once anything is attached, but stays disabled until every
-  // chip has uploaded; the chips themselves show the progress.
-  const canSendNow = canSend && (!hasChips || attachments.ready);
+  // The send affordance lights up for text or a ready batch of chips; a still-uploading
+  // chips-only draft keeps the trailing button in its voice form until the uploads finish.
+  const hasDraft = input.trim().length > 0 || attachments.ready;
   const openAttachMenu = useCallback(() => {
     showAttachMenu((assets) => {
       void attachmentsRef.current.addAssets(assets);
@@ -257,21 +290,42 @@ export default function ChatPage() {
     setViewer(null);
   }, []);
 
-  const toggleVoice = () => {
-    if (process.env.EXPO_OS === "ios") {
+  const heavyHaptic = () => {
+    if (process.env.EXPO_OS === "ios")
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(
         () => undefined,
       );
-    }
-    if (voice.active) {
-      voice.stop();
-    } else {
-      stopSpeech();
-      void voice.start().catch((cause) => {
-        showError(cause, "Voice could not start");
-      });
-    }
   };
+  const startDictation = () => {
+    heavyHaptic();
+    setInput("");
+    void voice.start("dictation").catch((cause) => {
+      showError(cause, "Voice could not start");
+    });
+  };
+  const confirmDictation = () => {
+    const text = inputValueRef.current;
+    voice.stop();
+    sendText(text, "voice");
+    setInput("");
+  };
+  const cancelDictation = () => {
+    voice.cancel();
+    setInput("");
+  };
+  const startConversation = () => {
+    heavyHaptic();
+    setConversationTranscript("");
+    void voice.start("conversation").catch((cause) => {
+      showError(cause, "Voice could not start");
+    });
+  };
+  const endConversation = () => voice.stop();
+  const conversationState = !voice.listening
+    ? "connecting"
+    : voice.speaking
+      ? "speaking"
+      : "listening";
 
   return (
     <View style={styles.screen}>
@@ -324,44 +378,61 @@ export default function ChatPage() {
               />
             </View>
             <GlassSurface style={styles.composerSurface}>
-              {replyTarget ? (
-                <ReplyPreview target={replyTarget} onCancel={cancelReply} />
-              ) : null}
-              <AttachmentChips
-                drafts={attachments.drafts}
-                previewUri={attachments.previewUri}
-                onRetry={attachments.retry}
-                onRemove={attachments.remove}
-              />
-              <View style={styles.composerRow}>
-                <AttachButton disabled={!canSend} onPress={openAttachMenu} />
-                <ChatComposerInput
-                  ref={inputRef}
-                  maxLength={20_000}
-                  onChangeText={setInput}
-                  placeholder={
-                    voice.active
-                      ? "Listening…"
-                      : !canSend
-                        ? "Waiting for agent…"
-                        : hasChips && input.length === 0
-                          ? "Add a caption…"
-                          : `Message ${name}`
-                  }
-                  placeholderTextColor={colors.tertiaryText}
-                  selectionColor={colors.accent}
-                  textColor={colors.text}
-                  value={input}
+              {recordingMode === "conversation" ? (
+                <VoiceConversationPanel
+                  state={conversationState}
+                  transcript={conversationTranscript}
+                  height={CONVERSATION_PANEL_HEIGHT}
+                  onEnd={endConversation}
                 />
-                <ComposerActionButton
-                  canSend={canSendNow}
-                  hasDraft={hasDraft}
-                  voiceActive={voice.active}
-                  voiceEnabled={voiceEnabled}
-                  onSend={send}
-                  onToggleVoice={toggleVoice}
-                />
-              </View>
+              ) : (
+                <>
+                  {replyTarget ? (
+                    <ReplyPreview target={replyTarget} onCancel={cancelReply} />
+                  ) : null}
+                  <AttachmentChips
+                    drafts={attachments.drafts}
+                    previewUri={attachments.previewUri}
+                    onRetry={attachments.retry}
+                    onRemove={attachments.remove}
+                  />
+                  <View style={styles.composerRow}>
+                    <AttachButton
+                      disabled={!canSend}
+                      onPress={openAttachMenu}
+                    />
+                    <ChatComposerInput
+                      ref={inputRef}
+                      maxLength={20_000}
+                      onChangeText={setInput}
+                      placeholder={
+                        recordingMode === "dictation"
+                          ? "Listening…"
+                          : !canSend
+                            ? "Waiting for agent…"
+                            : hasChips && input.length === 0
+                              ? "Add a caption…"
+                              : `Message ${name}`
+                      }
+                      placeholderTextColor={colors.tertiaryText}
+                      selectionColor={colors.accent}
+                      textColor={colors.text}
+                      value={input}
+                    />
+                    <ComposerActions
+                      canSend={canSend}
+                      hasDraft={hasDraft}
+                      recordingMode={recordingMode}
+                      voiceEnabled={voiceEnabled}
+                      onSend={send}
+                      onDictate={startDictation}
+                      onConfirm={confirmDictation}
+                      onCancel={cancelDictation}
+                      onConversation={startConversation}
+                    />
+                  </View>
+                </>
+              )}
             </GlassSurface>
           </Animated.View>
         </View>
@@ -369,6 +440,8 @@ export default function ChatPage() {
     </View>
   );
 }
+
+const CONVERSATION_PANEL_HEIGHT = 220;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },

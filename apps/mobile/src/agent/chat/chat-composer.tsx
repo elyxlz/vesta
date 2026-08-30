@@ -1,10 +1,5 @@
-import { memo, useEffect, useMemo } from "react";
-import { Pressable, StyleSheet } from "react-native";
-import Reanimated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
+import { memo, useMemo } from "react";
+import { Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -82,98 +77,120 @@ export function AttachButton({
   );
 }
 
-export function ComposerActionButton({
-  canSend,
-  hasDraft,
-  voiceActive,
-  voiceEnabled,
-  onSend,
-  onToggleVoice,
+type ActionKind = "dictate" | "confirm" | "cancel" | "conversation" | "send";
+
+function RoundAction({
+  kind,
+  disabled,
+  onPress,
 }: {
-  canSend: boolean;
-  hasDraft: boolean;
-  voiceActive: boolean;
-  voiceEnabled: boolean;
-  onSend: () => void;
-  onToggleVoice: () => void;
+  kind: ActionKind;
+  disabled: boolean;
+  onPress: () => void;
 }) {
   const { colors } = usePreferences();
-  const sendMode = !voiceEnabled || (hasDraft && !voiceActive);
-  const sendProgress = useSharedValue(sendMode ? 1 : 0);
-
-  useEffect(() => {
-    sendProgress.set(
-      withTiming(sendMode ? 1 : 0, {
-        duration: 180,
-      }),
-    );
-  }, [sendMode, sendProgress]);
-
-  const voiceStyle = useAnimatedStyle(() => ({
-    opacity: 1 - sendProgress.value,
-    transform: [{ scale: 1 - sendProgress.value * 0.2 }],
-  }));
-  const sendStyle = useAnimatedStyle(() => ({
-    opacity: sendProgress.value,
-    transform: [{ scale: 0.76 + sendProgress.value * 0.24 }],
-  }));
-  const sendSurfaceStyle = useAnimatedStyle(() => ({
-    opacity: sendProgress.value,
-  }));
-  const actionDisabled = sendMode
-    ? !canSend || !hasDraft
-    : !voiceEnabled || !canSend;
-
+  const primary = kind === "confirm" || kind === "conversation";
+  const danger = kind === "cancel";
+  const icon: Record<ActionKind, keyof typeof Ionicons.glyphMap> = {
+    dictate: "mic",
+    confirm: "checkmark",
+    cancel: "close",
+    conversation: "chatbubbles",
+    send: "arrow-up",
+  };
+  const label: Record<ActionKind, string> = {
+    dictate: "Dictate",
+    confirm: "Send dictation",
+    cancel: "Discard dictation",
+    conversation: "Start voice conversation",
+    send: "Send message",
+  };
   return (
     <Pressable
-      accessibilityLabel={
-        voiceActive
-          ? "Stop listening"
-          : sendMode
-            ? "Send message"
-            : "Start voice input"
-      }
+      accessibilityLabel={label[kind]}
       accessibilityRole="button"
-      disabled={actionDisabled}
+      disabled={disabled}
       hitSlop={6}
-      onPress={sendMode ? onSend : onToggleVoice}
+      onPress={onPress}
       style={({ pressed }) => [
         styles.roundButton,
         {
-          backgroundColor: voiceActive ? colors.danger : colors.input,
-          opacity: actionDisabled ? 0.38 : pressed ? 0.72 : 1,
+          backgroundColor: primary
+            ? colors.accent
+            : danger
+              ? colors.danger
+              : colors.input,
+          opacity: disabled ? 0.38 : pressed ? 0.72 : 1,
         },
       ]}
     >
-      <Reanimated.View
-        pointerEvents="none"
-        style={[
-          styles.composerActionSurface,
-          { backgroundColor: colors.accent },
-          sendSurfaceStyle,
-        ]}
+      <Ionicons
+        name={icon[kind]}
+        size={kind === "send" || kind === "confirm" ? 17 : 16}
+        color={primary ? colors.accentText : danger ? "white" : colors.text}
       />
-      <Reanimated.View
-        pointerEvents="none"
-        style={[styles.composerActionGlyph, voiceStyle]}
-      >
-        <Ionicons
-          name={voiceActive ? "stop" : "mic"}
-          size={16}
-          color={voiceActive ? "white" : colors.text}
-        />
-      </Reanimated.View>
-      <Reanimated.View
-        pointerEvents="none"
-        style={[styles.composerActionGlyph, sendStyle]}
-      >
-        <Ionicons name="arrow-up" size={17} color={colors.accentText} />
-      </Reanimated.View>
     </Pressable>
   );
 }
 
+// The composer's right cluster. Dictation swaps the row for discard and confirm; otherwise the
+// mic dictates and the trailing slot sends a draft or opens a voice conversation.
+export function ComposerActions({
+  canSend,
+  hasDraft,
+  recordingMode,
+  voiceEnabled,
+  onSend,
+  onDictate,
+  onConfirm,
+  onCancel,
+  onConversation,
+}: {
+  canSend: boolean;
+  hasDraft: boolean;
+  recordingMode: "dictation" | "conversation" | null;
+  voiceEnabled: boolean;
+  onSend: () => void;
+  onDictate: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onConversation: () => void;
+}) {
+  if (recordingMode === "dictation") {
+    return (
+      <View style={styles.actionCluster}>
+        <RoundAction kind="cancel" disabled={false} onPress={onCancel} />
+        <RoundAction kind="confirm" disabled={!canSend} onPress={onConfirm} />
+      </View>
+    );
+  }
+  if (!voiceEnabled) {
+    return (
+      <RoundAction
+        kind="send"
+        disabled={!canSend || !hasDraft}
+        onPress={onSend}
+      />
+    );
+  }
+  return (
+    <View style={styles.actionCluster}>
+      <RoundAction kind="dictate" disabled={!canSend} onPress={onDictate} />
+      {hasDraft ? (
+        <RoundAction kind="send" disabled={!canSend} onPress={onSend} />
+      ) : (
+        <RoundAction
+          kind="conversation"
+          disabled={!canSend}
+          onPress={onConversation}
+        />
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  actionCluster: { flexDirection: "row", alignItems: "center", gap: 6 },
   replyLabel: { fontSize: 12, fontWeight: "600" },
   replyText: { fontSize: 13, lineHeight: 17 },
   replyClose: {

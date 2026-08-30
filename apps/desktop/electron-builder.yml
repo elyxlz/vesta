@@ -23,6 +23,8 @@ mac:
       arch: [arm64]
   hardenedRuntime: true
   notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: Vesta uses your microphone for voice input to your agent.
     NSLocationWhenInUseUsageDescription: Vesta shares this device's location with your agents so they follow your travel.

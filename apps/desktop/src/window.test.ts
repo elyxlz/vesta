@@ -1,6 +1,10 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { downloadDefaultPath, resolveBundlePath } from "./window";
+import {
+  downloadDefaultPath,
+  rendererPermissionDecision,
+  resolveBundlePath,
+} from "./window";
 
 const WEB_DIST = path.join(path.sep, "app", "web");
 const INDEX = path.join(WEB_DIST, "index.html");
@@ -33,5 +37,16 @@ describe("downloadDefaultPath", () => {
     expect(downloadDefaultPath("/home/u/Downloads", "")).toBe(
       "/home/u/Downloads/file",
     );
+  });
+});
+
+describe("rendererPermissionDecision", () => {
+  it.each([
+    { permission: "geolocation", expected: "grant" },
+    { permission: "media", expected: "media" },
+    { permission: "notifications", expected: "deny" },
+    { permission: "clipboard-read", expected: "deny" },
+  ])("maps $permission to $expected", ({ permission, expected }) => {
+    expect(rendererPermissionDecision(permission)).toBe(expected);
   });
 });

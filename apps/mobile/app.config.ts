@@ -59,6 +59,8 @@ const config: ExpoConfig = {
       NSMicrophoneUsageDescription: "Talk to your Vesta agent.",
       NSPhotoLibraryUsageDescription:
         "Attach photos and videos from your library to your chat.",
+      // Keeps a hands-free voice conversation alive with the screen locked.
+      UIBackgroundModes: ["audio"],
     },
   },
   android: {
@@ -77,6 +79,10 @@ const config: ExpoConfig = {
       // through the Storage Access Framework and need no permission.
       "android.permission.READ_MEDIA_IMAGES",
       "android.permission.READ_MEDIA_VIDEO",
+      // The microphone foreground service that keeps a hands-free voice conversation alive
+      // while the app is backgrounded or the screen is locked.
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_MICROPHONE",
     ],
     intentFilters: [
       {
