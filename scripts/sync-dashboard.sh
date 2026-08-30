@@ -30,6 +30,7 @@ cp "$APP_SRC/design-tokens.css" "$DASHBOARD_SRC/design-tokens.css"
 cp "$APP_SRC/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
 cp "$APP_SRC/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
 cp "$APP_SRC/hooks/use-media-query.ts" "$DASHBOARD_SRC/hooks/use-media-query.ts" # use-mobile delegates to it
+cp "$APP_SRC/hooks/use-scroll-fade.ts" "$DASHBOARD_SRC/hooks/use-scroll-fade.ts" # ui/scroll-shell imports it
 # Strict mirror (delete-on-sync) so the dashboard's ui/ exactly matches the
 # canonical registry; a primitive removed from one side fails the CI check.
 rsync -a --delete --include='*.tsx' --exclude='*' "$APP_SRC/components/ui/" "$DASHBOARD_SRC/components/ui/"
