@@ -54,8 +54,11 @@ const config: ExpoConfig = {
       : { associatedDomains: ["applinks:vesta.run"] }),
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
-      NSCameraUsageDescription: "Scan a Vesta connection QR code.",
+      NSCameraUsageDescription:
+        "Scan a Vesta connection QR code, and capture photos or videos to send in chat.",
       NSMicrophoneUsageDescription: "Talk to your Vesta agent.",
+      NSPhotoLibraryUsageDescription:
+        "Attach photos and videos from your library to your chat.",
     },
   },
   android: {
@@ -70,6 +73,10 @@ const config: ExpoConfig = {
       "android.permission.CAMERA",
       "android.permission.RECORD_AUDIO",
       "android.permission.POST_NOTIFICATIONS",
+      // Scoped media reads for the attachment picker (API 33+); documents go
+      // through the Storage Access Framework and need no permission.
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VIDEO",
     ],
     intentFilters: [
       {
@@ -110,6 +117,17 @@ const config: ExpoConfig = {
         microphonePermission: "Talk to your Vesta agent.",
       },
     ],
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "Attach photos and videos from your library to your chat.",
+        cameraPermission:
+          "Scan a Vesta connection QR code, and capture photos or videos to send in chat.",
+        microphonePermission: "Talk to your Vesta agent.",
+      },
+    ],
+    "expo-video",
     ...notificationPlugins,
     "expo-localization",
     [
