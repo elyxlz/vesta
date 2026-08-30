@@ -24,7 +24,7 @@
     "@expo/ui": "~57.0.9",
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@tanstack/react-query": "^5.101.3",
+    "@tanstack/react-query": "^5.102.6",
     "@vesta/core": "*",
     "expo": "~57.0.11",
     "expo-audio": "~57.0.3",
@@ -76,11 +76,11 @@
     "@types/react": "~19.2.2",
     "@vesta/visual": "*",
     "eslint": "^9.39.5",
-    "eslint-config-expo": "~57.0.1",
+    "eslint-config-expo": "~57.0.2",
     "eslint-import-resolver-typescript": "^4.4.5",
-    "globals": "^17.11.0",
+    "globals": "^16.5.0",
     "patch-package": "^8.0.1",
     "typescript": "~6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }
