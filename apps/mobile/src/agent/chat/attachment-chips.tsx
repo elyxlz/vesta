@@ -7,11 +7,11 @@ import {
   attachmentKind,
   draftTotalBytes,
   formatBytes,
-  type AttachmentKind,
   type DraftAttachment,
   type UploadErrorReason,
 } from "@vesta/core";
 import { Text } from "@/components/ui/Typography";
+import { ATTACHMENT_KIND_ICON } from "@/agent/chat/attachment-icons";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 // The composer's draft chips: one per picked file, always showing name and size, with the upload
@@ -21,13 +21,6 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 const THUMB_SIZE = 40;
 const RING_SIZE = 22;
 const RING_STROKE = 2.5;
-
-const KIND_ICON: Record<AttachmentKind, keyof typeof Ionicons.glyphMap> = {
-  image: "image-outline",
-  video: "film-outline",
-  audio: "musical-notes-outline",
-  file: "document-outline",
-};
 
 const ERROR_LABEL: Record<UploadErrorReason, string> = {
   too_large: "Too large",
@@ -132,7 +125,7 @@ export const AttachmentChips = memo(function AttachmentChips({
                     ]}
                   >
                     <Ionicons
-                      name={KIND_ICON[attachmentKind(draft.mime)]}
+                      name={ATTACHMENT_KIND_ICON[attachmentKind(draft.mime)]}
                       size={18}
                       color={colors.secondaryText}
                     />

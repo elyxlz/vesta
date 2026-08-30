@@ -36,6 +36,8 @@ import {
   ReplyPreview,
 } from "@/agent/chat/chat-composer";
 import { AttachmentChips } from "@/agent/chat/attachment-chips";
+import { AttachmentViewer } from "@/agent/chat/attachment-viewer";
+import type { OpenViewerRequest } from "@/agent/chat/attachment-content";
 import { showAttachMenu } from "@/agent/chat/attach-menu";
 import { useAttachmentDrafts } from "@/attachments/use-attachment-drafts";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
@@ -247,6 +249,13 @@ export default function ChatPage() {
       void attachmentsRef.current.addAssets(assets);
     });
   }, []);
+  const [viewer, setViewer] = useState<OpenViewerRequest | null>(null);
+  const openAttachment = useCallback((request: OpenViewerRequest) => {
+    setViewer(request);
+  }, []);
+  const closeViewer = useCallback(() => {
+    setViewer(null);
+  }, []);
 
   const toggleVoice = () => {
     if (process.env.EXPO_OS === "ios") {
@@ -282,6 +291,13 @@ export default function ChatPage() {
         onEditAndResend={editAndResend}
         onReadAloud={readAloud}
         onRetry={socket.retry}
+        onOpenAttachment={openAttachment}
+      />
+      <AttachmentViewer
+        api={api}
+        agent={name}
+        request={viewer}
+        onClose={closeViewer}
       />
       <KeyboardStickyView
         offset={{ closed: 0, opened: composerKeyboardOffset }}

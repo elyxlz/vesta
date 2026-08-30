@@ -14,6 +14,7 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { LinearGradient } from "expo-linear-gradient";
 import type { ChatAttachment, InputMethod } from "@vesta/core";
+import type { OpenViewerRequest } from "@/agent/chat/attachment-content";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChatLoadingSkeleton } from "@/components/chat-loading-skeleton";
 import { LoadingSpinner } from "@/components/loading-spinner";
@@ -50,6 +51,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   onEditAndResend,
   onReadAloud,
   onRetry,
+  onOpenAttachment,
 }: {
   rows: ChatRow[];
   agentName: string;
@@ -73,6 +75,7 @@ export const ChatTranscript = memo(function ChatTranscript({
     inputMethod?: InputMethod,
     attachments?: ChatAttachment[],
   ) => void;
+  onOpenAttachment: (request: OpenViewerRequest) => void;
 }) {
   const insets = useSafeAreaInsets();
   const { colors } = usePreferences();
@@ -102,6 +105,7 @@ export const ChatTranscript = memo(function ChatTranscript({
       ) : (
         <ChatEvent
           event={item.event}
+          agentName={agentName}
           startsNewBubbleGroup={item.startsNewBubbleGroup}
           endsBubbleGroup={item.endsBubbleGroup}
           canSpeak={canSpeak}
@@ -109,9 +113,18 @@ export const ChatTranscript = memo(function ChatTranscript({
           onEditAndResend={onEditAndResend}
           onReadAloud={onReadAloud}
           onRetry={onRetry}
+          onOpenAttachment={onOpenAttachment}
         />
       ),
-    [agentName, canSpeak, onEditAndResend, onReadAloud, onReply, onRetry],
+    [
+      agentName,
+      canSpeak,
+      onEditAndResend,
+      onOpenAttachment,
+      onReadAloud,
+      onReply,
+      onRetry,
+    ],
   );
 
   return (

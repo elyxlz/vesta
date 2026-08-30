@@ -35,7 +35,12 @@ import {
   messageActionIds,
   type MessageActionId,
 } from "@/agent/message-actions";
+import { useSession } from "@/session/SessionProvider";
 import { chatMarkdownStyleSet } from "@/agent/chat/chat-markdown";
+import {
+  AttachmentContent,
+  type OpenViewerRequest,
+} from "@/agent/chat/attachment-content";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
 import {
   chatDateLabel,
@@ -159,6 +164,7 @@ export const ChatDateHeader = memo(function ChatDateHeader({
 
 export const ChatEvent = memo(function ChatEvent({
   event,
+  agentName,
   startsNewBubbleGroup,
   endsBubbleGroup,
   canSpeak,
@@ -166,8 +172,10 @@ export const ChatEvent = memo(function ChatEvent({
   onEditAndResend,
   onReadAloud,
   onRetry,
+  onOpenAttachment,
 }: {
   event: ChatMessage;
+  agentName: string;
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
   canSpeak: boolean;
@@ -180,8 +188,10 @@ export const ChatEvent = memo(function ChatEvent({
     inputMethod?: InputMethod,
     attachments?: ChatAttachment[],
   ) => void;
+  onOpenAttachment: (request: OpenViewerRequest) => void;
 }) {
   const { colors } = usePreferences();
+  const { api } = useSession();
   // Memoized because toLocaleTimeString builds an Intl formatter per call and
   // rows legitimately re-render (bubble-group flips on each appended message).
   const timestamp = useMemo(
@@ -292,6 +302,10 @@ export const ChatEvent = memo(function ChatEvent({
   }
   if (event.type !== "user" && event.type !== "chat") return null;
   const bubbleColor = user ? colors.accent : colors.card;
+  const attachments = event.attachments ?? [];
+  // With no caption the markdown (and the spacer that reserves the timestamp's room) is absent,
+  // so the timestamp renders as its own right-aligned line under the blocks instead.
+  const hasCaption = event.text.trim().length > 0;
   const bubble = (
     <View
       accessibilityHint="Long press for message actions"
@@ -314,15 +328,40 @@ export const ChatEvent = memo(function ChatEvent({
       {endsBubbleGroup && !USES_NATIVE_BUBBLE_SHAPE ? (
         <BubbleTail user={user} fill={bubbleColor} stroke={colors.border} />
       ) : null}
-      <Markdown
-        markdownit={CHAT_MARKDOWN}
-        onLinkPress={openMarkdownLink}
-        rules={markdownRules}
-        style={user ? markdownStyleSet.user : markdownStyleSet.base}
-      >
-        {event.text}
-      </Markdown>
-      {timestamp ? (
+      {attachments.map((attachment) => (
+        <AttachmentContent
+          key={attachment.id}
+          api={api}
+          agent={agentName}
+          user={user}
+          attachment={attachment}
+          onOpen={onOpenAttachment}
+        />
+      ))}
+      {hasCaption ? (
+        <Markdown
+          markdownit={CHAT_MARKDOWN}
+          onLinkPress={openMarkdownLink}
+          rules={markdownRules}
+          style={user ? markdownStyleSet.user : markdownStyleSet.base}
+        >
+          {event.text}
+        </Markdown>
+      ) : null}
+      {timestamp && !hasCaption ? (
+        <Text
+          style={[
+            styles.attachmentTimestamp,
+            {
+              color: user ? colors.accentText : colors.tertiaryText,
+              opacity: user ? 0.58 : 1,
+            },
+          ]}
+        >
+          {timestamp}
+        </Text>
+      ) : null}
+      {timestamp && hasCaption ? (
         <Text
           style={[
             styles.bubbleTimestamp,
@@ -537,6 +576,7 @@ const styles = StyleSheet.create({
     bottom: 10,
     fontSize: 12,
   },
+  attachmentTimestamp: { fontSize: 12, textAlign: "right", paddingTop: 2 },
   finalMarkdownParagraph: { marginBottom: 0 },
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
