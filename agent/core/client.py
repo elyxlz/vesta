@@ -552,10 +552,10 @@ def _adaptive_thinking() -> ThinkingConfigAdaptive:
 
 
 def _fixed_provider_context(provider: cfg.ZaiConfig | cfg.KimiConfig | cfg.OpenAIConfig) -> int:
-    """Resolve fixed-provider context exclusively from the selection or validated manifest."""
+    """Resolve fixed-provider context exclusively from the selection or validated catalog."""
     context = provider.max_context_tokens or cfg.provider_context_default(provider.kind, provider.model)
     if context is None:
-        raise RuntimeError(f"provider manifest has no context policy for {provider.kind}/{provider.model}")
+        raise RuntimeError(f"provider catalog has no context policy for {provider.kind}/{provider.model}")
     return context
 
 
@@ -623,7 +623,7 @@ def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSet
     context = _fixed_provider_context(provider)
     auxiliary_model = cfg.provider_auxiliary_model(provider.kind)
     if auxiliary_model is None:
-        raise RuntimeError(f"provider manifest has no auxiliary model for {provider.kind}")
+        raise RuntimeError(f"provider catalog has no auxiliary model for {provider.kind}")
     env = {
         "ANTHROPIC_BASE_URL": state.codex_proxy_url,
         "ANTHROPIC_AUTH_TOKEN": "unused",
@@ -655,7 +655,7 @@ def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> _SDKSetti
 
 
 def _harness_model(provider: cfg.Provider) -> str:
-    """Apply the manifest-declared Claude Code model hint for the selected context."""
+    """Apply the catalog-declared Claude Code model hint for the selected context."""
     model = provider.model.removesuffix("[1m]")
     context = provider.max_context_tokens or cfg.provider_context_default(provider.kind, model) or 0
     return cfg.provider_harness_model(provider.kind, model, context)

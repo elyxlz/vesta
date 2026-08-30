@@ -8,6 +8,7 @@ import {
   type GatewayContextValue,
 } from "@/providers/GatewayProvider/context";
 import { fakeAgentRow } from "@/test/fake-controller";
+import { clearOnboarding, saveOnboarding } from "@/lib/onboarding-progress";
 import { NavigationGuard } from "./index";
 
 const auth = vi.hoisted(() => ({ connected: true }));
@@ -42,7 +43,7 @@ function renderAt(path: string, overrides: Partial<GatewayContextValue>) {
             <Route index element={<p>home</p>} />
             <Route path="new" element={<p>new</p>} />
             <Route path="settings" element={<p>settings</p>} />
-            <Route path="agent/:name" element={<p>agent</p>} />
+            <Route path="agent/:name/*" element={<p>agent</p>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -56,6 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  clearOnboarding();
 });
 
 describe("NavigationGuard", () => {
@@ -97,5 +99,40 @@ describe("NavigationGuard", () => {
       gatewayOperation: RUNNING,
     });
     expect(getByText("home")).toBeTruthy();
+  });
+
+  it.each([
+    ["unprovisioned", { status: "unprovisioned" as const, booting: false }],
+    ["starting", { status: "starting" as const, booting: false }],
+    ["booting", { status: "alive" as const, booting: true }],
+  ])(
+    "keeps the onboarding agent behind the new-agent screen while %s",
+    (_, state) => {
+      saveOnboarding({ agentName: "ada", personality: null });
+      const { getByText, queryByText } = renderAt("/agent/ada/chat", {
+        agents: [fakeAgentRow("ada", state)],
+      });
+      expect(getByText("new")).toBeTruthy();
+      expect(queryByText("agent")).toBeNull();
+    },
+  );
+
+  it("opens the onboarding agent only after the ready state is observed", () => {
+    saveOnboarding({ agentName: "ada", personality: null });
+    const { getByText } = renderAt("/agent/ada/chat", {
+      agents: [fakeAgentRow("ada", { status: "alive", booting: false })],
+    });
+    expect(getByText("agent")).toBeTruthy();
+  });
+
+  it("does not contain an unrelated agent while onboarding is active", () => {
+    saveOnboarding({ agentName: "ada", personality: null });
+    const { getByText } = renderAt("/agent/grace/chat", {
+      agents: [
+        fakeAgentRow("ada", { status: "starting", booting: false }),
+        fakeAgentRow("grace", { status: "alive", booting: false }),
+      ],
+    });
+    expect(getByText("agent")).toBeTruthy();
   });
 });

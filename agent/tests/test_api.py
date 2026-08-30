@@ -582,6 +582,7 @@ async def test_status_reports_readiness_separate_from_provider(config):
     provider_resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     provider_body = json.loads(typing.cast("str", provider_resp.text))
     assert provider_body["authed"] is True
+    assert provider_body["catalog"]["default_provider"] == "claude"
     assert "setup_complete" not in provider_body  # readiness moved to /status
     assert provider_body["kind"] == "claude"
 

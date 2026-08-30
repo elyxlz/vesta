@@ -8,8 +8,7 @@ import {
 } from "./logos";
 import type { ProviderMode } from "./types";
 
-// Brand art + UI copy that isn't in the manifest (logo, tagline). The provider's display NAME comes
-// from the manifest (manifest.providers[id].display), so it isn't hardcoded here.
+// Brand art and UI copy that are presentation. Provider display names come from the agent catalog.
 export interface ProviderMeta {
   id: ProviderMode;
   tagline: string;

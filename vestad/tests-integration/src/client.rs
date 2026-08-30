@@ -8,7 +8,7 @@ use ureq::http::Response;
 use ureq::Body;
 
 use crate::types::{
-    AccessToken, AuthFlowResponse, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
+    AccessToken, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
 };
 
 // ── HTTP client ─────────────────────────────────────────────────
@@ -356,28 +356,6 @@ impl Client {
         }
     }
 
-    /// Standalone Claude OAuth start (not agent-scoped). Returns the auth URL and session id.
-    pub fn oauth_start(&self) -> Result<AuthFlowResponse, String> {
-        let resp = self.post("/providers/claude/oauth/start")?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
-    }
-
-    /// Standalone Claude OAuth completion. Returns the credentials JSON on success.
-    pub fn oauth_complete(&self, session_id: &str, code: &str) -> Result<String, String> {
-        let body = serde_json::json!({"session_id": session_id, "code": code});
-        let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
-        let v: serde_json::Value = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))?;
-        v["credentials"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| "missing credentials in response".to_string())
-    }
-
     /// Sign an agent in with an `OpenRouter` key + model via `PUT /provider`. The write doesn't restart
     /// — callers (e.g. `provision_and_settle`) restart afterwards. The agent must be running (its WS
     /// port bound) to receive the call, so this waits first.
@@ -619,6 +597,26 @@ impl Client {
             request = request.header(header, &value);
         }
         let response = request.call().map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// POST JSON to a proxied path with a chosen credential, preserving the upstream status/body.
+    pub fn proxy_post_json(
+        &self,
+        path: &str,
+        auth: ProxyAuth,
+        body: &serde_json::Value,
+    ) -> Result<(u16, String), String> {
+        let mut request = self.agent.post(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.send_json(body).map_err(|e| map_error(&e))?;
         let status = response.status().as_u16();
         let body = response
             .into_body()

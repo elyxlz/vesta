@@ -5,11 +5,13 @@ import { claudeProvider } from "@/api";
 type AuthStartResult = claudeProvider.OAuthStartResult;
 
 export function AuthStep({
+  agentName,
   authStart,
   startError,
   onCredentialsReady,
   onBack,
 }: {
+  agentName: string;
   authStart: AuthStartResult | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
@@ -22,6 +24,7 @@ export function AuthStep({
           authUrl={authStart.auth_url}
           onSubmitCode={async (code) => {
             const creds = await claudeProvider.completeOAuth(
+              agentName,
               authStart.session_id,
               code,
             );

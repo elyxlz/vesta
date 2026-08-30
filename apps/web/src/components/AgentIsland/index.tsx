@@ -3,7 +3,6 @@ import { motion } from "motion/react";
 import { resolveProviderIdentity } from "@vesta/core";
 import { cn } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
-import { useManifest } from "@/hooks/use-manifest";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { AgentIslandExpanded } from "./Expanded";
 import { AgentIslandCollapsed } from "./Collapsed";
@@ -28,9 +27,8 @@ const enterVariants = {
 
 export function AgentIsland() {
   const { name, error, statusLabel, orbState } = useSelectedAgent();
-  const { provider } = useProvider(name);
-  const manifest = useManifest();
-  const providerIdentity = resolveProviderIdentity(provider, manifest);
+  const { provider, catalog } = useProvider(name);
+  const providerIdentity = resolveProviderIdentity(provider, catalog);
 
   const [expanded, setExpanded] = useState(false);
   const islandRef = useRef<HTMLDivElement>(null);

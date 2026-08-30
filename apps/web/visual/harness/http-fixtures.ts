@@ -1,12 +1,9 @@
 import type { Page } from "@playwright/test";
-import type { ProviderContextPolicy, ProviderManifest } from "@vesta/core";
+import type { ProviderContextPolicy, ProviderCatalog } from "@vesta/core";
 
 export const AGENT = "luna";
 export const GATEWAY_ORIGIN = "http://vestad.local";
 
-// Small DTO duplicated on this side of the seam (the src Manifest type lives in
-// the app tsconfig project): GET /manifest is the provider catalog plus the
-// personality presets.
 interface Personality {
   name: string;
   emoji: string;
@@ -16,17 +13,14 @@ interface Personality {
   order: number;
 }
 
-type Manifest = ProviderManifest & { personalities: Personality[] };
-
 const CONTEXT: ProviderContextPolicy = {
   default: 131072,
   max: 131072,
   presets: [{ tokens: 131072, label: "128K", note: "the full window" }],
 };
 
-export const MANIFEST: Manifest = {
+export const PROVIDER_CATALOG: ProviderCatalog = {
   default_provider: "claude",
-  default_personality: "dry",
   providers: {
     claude: {
       display: "Claude",
@@ -84,7 +78,14 @@ export const MANIFEST: Manifest = {
       context: CONTEXT,
     },
   },
-  personalities: [
+};
+
+export const PERSONALITY_CATALOG: {
+  default: string;
+  presets: Personality[];
+} = {
+  default: "dry",
+  presets: [
     {
       name: "dry",
       emoji: "😏",
@@ -138,7 +139,7 @@ export const MANIFEST: Manifest = {
   ],
 };
 
-// Small DTO duplicated from the src OpenRouter module, like Manifest above.
+// Small DTO duplicated from the src OpenRouter module.
 interface OpenRouterModelOption {
   slug: string;
   label: string;
@@ -207,6 +208,7 @@ export interface RouteFixture {
   query?: Record<string, string>;
   status?: number;
   json?: unknown;
+  jsonSequence?: readonly [unknown, ...unknown[]];
   body?: string;
   contentType?: string;
   hang?: boolean;
@@ -222,27 +224,64 @@ export interface ProviderInfoFixture {
   plan: string | null;
 }
 
-export function providerRoute(provider: ProviderInfoFixture): RouteFixture {
-  return { path: `/agents/${AGENT}/provider`, method: "GET", json: provider };
+export function providerRoute(
+  provider: ProviderInfoFixture,
+  catalog: ProviderCatalog = PROVIDER_CATALOG,
+): RouteFixture {
+  return {
+    path: `/agents/${AGENT}/provider`,
+    method: "GET",
+    json: { ...provider, catalog },
+  };
 }
 
 // The answers every scenario starts from: a hermetic catch-all for the gateway
-// origin, the onboarding catalog and OAuth handshakes, and an agent that is
-// still starting. A scenario's own routes are registered after these, and
+// origin, the onboarding catalogs and OAuth handshakes, and an empty agent
+// whose HTTP server is ready. A scenario's own routes are registered after these, and
 // Playwright hands a request to the last matching handler, so they win.
 const BASE_ROUTES: RouteFixture[] = [
-  { path: "/manifest", json: MANIFEST },
-  { path: "/providers/openrouter/models/top", json: OPENROUTER_MODELS },
-  { path: "/providers/claude/oauth/start", json: OAUTH_START },
-  { path: "/providers/openai/oauth/start", json: OPENAI_OAUTH_START },
-  { path: "/providers/claude/oauth/complete", json: OAUTH_CREDENTIALS },
   {
-    path: "/providers/openai/oauth/complete",
+    path: `/agents/${AGENT}/provider`,
+    method: "GET",
+    json: { authed: false, catalog: PROVIDER_CATALOG },
+  },
+  {
+    path: `/agents/${AGENT}/personalities`,
+    json: PERSONALITY_CATALOG,
+  },
+  {
+    path: `/agents/${AGENT}/providers/openrouter/models/top`,
+    json: OPENROUTER_MODELS,
+  },
+  {
+    path: `/agents/${AGENT}/providers/claude/oauth/start`,
+    json: OAUTH_START,
+  },
+  {
+    path: `/agents/${AGENT}/providers/openai/oauth/start`,
+    json: OPENAI_OAUTH_START,
+  },
+  {
+    path: `/agents/${AGENT}/providers/claude/oauth/complete`,
+    json: OAUTH_CREDENTIALS,
+  },
+  {
+    path: `/agents/${AGENT}/providers/openai/oauth/complete`,
     json: { credentials: "visual-openai-credentials" },
   },
-  { path: "/providers/claude/models", json: CLAUDE_MODELS },
-  { path: "/providers/openrouter/validate-key", json: {} },
-  { path: `/agents/${AGENT}`, method: "GET", json: { status: "starting" } },
+  {
+    path: `/agents/${AGENT}/providers/claude/models`,
+    json: CLAUDE_MODELS,
+  },
+  {
+    path: `/agents/${AGENT}/providers/openrouter/validate-key`,
+    json: {},
+  },
+  {
+    path: `/agents/${AGENT}`,
+    method: "GET",
+    json: { status: "unprovisioned", booting: false },
+  },
 ];
 
 function matches(fixture: RouteFixture): (url: URL) => boolean {
@@ -264,6 +303,7 @@ function matches(fixture: RouteFixture): (url: URL) => boolean {
 }
 
 async function installRoute(page: Page, fixture: RouteFixture): Promise<void> {
+  let sequenceIndex = 0;
   await page.route(matches(fixture), (route) => {
     if (fixture.method && route.request().method() !== fixture.method) {
       return route.fallback();
@@ -276,9 +316,14 @@ async function installRoute(page: Page, fixture: RouteFixture): Promise<void> {
         body: fixture.body,
       });
     }
+    const sequence = fixture.jsonSequence;
+    const json =
+      sequence === undefined
+        ? (fixture.json ?? {})
+        : sequence[Math.min(sequenceIndex++, sequence.length - 1)];
     return route.fulfill({
       status: fixture.status ?? 200,
-      json: fixture.json ?? {},
+      json,
     });
   });
 }

@@ -209,8 +209,8 @@ export type {
   ProviderIdentity,
   ProviderInfoWire,
   ProviderKind,
-  ProviderManifest,
-  ProviderManifestEntry,
+  ProviderCatalog,
+  ProviderCatalogEntry,
   ProviderPutBody,
   ProviderSelection,
 } from "./provider/provider"

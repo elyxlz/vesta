@@ -3,6 +3,7 @@
 // Checked by apps/web/src/lib/api-contract.test.ts against the web's TypeScript types.
 export const vestadApiFixtures = {
   "agent_status_json": {
+    "booting": false,
     "id": "c0ffee",
     "name": "sample-agent",
     "status": "alive",
@@ -34,10 +35,6 @@ export const vestadApiFixtures = {
       "ws_port": 4201
     }
   ],
-  "auth_start": {
-    "auth_url": "https://claude.ai/oauth/authorize?code=true",
-    "session_id": "0123456789abcdef"
-  },
   "backups": [
     {
       "agent_name": "sample-agent",

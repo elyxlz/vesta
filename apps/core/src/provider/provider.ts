@@ -17,7 +17,7 @@ export interface ProviderContextPolicy {
   harness_suffix_above?: number
 }
 
-export interface ProviderManifestEntry {
+export interface ProviderCatalogEntry {
   display: string
   order: number
   auth_kind: ProviderAuthKind
@@ -29,11 +29,10 @@ export interface ProviderManifestEntry {
   context_by_model?: Record<string, ProviderContextPolicy>
 }
 
-export interface ProviderManifest {
+export interface ProviderCatalog {
   default_provider: ProviderKind
-  default_personality: string
   // Partial keeps clients defensive across rolling upgrades and the server's Claude-only fallback.
-  providers: Partial<Record<ProviderKind, ProviderManifestEntry>>
+  providers: Partial<Record<ProviderKind, ProviderCatalogEntry>>
 }
 
 export type ProviderSelection =
@@ -189,15 +188,15 @@ function formatClaudeSlug(slug: string): string | null {
 
 /// The user-facing model label. A floating alias keeps its label until the session reports the
 /// concrete model it resolved to; then the exact model wins ("Opus 4.8"). Fixed catalogs keep
-/// their manifest names, and anything unrecognized shows the raw identifier.
+/// their catalog names, and anything unrecognized shows the raw identifier.
 function resolveModelName(
   provider: ProviderInfo,
-  entry: ProviderManifestEntry | undefined,
+  entry: ProviderCatalogEntry | undefined,
 ): string | null {
   const model = provider.model
   if (!model) return null
-  const manifestName = entry?.model_names?.[model]
-  if (manifestName !== undefined) return manifestName
+  const catalogName = entry?.model_names?.[model]
+  if (catalogName !== undefined) return catalogName
   const aliasLabel = CLAUDE_ALIAS_LABELS[model]
   if (aliasLabel !== undefined) {
     const resolved = provider.resolved_model ? formatClaudeSlug(provider.resolved_model) : null
@@ -206,14 +205,14 @@ function resolveModelName(
   return formatClaudeSlug(model) ?? model
 }
 
-/// Who is running this agent, as the user reads it: the manifest owns both names, and the wire
-/// identifiers stand in on a gateway whose manifest predates them. Null while disconnected.
+/// Who is running this agent, as the user reads it: the catalog owns both names, and wire
+/// identifiers stand in when catalog data is unavailable. Null while disconnected.
 export function resolveProviderIdentity(
   provider: ProviderInfo | null,
-  manifest: ProviderManifest | undefined,
+  catalog: ProviderCatalog | undefined,
 ): ProviderIdentity | null {
   if (!provider || provider.kind === "none" || !provider.authed) return null
-  const entry = manifest?.providers[provider.kind]
+  const entry = catalog?.providers[provider.kind]
   return {
     kind: provider.kind,
     providerName: entry?.display ?? provider.kind,

@@ -60,7 +60,7 @@ describe("normalizeProviderInfo", () => {
 })
 
 describe("resolveProviderIdentity", () => {
-  it("resolves provider and model display names from the manifest", () => {
+  it("resolves provider and model display names from the catalog", () => {
     expect(
       resolveProviderIdentity(
         {
@@ -73,7 +73,6 @@ describe("resolveProviderIdentity", () => {
         },
         {
           default_provider: "openai",
-          default_personality: "dry",
           providers: {
             openai: {
               display: "OpenAI",
@@ -94,7 +93,7 @@ describe("resolveProviderIdentity", () => {
     })
   })
 
-  it("labels a live Claude alias when the manifest carries no model_names", () => {
+  it("labels a live Claude alias when the catalog carries no model_names", () => {
     const provider = {
       kind: "claude" as const,
       model: "opus",
@@ -103,9 +102,8 @@ describe("resolveProviderIdentity", () => {
       authed: true,
       plan: null,
     }
-    const manifest = {
+    const catalog = {
       default_provider: "claude" as const,
-      default_personality: "dry",
       providers: {
         claude: {
           display: "Claude",
@@ -117,38 +115,38 @@ describe("resolveProviderIdentity", () => {
         },
       },
     }
-    expect(resolveProviderIdentity(provider, manifest)).toEqual({
+    expect(resolveProviderIdentity(provider, catalog)).toEqual({
       kind: "claude",
       providerName: "Claude",
       modelName: "Opus",
     })
-    expect(resolveProviderIdentity({ ...provider, model: "claude-opus-5" }, manifest)).toEqual({
+    expect(resolveProviderIdentity({ ...provider, model: "claude-opus-5" }, catalog)).toEqual({
       kind: "claude",
       providerName: "Claude",
       modelName: "Opus 5",
     })
     expect(
-      resolveProviderIdentity({ ...provider, model: "claude-opus-4-8" }, manifest)?.modelName,
+      resolveProviderIdentity({ ...provider, model: "claude-opus-4-8" }, catalog)?.modelName,
     ).toBe("Opus 4.8")
     expect(
-      resolveProviderIdentity({ ...provider, model: "claude-haiku-4-5-20251001" }, manifest)
+      resolveProviderIdentity({ ...provider, model: "claude-haiku-4-5-20251001" }, catalog)
         ?.modelName,
     ).toBe("Haiku 4.5")
     expect(
-      resolveProviderIdentity({ ...provider, model: "claude-3-5-sonnet-20241022" }, manifest)
+      resolveProviderIdentity({ ...provider, model: "claude-3-5-sonnet-20241022" }, catalog)
         ?.modelName,
     ).toBe("claude-3-5-sonnet-20241022")
     expect(
-      resolveProviderIdentity({ ...provider, resolved_model: "claude-opus-4-8" }, manifest)
+      resolveProviderIdentity({ ...provider, resolved_model: "claude-opus-4-8" }, catalog)
         ?.modelName,
     ).toBe("Opus 4.8")
-    expect(
-      resolveProviderIdentity({ ...provider, model: "opus-latest" }, manifest)?.modelName,
-    ).toBe("Opus")
+    expect(resolveProviderIdentity({ ...provider, model: "opus-latest" }, catalog)?.modelName).toBe(
+      "Opus",
+    )
     expect(
       resolveProviderIdentity(
         { ...provider, model: "sonnet-latest", resolved_model: "claude-sonnet-5" },
-        manifest,
+        catalog,
       )?.modelName,
     ).toBe("Sonnet 5")
   })

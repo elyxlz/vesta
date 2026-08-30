@@ -10,18 +10,17 @@ Two tiers of calls:
   credential, and the per-VM api_key never leaves the control plane.
 
 * **The buyer's vestad** (`https://<subdomain>.vesta.run`, Bearer = the minted
-  server-token): create their first agent and connect their Claude account via
-  vestad's standalone PKCE OAuth (the code_verifier stays on their box, so the
-  code they read back is useless to anyone else).
+  server-token): create their first agent, then relay Claude setup to that
+  agent's PKCE OAuth endpoint. The code verifier stays with the target agent, so
+  the code they read back is useless to anyone else.
 """
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
+from urllib.parse import quote
 
 import requests
-from urllib3.exceptions import InsecureRequestWarning
 
 from .config import Config
 
@@ -29,13 +28,9 @@ _TIMEOUT = 20
 # Creating an agent pulls/builds the container image — can take a couple minutes.
 _CREATE_TIMEOUT = 300
 
-# vestad serves a self-signed cert on the loopback; we reach it from inside the
-# same box, so TLS verification adds nothing and would just fail.
-warnings.simplefilter("ignore", InsecureRequestWarning)
-
 
 class OnboardError(Exception):
-    """A control-plane / vestad call failed (network, HTTP, or structured error)."""
+    """A control-plane, gateway, or agent call failed."""
 
 
 class Client:
@@ -45,43 +40,36 @@ class Client:
     def _url(self, path: str) -> str:
         return f"{self._cfg.base_url}{path}"
 
-    # --- vestad: read-only reference data over the loopback ------------------
+    # --- current agent: read-only reference data over loopback ---------------
 
-    def _vestad_get(self, path: str) -> Any:
-        """GET a public reference endpoint on THIS box's vestad. The onboard skill is just
-        another frontend, so it reads personalities / models / defaults from vestad rather
-        than keeping its own copies."""
+    def _agent_get(self, path: str) -> Any:
+        """GET one catalog from the current agent's authenticated local API."""
         cfg = self._cfg
-        if not cfg.vestad_base:
-            raise OnboardError("not running inside an agent container (no VESTAD_PORT) — only a hosted vesta can onboard")
-        resp = self._send("GET", f"{cfg.vestad_base}{path}", verify=False)
+        if not cfg.agent_base or not cfg.agent_token:
+            raise OnboardError("not running inside an agent container (no WS_PORT/AGENT_TOKEN)")
+        resp = self._send("GET", f"{cfg.agent_base}{path}", headers={"X-Agent-Token": cfg.agent_token})
         if resp.status_code >= 400:
-            raise OnboardError(f"vestad {path} -> {resp.status_code}: {resp.text[:200]}")
+            raise OnboardError(f"agent {path} returned {resp.status_code}: {resp.text[:200]}")
         try:
             return resp.json()
         except ValueError:
-            raise OnboardError(f"vestad {path} returned non-JSON ({resp.status_code})") from None
+            raise OnboardError(f"agent {path} returned non-JSON ({resp.status_code})") from None
 
-    def fetch_manifest(self) -> dict[str, Any]:
-        return self._vestad_get("/manifest")
+    def fetch_provider_catalog(self) -> dict[str, Any]:
+        provider = self._agent_get("/provider")
+        return provider["catalog"]
 
     def fetch_agent_defaults(self) -> dict[str, Any]:
-        # Read straight from the manifest, the single source of these defaults (the default provider's
-        # default model + the default personality). A missing key is a real error, not a silent default.
-        # A live catalog (default_model null) has no manifest default, so fall back to the "opus-latest" alias.
-        manifest = self.fetch_manifest()
-        provider = manifest["providers"][manifest["default_provider"]]
-        return {"model": provider["default_model"] or "opus-latest", "personality": manifest["default_personality"]}
+        providers = self.fetch_provider_catalog()
+        personalities = self._agent_get("/personalities")
+        provider = providers["providers"][providers["default_provider"]]
+        return {"model": provider["default_model"] or "opus-latest", "personality": personalities["default"]}
 
     def fetch_personalities(self) -> list[dict[str, Any]]:
-        # The personality catalog the manifest carries (merged from the skill presets by vestad).
-        return self.fetch_manifest()["personalities"]
+        return self._agent_get("/personalities")["presets"]
 
     def fetch_claude_models(self) -> list[dict[str, Any]]:
-        # Claude's model catalog lives in the manifest: either a fixed slug list, or the string
-        # "live" for a catalog fetched live from Anthropic, which the manifest carries only as the
-        # two stable aliases. Shape either into {id} entries for the picker.
-        models = self.fetch_manifest()["providers"]["claude"]["models"]
+        models = self.fetch_provider_catalog()["providers"]["claude"]["models"]
         if models == "live":
             return [{"id": "opus-latest"}, {"id": "sonnet-latest"}]
         return [{"id": slug} for slug in models]
@@ -188,19 +176,30 @@ class Client:
         url = f"{self._cfg.tenant_base(subdomain)}/agents"
         return self._json(self._raw_post(url, json={"name": name}, token=server_token, timeout=_CREATE_TIMEOUT))
 
-    def claude_oauth_start(self, *, subdomain: str, server_token: str) -> dict[str, Any]:
-        """POST <tenant>/providers/claude/oauth/start -> {auth_url, session_id}."""
-        url = f"{self._cfg.tenant_base(subdomain)}/providers/claude/oauth/start"
+    def _target_agent_url(self, subdomain: str, name: str, path: str) -> str:
+        encoded_name = quote(name, safe="")
+        return f"{self._cfg.tenant_base(subdomain)}/agents/{encoded_name}{path}"
+
+    def claude_oauth_start(self, *, subdomain: str, server_token: str, name: str) -> dict[str, Any]:
+        """Start Claude OAuth inside the empty target agent."""
+        url = self._target_agent_url(subdomain, name, "/providers/claude/oauth/start")
         return self._json(self._raw_post(url, json={}, token=server_token))
 
-    def claude_oauth_complete(self, *, subdomain: str, server_token: str, session_id: str, code: str) -> str:
-        """POST <tenant>/providers/claude/oauth/complete -> the credentials blob."""
-        url = f"{self._cfg.tenant_base(subdomain)}/providers/claude/oauth/complete"
+    def claude_oauth_complete(self, *, subdomain: str, server_token: str, name: str, session_id: str, code: str) -> str:
+        """Complete Claude OAuth inside the target agent."""
+        url = self._target_agent_url(subdomain, name, "/providers/claude/oauth/complete")
         data = self._json(self._raw_post(url, json={"session_id": session_id, "code": code}, token=server_token))
         creds = data["credentials"] if "credentials" in data else None
         if not creds:
             raise OnboardError("OAuth completion returned no credentials")
         return creds
+
+    def fetch_target_default_model(self, *, subdomain: str, server_token: str, name: str) -> str:
+        url = self._target_agent_url(subdomain, name, "/provider")
+        resource = self._json(self._raw_get(url, token=server_token))
+        catalog = resource["catalog"]
+        provider = catalog["providers"][catalog["default_provider"]]
+        return provider["default_model"] or "opus-latest"
 
     def set_provider(
         self,
@@ -216,19 +215,21 @@ class Client:
         """Provision the agent: sign in the Claude provider (PUT /provider, model folded in) and write
         its preferences (PUT /config), then restart once so it wakes with everything in place. Writes
         don't restart on their own, so this is several writes + a single restart."""
-        base = self._cfg.tenant_base(subdomain)
+        provider_url = self._target_agent_url(subdomain, name, "/provider")
         provider: dict[str, Any] = {"kind": "claude", "credentials": credentials}
         if model:
             provider["model"] = model
-        self._json(self._raw_put(f"{base}/agents/{name}/provider", json=provider, token=server_token, timeout=120))
+        self._json(self._raw_put(provider_url, json=provider, token=server_token, timeout=120))
         prefs: dict[str, Any] = {}
         if personality:
             prefs["agent_personality"] = personality
         if seed_context:
             prefs["seed_context"] = seed_context
         if prefs:
-            self._json(self._raw_put(f"{base}/agents/{name}/config", json=prefs, token=server_token, timeout=120))
-        return self._json(self._raw_post(f"{base}/agents/{name}/restart", json={}, token=server_token, timeout=120))
+            config_url = self._target_agent_url(subdomain, name, "/config")
+            self._json(self._raw_put(config_url, json=prefs, token=server_token, timeout=120))
+        restart_url = self._target_agent_url(subdomain, name, "/restart")
+        return self._json(self._raw_post(restart_url, json={}, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------
 
@@ -264,6 +265,9 @@ class Client:
     ) -> requests.Response:
         return self._send("POST", url, json=json, headers=self._auth(token), timeout=timeout)
 
+    def _raw_get(self, url: str, *, token: str, timeout: int = _TIMEOUT) -> requests.Response:
+        return self._send("GET", url, headers=self._auth(token), timeout=timeout)
+
     def _raw_put(
         self,
         url: str,
@@ -283,10 +287,9 @@ class Client:
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         timeout: int = _TIMEOUT,
-        verify: bool = True,
     ) -> requests.Response:
         try:
-            return requests.request(method, url, params=params, json=json, headers=headers, timeout=timeout, verify=verify)
+            return requests.request(method, url, params=params, json=json, headers=headers, timeout=timeout)
         except requests.RequestException as e:
             raise OnboardError(f"could not reach {url}: {e}") from e
 

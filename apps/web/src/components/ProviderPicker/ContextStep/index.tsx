@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from "react";
-import type { ContextPreset } from "@/api/manifest";
+import type { ContextPreset } from "@/api/catalogs";
 import { ProviderStep } from "../ProviderStep";
 
-// Presets + the default come from the manifest (GET /manifest), passed in by the parent,
+// Presets and the default come from the agent's provider catalog, passed in by the parent,
 // so this step holds no copy of either.
 export function ContextStep({
   presets,

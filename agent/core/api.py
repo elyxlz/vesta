@@ -7,11 +7,12 @@ Routes:
   - GET  /status               operational readiness: {authed, setup_complete, boot_complete} (vestad polls this)
   - GET  /config               prefs + notification_rules (personality, timezone, seed_context, operational)
   - PUT  /config               update prefs and/or notification_rules (provider is set via /provider)
-  - GET  /provider             active provider (configured fields) + derived {authed}
+  - GET  /provider             active provider + provider catalog
   - PUT  /provider             sign in / switch provider (OAuth or subscription/provider key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
   - GET  /provider/models      the signed-in Claude account's live model catalog
+  - GET  /personalities        personality preset catalog + default
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 
@@ -32,7 +33,7 @@ import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from . import claude_models
+from . import claude_models, provider_setup
 from .config import (
     ClaudeConfig,
     KeyProviderKind,
@@ -41,6 +42,7 @@ from .config import (
     load_active_skills,
     load_notification_rules,
     provider_context_default,
+    read_provider_catalog,
     stored_config,
     update_config_store,
     validate_config_updates,
@@ -48,6 +50,7 @@ from .config import (
 from .events import EventBus, SnapshotConfig, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
+from .personalities import read_personality_catalog
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_key_provider, set_openai
 
 logger = logging.getLogger("vesta.api")
@@ -302,14 +305,14 @@ class _ProviderPrefs(pyd.BaseModel):
 
 
 async def _provider_get_handler(request: web.Request) -> web.Response:
-    """The active provider: its configured fields (key redacted, oauth excluded) plus the derived
-    `authed` flag (whether its credentials are currently valid). Readiness lives at GET /status."""
+    """The active provider and its harness-owned setup catalog. Readiness lives at GET /status."""
     config: VestaConfig = request.app["config"]
     state: State = request.app["state"]
     status = state.provider_status
     provider = stored_config(config)["provider"]
     body = dict(provider) if isinstance(provider, dict) else {}
     body["authed"] = status is not None and status.state == ProviderAuthState.AUTHENTICATED
+    body["catalog"] = read_provider_catalog()
     # The Claude plan tier (from the on-disk OAuth blob, excluded from stored_config) so the context
     # picker can restrict >200K windows to Max, the only plan entitled to the 1M-context beta.
     if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is not None:
@@ -413,6 +416,16 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def _personalities_handler(_request: web.Request) -> web.Response:
+    """The personality skill's live preset metadata and default."""
+    try:
+        catalog = read_personality_catalog()
+    except (OSError, ValueError, pyd.ValidationError) as exc:
+        logger.error("personality catalog load failed: %s", exc)
+        return web.json_response({"error": "personality catalog load failed"}, status=500)
+    return web.json_response(catalog)
+
+
 async def _provider_models_handler(_request: web.Request) -> web.Response:
     """The signed-in Claude account's live model catalog, for the settings model picker."""
     token = await asyncio.to_thread(claude_models.read_claude_access_token)
@@ -493,8 +506,10 @@ async def start_ws_server(
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)
     app.router.add_delete("/provider", _provider_delete_handler)
+    app.router.add_get("/personalities", _personalities_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
+    provider_setup.register_routes(app)
 
     runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT_S)
     await runner.setup()

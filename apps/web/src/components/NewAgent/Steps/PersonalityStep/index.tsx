@@ -1,6 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { Manifest } from "@/api/manifest";
+import type { Personality } from "@/api/catalogs";
 import { glassHover, glassSelected, glassSurface } from "../../glass";
 
 export function PersonalityStep({
@@ -8,7 +8,7 @@ export function PersonalityStep({
   selected,
   onPick,
 }: {
-  personalities: Manifest["personalities"] | null;
+  personalities: Personality[] | null;
   selected: string;
   onPick: (name: string) => void;
 }) {

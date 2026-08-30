@@ -1,6 +1,4 @@
-"""The manifest is the hand-authored source of the catalog + new-agent defaults; the Python model
-reads it for its field defaults. These lock the file's shape, that the model honors it, and the
-union's credential-shape guarantees."""
+"""Provider catalog shape, runtime defaults, and credential union guarantees."""
 
 import json
 
@@ -8,50 +6,46 @@ import pydantic as pyd
 import pytest
 
 from core.config import (
-    MANIFEST_PATH,
+    PROVIDERS_PATH,
     ClaudeConfig,
     KimiConfig,
     OpenAIConfig,
     OpenRouterConfig,
     VestaConfig,
     ZaiConfig,
-    read_manifest,
+    read_provider_catalog,
     validate_config_updates,
     validate_provider_selection,
 )
 
 
-def _manifest():
-    return json.loads(MANIFEST_PATH.read_text())
+def _catalog():
+    return json.loads(PROVIDERS_PATH.read_text())
 
 
-def test_manifest_has_both_providers_and_defaults():
-    manifest = _manifest()
-    assert read_manifest() == manifest  # typed runtime validation accepted the shipped contract
-    assert manifest["default_provider"] == "claude"
-    assert manifest["default_personality"] == "dry"
-    assert sorted(manifest["providers"]) == ["claude", "kimi", "openai", "openrouter", "zai"]
-    ordered = sorted(manifest["providers"], key=lambda kind: manifest["providers"][kind]["order"])
+def test_catalog_has_providers_and_default():
+    catalog = _catalog()
+    assert read_provider_catalog() == catalog
+    assert catalog["default_provider"] == "claude"
+    assert sorted(catalog["providers"]) == ["claude", "kimi", "openai", "openrouter", "zai"]
+    ordered = sorted(catalog["providers"], key=lambda kind: catalog["providers"][kind]["order"])
     assert ordered == ["claude", "openai", "zai", "kimi", "openrouter"]
-    assert manifest["providers"]["claude"]["models"] == "live"
-    assert manifest["providers"]["claude"]["default_model"] is None
-    assert manifest["providers"]["claude"]["context"]["presets"]  # plan-gated presets stay
-    assert manifest["providers"]["openrouter"]["models"] == "live"  # free-form, fetched separately
-    assert manifest["providers"]["zai"]["default_model"] == "glm-5.2"
-    assert manifest["providers"]["kimi"]["default_model"] == "kimi-for-coding"
-    assert manifest["providers"]["openai"]["default_model"] == "gpt-5.6-sol"
-    assert manifest["providers"]["openai"]["model_names"]["gpt-5.6-sol"] == "GPT 5.6 Sol"
-    assert manifest["providers"]["openai"]["auxiliary_model"] == "gpt-5.6-luna"
-    assert manifest["providers"]["kimi"]["model_names"]["kimi-for-coding"] == "Coding"
+    assert catalog["providers"]["claude"]["models"] == "live"
+    assert catalog["providers"]["claude"]["default_model"] is None
+    assert catalog["providers"]["claude"]["context"]["presets"]
+    assert catalog["providers"]["openrouter"]["models"] == "live"
+    assert catalog["providers"]["zai"]["default_model"] == "glm-5.2"
+    assert catalog["providers"]["kimi"]["default_model"] == "kimi-for-coding"
+    assert catalog["providers"]["openai"]["default_model"] == "gpt-5.6-sol"
+    assert catalog["providers"]["openai"]["model_names"]["gpt-5.6-sol"] == "GPT 5.6 Sol"
+    assert catalog["providers"]["openai"]["auxiliary_model"] == "gpt-5.6-luna"
+    assert catalog["providers"]["kimi"]["model_names"]["kimi-for-coding"] == "Coding"
 
 
-def test_model_defaults_come_from_the_manifest():
-    # The single source: the model's field defaults are read from the manifest, not restated in code.
-    # Claude's catalog is live, so it has no manifest default; the code-owned fallback applies instead.
-    manifest = _manifest()
-    assert manifest["providers"]["claude"]["default_model"] is None
+def test_model_defaults_come_from_the_catalog():
+    catalog = _catalog()
+    assert catalog["providers"]["claude"]["default_model"] is None
     assert ClaudeConfig().model == "opus-latest"
-    assert VestaConfig().agent_personality == manifest["default_personality"]
 
 
 def test_claude_latest_aliases_reach_the_harness_bare():
@@ -122,7 +116,7 @@ def test_provider_models_and_keys_must_not_be_blank(provider_type, values):
         (OpenAIConfig, {"model": "made-up-gpt"}),
     ],
 )
-def test_fixed_providers_reject_models_outside_the_manifest(provider_type, values):
+def test_fixed_providers_reject_models_outside_the_catalog(provider_type, values):
     with pytest.raises(ValueError, match="is not a supported"):
         validate_provider_selection(provider_type.model_validate(values))
 
@@ -142,7 +136,7 @@ def test_reauth_preserves_a_persisted_model_removed_from_catalog(config):
 
 
 def test_subscription_contexts_are_model_specific():
-    providers = _manifest()["providers"]
+    providers = _catalog()["providers"]
     assert providers["zai"]["context_by_model"]["glm-5.2"]["default"] == 1_000_000
     assert providers["zai"]["context"]["default"] == 200_000
     assert providers["kimi"]["context_by_model"]["k3"]["default"] == 262_144
@@ -174,7 +168,7 @@ def test_subscription_configs_reject_context_beyond_the_selected_model():
 def test_claude_context_gates_large_windows_by_plan():
     # The 1M-context beta is a Max-only entitlement, so the picker maps plan -> default and marks the
     # >200K windows Max-only; the 200K window is offered to every plan.
-    context = _manifest()["providers"]["claude"]["context"]
+    context = _catalog()["providers"]["claude"]["context"]
     assert context["defaults_by_plan"] == {"max": 1000000, "pro": 200000, "free": 200000}
     plans_by_tokens = {preset["tokens"]: preset["plans"] for preset in context["presets"] if "plans" in preset}
     assert plans_by_tokens == {1000000: ["max"], 500000: ["max"]}

@@ -17,6 +17,7 @@ from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisable
 from core import logger
 
 from .notification_interrupt_policy import NotificationInterruptRule, drop_expired
+from .personalities import DEFAULT_PERSONALITY
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
@@ -32,13 +33,12 @@ ProviderAuthKind = tp.Literal["claude_oauth", "device_oauth", "subscription_key"
 # provider.py re-exports it.
 CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 
-# The hand-authored provider/setup catalog + new-agent defaults. It is the single source of that
-# reference data: the Python model reads it for its field defaults (below), vestad embeds + serves it at
-# GET /manifest (merging in the personality presets), and the web app reads it. No generation step.
-MANIFEST_PATH = pl.Path(__file__).parent / "manifest.json"
+# The hand-authored provider catalog. The harness reads it for runtime policy and serves it with the
+# configured provider at GET /provider. Personality presets own their separate catalog.
+PROVIDERS_PATH = pl.Path(__file__).parent / "providers.json"
 
 
-# A tiny floor so a corrupt/missing manifest can never crash-loop the boot path (it never happens in
+# A tiny floor so a corrupt/missing catalog can never crash-loop the boot path (it never happens in
 # practice; the file ships with the agent).
 class _ContextPreset(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="forbid")
@@ -85,7 +85,7 @@ class _ContextPolicy(pyd.BaseModel):
         return self
 
 
-class _ProviderManifestEntry(pyd.BaseModel):
+class _ProviderCatalogEntry(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="forbid")
 
     display: str = pyd.Field(min_length=1)
@@ -99,7 +99,7 @@ class _ProviderManifestEntry(pyd.BaseModel):
     context_by_model: dict[str, _ContextPolicy] = pyd.Field(default_factory=dict)
 
     @pyd.model_validator(mode="after")
-    def _default_is_selectable(self) -> "_ProviderManifestEntry":
+    def _default_is_selectable(self) -> "_ProviderCatalogEntry":
         if self.models == "live":
             if self.default_model is not None:
                 raise ValueError("live model catalogs cannot declare a static default")
@@ -116,15 +116,14 @@ class _ProviderManifestEntry(pyd.BaseModel):
         return self
 
 
-class _ProviderManifest(pyd.BaseModel):
+class _ProviderCatalog(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="forbid")
 
     default_provider: ProviderKind
-    default_personality: str
-    providers: dict[ProviderKind, _ProviderManifestEntry]
+    providers: dict[ProviderKind, _ProviderCatalogEntry]
 
     @pyd.model_validator(mode="after")
-    def _default_provider_exists(self) -> "_ProviderManifest":
+    def _default_provider_exists(self) -> "_ProviderCatalog":
         if self.default_provider not in self.providers:
             raise ValueError("default_provider must be present in providers")
         orders = [entry.order for entry in self.providers.values()]
@@ -133,9 +132,8 @@ class _ProviderManifest(pyd.BaseModel):
         return self
 
 
-_MANIFEST_FALLBACK: dict[str, pyd.JsonValue] = {
+_PROVIDER_CATALOG_FALLBACK: dict[str, pyd.JsonValue] = {
     "default_provider": "claude",
-    "default_personality": "dry",
     "providers": {
         "claude": {
             "display": "Claude",
@@ -149,23 +147,23 @@ _MANIFEST_FALLBACK: dict[str, pyd.JsonValue] = {
 }
 
 
-def _load_manifest() -> _ProviderManifest:
+def _load_provider_catalog() -> _ProviderCatalog:
     try:
-        return _ProviderManifest.model_validate_json(MANIFEST_PATH.read_text())
+        return _ProviderCatalog.model_validate_json(PROVIDERS_PATH.read_text())
     except (OSError, pyd.ValidationError):
-        return _ProviderManifest.model_validate(_MANIFEST_FALLBACK)
+        return _ProviderCatalog.model_validate(_PROVIDER_CATALOG_FALLBACK)
 
 
-_MANIFEST_MODEL = _load_manifest()
+_PROVIDER_CATALOG = _load_provider_catalog()
 
 
-def read_manifest() -> dict[str, pyd.JsonValue]:
+def read_provider_catalog() -> dict[str, pyd.JsonValue]:
     """Return the validated provider catalog in its JSON wire shape."""
-    return tp.cast("dict[str, pyd.JsonValue]", _MANIFEST_MODEL.model_dump(mode="json", exclude_unset=True))
+    return tp.cast("dict[str, pyd.JsonValue]", _PROVIDER_CATALOG.model_dump(mode="json", exclude_unset=True))
 
 
 def _provider_model_policy(kind: str, model: str) -> _ContextPolicy | None:
-    entry = _MANIFEST_MODEL.providers.get(kind)
+    entry = _PROVIDER_CATALOG.providers.get(kind)
     if entry is None:
         return None
     return entry.context_by_model.get(model.removesuffix("[1m]"), entry.context)
@@ -179,7 +177,7 @@ def provider_context_default(kind: str, model: str) -> int | None:
 
 def provider_auxiliary_model(kind: ProviderKind) -> str | None:
     """Return the provider's catalog-owned cheap/background model, when one is declared."""
-    entry = _MANIFEST_MODEL.providers.get(kind)
+    entry = _PROVIDER_CATALOG.providers.get(kind)
     return entry.auxiliary_model if entry is not None else None
 
 
@@ -197,8 +195,8 @@ def provider_harness_model(kind: ProviderKind, model: str, context: int) -> str:
 
 
 def _validate_catalog_provider(kind: str, model: str, max_context_tokens: int | None) -> None:
-    """Enforce the manifest's fixed model catalog and model-specific context ceiling."""
-    entry = _MANIFEST_MODEL.providers.get(kind)
+    """Enforce the fixed model catalog and model-specific context ceiling."""
+    entry = _PROVIDER_CATALOG.providers.get(kind)
     base_model = model.removesuffix("[1m]")
     if entry is None:
         raise ValueError(f"unknown provider {kind}")
@@ -210,12 +208,12 @@ def _validate_catalog_provider(kind: str, model: str, max_context_tokens: int | 
         raise ValueError(f"{model} supports at most {limit} context tokens")
 
 
-# New-agent defaults, read from the manifest (the one source) so they aren't restated in code.
-DEFAULT_PROVIDER = _MANIFEST_MODEL.default_provider
-_DEFAULT_PERSONALITY = _MANIFEST_MODEL.default_personality
-_DEFAULT_CLAUDE_MODEL = _MANIFEST_MODEL.providers["claude"].default_model or "opus-latest"
+# New-agent provider defaults come from the provider catalog. The personality skill owns its default.
+DEFAULT_PROVIDER = _PROVIDER_CATALOG.default_provider
+_DEFAULT_PERSONALITY = DEFAULT_PERSONALITY
+_DEFAULT_CLAUDE_MODEL = _PROVIDER_CATALOG.providers["claude"].default_model or "opus-latest"
 
-# Stable persisted-shape floor. Exact provider/model ceilings are manifest policy enforced only on
+# Stable persisted-shape floor. Exact provider/model ceilings are catalog policy enforced only on
 # new PUT/PATCH selections, so catalog churn cannot invalidate an existing agent at boot.
 _CTX_MIN = 1_000
 _CLAUDE_CTX_MAX = 1_000_000
@@ -378,9 +376,9 @@ def read_claude_oauth() -> "ClaudeOAuth | None":
 
 
 # The provider config is a discriminated union by `kind` — it carries the shape invariants (key-backed
-# providers require a key; Claude carries thinking + its OAuth blob), while the catalog of model/context
-# options lives in the manifest. OpenRouter is free-form because its model catalog is fetched live;
-# fixed providers validate against the manifest.
+# providers require a key; Claude carries thinking + its OAuth blob), while model/context options live
+# in the provider catalog. OpenRouter is free-form because its model catalog is fetched live; fixed
+# providers validate against the catalog.
 class _KeyBackedConfig(pyd.BaseModel):
     key: pyd.SecretStr
 
@@ -484,8 +482,8 @@ class VestaConfig(pyd_settings.BaseSettings):
     """Vesta agent configuration: one central config.json (nested), per-agent.
 
     The active provider (model + context + credential) is a discriminated union under `provider`; the
-    rest are provider-independent prefs. This model's field defaults are read from the hand-authored
-    manifest (MANIFEST_PATH). The store wins over env; see settings_customise_sources.
+    rest are provider-independent prefs. Provider field defaults come from the hand-authored catalog
+    at PROVIDERS_PATH. The store wins over env; see settings_customise_sources.
 
     Key env overrides (operational scalars only; provider fields live in the nested store, not env):
         LOG_LEVEL                - DEBUG | INFO | WARNING | ERROR (default: "INFO")

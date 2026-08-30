@@ -3,10 +3,10 @@
 Most of it is read from the environment:
 
 * the control-plane base URL (`VESTA_CLOUD_CONTROL_URL`);
-* how to reach **this box's vestad** (`BOX_HOST` + `VESTAD_PORT`) to read
-  reference data (personalities / models) for the create-agent step. Onboarding
-  itself is public (issue #79): the account pre-create needs no server-identity
-  token, so a self-hosted box can onboard too.
+* how to reach this agent's local API (`WS_PORT` + `AGENT_TOKEN`) to read
+  provider and personality catalogs. Onboarding itself is public (issue #79):
+  the account pre-create needs no server identity token, so a self-hosted box
+  can onboard too.
 
 The non-secret referral code that attributes a completed signup to this account
 is the one exception: it comes from the shared on-disk file the `vesta-cloud` skill
@@ -51,7 +51,8 @@ class Config:
 
     base_url: str
     referral_code: str | None
-    vestad_base: str
+    agent_base: str
+    agent_token: str | None
 
     @classmethod
     def load(cls) -> Config:
@@ -59,18 +60,13 @@ class Config:
         # Non-secret per-account attribution id, set by `vesta-cloud
         # set-referral`; absent (or admin-set) on self-hosted boxes.
         ref = referral_store.get_referral_code()
-        # vestad runs natively on the host, never in a container (see the account /
-        # voice skills); BOX_HOST (from /run/vestad-env) is how the agent reaches
-        # it to read reference data (personalities / models) for the create-agent step.
-        # Missing either half leaves vestad_base empty, tripping the same "not a
-        # hosted vesta" check a missing port already does.
-        port = os.environ.get("VESTAD_PORT", "").strip()
-        host = os.environ.get("BOX_HOST", "").strip()
-        vestad_base = f"https://{host}:{port}" if port and host else ""
+        port = os.environ.get("WS_PORT", "").strip()
+        agent_base = f"http://127.0.0.1:{port}" if port else ""
         return cls(
             base_url=base,
             referral_code=ref,
-            vestad_base=vestad_base,
+            agent_base=agent_base,
+            agent_token=os.environ.get("AGENT_TOKEN", "").strip() or None,
         )
 
     @property

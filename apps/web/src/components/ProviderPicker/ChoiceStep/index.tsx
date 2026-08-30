@@ -1,4 +1,4 @@
-import type { Manifest } from "@/api/manifest";
+import type { ProviderCatalog } from "@/api/catalogs";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { StepHeading } from "@/components/StepHeading";
@@ -30,20 +30,20 @@ function BackLink({ onBack }: { onBack?: () => void }) {
 
 export function ChoiceStep({
   onPick,
-  manifest,
+  catalog,
   variant = "compact",
   onBack,
 }: {
   onPick: (mode: ProviderMode) => void;
-  manifest: Manifest;
+  catalog: ProviderCatalog;
   variant?: ChoiceVariant;
   onBack?: () => void;
 }) {
   // Ordering and display names are catalog data; only logos + taglines are local presentation.
-  const ordered = PROVIDERS.filter(({ id }) => manifest.providers[id]).sort(
+  const ordered = PROVIDERS.filter(({ id }) => catalog.providers[id]).sort(
     (left, right) =>
-      (manifest.providers[left.id]?.order ?? Number.MAX_SAFE_INTEGER) -
-      (manifest.providers[right.id]?.order ?? Number.MAX_SAFE_INTEGER),
+      (catalog.providers[left.id]?.order ?? Number.MAX_SAFE_INTEGER) -
+      (catalog.providers[right.id]?.order ?? Number.MAX_SAFE_INTEGER),
   );
 
   if (variant === "grid") {
@@ -67,7 +67,7 @@ export function ChoiceStep({
             >
               <Logo className="size-7" />
               <span className="text-sm font-semibold">
-                {manifest.providers[id]?.display ?? id}
+                {catalog.providers[id]?.display ?? id}
               </span>
             </button>
           ))}
@@ -99,7 +99,7 @@ export function ChoiceStep({
             <Logo className="size-6" />
             <div className="flex flex-col gap-0.5">
               <span className="text-sm font-semibold">
-                {manifest.providers[id]?.display ?? id}
+                {catalog.providers[id]?.display ?? id}
               </span>
               <span className="text-[11px] leading-snug text-muted-foreground">
                 {tagline}

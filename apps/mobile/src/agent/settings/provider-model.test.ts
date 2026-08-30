@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderManifestEntry } from "@vesta/core";
+import type { ProviderCatalogEntry } from "@vesta/core";
 import {
   buildModelOptions,
   resolveProviderKind,
   sortAdvertisedProviders,
 } from "./provider-model";
 
-function entryOf(overrides: Partial<ProviderManifestEntry>): ProviderManifestEntry {
+function entryOf(overrides: Partial<ProviderCatalogEntry>): ProviderCatalogEntry {
   return {
     display: "Provider",
     order: 1,

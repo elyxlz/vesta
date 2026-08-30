@@ -6,6 +6,7 @@ import {
   restartBody,
   type NotificationEvent,
   type ProviderInfo,
+  type ProviderInfoWire,
   type ProviderSelection,
   type RestartReason,
   type VestaEvent,
@@ -19,8 +20,8 @@ import type {
   GatewayInfo,
   GatewaySettings,
   HostMount,
-  Manifest,
   NotificationInterruptRule,
+  ProviderCatalog,
   Usage,
   VoiceStatus,
 } from "./types";
@@ -38,8 +39,13 @@ export interface OpenRouterModelOption {
   cache_read_price?: number | null;
 }
 
-export async function fetchManifest(api: ApiClient): Promise<Manifest> {
-  return api.json("/manifest");
+export interface ProviderResource {
+  provider: ProviderInfo;
+  catalog: ProviderCatalog;
+}
+
+function providerSetupPath(name: string, path: string): string {
+  return `/agents/${encodeURIComponent(name)}/providers/${path}`;
 }
 
 export async function provisionAgent(
@@ -69,17 +75,21 @@ export async function provisionAgent(
 
 export async function startClaudeOAuth(
   api: ApiClient,
+  name: string,
 ): Promise<{ auth_url: string; session_id: string }> {
-  return api.json("/providers/claude/oauth/start", { method: "POST" });
+  return api.json(providerSetupPath(name, "claude/oauth/start"), {
+    method: "POST",
+  });
 }
 
 export async function completeClaudeOAuth(
   api: ApiClient,
+  name: string,
   sessionId: string,
   code: string,
 ): Promise<string> {
   const result = await api.json<{ credentials: string }>(
-    "/providers/claude/oauth/complete",
+    providerSetupPath(name, "claude/oauth/complete"),
     api.jsonInit("POST", { session_id: sessionId, code }),
   );
   return result.credentials;
@@ -87,16 +97,20 @@ export async function completeClaudeOAuth(
 
 export async function startOpenAIOAuth(
   api: ApiClient,
+  name: string,
 ): Promise<{ auth_url: string; user_code: string; session_id: string }> {
-  return api.json("/providers/openai/oauth/start", { method: "POST" });
+  return api.json(providerSetupPath(name, "openai/oauth/start"), {
+    method: "POST",
+  });
 }
 
 export async function completeOpenAIOAuth(
   api: ApiClient,
+  name: string,
   sessionId: string,
 ): Promise<string> {
   const result = await api.json<{ credentials: string }>(
-    "/providers/openai/oauth/complete",
+    providerSetupPath(name, "openai/oauth/complete"),
     api.jsonInit("POST", { session_id: sessionId }),
   );
   return result.credentials;
@@ -104,8 +118,9 @@ export async function completeOpenAIOAuth(
 
 export async function fetchOpenRouterModels(
   api: ApiClient,
+  name: string,
 ): Promise<OpenRouterModelOption[]> {
-  return api.json("/providers/openrouter/models/top");
+  return api.json(providerSetupPath(name, "openrouter/models/top"));
 }
 
 export async function fetchClaudeModels(
@@ -117,10 +132,11 @@ export async function fetchClaudeModels(
 
 export async function validateOpenRouterKey(
   api: ApiClient,
+  name: string,
   key: string,
 ): Promise<void> {
   await api.request(
-    "/providers/openrouter/validate-key",
+    providerSetupPath(name, "openrouter/validate-key"),
     api.jsonInit("POST", { key }),
   );
 }
@@ -128,10 +144,14 @@ export async function validateOpenRouterKey(
 export async function getProvider(
   api: ApiClient,
   name: string,
-): Promise<ProviderInfo> {
-  return normalizeProviderInfo(
-    await api.json(`/agents/${encodeURIComponent(name)}/provider`),
+): Promise<ProviderResource> {
+  const resource = await api.json<ProviderInfoWire & { catalog: ProviderCatalog }>(
+    `/agents/${encodeURIComponent(name)}/provider`,
   );
+  return {
+    provider: normalizeProviderInfo(resource),
+    catalog: resource.catalog,
+  };
 }
 
 async function patchProvider(

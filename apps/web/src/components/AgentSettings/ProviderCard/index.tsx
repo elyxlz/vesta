@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   MoreHorizontal,
   RefreshCw,
@@ -59,13 +59,15 @@ import {
   type UsageMeter,
 } from "@/api/agents";
 import { fetchAgentClaudeModels } from "@/api/providers/claude";
-import { contextForModel, type Manifest } from "@/api/manifest";
-import type { OpenRouterModelOption } from "@/api/providers/openrouter";
+import { contextForModel, type ProviderCatalog } from "@/api/catalogs";
+import {
+  fetchTopModels,
+  type OpenRouterModelOption,
+} from "@/api/providers/openrouter";
 import { formatTokens } from "@/lib/format";
 import { errorMessage } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
 import { useClaudeModels } from "@/hooks/use-claude-models";
-import { useManifest } from "@/hooks/use-manifest";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useUsage } from "./use-usage";
@@ -200,18 +202,18 @@ function NotConnectedCard({
 function ProviderIdentity({
   provider,
   kind,
-  manifest,
+  catalog,
   ready,
 }: {
   provider: ProviderInfo;
   kind: ProviderMode;
-  manifest: Manifest | undefined;
+  catalog: ProviderCatalog | undefined;
   ready: boolean;
 }) {
   const isClaude = kind === "claude";
   const { Logo } = providerMeta(kind);
   const defaultContext = contextForModel(
-    manifest?.providers[kind],
+    catalog?.providers[kind],
     provider.model ?? "",
   )?.default;
   const contextLabel =
@@ -234,7 +236,7 @@ function ProviderIdentity({
       </div>
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="text-sm text-muted-foreground">
-          {manifest?.providers[kind]?.display ?? kind}
+          {catalog?.providers[kind]?.display ?? kind}
         </span>
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -348,29 +350,35 @@ function UsageSection({
 }
 
 function ModelDialog({
+  agentName,
   open,
   onClose,
   applying,
   error,
   provider,
   claudeLiveModels,
-  manifest,
+  catalog,
   onSubmit,
 }: {
+  agentName: string;
   open: boolean;
   onClose: () => void;
   applying: boolean;
   error: string | null;
   provider: ProviderInfo;
   claudeLiveModels: OpenRouterModelOption[] | null;
-  manifest: Manifest | undefined;
+  catalog: ProviderCatalog | undefined;
   onSubmit: (model: string) => void;
 }) {
   const isClaude = provider.kind === "claude";
   const configuredKind = provider.kind === "none" ? null : provider.kind;
+  const loadOpenRouterModels = useCallback(
+    () => fetchTopModels(agentName),
+    [agentName],
+  );
   const fixedModels = providerModelOptions(
     configuredKind,
-    manifest,
+    catalog,
     provider.model,
   );
   return (
@@ -397,6 +405,11 @@ function ModelDialog({
               initialModel={provider.model ?? ""}
               models={fixedModels}
               claudeLiveModels={isClaude ? claudeLiveModels : undefined}
+              loadModels={
+                provider.kind === "openrouter"
+                  ? loadOpenRouterModels
+                  : undefined
+              }
               submitLabel="switch model"
               onSubmit={onSubmit}
             />
@@ -416,7 +429,7 @@ function ContextDialog({
   applying,
   error,
   provider,
-  manifest,
+  catalog,
   onSubmit,
 }: {
   open: boolean;
@@ -424,7 +437,7 @@ function ContextDialog({
   applying: boolean;
   error: string | null;
   provider: ProviderInfo;
-  manifest: Manifest | undefined;
+  catalog: ProviderCatalog | undefined;
   onSubmit: (tokens: number) => void;
 }) {
   return (
@@ -445,7 +458,7 @@ function ContextDialog({
           <div className="flex flex-col items-center gap-3 py-4">
             <ProgressBar message="changing context window, restarting agent..." />
           </div>
-        ) : !manifest ? (
+        ) : !catalog ? (
           <div className="flex w-full flex-col gap-1.5 py-2">
             <Skeleton className="h-12 w-full rounded-xl" />
             <Skeleton className="h-12 w-full rounded-xl" />
@@ -457,7 +470,7 @@ function ContextDialog({
               const context = contextForModel(
                 provider.kind === "none"
                   ? undefined
-                  : manifest.providers[provider.kind],
+                  : catalog.providers[provider.kind],
                 provider.model ?? "",
               );
               const { presets, initial } = context
@@ -542,10 +555,9 @@ export function ProviderCard() {
   const { handleOpenAuth } = useModals();
   // Revalidate on status change so a provider switch (which restarts the agent)
   // is reflected here without a manual reload.
-  const { provider, refresh } = useProvider(name, agent.status);
-  // Context-window presets come from the manifest (GET /manifest); the context dialog needs the
+  const { provider, catalog, refresh } = useProvider(name, agent.status);
+  // Context-window presets come from this agent's provider catalog. The context dialog needs the
   // active provider's presets just like the setup wizard does.
-  const manifest = useManifest();
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
@@ -624,7 +636,7 @@ export function ProviderCard() {
         <ProviderIdentity
           provider={provider}
           kind={provider.kind}
-          manifest={manifest}
+          catalog={catalog}
           ready={ready}
         />
 
@@ -702,6 +714,7 @@ export function ProviderCard() {
       </CardContent>
 
       <ModelDialog
+        agentName={name}
         open={modelOpen}
         onClose={() => {
           setModelOpen(false);
@@ -711,7 +724,7 @@ export function ProviderCard() {
         error={error}
         provider={provider}
         claudeLiveModels={claudeLiveModels}
-        manifest={manifest}
+        catalog={catalog}
         onSubmit={(model) => void applyModel(model)}
       />
 
@@ -724,7 +737,7 @@ export function ProviderCard() {
         applying={applying}
         error={error}
         provider={provider}
-        manifest={manifest}
+        catalog={catalog}
         onSubmit={(tokens) => void applyContext(tokens)}
       />
 

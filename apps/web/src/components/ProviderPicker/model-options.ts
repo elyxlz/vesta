@@ -1,5 +1,5 @@
 import { CLAUDE_ALIASES as CORE_CLAUDE_ALIASES } from "@vesta/core";
-import type { Manifest } from "@/api/manifest";
+import type { ProviderCatalog } from "@/api/catalogs";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import type { ProviderMode } from "./types";
 
@@ -9,17 +9,17 @@ export const CLAUDE_ALIASES: OpenRouterModelOption[] = CORE_CLAUDE_ALIASES.map(
   (alias) => ({ ...alias, author: "Anthropic" }),
 );
 
-/** Build the fixed-model picker options from the manifest. Live-catalog providers
+/** Build fixed-model picker options from the provider catalog. Live providers
  * (OpenRouter, Claude) return undefined: they feed the picker their own way. */
 export function providerModelOptions(
   provider: ProviderMode | null,
-  manifest: Manifest | undefined,
+  catalog: ProviderCatalog | undefined,
   currentModel?: string | null,
 ): OpenRouterModelOption[] | undefined {
   if (provider === null || provider === "openrouter" || provider === "claude")
     return undefined;
 
-  const entry = manifest?.providers[provider];
+  const entry = catalog?.providers[provider];
   const models = Array.isArray(entry?.models)
     ? entry.models
     : currentModel

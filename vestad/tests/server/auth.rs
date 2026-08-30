@@ -1,18 +1,89 @@
-use vesta_tests::{mark_first_start_done, unique_agent, TestAgent, SERVER};
+use vesta_tests::{
+    mark_first_start_done, unique_agent, ProxyAuth, TestAgent, SERVER,
+};
 
 #[test]
-fn oauth_start_returns_url() {
+fn provider_setup_and_catalogs_are_owned_by_the_named_agent() {
     let c = SERVER.client();
-    let auth = c.oauth_start().unwrap();
-    assert!(!auth.auth_url.is_empty());
-    assert!(!auth.session_id.is_empty());
-    assert!(auth.auth_url.contains("oauth"));
-}
+    let agent = TestAgent::create(&c, &unique_agent("provider-relay")).expect("create agent");
+    c.wait_until_running(&agent.name, 180)
+        .expect("agent API running");
 
-#[test]
-fn oauth_complete_bad_session_fails() {
-    let c = SERVER.client();
-    assert!(c.oauth_complete("bogus-session", "bogus-code").is_err());
+    let start_path = format!("/agents/{}/providers/claude/oauth/start", agent.name);
+    assert_eq!(
+        c.proxy_post_json(&start_path, ProxyAuth::None, &serde_json::json!({}))
+            .expect("unauthenticated request reaches gateway")
+            .0,
+        401,
+        "provider setup remains client-authenticated at the gateway"
+    );
+    let (start_status, start_body) = c
+        .proxy_post_json(&start_path, ProxyAuth::ApiKey, &serde_json::json!({}))
+        .expect("start Claude auth through relay");
+    assert_eq!(start_status, 200);
+    let start: serde_json::Value =
+        serde_json::from_str(&start_body).expect("Claude auth start JSON");
+    assert!(start["auth_url"].as_str().is_some_and(|url| url.contains("oauth")));
+    assert!(start["session_id"].as_str().is_some_and(|id| !id.is_empty()));
+
+    let complete_path = format!("/agents/{}/providers/claude/oauth/complete", agent.name);
+    let (bad_status, bad_body) = c
+        .proxy_post_json(
+            &complete_path,
+            ProxyAuth::ApiKey,
+            &serde_json::json!({"session_id": "bogus-session", "code": "bogus-code"}),
+        )
+        .expect("bad completion still relays its upstream response");
+    assert_eq!(bad_status, 400);
+    let bad: serde_json::Value =
+        serde_json::from_str(&bad_body).expect("Claude auth error JSON");
+    assert_eq!(bad["error"], "invalid or expired auth session");
+
+    let personalities_path = format!("/agents/{}/personalities", agent.name);
+    let (personalities_status, personalities_body) = c
+        .proxy_get(&personalities_path, ProxyAuth::ApiKey)
+        .expect("personality catalog through relay");
+    assert_eq!(personalities_status, 200);
+    let personalities: serde_json::Value =
+        serde_json::from_str(&personalities_body).expect("personality catalog JSON");
+    assert_eq!(personalities["default"], "dry");
+    assert!(personalities["presets"].as_array().is_some_and(|presets| {
+        presets.iter().any(|preset| preset["name"] == "dry")
+    }));
+
+    let provider_path = format!("/agents/{}/provider", agent.name);
+    let (provider_status, provider_body) = c
+        .proxy_get(&provider_path, ProxyAuth::ApiKey)
+        .expect("provider resource through relay");
+    assert_eq!(provider_status, 200);
+    let provider: serde_json::Value =
+        serde_json::from_str(&provider_body).expect("provider resource JSON");
+    assert_eq!(provider["catalog"]["default_provider"], "claude");
+    assert!(provider["catalog"].get("default_personality").is_none());
+
+    for reserved in ["providers", "personalities"] {
+        let error = c
+            .register_service(&agent.name, reserved)
+            .expect_err("catalog and setup routes cannot be shadowed by services");
+        assert!(error.contains("reserved name"), "{error}");
+    }
+
+    assert_eq!(
+        c.proxy_post_json(
+            "/providers/claude/oauth/start",
+            ProxyAuth::ApiKey,
+            &serde_json::json!({}),
+        )
+        .expect("removed global provider route")
+        .0,
+        404
+    );
+    assert_eq!(
+        c.proxy_get("/manifest", ProxyAuth::None)
+            .expect("removed manifest route")
+            .0,
+        404
+    );
 }
 
 #[test]

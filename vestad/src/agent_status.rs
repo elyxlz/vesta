@@ -63,9 +63,16 @@ pub async fn get_status(
     } else {
         combined_status(docker, http_client, agents_dir, cache, &cname, &info).await
     };
+    let readiness = cache.readiness(name);
+    let booting = readiness_booting(
+        status,
+        readiness.as_ref(),
+        cache.readiness_is_fresh(name),
+    );
     Ok(docker::StatusJson {
         name: name.to_string(),
         status,
+        booting,
         id: info.id,
         ws_port: info.port.unwrap_or(0),
     })
@@ -90,7 +97,11 @@ pub async fn list_agents(
             name: agent_name.clone(),
             status,
             ws_port: info.port.unwrap_or(0),
-            booting: readiness.as_ref().is_some_and(|r| !r.boot_complete),
+            booting: readiness_booting(
+                status,
+                readiness.as_ref(),
+                cache.readiness_is_fresh(agent_name),
+            ),
             rate_limited: readiness.and_then(|r| r.rate_limited),
             started_at: info.started_at.clone(),
         });
@@ -224,6 +235,17 @@ fn status_from_readiness(
     }
 }
 
+/// Only an explicit completed readiness report unlocks an Alive agent. Missing
+/// readiness fails closed so onboarding cannot enter chat during a cache gap.
+fn readiness_booting(
+    status: docker::AgentStatus,
+    readiness: Option<&Readiness>,
+    readiness_is_fresh: bool,
+) -> bool {
+    status == docker::AgentStatus::Alive
+        && (!readiness_is_fresh || !readiness.is_some_and(|report| report.boot_complete))
+}
+
 /// Publishes an agent's in-flight operation on the roster for as long as it is held, clearing it on
 /// drop so an early `?` return cannot strand the agent looking busy forever. The lifecycle push
 /// also reads the operations registry: an operated agent's status changes are planned work, not news.
@@ -297,6 +319,10 @@ pub struct AgentStatusCache {
     /// while the tap is connected, so a flags fetch that fails under load keeps the last known
     /// answer instead of demoting a live agent.
     readiness: Mutex<HashMap<String, Readiness>>,
+    /// Agents whose readiness was fetched during the current tap connection. Status can retain
+    /// the last answer across a tap flap, but boot completion cannot cross that lifecycle edge:
+    /// a restarted process must report ready for itself before clients can enter its home.
+    readiness_fresh: Mutex<HashSet<String>>,
     /// Each agent's last stable status: the one source of lifecycle user notifications. It
     /// advances only when the agent is observed in a stable state with no planned operation
     /// covering it, so probe noise, boots, and vestad's own work can never masquerade as agent
@@ -353,6 +379,7 @@ impl AgentStatusCache {
             operations: Mutex::new(HashMap::new()),
             tap_connected: Mutex::new(HashSet::new()),
             readiness: Mutex::new(HashMap::new()),
+            readiness_fresh: Mutex::new(HashSet::new()),
             stable_statuses: Mutex::new(HashMap::new()),
             rate_limits_notified: Mutex::new(HashMap::new()),
             observing: std::sync::atomic::AtomicBool::new(false),
@@ -370,6 +397,10 @@ impl AgentStatusCache {
             taps.insert(name.to_string());
         } else {
             taps.remove(name);
+            self.readiness_fresh
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(name);
         }
     }
 
@@ -385,6 +416,10 @@ impl AgentStatusCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(name.to_string(), readiness);
+        self.readiness_fresh
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_string());
     }
 
     fn readiness(&self, name: &str) -> Option<Readiness> {
@@ -393,6 +428,13 @@ impl AgentStatusCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(name)
             .cloned()
+    }
+
+    fn readiness_is_fresh(&self, name: &str) -> bool {
+        self.readiness_fresh
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(name)
     }
 
     /// Drop a destroyed agent's observation state (readiness, tap mark, last stable status), so
@@ -410,6 +452,10 @@ impl AgentStatusCache {
             .remove(name);
         let normalized = docker::normalize_name(name);
         self.readiness
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&normalized);
+        self.readiness_fresh
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&normalized);
@@ -896,9 +942,11 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
         AgentUpdate::Timezone(zone) => cache.timezones_tx.send_modify(|zones| {
             zones.insert(name, zone);
         }),
-        AgentUpdate::PresenceNotificationsEnabled(enabled) => cache.presence_notifications_tx.send_modify(|map| {
-            map.insert(name, enabled);
-        }),
+        AgentUpdate::PresenceNotificationsEnabled(enabled) => {
+            cache.presence_notifications_tx.send_modify(|map| {
+                map.insert(name, enabled);
+            });
+        }
     }
 }
 
@@ -1025,6 +1073,63 @@ fn pending_ids(snapshot: &serde_json::Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readiness_booting_requires_explicit_current_boot_completion() {
+        let incomplete = Readiness {
+            status: docker::AgentStatus::Alive,
+            boot_complete: false,
+            rate_limited: None,
+        };
+        let complete = Readiness {
+            boot_complete: true,
+            ..incomplete.clone()
+        };
+
+        assert!(readiness_booting(
+            docker::AgentStatus::Alive,
+            None,
+            false
+        ));
+        assert!(readiness_booting(
+            docker::AgentStatus::Alive,
+            Some(&incomplete),
+            true
+        ));
+        assert!(readiness_booting(
+            docker::AgentStatus::Alive,
+            Some(&complete),
+            false
+        ));
+        assert!(!readiness_booting(
+            docker::AgentStatus::Alive,
+            Some(&complete),
+            true
+        ));
+        assert!(!readiness_booting(
+            docker::AgentStatus::Starting,
+            Some(&incomplete),
+            false
+        ));
+    }
+
+    #[test]
+    fn tap_disconnect_keeps_status_but_invalidates_boot_freshness() {
+        let cache = AgentStatusCache::new();
+        let complete = Readiness {
+            status: docker::AgentStatus::Alive,
+            boot_complete: true,
+            rate_limited: None,
+        };
+        cache.set_tap_connected("ada", true);
+        cache.set_readiness("ada", complete.clone());
+        assert!(cache.readiness_is_fresh("ada"));
+
+        cache.set_tap_connected("ada", false);
+
+        assert_eq!(cache.readiness("ada"), Some(complete));
+        assert!(!cache.readiness_is_fresh("ada"));
+    }
 
     #[test]
     fn bridge_ip_round_trips_and_clears() {
