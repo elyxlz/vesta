@@ -1,7 +1,7 @@
 """Unit tests for microsoft_cli.email.create_email_draft (mocked Graph calls)."""
 
 import pytest
-from microsoft_cli import email
+from microsoft_cli import email, pending_send
 from microsoft_cli.config import Config
 from microsoft_cli.payloads import MailDraft
 
@@ -69,3 +69,37 @@ def test_forward_draft_with_recipient(patched):
 def test_reply_and_forward_mutually_exclusive(patched):
     with pytest.raises(ValueError, match="at most one"):
         email.create_email_draft(Config(), None, account_email="me@example.com", mail=MailDraft(body="x", reply_to_id="a", forward_id="b"))
+
+
+def test_forward_draft_without_body_keeps_quoted_original(patched):
+    """A bare forward must not PATCH `body`: createForward already filled the draft with the
+    quoted original, and sending an empty body over it delivers a subject line and nothing else."""
+    email.create_email_draft(Config(), None, account_email="me@example.com", mail=MailDraft(forward_id="orig-3", to=["bob@x.com"]))
+    patch = next(c for c in patched if c["method"] == "PATCH")
+    assert "body" not in patch["json"]
+    assert patch["json"]["toRecipients"] == [{"emailAddress": {"address": "bob@x.com"}}]
+
+
+def test_reply_draft_without_body_keeps_quoted_original(patched):
+    email.create_email_draft(Config(), None, account_email="me@example.com", mail=MailDraft(reply_to_id="orig-4"))
+    patch = next(c for c in patched if c["method"] == "PATCH")
+    assert "body" not in patch["json"]
+
+
+def test_forward_draft_with_body_still_sets_it(patched):
+    email.create_email_draft(Config(), None, account_email="me@example.com", mail=MailDraft(body="fyi", forward_id="orig-5", to=["bob@x.com"]))
+    patch = next(c for c in patched if c["method"] == "PATCH")
+    assert patch["json"]["body"] == {"contentType": "Text", "content": "fyi"}
+
+
+def test_queued_forward_without_body_keeps_quoted_original(patched, tmp_path):
+    """The queued path is the default (a send delay ships on by default), so it is the one that
+    reaches recipients. The immediate `/forward` action appends via `comment` and is unaffected."""
+    config = Config(data_dir=tmp_path)
+    assert pending_send.delay_seconds(tmp_path) > 0
+
+    result = email.forward_email(config, None, account_email="me@example.com", email_id="orig-6", mail=MailDraft(to=["bob@x.com"]))
+
+    assert result["status"] == "pending"
+    patch = next(c for c in patched if c["method"] == "PATCH")
+    assert "body" not in patch["json"]

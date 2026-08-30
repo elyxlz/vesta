@@ -361,7 +361,14 @@ def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: st
         raise ValueError("Failed to create reply/forward draft")
     draft_id = draft["id"]
 
-    updates: dict[str, Any] = {"body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body}}
+    # `createReply`/`createForward` return a draft that ALREADY holds the quoted original, and
+    # PATCHing `body` replaces it wholesale, so only set it when there is something to say.
+    # Otherwise an empty body strips the very message being forwarded and sends subject only.
+    # The immediate path uses Graph's `/forward` action with `comment`, which appends instead;
+    # a send delay is on by default, so the queued path through here is the one that runs.
+    updates: dict[str, Any] = {}
+    if mail.body:
+        updates["body"] = {"contentType": "HTML" if mail.html else "Text", "content": mail.body}
     if mail.subject:
         updates["subject"] = mail.subject
     if mail.to:
