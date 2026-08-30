@@ -1,4 +1,12 @@
-import { BrowserWindow, app, net, protocol, session, shell } from "electron";
+import {
+  BrowserWindow,
+  app,
+  net,
+  protocol,
+  session,
+  shell,
+  systemPreferences,
+} from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -59,10 +67,37 @@ function handleAppProtocol(): void {
 
 // Microphone (voice) and geolocation (the "share this device's location" opt-in) are the only
 // permissions the renderer may request; everything else is denied.
+export function rendererPermissionDecision(
+  permission: string,
+): "grant" | "media" | "deny" {
+  if (permission === "geolocation") return "grant";
+  if (permission === "media") return "media";
+  return "deny";
+}
+
 function allowRendererPermissions(): void {
   session.defaultSession.setPermissionRequestHandler(
     (_wc, permission, callback) => {
-      callback(permission === "media" || permission === "geolocation");
+      const decision = rendererPermissionDecision(permission);
+      if (decision !== "media") {
+        callback(decision === "grant");
+        return;
+      }
+      // The hardened-runtime entitlement lets the app reach the microphone; this obtains the
+      // OS grant (the TCC prompt) that Chromium's getUserMedia needs on top of it. macOS only;
+      // other platforms gate on the renderer callback alone.
+      if (process.platform !== "darwin") {
+        callback(true);
+        return;
+      }
+      void systemPreferences.askForMediaAccess("microphone").then(
+        (granted) => {
+          callback(granted);
+        },
+        () => {
+          callback(false);
+        },
+      );
     },
   );
 }
