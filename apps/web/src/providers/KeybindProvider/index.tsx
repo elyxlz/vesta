@@ -6,25 +6,24 @@ import { useTheme } from "@/providers/ThemeProvider";
 
 export function KeybindProvider({ children }: { children: ReactNode }) {
   const { cycleTheme } = useTheme();
-  const spacebarMode = useVoiceActivation((s) => s.mode);
+  const activation = useVoiceActivation((s) => s.mode);
 
   useEffect(() => {
+    // Space is the keyboard twin of the mic: it starts a dictation and confirms it, on
+    // release (hold) or on the next press (toggle).
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isEditableTarget(event.target)) return;
 
       if (event.key === " ") {
-        const { sttAvailable, toggleVoice } = useVoice.getState();
+        const { sttAvailable, recordingMode, startVoice, stopVoice } =
+          useVoice.getState();
         if (!sttAvailable) return;
         event.preventDefault();
-        if (spacebarMode === "hold") {
-          if (!useVoice.getState().isRecording) {
-            toggleVoice();
-          }
-        } else {
-          toggleVoice();
-        }
+        if (recordingMode === null) startVoice("dictation");
+        else if (recordingMode === "dictation" && activation === "toggle")
+          stopVoice();
         return;
       }
 
@@ -35,14 +34,9 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
-      if (event.key !== " ") return;
-      if (spacebarMode !== "hold") return;
-      if (isEditableTarget(event.target)) return;
-
-      const { isRecording, toggleVoice } = useVoice.getState();
-      if (isRecording) {
-        toggleVoice();
-      }
+      if (event.key !== " " || activation !== "hold") return;
+      const { recordingMode, stopVoice } = useVoice.getState();
+      if (recordingMode === "dictation") stopVoice();
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -51,7 +45,7 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [cycleTheme, spacebarMode]);
+  }, [cycleTheme, activation]);
 
   return <>{children}</>;
 }

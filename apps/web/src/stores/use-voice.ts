@@ -9,7 +9,16 @@ import {
   type TtsStatus,
 } from "@/lib/voice";
 import type { InputMethod, ServiceInfo } from "@vesta/core";
-import { useVoiceActivation } from "@/stores/use-voice-activation";
+import { useToastStore } from "@/stores/use-toast";
+
+// A conversation with no user turn for this long ends itself, since an open transcription
+// stream costs by the minute; the user is told through a toast.
+export const CONVERSATION_INACTIVITY_MS = 15 * 60_000;
+
+// "dictation" (the mic button, Space): turns accumulate in the composer until the
+// user confirms (sent as one message) or discards. "conversation": a duplex
+// exchange, each turn sent as it ends, until the user ends it.
+export type VoiceMode = "dictation" | "conversation";
 
 interface VoiceState {
   // Agent context (set by VoiceStoreEffects)
@@ -22,10 +31,11 @@ interface VoiceState {
   ttsStatus: TtsStatus | null;
   sttAvailable: boolean;
   speechEnabled: boolean;
-  voiceAutoSend: boolean;
 
-  // Recording
-  isRecording: boolean;
+  // Recording (set at press time so a release that beats the microphone still lands)
+  recordingMode: VoiceMode | null;
+  // True once the microphone and the transcription socket are up.
+  listening: boolean;
   liveTranscript: string;
   voiceError: string | null;
 
@@ -33,13 +43,19 @@ interface VoiceState {
   isSpeaking: boolean;
 
   // Actions
-  toggleVoice: () => void;
+  startVoice: (mode: VoiceMode) => void;
+  // Confirms a dictation (sends what it captured) or ends a conversation.
+  stopVoice: () => void;
+  // Ends either mode and drops anything captured.
+  cancelVoice: () => void;
   prefetch: (text: string) => void;
   speak: (text: string) => void;
   stopSpeech: () => void;
-  registerChatCallbacks: (
+  // The chat's send, and its input reset: a voice mode takes the composer over, so typed
+  // text is dropped when one starts.
+  registerChat: (
     send: (text: string, inputMethod?: InputMethod) => void,
-    draft: (text: string) => void,
+    clearInput: () => void,
   ) => void;
 
   // Status management
@@ -63,8 +79,8 @@ interface VoiceState {
 let transcriber: Transcriber | null = null;
 let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
   null;
-let draftCallback: ((text: string) => void) | null = null;
-let idleTimer: ReturnType<typeof setTimeout> | null = null;
+let clearInputCallback: (() => void) | null = null;
+let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 let ttsAbort: AbortController | null = null;
 let ttsQueue: string[] = [];
 let ttsProcessing = false;
@@ -75,10 +91,10 @@ let ttsEpoch = 0;
 // start the streamed GET immediately when the message is shown.
 const ttsPrefetchCache = new Map<string, Promise<string>>();
 
-function clearIdleTimer() {
-  if (idleTimer) {
-    clearTimeout(idleTimer);
-    idleTimer = null;
+function clearInactivityTimer() {
+  if (inactivityTimer) {
+    clearTimeout(inactivityTimer);
+    inactivityTimer = null;
   }
 }
 
@@ -94,8 +110,7 @@ function boolSetting(
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
   const sttAvailable = (stt?.configured && stt.enabled) ?? false;
   const speechEnabled = (tts?.configured && tts.enabled) ?? false;
-  const voiceAutoSend = boolSetting(stt, "auto_send", true);
-  return { sttAvailable, speechEnabled, voiceAutoSend };
+  return { sttAvailable, speechEnabled };
 }
 
 export const useVoice = create<VoiceState>((set, get) => {
@@ -149,25 +164,32 @@ export const useVoice = create<VoiceState>((set, get) => {
     ttsStatus: null,
     sttAvailable: false,
     speechEnabled: false,
-    voiceAutoSend: true,
 
-    isRecording: false,
+    recordingMode: null,
+    listening: false,
     liveTranscript: "",
     voiceError: null,
 
     isSpeaking: false,
 
-    toggleVoice: () => {
-      if (transcriber?.isActive()) {
-        const isHold = useVoiceActivation.getState().mode === "hold";
-        const captured = isHold ? get().liveTranscript.trim() : "";
-        transcriber.stop();
-        transcriber = null;
-        clearIdleTimer();
-        set({ isRecording: false, liveTranscript: "" });
-        if (captured) sendCallback?.(captured, "voice");
-        return;
-      }
+    stopVoice: () => {
+      const { recordingMode, liveTranscript } = get();
+      if (recordingMode === null) return;
+      const captured =
+        recordingMode === "dictation" ? liveTranscript.trim() : "";
+      get().cancelVoice();
+      if (captured) sendCallback?.(captured, "voice");
+    },
+
+    cancelVoice: () => {
+      transcriber?.stop();
+      transcriber = null;
+      clearInactivityTimer();
+      set({ recordingMode: null, listening: false, liveTranscript: "" });
+    },
+
+    startVoice: (mode) => {
+      if (get().recordingMode !== null) return;
 
       const { sttAvailable, agentName } = get();
       if (!sttAvailable || !agentName) {
@@ -177,44 +199,45 @@ export const useVoice = create<VoiceState>((set, get) => {
         return;
       }
 
-      set({ voiceError: null });
+      set({ voiceError: null, recordingMode: mode });
+      clearInputCallback?.();
 
       // Stop TTS when recording starts
       get().stopSpeech();
 
-      const isHold = useVoiceActivation.getState().mode === "hold";
-      const idleTimeoutMs = useVoiceActivation.getState().toggleIdleTimeoutMs;
+      const dictation = mode === "dictation";
 
-      const armIdleTimer = () => {
-        if (isHold || !idleTimeoutMs) return;
-        clearIdleTimer();
-        idleTimer = setTimeout(() => {
-          idleTimer = null;
-          if (transcriber?.isActive()) get().toggleVoice();
-        }, idleTimeoutMs);
+      const armInactivityTimer = () => {
+        if (dictation) return;
+        clearInactivityTimer();
+        inactivityTimer = setTimeout(() => {
+          inactivityTimer = null;
+          get().stopVoice();
+          useToastStore
+            .getState()
+            .show("info", "conversation ended after 15 minutes of silence");
+        }, CONVERSATION_INACTIVITY_MS);
       };
 
       const stream = new Transcriber({
         agentName,
-        accumulate: isHold,
+        accumulate: dictation,
         onTranscript: (text) => {
           set({ liveTranscript: text });
-          if (!isHold && !get().voiceAutoSend) draftCallback?.(text);
-          if (text) armIdleTimer();
         },
         onTurnEnd: (text) => {
-          if (isHold) return;
-          if (get().voiceAutoSend) sendCallback?.(text, "voice");
-          else draftCallback?.(text);
+          if (dictation) return;
+          sendCallback?.(text, "voice");
           set({ liveTranscript: "" });
-          armIdleTimer();
+          armInactivityTimer();
         },
+        // A conversation is duplex, so speaking always cuts a reply; dictation honors the setting.
         onTurnStart: () => {
-          if (boolSetting(get().sttStatus, "interrupt_tts", true))
+          if (!dictation || boolSetting(get().sttStatus, "interrupt_tts", true))
             get().stopSpeech();
         },
         onError: (err) => {
-          set({ voiceError: err, isRecording: false });
+          set({ voiceError: err, recordingMode: null });
           transcriber?.stop();
           transcriber = null;
         },
@@ -224,13 +247,14 @@ export const useVoice = create<VoiceState>((set, get) => {
       stream
         .start()
         .then(() => {
-          set({ isRecording: true });
-          armIdleTimer();
+          if (transcriber !== stream) return;
+          set({ listening: true });
+          armInactivityTimer();
         })
         .catch((err: unknown) => {
           const msg =
             err instanceof Error ? err.message : "Microphone access denied";
-          set({ voiceError: msg });
+          set({ voiceError: msg, recordingMode: null });
           transcriber = null;
         });
     },
@@ -260,9 +284,9 @@ export const useVoice = create<VoiceState>((set, get) => {
       set({ isSpeaking: false });
     },
 
-    registerChatCallbacks: (send, draft) => {
+    registerChat: (send, clearInput) => {
       sendCallback = send;
-      draftCallback = draft;
+      clearInputCallback = clearInput;
     },
 
     patchStt: (patch) => {
@@ -322,10 +346,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     },
 
     _cleanup: () => {
-      transcriber?.stop();
-      transcriber = null;
+      get().cancelVoice();
       get().stopSpeech();
-      set({ isRecording: false, liveTranscript: "" });
     },
   };
 });

@@ -26,6 +26,7 @@ import { createBrowserSocket } from "@/providers/ControllerProvider/browser-sock
 import { websocketUrl } from "@/lib/authed-url";
 import { fetchHistory } from "@/api/agents";
 import { useChatPacing } from "@/stores/use-chat-pacing";
+import { useVoice } from "@/stores/use-voice";
 
 function idsEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i]);
@@ -116,9 +117,11 @@ export function useAgentSocketState({
         setIsTyping(false);
         return;
       }
+      // A voice conversation is duplex: the reply is spoken the moment it lands, not typed out.
       if (
         queue.length > PACING.flushThreshold ||
-        !useChatPacing.getState().naturalFor(name ?? "")
+        !useChatPacing.getState().naturalFor(name ?? "") ||
+        useVoice.getState().recordingMode === "conversation"
       ) {
         flushQueue();
         return;

@@ -178,13 +178,6 @@ async def stt_set_enabled(request: web.Request) -> web.Response:
     return resp
 
 
-async def stt_set_auto_send(request: web.Request) -> web.Response:
-    resp = await _set_bool(request, voice_config.set_stt_auto_send)
-    if resp.status == 200:
-        _spawn_invalidation("stt")
-    return resp
-
-
 async def stt_set_eot(request: web.Request) -> web.Response:
     body = await _json_body(request)
     if isinstance(body, web.Response):
