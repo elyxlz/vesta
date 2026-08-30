@@ -38,6 +38,9 @@ interface VoiceState {
   ttsStatus: TtsStatus | null;
   sttAvailable: boolean;
   speechEnabled: boolean;
+  // Voice has been set up at all (either service configured), the gate for showing the
+  // composer's voice buttons; being configured but off is a per-click toast, not a hide.
+  voiceConfigured: boolean;
 
   // Recording (set at press time so a release that beats the microphone still lands).
   recordingMode: VoiceMode | null;
@@ -110,7 +113,9 @@ function boolSetting(
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
   const sttAvailable = (stt?.configured && stt.enabled) ?? false;
   const speechEnabled = (tts?.configured && tts.enabled) ?? false;
-  return { sttAvailable, speechEnabled };
+  const voiceConfigured =
+    (stt?.configured ?? false) || (tts?.configured ?? false);
+  return { sttAvailable, speechEnabled, voiceConfigured };
 }
 
 // A reply is spoken when text-to-speech is available and either a conversation is running (it
@@ -168,6 +173,7 @@ export const useVoice = create<VoiceState>((set, get) => {
     ttsStatus: null,
     sttAvailable: false,
     speechEnabled: false,
+    voiceConfigured: false,
 
     recordingMode: null,
     listening: false,
