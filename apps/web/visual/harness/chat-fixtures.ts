@@ -268,7 +268,10 @@ function withAttachments(
   event: VestaEvent,
   attachments: BubbleAttachment[],
 ): VestaEvent {
-  return { ...event, attachments } as VestaEvent;
+  // Attachments exist only on the user/chat variants; narrowing keeps the spread cast-free.
+  if (event.type !== "user" && event.type !== "chat")
+    throw new Error("attachments ride user/chat events");
+  return { ...event, attachments };
 }
 
 // A conversation with every attachment kind on both sides, captions and sizes visible.

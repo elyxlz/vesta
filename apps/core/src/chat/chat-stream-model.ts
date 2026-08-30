@@ -235,3 +235,27 @@ export function prependPage(
   for (const event of events) if (event.id != null) shownIds.add(event.id)
   return { ...state, shownIds, messages: [...events, ...state.messages], cursor }
 }
+
+// The bubbles parked in the retryable state, as idempotent re-post inputs. Owned here so every
+// client's reconnect edge replays the same delivery semantics (same intent id, dedup-safe).
+export interface RetryableSend {
+  intentId: string
+  text: string
+  inputMethod: InputMethod
+  attachments?: ChatAttachment[]
+}
+
+export function retryableSends(state: ChatState): RetryableSend[] {
+  return state.messages.flatMap((message) =>
+    message.type === "user" && message.send_state === "retry" && message.intent_id != null
+      ? [
+          {
+            intentId: message.intent_id,
+            text: message.text,
+            inputMethod: message.input_method ?? "typed",
+            ...(message.attachments ? { attachments: message.attachments } : {}),
+          },
+        ]
+      : [],
+  )
+}

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -8,7 +9,6 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { AnimatePresence, motion } from "motion/react";
 import { Download, X } from "lucide-react";
 import {
-  ApiError,
   appChatAttachmentPath,
   attachmentKind,
   formatBytes,
@@ -16,7 +16,7 @@ import {
 } from "@vesta/core";
 import { Button } from "@/components/ui/button";
 import { useAuthedSrc } from "@/hooks/use-authed-src";
-import { downloadAttachment } from "@/lib/download";
+import { attachmentRemoved, downloadAttachment } from "@/lib/download";
 import { useToastStore } from "@/stores/use-toast";
 import { stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -42,60 +42,70 @@ const PINCH_ZOOM_RATE = 0.01;
 // The media caps at this fraction of the container, so the scrim always frames it.
 const MEDIA_FRACTION = "88%";
 
-function ZoomableImage({
-  src,
-  name,
-  zoom,
-  onZoom,
-}: {
-  src: string;
-  name: string;
-  zoom: ZoomState;
-  onZoom: (
-    fold: (current: ZoomState, container: Size, content: Size) => ZoomState,
-  ) => void;
-}) {
+// Owns its zoom/pan state and its own geometry (offsetWidth ignores the transform, so it reads
+// the fitted scale-1 size); the parent resets everything by keying this component on the
+// attachment id.
+function ZoomableImage({ src, name }: { src: string; name: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const [zoom, setZoom] = useState<ZoomState>(resetZoom);
+
+  const fold = useCallback(
+    (
+      apply: (
+        current: ZoomState,
+        cursor: { x: number; y: number },
+        container: Size,
+        content: Size,
+      ) => ZoomState,
+      clientX: number,
+      clientY: number,
+    ) => {
+      const container = containerRef.current;
+      const image = imageRef.current;
+      if (!container || !image) return;
+      const bounds = container.getBoundingClientRect();
+      const cursor = {
+        x: clientX - bounds.left - bounds.width / 2,
+        y: clientY - bounds.top - bounds.height / 2,
+      };
+      const containerSize = {
+        width: container.clientWidth,
+        height: container.clientHeight,
+      };
+      const contentSize = {
+        width: image.offsetWidth,
+        height: image.offsetHeight,
+      };
+      setZoom((current) => apply(current, cursor, containerSize, contentSize));
+    },
+    [],
+  );
 
   // React attaches wheel listeners passively, so the zoom handler binds directly to keep
-  // preventDefault (the chat behind must not scroll while zooming).
+  // preventDefault (the chat behind must not scroll while zooming). `fold` is stable, so the
+  // non-passive listener binds once per mount.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const bounds = container.getBoundingClientRect();
-      const cursor = {
-        x: event.clientX - bounds.left - bounds.width / 2,
-        y: event.clientY - bounds.top - bounds.height / 2,
-      };
       const factor = Math.exp(
         -event.deltaY * (event.ctrlKey ? PINCH_ZOOM_RATE : WHEEL_ZOOM_RATE),
       );
-      onZoom((current, containerSize, contentSize) =>
-        zoomAt(current, cursor, factor, containerSize, contentSize),
+      fold(
+        (current, cursor, containerSize, contentSize) =>
+          zoomAt(current, cursor, factor, containerSize, contentSize),
+        event.clientX,
+        event.clientY,
       );
     };
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       container.removeEventListener("wheel", onWheel);
     };
-  }, [onZoom]);
-
-  const onDoubleClick = (event: React.MouseEvent) => {
-    const container = containerRef.current;
-    if (!container) return;
-    const bounds = container.getBoundingClientRect();
-    const cursor = {
-      x: event.clientX - bounds.left - bounds.width / 2,
-      y: event.clientY - bounds.top - bounds.height / 2,
-    };
-    onZoom((current, containerSize, contentSize) =>
-      toggleZoom(current, cursor, containerSize, contentSize),
-    );
-  };
+  }, [fold]);
 
   const onPointerDown = (event: ReactPointerEvent) => {
     if (zoom.scale <= 1) return;
@@ -108,8 +118,11 @@ function ZoomableImage({
     const dx = event.clientX - last.x;
     const dy = event.clientY - last.y;
     dragRef.current = { x: event.clientX, y: event.clientY };
-    onZoom((current, containerSize, contentSize) =>
-      panBy(current, dx, dy, containerSize, contentSize),
+    fold(
+      (current, _cursor, containerSize, contentSize) =>
+        panBy(current, dx, dy, containerSize, contentSize),
+      event.clientX,
+      event.clientY,
     );
   };
   const endDrag = () => {
@@ -121,7 +134,9 @@ function ZoomableImage({
       ref={containerRef}
       data-viewer-stage
       className="flex size-full items-center justify-center overflow-hidden"
-      onDoubleClick={onDoubleClick}
+      onDoubleClick={(event) => {
+        fold(toggleZoom, event.clientX, event.clientY);
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -149,24 +164,6 @@ function ZoomableImage({
   );
 }
 
-function viewerGeometry(stage: HTMLElement | null): {
-  container: Size;
-  content: Size;
-} {
-  const image = stage?.querySelector("img");
-  return {
-    container: {
-      width: stage?.clientWidth ?? 1,
-      height: stage?.clientHeight ?? 1,
-    },
-    // offsetWidth ignores the transform, so this is the fitted (scale 1) content size.
-    content: {
-      width: image?.offsetWidth ?? 1,
-      height: image?.offsetHeight ?? 1,
-    },
-  };
-}
-
 export function AttachmentViewer({
   agent,
   request,
@@ -177,36 +174,17 @@ export function AttachmentViewer({
   onClose: () => void;
 }) {
   const attachment = request?.attachment ?? null;
-  const [zoom, setZoom] = useState<ZoomState>(resetZoom);
-  const shellRef = useRef<HTMLDivElement>(null);
   const src = useAuthedSrc(
     attachment ? appChatAttachmentPath(agent, attachment.id) : null,
   );
 
-  // Zoom is per opening: a fresh attachment starts fitted.
-  const openedId = attachment?.id;
-  useEffect(() => {
-    setZoom(resetZoom());
-  }, [openedId]);
-
-  const onZoom = (
-    fold: (current: ZoomState, container: Size, content: Size) => ZoomState,
-  ) => {
-    const stage =
-      shellRef.current?.querySelector<HTMLElement>("[data-viewer-stage]") ??
-      null;
-    const { container, content } = viewerGeometry(stage);
-    setZoom((current) => fold(current, container, content));
-  };
-
   const save = (target: ChatAttachment) => {
     downloadAttachment(agent, target).catch((error: unknown) => {
-      const removed = error instanceof ApiError && error.status === 410;
       useToastStore
         .getState()
         .show(
           "error",
-          removed
+          attachmentRemoved(error)
             ? `${target.name} is no longer available`
             : `couldn't download ${target.name}`,
         );
@@ -224,13 +202,11 @@ export function AttachmentViewer({
         >
           <DialogPrimitive.Content
             asChild
-            onEscapeKeyDown={onClose}
             onInteractOutside={(event) => {
               event.preventDefault();
             }}
           >
             <motion.div
-              ref={shellRef}
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
@@ -299,10 +275,9 @@ export function AttachmentViewer({
                   ) : (
                     src !== null && (
                       <ZoomableImage
+                        key={attachment.id}
                         src={src}
                         name={attachment.name}
-                        zoom={zoom}
-                        onZoom={onZoom}
                       />
                     )
                   )}

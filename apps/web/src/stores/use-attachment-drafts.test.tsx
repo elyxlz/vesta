@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { ChatAttachment, UploadCallbacks, UploadMeta } from "@vesta/core";
-import { UploadError } from "@vesta/core";
+import { MAX_ATTACHMENT_BYTES, UploadError } from "@vesta/core";
 import { useToastStore } from "@/stores/use-toast";
 import { useAttachmentDrafts } from "./use-attachment-drafts";
 
@@ -122,7 +122,6 @@ describe("useAttachmentDrafts", () => {
       attachment: DONE,
     });
     expect(result.current.ready).toBe(true);
-    expect(result.current.uploadedIdList).toEqual(["srv1"]);
     expect(result.current.uploaded).toEqual([DONE]);
   });
 
@@ -157,7 +156,7 @@ describe("useAttachmentDrafts", () => {
     const { result } = mount();
     const before = uploads.length;
     act(() => {
-      result.current.addFiles([file("huge.bin", 512 * 1024 * 1024 + 1)]);
+      result.current.addFiles([file("huge.bin", MAX_ATTACHMENT_BYTES + 1)]);
     });
     await flush();
     expect(result.current.drafts).toEqual([]);

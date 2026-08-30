@@ -149,7 +149,14 @@ function MessageBubble({
   agentName?: string;
   onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
-  const blocks = agentName && attachments ? attachments : [];
+  // Attachments need the agent name to build their URLs; a caller that omits it (the Debug
+  // stream) renders the caption alone.
+  const blocks =
+    agentName !== undefined &&
+    attachments !== undefined &&
+    attachments.length > 0
+      ? { agentName, attachments }
+      : null;
   return (
     <Message align={isUser ? "end" : "start"} className={className}>
       <Bubble
@@ -163,13 +170,14 @@ function MessageBubble({
           // corner for the conversation look.
           style={bubbleRadiusStyle(isUser, hasTail)}
         >
-          <div className="flex min-w-0 flex-col gap-1.5 break-words">
-            {blocks.length > 0 && (
-              <div className={cn("flex flex-col gap-1.5", text && "pt-1")}>
-                {blocks.map((attachment) => (
+          {/* Block flow (not flex) so adjacent markdown paragraphs keep their collapsed margins. */}
+          <div className="min-w-0 break-words">
+            {blocks && (
+              <div className={cn("flex flex-col gap-1.5 py-1", text && "mb-1")}>
+                {blocks.attachments.map((attachment) => (
                   <AttachmentContent
                     key={attachment.id}
-                    agent={agentName ?? ""}
+                    agent={blocks.agentName}
                     attachment={attachment}
                     onOpen={onOpenAttachment}
                   />

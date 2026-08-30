@@ -16,6 +16,7 @@ import {
   initialChatState,
   markSend,
   prependPage,
+  retryableSends,
   seedTail,
   sendMessage,
   trimTail,
@@ -298,19 +299,13 @@ export function useAgentSocketState({
   );
 
   repostRef.current = () => {
-    for (const message of stateRef.current.messages) {
-      if (
-        message.type === "user" &&
-        message.send_state === "retry" &&
-        message.intent_id != null
-      )
-        retry(
-          message.intent_id,
-          message.text,
-          message.input_method ?? "typed",
-          message.attachments,
-        );
-    }
+    for (const parked of retryableSends(stateRef.current))
+      retry(
+        parked.intentId,
+        parked.text,
+        parked.inputMethod,
+        parked.attachments,
+      );
   };
 
   const hasMore = state.cursor !== null;

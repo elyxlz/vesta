@@ -1,5 +1,11 @@
 import { appChatAttachmentPath, type ChatAttachment } from "@vesta/core";
-import { apiFetch } from "@/api/client";
+import { ApiError, apiFetch } from "@/api/client";
+
+// The one owner of "this blob was freed by the agent's cleanup": the serve route answers 410 for a
+// removed attachment, the terminal state every surface renders as "no longer available".
+export function attachmentRemoved(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 410;
+}
 
 // Download an attachment through the header-authed client (no token in any visible URL): fetch to
 // a Blob, then a same-origin object-URL anchor click, which works identically in the browser and

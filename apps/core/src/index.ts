@@ -112,8 +112,15 @@ export {
   prependPage,
   seedTail,
   trimTail,
+  retryableSends,
 } from "./chat/chat-stream-model"
-export type { ChatMessage, ChatState, HistoryPage, SendState } from "./chat/chat-stream-model"
+export type {
+  ChatMessage,
+  ChatState,
+  HistoryPage,
+  RetryableSend,
+  SendState,
+} from "./chat/chat-stream-model"
 
 export {
   appChatAttachmentPath,

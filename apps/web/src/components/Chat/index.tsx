@@ -35,6 +35,7 @@ import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
 import { agentSubpage } from "@/lib/agent-subpage";
 import { TRIM_HISTORY_SETTLE_MS, agentNeedsUser } from "@vesta/core";
+import type { InputMethod } from "@vesta/core";
 
 // Breathing room between the last bubble and the floating composer, folded into
 // the inset so the message list, skeleton, mask, and button all clear it.
@@ -109,9 +110,20 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     return () => window.clearTimeout(timer);
   }, [atBottom, trimHistory]);
 
+  // Voice sends go through the same composer semantics as typed ones: ready attachments ride
+  // along and clear, so a dictated caption never silently drops the chips the user can see.
+  const sendWithDrafts = useCallback(
+    (text: string, inputMethod: InputMethod = "voice") => {
+      const uploaded = attachments.ready ? attachments.uploaded : undefined;
+      const sent = send(text, inputMethod, uploaded);
+      if (sent && uploaded) attachments.clear();
+      return sent;
+    },
+    [send, attachments],
+  );
   useEffect(() => {
-    registerChatCallbacks(send, setInput);
-  }, [registerChatCallbacks, send, setInput]);
+    registerChatCallbacks(sendWithDrafts, setInput);
+  }, [registerChatCallbacks, sendWithDrafts, setInput]);
 
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -204,7 +216,17 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const handleSend = () => {
     const text = input.trim();
-    if (!canSend) return;
+    if (!canSend) {
+      // A closed gate with visible chips deserves a reason, not a silent no-op; an empty
+      // composer stays quiet as before.
+      if (attachments.drafts.length > 0)
+        toast.error(
+          attachments.drafts.some((draft) => draft.status === "error")
+            ? "retry or remove the failed attachment first"
+            : "attachments are still uploading",
+        );
+      return;
+    }
     if (!connected) {
       toast.error(`can't reach ${name} right now, message not sent`);
       return;
@@ -222,6 +244,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      // While recording, the field shows the live transcript (not `input`); Enter must not fire
+      // a send whose contents differ from what the screen shows.
+      if (isRecording) return;
       handleSend();
     }
   };

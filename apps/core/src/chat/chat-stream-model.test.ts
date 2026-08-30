@@ -7,6 +7,7 @@ import {
   initialChatState,
   markSend,
   prependPage,
+  retryableSends,
   seedTail,
   trimTail,
   type ChatMessage,
@@ -280,5 +281,20 @@ describe("attachments on the stream", () => {
     expect(bubble.attachments).toEqual([echoed])
     expect(bubble.id).toBe(7)
     expect(bubble.send_state).toBeUndefined()
+  })
+})
+
+describe("retryableSends", () => {
+  it("collects only retry-state bubbles as idempotent re-post inputs", () => {
+    const attachment = { id: "srv1", name: "a.png", mime: "image/png", size: 1 }
+    let state = beginSend(initialChatState(), "one", "typed", "i-1", [attachment])
+    state = beginSend(state, "two", "voice", "i-2")
+    state = beginSend(state, "three", "typed", "i-3")
+    state = markSend(state, "i-1", "retry")
+    state = markSend(state, "i-3", "failed")
+
+    expect(retryableSends(state)).toEqual([
+      { intentId: "i-1", text: "one", inputMethod: "typed", attachments: [attachment] },
+    ])
   })
 })

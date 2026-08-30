@@ -1,11 +1,11 @@
 import { useCallback } from "react";
 import {
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
   UploadError,
   addDraft,
   agentHoldKey,
   createKeyedHoldStore,
-  draftTotalBytes,
   draftsReady,
   failDraft,
   finalizeDraft,
@@ -15,7 +15,6 @@ import {
   setDraftWaiting,
   uploadAttachment,
   uploadedAttachments,
-  uploadedIds,
   type ChatAttachment,
   type Connectivity,
   type DraftAttachment,
@@ -113,14 +112,29 @@ async function measureMedia(file: File): Promise<MediaProbe> {
   return {};
 }
 
-function mutate(
-  key: string,
-  fold: (drafts: DraftAttachment[]) => DraftAttachment[],
-) {
-  attachmentDrafts.persist(key, fold(attachmentDrafts.read(key) ?? []));
+function draftExists(key: string, localId: string): boolean {
+  return (attachmentDrafts.read(key) ?? []).some(
+    (draft) => draft.localId === localId,
+  );
 }
 
-function discard(key: string, localId: string) {
+// Fold one draft's cell. Returns false without touching the store when the draft is gone
+// (removed, or its whole cell LRU-evicted): writing then would resurrect an empty cell and
+// evict someone else's live drafts.
+function mutateDraft(
+  key: string,
+  localId: string,
+  fold: (drafts: DraftAttachment[]) => DraftAttachment[],
+): boolean {
+  const current = attachmentDrafts.read(key) ?? [];
+  if (!current.some((draft) => draft.localId === localId)) return false;
+  attachmentDrafts.persist(key, fold(current));
+  return true;
+}
+
+// Free every per-draft resource outside the store: the running engine, the picked File, and the
+// preview object URL. Shared by remove, clear, and orphan detection.
+function release(localId: string) {
   uploadHandles.get(localId)?.abort();
   uploadHandles.delete(localId);
   pickedFiles.delete(localId);
@@ -129,36 +143,65 @@ function discard(key: string, localId: string) {
     URL.revokeObjectURL(preview);
     previewUrls.delete(localId);
   }
-  mutate(key, (drafts) => removeDraft(drafts, localId));
+}
+
+function discard(key: string, localId: string) {
+  release(localId);
+  mutateDraft(key, localId, (drafts) => removeDraft(drafts, localId));
 }
 
 function startUpload(key: string, agent: string, localId: string, file: File) {
   void measureMedia(file).then((probe) => {
+    // The chip may have been removed while the metadata probe ran; starting now would upload a
+    // blob nothing references and nothing can cancel.
+    if (!draftExists(key, localId)) {
+      release(localId);
+      return;
+    }
     const meta: UploadMeta = {
       name: file.name,
       mime: file.type || "application/octet-stream",
       size: file.size,
       ...probe,
     };
-    const handle = uploadAttachment(httpClient, agent, file, meta, uploadDeps, {
+    let handle: UploadHandle | null = null;
+    // A callback landing on a vanished draft means the cell was evicted from under the engine:
+    // abort it and free the side state, or it would retry forever with no UI able to cancel.
+    const orphaned = () => {
+      handle?.abort();
+      release(localId);
+    };
+    handle = uploadAttachment(httpClient, agent, file, meta, uploadDeps, {
       onProgress: (sent, total) => {
-        mutate(key, (drafts) => setDraftProgress(drafts, localId, sent, total));
+        if (
+          !mutateDraft(key, localId, (drafts) =>
+            setDraftProgress(drafts, localId, sent, total),
+          )
+        )
+          orphaned();
       },
       onStateChange: (state) => {
-        if (state === "waiting")
-          mutate(key, (drafts) => setDraftWaiting(drafts, localId));
+        if (state !== "waiting") return;
+        if (
+          !mutateDraft(key, localId, (drafts) =>
+            setDraftWaiting(drafts, localId),
+          )
+        )
+          orphaned();
       },
     });
     uploadHandles.set(localId, handle);
     handle.result.then(
       (attachment) => {
         uploadHandles.delete(localId);
-        mutate(key, (drafts) => finalizeDraft(drafts, localId, attachment));
+        mutateDraft(key, localId, (drafts) =>
+          finalizeDraft(drafts, localId, attachment),
+        );
       },
       (error: unknown) => {
         uploadHandles.delete(localId);
         const reason = error instanceof UploadError ? error.reason : "failed";
-        if (reason === "aborted") return; // the remove that aborted already cleaned up
+        if (reason === "aborted") return; // the remove/orphan that aborted already cleaned up
         if (reason === "unsupported_agent") {
           useToastStore
             .getState()
@@ -166,7 +209,9 @@ function startUpload(key: string, agent: string, localId: string, file: File) {
           discard(key, localId);
           return;
         }
-        mutate(key, (drafts) => failDraft(drafts, localId, reason));
+        mutateDraft(key, localId, (drafts) =>
+          failDraft(drafts, localId, reason),
+        );
       },
     );
   });
@@ -193,7 +238,12 @@ function acceptFile(key: string, agent: string, file: File): boolean {
     localId,
   );
   if (added === null) {
-    useToastStore.getState().show("error", "at most 10 files per message");
+    useToastStore
+      .getState()
+      .show(
+        "error",
+        `at most ${String(MAX_ATTACHMENTS_PER_MESSAGE)} files per message`,
+      );
     return false;
   }
   attachmentDrafts.persist(key, added);
@@ -213,8 +263,6 @@ export interface AttachmentDrafts {
   previewUrl: (localId: string) => string | null;
   ready: boolean;
   uploaded: ChatAttachment[];
-  uploadedIdList: string[];
-  totalBytes: number;
 }
 
 export function useAttachmentDrafts(agent: string): AttachmentDrafts {
@@ -235,7 +283,7 @@ export function useAttachmentDrafts(agent: string): AttachmentDrafts {
         discard(key, localId);
         return;
       }
-      mutate(key, (current) =>
+      mutateDraft(key, localId, (current) =>
         setDraftProgress(current, localId, 0, file.size),
       );
       startUpload(key, agent, localId, file);
@@ -251,16 +299,8 @@ export function useAttachmentDrafts(agent: string): AttachmentDrafts {
   );
 
   const clear = useCallback(() => {
-    for (const draft of attachmentDrafts.read(key) ?? []) {
-      uploadHandles.get(draft.localId)?.abort();
-      uploadHandles.delete(draft.localId);
-      pickedFiles.delete(draft.localId);
-      const preview = previewUrls.get(draft.localId);
-      if (preview !== undefined) {
-        URL.revokeObjectURL(preview);
-        previewUrls.delete(draft.localId);
-      }
-    }
+    for (const draft of attachmentDrafts.read(key) ?? [])
+      release(draft.localId);
     attachmentDrafts.persist(key, []);
   }, [key]);
 
@@ -278,7 +318,5 @@ export function useAttachmentDrafts(agent: string): AttachmentDrafts {
     previewUrl,
     ready: draftsReady(drafts),
     uploaded: uploadedAttachments(drafts),
-    uploadedIdList: uploadedIds(drafts),
-    totalBytes: draftTotalBytes(drafts),
   };
 }

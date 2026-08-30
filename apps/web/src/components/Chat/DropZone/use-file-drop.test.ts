@@ -6,7 +6,7 @@ import {
   dragEntered,
   dragLeft,
   isDragActive,
-} from "./drop-zone-model";
+} from "./use-file-drop";
 
 describe("drop zone counter", () => {
   it("stays active across child enter/leave pairs and hides on the final leave", () => {

@@ -1,32 +1,18 @@
 import { AnimatePresence, motion } from "motion/react";
-import {
-  File,
-  FileText,
-  Film,
-  Music,
-  RotateCcw,
-  WifiOff,
-  X,
-} from "lucide-react";
+import { RotateCcw, WifiOff, X } from "lucide-react";
 import {
   attachmentKind,
+  draftTotalBytes,
   formatBytes,
-  type AttachmentKind,
   type DraftAttachment,
   type UploadErrorReason,
 } from "@vesta/core";
+import { ATTACHMENT_KIND_ICON } from "../ChatBubble/AttachmentContent/kind-icon";
 import { cn } from "@/lib/utils";
 
 // The composer's draft chips: one per picked file, always showing name + size, with the upload
 // state as a determinate ring (uploading), a wifi-off badge (waiting for network, auto-resumes),
 // or a red retry affordance (terminal error). Two or more chips add the totals footer.
-
-const KIND_ICON: Record<AttachmentKind, typeof File> = {
-  image: FileText, // images render their own thumbnail; this is the no-preview fallback
-  video: Film,
-  audio: Music,
-  file: File,
-};
 
 const ERROR_LABEL: Record<UploadErrorReason, string> = {
   too_large: "too large",
@@ -35,13 +21,7 @@ const ERROR_LABEL: Record<UploadErrorReason, string> = {
   aborted: "cancelled",
 };
 
-function ProgressRing({
-  progress,
-  paused,
-}: {
-  progress: number;
-  paused: boolean;
-}) {
+function ProgressRing({ progress }: { progress: number }) {
   const radius = 8;
   const circumference = 2 * Math.PI * radius;
   return (
@@ -63,10 +43,7 @@ function ProgressRing({
         strokeLinecap="round"
         strokeDasharray={circumference}
         strokeDashoffset={circumference * (1 - progress)}
-        className={cn(
-          "stroke-primary transition-[stroke-dashoffset] duration-300",
-          paused && "stroke-muted-foreground",
-        )}
+        className="stroke-primary transition-[stroke-dashoffset] duration-300"
       />
     </svg>
   );
@@ -87,7 +64,7 @@ function ChipThumb({
       <video src={preview} muted className="size-10 rounded-lg object-cover" />
     );
   }
-  const Icon = KIND_ICON[kind];
+  const Icon = ATTACHMENT_KIND_ICON[kind];
   return (
     <span className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
       <Icon className="size-5" />
@@ -137,7 +114,7 @@ export function AttachmentChips({
                     {draft.status === "waiting" ? (
                       <WifiOff className="size-4 text-muted-foreground" />
                     ) : (
-                      <ProgressRing progress={draft.progress} paused={false} />
+                      <ProgressRing progress={draft.progress} />
                     )}
                   </span>
                 )}
@@ -183,8 +160,7 @@ export function AttachmentChips({
       </div>
       {drafts.length > 1 && (
         <div className="px-1.5 pt-1 text-xs text-muted-foreground">
-          {drafts.length} files ·{" "}
-          {formatBytes(drafts.reduce((total, draft) => total + draft.size, 0))}
+          {drafts.length} files · {formatBytes(draftTotalBytes(drafts))}
         </div>
       )}
     </div>

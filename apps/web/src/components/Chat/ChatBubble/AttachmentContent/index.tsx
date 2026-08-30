@@ -1,28 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { Ban, Download, Maximize2, RotateCcw } from "lucide-react";
 import {
-  Ban,
-  Download,
-  File,
-  FileText,
-  Film,
-  Maximize2,
-  Music,
-  RotateCcw,
-} from "lucide-react";
-import {
-  ApiError,
   appChatAttachmentPath,
   attachmentKind,
   formatBytes,
-  type AttachmentKind,
   type ChatAttachment,
 } from "@vesta/core";
 import { apiFetch } from "@/api/client";
 import { useAuthedSrc } from "@/hooks/use-authed-src";
-import { downloadAttachment } from "@/lib/download";
+import { attachmentRemoved, downloadAttachment } from "@/lib/download";
 import { useToastStore } from "@/stores/use-toast";
-import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { cn } from "@/lib/utils";
+import { ATTACHMENT_KIND_ICON } from "./kind-icon";
 
 // One attachment block inside a chat bubble, routed by kind: images open the in-chat viewer,
 // videos play inline with an expand handoff, audio plays inline, and everything else is a
@@ -34,16 +23,13 @@ export interface OpenViewerRequest {
   startTime?: number;
 }
 
-const TILE_ICON: Record<AttachmentKind, typeof File> = {
-  image: FileText,
-  video: Film,
-  audio: Music,
-  file: File,
-};
-
 // Bubble media is capped to a phone-photo footprint; pre-sizing from the metadata dimensions
 // keeps the chat scroll stable while bytes load.
 const MEDIA_CLASS = "block max-h-[400px] max-w-[320px] rounded-xl";
+
+// How long the file tile celebrates a finished download before returning to idle: on desktop the
+// blob has only reached the save dialog, so a permanent "saved" could overclaim.
+const SAVED_NOTICE_MS = 4000;
 
 function mediaAspect(attachment: ChatAttachment): React.CSSProperties {
   if (!attachment.width || !attachment.height) return {};
@@ -55,16 +41,14 @@ function mediaAspect(attachment: ChatAttachment): React.CSSProperties {
 
 type MediaPhase = "loading" | "loaded" | "removed" | "error";
 
-// An <img> error carries no status, so the phase probe asks the endpoint: a 410 is the terminal
-// removed state, anything else a retryable load failure.
+// An <img> error carries no status, so the phase probe asks the endpoint with a bodyless HEAD:
+// a 410 is the terminal removed state, anything else a retryable load failure.
 async function probePhase(agent: string, id: string): Promise<MediaPhase> {
   try {
-    await apiFetch(appChatAttachmentPath(agent, id));
+    await apiFetch(appChatAttachmentPath(agent, id), { method: "HEAD" });
     return "error";
   } catch (error) {
-    return error instanceof ApiError && error.status === 410
-      ? "removed"
-      : "error";
+    return attachmentRemoved(error) ? "removed" : "error";
   }
 }
 
@@ -92,19 +76,10 @@ function ImageBlock({
   onOpen?: (request: OpenViewerRequest) => void;
 }) {
   const [phase, setPhase] = useState<MediaPhase>("loading");
-  const [generation, setGeneration] = useState(0);
-  const src = useAuthedSrc(appChatAttachmentPath(agent, attachment.id));
-
-  // A load that failed on a bad link retries itself once each time the gateway reconnects; the
-  // removed state is terminal and never retried.
-  const { connected } = useAgentSocket();
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase;
-  useEffect(() => {
-    if (!connected || phaseRef.current !== "error") return;
-    setGeneration((current) => current + 1);
-    setPhase("loading");
-  }, [connected]);
+  // Each retry bumps the epoch: useAuthedSrc rebuilds the token URL, so a retry after token
+  // expiry dials fresh instead of remounting the same stale src.
+  const [epoch, setEpoch] = useState(0);
+  const src = useAuthedSrc(appChatAttachmentPath(agent, attachment.id), epoch);
 
   if (phase === "removed") return <RemovedTile attachment={attachment} />;
   if (phase === "error") {
@@ -112,7 +87,7 @@ function ImageBlock({
       <button
         type="button"
         onClick={() => {
-          setGeneration((current) => current + 1);
+          setEpoch((current) => current + 1);
           setPhase("loading");
         }}
         className="flex items-center gap-2.5 rounded-xl bg-background/40 px-3 py-2 text-muted-foreground"
@@ -135,7 +110,7 @@ function ImageBlock({
     >
       {src !== null && (
         <img
-          key={generation}
+          key={epoch}
           src={src}
           alt={attachment.name}
           loading="lazy"
@@ -247,19 +222,30 @@ function FileBlock({
 }) {
   const [phase, setPhase] = useState<DownloadPhase>("idle");
   const [received, setReceived] = useState(0);
+  // Progress arrives per network chunk; only meaningful movement commits a render.
+  const progressStep = Math.max(attachment.size / 100, 256 * 1024);
 
   if (phase === "removed") return <RemovedTile attachment={attachment} />;
 
-  const Icon = TILE_ICON[attachmentKind(attachment.mime)];
+  const Icon = ATTACHMENT_KIND_ICON[attachmentKind(attachment.mime)];
   const start = () => {
     setPhase("fetching");
     setReceived(0);
-    downloadAttachment(agent, attachment, setReceived).then(
+    downloadAttachment(agent, attachment, (bytes) => {
+      setReceived((previous) =>
+        bytes - previous >= progressStep || bytes >= attachment.size
+          ? bytes
+          : previous,
+      );
+    }).then(
       () => {
         setPhase("saved");
+        window.setTimeout(() => {
+          setPhase((current) => (current === "saved" ? "idle" : current));
+        }, SAVED_NOTICE_MS);
       },
       (error: unknown) => {
-        if (error instanceof ApiError && error.status === 410) {
+        if (attachmentRemoved(error)) {
           setPhase("removed");
           return;
         }
@@ -275,7 +261,7 @@ function FileBlock({
     phase === "fetching"
       ? `${formatBytes(received)} of ${formatBytes(attachment.size)}`
       : phase === "saved"
-        ? `${formatBytes(attachment.size)} · saved`
+        ? `${formatBytes(attachment.size)} · downloaded`
         : formatBytes(attachment.size);
 
   return (
