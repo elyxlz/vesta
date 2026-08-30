@@ -37,7 +37,8 @@ export interface NotificationFeedHandle {
  * lands), the newest page is prefetched the moment the controller exists (so
  * the first open renders from memory, never a skeleton), each open refetches
  * that page and merges it by id, and the gateway's watermark is what "seen"
- * means.
+ * means. Each arrival is also judged against where the user was standing when
+ * it landed, which is what `feedUnseen` reads to keep the dot honest.
  */
 export function useNotificationFeed(
   controller: Controller | null,
