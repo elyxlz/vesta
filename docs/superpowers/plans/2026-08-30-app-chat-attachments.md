@@ -94,7 +94,13 @@ Validation order inside the handler, preserving at-most-once: parse body → req
 
 ### Task 1.5: SKILL.md + checks
 
-- Modify: `agent/skills/app-chat/SKILL.md` (receiving: the notification's path line; sending: `--attach`; written after invoking vesta-prompt-guide, stating current mechanism only, no changelog)
+**Files:**
+- Modify: `agent/skills/app-chat/SKILL.md`
+
+The spec's "Agent side" section carries the draft copy: the description gains "send files with --attach" as a discovery trigger, and a new `## Attachments` body section covers receiving (the `attachments` notification attribute with absolute paths, `Read` for images/PDFs, shell tools otherwise, never delete under `~/.app-chat/attachments/`), sending (`--attach` examples with and without `--message`, temp files safe to remove after, 512 MB cap, lint on text only), and the preference to attach real artifacts instead of pasting them as text. Rules: invoke vesta-prompt-guide before writing, state mechanism only (no changelog prose), concrete command examples over descriptions, no dash separators (the SKILL.md dash guard covers this file).
+
+- [ ] Write the section following the draft; verify against the guide's checklist (description states when, not how; no old-design prose)
+- [ ] Confirm zero `agent/core/` diffs in the PR (the spec's designed property: notification rendering and interrupt policy are generic)
 - [ ] Run `./check.sh app-chat` and `./check.sh guards`; open PR 1 (`feat(app-chat): user attachments over chunked upload`)
 
 ---
@@ -285,7 +291,7 @@ Chip states per spec (uploading ring with determinate progress, waiting with the
 ## Phase 5 (later, separate plans)
 
 - **Mobile**: pickers (expo-image-picker/document-picker) + share-sheet save, reusing `attachment-draft.ts` and `upload.ts` unchanged; holds for drafts in `src/holds/`.
-- **Agent behavior**: teach Vesta when to send files back (prompt/skill text refinement beyond the Phase 1 SKILL.md mechanics).
+- **Agent behavior refinement**: the Phase 1 SKILL.md ships the full mechanics plus the attach-over-paste preference; revisit only if real transcripts show the agent underusing or misusing attachments (a vesta-feel style pass, evidence first).
 - **Deferred items** from the spec: bubble-embedded upload progress, thumbnails, FTS over attachment names, camera capture, streaming desktop save.
 
 ## Verification map

@@ -262,7 +262,7 @@ The duplicate `ChatMessage` in `apps/web/src/lib/types.ts` picks up the same opt
 
 No preload/native-bridge change, so `preload-parity.test.ts` is untouched.
 
-### agent side (app-chat skill; scoped now, built later)
+### agent side (app-chat skill)
 
 | File | Contents |
 |---|---|
@@ -270,9 +270,55 @@ No preload/native-bridge change, so `preload-parity.test.ts` is untouched.
 | `cli/src/app_chat_cli/service.py` (modify) | the five attachment routes (create, data PUT, status, complete, serve); `client_max_size` raised to `MAX_CHUNK_BYTES` + slack; `/message` gains id validation + metadata embedding + notification attachment line |
 | `cli/src/app_chat_cli/daemon.py` (modify) | unix-socket `send` accepts `attach` paths; ingest-by-copy into the store |
 | `cli/src/app_chat_cli/commands.py` + `cli.py` (modify) | `app-chat send --attach <path>` (repeatable) |
-| `SKILL.md` (modify) | document receiving (path in notification) and sending (`--attach`); written under the vesta-prompt-guide rules |
+| `SKILL.md` (modify) | the Attachments section and description update below |
 
-No prompt migration is needed: the change is additive, ships with upstream sync, and old history needs no conversion.
+## Agent side
+
+**Zero `agent/core/` changes.** This is a designed property, verified against the current tree:
+
+- `notification.py` renders every non-content notification field as an XML attribute on the `<channel>` element, so the new `attachments` scalar renders with no renderer change: `<app-chat type="message" attachments="photo.jpg (image/jpeg, 2.1 MB) at /root/.app-chat/attachments/<id>/photo.jpg">look at this</app-chat>`.
+- `notification_interrupt_policy.py` is untouched: an attachment message is a `source=app-chat type=message` notification like any other, so it interrupts by default and user rules apply to it unchanged.
+- `events.py`, `tools.py`, `loops.py`, prompts: untouched. The skill owns the whole feature.
+
+### How the agent consumes an attachment
+
+The notification hands the agent an absolute path inside its own container. From there everything is existing capability, and the SKILL.md states it so the agent does not go hunting for a special tool:
+
+- Images and PDFs: the `Read` tool presents them visually (pages for PDFs).
+- Text, code, spreadsheets, archives: `Read` and ordinary shell tools.
+- Audio and video: shell tools (`ffprobe`/`ffmpeg` ship in the box); transcription rides whatever the agent's voice tooling offers.
+- The blob is durable: GC never touches a referenced attachment, and `app-chat history` returns the metadata, so the agent can revisit a file the user sent weeks ago. The agent must never delete files under `~/.app-chat/attachments/`, because the app streams bubbles and downloads from there for as long as the message exists.
+
+### How the agent sends one
+
+`app-chat send --attach <path>` (repeatable), with or without `--message`. The daemon copies the file into the store (`ingest_file`), so the agent may attach a temp file and delete its copy immediately after. Size above `MAX_ATTACHMENT_BYTES` fails loudly on stderr. The bubble lint applies to the message text only; `--attach` with no text is valid. Pacing on the client handles an attachment-only bubble (minimum typing delay).
+
+### SKILL.md additions (draft copy, final wording at implementation under vesta-prompt-guide review)
+
+Description gains the sending trigger, staying discovery-only: `The user's chat screen in the Vesta app (web, desktop, mobile). Reply to source=app-chat notifications via app-chat send; send files with --attach. Requires daemon.`
+
+New body section, after How it works:
+
+> ## Attachments
+>
+> Files the user sends from the app arrive on the message notification: the `attachments` attribute lists each file's name, type, size, and an absolute path. Open the path directly: `Read` shows images and PDFs, shell tools handle everything else. The files persist under `~/.app-chat/attachments/` and `app-chat history` returns their metadata, so you can come back to one later. Never delete anything under that directory: the app loads those files whenever the user views or downloads the message.
+>
+> Send a file with `--attach` (repeat it for several), with or without a message:
+>
+> ```bash
+> app-chat send --attach ~/out/budget-2026.pdf --message 'here it is!'
+> app-chat send --attach chart.png
+> ```
+>
+> The daemon copies the file into its own store, so a temp file can be removed right after sending. The app renders by type: images and videos inline, audio as a player, anything else as a download tile. Limit 512 MB per file. The short-bubble lint applies to the message text only. When the user asks for a real document, a chart, or anything they will keep, attach the file instead of pasting its contents as text.
+
+The existing longform note gains that same last preference (attach real artifacts rather than sending walls of text), phrased once, in one place.
+
+### Fleet convergence
+
+No prompt migration: the change is additive and old history needs no conversion. The skill code reaches every box through upstream sync; the CLI is a `uv tool install --editable` install and the dependency set is unchanged (aiohttp only), so new code applies at the next daemon start with no reinstall. A merged sync restarts the agent, the restart kills the daemon with the container, and the agent's restart routine starts it again on the new code, so the feature turns on fleet-wide at the first post-update boot. Until a given agent updates, a new client's `POST /attachments` 404s and the composer shows the "agent needs an update" state; old clients against a new agent ignore the unknown field and show captions only.
+
+`agent/tests/test_service_exposure.py` keeps pinning app-chat as private, and `test_daemon_contract.py` is untouched (the daemon verbs do not change).
 
 ## Invariants preserved
 
