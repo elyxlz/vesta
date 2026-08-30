@@ -8,36 +8,23 @@ description: >
 
 # Polish a PR
 
-Take one PR from "the author's draft" to "reviewer-ready" in a single autonomous pass: review, simplify, prompt-quality, and CLAUDE.md freshness, then verify and push. The heavy work runs inside one Opus subagent in its own worktree; this orchestrator only triages the PR and relays the result.
+Take one PR from "the author's draft" to "reviewer-ready" in a single autonomous pass: review, simplify, prompt-quality, and CLAUDE.md freshness, then verify and push. The whole workflow runs in the calling session, inside a worktree for the PR's branch. It is never delegated to a background subagent: the passes invoke skills that fan out agents of their own, and a background parent that waits on background children stalls until someone nudges it, while its notifications leak up to the user as noise.
 
 Scope: exactly ONE PR, named by number (or branch). To polish several, invoke the skill once per PR.
 
-## Orchestrator
+## Setup
 
 1. **Resolve the PR.**
    ```
    gh pr view <N> --json number,title,headRefName,baseRefName,isDraft,author,mergeable,headRepositoryOwner
    ```
-   Stop and report (do not dispatch) if the PR is a draft, or is from a fork (you cannot push to fork branches). Record the head branch and base branch.
+   Stop and report if the PR is a draft, or is from a fork (you cannot push to fork branches). Record the head branch and base branch.
 
-2. **Dispatch one Opus agent.** Run the whole workflow in a single worktree-isolated subagent on Opus:
-   ```
-   Agent({
-     subagent_type: "general-purpose",
-     isolation: "worktree",
-     model: "opus",
-     description: "polish PR #<N>",
-     prompt: <the "Agent workflow" and "Hard rules" sections below, verbatim,
-              with PR number, title, head branch, and base branch filled in>,
-   })
-   ```
-   The `isolation: "worktree"` gives the agent its own checkout, so it never dirties the main tree.
+2. **Enter a worktree for the PR.** Use the native worktree tool when one exists (`EnterWorktree`), else `git worktree add` under the repo's worktree directory, so the main checkout stays clean. Do everything below inside it, yourself, in this session.
 
-3. **Relay the report.** When the agent returns, surface its summary to the user unchanged: what each pass changed, whether it pushed, and any CLAUDE.md items it flagged rather than wrote. If it stopped without pushing (verify red or a fork/draft slipped through), relay the diagnosis.
+3. **Report at the end.** Give the user what each pass changed, whether you pushed, and any CLAUDE.md items you flagged rather than wrote. If you stopped without pushing (verify red, or a fork/draft slipped through), give the diagnosis.
 
-## Agent workflow (what the Opus subagent does)
-
-You are in your own worktree. Do everything here inside it.
+## Workflow
 
 1. **Check out the PR and scope the diff.**
    ```
@@ -47,7 +34,7 @@ You are in your own worktree. Do everything here inside it.
    ```
    That changed-file set drives every pass and the verify mapping. Do not touch files outside it except `CLAUDE.md` (pass 4 may edit the documenting file even though the PR did not).
 
-2. **Pass 1, Review.** Run `/code-review high --fix` so it reviews the PR diff and applies the confirmed correctness and reuse findings to the working tree. Let it finish and land its edits before the next pass.
+2. **Pass 1, Review.** Run `/code-review high --fix` so it reviews the PR diff and applies the confirmed correctness and reuse findings to the working tree. Its fan-out finishes before the skill returns, so its edits are on disk when you continue. Then `git status --porcelain` and revert (`git checkout -- <file>`) any edit outside the PR's file set: `--fix` follows findings wherever they point, and polish does not.
 
 3. **Pass 2, Simplify.** Run `/simplify` over the changed code to apply simplification, reuse, efficiency, and altitude cleanups. Review comes first on purpose: do not polish code that pass 1 was about to rewrite.
 

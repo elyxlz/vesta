@@ -80,6 +80,9 @@ interface VoiceSetting {
   description?: string;
   value: unknown;
   default?: unknown;
+  min?: number;
+  max?: number;
+  step?: number;
   options?: { value: string; label: string; description?: string }[];
 }
 
@@ -233,12 +236,16 @@ const STT_STATUS: VoiceStatus = {
   enabled: true,
   settings: [
     {
-      key: "auto_send",
-      type: "bool",
-      label: "auto-send on pause",
-      description: "send message automatically when you stop speaking",
-      value: true,
-      default: true,
+      key: "eot_threshold",
+      type: "number",
+      label: "end-of-turn sensitivity",
+      description:
+        "lower finalizes turns faster; higher waits for more confidence before ending the turn",
+      value: 0.8,
+      default: 0.8,
+      min: 0.5,
+      max: 0.9,
+      step: 0.05,
     },
     {
       key: "interrupt_tts",
