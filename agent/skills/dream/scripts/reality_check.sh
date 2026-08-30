@@ -78,6 +78,26 @@ for log in "$HOME"/agent/logs/*.log; do
     fi
 done
 
+# Dreamer summary freshness. The retrospective reads the last few files in ~/agent/dreamer/, so a
+# dream that did its work and skipped writing its record leaves the NEXT dream reading stale history
+# with no sign anything is missing. Nothing else here would catch it: an absent summary is
+# indistinguishable from a night that needed none, which is the same blind spot as a probe whose
+# scope is a list. Found 30 Aug 2026, when a dream updated MEMORY, marked itself complete, and wrote
+# no summary at all.
+dreamer="$HOME/agent/dreamer"
+if [ ! -d "$dreamer" ]; then
+    bad "no dreamer directory at $dreamer: the retrospective has nothing to read"
+elif [ -n "$(find "$dreamer" -maxdepth 1 -name '*.md' -mmin -2880 2>/dev/null)" ]; then
+    ok "dreamer summary written within 48h"
+else
+    newest=$(ls -t "$dreamer"/*.md 2>/dev/null | head -1)
+    if [ -z "$newest" ]; then
+        bad "dreamer directory is empty: every retrospective so far has produced no record"
+    else
+        bad "newest dreamer summary is $(basename "$newest"), over 48h old: a dream ran without writing its record, or none has run"
+    fi
+fi
+
 # Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between
 # checkpoints the recent commits touch only the -wal sibling; judge by the newest of the pair.
 db="$HOME/agent/data/events.db"

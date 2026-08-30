@@ -2,7 +2,9 @@
 
 import os
 import pathlib as pl
+import shutil
 import subprocess
+import time
 
 SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "dream" / "scripts" / "reality_check.sh"
 
@@ -36,6 +38,8 @@ def _healthy_home(tmp_path: pl.Path) -> pl.Path:
     (tmp_path / "agent" / "logs").mkdir(parents=True)
     (tmp_path / "agent" / "notifications").mkdir(parents=True)
     (tmp_path / "agent" / "data" / "events.db").write_text("stub")
+    (tmp_path / "agent" / "dreamer").mkdir(parents=True)
+    (tmp_path / "agent" / "dreamer" / "2026-01-01T0300.md").write_text("stub")
     _fake_disk_usage(tmp_path, 42)
     _fake_own_usage(tmp_path, 512)
     return tmp_path
@@ -239,3 +243,50 @@ def test_stale_events_db_goes_red(tmp_path):
 
     assert run.returncode == 1
     assert "RED events.db" in run.stdout
+
+
+def test_a_fresh_dreamer_summary_stays_green(tmp_path):
+    # The healthy case for this probe: a summary written last night is the normal state, and the
+    # probe has to be able to say so. A check that only ever fires is not a check.
+    home = _healthy_home(tmp_path)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "dreamer summary written within 48h" in run.stdout
+
+
+def test_a_stale_dreamer_summary_goes_red(tmp_path):
+    # A dream can do its work, update memory, mark itself complete, and never write its record. The
+    # retrospective reads this directory, so the NEXT dream then reads stale history with no sign
+    # that a night is missing. Nothing else in the probe would notice: an absent summary looks
+    # exactly like a night that did not need one.
+    home = _healthy_home(tmp_path)
+    old = home / "agent" / "dreamer" / "2026-01-01T0300.md"
+    stale = time.time() - 5 * 24 * 3600
+    os.utime(old, (stale, stale))
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "over 48h old" in run.stdout
+
+
+def test_an_empty_dreamer_directory_goes_red(tmp_path):
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "dreamer" / "2026-01-01T0300.md").unlink()
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "dreamer directory is empty" in run.stdout
+
+
+def test_a_missing_dreamer_directory_goes_red(tmp_path):
+    home = _healthy_home(tmp_path)
+    shutil.rmtree(home / "agent" / "dreamer")
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "no dreamer directory" in run.stdout
