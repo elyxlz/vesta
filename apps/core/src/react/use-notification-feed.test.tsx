@@ -14,7 +14,13 @@ function entry(id: number): LoggedUserNotification {
   return { id, at: id * 100, agent: "aria", kind: "message", title: "aria", body: `n${String(id)}` }
 }
 
-function harness(pages: Record<string, LoggedUserNotification[] | Error>) {
+function harness(
+  pages: Record<string, LoggedUserNotification[] | Error>,
+  viewing: { viewedAgent: string | null; focused: boolean } = {
+    viewedAgent: null,
+    focused: true,
+  },
+) {
   const listeners = new Set<(delta: Delta) => void>()
   const requests: string[] = []
   const controller: Controller = {
@@ -49,7 +55,9 @@ function harness(pages: Record<string, LoggedUserNotification[] | Error>) {
   const emit = (item: LoggedUserNotification): void => {
     for (const listener of listeners) listener({ type: "user_notification", ...item })
   }
-  const hook = renderHook(() => useNotificationFeed(controller, { pageSize: PAGE_SIZE }))
+  const hook = renderHook(() =>
+    useNotificationFeed(controller, { pageSize: PAGE_SIZE, ...viewing }),
+  )
   return { ...hook, emit, requests }
 }
 
@@ -63,6 +71,33 @@ describe("useNotificationFeed", () => {
     })
     expect(h.result.current.feed.entries.map((item) => item.id)).toEqual([3, 2])
     expect(h.result.current.feed.open).toBe(false)
+  })
+
+  it("marks a message read in place when it lands on that agent's focused page", () => {
+    const h = harness({ "/notifications?limit=2": [] }, { viewedAgent: "aria", focused: true })
+    act(() => {
+      h.emit(entry(3))
+    })
+    expect(h.result.current.feed.readIds).toEqual([3])
+  })
+
+  it("does not mark one read in place on another page, or behind an unfocused window", () => {
+    const elsewhere = harness(
+      { "/notifications?limit=2": [] },
+      { viewedAgent: "nova", focused: true },
+    )
+    act(() => {
+      elsewhere.emit(entry(3))
+    })
+    expect(elsewhere.result.current.feed.readIds).toEqual([])
+    const blurred = harness(
+      { "/notifications?limit=2": [] },
+      { viewedAgent: "aria", focused: false },
+    )
+    act(() => {
+      blurred.emit(entry(4))
+    })
+    expect(blurred.result.current.feed.readIds).toEqual([])
   })
 
   it("joins a live arrival to the page that later contains it", async () => {

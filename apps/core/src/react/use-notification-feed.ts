@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer } from "react"
+import { useCallback, useEffect, useReducer, useRef } from "react"
 import type { Controller } from "../controller/controller"
 import type { Delta } from "../protocol/deltas"
 import {
@@ -12,9 +12,14 @@ import {
   loggedFromDelta,
   markUserNotificationsSeen,
 } from "../notifications-pill/user-notification-feed"
+import { notificationReadInPlace } from "../notifications-pill/notifications-pill"
 
 export interface NotificationFeedOptions {
   pageSize: number
+  /** The agent whose page is open, if any. */
+  viewedAgent: string | null
+  /** Whether this client's window has the user's attention right now. */
+  focused: boolean
 }
 
 export interface NotificationFeedHandle {
@@ -36,15 +41,29 @@ export interface NotificationFeedHandle {
  */
 export function useNotificationFeed(
   controller: Controller | null,
-  { pageSize }: NotificationFeedOptions,
+  options: NotificationFeedOptions,
 ): NotificationFeedHandle {
+  const { pageSize } = options
   const [feed, dispatch] = useReducer(reduceFeed, EMPTY_FEED)
+
+  // Read through a ref, as the pill does: the subscription outlives every route
+  // and focus change, and each arrival is judged against the moment it landed.
+  const optionsRef = useRef(options)
+  useEffect(() => {
+    optionsRef.current = options
+  })
 
   useEffect(() => {
     if (!controller) return
     return controller.subscribeDeltas((delta: Delta) => {
       const entry = loggedFromDelta(delta)
-      if (entry) dispatch({ type: "arrived", entry })
+      if (!entry) return
+      const { viewedAgent, focused } = optionsRef.current
+      dispatch({
+        type: "arrived",
+        entry,
+        readInPlace: notificationReadInPlace(entry, viewedAgent, focused),
+      })
     })
   }, [controller])
 

@@ -3,6 +3,7 @@ import {
   EMPTY_FEED,
   feedNeedsMarkSeen,
   feedSections,
+  feedUnseen,
   feedView,
   reduceFeed,
   type FeedAction,
@@ -27,9 +28,9 @@ function ids(feed: NotificationFeed): number[] {
 describe("reduceFeed: the live edge", () => {
   it("lands a live arrival at the top, once, and remembers it as live", () => {
     const feed = run([
-      { type: "arrived", entry: entry(5) },
-      { type: "arrived", entry: entry(5) },
-      { type: "arrived", entry: entry(6) },
+      { type: "arrived", readInPlace: false, entry: entry(5) },
+      { type: "arrived", readInPlace: false, entry: entry(5) },
+      { type: "arrived", readInPlace: false, entry: entry(6) },
     ])
     expect(ids(feed)).toEqual([6, 5])
     expect(feed.liveIds).toEqual([5, 6])
@@ -39,7 +40,7 @@ describe("reduceFeed: the live edge", () => {
 describe("reduceFeed: pages", () => {
   it("merges the newest page into what the live edge already delivered, by id", () => {
     const feed = run([
-      { type: "arrived", entry: entry(6) },
+      { type: "arrived", readInPlace: false, entry: entry(6) },
       { type: "page_loading" },
       { type: "page_loaded", page: [entry(6), entry(5), entry(4)], pageSize: PAGE_SIZE },
     ])
@@ -61,7 +62,7 @@ describe("reduceFeed: pages", () => {
   it("keeps the archive exhausted when a later newest page comes back full", () => {
     const feed = run([
       { type: "page_loaded", page: [entry(2), entry(1)], pageSize: PAGE_SIZE },
-      { type: "arrived", entry: entry(3) },
+      { type: "arrived", readInPlace: false, entry: entry(3) },
       { type: "page_loaded", page: [entry(3), entry(2), entry(1)], pageSize: PAGE_SIZE },
     ])
     expect(feed.older).toBe("exhausted")
@@ -107,7 +108,7 @@ describe("reduceFeed: the catch-up session", () => {
   it("re-snapshots the watermark on the next open and forgets which rows were live", () => {
     const feed = run([
       { type: "open", seenAt: 150 },
-      { type: "arrived", entry: entry(3) },
+      { type: "arrived", readInPlace: false, entry: entry(3) },
       { type: "close" },
       { type: "open", seenAt: 300 },
     ])
@@ -121,11 +122,49 @@ describe("feedNeedsMarkSeen", () => {
     const held = run([{ type: "open", seenAt: 150 }, { type: "close" }])
     expect(feedNeedsMarkSeen(held, 200)).toBe(true)
     expect(feedNeedsMarkSeen(held, 150)).toBe(false)
-    expect(feedNeedsMarkSeen(run([{ type: "arrived", entry: entry(2) }], held), 150)).toBe(true)
+    expect(
+      feedNeedsMarkSeen(run([{ type: "arrived", readInPlace: false, entry: entry(2) }], held), 150),
+    ).toBe(true)
   })
 
   it("never asks before a session ever opened", () => {
-    expect(feedNeedsMarkSeen(run([{ type: "arrived", entry: entry(2) }]), 500)).toBe(false)
+    expect(
+      feedNeedsMarkSeen(run([{ type: "arrived", readInPlace: false, entry: entry(2) }]), 500),
+    ).toBe(false)
+  })
+})
+
+describe("feedUnseen", () => {
+  // A loaded feed is the precondition for discounting anything, so each case
+  // starts from a ready newest page.
+  function loaded(actions: FeedAction[]): NotificationFeed {
+    return run([{ type: "page_loaded", page: [], pageSize: PAGE_SIZE }, ...actions])
+  }
+
+  it("does not raise the dot for a notification the user read in the chat", () => {
+    const feed = loaded([{ type: "arrived", readInPlace: true, entry: entry(3, 300) }])
+    expect(feedUnseen(feed, 300, 200)).toBe(false)
+  })
+
+  it("still raises the dot for anything alongside it the user has not read", () => {
+    const feed = loaded([
+      { type: "arrived", readInPlace: false, entry: entry(3, 300) },
+      { type: "arrived", readInPlace: true, entry: entry(4, 400) },
+    ])
+    expect(feedUnseen(feed, 400, 200)).toBe(true)
+  })
+
+  it("keeps the dot for what it cannot account for: an unloaded feed or a stamp above every row", () => {
+    const unloaded = run([{ type: "arrived", readInPlace: true, entry: entry(3, 300) }])
+    expect(feedUnseen(unloaded, 300, 200)).toBe(true)
+    const feed = loaded([{ type: "arrived", readInPlace: true, entry: entry(3, 300) }])
+    expect(feedUnseen(feed, 400, 200)).toBe(true)
+  })
+
+  it("stays down while the gateway's scalars report nothing new", () => {
+    const feed = loaded([{ type: "arrived", readInPlace: false, entry: entry(3, 300) }])
+    expect(feedUnseen(feed, 300, 300)).toBe(false)
+    expect(feedUnseen(feed, null, 0)).toBe(false)
   })
 })
 
@@ -146,9 +185,11 @@ describe("feedView", () => {
     expect(feedView(run([{ type: "page_loading" }]))).toBe("loading")
     expect(feedView(run([{ type: "page_failed" }]))).toBe("failed")
     expect(feedView(run([{ type: "page_loaded", page: [], pageSize: PAGE_SIZE }]))).toBe("empty")
-    expect(feedView(run([{ type: "arrived", entry: entry(1) }]))).toBe("rows")
-    expect(feedView(run([{ type: "arrived", entry: entry(1) }, { type: "page_failed" }]))).toBe(
-      "rows",
-    )
+    expect(feedView(run([{ type: "arrived", readInPlace: false, entry: entry(1) }]))).toBe("rows")
+    expect(
+      feedView(
+        run([{ type: "arrived", readInPlace: false, entry: entry(1) }, { type: "page_failed" }]),
+      ),
+    ).toBe("rows")
   })
 })
