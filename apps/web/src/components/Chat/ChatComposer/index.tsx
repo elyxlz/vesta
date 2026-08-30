@@ -134,9 +134,8 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const isMobile = useIsMobile();
   const activation = useVoiceActivation((s) => s.mode);
-  const recording = recordingMode !== null;
   // The input shows what dictation has captured so far, or a conversation's live turn.
-  const useLiveTranscript = recording;
+  const useLiveTranscript = recordingMode !== null;
   // Only sign-in disables the field; a dropped connection still lets you type (a send while
   // disconnected is blocked with a toast in the parent instead).
   const inputDisabled = notAuthenticated;
@@ -152,7 +151,7 @@ export function ChatComposer({
     sttAvailable,
     recordingMode,
     inputDisabled,
-    slot: rightSlot({ input, recordingMode, sttAvailable }),
+    slot: rightSlot({ input, recordingMode }),
     micHandlers: micHandlers(activation, startVoice, stopVoice),
     onConfirm: stopVoice,
     onCancel: cancelVoice,

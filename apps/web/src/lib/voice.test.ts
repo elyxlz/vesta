@@ -117,3 +117,31 @@ describe("Transcriber audio captured before the socket opens", () => {
     ]);
   });
 });
+
+describe("Transcriber.stop()", () => {
+  it("drops an in-flight partial instead of reporting it as a turn", async () => {
+    const onTurnEnd = vi.fn();
+    const stt = new Transcriber({
+      agentName: "a",
+      onTranscript: () => undefined,
+      onTurnEnd,
+      onTurnStart: () => undefined,
+      onError: () => undefined,
+    });
+    const started = stt.start();
+    await vi.waitFor(() => {
+      expect(HeldSocket.current).not.toBeNull();
+    });
+    HeldSocket.current?.onopen?.();
+    await started;
+    HeldSocket.current?.onmessage?.({
+      data: JSON.stringify({
+        type: "TurnInfo",
+        event: "Update",
+        transcript: "half a",
+      }),
+    });
+    stt.stop();
+    expect(onTurnEnd).not.toHaveBeenCalled();
+  });
+});

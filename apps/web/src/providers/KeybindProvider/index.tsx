@@ -4,6 +4,10 @@ import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 import { useTheme } from "@/providers/ThemeProvider";
 
+function isButtonTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("button") !== null;
+}
+
 export function KeybindProvider({ children }: { children: ReactNode }) {
   const { cycleTheme } = useTheme();
   const activation = useVoiceActivation((s) => s.mode);
@@ -20,6 +24,8 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
         const { sttAvailable, recordingMode, startVoice, stopVoice } =
           useVoice.getState();
         if (!sttAvailable) return;
+        // A focused composer button (discard, confirm, end conversation) owns its own Space.
+        if (recordingMode !== null && isButtonTarget(event.target)) return;
         event.preventDefault();
         if (recordingMode === null) startVoice("dictation");
         else if (recordingMode === "dictation" && activation === "toggle")
@@ -35,6 +41,7 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
 
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key !== " " || activation !== "hold") return;
+      if (isEditableTarget(event.target)) return;
       const { recordingMode, stopVoice } = useVoice.getState();
       if (recordingMode === "dictation") stopVoice();
     };

@@ -13,7 +13,9 @@ import { useToastStore } from "@/stores/use-toast";
 
 // A conversation with no user turn for this long ends itself, since an open transcription
 // stream costs by the minute; the user is told through a toast.
-export const CONVERSATION_INACTIVITY_MS = 15 * 60_000;
+const CONVERSATION_INACTIVITY_MINUTES = 15;
+export const CONVERSATION_INACTIVITY_MS =
+  CONVERSATION_INACTIVITY_MINUTES * 60_000;
 
 // "dictation" (the mic button, Space): turns accumulate in the composer until the
 // user confirms (sent as one message) or discards. "conversation": a duplex
@@ -215,7 +217,10 @@ export const useVoice = create<VoiceState>((set, get) => {
           get().stopVoice();
           useToastStore
             .getState()
-            .show("info", "conversation ended after 15 minutes of silence");
+            .show(
+              "info",
+              `conversation ended after ${String(CONVERSATION_INACTIVITY_MINUTES)} minutes of silence`,
+            );
         }, CONVERSATION_INACTIVITY_MS);
       };
 
@@ -237,9 +242,9 @@ export const useVoice = create<VoiceState>((set, get) => {
             get().stopSpeech();
         },
         onError: (err) => {
-          set({ voiceError: err, recordingMode: null });
-          transcriber?.stop();
-          transcriber = null;
+          if (transcriber !== stream) return;
+          get().cancelVoice();
+          set({ voiceError: err });
         },
       });
 
@@ -252,10 +257,12 @@ export const useVoice = create<VoiceState>((set, get) => {
           armInactivityTimer();
         })
         .catch((err: unknown) => {
+          // A session the user already ended (or replaced) never reports its own failure.
+          if (transcriber !== stream) return;
           const msg =
             err instanceof Error ? err.message : "Microphone access denied";
-          set({ voiceError: msg, recordingMode: null });
-          transcriber = null;
+          get().cancelVoice();
+          set({ voiceError: msg });
         });
     },
 

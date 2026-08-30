@@ -7,13 +7,10 @@ export type RightSlot = "conversation" | "send";
 export function rightSlot({
   input,
   recordingMode,
-  sttAvailable,
 }: {
   input: string;
   recordingMode: VoiceMode | null;
-  sttAvailable: boolean;
 }): RightSlot {
-  if (!sttAvailable) return "send";
   if (recordingMode === "conversation") return "conversation";
   return input.trim().length === 0 ? "conversation" : "send";
 }

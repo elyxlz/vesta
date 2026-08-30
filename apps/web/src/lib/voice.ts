@@ -287,7 +287,7 @@ export class Transcriber {
     } catch {
       this.cleanup();
       throw new Error(
-        "Could not initialize audio — browser may not support AudioContext",
+        "Could not initialize audio: browser may not support AudioContext",
       );
     }
 
@@ -423,14 +423,8 @@ export class Transcriber {
   stop(): void {
     if (!this.active) return;
     this.active = false;
-
-    const text = this.transcript.trim();
-    if (text) {
-      this.opts.onTurnEnd(text);
-      this.transcript = "";
-      this.opts.onTranscript("");
-    }
-
+    // An in-flight partial is not a turn: the caller read what it wants before stopping.
+    this.transcript = "";
     this.cleanup();
   }
 

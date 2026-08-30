@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { cn } from "@/lib/utils";
 import { setTtsEnabled } from "@/lib/voice";
+import { useLayout } from "@/stores/use-layout";
 import { useVoice } from "@/stores/use-voice";
 
 interface ChatHeaderActionsProps {
@@ -19,11 +20,16 @@ export function ChatHeaderActions({
 }: ChatHeaderActionsProps) {
   const navigate = useNavigate();
   const ttsConfigured = useVoice((s) => s.ttsStatus?.configured ?? false);
+  const navbarHeight = useLayout((s) => s.navbarHeight);
 
   if (fullscreen && !ttsConfigured) return null;
 
+  // The fullscreen chat sits under the absolute navbar, so the actions start below it.
   return (
-    <div className="absolute right-3 top-3 z-10">
+    <div
+      className="absolute right-3 z-10"
+      style={{ top: fullscreen ? navbarHeight + 12 : 12 }}
+    >
       <ButtonGroup>
         {ttsConfigured && <SpeechButton agentName={agentName} />}
         {!fullscreen && (

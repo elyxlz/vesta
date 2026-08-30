@@ -388,6 +388,41 @@ describe("recording modes", () => {
     }
   });
 
+  it("a transcription error mid-conversation resets the session and disarms the inactivity toast", async () => {
+    const socket = await startRecording("conversation");
+    vi.useFakeTimers();
+    try {
+      socket.onmessage?.({ data: JSON.stringify({ type: "Error" }) });
+      expect(useVoice.getState()).toMatchObject({
+        recordingMode: null,
+        listening: false,
+        liveTranscript: "",
+        voiceError: "Transcription service error",
+      });
+      vi.advanceTimersByTime(CONVERSATION_INACTIVITY_MS);
+      expect(useToastStore.getState().current).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a microphone failure of a session already ended never reports", async () => {
+    let denyMicrophone: (reason: Error) => void = () => undefined;
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: () =>
+          new Promise((_resolve, reject) => {
+            denyMicrophone = reject;
+          }),
+      },
+    });
+    useVoice.getState().startVoice("dictation");
+    useVoice.getState().cancelVoice();
+    denyMicrophone(new DOMException("denied", "NotAllowedError"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useVoice.getState().voiceError).toBeNull();
+  });
+
   it("a release before the microphone opens still ends the session", async () => {
     useVoice.getState().startVoice("dictation");
     useVoice.getState().stopVoice();
