@@ -72,8 +72,12 @@ POST /attachments/{id}/complete
   # metadata, so a lost complete response is retried safely
 
 GET /attachments/{id}                        # streams the blob
-  -> 200 bytes, Content-Type: <mime>, Content-Disposition: inline; filename="<sanitized>"
-     Accept-Ranges/Range supported (web.FileResponse)
+  -> 200 bytes; Accept-Ranges/Range supported (web.FileResponse)
+     Content-Disposition per RFC 6266/5987 (ascii fallback + filename*), inline only for
+     image/*, video/*, audio/*, application/pdf; every other declared mime serves as
+     application/octet-stream attachment (client-declared text/html inline on the gateway
+     origin would execute beside the app's tokens), plus Content-Security-Policy: sandbox
+     and Cache-Control: private, max-age=3600 (an hour, so a removed blob's 410 can surface)
   ?download=1 -> Content-Disposition: attachment
   -> 404 unknown id
   -> 410 { "error": "attachment removed" }   # meta exists but the blob was cleaned up
@@ -105,11 +109,11 @@ export interface ChatAttachment {
 ### Disk layout (agent side)
 
 ```
-~/.app-chat/attachments/<id>/meta.json      # ChatAttachment JSON (name, mime, size, dims)
-~/.app-chat/attachments/<id>/<sanitized-name>   # the blob (staging: .part, renamed on complete)
+~/.app-chat/attachments/<id>/.meta.json     # ChatAttachment JSON (name, mime, size, dims), atomic write
+~/.app-chat/attachments/<id>/<sanitized-name>   # the blob (staging: .part + .session.json, renamed on complete)
 ```
 
-The blob keeps a human filename so the path in the notification reads naturally for the agent. `meta.json` is what the serve handler reads; the id directory is the unit of GC. Stale sessions (a `.part` older than 24 h) and finalized-but-never-referenced dirs older than 24 h are swept at daemon start; a referenced attachment lives as long as its event.
+The blob keeps a human filename so the path in the notification reads naturally for the agent. Control files are dot-prefixed and sanitization strips leading dots, so a user file named like a store record can never clobber one. `.meta.json` is what the serve handler reads; the id directory is the unit of GC. Stale sessions and finalized-but-never-referenced dirs older than 24 h are swept by a periodic daemon task (first pass shortly after start, never on the readiness path), with referenced ids taken from one structured scan of the events' `$.attachments` arrays; a referenced attachment lives as long as its event.
 
 ### Notification (agent intake)
 

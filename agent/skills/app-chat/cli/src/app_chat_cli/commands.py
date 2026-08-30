@@ -1,4 +1,4 @@
-"""CLI commands: send, history, and import."""
+"""CLI commands: send, history, import, and the attachments disk-management verbs."""
 
 import argparse
 import asyncio
@@ -7,7 +7,9 @@ import os
 import pathlib as pl
 import sqlite3
 import sys
+import typing as tp
 
+from app_chat_cli import attachments
 from app_chat_cli.bubblelint import bubble_lint_reason
 from app_chat_cli.store import Store, store_path
 
@@ -22,10 +24,13 @@ def cmd_send(args: argparse.Namespace) -> None:
     # `-` reads the body from stdin, so a reply with apostrophes, quotes or newlines can be passed
     # through a quoted heredoc instead of being escaped into an inline argument.
     message = sys.stdin.read().rstrip("\r\n") if args.message == "-" else args.message
-    if not message:
-        _fail({"error": "--message is empty (pass '-' and a <<'MSG' heredoc to read the body from stdin)"})
+    # Absolute paths cross the socket: the daemon's cwd is wherever `daemon start` ran, never the
+    # sender's, so a relative --attach would resolve against the wrong directory.
+    attach: list[str] = [str(pl.Path(path).expanduser().resolve()) for path in args.attach or []]
+    if not message and not attach:
+        _fail({"error": "--message is empty (pass '-' and a <<'MSG' heredoc to read the body from stdin, or --attach a file)"})
 
-    if not getattr(args, "longform", False):
+    if message and not args.longform:
         reason = bubble_lint_reason(message)
         if reason:
             _fail({"error": reason})
@@ -35,16 +40,16 @@ def cmd_send(args: argparse.Namespace) -> None:
     if not sock_path.exists():
         _fail({"error": f"daemon not running (no socket at {sock_path})"})
 
-    result = asyncio.run(_send_via_socket(sock_path, message))
+    result = asyncio.run(_send_via_socket(sock_path, message, attach))
     if "error" in result:
         _fail(result)
     print(json.dumps(result))
 
 
-async def _send_via_socket(sock_path: pl.Path, message: str) -> dict[str, object]:
+async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str]) -> dict[str, object]:
     try:
         reader, writer = await asyncio.open_unix_connection(str(sock_path))
-        request = json.dumps({"command": "send", "message": message})
+        request = json.dumps({"command": "send", "message": message, "attach": attach})
         writer.write(request.encode())
         writer.write_eof()
         data = await asyncio.wait_for(reader.read(65536), timeout=10.0)
@@ -69,6 +74,72 @@ def cmd_history(args: argparse.Namespace) -> None:
         store.close()
     results = [{"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events]
     print(json.dumps(results, indent=2))
+
+
+class _ListedAttachment(tp.TypedDict):
+    id: str
+    name: str
+    mime: str
+    size: int
+    ts: str | None
+    direction: str | None
+    removed: bool
+
+
+def _attachments_root(args: argparse.Namespace) -> pl.Path:
+    return attachments.attachments_root(pl.Path(args.data_dir or (pl.Path.home() / ".app-chat")))
+
+
+def cmd_attachments_list(args: argparse.Namespace) -> None:
+    """Every finalized attachment with its size, joined to the event that references it (ts + whether it
+    was received from the user or sent by the agent). Largest first by default; count and total_bytes
+    describe the filtered set even when --limit trims the printed array."""
+    root = _attachments_root(args)
+    store = Store(store_path(root.parent))
+    rows: list[_ListedAttachment] = []
+    try:
+        references = store.attachment_references()
+        for directory in sorted(root.iterdir()) if root.exists() else []:
+            meta = attachments.read_meta(root, directory.name)
+            if meta is None:
+                continue  # staging sessions have nothing to list yet
+            reference = references[meta["id"]] if meta["id"] in references else None
+            rows.append(
+                {
+                    "id": meta["id"],
+                    "name": meta["name"],
+                    "mime": meta["mime"],
+                    "size": meta["size"],
+                    "ts": reference[0] if reference is not None else None,
+                    "direction": (("received" if reference[1] == "user" else "sent") if reference is not None else None),
+                    "removed": attachments.is_removed(root, meta["id"]),
+                }
+            )
+    finally:
+        store.close()
+    if args.min_size is not None:
+        rows = [row for row in rows if row["size"] >= args.min_size]
+    if args.sort == "date":
+        rows.sort(key=lambda row: row["ts"] if row["ts"] is not None else "", reverse=True)
+    else:
+        rows.sort(key=lambda row: row["size"], reverse=True)
+    total = sum(row["size"] for row in rows if not row["removed"])
+    listed = rows[: args.limit] if args.limit is not None else rows
+    print(json.dumps({"attachments": listed, "count": len(rows), "total_bytes": total}))
+
+
+def cmd_attachments_rm(args: argparse.Namespace) -> None:
+    """Free the bytes of one or more attachments, keeping each meta so chat history renders a clean
+    "no longer available" tile instead of a broken bubble. All ids are validated before any blob is
+    touched, so a typo never leaves a half-applied removal behind an error."""
+    root = _attachments_root(args)
+    for attachment_id in args.ids:
+        if attachments.read_meta(root, attachment_id) is None:
+            _fail({"error": f"unknown attachment: {attachment_id}"})
+    freed = 0
+    for attachment_id in args.ids:
+        freed += attachments.remove_blob(root, attachment_id)
+    print(json.dumps({"removed": args.ids, "freed_bytes": freed}))
 
 
 def _default_events_db() -> pl.Path:
