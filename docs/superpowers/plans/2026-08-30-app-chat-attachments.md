@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Scope note:** this is a scoping-mode plan, written before any code. Contracts, types, signatures, states, and test behaviors are locked here; implementation bodies are written at execution time, test-first. Each phase is one PR. Re-read the spec before each phase.
+> **Scope note:** this is a scoping-mode plan, written before any code. Contracts, types, signatures, states, and test behaviors are locked here; implementation bodies are written at execution time, test-first. Each phase lands as one reviewed commit on the epic branch (see Branch and commit structure). Re-read the spec before each phase.
 
 **Goal:** users send any file to their agent through app chat and receive typed attachment bubbles back, on web and desktop, over a chunked upload contract that mobile reuses later.
 
@@ -16,24 +16,24 @@
 
 - Server caps: `MAX_CHUNK_BYTES = 8 * 1024 * 1024`, `MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024`, `MAX_ATTACHMENTS_PER_MESSAGE = 10` (Python consts in `attachments.py`). Client sizing/retry consts (`attachment-model.ts`): `MAX_CHUNK_UPLOAD_BYTES = 8 MiB`, `INITIAL_CHUNK_BYTES = 1 MiB`, `MIN_CHUNK_BYTES = 256 KiB`, `CHUNK_TIMEOUT_MS = 120_000`, `CHUNK_FAST_SECS = 2`, `RETRY_BASE_MS = 1_000`, `RETRY_MAX_MS = 30_000`. The wire contract in the spec is the seam.
 - Resilience invariants (spec, "Resilience on poor and spotty connections"): offset-addressed uploads with 409 resync, idempotent complete, status-probe resume, adaptive chunk sizing, unbounded classified retries, offline parking. Every one has a behavioral test.
-
-## Branch and PR structure (stacked, one epic merge)
-
-Nothing merges to master until the whole feature is reviewed as one. Structure:
-
-- **Epic branch**: `feat/app-chat-attachments`, cut from master at Phase 1 start. It only ever receives phase merges and master syncs; no direct commits.
-- **Phase branches**: `attachments/1-skill`, `attachments/2-core`, `attachments/3-composer`, `attachments/4-viewer`, each cut from the epic branch's current tip. Each phase opens a PR **based on the epic branch**, never on master. CI runs in full on these (`ci.yml` triggers on every `pull_request` regardless of base).
-- **Phase merge**: when a phase PR is green and its checks in this plan pass, merge it into the epic branch and cut the next phase branch from the new tip. (Standing instruction from Emi, 2026-08-30: phase PRs merge into the epic branch without a per-PR ask; the epic PR itself still needs explicit approval to merge.)
-- **Master drift**: rebase or merge master into the epic branch between phases when master moves; conflicts get resolved in the epic branch, keeping phase PRs small.
-- **Final deliverable**: one epic PR, `feat/app-chat-attachments` → master, opened after Phase 4 lands in the epic branch. Its body summarizes the feature per surface and links the spec; the phase PRs serve as the reviewable history. It merges only on explicit approval.
 - All attachment routes ride the existing private app-chat service; no new service, no vestad change, no `/sync` change, no `min_supported` bump, no fixture regen.
 - The intake at-most-once invariant in `service.py::message_handler` must survive: no fallible step may be added after the notification write.
-- Skill work follows `agent/` prompt rules (invoke vesta-prompt-guide before editing `SKILL.md`); no dashes as prose separators; no inline lint escapes; each PR runs its `./check.sh` subcommands before push; never push to master; do not merge without approval.
+- Skill work follows `agent/` prompt rules (invoke vesta-prompt-guide before editing `SKILL.md`); no dashes as prose separators; no inline lint escapes; each phase runs its `./check.sh` subcommands before push; never push to master; do not merge without approval.
 - Chat-plane compat: `attachments` is optional on `user`/`chat` events; old clients must keep parsing (no changes to `parse.ts` or the ignore-unknown tests).
+
+## Branch and commit structure (one epic branch, one epic PR)
+
+Nothing merges to master until the whole feature is reviewed as one, and there are no intermediate PRs. Structure (standing instruction from Emi, 2026-08-30):
+
+- **One branch**: `feat/app-chat-attachments`, cut from master at Phase 1 start, worked in its own worktree.
+- **One big commit per phase.** A phase's tasks are developed with the plan's inner TDD steps, then squashed into a single phase commit with a full Conventional Commits message (the phase's `feat(...)` subject plus a body listing what it contains).
+- **Review before every push.** Before a phase commit is pushed: the phase's `./check.sh` slices pass, the full phase diff is read end to end against the spec, and a code-review pass runs on it, with confirmed findings fixed and folded into the commit. Only then push.
+- **Master drift**: rebase the epic branch onto master between phases when master moves (never soft-reset; diff-stat sanity-check after).
+- **Final deliverable**: one epic PR, `feat/app-chat-attachments` → master, opened after the Phase 4 commit is pushed. Four reviewed phase commits are its history; the body summarizes per surface and links the spec. It merges only on Emi's explicit approval.
 
 ---
 
-## Phase 1 (PR 1): app-chat attachment store + endpoints + `send --attach`
+## Phase 1 (commit 1): app-chat attachment store + endpoints + `send --attach`
 
 Standalone and fully testable with pytest; clients come later. Suite: `agent/skills/app-chat/cli/tests/`, run via `uv run --project agent/skills/app-chat/cli pytest agent/skills/app-chat/cli/tests/` (picked up by `./check.sh app-chat`).
 
@@ -124,11 +124,11 @@ The spec's "Agent side" section carries the draft copy: the description gains "s
 
 - [ ] Write the section following the draft; verify against the guide's checklist (description states when, not how; no old-design prose)
 - [ ] Confirm zero `agent/core/` diffs in the PR (the spec's designed property: notification rendering and interrupt policy are generic)
-- [ ] Run `./check.sh app-chat` and `./check.sh guards`; open PR 1 (`feat(app-chat): user attachments over chunked upload`), branch `attachments/1-skill`, **base `feat/app-chat-attachments`**; when green, merge into the epic branch
+- [ ] Run `./check.sh app-chat` and `./check.sh guards`; squash the phase into one commit (`feat(app-chat): user attachments over chunked upload`); review the full diff against the spec + code-review pass; push to `feat/app-chat-attachments`
 
 ---
 
-## Phase 2 (PR 2): @vesta/core attachment modules
+## Phase 2 (commit 2): @vesta/core attachment modules
 
 Suite: `./check.sh app-core`. Contract fixed by Phase 1; this PR is client logic only, no UI.
 
@@ -210,11 +210,11 @@ export function uploadedAttachments(drafts): ChatAttachment[]
 - Modify: `apps/core/src/protocol/events.ts` (`user`/`chat` gain `attachments?: ChatAttachment[]`), `apps/core/src/intents/send-message.ts` (`SendMessageBody { text?: string; attachments?: string[]; input_method?: InputMethod }`), `apps/core/src/chat/chat-stream-model.ts` (`beginSend(state, text, inputMethod, intentId, attachments?)` carries them onto the optimistic bubble)
 - Test: extend `send-message.test.ts` (body serialization with attachments, no-text body), `chat-stream-model.test.ts` (optimistic bubble carries attachments; echo adoption replaces the pending row wholesale so server metadata wins)
 
-- [ ] Failing tests → implement → run `./check.sh app-core` → commit; open PR 2 (`feat(core): chat attachment model, chunked upload engine, draft reducer`), branch `attachments/2-core`, **base `feat/app-chat-attachments`**; when green, merge into the epic branch
+- [ ] Failing tests → implement → run `./check.sh app-core`; squash the phase into one commit (`feat(core): chat attachment model, chunked upload engine, draft reducer`); review the full diff + code-review pass; push
 
 ---
 
-## Phase 3 (PR 3): web composer (attach, drop, paste, chips, send)
+## Phase 3 (commit 3): web composer (attach, drop, paste, chips, send)
 
 Suite: `./check.sh app-web`; visual states verified through the visual-qa gallery (add scenarios) and a live run before claiming done (per the verify-UI-visually rule).
 
@@ -294,11 +294,11 @@ Scenarios (ids unique across both families):
 - `chat-attachment-chips-offline`: add a file, then `context.setOffline(true)`; settle on the "waiting for network" chip.
 - `chat-attachment-dropzone`: dispatch `dragenter` with a `DataTransfer` carrying the `Files` type; settle on the "Drop to send" overlay.
 
-- [ ] Add fixtures, drives, and registry entries → `./check.sh app-visual` → `npm run web:visual:capture` → inspect the gallery pixels (both themes, `web`, `desktop`, `web-narrow`) → commit → open PR 3 (`feat(web): attachment composer with drag-drop, paste, and upload chips`), branch `attachments/3-composer`, **base `feat/app-chat-attachments`**; when green, merge into the epic branch
+- [ ] Add fixtures, drives, and registry entries → `./check.sh app-visual` → `npm run web:visual:capture` → inspect the gallery pixels (both themes, `web`, `desktop`, `web-narrow`) → squash the phase into one commit (`feat(web): attachment composer with drag-drop, paste, and upload chips`); review the full diff + code-review pass; push
 
 ---
 
-## Phase 4 (PR 4): bubbles, in-chat viewer, downloads, desktop save
+## Phase 4 (commit 4): bubbles, in-chat viewer, downloads, desktop save
 
 ### Task 4.1: authed media src + download lib
 
@@ -359,13 +359,13 @@ Scenarios:
 - Modify: `apps/desktop/src/window.ts` (`session.on("will-download")`: default to the OS Downloads dir with a native save dialog)
 - Test: `apps/desktop` unit test around the handler wiring; manual verify via the `apps/desktop:verify` skill
 
-- [ ] Implement → `./check.sh app-desktop` → commit → run `./check.sh web` whole chain → open PR 4 (`feat(web,desktop): attachment bubbles, viewer, and downloads`), branch `attachments/4-viewer`, **base `feat/app-chat-attachments`**; when green, merge into the epic branch
+- [ ] Implement → `./check.sh app-desktop` → run `./check.sh web` whole chain → squash the phase into one commit (`feat(web,desktop): attachment bubbles, viewer, and downloads`); review the full diff + code-review pass; push
 
 ## Closing task: the epic PR
 
-- [ ] Sync the epic branch with master one last time (rebase or merge; diff-stat sanity-check after, per the no-soft-reset rule)
-- [ ] Run the full relevant check set on the epic branch: `./check.sh guards`, `./check.sh app-chat`, `./check.sh web`
-- [ ] Open the epic PR: `feat/app-chat-attachments` → master, title `feat: app chat attachments`, body summarizing per surface (skill contract, core engine, composer UX, viewer, downloads, desktop) with a link to the spec and the phase PRs
+- [ ] Rebase the epic branch onto master one last time (never soft-reset; diff-stat sanity-check after)
+- [ ] Run the full relevant check set on the branch: `./check.sh guards`, `./check.sh app-chat`, `./check.sh web`
+- [ ] Open the epic PR: `feat/app-chat-attachments` → master, title `feat: app chat attachments`, body summarizing per surface (skill contract, core engine, composer UX, viewer, downloads, desktop) with a link to the spec; the four reviewed phase commits are the history
 - [ ] Verify `merge-gate-ci` is green and the PR is mergeable; then stop. **The epic PR merges only on Emi's explicit approval.**
 
 ---
