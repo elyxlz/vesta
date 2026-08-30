@@ -44,6 +44,16 @@ Threads older than it are excluded rather than reported, because past that point
 never fetched and its silence is an artefact of the scan, not a fact about the thread. When
 `truncated_by_scan` is true, raise `--scan` to see further back.
 
+**Threads you have judged are demoted, not hidden.** Put a `conversationId`, a space, and a reason
+in `~/.microsoft/threads-accepted.txt` and that thread moves from `stalled` to `accepted` with the
+reason attached. It is still examined and still returned, so a decision that turns out to be wrong
+stays visible instead of vanishing. The point is noise: a check that keeps reporting something you
+have already closed trains you to skim it, and a skimmed report is a missed one.
+
+That file holds **decisions only and must never be used to limit scope.** If it decided which
+threads got examined, a thread nobody listed would be silently out of scope and its absence would
+look exactly like a clean result.
+
 If no folder can be read the command exits non-zero rather than returning an empty list, so a total
 failure cannot be mistaken for a quiet mailbox. A partial failure returns results with the failed
 folder named in `folder_errors`.

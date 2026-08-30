@@ -347,7 +347,27 @@ def stalled_threads(
             }
         )
 
+    # Judged-and-closed threads are DEMOTED, never dropped. A check that keeps reporting an item
+    # you have already decided about trains you to skim it, and a skimmed report is a missed one.
+    # But hiding them outright would make a reversed decision invisible, so they still come back
+    # under `accepted`. The file holds DECISIONS ONLY, one conversationId per line with a reason.
+    # It must never be allowed to hold scope: the moment it decides WHICH threads get examined, a
+    # thread nobody listed is silently out of scope and its absence looks like a clean result.
+    accepted_ids = {}
+    accepted_file = config.data_dir / "threads-accepted.txt"
+    if accepted_file.is_file():
+        for raw in accepted_file.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            convo, _, reason = line.partition(" ")
+            accepted_ids[convo] = reason.strip() or "(no reason recorded)"
+
+    accepted = [r | {"accepted_because": accepted_ids[r["conversationId"]]} for r in out if r["conversationId"] in accepted_ids]
+    out = [r for r in out if r["conversationId"] not in accepted_ids]
+
     out.sort(key=lambda r: (r["waiting_on"] != "them", -r["days_quiet"]))
+    accepted.sort(key=lambda r: -r["days_quiet"])
     return {
         "threshold_days": days,
         "lookback_days": lookback_days,
@@ -355,13 +375,17 @@ def stalled_threads(
         "coverage_from": horizon or f"full {lookback_days}d window",
         "truncated_by_scan": truncated,
         "stalled": out,
+        "accepted": accepted,
+        "accepted_file": str(accepted_file),
         "folder_errors": folder_errors,
         "note": (
             "waiting_on=them means the user sent the last message and nobody replied. "
             "Read the last message's TEXT before acting: a count is not a content check. "
             "When truncated_by_scan is true, threads older than coverage_from are NOT reported, "
             "because their replies were never fetched and their silence would be an artefact. "
-            "Raise --scan to widen the horizon."
+            "Raise --scan to widen the horizon. Threads you have judged and closed live in "
+            "accepted_file and are demoted into `accepted` rather than hidden, so a decision can be "
+            "revisited; that file holds decisions only and must never be used to limit scope."
         ),
     }
 
