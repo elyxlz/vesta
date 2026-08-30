@@ -275,6 +275,8 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
     _run("launch", "--stealth")
     _run("open", "https://outlook.office.com/mail/")
     token = _run("evaluate", _OWA_TOKEN_JS)
+    if token.startswith('"'):
+        token = json.loads(token)
 
     if not token or token == "NONE":
         return {
@@ -431,6 +433,8 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
     _run("launch", "--stealth")
     _run("open", "https://teams.microsoft.com/")
     token = _run("evaluate", capture._TEAMS_TOKEN_JS)
+    if token.startswith('"'):
+        token = json.loads(token)
 
     if not token or token == "NONE":
         return {
