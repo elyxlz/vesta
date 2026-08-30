@@ -118,6 +118,11 @@ PATTERNS = [
     # so the sk- (hyphen) pattern above never matched them. Publishable pk_ keys are not secret and
     # are deliberately excluded.
     r"[sr]k_(?:live|test)_[0-9a-zA-Z]{20,}",
+    # ElevenLabs API keys are sk_<hex> (underscore, no live/test segment), so the sk- (hyphen) rule
+    # and the Stripe sk_live_/sk_test_ rule both miss them. A bare sk_ followed by a long
+    # unbroken alphanumeric run is high-entropy and does not collide with prose or Stripe keys
+    # (whose next segment `live_`/`test_` carries an underscore that stops this class early).
+    r"sk_[A-Za-z0-9]{40,}",
     r"xox[bp]-[0-9A-Za-z-]+",
     # GitHub App installation tokens are ghs_<installation-id>_<jwt> (the format `upstream token`
     # hands out), so the class allows underscores and dots: without them the match dies at the
