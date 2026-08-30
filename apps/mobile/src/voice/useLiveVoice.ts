@@ -164,7 +164,12 @@ export function useLiveVoice({
       if (signal.aborted) return;
       const target = playerRef.current;
       await new Promise<void>((resolve) => {
-        let played = false;
+        // The source dropping out of a loaded/buffering state after it started is a failed or
+        // interrupted stream. Settling on that (as well as a natural finish and abort) keeps
+        // the queue advancing instead of blocking on a promise that never settles. A source
+        // that errors before it ever loads emits no such transition; that reply is silent
+        // until the next stopSpeech or barge-in aborts it, which every conversation turn does.
+        let started = false;
         const settle = () => {
           subscription.remove();
           resolve();
@@ -172,11 +177,13 @@ export function useLiveVoice({
         const subscription = target.addListener(
           "playbackStatusUpdate",
           (status) => {
-            if (status.isLoaded && status.playing) played = true;
-            // Resolve on a natural finish, or on the source dropping out of the loaded state
-            // after it had loaded (a failed or interrupted stream). Either way the queue must
-            // advance instead of blocking on a promise that never settles.
-            if (status.didJustFinish || (played && !status.isLoaded)) settle();
+            if (status.isLoaded || status.isBuffering || status.playing)
+              started = true;
+            if (
+              status.didJustFinish ||
+              (started && !status.isLoaded && !status.isBuffering)
+            )
+              settle();
           },
         );
         signal.addEventListener("abort", () => {

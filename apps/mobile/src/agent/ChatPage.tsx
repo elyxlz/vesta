@@ -199,7 +199,11 @@ export default function ChatPage() {
     enabled: voiceEnabled,
     sttStatus: speechToText.data ?? null,
     onTranscript: handleVoiceTranscript,
-    onSend: (text) => sendText(text, "voice"),
+    // A conversation sends each turn as it ends; dictation sends the composer on confirm
+    // (below), so a manual edit made during dictation rides along.
+    onSend: (text) => {
+      if (modeRef.current === "conversation") sendText(text, "voice");
+    },
     onError: showError,
     onInactivityStop: () =>
       showError(
@@ -267,7 +271,9 @@ export default function ChatPage() {
     });
   };
   const confirmDictation = () => {
+    const text = inputValueRef.current;
     voice.stop();
+    sendText(text, "voice");
     setInput("");
   };
   const cancelDictation = () => {
