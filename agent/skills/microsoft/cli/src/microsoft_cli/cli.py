@@ -617,7 +617,8 @@ def _warn_if_capped(args, result) -> None:
     Goes to STDERR on purpose, so `--json` output stays machine-parseable and a caller piping
     to a parser still sees the warning on their terminal.
     """
-    limit = vars(args).get("limit")
+    attrs = vars(args)
+    limit = attrs["limit"] if "limit" in attrs else None
     if isinstance(result, list) and isinstance(limit, int) and limit > 0 and len(result) >= limit:
         print(
             f"NOTE: returned exactly --limit ({limit}) items, so this is very likely TRUNCATED "
@@ -625,6 +626,25 @@ def _warn_if_capped(args, result) -> None:
             f"from what is missing here.",
             file=sys.stderr,
         )
+
+
+def _is_unfoldered_search(args) -> bool:
+    """True when this call went down Graph's mailbox-wide `$search` route.
+
+    Two entry points reach it, not one. `email search --query` is the obvious one; `email list
+    --query/--search` is the alias agents reach for first, and the dispatcher runs it through the
+    IDENTICAL `search_emails` call, passing folder=None unless the caller moved `--folder` off its
+    `inbox` default. Naming one subcommand would leave the caveat silent on the route agents
+    reach for most, so this mirrors the dispatcher's own condition instead.
+    """
+    attrs = vars(args)
+    if attrs["group"] != "email":
+        return False
+    if attrs["command"] == "search":
+        return attrs["folder"] is None
+    if attrs["command"] == "list":
+        return "search" in attrs and attrs["search"] is not None and attrs["folder"] == "inbox"
+    return False
 
 
 def _warn_if_search_found_nothing(args, result) -> None:
@@ -644,13 +664,13 @@ def _warn_if_search_found_nothing(args, result) -> None:
     warning on every call is trained out within a day, and a partial result that silently omits
     a junk item is a different problem this cannot honestly catch.
     """
-    if vars(args).get("folder"):
+    if not _is_unfoldered_search(args):
         return
     if isinstance(result, list) and not result:
         print(
             "NOTE: $search does not reach JunkEmail or DeletedItems, so an empty result is NOT "
             "proof the message does not exist. To rule out absence, list those folders directly "
-            "(--folder JunkEmail, --folder DeletedItems) instead of concluding from this.",
+            "(email list --folder junk, --folder deleted) instead of concluding from this.",
             file=sys.stderr,
         )
 
@@ -658,8 +678,7 @@ def _warn_if_search_found_nothing(args, result) -> None:
 def _print_result(args, result) -> None:
     """Route a command result to the compact formatter or a JSON variant."""
     _warn_if_capped(args, result)
-    if (args.group, args.command) == ("email", "search"):
-        _warn_if_search_found_nothing(args, result)
+    _warn_if_search_found_nothing(args, result)
     attrs = vars(args)
     want_json = "json" in attrs and attrs["json"]
     want_pretty = "json_pretty" in attrs and attrs["json_pretty"]
