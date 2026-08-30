@@ -109,6 +109,22 @@ describe("chat send model", () => {
     expect(lastBubble(state()).send_state).toBe("sending");
   });
 
+  it("reposts every parked bubble, and a repost failing again re-parks", async () => {
+    const { sender, requests, state, setReject } = harness();
+    setReject(true);
+    sender.send("first");
+    sender.send("second");
+    await flush();
+
+    sender.repostParked();
+    expect(requests.slice(2).map((request) => request.intent_id)).toEqual([
+      "intent-1",
+      "intent-2",
+    ]);
+    await flush();
+    expect(lastBubble(state()).send_state).toBe("retry");
+  });
+
   it("reposts nothing when bubbles are in flight or already echoed", async () => {
     const { sender, requests, commit, state } = harness();
     sender.send("landing");

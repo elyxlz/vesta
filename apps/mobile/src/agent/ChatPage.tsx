@@ -180,29 +180,25 @@ export default function ChatPage() {
     attachmentsRef.current = attachments;
   }, [attachments]);
   // Reads the draft, armed reply, and attachments from refs, so the voice socket's captured
-  // onTurnEnd sends what is armed at turn end, not what was armed at start(). With chips
-  // present, every one must finish uploading first; the text becomes an optional caption.
+  // onTurnEnd sends what is armed at turn end, not what was armed at start(). Ready chips ride
+  // along and clear; chips still uploading stay put while a dictated caption sends alone, so a
+  // voice turn is never silently dropped.
   const sendCurrentInput = useCallback(
     (source?: "voice") => {
       const text = inputValueRef.current.trim();
       const drafts = attachmentsRef.current;
-      const withFiles = drafts.drafts.length > 0 && drafts.ready;
       if (!canSend) return;
-      if (drafts.drafts.length > 0 && !drafts.ready) {
-        // Reachable from voice turn-end and Enter, where no disabled button explains the no-op.
-        showError("Wait for attachments to finish uploading, or remove them");
-        return;
-      }
-      if (!text && !withFiles) return;
+      const uploaded = drafts.ready ? drafts.uploaded : undefined;
+      if (!text && !uploaded) return;
       const reply = replyTargetRef.current;
       const outgoing = reply ? `${quotedReply(reply.text)}${text}` : text;
-      if (sendChat(outgoing, source, withFiles ? drafts.uploaded : undefined)) {
+      if (sendChat(outgoing, source, uploaded)) {
         setInput("");
         setReplyTarget(null);
-        if (withFiles) drafts.clear();
+        if (uploaded) drafts.clear();
       }
     },
-    [canSend, sendChat, setInput, setReplyTarget, showError],
+    [canSend, sendChat, setInput, setReplyTarget],
   );
   const voice = useLiveVoice({
     name,

@@ -244,7 +244,6 @@ export function useAgentSocket(
     let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
     let seedRetryDelay = SEED_RETRY_MS;
     let socketOpen = false;
-    let sawOpen = false;
     const clearSeedRetry = () => {
       if (seedRetryTimer) clearTimeout(seedRetryTimer);
       seedRetryTimer = null;
@@ -289,8 +288,9 @@ export function useAgentSocket(
             resetTyping();
             seedRetryDelay = SEED_RETRY_MS;
             runSeed();
-            if (sawOpen) repostRef.current();
-            sawOpen = true;
+            // Every open, including the first: the hold persists parked retry bubbles across
+            // screen pops and remounts, and the re-post dedups on its original intent id.
+            repostRef.current();
           }
         },
       },
