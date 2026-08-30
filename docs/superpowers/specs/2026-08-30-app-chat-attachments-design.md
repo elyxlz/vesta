@@ -28,7 +28,7 @@ Every claim below was verified in the current tree.
 Each fork below is resolved. Alternatives are recorded once, with the reason.
 
 1. **The app-chat skill owns attachments.** Blobs live on the agent's disk under the skill's data dir. One owner for the whole chat plane, and the agent gets a plain file path it can `Read`. Rejected: a vestad-side blob store (splits chat ownership, and the agent would need a network hop to read its own attachment).
-2. **Uploads are chunked.** The client slices the file into `ATTACHMENT_CHUNK_BYTES = 4 MiB` parts and PUTs them sequentially. This clears vestad's 10 MiB buffered-body cap and the Cloudflare edge cap with margin, requires **zero vestad changes**, gives per-chunk progress and per-chunk retry, and scales to `MAX_ATTACHMENT_BYTES = 512 MiB`. Rejected: multipart (nothing in the stack parses it), streaming proxy bodies (a vestad rewrite that disables its bind-grace retry), WS binary upload (a second stateful channel for no gain).
+2. **Uploads are chunked and offset-addressed** (tus-style). The client PUTs sequential byte ranges at an explicit `offset`; the server appends only when the offset equals the staged size and otherwise answers with the staged size so the client resyncs. This clears vestad's 10 MiB buffered-body cap and the Cloudflare edge cap with margin, requires **zero vestad changes**, gives per-chunk progress and per-chunk retry, allows variable chunk sizes (the resilience section below adapts them to link quality), and scales to `MAX_ATTACHMENT_BYTES = 512 MiB`. Rejected: index-addressed chunks (a fixed index implies a fixed size, which forbids adaptive sizing), multipart (nothing in the stack parses it), streaming proxy bodies (a vestad rewrite that disables its bind-grace retry), WS binary upload (a second stateful channel for no gain).
 3. **Attachments ride the existing `user`/`chat` events** as an optional `attachments` metadata array; `text` becomes the optional caption. History paging, socket echo, intent dedup, optimistic reconciliation, grouping, and trimming all keep working untouched. An attachment-only message has `text: ""`. Rejected: a new event type (the store's `_CONVERSATION_TYPES` filter would drop it from history).
 4. **Upload precedes send.** The composer uploads on add; `POST /message` carries only finalized attachment ids. Validation of those ids happens before the notification write, and a validation failure is a 400 that persists nothing, so the at-most-once invariant is preserved. A send retry re-posts the same `intent_id` and the same ids; dedup covers it.
 5. **Send is gated on upload completion (v1).** Chips show upload progress; the send button enables when every draft is finalized. By the time a caption is typed, small files are done. The WhatsApp pattern (send immediately, progress inside the bubble) is a deliberate later enhancement, because it adds partially-sent message states to the stream model.
@@ -50,15 +50,26 @@ POST /attachments
   -> 200 { "id": string }            # uuid4, server-minted
   -> 400 invalid body | 413 size > MAX_ATTACHMENT_BYTES
 
-PUT /attachments/{id}/chunks/{index}         # raw bytes, <= ATTACHMENT_CHUNK_BYTES
+PUT /attachments/{id}/data?offset={n}        # raw bytes, <= MAX_CHUNK_BYTES
   -> 200 { "ok": true, "received": int }     # total bytes staged so far
-  -> 404 unknown id | 409 { "error": "wrong chunk index", "expected": int }
-  # chunks are sequential; re-PUTting the last-accepted index is an idempotent no-op
+  -> 404 unknown id
+  -> 409 { "error": "offset mismatch", "received": int }
+  # append happens only when offset == staged size; on 409 the client resyncs to
+  # "received". A retried PUT whose original landed but whose response was lost
+  # gets a 409 with received == offset + len, which the client reads as success.
+
+GET /attachments/{id}/status
+  -> 200 { "received": int, "size": int, "finalized": bool }
+  -> 404 unknown id
+  # the resume probe: after a connection gap the client asks where to continue
+  # instead of guessing with a blind PUT
 
 POST /attachments/{id}/complete
   {}
   -> 200 { "attachment": ChatAttachment }    # staged size must equal declared size
   -> 409 size mismatch | 404 unknown id
+  # idempotent: complete on an already-finalized id returns 200 with the same
+  # metadata, so a lost complete response is retried safely
 
 GET /attachments/{id}                        # streams the blob
   -> 200 bytes, Content-Type: <mime>, Content-Disposition: inline; filename="<sanitized>"
@@ -86,7 +97,7 @@ export interface ChatAttachment {
 }
 ```
 
-`StoredEvent` (Python, `store.py`) gains `attachments: list[...]`; the TS `VestaEvent` union's `user` and `chat` members gain `attachments?: ChatAttachment[]`. Constants: `ATTACHMENT_CHUNK_BYTES = 4 MiB`, `MAX_ATTACHMENT_BYTES = 512 MiB`, `MAX_ATTACHMENTS_PER_MESSAGE = 10`.
+`StoredEvent` (Python, `store.py`) gains `attachments: list[...]`; the TS `VestaEvent` union's `user` and `chat` members gain `attachments?: ChatAttachment[]`. Constants: `MAX_CHUNK_BYTES = 8 MiB` (the server-enforced per-request cap, safely under vestad's 10 MiB), `MAX_ATTACHMENT_BYTES = 512 MiB`, `MAX_ATTACHMENTS_PER_MESSAGE = 10`; client-side sizing consts live in the resilience section.
 
 ### Disk layout (agent side)
 
@@ -106,6 +117,42 @@ The blob keeps a human filename so the path in the notification reads naturally 
 ```
 
 `message` stays the caption. An attachment-only message keeps the notification's `message` empty and the attribute renderer drops empty fields, so the `<channel>` body is the attachment line itself in that case (`format_for_display` picks the first of `message`/`text`/`content`; when all are empty the attributes still render). The agent needs no new mechanism: it reads the path with its normal tools and replies with `app-chat send --attach` when it wants to return a file.
+
+## Resilience on poor and spotty connections
+
+The upload path is the part of the app most exposed to link quality, so resilience is designed in, not retrofitted. Principles: the server holds the truth about staged bytes, every request is idempotent or resyncable, retries are unbounded while intent exists, and the client never burns retries against a link it knows is down.
+
+### Adaptive chunk sizing
+
+One fixed chunk size cannot serve both a fast LAN and a train wifi. The engine adapts, GCS-resumable-style:
+
+- `INITIAL_CHUNK_BYTES = 1 MiB`, `MIN_CHUNK_BYTES = 256 KiB`, `MAX_CHUNK_UPLOAD_BYTES = 8 MiB` (client mirror of the server's `MAX_CHUNK_BYTES`).
+- After a chunk completes in under `CHUNK_FAST_SECS = 2 s`, the next chunk doubles (capped at max). After a timeout or a network failure, the next attempt halves (floored at min).
+- The loss window on a drop is at most one chunk, and on a degraded link it shrinks toward 256 KiB. On a good link the file moves at near-streaming efficiency.
+
+### Stall detection and retry policy
+
+- Every chunk PUT carries `AbortSignal.timeout(CHUNK_TIMEOUT_MS = 120_000)`; the core HTTP client passes `init` through, so no client change is needed. A stalled request aborts, halves the chunk, and retries. 256 KiB in 120 s holds down to roughly 2G speeds.
+- Failures are classified once, in the engine: **terminal** (413, 404 on create meaning old agent, complete size mismatch) rejects the draft to its error state; **retryable** (network error, abort, 408/429/5xx) never rejects. Retryable failures back off exponentially from `RETRY_BASE_MS = 1 s` to `RETRY_MAX_MS = 30 s` and retry for as long as the draft exists. The user's X on the chip is the only cap.
+- A 409 is not a failure: it is the resync signal. The client adopts the server's `received` and continues from there. This also confirms delivery when a PUT landed but its response was lost.
+
+### Offline awareness (pause, do not fail)
+
+- The engine takes an injected `Connectivity` dep (`isOnline(): boolean` plus an `onChange` subscription). While offline it skips retry timers entirely and parks; the first online edge resumes immediately with a `GET .../status` probe, then continues from `received`. The web adapter wraps `navigator.onLine` and the `online`/`offline` window events.
+- Parked or backing-off drafts surface as a distinct chip state, **waiting** ("waiting for network"), separate from active uploading and from terminal error. Auto-resume needs no tap; tap-to-retry is reserved for terminal errors.
+- Browser `onLine` overreports connectivity, so the online edge is an optimization only; the backoff loop remains the correctness mechanism.
+
+### Resume semantics
+
+- **Within the SPA session** (tab alive, network dropped for any duration): full resume from the server's staged offset via the status probe. Nothing re-uploads except the in-flight chunk.
+- **Across a page reload**: not resumable on web, by design. The browser cannot re-read a picked `File` after reload without re-picking. Drafts die with the tab; the staged session on disk is swept by the daemon's 24 h GC. The offset protocol and status probe are exactly what mobile will use later for background/cross-launch resume, where file URIs persist.
+- **Send intent**: already resilient by the existing contract (durable 200, `intent_id` dedup, tap-to-retry with the same id). On the socket's reconnect edge, a message stuck in `send_state: "retry"` whose bytes are all finalized is re-posted automatically once; dedup makes the double-send impossible.
+
+### Receiving side on a bad link
+
+- Image blocks that fail to load show the broken-fallback tile and auto-retry once on each reconnect edge (the `connected` flag the chat provider already exposes); the manual retry stays.
+- Video and audio ride the browser's native Range recovery against the `FileResponse` endpoint; no client logic.
+- Explicit downloads that fail mid-transfer surface the failed tile state with tap-to-retry; the blob refetches from zero. Range-based download resume is recorded as deferred.
 
 ## UI state map (web/desktop)
 
@@ -137,8 +184,9 @@ A new full-width flex row inside the existing `flex-wrap` pill (the pill's `moti
 | Chip state | Visual |
 |---|---|
 | uploading | 56 px thumbnail (images/videos, local object URL) or kind icon tile; middle-truncated name + human size; circular progress ring overlay (determinate, per-chunk granularity); X to cancel |
+| waiting | ring pauses, muted wifi-off glyph, "waiting for network"; auto-resumes, no tap needed; X to cancel |
 | uploaded | ring completes and fades; subtle check |
-| error | red ring + short reason ("too large", "upload failed"); tap to retry, X to remove |
+| error (terminal) | red ring + short reason ("too large", "agent needs update"); tap to retry, X to remove |
 | removing | chip exits via layout animation |
 
 Rules: max `MAX_ATTACHMENTS_PER_MESSAGE = 10` chips (further adds toast); files over `MAX_ATTACHMENT_BYTES` are rejected at pick time with a toast, never uploaded; image dims measured client-side via `createImageBitmap` before session create; video dims/duration best-effort via a metadata probe, skipped on failure. When chips exist and the input is empty, the textarea placeholder becomes "Add a caption". Enter sends only when the send gate is open.
@@ -164,7 +212,7 @@ One `AttachmentContent` block per attachment, stacked vertically inside the bubb
 | image | `<img>` via `authedUrl`, pre-sized with CSS `aspect-ratio` from `width`/`height` (prevents scroll jitter; the chat ResizeObserver otherwise fires on load), max ~320×400 | skeleton shimmer while loading; loaded; broken-image fallback tile with retry |
 | video | `<video controls preload="metadata">` via `authedUrl`, pre-sized; Range gives seeking | poster-less first frame; native controls |
 | audio | compact `<audio controls>` | native |
-| file (everything else) | horizontal tile: kind icon, name (middle-truncated), size, download icon | idle; fetching (spinner replaces icon, determinate when Content-Length survives); saved; failed (toast + retry) |
+| file (everything else) | horizontal tile: kind icon, name (middle-truncated), size, download icon | idle; fetching (determinate ring: the proxy strips `Content-Length`, so progress reads the response stream against the metadata `size`); saved; failed (toast + retry) |
 
 Image click opens a lightbox (existing `Dialog`): full image, filename, size, download action, Esc/backdrop closes. Video/audio play inline; file tiles download on click. `useAuthedSrc(path)` (small web hook wrapping the async `authedUrl`) feeds every media element and rebuilds per mount, so the token is always fresh.
 
@@ -182,9 +230,9 @@ Nothing new. Attachment metadata rides the events that history paging and the so
 
 | File | Contents |
 |---|---|
-| `attachments/attachment-model.ts` (new) | `ChatAttachment`, `AttachmentKind`, `attachmentKind(mime)`, `formatBytes(size)`, `ATTACHMENT_CHUNK_BYTES`, `MAX_ATTACHMENT_BYTES`, `MAX_ATTACHMENTS_PER_MESSAGE`, `appChatAttachmentPath(agent, id, download?)` |
-| `attachments/upload.ts` (new) | `uploadAttachment(http, agent, file: UploadSource, meta, callbacks): UploadHandle` — the chunked state machine: create → sequential chunk PUTs (`Blob.slice`, re-readable on 401 replay) → complete. `onProgress(sentBytes, totalBytes)`, `abort()`, capped per-chunk retry with backoff, resumes from the server's `expected` index on a 409. Pure logic over the injected `HttpClient`; fully unit-testable with a fake |
-| `attachments/attachment-draft.ts` (new) | pure draft reducer shared with mobile later: `DraftAttachment` (`status: "uploading" | "uploaded" | "error"`, `progress`, `attachment?`, `error?`), `addDraft`, `setDraftProgress`, `finalizeDraft`, `failDraft`, `removeDraft`, `draftsReady(drafts)`, `uploadedIds(drafts)` |
+| `attachments/attachment-model.ts` (new) | `ChatAttachment`, `AttachmentKind`, `attachmentKind(mime)`, `formatBytes(size)`, the sizing/retry consts (`MAX_CHUNK_UPLOAD_BYTES`, `INITIAL_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `CHUNK_TIMEOUT_MS`, `CHUNK_FAST_SECS`, `RETRY_BASE_MS`, `RETRY_MAX_MS`, `MAX_ATTACHMENT_BYTES`, `MAX_ATTACHMENTS_PER_MESSAGE`), `appChatAttachmentPath(agent, id, download?)` |
+| `attachments/upload.ts` (new) | `uploadAttachment(http, agent, file: UploadSource, meta, deps, callbacks): UploadHandle` — the offset-addressed state machine: create → sequential offset PUTs (`Blob.slice`, re-readable on 401 replay, `AbortSignal.timeout` per chunk) → complete. Adaptive chunk sizing (double on fast, halve on failure), unbounded classified retries with backoff, 409 resync to the server's `received`, status-probe resume on reconnect, offline parking via the injected `Connectivity` dep, `onProgress(sentBytes, totalBytes)`, `onStateChange("uploading" \| "waiting")`, `abort()`. Pure logic over the injected `HttpClient`; fully unit-testable with fakes and injected timers |
+| `attachments/attachment-draft.ts` (new) | pure draft reducer shared with mobile later: `DraftAttachment` (`status: "uploading" | "waiting" | "uploaded" | "error"`, `progress`, `attachment?`, `error?`), `addDraft`, `setDraftProgress`, `setDraftWaiting`, `finalizeDraft`, `failDraft`, `removeDraft`, `draftsReady(drafts)`, `uploadedIds(drafts)` |
 | `protocol/events.ts` (modify) | `user` and `chat` members gain `attachments?: ChatAttachment[]` |
 | `intents/send-message.ts` (modify) | `SendMessageBody` becomes `{ text?: string; attachments?: string[]; input_method?: InputMethod }`; behavior otherwise unchanged |
 | `chat/chat-stream-model.ts` (modify) | `beginSend` gains an optional `attachments: ChatAttachment[]` param carried onto the optimistic bubble; echo reconciliation unchanged (matches on `intent_id`) |
@@ -203,7 +251,8 @@ The duplicate `ChatMessage` in `apps/web/src/lib/types.ts` picks up the same opt
 | `hooks/use-authed-src.ts` (new) | async `authedUrl` → `src` string for media elements |
 | `lib/download.ts` (new) | `downloadAttachment(agent, attachment)` blob-anchor flow |
 | `Chat/index.tsx`, `ChatComposer/index.tsx` (modify) | lift drafts next to `input`; send gating; paste handler; pass attachments into `send` |
-| `providers/AgentSocketProvider/use-agent-socket.ts` (modify) | `send(text, inputMethod, attachments?)` threads ids + metadata through `sendMessage`/`beginSend`; `retry` carries them too |
+| `providers/AgentSocketProvider/use-agent-socket.ts` (modify) | `send(text, inputMethod, attachments?)` threads ids + metadata through `sendMessage`/`beginSend`; `retry` carries them too; on the reconnect edge, re-posts a `send_state: "retry"` message once (dedup makes it safe) |
+| `lib/native/…` | unchanged; the web `Connectivity` adapter (`navigator.onLine` + window events) lives beside the upload wiring in `use-attachment-drafts.ts` |
 
 ### apps/desktop
 
@@ -217,8 +266,8 @@ No preload/native-bridge change, so `preload-parity.test.ts` is untouched.
 
 | File | Contents |
 |---|---|
-| `cli/src/app_chat_cli/attachments.py` (new) | store: session create, sequential chunk staging, finalize, GC sweep, meta read, path/filename sanitization |
-| `cli/src/app_chat_cli/service.py` (modify) | the four attachment routes; `client_max_size` raised to chunk size + slack; `/message` gains id validation + metadata embedding + notification attachment line |
+| `cli/src/app_chat_cli/attachments.py` (new) | store: session create, offset-checked append, staged-size read, idempotent finalize, GC sweep, meta read, path/filename sanitization |
+| `cli/src/app_chat_cli/service.py` (modify) | the five attachment routes (create, data PUT, status, complete, serve); `client_max_size` raised to `MAX_CHUNK_BYTES` + slack; `/message` gains id validation + metadata embedding + notification attachment line |
 | `cli/src/app_chat_cli/daemon.py` (modify) | unix-socket `send` accepts `attach` paths; ingest-by-copy into the store |
 | `cli/src/app_chat_cli/commands.py` + `cli.py` (modify) | `app-chat send --attach <path>` (repeatable) |
 | `SKILL.md` (modify) | document receiving (path in notification) and sending (`--attach`); written under the vesta-prompt-guide rules |
@@ -241,3 +290,5 @@ No prompt migration is needed: the change is additive, ships with upstream sync,
 - **Recall/FTS over attachment names**: the FTS triggers index `$.text` only; indexing `$.attachments[*].name` is a v3+ events-db-style additive migration in the skill store.
 - **Camera capture** entry in the popover (mobile-first concern).
 - **Streaming save on desktop** for multi-GB files (bridge `saveFile` capability); v1 buffers the Blob in renderer memory, acceptable to 512 MiB.
+- **Range-resumable downloads**: the serve endpoint already honors Range; a chunked download engine mirroring the upload engine can resume a failed download instead of refetching. v1 refetches.
+- **Cross-reload upload resume on web** via the File System Access API's persistable handles; the offset protocol and status probe already support it, only the file re-read is missing.

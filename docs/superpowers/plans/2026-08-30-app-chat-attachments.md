@@ -14,7 +14,8 @@
 
 ## Global constraints
 
-- `ATTACHMENT_CHUNK_BYTES = 4 * 1024 * 1024`; `MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024`; `MAX_ATTACHMENTS_PER_MESSAGE = 10`. Same values as named consts in `@vesta/core` (`attachment-model.ts`) and Python (`attachments.py`); the wire contract in the spec is the seam.
+- Server caps: `MAX_CHUNK_BYTES = 8 * 1024 * 1024`, `MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024`, `MAX_ATTACHMENTS_PER_MESSAGE = 10` (Python consts in `attachments.py`). Client sizing/retry consts (`attachment-model.ts`): `MAX_CHUNK_UPLOAD_BYTES = 8 MiB`, `INITIAL_CHUNK_BYTES = 1 MiB`, `MIN_CHUNK_BYTES = 256 KiB`, `CHUNK_TIMEOUT_MS = 120_000`, `CHUNK_FAST_SECS = 2`, `RETRY_BASE_MS = 1_000`, `RETRY_MAX_MS = 30_000`. The wire contract in the spec is the seam.
+- Resilience invariants (spec, "Resilience on poor and spotty connections"): offset-addressed uploads with 409 resync, idempotent complete, status-probe resume, adaptive chunk sizing, unbounded classified retries, offline parking. Every one has a behavioral test.
 - All attachment routes ride the existing private app-chat service; no new service, no vestad change, no `/sync` change, no `min_supported` bump, no fixture regen.
 - The intake at-most-once invariant in `service.py::message_handler` must survive: no fallible step may be added after the notification write.
 - Skill work follows `agent/` prompt rules (invoke vesta-prompt-guide before editing `SKILL.md`); no dashes as prose separators; no inline lint escapes; each PR runs its `./check.sh` subcommands before push; never push to master; do not merge without approval.
@@ -34,7 +35,7 @@ Standalone and fully testable with pytest; clients come later. Suite: `agent/ski
 
 **Interfaces (produces):**
 ```python
-ATTACHMENT_CHUNK_BYTES = 4 * 1024 * 1024
+MAX_CHUNK_BYTES = 8 * 1024 * 1024
 MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024
 MAX_ATTACHMENTS_PER_MESSAGE = 10
 STALE_SESSION_MAX_AGE_SECS = 24 * 3600
@@ -44,8 +45,9 @@ class AttachmentMeta(tp.TypedDict, total=False):
     width: int; height: int; duration_secs: float
 
 def create_session(root: Path, name: str, mime: str, size: int, extra: AttachmentMeta) -> str  # returns id; raises SizeError
-def append_chunk(root: Path, attachment_id: str, index: int, data: bytes) -> int  # returns staged bytes; raises WrongChunk(expected)/UnknownAttachment
-def finalize(root: Path, attachment_id: str) -> AttachmentMeta  # renames .part, writes meta.json final; raises SizeMismatch
+def append_at(root: Path, attachment_id: str, offset: int, data: bytes) -> int  # appends only when offset == staged size, returns staged bytes; raises OffsetMismatch(received)/UnknownAttachment
+def staged_size(root: Path, attachment_id: str) -> int  # raises UnknownAttachment
+def finalize(root: Path, attachment_id: str) -> AttachmentMeta  # renames .part, writes meta.json final; raises SizeMismatch; idempotent on an already-finalized id
 def read_meta(root: Path, attachment_id: str) -> AttachmentMeta | None  # None until finalized
 def blob_path(root: Path, attachment_id: str) -> Path
 def ingest_file(root: Path, source: Path, mime: str | None) -> AttachmentMeta  # copy-in for agent sends; mime guessed via mimetypes when None
@@ -53,9 +55,9 @@ def sweep(root: Path, now: float, referenced: cabc.Callable[[str], bool]) -> lis
 def sanitize_filename(name: str) -> str  # strips path separators/control chars, caps length, never empty
 ```
 
-Disk layout per spec: `<root>/<id>/meta.json` + `<root>/<id>/<sanitized-name>` (staging suffix `.part`). Chunk index is enforced sequential; re-PUT of the last accepted index is an idempotent no-op (returns current staged size).
+Disk layout per spec: `<root>/<id>/meta.json` + `<root>/<id>/<sanitized-name>` (staging suffix `.part`). Appends are offset-checked: a write at a stale offset raises with the true staged size, so a client that lost a response resyncs instead of corrupting the stage.
 
-- [ ] Write failing tests: session create rejects size over cap; sequential chunks accumulate; wrong index raises with `expected`; duplicate last chunk is a no-op; finalize rejects size mismatch and renames the blob; `read_meta` is `None` pre-finalize; `ingest_file` copies and guesses mime; `sanitize_filename` strips `../` and slashes; `sweep` removes a stale `.part` and an old unreferenced dir but keeps a referenced one
+- [ ] Write failing tests: session create rejects size over cap; sequential offset appends accumulate; a stale offset raises with `received` and stages nothing; a replayed append whose bytes already landed raises with `received == offset + len` (the lost-response case); `staged_size` tracks; finalize rejects size mismatch, renames the blob, and is an idempotent no-op when already finalized; `read_meta` is `None` pre-finalize; `ingest_file` copies and guesses mime; `sanitize_filename` strips `../` and slashes; `sweep` removes a stale `.part` and an old unreferenced dir but keeps a referenced one
 - [ ] Implement `attachments.py` minimally to pass
 - [ ] Run the suite; commit `feat(app-chat): attachment blob store`
 
@@ -65,9 +67,9 @@ Disk layout per spec: `<root>/<id>/meta.json` + `<root>/<id>/<sanitized-name>` (
 - Modify: `agent/skills/app-chat/cli/src/app_chat_cli/service.py`
 - Test: `agent/skills/app-chat/cli/tests/test_service.py` (extend)
 
-**Interfaces (produces):** the four routes exactly as the spec's wire contract: `POST /attachments`, `PUT /attachments/{id}/chunks/{index}`, `POST /attachments/{id}/complete`, `GET /attachments/{id}` (via `web.FileResponse` with `Content-Disposition` from `sanitize_filename`, `?download=1` toggling `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, max-age=31536000, immutable`). `web.Application(client_max_size=ATTACHMENT_CHUNK_BYTES + 1024 * 1024)`. `ServiceState` gains `attachments_root: Path` (default `data_dir / "attachments"`); daemon start runs `sweep` with a referenced-check that scans `events.data` for the candidate id.
+**Interfaces (produces):** the five routes exactly as the spec's wire contract: `POST /attachments`, `PUT /attachments/{id}/data?offset={n}`, `GET /attachments/{id}/status`, `POST /attachments/{id}/complete`, `GET /attachments/{id}` (via `web.FileResponse` with `Content-Disposition` from `sanitize_filename`, `?download=1` toggling `attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, max-age=31536000, immutable`). `web.Application(client_max_size=MAX_CHUNK_BYTES + 1024 * 1024)`. `ServiceState` gains `attachments_root: Path` (default `data_dir / "attachments"`); daemon start runs `sweep` with a referenced-check that scans `events.data` for the candidate id.
 
-- [ ] Write failing aiohttp test-client tests: full happy path (create → 2 chunks → complete → GET bytes round-trip with correct headers); 413 on oversize declare; 409 on out-of-order chunk carries `expected`; 409 on complete with missing bytes; 404 on unknown id; Range request returns 206; `?download=1` flips disposition
+- [ ] Write failing aiohttp test-client tests: full happy path (create → 2 offset PUTs → complete → GET bytes round-trip with correct headers); 413 on oversize declare; 409 on a stale offset carries `received`; status reports `{received, size, finalized}` mid-stage and post-finalize; complete is idempotent (second call returns the same metadata); 409 on complete with missing bytes; 404 on unknown id; Range request returns 206; `?download=1` flips disposition
 - [ ] Implement routes; run; commit `feat(app-chat): chunked attachment upload and download routes`
 
 ### Task 1.3: message intake with attachments
@@ -113,7 +115,13 @@ export type AttachmentKind = "image" | "video" | "audio" | "file"
 export function attachmentKind(mime: string): AttachmentKind
 export function formatBytes(size: number): string          // "2.1 MB", "340 kB"
 export function appChatAttachmentPath(agent: string, id: string, download?: boolean): string
-export const ATTACHMENT_CHUNK_BYTES: number
+export const MAX_CHUNK_UPLOAD_BYTES: number  // 8 MiB, mirrors the server cap
+export const INITIAL_CHUNK_BYTES: number     // 1 MiB
+export const MIN_CHUNK_BYTES: number         // 256 KiB
+export const CHUNK_TIMEOUT_MS: number        // 120_000
+export const CHUNK_FAST_SECS: number         // 2
+export const RETRY_BASE_MS: number           // 1_000
+export const RETRY_MAX_MS: number            // 30_000
 export const MAX_ATTACHMENT_BYTES: number
 export const MAX_ATTACHMENTS_PER_MESSAGE: number
 ```
@@ -128,13 +136,21 @@ export const MAX_ATTACHMENTS_PER_MESSAGE: number
 **Interfaces (produces):**
 ```ts
 export interface UploadMeta { name: string; mime: string; size: number; width?: number; height?: number; duration_secs?: number }
-export interface UploadCallbacks { onProgress: (sentBytes: number, totalBytes: number) => void }
+export interface Connectivity { isOnline: () => boolean; onChange: (cb: (online: boolean) => void) => () => void }
+export interface UploadDeps { connectivity: Connectivity; setTimer: (fn: () => void, ms: number) => number; clearTimer: (handle: number) => void; now: () => number }
+export interface UploadCallbacks { onProgress: (sentBytes: number, totalBytes: number) => void; onStateChange: (state: "uploading" | "waiting") => void }
 export type UploadErrorReason = "too_large" | "unsupported_agent" | "failed"
 export interface UploadHandle { result: Promise<ChatAttachment>; abort: () => void }  // result rejects with UploadError{reason}
-export function uploadAttachment(http: HttpClient, agent: string, blob: Blob, meta: UploadMeta, callbacks: UploadCallbacks): UploadHandle
+export function uploadAttachment(http: HttpClient, agent: string, blob: Blob, meta: UploadMeta, deps: UploadDeps, callbacks: UploadCallbacks): UploadHandle
 ```
 
-Behavior locked by tests: sequential `Blob.slice` chunk PUTs; progress after each accepted chunk; a 409 resyncs to the server's `expected` index; per-chunk retry capped at 3 with backoff for retryable failures (network, 502/503/504); a 404 on session create rejects `unsupported_agent`; declared size over the cap rejects `too_large` without any request; abort stops between chunks and rejects. Fake `HttpClient` records requests.
+Behavior locked by tests (fake `HttpClient`, fake timers, fake connectivity):
+- sequential `Blob.slice` offset PUTs with `AbortSignal.timeout(CHUNK_TIMEOUT_MS)`; progress after each accepted chunk
+- adaptive sizing: chunk doubles after a sub-`CHUNK_FAST_SECS` success (capped at `MAX_CHUNK_UPLOAD_BYTES`), halves after a timeout or network failure (floored at `MIN_CHUNK_BYTES`)
+- a 409 resyncs the offset to the server's `received` and is not counted as a failure; a 409 with `received == offset + len` reads as delivered
+- failure classification: 413/create-404 (`unsupported_agent`)/size-mismatch reject terminally; network/abort/408/429/5xx retry forever with `RETRY_BASE_MS → RETRY_MAX_MS` backoff and emit `waiting`
+- offline parking: while `connectivity.isOnline()` is false no timer burns; the online edge probes `GET .../status`, adopts `received`, resumes, and emits `uploading`
+- declared size over the cap rejects `too_large` without any request; abort stops between chunks, cancels timers, and rejects; complete retries ride the same classification and its idempotence
 
 - [ ] Failing tests for each behavior above → implement → commit
 
@@ -145,9 +161,10 @@ Behavior locked by tests: sequential `Blob.slice` chunk PUTs; progress after eac
 
 **Interfaces (produces):**
 ```ts
-export interface DraftAttachment { localId: string; name: string; mime: string; size: number; status: "uploading" | "uploaded" | "error"; progress: number; attachment?: ChatAttachment; error?: UploadErrorReason }
+export interface DraftAttachment { localId: string; name: string; mime: string; size: number; status: "uploading" | "waiting" | "uploaded" | "error"; progress: number; attachment?: ChatAttachment; error?: UploadErrorReason }
 export function addDraft(drafts, file: {name; mime; size}, localId: string): DraftAttachment[] | null  // null when at MAX_ATTACHMENTS_PER_MESSAGE
-export function setDraftProgress(drafts, localId, sent, total): DraftAttachment[]
+export function setDraftProgress(drafts, localId, sent, total): DraftAttachment[]  // also flips waiting -> uploading
+export function setDraftWaiting(drafts, localId): DraftAttachment[]
 export function finalizeDraft(drafts, localId, attachment: ChatAttachment): DraftAttachment[]
 export function failDraft(drafts, localId, error: UploadErrorReason): DraftAttachment[]
 export function removeDraft(drafts, localId): DraftAttachment[]
@@ -192,9 +209,9 @@ export interface AttachmentDrafts {
 export function useAttachmentDrafts(agentName: string): AttachmentDrafts
 ```
 
-`unsupported_agent` failure raises the "This agent needs an update to receive files" toast and removes the draft. Object URLs revoked on remove/clear/unmount.
+`unsupported_agent` failure raises the "This agent needs an update to receive files" toast and removes the draft. Object URLs revoked on remove/clear/unmount. The hook owns the web `Connectivity` adapter (`navigator.onLine` + `online`/`offline` window events) and feeds it to the engine; engine `onStateChange` drives the `waiting` draft status.
 
-- [ ] Failing hook tests (fake upload engine via injected module boundary or msw-style fake http) for add/progress/finalize/fail/remove/ready → implement → commit
+- [ ] Failing hook tests (fake upload engine via injected module boundary or msw-style fake http) for add/progress/waiting/finalize/fail/remove/ready → implement → commit
 
 ### Task 3.2: attach menu + paste
 
@@ -222,15 +239,15 @@ States per spec: idle / valid drag-over overlay / non-file drag ignored (`dataTr
 - Create: `apps/web/src/components/Chat/AttachmentChips/index.tsx`
 - Modify: `ChatComposer/index.tsx` (render the row as a `basis-full` child of the existing flex-wrap pill so the `layout` spring animates growth)
 
-Chip states per spec (uploading ring with determinate progress, uploaded, error + retry, remove). Thumbnails from `previewUrl`, kind icon tiles otherwise (lucide `FileText`/`Film`/`Music`/`File`). Verify the composer height measurement (`hasDraftRef` rule) still behaves with the taller pill.
+Chip states per spec (uploading ring with determinate progress, waiting with the wifi-off glyph and auto-resume, uploaded, terminal error + retry, remove). Thumbnails from `previewUrl`, kind icon tiles otherwise (lucide `FileText`/`Film`/`Music`/`File`, `WifiOff` for waiting). Verify the composer height measurement (`hasDraftRef` rule) still behaves with the taller pill.
 
 - [ ] Implement; add a visual-qa scenario for the chip states; commit
 
 ### Task 3.5: send wiring
 
 **Files:**
-- Modify: `Chat/index.tsx` (`handleSend` gates on `input.trim() || ready`, passes `uploaded` through, clears drafts on accept), `providers/AgentSocketProvider/use-agent-socket.ts` (`send(text, inputMethod?, attachments?: ChatAttachment[])` → `sendMessage(http, name, { text, input_method, attachments: ids })` + `beginSend(..., attachments)`; `retry` re-carries them), `apps/web/src/lib/types.ts` (mirror field)
-- Test: extend `use-agent-socket` tests for the extended send/retry; keyboard Enter no-op while gate closed
+- Modify: `Chat/index.tsx` (`handleSend` gates on `input.trim() || ready`, passes `uploaded` through, clears drafts on accept), `providers/AgentSocketProvider/use-agent-socket.ts` (`send(text, inputMethod?, attachments?: ChatAttachment[])` → `sendMessage(http, name, { text, input_method, attachments: ids })` + `beginSend(..., attachments)`; `retry` re-carries them; on the socket's reconnect edge, a message in `send_state: "retry"` is re-posted automatically once, safe under intent dedup), `apps/web/src/lib/types.ts` (mirror field)
+- Test: extend `use-agent-socket` tests for the extended send/retry, the one-shot reconnect re-post (and that it fires only once per reconnect), and keyboard Enter no-op while gate closed
 
 - [ ] Failing tests → implement → run `./check.sh app-web` → visual verify → open PR 3 (`feat(web): attachment composer with drag-drop, paste, and upload chips`)
 
@@ -249,7 +266,7 @@ Chip states per spec (uploading ring with determinate progress, uploaded, error 
 ### Task 4.2: attachment bubble content
 
 **Files:**
-- Create: `apps/web/src/components/Chat/ChatBubble/AttachmentContent/index.tsx` (routes on `attachmentKind`: image with `aspect-ratio` pre-size + skeleton + broken-fallback + lightbox `Dialog`; video `controls preload="metadata"`; audio compact; file tile with download states)
+- Create: `apps/web/src/components/Chat/ChatBubble/AttachmentContent/index.tsx` (routes on `attachmentKind`: image with `aspect-ratio` pre-size + skeleton + broken-fallback with manual retry and one auto-retry per `connected` reconnect edge; video `controls preload="metadata"`; audio compact; file tile with download states, progress read from the response stream against metadata `size`)
 - Modify: `ChatBubble/index.tsx` (render attachment blocks stacked above the markdown caption inside `BubbleContent`; optimistic rows read `previewUrl` from the Chat-level map before the echo)
 - Test: render tests for each kind and for caption-less messages; visual-qa scenarios for all four bubble kinds in both user and agent variants, loading and error states
 
@@ -275,11 +292,12 @@ Chip states per spec (uploading ring with determinate progress, uploaded, error 
 
 | Behavior | Suite |
 |---|---|
-| store/session/chunk/finalize/GC | `test_attachments.py` |
-| routes incl. Range + dispositions | `test_service.py` |
+| store/session/offset append/finalize/GC | `test_attachments.py` |
+| routes incl. status, Range, dispositions | `test_service.py` |
 | intake invariant + notification line | `test_service.py` |
 | `send --attach` | `test_daemon.py` |
-| upload engine resume/retry/abort | `upload.test.ts` |
+| engine: adaptive sizing, 409 resync, offline parking, status-probe resume, timeout, abort | `upload.test.ts` |
+| reconnect re-post of a retry-state send | `use-agent-socket` tests |
 | draft reducer | `attachment-draft.test.ts` |
 | send body + optimistic echo | `send-message.test.ts`, `chat-stream-model.test.ts` |
 | drop counter, drafts hook, download | web vitest |
