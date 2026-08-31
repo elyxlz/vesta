@@ -178,8 +178,41 @@ def _delete_cmd(config: Config, argv: list[str]) -> dict:
     return commands.remind_delete(config, reminder_id=reminder_id)
 
 
+# The retime flags `snooze` owns. `update` rewrites a reminder's message and its schedule's zone;
+# the fire instant of a one-shot moves with `snooze`, which already keeps the id, the metadata file
+# and created_at. Reaching for them on `update` otherwise dies in argparse as "unrecognized
+# arguments", which reads as "a one-shot cannot be retimed" and invites delete-and-recreate: that
+# mints a new id, so the old id's metadata file is orphaned and every reference to it goes stale.
+_RETIME_FLAGS = ("--at", "--in-minutes", "--in-hours", "--in-days")
+
+
+def _peek_id(argv: list[str]) -> str | None:
+    """The id as written on the command line, for an error raised before argparse runs."""
+    if "--id" in argv:
+        index = argv.index("--id")
+        if index + 1 < len(argv):
+            return argv[index + 1]
+    return argv[0] if argv and not argv[0].startswith("-") else None
+
+
+def _reject_retime_flags(argv: list[str]) -> None:
+    used = [flag for flag in _RETIME_FLAGS if flag in argv or any(arg.startswith(f"{flag}=") for arg in argv)]
+    if not used:
+        return
+    rid = _peek_id(argv) or "<id>"
+    raise ValueError(
+        f"{used[0]} is not an update flag. Move when a one-shot fires with snooze, which retimes it in place, "
+        f"earlier or later, keeping its id, its metadata file and its created_at: "
+        f"reminders snooze {rid} --at <iso> [--tz <zone>], or reminders snooze {rid} --in-hours N"
+    )
+
+
 def _update_cmd(config: Config, argv: list[str]) -> dict:
-    p = argparse.ArgumentParser(prog="reminders update")
+    _reject_retime_flags(argv)
+    p = argparse.ArgumentParser(
+        prog="reminders update",
+        epilog="To move WHEN a one-shot fires, keeping its id, metadata file and created_at: reminders snooze <id> --at <iso> [--tz <zone>]",
+    )
     _add_id_args(p)
     p.add_argument("--message", default=None)
     p.add_argument("--tz", default=None, help="Repoint a recurring schedule to this IANA zone, keeping its wall-clock time")
@@ -245,7 +278,7 @@ def _print_help():
     print("""usage: reminders create <message> [options]
        reminders list [--limit N] [--show-completed] [--show-deleted]
        reminders get <id> [--field <name>]
-       reminders snooze <id> --in-hours N | --at <iso> [--tz <tz>]
+       reminders snooze <id> --in-hours N | --at <iso> [--tz <tz>]   # retime a one-shot, same id
        reminders delete <id>
        reminders update <id> --message <msg> | --tz <zone> | --unpin-tz
 
@@ -272,9 +305,11 @@ subcommands:
   create                Set a reminder
   list                  List active reminders (table shows the first 50; --json/--json-pretty list all unless --limit is given)
   get                   One reminder by id, deleted ones included (--field prints just that value)
-  snooze                Reschedule a one-shot (works on fired ones too): --in-* from now, or --at <iso> [--tz <tz>]
+  snooze                Retime a one-shot in place, earlier or later, keeping its id, metadata file and created_at
+                        (works on fired ones too): --in-* from now, or --at <iso> [--tz <tz>]
   delete                Soft-delete a reminder: it never fires again and drops off list (see it with list --show-deleted)
-  update                Rewrite a reminder in place, under the same id: --message, and --tz <zone>/--unpin-tz for a recurring schedule""")
+  update                Rewrite a reminder in place, under the same id: --message, and --tz <zone>/--unpin-tz for a
+                        recurring schedule. To move WHEN a one-shot fires, use snooze""")
 
 
 def _serve_cmd(config: Config, argv: list[str]) -> None:
