@@ -37,10 +37,19 @@ const HIGHLIGHT: OrbHighlight = {
   alpha: 0.34,
 }
 
+// A live-voice overlay on top of the status: same colors and glow, different motion.
+// "listening" barely breathes; "talking" pulses hard and fast, unmistakably speech.
+export type OrbMotion = "listening" | "talking"
+
+const MOTION_CONFIG: Record<OrbMotion, Pick<OrbVisual, "pulseScale" | "pulseHalfMs">> = {
+  listening: { pulseScale: 1.03, pulseHalfMs: 2400 },
+  talking: { pulseScale: 1.16, pulseHalfMs: 430 },
+}
+
 // One owner for how the orb looks and moves; each platform renders from this.
-export function orbVisual(state: OrbVisualState): OrbVisual {
+export function orbVisual(state: OrbVisualState, motion?: OrbMotion): OrbVisual {
   const thinking = state === "thinking"
-  return {
+  const base: OrbVisual = {
     gradient: GRADIENT,
     highlight: HIGHLIGHT,
     live: orbIsLive(state),
@@ -50,6 +59,8 @@ export function orbVisual(state: OrbVisualState): OrbVisual {
     pulseHalfMs: thinking ? 1200 : 1800,
     rotationMs: thinking ? 2600 : 9000,
   }
+  if (!motion) return base
+  return { ...base, breathes: true, ...MOTION_CONFIG[motion] }
 }
 
 // CSS `linear-gradient` angle (deg) that matches the start -> end axis, with the

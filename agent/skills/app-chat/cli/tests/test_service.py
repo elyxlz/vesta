@@ -264,6 +264,41 @@ def test_ws_streams_a_reply_emitted_after_connect(tmp_path):
     state.store.close()
 
 
+def test_ws_speaking_frames_flip_the_flag_and_junk_is_ignored(tmp_path):
+    state, _ = _service_state(tmp_path)
+
+    async def scenario(client):
+        ws = await client.ws_connect("/ws")
+        await _wait_for(lambda: len(state.subscribers) == 1)
+        await ws.send_str(json.dumps({"type": "speaking", "active": True}))
+        await _wait_for(state.user_speaking)
+        await ws.send_str("not json")
+        await ws.send_str(json.dumps({"type": "unknown-frame"}))
+        await ws.send_str(json.dumps({"type": "speaking", "active": "yes"}))
+        assert state.user_speaking()
+        await ws.send_str(json.dumps({"type": "speaking", "active": False}))
+        await _wait_for(lambda: not state.user_speaking())
+        await ws.close()
+
+    asyncio.run(_with_client(state, scenario))
+    state.store.close()
+
+
+def test_ws_disconnect_clears_a_live_speaking_flag(tmp_path):
+    state, _ = _service_state(tmp_path)
+
+    async def scenario(client):
+        ws = await client.ws_connect("/ws")
+        await _wait_for(lambda: len(state.subscribers) == 1)
+        await ws.send_str(json.dumps({"type": "speaking", "active": True}))
+        await _wait_for(state.user_speaking)
+        await ws.close()
+        await _wait_for(lambda: not state.user_speaking())
+
+    asyncio.run(_with_client(state, scenario))
+    state.store.close()
+
+
 def test_ws_disconnect_discards_the_subscriber(tmp_path):
     state, _ = _service_state(tmp_path)
 

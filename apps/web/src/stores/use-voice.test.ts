@@ -274,7 +274,7 @@ describe("recording modes", () => {
     useVoice.getState()._setTtsStatus(ENABLED_TTS);
     send = vi.fn<(text: string) => void>();
     clearInput = vi.fn<() => void>();
-    useVoice.getState().registerChat(send, clearInput);
+    useVoice.getState().registerChat(send, clearInput, () => undefined);
   });
 
   it("dials the authed STT socket url on the ws scheme", async () => {

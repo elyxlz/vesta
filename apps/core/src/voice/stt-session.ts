@@ -33,6 +33,8 @@ export interface SttSessionDeps {
 export interface SttSessionCallbacks {
   onTranscript: (text: string) => void
   onTurnStart: () => void
+  // Fires on every turn close, with "" for a turn that transcribed nothing, so a consumer
+  // tracking the live turn (a speaker hold, a speaking report) always sees it end.
   onTurnEnd: (text: string) => void
   onError: (message: string) => void
   onActiveChange: (active: boolean) => void
@@ -140,7 +142,10 @@ export function createSttSession(
       if (event.event === "EndOfTurn") {
         const text = current.trim()
         current = ""
-        if (!text) return
+        if (!text) {
+          callbacks.onTurnEnd("")
+          return
+        }
         if (accumulate) {
           committed = committed ? `${committed} ${text}` : text
           callbacks.onTranscript(committed)

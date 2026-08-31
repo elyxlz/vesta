@@ -70,6 +70,9 @@ export function useAgentSocketState({
 
   const onAssistantMessageRef = useRef(onAssistantMessage);
   onAssistantMessageRef.current = onAssistantMessage;
+  // The live socket's speaking report, held by ref so the callback handed to the voice store
+  // stays stable across reconnects and agent switches.
+  const reportSpeakingRef = useRef<((speaking: boolean) => void) | null>(null);
   const onPrefetchRef = useRef(onPrefetch);
   onPrefetchRef.current = onPrefetch;
   const chatQueueRef = useRef<ChatMessage[]>([]);
@@ -239,12 +242,19 @@ export function useAgentSocketState({
       },
     );
 
+    reportSpeakingRef.current = socket.reportSpeaking;
+
     return () => {
       cancelled = true;
+      reportSpeakingRef.current = null;
       socket.close();
       resetTyping();
     };
   }, [active, name, commit, enqueueChatMessage]);
+
+  const reportSpeaking = useCallback((speaking: boolean) => {
+    reportSpeakingRef.current?.(speaking);
+  }, []);
 
   const send = useCallback(
     (
@@ -352,5 +362,6 @@ export function useAgentSocketState({
     trimHistory,
     send,
     retry,
+    reportSpeaking,
   };
 }

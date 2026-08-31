@@ -8,12 +8,15 @@ import { useVoice } from "@/stores/use-voice";
 
 interface ChatHeaderActionsProps {
   fullscreen?: boolean;
+  // Recede in perspective with the chat while a conversation runs.
+  receded?: boolean;
   onCollapse?: () => void;
   agentName: string;
 }
 
 export function ChatHeaderActions({
   fullscreen,
+  receded,
   onCollapse,
   agentName,
 }: ChatHeaderActionsProps) {
@@ -26,7 +29,10 @@ export function ChatHeaderActions({
   // The fullscreen chat sits under the absolute navbar, so the actions start below it.
   return (
     <div
-      className="absolute right-3 z-10"
+      className={cn(
+        "absolute right-3 z-10 [will-change:transform] transition-transform ease-[cubic-bezier(0.32,0.72,0,1)]",
+        receded ? "duration-500 -translate-y-16" : "duration-300",
+      )}
       style={{ top: fullscreen ? navbarHeight + 12 : 12 }}
     >
       <ButtonGroup>

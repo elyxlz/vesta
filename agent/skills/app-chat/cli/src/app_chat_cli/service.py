@@ -60,6 +60,13 @@ class ServiceState:
         self.attachments_root = attachments_root
         self.seen_intent_ids: collections.OrderedDict[str, None] = collections.OrderedDict()
         self.subscribers: set[asyncio.Queue[StoredEvent]] = set()
+        # Connections whose client reported the user talking into a live voice conversation.
+        # Keyed by the connection's queue and cleared with it, so a dropped client can never
+        # wedge the send gate; no timers, the socket lifecycle owns the entry.
+        self.speaking: set[asyncio.Queue[StoredEvent]] = set()
+
+    def user_speaking(self) -> bool:
+        return bool(self.speaking)
 
     def remember(self, intent_id: str) -> None:
         self.seen_intent_ids[intent_id] = None
@@ -211,10 +218,28 @@ async def health_handler(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
+def _apply_client_frame(state: ServiceState, queue: asyncio.Queue[StoredEvent], raw: str) -> None:
+    """One inbound report rides the chat socket: {"type": "speaking", "active": bool}, true while
+    the user is talking into a live voice conversation. Every other inbound frame is ignored, so
+    clients can add frames without breaking older daemons."""
+    try:
+        frame = json.loads(raw)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(frame, dict) or "type" not in frame or frame["type"] != "speaking":
+        return
+    if "active" not in frame or not isinstance(frame["active"], bool):
+        return
+    if frame["active"]:
+        state.speaking.add(queue)
+    else:
+        state.speaking.discard(queue)
+
+
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Per-connection live chat stream: every event appended after connect (user echo, agent reply),
     no replay. Clients seed history over GET /history and reconcile this live edge by id. The inbound
-    half is drained only to notice a client close."""
+    half carries the speaking report and notices a client close."""
     state = request.app[_STATE_KEY]
     ws = web.WebSocketResponse(heartbeat=30.0)
     await ws.prepare(request)
@@ -229,6 +254,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     sender = asyncio.create_task(pump())
     try:
         async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                _apply_client_frame(state, queue, msg.data)
             if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                 break
     finally:
@@ -240,6 +267,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         except (ConnectionResetError, RuntimeError) as exc:
             logger.debug("chat-socket pump ended on a dead client: %s", exc)
         state.subscribers.discard(queue)
+        state.speaking.discard(queue)
     return ws
 
 

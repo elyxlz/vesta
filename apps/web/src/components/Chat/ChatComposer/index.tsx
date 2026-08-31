@@ -1,4 +1,6 @@
 import {
+  useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -16,7 +18,10 @@ import {
   Square,
   X,
 } from "lucide-react";
+import { AnimatePresence, motion as m } from "motion/react";
+import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { Button } from "@/components/ui/button";
+import { ConversationPanel } from "@/components/Chat/ConversationPanel";
 import { cn } from "@/lib/utils";
 import { useVoice, type VoiceMode } from "@/stores/use-voice";
 import {
@@ -67,22 +72,18 @@ function micHandlers(
 function placeholderText({
   recordingMode,
   listening,
-  isSpeaking,
   notAuthenticated,
   agentName,
   hasAttachments,
 }: {
   recordingMode: VoiceMode | null;
   listening: boolean;
-  isSpeaking: boolean;
   notAuthenticated: boolean;
   agentName: string;
   hasAttachments: boolean;
 }) {
-  if (recordingMode !== null) {
-    if (!listening) return "connecting...";
-    if (recordingMode === "conversation" && isSpeaking) return "speaking...";
-    return "listening...";
+  if (recordingMode === "dictation") {
+    return listening ? "listening..." : "connecting...";
   }
   if (notAuthenticated) return "sign in to chat";
   if (hasAttachments) return "add a caption";
@@ -107,8 +108,10 @@ interface ChatComposerProps {
   voiceConfigured: boolean;
   recordingMode: VoiceMode | null;
   listening: boolean;
-  isSpeaking: boolean;
   liveTranscript: string;
+  // True while the pill is animating between composer and panel: the parent freezes its
+  // measurement-driven layout for the duration so the morph stays compositor-cheap.
+  onMorphingChange?: (morphing: boolean) => void;
   startVoice: (mode: VoiceMode) => void;
   stopVoice: () => void;
   cancelVoice: () => void;
@@ -129,8 +132,8 @@ export function ChatComposer({
   voiceConfigured,
   recordingMode,
   listening,
-  isSpeaking,
   liveTranscript,
+  onMorphingChange,
   startVoice,
   stopVoice,
   cancelVoice,
@@ -145,8 +148,8 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const isMobile = useIsMobile();
   const activation = useVoiceActivation((s) => s.mode);
-  // The input shows what dictation has captured so far, or a conversation's live turn.
-  const useLiveTranscript = recordingMode !== null;
+  // The input shows what dictation has captured so far; a conversation lives in its drawer.
+  const useLiveTranscript = recordingMode === "dictation";
   // Only sign-in disables the field; a dropped connection still lets you type (a send while
   // disconnected is blocked with a toast in the parent instead).
   const inputDisabled = notAuthenticated;
@@ -155,7 +158,6 @@ export function ChatComposer({
   const placeholder = placeholderText({
     recordingMode,
     listening,
-    isSpeaking,
     notAuthenticated,
     agentName,
     hasAttachments,
@@ -188,6 +190,7 @@ export function ChatComposer({
       textareaRef={textareaRef}
       controls={controls}
       attachments={attachments}
+      onMorphingChange={onMorphingChange}
     />
   );
 }
@@ -216,6 +219,7 @@ function FloatingComposer({
   textareaRef,
   controls,
   attachments,
+  onMorphingChange,
 }: {
   paddingClass: string;
   value: string;
@@ -227,6 +231,7 @@ function FloatingComposer({
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   controls: ComposerControls;
   attachments: AttachmentDrafts;
+  onMorphingChange?: (morphing: boolean) => void;
 }) {
   const { inputDisabled, recordingMode } = controls;
 
@@ -262,74 +267,162 @@ function FloatingComposer({
     });
   }, [value]);
 
+  const inConversation = recordingMode === "conversation";
+  useEffect(() => {
+    if (!inConversation) {
+      setMorphed(false);
+      return;
+    }
+    const id = setTimeout(
+      () => setMorphed(true),
+      CONVERSATION_PANEL_ENTER_DELAY_MS,
+    );
+    return () => clearTimeout(id);
+  }, [inConversation]);
+  // The pill grows first (overflow-hidden clips its contents during the morph), so the panel's
+  // orb and controls animate in only once it has finished growing, when they are no longer
+  // masked by the growing clip window.
+  const [morphed, setMorphed] = useState(false);
+  // Motion cannot tween from "auto", so the collapsed height is measured and the morph
+  // animates number-to-number in both directions. The measurement pauses while the composer
+  // content is unmounted mid-conversation (it would read 0 and must keep the last value).
+  const [composerContentHeight, setComposerContentHeight] = useState(0);
+  const measureContentRef = useMeasuredSize(
+    "height",
+    useCallback((height: number) => {
+      if (height > 0) setComposerContentHeight(height);
+    }, []),
+  );
   return (
     <div className={paddingClass}>
-      <div
+      <m.div
+        initial={false}
+        // The composer pill morphs into the conversation panel: the box spring-animates its
+        // height while the contents crossfade, so one surface reads as becoming the other.
+        animate={{
+          height: inConversation
+            ? CONVERSATION_PANEL_HEIGHT
+            : composerContentHeight > 0
+              ? composerContentHeight
+              : "auto",
+        }}
+        transition={
+          inConversation
+            ? { type: "spring", stiffness: 300, damping: 32 }
+            : { type: "spring", stiffness: 520, damping: 40 }
+        }
+        onAnimationStart={() => onMorphingChange?.(true)}
+        onAnimationComplete={() => onMorphingChange?.(false)}
+        // Contain the box so its animating height reflows only its own subtree, never the
+        // chat above it.
+        style={{ contain: "layout paint" }}
         className={cn(
-          // rounded-3xl is half the collapsed height (48px): a true pill when collapsed, the same
-          // corners as a rounded rectangle once it grows.
-          "flex flex-wrap items-end gap-1 rounded-3xl border border-border bg-popover px-2 pb-1.5 shadow-sm",
-          // Sides + bottom stay fixed so the bottom-row buttons don't move; only the top grows
-          // to give the input its own breathing room once it moves onto its own row.
-          expanded ? "pt-3" : "pt-1.5",
+          // rounded-3xl is half the collapsed height (48px): a true pill when collapsed. The
+          // morphed conversation panel takes the design system's squircle corners instead.
+          "relative overflow-hidden border border-border bg-popover shadow-sm",
+          inConversation
+            ? "rounded-squircle-sm [corner-shape:squircle]"
+            : "rounded-3xl",
           "has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/30",
-          recordingMode !== null && "border-red-500",
+          recordingMode === "dictation" && "border-red-500",
         )}
       >
-        {/* Off-screen single-line mirror of the text, to detect the wrap point. */}
-        <span
-          ref={measureRef}
-          aria-hidden
-          className="pointer-events-none invisible fixed top-0 left-[-9999px] whitespace-pre md:text-base"
-        >
-          {value || " "}
-        </span>
+        {/* Default (sync) presence, not popLayout: popLayout absolutely positions and
+            measures exiting children, forcing layout on every frame of the morph. The panel
+            is absolutely positioned instead, so the two never fight for flow. */}
+        <AnimatePresence initial={false}>
+          {inConversation ? (
+            <m.div
+              key="conversation"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.12 } }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="absolute inset-0"
+            >
+              <ConversationPanel morphed={morphed} />
+            </m.div>
+          ) : (
+            <m.div
+              key="composer"
+              ref={measureContentRef}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.12 } }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className={cn(
+                "flex flex-wrap items-end gap-1 px-2 pb-1.5",
+                // Sides + bottom stay fixed so the bottom-row buttons don't move; only the top
+                // grows to give the input its own breathing room on its own row.
+                expanded ? "pt-3" : "pt-1.5",
+              )}
+            >
+              {/* Off-screen single-line mirror of the text, to detect the wrap point. */}
+              <span
+                ref={measureRef}
+                aria-hidden
+                className="pointer-events-none invisible fixed top-0 left-[-9999px] whitespace-pre md:text-base"
+              >
+                {value || " "}
+              </span>
 
-        <AttachmentChips
-          drafts={attachments.drafts}
-          previewUrl={attachments.previewUrl}
-          onRetry={attachments.retry}
-          onRemove={attachments.remove}
-        />
+              <AttachmentChips
+                drafts={attachments.drafts}
+                previewUrl={attachments.previewUrl}
+                onRetry={attachments.retry}
+                onRemove={attachments.remove}
+              />
 
-        <div className={cn("shrink-0", expanded ? "order-2" : "order-1")}>
-          <AttachMenu disabled={inputDisabled} onFiles={attachments.addFiles} />
-        </div>
+              <div className={cn("shrink-0", expanded ? "order-2" : "order-1")}>
+                <AttachMenu
+                  disabled={inputDisabled}
+                  onFiles={attachments.addFiles}
+                />
+              </div>
 
-        <div
-          className={cn(
-            "flex min-w-0 items-center self-stretch",
-            expanded ? "order-1 basis-full" : "order-2 flex-1",
+              <div
+                className={cn(
+                  "flex min-w-0 items-center self-stretch",
+                  expanded ? "order-1 basis-full" : "order-2 flex-1",
+                )}
+              >
+                <textarea
+                  ref={textareaRef}
+                  value={value}
+                  onChange={onInputChange}
+                  onKeyDown={onKeyDown}
+                  onPaste={onPaste}
+                  readOnly={readOnly}
+                  data-voice-dictate="true"
+                  placeholder={placeholder}
+                  disabled={inputDisabled}
+                  rows={1}
+                  enterKeyHint="send"
+                  className="field-sizing-content max-h-[240px] w-full resize-none bg-transparent px-1 py-1.5 leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-50 md:text-base"
+                />
+              </div>
+
+              <div
+                className={cn(
+                  "flex shrink-0 items-end gap-1 order-3",
+                  expanded && "ml-auto",
+                )}
+              >
+                <VoiceButtons controls={controls} />
+              </div>
+            </m.div>
           )}
-        >
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={onInputChange}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            readOnly={readOnly}
-            data-voice-dictate="true"
-            placeholder={placeholder}
-            disabled={inputDisabled}
-            rows={1}
-            enterKeyHint="send"
-            className="field-sizing-content max-h-[240px] w-full resize-none bg-transparent px-1 py-1.5 leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-50 md:text-base"
-          />
-        </div>
-
-        <div
-          className={cn(
-            "flex shrink-0 items-end gap-1 order-3",
-            expanded && "ml-auto",
-          )}
-        >
-          <VoiceButtons controls={controls} />
-        </div>
-      </div>
+        </AnimatePresence>
+      </m.div>
     </div>
   );
 }
+
+// Height of the conversation surface the composer morphs into.
+const CONVERSATION_PANEL_HEIGHT = 264;
+// The pill grows first (its overflow-hidden clips the contents); the panel's orb and
+// controls animate in this long after a conversation opens, once the growth has cleared them.
+const CONVERSATION_PANEL_ENTER_DELAY_MS = 0;
 
 const ACTION_BUTTON = "size-9 rounded-full [&_svg]:size-4";
 const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";

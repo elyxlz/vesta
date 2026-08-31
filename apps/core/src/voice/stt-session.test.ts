@@ -123,6 +123,17 @@ describe("the STT session", () => {
     expect(cbs.transcripts.at(-1)).toBe("")
   })
 
+  it("closes a turn that transcribed nothing with an empty turn end", async () => {
+    const { socket, cbs, session } = setup(false)
+    const starting = session.start()
+    await tick()
+    socket.onopen?.()
+    await starting
+    socket.emit("StartOfTurn")
+    socket.emit("EndOfTurn")
+    expect(cbs.turns).toEqual([""])
+  })
+
   it("accumulates turns and returns the whole display, partial included, on stop", async () => {
     const { socket, cbs, session } = setup(true)
     const starting = session.start()

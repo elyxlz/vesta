@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { orbVisual, type OrbVisualState } from "@vesta/core";
+import { orbVisual, type OrbMotion, type OrbVisualState } from "@vesta/core";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 import {
   orbColors,
@@ -10,6 +10,8 @@ import {
 
 interface OrbProps {
   state: OrbVisualState;
+  // Live-voice motion overlay: same colors, different breathing.
+  motion?: OrbMotion;
   size?: number;
   suppressMotion?: boolean;
   label?: string;
@@ -28,6 +30,7 @@ const GLOW_FADE_PCT = 60;
 
 export function Orb({
   state,
+  motion,
   size = 140,
   suppressMotion = false,
   label,
@@ -37,7 +40,7 @@ export function Orb({
   const shellRef = useRef<HTMLDivElement>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
   const motionSuppressed = suppressMotion || prefersReducedMotion;
-  const visual = orbVisual(state);
+  const visual = orbVisual(state, motion);
   const orbSize = size * ORB_FILL;
   const orbInset = (size - orbSize) / 2;
 

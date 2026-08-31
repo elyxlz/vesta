@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useLocation } from "react-router-dom";
+import { AnimatePresence, motion as m } from "motion/react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -31,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
+
 import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
 import { agentSubpage } from "@/lib/agent-subpage";
@@ -68,7 +70,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     voiceConfigured,
     recordingMode,
     listening,
-    isSpeaking,
     liveTranscript,
     startVoice,
     stopVoice,
@@ -88,6 +89,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     trimHistory,
     send,
     retry,
+    reportSpeaking,
   } = useAgentSocket();
 
   const [input, setInput] = useChatDraft(name);
@@ -123,10 +125,14 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     [send, attachments],
   );
   useEffect(() => {
-    registerChat(sendWithDrafts, () => {
-      setInput("");
-    });
-  }, [registerChat, sendWithDrafts, setInput]);
+    registerChat(
+      sendWithDrafts,
+      () => {
+        setInput("");
+      },
+      reportSpeaking,
+    );
+  }, [registerChat, sendWithDrafts, setInput, reportSpeaking]);
 
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -170,26 +176,70 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // the message list's scroll range, so the bubbles a tall draft covers stay
   // reachable by scrolling without the list ever shifting under the typist.
   const hasDraftRef = useRef(false);
+  const inConversationRef = useRef(false);
+  // The composer's height animates frame by frame during the conversation morph. Feeding
+  // that into React would re-pad, re-mask and re-pin the whole message list every frame, so
+  // the measurement is frozen for the morph and synced once when it settles.
+  const [morphing, setMorphing] = useState(false);
+  const morphingRef = useRef(false);
+  const composerNodeRef = useRef<HTMLDivElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  // The last measured composer height, and the reservation frozen at the morph's first frame.
+  const lastHeightRef = useRef(0);
+  const frozenInsetRef = useRef(0);
   useLayoutEffect(() => {
     // Attachment chips grow the pill exactly like typed text: both are drafts the
     // inset must ignore so the list never shifts under the composer.
     hasDraftRef.current = input.length > 0 || attachments.drafts.length > 0;
+    inConversationRef.current = recordingMode === "conversation";
+    morphingRef.current = morphing;
   });
   const composerRef = useMeasuredSize(
     "height",
     useCallback(
       (height: number) => {
+        lastHeightRef.current = height;
+        const card = cardRef.current;
+        // The list reserves the composer through these variables, so the reservation tracks
+        // the morph frame by frame without a React render. While morphing the padding holds
+        // still and a transform carries the same distance: changing padding inside the
+        // receding (3D, promoted) layer re-rasterizes the whole chat every frame.
+        if (morphingRef.current) {
+          card?.style.setProperty(
+            "--composer-shift",
+            `${String(frozenInsetRef.current - height)}px`,
+          );
+          return;
+        }
+        card?.style.setProperty("--composer-inset", `${String(height)}px`);
+        card?.style.setProperty("--composer-shift", "0px");
         setComposerHeight(height);
         if (height === 0 || !hasDraftRef.current) {
           setComposerInset(height);
-          // Cache only a real, draft-free baseline; unmount reports 0, which must
-          // not overwrite the seed the next remount reads.
-          if (height > 0) setComposerBaseline(composerVariant, height);
+          // Cache only a real, draft-free baseline; unmount reports 0 and the morphed
+          // conversation panel is a temporary height, and neither must overwrite the
+          // seed the next remount reads.
+          if (height > 0 && !inConversationRef.current)
+            setComposerBaseline(composerVariant, height);
         }
       },
       [composerVariant, setComposerBaseline],
     ),
   );
+
+  useEffect(() => {
+    if (morphing) return;
+    const node = composerNodeRef.current;
+    if (!node) return;
+    const height = node.getBoundingClientRect().height;
+    if (height <= 0) return;
+    // Padding and shift swap in one style write, so the handoff off the transform is unseen.
+    const card = cardRef.current;
+    card?.style.setProperty("--composer-inset", `${String(height)}px`);
+    card?.style.setProperty("--composer-shift", "0px");
+    setComposerHeight(height);
+    if (!hasDraftRef.current) setComposerInset(height);
+  }, [morphing]);
 
   const chatMessages = useMemo(
     () =>
@@ -206,6 +256,20 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const scrollToBottom = useCallback(() => {
     scrollRef.current?.scrollToBottom();
   }, []);
+
+  // A conversation owns the viewport: pin the chat to the newest message when it opens and
+  // keep it pinned as turns land, whatever the scroll position was before. The inset tracking
+  // the morphing panel keeps it pinned through the resize itself.
+  const inConversation = recordingMode === "conversation";
+  // While locked the list is bottom-anchored structurally; on both edges of the lock the
+  // real scroller needs to sit at the end (entering: before the anchor kicks in, leaving:
+  // the resumed scroller's scrollTop is stale).
+  useEffect(() => {
+    requestAnimationFrame(() => scrollRef.current?.pinToLatest());
+    // The locked list shows only its tail, so drop the rest of the loaded history right
+    // away; scrolling up after the conversation refetches it.
+    if (inConversation) trimHistory();
+  }, [inConversation, trimHistory]);
 
   // Stable so ChatMessageArea's memo holds across per-keystroke composer re-renders.
   const handleLoadMore = useCallback(() => {
@@ -272,6 +336,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     <div className="flex h-full min-h-0 flex-col">
       <Card
         {...dropHandlers}
+        ref={cardRef}
         className={cn(
           "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base shadow-none",
           fullscreen && "ring-0",
@@ -282,6 +347,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         <AttachmentViewer agent={name} request={viewer} onClose={closeViewer} />
         <ChatHeaderActions
           fullscreen={fullscreen}
+          receded={inConversation}
           onCollapse={onCollapse}
           agentName={name}
         />
@@ -300,6 +366,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
           isMobile={isMobile}
+          scrollLocked={inConversation}
           onRetry={retry}
           onOpenAttachment={openAttachment}
           bottomInset={
@@ -310,11 +377,42 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           onAtBottomChange={setAtBottom}
         />
 
+        <AnimatePresence>
+          {recordingMode === "conversation" && (
+            <m.button
+              type="button"
+              aria-label="end conversation"
+              onClick={stopVoice}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.27 } }}
+              transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
+              className="absolute inset-0 z-10 cursor-default bg-background/60"
+            />
+          )}
+          {recordingMode === "conversation" && (
+            <m.div
+              aria-hidden
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.27 } }}
+              transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
+              className="pointer-events-none absolute inset-x-0 top-0 z-20 h-24 bg-gradient-to-b from-background to-transparent"
+            />
+          )}
+        </AnimatePresence>
+
         <div
-          ref={composerRef}
+          ref={(node) => {
+            composerNodeRef.current = node;
+            composerRef(node);
+          }}
           // px-3 mirrors the message list's 12px scrollbar-gutter on each side, so the
           // composer's capped column computes from the same width and lines up with the bubbles.
-          className={cn("absolute inset-x-0 bottom-0", !isMobile && "px-3")}
+          className={cn(
+            "absolute inset-x-0 bottom-0 z-20",
+            !isMobile && "px-3",
+          )}
         >
           {chatMessages.length > 0 && (
             <Button
@@ -348,8 +446,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
               voiceConfigured={voiceConfigured}
               recordingMode={recordingMode}
               listening={listening}
-              isSpeaking={isSpeaking}
               liveTranscript={liveTranscript}
+              onMorphingChange={(next) => {
+                if (next) frozenInsetRef.current = lastHeightRef.current;
+                setMorphing(next);
+              }}
               startVoice={startVoice}
               stopVoice={stopVoice}
               cancelVoice={cancelVoice}

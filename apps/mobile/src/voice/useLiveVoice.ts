@@ -30,6 +30,8 @@ interface LiveVoiceOptions {
   onSend: (text: string) => void;
   onError: (message: string) => void;
   onInactivityStop: () => void;
+  // Forwarded to the chat socket, so the agent holds its reply while the user is talking.
+  onUserSpeakingChange: (speaking: boolean) => void;
 }
 
 // A conversation with no user turn for this long ends itself, bounding the battery and
@@ -93,6 +95,7 @@ export function useLiveVoice({
   onSend,
   onError,
   onInactivityStop,
+  onUserSpeakingChange,
 }: LiveVoiceOptions) {
   const { api } = useSession();
   const [recordingMode, setRecordingMode] = useState<VoiceMode | null>(null);
@@ -102,7 +105,13 @@ export function useLiveVoice({
 
   // Live-updated refs, so the session (created once per agent) always reads the current
   // callbacks and settings.
-  const callbacksRef = useRef({ onTranscript, onSend, onError, onInactivityStop });
+  const callbacksRef = useRef({
+    onTranscript,
+    onSend,
+    onError,
+    onInactivityStop,
+    onUserSpeakingChange,
+  });
   const sttStatusRef = useRef(sttStatus);
   const ttsEnabledRef = useRef(false);
 
@@ -122,7 +131,13 @@ export function useLiveVoice({
   const playerRef = useRef(player);
 
   useEffect(() => {
-    callbacksRef.current = { onTranscript, onSend, onError, onInactivityStop };
+    callbacksRef.current = {
+      onTranscript,
+      onSend,
+      onError,
+      onInactivityStop,
+      onUserSpeakingChange,
+    };
     sttStatusRef.current = sttStatus;
     ttsEnabledRef.current = ttsEnabled;
     streamRef.current = stream;
@@ -253,11 +268,15 @@ export function useLiveVoice({
         onModeChange: setRecordingMode,
         onListeningChange: setListening,
         onSpeakingChange: setSpeaking,
+        onUserSpeakingChange: (speaking) =>
+          callbacksRef.current.onUserSpeakingChange(speaking),
         onInactivityStop: () => callbacksRef.current.onInactivityStop(),
       },
       () => ({
         interruptTts: boolSetting(sttStatusRef.current, "interrupt_tts", true),
         inactivityMs: CONVERSATION_INACTIVITY_MS,
+        // Always yields for now; the per-device toggle lands with the mobile settings pass.
+        yieldToUser: true,
       }),
     );
     sessionRef.current = session;

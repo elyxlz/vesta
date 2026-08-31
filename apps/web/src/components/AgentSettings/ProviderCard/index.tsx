@@ -107,11 +107,11 @@ function AccountSection({ account }: { account: Account }) {
   return (
     <div className="flex flex-col gap-2.5">
       <span className="text-sm font-medium text-muted-foreground">account</span>
-      <div className="flex flex-col">
+      <div className="flex flex-col gap-0.5">
         {rows.map((row) => (
           <div
             key={row.label}
-            className="-mx-2 flex items-center justify-between gap-4 rounded-md px-2 py-1.5 text-sm odd:bg-foreground/[0.07]"
+            className="-mx-2 flex items-center justify-between gap-4 rounded-md px-2 py-2 text-sm odd:bg-foreground/[0.07]"
           >
             <span className="text-muted-foreground">{row.label}</span>
             <span className="truncate text-foreground">{row.value}</span>

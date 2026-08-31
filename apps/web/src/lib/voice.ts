@@ -253,8 +253,9 @@ export function browserSocket(url: string): VoiceSocketLike {
   return adapter;
 }
 
-// The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped.
-export function browserCapture(): AudioCapture {
+// The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped. `muted` is read
+// per frame, so a conversation's mic mute stops the flow without tearing the session down.
+export function browserCapture(muted?: () => boolean): AudioCapture {
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;
 
@@ -310,6 +311,7 @@ export function browserCapture(): AudioCapture {
         channelCount: 1,
       });
       workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+        if (muted?.()) return;
         onFrame(floatTo16BitPCM(e.data));
       };
       source.connect(workletNode);

@@ -228,6 +228,7 @@ export default function ChatPage() {
         "Conversation ended after 15 minutes of silence.",
         "Voice conversation",
       ),
+    onUserSpeakingChange: socket.reportSpeaking,
   });
   const recordingMode = voice.recordingMode;
   useEffect(() => {
