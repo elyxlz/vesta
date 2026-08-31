@@ -101,6 +101,20 @@ function composerPadding(fullscreen: boolean | undefined, isMobile: boolean) {
   );
 }
 
+// Expand a hair before the last word would wrap so the narrow field never shows two lines
+// first; once expanded, hold until the text clearly fits again (hysteresis).
+function expandedNext(
+  prev: boolean,
+  value: string,
+  avail: number,
+  width: number,
+): boolean {
+  if (value.trim().length === 0) return false;
+  if (value.includes("\n")) return true;
+  if (avail <= 0) return prev;
+  return prev ? width > avail - 24 : width > avail - 8;
+}
+
 interface ChatComposerProps {
   fullscreen?: boolean;
   agentName: string;
@@ -112,6 +126,7 @@ interface ChatComposerProps {
   // True while the pill is animating between composer and panel: the parent freezes its
   // measurement-driven layout for the duration so the morph stays compositor-cheap.
   onMorphingChange?: (morphing: boolean) => void;
+  onHeightAnimation?: (animating: boolean) => void;
   startVoice: (mode: VoiceMode) => void;
   stopVoice: () => void;
   cancelVoice: () => void;
@@ -134,6 +149,7 @@ export function ChatComposer({
   listening,
   liveTranscript,
   onMorphingChange,
+  onHeightAnimation,
   startVoice,
   stopVoice,
   cancelVoice,
@@ -191,6 +207,7 @@ export function ChatComposer({
       controls={controls}
       attachments={attachments}
       onMorphingChange={onMorphingChange}
+      onHeightAnimation={onHeightAnimation}
     />
   );
 }
@@ -220,6 +237,7 @@ function FloatingComposer({
   controls,
   attachments,
   onMorphingChange,
+  onHeightAnimation,
 }: {
   paddingClass: string;
   value: string;
@@ -232,6 +250,7 @@ function FloatingComposer({
   controls: ComposerControls;
   attachments: AttachmentDrafts;
   onMorphingChange?: (morphing: boolean) => void;
+  onHeightAnimation?: (animating: boolean) => void;
 }) {
   const { inputDisabled, recordingMode } = controls;
 
@@ -258,12 +277,10 @@ function FloatingComposer({
     const avail = collapsedWidthRef.current;
     const width = span.scrollWidth;
     setExpanded((prev) => {
-      if (value.trim().length === 0) return false;
-      if (value.includes("\n")) return true;
-      if (avail <= 0) return prev;
-      // Expand a hair before the last word would wrap so the narrow field never shows two
-      // lines first; once expanded, hold until the text clearly fits again (hysteresis).
-      return prev ? width > avail - 24 : width > avail - 8;
+      const next = expandedNext(prev, value, avail, width);
+      // Only the row transition animates the box; growth within a state stays instant.
+      if (next !== prev) animateNextHeightRef.current = true;
+      return next;
     });
   }, [value]);
 
@@ -283,16 +300,28 @@ function FloatingComposer({
   // orb and controls animate in only once it has finished growing, when they are no longer
   // masked by the growing clip window.
   const [morphed, setMorphed] = useState(false);
-  // Motion cannot tween from "auto", so the collapsed height is measured and the morph
-  // animates number-to-number in both directions. The measurement pauses while the composer
-  // content is unmounted mid-conversation (it would read 0 and must keep the last value).
-  const [composerContentHeight, setComposerContentHeight] = useState(0);
+  // The box animates number-to-number, but only across the row transition (the wrap point
+  // flipping) and the morph: each measurement carries whether the flip caused it, and any
+  // other content growth (an extra textarea line, a chips row) applies instantly like a plain
+  // textarea. The measurement pauses while the composer content is unmounted mid-conversation
+  // (it would read 0 and must keep the last value).
+  const animateNextHeightRef = useRef(false);
+  const [contentBox, setContentBox] = useState({ height: 0, animated: false });
   const measureContentRef = useMeasuredSize(
     "height",
     useCallback((height: number) => {
-      if (height > 0) setComposerContentHeight(height);
+      if (height <= 0) return;
+      setContentBox({ height, animated: animateNextHeightRef.current });
+      animateNextHeightRef.current = false;
     }, []),
   );
+  // The exit morph renders with inConversation already false, so the previous value is what
+  // marks its one render as still animated.
+  const prevConversationRef = useRef(inConversation);
+  const leavingConversation = prevConversationRef.current && !inConversation;
+  useEffect(() => {
+    prevConversationRef.current = inConversation;
+  });
   return (
     <div className={paddingClass}>
       <m.div
@@ -302,29 +331,44 @@ function FloatingComposer({
         animate={{
           height: inConversation
             ? CONVERSATION_PANEL_HEIGHT
-            : composerContentHeight > 0
-              ? composerContentHeight
+            : contentBox.height > 0
+              ? contentBox.height
               : "auto",
         }}
         transition={
           inConversation
             ? { type: "spring", stiffness: 300, damping: 32 }
-            : { type: "spring", stiffness: 520, damping: 40 }
+            : leavingConversation || contentBox.animated
+              ? ROW_SPRING
+              : { duration: 0 }
         }
-        onAnimationStart={() => onMorphingChange?.(true)}
-        onAnimationComplete={() => onMorphingChange?.(false)}
+        // The morph's start is reported by the parent on the conversation flip itself, so a
+        // typing animation never trips the freeze; completion is safe to report from here (a
+        // settle outside a morph is a no-op). The animation edges gate the parent's inset
+        // tracking, since mid-flight heights must never become the list's reservation.
+        onAnimationStart={() => onHeightAnimation?.(true)}
+        onAnimationComplete={() => {
+          onHeightAnimation?.(false);
+          onMorphingChange?.(false);
+        }}
         // Contain the box so its animating height reflows only its own subtree, never the
         // chat above it.
         style={{ contain: "layout paint" }}
         className={cn(
           // rounded-3xl is half the collapsed height (48px): a true pill when collapsed. The
           // morphed conversation panel takes the design system's squircle corners instead.
-          "relative overflow-hidden border border-border bg-popover shadow-sm",
+          // Bottom-anchored: while the box grows toward wrapped content the clip edge reveals
+          // the new top row and the button row never moves.
+          "relative flex flex-col justify-end overflow-hidden border border-border bg-popover shadow-sm",
           inConversation
             ? "rounded-squircle-sm [corner-shape:squircle]"
             : "rounded-3xl",
           "has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/30",
-          recordingMode === "dictation" && "border-red-500",
+          // Red snaps on with the recording and fades out slowly after it: the transition
+          // class rides only the resting state, so the exit eases while the entry is instant.
+          recordingMode === "dictation"
+            ? "border-red-500"
+            : "transition-colors duration-700",
         )}
       >
         {/* Default (sync) presence, not popLayout: popLayout absolutely positions and
@@ -373,14 +417,23 @@ function FloatingComposer({
                 onRemove={attachments.remove}
               />
 
-              <div className={cn("shrink-0", expanded ? "order-2" : "order-1")}>
+              {/* position-only FLIP on the row pieces: the input glides onto its own row and
+                  the buttons slide into place on the same spring the box grows with, while
+                  the text itself never scale-distorts. */}
+              <m.div
+                layout="position"
+                transition={{ layout: ROW_SPRING }}
+                className={cn("shrink-0", expanded ? "order-2" : "order-1")}
+              >
                 <AttachMenu
                   disabled={inputDisabled}
                   onFiles={attachments.addFiles}
                 />
-              </div>
+              </m.div>
 
-              <div
+              <m.div
+                layout="position"
+                transition={{ layout: ROW_SPRING }}
                 className={cn(
                   "flex min-w-0 items-center self-stretch",
                   expanded ? "order-1 basis-full" : "order-2 flex-1",
@@ -400,16 +453,18 @@ function FloatingComposer({
                   enterKeyHint="send"
                   className="field-sizing-content max-h-[240px] w-full resize-none bg-transparent px-1 py-1.5 leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-50 md:text-base"
                 />
-              </div>
+              </m.div>
 
-              <div
+              <m.div
+                layout="position"
+                transition={{ layout: ROW_SPRING }}
                 className={cn(
                   "flex shrink-0 items-end gap-1 order-3",
                   expanded && "ml-auto",
                 )}
               >
                 <VoiceButtons controls={controls} />
-              </div>
+              </m.div>
             </m.div>
           )}
         </AnimatePresence>
@@ -420,6 +475,10 @@ function FloatingComposer({
 
 // Height of the conversation surface the composer morphs into.
 const CONVERSATION_PANEL_HEIGHT = 264;
+
+// One spring for the pill growing toward wrapped text and the row pieces gliding within it,
+// so the box and its contents arrive together.
+const ROW_SPRING = { type: "spring", stiffness: 520, damping: 40 } as const;
 // The pill grows first (its overflow-hidden clips the contents); the panel's orb and
 // controls animate in this long after a conversation opens, once the growth has cleared them.
 const CONVERSATION_PANEL_ENTER_DELAY_MS = 0;
