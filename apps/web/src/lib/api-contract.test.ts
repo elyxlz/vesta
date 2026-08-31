@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentStatus } from "@vesta/core";
 import type { BackupInfo } from "@/api/agents";
-import type { OAuthStartResult } from "@/api/providers/claude";
 import type { FileTreeEntry } from "@/api/files";
 import { vestadApiFixtures } from "./vestad-api-fixtures";
 
@@ -32,12 +31,6 @@ describe("vestad API contract", () => {
       "pre_update",
       "pre_restore",
     ]);
-  });
-
-  it("auth flow response satisfies OAuthStartResult", () => {
-    const auth = vestadApiFixtures.auth_start satisfies OAuthStartResult;
-    expect(auth.auth_url).toContain("https://");
-    expect(auth.session_id).toBeTruthy();
   });
 
   it("tree entries satisfy FileTreeEntry", () => {

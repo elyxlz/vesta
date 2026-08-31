@@ -1,8 +1,8 @@
 import type {
   ProviderContextPolicy,
   ProviderContextPreset,
-  ProviderManifest,
-  ProviderManifestEntry,
+  ProviderCatalog as CoreProviderCatalog,
+  ProviderCatalogEntry,
   ReleaseChannel,
 } from "@vesta/core";
 
@@ -16,7 +16,7 @@ export interface ConnectionConfig {
 
 export type ContextPreset = ProviderContextPreset;
 export type ProviderContext = ProviderContextPolicy;
-export type ProviderEntry = ProviderManifestEntry;
+export type ProviderEntry = ProviderCatalogEntry;
 
 export interface Personality {
   name: string;
@@ -27,8 +27,11 @@ export interface Personality {
   order: number;
 }
 
-export interface Manifest extends ProviderManifest {
-  personalities: Personality[];
+export type ProviderCatalog = CoreProviderCatalog;
+
+export interface PersonalityCatalog {
+  default: string;
+  presets: Personality[];
 }
 
 export interface BackupInfo {

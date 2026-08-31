@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderContext } from "@/api/manifest";
+import type { ProviderContext } from "@/api/catalogs";
 import { planContextOptions, planFromCredentials } from "./context-plan";
 
 const claudeContext: ProviderContext = {

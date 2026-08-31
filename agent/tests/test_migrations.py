@@ -290,7 +290,7 @@ def test_workspace_repair_recovers_active_skills_without_activating_all_stock(tm
     subprocess.run(["git", "config", "user.email", "testbox@vesta"], cwd=home, check=True)
     subprocess.run(["git", "add", "agent/skills/stock"], cwd=home, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "stock"], cwd=home, check=True)
-    subprocess.run(["git", "tag", "agent-v0.1.180"], cwd=home, check=True)
+    subprocess.run(["git", "tag", "--no-sign", "agent-v0.1.180"], cwd=home, check=True)
 
     config_path = home / "agent/data/config.json"
     config_path.parent.mkdir()
@@ -330,7 +330,7 @@ def test_workspace_repair_skips_local_only_recovery_when_the_stock_list_is_unrea
     (home / "MEMORY.md").write_text("memory")
     subprocess.run(["git", "add", "MEMORY.md"], cwd=home, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "pre-skills"], cwd=home, check=True)
-    subprocess.run(["git", "tag", "agent-v0.1.180"], cwd=home, check=True)
+    subprocess.run(["git", "tag", "--no-sign", "agent-v0.1.180"], cwd=home, check=True)
     stock_skill = home / "agent/skills/stock"
     stock_skill.mkdir(parents=True)
     (stock_skill / "SKILL.md").write_text("stock")

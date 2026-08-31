@@ -12,6 +12,8 @@ import {
   type BuildPhase,
   type NotificationEvent,
   type ProviderInfo,
+  type ProviderInfoWire,
+  type ProviderCatalog,
   type ProviderSelection,
   type RestartReason,
   type VestaEvent,
@@ -23,6 +25,11 @@ export type { NotificationEvent };
 
 export type ProviderResult = ProviderSelection;
 export type { ProviderInfo };
+
+export interface ProviderResource {
+  provider: ProviderInfo;
+  catalog: ProviderCatalog;
+}
 
 /// Provision/attach a provider: map the chosen `ProviderResult` to the `PUT /provider` body, write any
 /// prefs (personality/timezone) to `PUT /config`, then restart once to apply. Re-provisioning an
@@ -57,10 +64,14 @@ export async function signOutProvider(name: string): Promise<void> {
 /// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
 /// provider is chosen (omitted when unprovisioned) plus an `authed` flag — so the UI can tell
 /// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
-export async function getProvider(name: string): Promise<ProviderInfo> {
-  return normalizeProviderInfo(
-    await apiJson(`/agents/${encodeURIComponent(name)}/provider`),
-  );
+export async function getProvider(name: string): Promise<ProviderResource> {
+  const resource = await apiJson<
+    ProviderInfoWire & { catalog: ProviderCatalog }
+  >(`/agents/${encodeURIComponent(name)}/provider`);
+  return {
+    provider: normalizeProviderInfo(resource),
+    catalog: resource.catalog,
+  };
 }
 
 /// Patch a provider preference (model / context) via `PATCH /provider`, then restart to apply.
@@ -118,9 +129,24 @@ export function buildPhaseMessage(phase: BuildPhase | null): string {
 }
 
 interface StatusWait {
-  ready: (status: AgentStatus) => boolean;
-  failed: (status: AgentStatus) => boolean;
+  ready: (response: AgentStatusResponse) => boolean;
+  failed: (response: AgentStatusResponse) => boolean;
   timeoutLabel: string;
+}
+
+interface AgentStatusResponse {
+  status: AgentStatus;
+  booting?: boolean;
+}
+
+export class AgentStatusError extends Error {
+  readonly status: AgentStatus;
+
+  constructor(name: string, status: AgentStatus) {
+    super(`${name}: ${status}`);
+    this.name = "AgentStatusError";
+    this.status = status;
+  }
 }
 
 /// Poll /agents/{name} until its status settles into one of `ready` (resolve) or `failed` (throw);
@@ -133,12 +159,12 @@ async function waitForStatus(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const resp = await apiJson<{ status: AgentStatus }>(
+    const resp = await apiJson<AgentStatusResponse>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (wait.ready(resp.status)) return;
-    if (wait.failed(resp.status)) {
-      throw new Error(`${name}: ${resp.status}`);
+    if (wait.ready(resp)) return;
+    if (wait.failed(resp)) {
+      throw new AgentStatusError(name, resp.status);
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
@@ -153,23 +179,23 @@ export async function waitUntilRunning(
   pollIntervalMs = 500,
 ): Promise<void> {
   await waitForStatus(name, timeoutMs, pollIntervalMs, {
-    ready: agentIsConnectable,
-    failed: agentIsDown,
+    ready: ({ status }) => agentIsConnectable(status),
+    failed: ({ status }) => agentIsDown(status),
     timeoutLabel: "timed out waiting for HTTP server",
   });
 }
 
-export async function waitUntilAlive(
+export async function waitUntilReady(
   name: string,
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
   await waitForStatus(name, timeoutMs, pollIntervalMs, {
-    ready: (status) => status === "alive",
+    ready: ({ status, booting }) => status === "alive" && booting === false,
     // A waiting agent never becomes alive on its own, so it is a failure here even though the
     // HTTP-up poll above treats it as ready.
-    failed: (status) => agentIsDown(status) || agentNeedsUser(status),
-    timeoutLabel: "timed out waiting to become alive",
+    failed: ({ status }) => agentIsDown(status) || agentNeedsUser(status),
+    timeoutLabel: "timed out waiting to become ready",
   });
 }
 

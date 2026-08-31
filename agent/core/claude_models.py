@@ -1,6 +1,4 @@
-"""Live Claude model catalog: read the stored OAuth token and list the account's models
-from the Anthropic Models API. The single owner of the /v1/models call and its parsing on
-the agent side (vestad owns the onboarding copy)."""
+"""Live Claude model catalog: read OAuth tokens and list models from the Anthropic API."""
 
 import typing as tp
 
@@ -30,6 +28,19 @@ class _Model(pyd.BaseModel):
 
 class _ModelsResponse(pyd.BaseModel):
     data: list[_Model]
+
+
+class _OAuthInner(pyd.BaseModel):
+    access_token: str = pyd.Field(alias="accessToken", min_length=1)
+
+
+class _OAuthBlob(pyd.BaseModel):
+    claude_ai_oauth: _OAuthInner = pyd.Field(alias="claudeAiOauth")
+
+
+def parse_claude_access_token(credentials: str) -> str:
+    """Extract an access token from the portable Claude OAuth credentials blob."""
+    return _OAuthBlob.model_validate_json(credentials).claude_ai_oauth.access_token
 
 
 def read_claude_access_token() -> str | None:

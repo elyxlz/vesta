@@ -1,6 +1,6 @@
 //! The HTTP layer's shared vocabulary, below every handler module: the daemon's
 //! `AppState`, the JSON response helpers, and the request-layer constants. Handler
-//! modules (serve.rs, auth.rs, `agent_proxy.rs`, providers/*) all
+//! modules (serve.rs, auth.rs, `agent_proxy.rs`) all
 //! import from here; this module imports none of them.
 
 use std::collections::HashMap;
@@ -21,36 +21,6 @@ pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 // by the edge after ~100s of silence; a periodic ping keeps frames flowing so the socket
 // survives an idle client. Must stay comfortably under that window.
 pub(crate) const WS_KEEPALIVE_INTERVAL_SECS: u64 = 30;
-
-const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
-
-/// One in-flight Claude OAuth PKCE session (see providers/claude.rs).
-pub(crate) struct AuthSession {
-    pub code_verifier: String,
-    pub state: String,
-    pub created: std::time::Instant,
-}
-
-/// One in-flight `ChatGPT` device-code session (see providers/openai.rs).
-#[derive(Clone)]
-pub(crate) struct OpenAiAuthSession {
-    pub device_auth_id: String,
-    pub user_code: String,
-    pub created: std::time::Instant,
-}
-
-
-impl OpenAiAuthSession {
-    pub fn is_expired(&self) -> bool {
-        self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
-    }
-}
-
-impl AuthSession {
-    pub fn is_expired(&self) -> bool {
-        self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
-    }
-}
 
 /// One refresh-token family (one login). `live` is the only currently-valid jti;
 /// `prev` is the jti it was just rotated from, honored ONCE as a retry-grace so a
@@ -105,8 +75,6 @@ pub struct AppState {
     pub(crate) api_key: String,
     pub(crate) env_config: docker::AgentEnvConfig,
     pub(crate) docker: bollard::Docker,
-    pub(crate) auth_sessions: Mutex<HashMap<String, AuthSession>>,
-    pub(crate) openai_auth_sessions: Mutex<HashMap<String, OpenAiAuthSession>>,
     /// Serializes the daemon's Vesta Cloud pairing handlers. The pairing state
     /// itself lives ONLY in `<config_dir>/vesta-cloud-pairing.json` (single
     /// source of truth shared with `vestad vesta-cloud login` and a restarted
@@ -200,8 +168,6 @@ impl AppState {
                 api_key,
                 env_config,
                 docker,
-                auth_sessions: Mutex::new(HashMap::new()),
-                openai_auth_sessions: Mutex::new(HashMap::new()),
                 vesta_cloud_pairing_lock: Mutex::new(()),
                 refresh_live: Mutex::new(refresh_live),
                 agent_locks: Mutex::new(HashMap::new()),
@@ -248,13 +214,6 @@ impl AppState {
             .clone()
     }
 
-    pub(crate) async fn clean_expired_sessions(&self) {
-        let mut sessions = self.auth_sessions.lock().await;
-        sessions.retain(|_, s| !s.is_expired());
-        drop(sessions);
-        let mut sessions = self.openai_auth_sessions.lock().await;
-        sessions.retain(|_, s| !s.is_expired());
-    }
 }
 
 pub type SharedState = Arc<AppState>;

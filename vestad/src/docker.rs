@@ -420,6 +420,7 @@ impl Drop for RebuildMark {
 pub struct StatusJson {
     pub name: String,
     pub status: AgentStatus,
+    pub booting: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub ws_port: u16,
@@ -3089,7 +3090,9 @@ async fn discard_unused_snapshot(docker: &Docker, cname: &str, snapshot: &str) {
     }
     match remove_image(docker, snapshot).await {
         Ok(()) => tracing::info!(image = %snapshot, "removed snapshot from failed rebuild"),
-        Err(e) => tracing::warn!(image = %snapshot, error = %e, "could not remove failed rebuild's snapshot"),
+        Err(e) => {
+            tracing::warn!(image = %snapshot, error = %e, "could not remove failed rebuild's snapshot");
+        }
     }
 }
 

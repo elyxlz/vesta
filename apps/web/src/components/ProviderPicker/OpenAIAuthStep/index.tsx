@@ -8,11 +8,13 @@ import { OAuthLink } from "../OAuthLink";
 import { OpenAILogo } from "../logos";
 
 export function OpenAIAuthStep({
+  agentName,
   authStart,
   startError,
   onCredentialsReady,
   onBack,
 }: {
+  agentName: string;
   authStart: openaiProvider.OAuthStartResult | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
@@ -41,7 +43,7 @@ export function OpenAIAuthStep({
     setError("");
     try {
       onCredentialsReady(
-        await openaiProvider.completeOAuth(authStart.session_id),
+        await openaiProvider.completeOAuth(agentName, authStart.session_id),
       );
     } catch (caught: unknown) {
       setError(errorMessage(caught, "verification failed"));

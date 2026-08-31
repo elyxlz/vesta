@@ -1,178 +1,185 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createAgent } from "@/api";
-import {
-  setProvider,
-  waitUntilRunning,
-  waitUntilAlive,
-  type ProviderResult,
-} from "@/api/agents";
+import { type ProviderResult } from "@/api/agents";
+import { Button } from "@/components/ui/button";
+import { usePersonalityCatalog } from "@/hooks/use-agent-catalogs";
 import { errorMessage } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
-import { useManifest } from "@/hooks/use-manifest";
 import { useToast } from "@/stores/use-toast";
 import {
+  clearOnboarding,
   loadOnboarding,
   saveOnboarding,
-  clearOnboarding,
 } from "@/lib/onboarding-progress";
-import { useOnboarding } from "@/stores/use-onboarding";
-import { NameStep } from "./Steps/NameStep";
+import { useOnboarding, type OnboardingStep } from "@/stores/use-onboarding";
 import { ProviderPicker } from "@/components/ProviderPicker";
+import { NameStep } from "./Steps/NameStep";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
-import { classifyCreateFailure, isCredentialRejection } from "./create-flow";
+import { applyProviderSetup, prepareAgentShell } from "./create-flow";
 import { Chrome } from "./Chrome";
 import { stepChrome, type ChromeActionKind } from "./step-chrome";
 
-// Generous timeout — first-time setup pulls + builds the agent image.
 const START_TIMEOUT_MS = 10 * 60 * 1000;
+const PERSONALITY_STEPS = new Set<OnboardingStep>([
+  "provider",
+  "personality",
+  "applying",
+  "done",
+]);
+const LIFECYCLE_STEPS = new Set<OnboardingStep>([
+  "creating",
+  "applying",
+  "done",
+]);
+
+function stepMatches(
+  step: OnboardingStep | null,
+  candidates: ReadonlySet<OnboardingStep>,
+): boolean {
+  return step !== null && candidates.has(step);
+}
+
+function selectedPersonality(
+  draft: string | null,
+  saved: string | null,
+  fallback: string | undefined,
+): string {
+  return draft ?? saved ?? fallback ?? "";
+}
 
 export function NewAgent() {
-  const step = useOnboarding((s) => s.step);
-  const setStep = useOnboarding((s) => s.setStep);
-  const navbarHeight = useLayout((s) => s.navbarHeight);
+  const step = useOnboarding((state) => state.step);
+  const setStep = useOnboarding((state) => state.setStep);
+  const navbarHeight = useLayout((state) => state.navbarHeight);
   const navigate = useNavigate();
-  const manifest = useManifest();
   const toast = useToast();
-  // Refreshing mid-onboarding restores the name and personality (never the credentials, which
-  // stay in memory only); a resumed run re-collects the provider and skips whatever it already has.
-  const [agentName, setAgentName] = useState(
-    () => loadOnboarding()?.agentName ?? "",
-  );
+  const [restored] = useState(loadOnboarding);
+  const initialAgentName = restored?.agentName ?? "";
+  const [agentName, setAgentName] = useState(initialAgentName);
   const [personality, setPersonality] = useState<string | null>(
-    () => loadOnboarding()?.personality ?? null,
+    restored?.personality ?? null,
   );
-  // The full provider result from the picker — credentials/key plus the default
-  // model and context window, all forwarded verbatim to setProvider.
   const [providerResult, setProviderResult] = useState<ProviderResult | null>(
     null,
   );
   const [createError, setCreateError] = useState<string | null>(null);
-  // One reporter for every step error: the state drives the failed UI (dimmed
-  // orb, retry, step routing) and the message itself surfaces as a toast.
-  const reportError = (message: string) => {
-    setCreateError(message);
-    toast.error(message);
-  };
-  // Drafts the shell's single button commits: the name field's raw text and
-  // the tile selection. personality stays committed only on continue, so the
-  // resume-skip logic in nextStep keeps its meaning.
-  const [nameDraft, setNameDraft] = useState(
-    () => loadOnboarding()?.agentName ?? "",
-  );
+  const [nameDraft, setNameDraft] = useState(initialAgentName);
   const [vibeDraft, setVibeDraft] = useState<string | null>(null);
-  const selectedVibe =
-    vibeDraft ?? personality ?? manifest?.default_personality ?? "";
-  // Pipeline runs for the current name; a retry treats createAgent's 409 as phase 1 already done
-  // (the failed attempt made the container). A resumed refresh is such a retry, since the container
-  // may already exist, so seed the count when the name was restored.
-  const attemptRef = useRef(agentName ? 1 : 0);
+  const attemptRef = useRef(initialAgentName ? 1 : 0);
+  const personalityEnabled = stepMatches(step, PERSONALITY_STEPS);
+  const {
+    data: personalityCatalog,
+    error: personalityError,
+    retry: retryPersonalities,
+  } = usePersonalityCatalog(agentName, personalityEnabled);
+  const selectedVibe = selectedPersonality(
+    vibeDraft,
+    personality,
+    personalityCatalog?.default,
+  );
+
+  const reportError = useCallback(
+    (message: string) => {
+      setCreateError(message);
+      toast.error(message);
+    },
+    [toast],
+  );
+  const finishOnboarding = useCallback(() => {
+    clearOnboarding();
+    setStep("done");
+  }, [setStep]);
 
   useEffect(() => {
-    // No credentials survive a refresh, so a restored name resumes at the provider step; the
-    // pipeline then skips any personality already collected. A fresh visit starts at the name.
-    setStep(agentName ? "provider" : "name");
+    setStep(initialAgentName ? "creating" : "name");
     return () => setStep(null);
-  }, []);
+  }, [initialAgentName, setStep]);
 
   useEffect(() => {
     if (agentName) saveOnboarding({ agentName, personality });
   }, [agentName, personality]);
 
   useEffect(() => {
-    if (step !== "creating" || createError !== null) return;
-    if (!agentName || !personality || !providerResult) return;
-    // Read through a call so each check re-reads the live flag: the cleanup flips it
-    // between awaits, which a narrowed local can't see.
+    if (step !== "creating" || createError !== null || !agentName) return;
     let cancelled = false;
-    const isCancelled = () => cancelled;
     attemptRef.current += 1;
     const firstAttempt = attemptRef.current === 1;
-    const run = async () => {
-      try {
-        // Phase 1: create the empty agent container.
-        try {
-          await createAgent(agentName);
-        } catch (e) {
-          const failure = classifyCreateFailure(e, firstAttempt);
-          if (failure === "name-rejected") {
-            // A rejected name never counts as an attempt: resubmitting it
-            // unchanged must not read the next 409 as "already created".
-            attemptRef.current = 0;
-            if (!isCancelled()) {
-              reportError(errorMessage(e, "creation failed"));
-              setStep("name");
-            }
-            return;
-          }
-          if (failure === "retryable") throw e;
+    void prepareAgentShell(agentName, firstAttempt, START_TIMEOUT_MS)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.kind === "name-rejected") {
+          attemptRef.current = 0;
+          reportError(errorMessage(result.error, "creation failed"));
+          setStep("name");
+        } else if (result.kind === "ready") {
+          finishOnboarding();
+        } else {
+          setStep("provider");
         }
-        if (isCancelled()) return;
-
-        // Phase 2: wait for the agent's HTTP server to be reachable.
-        await waitUntilRunning(agentName, START_TIMEOUT_MS);
-        if (isCancelled()) return;
-
-        // Phase 3: set credentials + preferences (provider, personality, model, context, timezone).
-        try {
-          await setProvider(
-            agentName,
-            providerResult,
-            personality,
-            Intl.DateTimeFormat().resolvedOptions().timeZone,
-          );
-        } catch (e) {
-          if (isCredentialRejection(e)) {
-            if (!isCancelled()) {
-              setProviderResult(null);
-              reportError(errorMessage(e, "provider setup failed"));
-              setStep("provider");
-            }
-            return;
-          }
-          throw e;
-        }
-        if (isCancelled()) return;
-
-        // Phase 4: wait for the provision-triggered restart to settle.
-        await waitUntilAlive(agentName, START_TIMEOUT_MS);
-        if (isCancelled()) return;
-
-        clearOnboarding();
-        setStep("done");
-      } catch (e) {
-        // Transient failure: stay here with everything collected intact; the
-        // retry button clears the error, which re-enters this pipeline. The
-        // reason shows in the failed body, so it needs no toast.
-        if (!isCancelled()) setCreateError(errorMessage(e, "creation failed"));
-      }
-    };
-    void run();
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) setCreateError(errorMessage(caught, "creation failed"));
+      });
     return () => {
       cancelled = true;
     };
-  }, [step, createError, agentName, personality, providerResult, setStep]);
+  }, [step, createError, agentName, reportError, finishOnboarding, setStep]);
 
-  // Every input survives a failure, so re-entry skips whatever is already
-  // collected: a fixed name jumps straight back to creating, a redone
-  // credential skips the vibe it already has.
-  const nextStep = (result: ProviderResult | null, vibe: string | null) => {
-    if (!result) return "provider";
-    if (!vibe) return "personality";
-    return "creating";
-  };
+  useEffect(() => {
+    if (step !== "applying" || createError !== null) return;
+    if (!agentName || !personality || !providerResult) return;
+    let cancelled = false;
+    void applyProviderSetup({
+      name: agentName,
+      provider: providerResult,
+      personality,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timeoutMs: START_TIMEOUT_MS,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.kind === "credential-rejected") {
+          setProviderResult(null);
+          reportError(errorMessage(result.error, "provider setup failed"));
+          setStep("provider");
+        } else if (result.kind === "needs-provider") {
+          setProviderResult(null);
+          reportError("the provider did not become ready");
+          setStep("provider");
+        } else {
+          finishOnboarding();
+        }
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) setCreateError(errorMessage(caught, "setup failed"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    step,
+    createError,
+    agentName,
+    personality,
+    providerResult,
+    reportError,
+    finishOnboarding,
+    setStep,
+  ]);
 
-  // The name is used verbatim (no normalization); the field already forbids
-  // whitespace, so a non-empty draft is the whole rule. The gateway is the one
-  // that validates it, and a rejection returns to this step with the error.
   const name = nameDraft.trim();
   const submitName = () => {
     if (!name) return;
-    if (name !== agentName) attemptRef.current = 0;
+    if (name !== agentName) {
+      attemptRef.current = 0;
+      setProviderResult(null);
+      setPersonality(null);
+      setVibeDraft(null);
+    }
     setAgentName(name);
     setCreateError(null);
-    setStep(nextStep(providerResult, personality));
+    setStep("creating");
   };
 
   const handleAction = (kind: ChromeActionKind) => {
@@ -180,7 +187,7 @@ export function NewAgent() {
       submitName();
     } else if (kind === "submit-vibe") {
       setPersonality(selectedVibe);
-      setStep("creating");
+      setStep("applying");
     } else if (kind === "open-chat") {
       void navigate(`/agent/${agentName}/chat`);
     } else {
@@ -189,39 +196,55 @@ export function NewAgent() {
   };
 
   const content = (() => {
-    if (step === "provider")
+    if (step === "provider") {
       return (
         <ProviderPicker
+          agentName={agentName}
           defaultsOnly
           choiceVariant="grid"
           onDone={(result) => {
-            // The picker handles OAuth/key + defaults internally and hands
-            // back a complete result; forward it verbatim to setProvider.
-            // Model/context stay editable later in AgentSettings.
             setProviderResult(result);
             setCreateError(null);
-            setStep(nextStep(result, personality));
+            setStep(personality ? "applying" : "personality");
           }}
           onBack={() => setStep("name")}
         />
       );
-    if (step === "personality")
+    }
+    if (step === "personality") {
+      if (personalityError) {
+        return (
+          <div className="flex flex-col items-center gap-3 px-4 text-center">
+            <p className="text-xs text-destructive">{personalityError}</p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={retryPersonalities}
+            >
+              retry
+            </Button>
+          </div>
+        );
+      }
       return (
         <PersonalityStep
-          personalities={manifest?.personalities ?? null}
+          personalities={personalityCatalog?.presets ?? null}
           selected={selectedVibe}
           onPick={setVibeDraft}
         />
       );
-    if (step === "creating" || step === "done")
+    }
+    if (step === "creating" || step === "applying" || step === "done") {
       return (
         <CreatingStep
           agentName={agentName}
+          stage={step === "applying" ? "applying" : "creating"}
           done={step === "done"}
           failed={createError !== null}
           error={createError}
         />
       );
+    }
     return (
       <NameStep
         value={nameDraft}
@@ -231,24 +254,15 @@ export function NewAgent() {
     );
   })();
 
-  // "creating" and "done" share one mounted screen so the orb is continuous:
-  // the same Orb lerps busy -> alive instead of remounting cold.
-  const contentKey = step === "done" ? "creating" : step;
-
+  const lifecycleStep = stepMatches(step, LIFECYCLE_STEPS);
+  const contentKey = lifecycleStep ? "lifecycle" : step;
   const chrome = stepChrome({
     step: step ?? "name",
     nameValid: name !== "",
-    vibeReady: manifest !== undefined && selectedVibe !== "",
+    vibeReady: personalityCatalog !== undefined && selectedVibe !== "",
     failed: createError !== null,
   });
 
-  // The step scrolls when it can't fit (a short screen + the tall personality
-  // grid) instead of clipping. m-auto centers the child when it fits and pins it
-  // to the top when it overflows, which justify-center can't (it clips the top in
-  // a scroll container). Top padding clears the absolute navbar; bottom padding
-  // clears the mobile home indicator. The top mask dissolves scrolled content
-  // over a long run before it slides under the transparent navbar; mask-t
-  // positions run bottom-to-top, hence the 100% arithmetic.
   return (
     <div className="flex h-full flex-col">
       <div

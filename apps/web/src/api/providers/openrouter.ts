@@ -11,16 +11,22 @@ export interface OpenRouterModelOption {
   cache_read_price?: number | null;
 }
 
-export async function fetchTopModels(): Promise<OpenRouterModelOption[]> {
-  return apiJson<OpenRouterModelOption[]>("/providers/openrouter/models/top");
+export async function fetchTopModels(
+  agentName: string,
+): Promise<OpenRouterModelOption[]> {
+  return apiJson<OpenRouterModelOption[]>(
+    `/agents/${encodeURIComponent(agentName)}/providers/openrouter/models/top`,
+  );
 }
 
-// Vestad proxies the check to OpenRouter's /api/v1/key, throwing on 401.
-// Going through vestad keeps the web and CLI paths symmetric: both clients
-// call the same endpoint, and the validation logic lives in one place.
-export async function validateKey(key: string): Promise<void> {
+// The target agent checks OpenRouter's /api/v1/key, throwing on 401. Both
+// clients use this agent-owned path, so validation still has one owner.
+export async function validateKey(
+  agentName: string,
+  key: string,
+): Promise<void> {
   await apiJson(
-    "/providers/openrouter/validate-key",
+    `/agents/${encodeURIComponent(agentName)}/providers/openrouter/validate-key`,
     jsonInit("POST", { key }),
   );
 }

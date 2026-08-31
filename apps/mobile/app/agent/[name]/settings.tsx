@@ -6,7 +6,6 @@ import { useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
-  fetchManifest,
   getProvider,
   restartAgent,
   startAgent,
@@ -47,17 +46,13 @@ function AgentSettingsContent() {
   const stopped = agent?.status === "stopped";
   const restart = useAwaitedRoundTrip(agent?.status !== "alive");
   const backup = useAwaitedRoundTrip(agent?.operation === "backing_up");
-  const provider = useQuery({
+  const providerResource = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
   });
-  const manifest = useQuery({
-    queryKey: ["manifest"],
-    queryFn: () => fetchManifest(api),
-  });
   const providerIdentity = resolveProviderIdentity(
-    provider.data ?? null,
-    manifest.data,
+    providerResource.data?.provider ?? null,
+    providerResource.data?.catalog,
   );
   const action = useMutation({
     mutationFn: async (

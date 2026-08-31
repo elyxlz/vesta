@@ -8,6 +8,7 @@ import {
 import type { Scenario } from "../harness/scenario-state";
 import {
   agentDelta,
+  agentNode,
   aliveAgentNode,
   startingAgent,
 } from "../harness/sync-fixtures";
@@ -42,7 +43,11 @@ async function crossProvider(page: Page): Promise<void> {
   // Z.AI shows its fixed model catalog in onboarding; take the default.
   await page.getByRole("button", { name: "continue" }).click();
 }
-async function toCreating(page: Page): Promise<void> {
+async function startCreating(page: Page): Promise<void> {
+  await fillName(page, AGENT);
+  await submitName(page);
+}
+async function toApplying(page: Page): Promise<void> {
   await fillName(page, AGENT);
   await submitName(page);
   await crossProvider(page);
@@ -108,7 +113,7 @@ export const ONBOARDING: Record<string, Scenario> = {
   },
   "name-rejected": {
     state: { routes: [createFailure(409, "name already taken")] },
-    drive: toCreating,
+    drive: startCreating,
     settle: async (page) => {
       await expect(page.getByText("name already taken")).toBeVisible();
       await expect(page.getByPlaceholder("name your agent")).toBeVisible();
@@ -164,7 +169,12 @@ export const ONBOARDING: Record<string, Scenario> = {
   },
   "provider-model-loading": {
     state: {
-      routes: [{ path: "/providers/openrouter/models/top", hang: true }],
+      routes: [
+        {
+          path: `/agents/${AGENT}/providers/openrouter/models/top`,
+          hang: true,
+        },
+      ],
     },
     drive: (page) =>
       toKeyedModel(page, "OpenRouter", "sk-or-v1-...", "sk-or-v1-visual"),
@@ -257,8 +267,15 @@ export const ONBOARDING: Record<string, Scenario> = {
   "creating-pulling": {
     state: {
       sync: { deltas: [agentDelta(AGENT, startingAgent("pulling"))] },
+      routes: [
+        {
+          path: `/agents/${AGENT}`,
+          method: "GET",
+          json: { status: "starting", booting: false },
+        },
+      ],
     },
-    drive: toCreating,
+    drive: startCreating,
     settle: async (page) => {
       await expect(
         page.getByText("downloading the agent image..."),
@@ -268,15 +285,22 @@ export const ONBOARDING: Record<string, Scenario> = {
   "creating-starting": {
     state: {
       sync: { deltas: [agentDelta(AGENT, startingAgent("starting"))] },
+      routes: [
+        {
+          path: `/agents/${AGENT}`,
+          method: "GET",
+          json: { status: "starting", booting: false },
+        },
+      ],
     },
-    drive: toCreating,
+    drive: startCreating,
     settle: async (page) => {
       await expect(page.getByText("starting up...")).toBeVisible();
     },
   },
   "creating-failed": {
     state: { routes: [createFailure(500, "gateway ran out of disk")] },
-    drive: toCreating,
+    drive: startCreating,
     settle: async (page) => {
       await expect(page.getByText("gateway ran out of disk")).toBeVisible();
       await expect(
@@ -284,13 +308,44 @@ export const ONBOARDING: Record<string, Scenario> = {
       ).toBeVisible();
     },
   },
+  "applying-booting": {
+    state: {
+      sync: {
+        agents: {
+          [AGENT]: agentNode("alive", { booting: true }),
+        },
+      },
+      routes: [
+        {
+          path: `/agents/${AGENT}`,
+          method: "GET",
+          jsonSequence: [
+            { status: "unprovisioned", booting: false },
+            { status: "alive", booting: true },
+          ],
+        },
+      ],
+    },
+    drive: toApplying,
+    settle: async (page) => {
+      await expect(page.getByText("waking up...")).toBeVisible();
+      await expect(page.getByText(`${AGENT} is ready`)).toBeHidden();
+    },
+  },
   done: {
     state: {
       routes: [
-        { path: `/agents/${AGENT}`, method: "GET", json: { status: "alive" } },
+        {
+          path: `/agents/${AGENT}`,
+          method: "GET",
+          jsonSequence: [
+            { status: "unprovisioned", booting: false },
+            { status: "alive", booting: false },
+          ],
+        },
       ],
     },
-    drive: toCreating,
+    drive: toApplying,
     settle: async (page) => {
       await expect(page.getByText(`${AGENT} is ready`)).toBeVisible();
       await expect(page.getByRole("button", { name: "say hi" })).toBeVisible();

@@ -1,11 +1,11 @@
-import type { ContextPreset, ProviderContext } from "@/api/manifest";
+import type { ContextPreset, ProviderContext } from "@/api/catalogs";
 
 // The Claude plan tier drives which context windows the picker offers: the 1M-context beta is a
 // Max-only entitlement, so a Pro/Free agent that selects a >200K window would send an unentitled
 // beta header and fail on its first turn. We gate the presets and default off the plan instead.
 
 // The plan tier from a raw `.credentials.json` OAuth blob, or null when absent/unparseable. During
-// onboarding the blob is only ever client-side (standalone OAuth, not yet bound to an agent), so the
+// onboarding the blob is only ever client-side (agent-scoped OAuth, not yet installed), so the
 // wizard reads the plan straight from it; the settings screen gets the plan from GET /provider.
 export function planFromCredentials(credentials: string): string | null {
   try {

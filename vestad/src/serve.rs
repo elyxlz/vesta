@@ -41,7 +41,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services", "devices",
+    "services", "devices", "providers", "personalities",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 
@@ -2607,12 +2607,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/health", get(health))
         .route("/info", get(info))
         .route("/auth/session", post(auth::create_session_handler))
-        .route("/auth/refresh", post(auth::refresh_session_handler))
-        // Reference data: read-only and non-sensitive (static per version, already shown in the
-        // public onboarding UI). Unauthenticated so every frontend reads it the same way — the
-        // app, the CLI, and the onboard skill (just another frontend hitting its own box's vestad
-        // over the loopback), none of which then need to keep a hardcoded copy.
-        .route("/manifest", get(crate::manifest::manifest_handler));
+        .route("/auth/refresh", post(auth::refresh_session_handler));
 
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
     // request so a stalled docker/restic call cannot hold a connection open indefinitely.
@@ -2624,34 +2619,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/auth/exchange", post(auth::exchange_session_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/info", get(gateway_info_handler))
-        .route(
-            "/providers/claude/oauth/start",
-            post(crate::providers::claude::oauth_start_handler),
-        )
-        .route(
-            "/providers/claude/oauth/complete",
-            post(crate::providers::claude::oauth_complete_handler),
-        )
-        .route(
-            "/providers/openai/oauth/start",
-            post(crate::providers::openai::oauth_start_handler),
-        )
-        .route(
-            "/providers/openai/oauth/complete",
-            post(crate::providers::openai::oauth_complete_handler),
-        )
-        .route(
-            "/providers/claude/models",
-            post(crate::providers::claude::list_models_handler),
-        )
-        .route(
-            "/providers/openrouter/models/top",
-            get(crate::providers::openrouter::list_top_models_handler),
-        )
-        .route(
-            "/providers/openrouter/validate-key",
-            post(crate::providers::openrouter::validate_key_handler),
-        )
         .route("/agents", get(list_agents_handler))
         .route("/agents/start", post(start_all_handler))
         .route(
@@ -2673,6 +2640,14 @@ pub fn build_router(state: SharedState) -> Router {
                 .delete(clear_provider_handler),
         )
         .route("/agents/{name}/provider/models", get(provider_models_handler))
+        .route(
+            "/agents/{name}/providers/{*path}",
+            any(agent_proxy::provider_setup_proxy_handler),
+        )
+        .route(
+            "/agents/{name}/personalities",
+            get(agent_proxy::personalities_proxy_handler),
+        )
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route(
@@ -3752,7 +3727,6 @@ mod tests {
 
     use super::{ServiceEntry, TreeEntry};
     use crate::docker::{AgentStatus, ListEntry, StartAllResult, StatusJson};
-    use crate::providers::claude::OAuthStartResponse;
     use crate::types::{BackupInfo, BackupType};
     use std::collections::HashMap;
 
@@ -3820,16 +3794,11 @@ mod tests {
         let agent_status_json = serde_json::to_value(StatusJson {
             name: "sample-agent".into(),
             status: AgentStatus::Alive,
+            booting: false,
             id: Some("c0ffee".into()),
             ws_port: 4200,
         })
         .expect("serialize StatusJson");
-
-        let auth_start = serde_json::to_value(OAuthStartResponse {
-            auth_url: "https://claude.ai/oauth/authorize?code=true".into(),
-            session_id: "0123456789abcdef".into(),
-        })
-        .expect("serialize OAuthStartResponse");
 
         // The POST /agents/start-all response body.
         let start_all = serde_json::json!({
@@ -3863,7 +3832,6 @@ mod tests {
             "agents": agents_json,
             "agent_status_json": agent_status_json,
             "backups": backups,
-            "auth_start": auth_start,
             "start_all": start_all,
             "tree_entry": tree_entry,
             "version": version,

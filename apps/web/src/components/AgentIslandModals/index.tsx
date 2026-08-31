@@ -65,6 +65,7 @@ export function AgentIslandModals() {
           ) : (
             <div className="flex min-w-0 flex-col items-center gap-3 py-2">
               <ProviderPicker
+                agentName={name}
                 className="w-full px-0"
                 onDone={(result) => {
                   const submit = async () => {

@@ -3,7 +3,7 @@ import { agentStatusKind, resolveProviderIdentity } from "@vesta/core";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
-import { fetchManifest, getProvider, renameAgent } from "@/api/endpoints";
+import { getProvider, renameAgent } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   agentRenameError,
@@ -54,17 +54,13 @@ export function GeneralSection() {
     setRequestError(null);
     rename.mutate();
   };
-  const provider = useQuery({
+  const providerResource = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
   });
-  const manifest = useQuery({
-    queryKey: ["manifest"],
-    queryFn: () => fetchManifest(api),
-  });
   const providerIdentity = resolveProviderIdentity(
-    provider.data ?? null,
-    manifest.data,
+    providerResource.data?.provider ?? null,
+    providerResource.data?.catalog,
   );
   return (
     <>

@@ -1,10 +1,14 @@
 import { expect, type Page } from "@playwright/test";
-import type { AgentNode, NotificationEvent } from "@vesta/core";
+import type {
+  AgentNode,
+  NotificationEvent,
+  ProviderCatalog,
+} from "@vesta/core";
 import { chatRoutes } from "../harness/chat-fixtures";
 import {
   AGENT,
   CLAUDE_MODELS,
-  MANIFEST,
+  PROVIDER_CATALOG,
   providerRoute,
   type ProviderInfoFixture,
   type RouteFixture,
@@ -18,8 +22,8 @@ import { agentNode } from "../harness/sync-fixtures";
 
 const SETTINGS_ROUTE = `/agent/${AGENT}/settings`;
 
-// Small DTOs duplicated on this side of the seam, like http-fixtures does for
-// the manifest: the src api types live in the app tsconfig project.
+// Small DTOs duplicated on this side of the seam. The src api types live in the
+// app tsconfig project.
 interface Usage {
   meters: {
     label: string;
@@ -115,7 +119,7 @@ function isoFromNow(minutes: number): string {
   return new Date(FIXED_TIME.getTime() + minutes * 60_000).toISOString();
 }
 
-// The Claude context policy the real manifest ships (three presets, two of
+// The Claude context policy the real provider catalog ships (three presets, two of
 // them Max-only), so the context dialog shows a full preset list.
 const CLAUDE_CONTEXT = {
   default: 1_000_000,
@@ -132,11 +136,16 @@ const CLAUDE_CONTEXT = {
   ],
 };
 
-const SETTINGS_MANIFEST = {
-  ...MANIFEST,
+const CLAUDE_CATALOG_ENTRY = PROVIDER_CATALOG.providers.claude;
+if (CLAUDE_CATALOG_ENTRY === undefined) {
+  throw new Error("the visual provider fixture must include Claude");
+}
+
+const SETTINGS_PROVIDER_CATALOG: ProviderCatalog = {
+  ...PROVIDER_CATALOG,
   providers: {
-    ...MANIFEST.providers,
-    claude: { ...MANIFEST.providers.claude, context: CLAUDE_CONTEXT },
+    ...PROVIDER_CATALOG.providers,
+    claude: { ...CLAUDE_CATALOG_ENTRY, context: CLAUDE_CONTEXT },
   },
 };
 
@@ -453,8 +462,7 @@ const MEMORY_FILE = {
 // snapshot history, both voice domains configured, notification history and
 // rules, host folders, and the file tree. A scenario overrides what it shows.
 const HAPPY_ROUTES: RouteFixture[] = [
-  { path: "/manifest", json: SETTINGS_MANIFEST },
-  providerRoute(CLAUDE_PROVIDER),
+  providerRoute(CLAUDE_PROVIDER, SETTINGS_PROVIDER_CATALOG),
   agentRoute("/usage", CLAUDE_USAGE),
   agentRoute("/provider/models", CLAUDE_MODELS),
   agentRoute("/settings/backup", BACKUP_SETTINGS),
@@ -610,7 +618,11 @@ export const AGENT_SETTINGS: Record<string, Scenario> = {
     {
       agent: settingsAgent("unprovisioned"),
       routes: [
-        agentRoute("/provider", { model: null, authed: false }),
+        agentRoute("/provider", {
+          model: null,
+          authed: false,
+          catalog: SETTINGS_PROVIDER_CATALOG,
+        }),
         ...UNCONFIGURED_VOICE_ROUTES,
       ],
     },

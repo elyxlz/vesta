@@ -1,5 +1,5 @@
 import { CLAUDE_ALIASES } from "@vesta/core";
-import type { ProviderKind, ProviderManifestEntry } from "@vesta/core";
+import type { ProviderKind, ProviderCatalogEntry } from "@vesta/core";
 
 export interface ModelOption {
   label: string;
@@ -30,7 +30,7 @@ export function resolveProviderKind(
 }
 
 export function sortAdvertisedProviders(
-  providers: Partial<Record<ProviderKind, ProviderManifestEntry>>,
+  providers: Partial<Record<ProviderKind, ProviderCatalogEntry>>,
 ): ProviderKind[] {
   return (Object.keys(providers) as ProviderKind[]).sort(
     (left, right) =>
@@ -45,7 +45,7 @@ function toOption(model: LiveModel): ModelOption {
 
 export function buildModelOptions(
   providerKind: ProviderKind,
-  entry: ProviderManifestEntry | undefined,
+  entry: ProviderCatalogEntry | undefined,
   openRouterModels: readonly LiveModel[] | undefined,
   claudeModels: readonly LiveModel[] | undefined,
 ): ModelOption[] {

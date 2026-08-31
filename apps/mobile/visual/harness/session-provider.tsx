@@ -9,8 +9,8 @@ import type {
   FileReadResponse,
   FileTreeEntry,
   HostMount,
-  Manifest,
   NotificationInterruptRule,
+  ProviderCatalog,
   Usage,
   VoiceStatus,
 } from "../../src/api/types";
@@ -122,10 +122,8 @@ const fileTree: FileTreeEntry[] = [
     mode: 0o644,
   },
 ];
-const manifest: Manifest = {
+const providerCatalog: ProviderCatalog = {
   default_provider: "claude",
-  default_personality: "thoughtful",
-  personalities: [],
   providers: {
     claude: {
       display: "Claude",
@@ -357,19 +355,18 @@ function isNova(path: string): boolean {
 }
 
 function fixtureFor(path: string): unknown {
-  if (path === "/manifest") return manifest;
   // A started update keeps the sheet's spinner up, which is the state the
   // gateway-update-in-progress scenario captures.
   if (path === "/gateway/update") return { started: true };
-  if (path === "/providers/claude/oauth/start") return oauthStart;
-  if (path === "/providers/openai/oauth/start") return openAIOAuthStart;
-  if (path === "/providers/claude/oauth/complete") {
+  if (path.endsWith("/providers/claude/oauth/start")) return oauthStart;
+  if (path.endsWith("/providers/openai/oauth/start")) return openAIOAuthStart;
+  if (path.endsWith("/providers/claude/oauth/complete")) {
     return { credentials: "visual-claude-credentials" };
   }
-  if (path === "/providers/openai/oauth/complete") {
+  if (path.endsWith("/providers/openai/oauth/complete")) {
     return { credentials: "visual-openai-credentials" };
   }
-  if (path.startsWith("/providers/openrouter/models/top")) {
+  if (path.endsWith("/providers/openrouter/models/top")) {
     return [
       {
         slug: "anthropic/claude-sonnet-4-5",
@@ -392,7 +389,9 @@ function fixtureFor(path: string): unknown {
   if (apiFails && path.startsWith("/agents/")) {
     throw new Error("The gateway did not answer.");
   }
-  if (path.endsWith("/provider")) return provider;
+  if (path.endsWith("/provider")) {
+    return { ...provider, catalog: providerCatalog };
+  }
   if (path.endsWith("/usage")) {
     if (!provider.authed) return { meters: [], credits: null, account: null };
     return provider.kind === "openrouter" ? openRouterUsage : usage;

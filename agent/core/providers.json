@@ -1,6 +1,5 @@
 {
   "default_provider": "claude",
-  "default_personality": "dry",
   "providers": {
     "claude": {
       "display": "Claude",

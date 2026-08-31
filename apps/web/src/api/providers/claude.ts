@@ -6,31 +6,33 @@ export interface OAuthStartResult {
   session_id: string;
 }
 
-// Standalone OAuth: runs the PKCE dance through vestad without binding to an
-// agent. The caller passes the returned credentials to createAgent (new agent)
-// or setProvider (existing agent).
-export async function startOAuth(): Promise<OAuthStartResult> {
-  return apiJson("/providers/claude/oauth/start", { method: "POST" });
+export async function startOAuth(agentName: string): Promise<OAuthStartResult> {
+  return apiJson(
+    `/agents/${encodeURIComponent(agentName)}/providers/claude/oauth/start`,
+    { method: "POST" },
+  );
 }
 
 export async function completeOAuth(
+  agentName: string,
   sessionId: string,
   code: string,
 ): Promise<string> {
   const resp = await apiJson<{ credentials: string }>(
-    "/providers/claude/oauth/complete",
+    `/agents/${encodeURIComponent(agentName)}/providers/claude/oauth/complete`,
     jsonInit("POST", { session_id: sessionId, code }),
   );
   return resp.credentials;
 }
 
 // The live Claude catalog during onboarding: the browser holds the fresh OAuth blob and
-// vestad calls the Anthropic Models API with it (the agent is not signed in yet).
+// the target agent calls the Anthropic Models API with it before storing anything.
 export async function fetchClaudeModels(
+  agentName: string,
   credentials: string,
 ): Promise<OpenRouterModelOption[]> {
   return apiJson<OpenRouterModelOption[]>(
-    "/providers/claude/models",
+    `/agents/${encodeURIComponent(agentName)}/providers/claude/models`,
     jsonInit("POST", { credentials }),
   );
 }

@@ -171,22 +171,24 @@ fn injected_agent_token(agent_token: Option<&str>, is_registered_service: bool) 
     }
 }
 
-pub async fn agent_proxy_handler(
-    State(state): State<SharedState>,
-    Path((name, path)): Path<(String, String)>,
-    request: Request,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    use axum::extract::FromRequestParts;
+struct RawAgentTarget {
+    cname: String,
+    host: String,
+    port: u16,
+    token: Option<String>,
+    guard: tokio::sync::OwnedRwLockReadGuard<()>,
+}
 
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-
-    let lock = state.agent_lock(&name).await;
-    let guard = lock.read_owned().await;
-
-    let (agent_port, agent_token) =
-        docker::read_agent_port_and_token_async(&name, &state.env_config.agents_dir).await;
-    let agent_port = agent_port.ok_or_else(|| {
+async fn resolve_raw_agent_target(
+    state: &crate::state::AppState,
+    name: &str,
+) -> Result<RawAgentTarget, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(name).map_err(map_docker_err)?;
+    let cname = docker::container_name(name);
+    let guard = state.agent_lock(name).await.read_owned().await;
+    let (port, token) =
+        docker::read_agent_port_and_token_async(name, &state.env_config.agents_dir).await;
+    let port = port.ok_or_else(|| {
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/",
@@ -195,9 +197,9 @@ pub async fn agent_proxy_handler(
     // The agent answers on its own bridge network (see AgentStatusCache::bridge_ip_or_resolve).
     // The happy path is a cache hit; only the miss asks Docker, and only then whether the
     // container itself explains the unresolved address.
-    let Some(target_host) = state
+    let Some(host) = state
         .agent_status_cache
-        .bridge_ip_or_resolve(&state.docker, &cname, &name)
+        .bridge_ip_or_resolve(&state.docker, &cname, name)
         .await
     else {
         return Err(match docker::ensure_running(&state.docker, &cname).await {
@@ -208,6 +210,29 @@ pub async fn agent_proxy_handler(
             ),
         });
     };
+    Ok(RawAgentTarget {
+        cname,
+        host,
+        port,
+        token,
+        guard,
+    })
+}
+
+pub async fn agent_proxy_handler(
+    State(state): State<SharedState>,
+    Path((name, path)): Path<(String, String)>,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    use axum::extract::FromRequestParts;
+
+    let RawAgentTarget {
+        cname,
+        host: target_host,
+        port: agent_port,
+        token: agent_token,
+        guard,
+    } = resolve_raw_agent_target(&state, &name).await?;
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
     let resolved = if first_segment.is_empty() {
@@ -316,6 +341,58 @@ pub async fn agent_proxy_handler(
         )
         .await
     }
+}
+
+async fn forward_raw_agent_http(
+    state: SharedState,
+    name: String,
+    raw_path: String,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let RawAgentTarget {
+        cname,
+        host,
+        port,
+        token,
+        guard,
+    } = resolve_raw_agent_target(&state, &name).await?;
+    let mut target_path = raw_path;
+    if let Some(query) = request.uri().query().and_then(forwarded_query) {
+        target_path.push('?');
+        target_path.push_str(&query);
+    }
+    drop(guard);
+    forward_http_to_container(
+        &state,
+        &cname,
+        UpstreamTarget {
+            host: &host,
+            port,
+            path: &target_path,
+        },
+        request,
+        token.as_deref(),
+        false,
+    )
+    .await
+}
+
+/// Forward provider setup to the named agent without consulting its service registry.
+pub async fn provider_setup_proxy_handler(
+    State(state): State<SharedState>,
+    Path((name, path)): Path<(String, String)>,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    forward_raw_agent_http(state, name, format!("/providers/{path}"), request).await
+}
+
+/// Forward the personality catalog to the named agent.
+pub async fn personalities_proxy_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    forward_raw_agent_http(state, name, "/personalities".to_string(), request).await
 }
 
 /// The upstream address a forward dials: the agent's bridge-network host plus the resolved

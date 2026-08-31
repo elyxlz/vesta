@@ -122,6 +122,12 @@
       "group": "Onboarding"
     },
     {
+      "id": "applying-booting",
+      "title": "Applying, agent booting",
+      "description": "Provider setup is complete, but onboarding stays mounted while the agent finishes booting.",
+      "group": "Onboarding"
+    },
+    {
       "id": "done",
       "title": "Agent ready",
       "description": "Onboarding complete: the new agent is alive and the say-hi action shows.",

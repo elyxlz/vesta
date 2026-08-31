@@ -1,3 +1,4 @@
+import { agentStatusLabel } from "@vesta/core";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Orb } from "@/components/Orb";
 import { useGateway } from "@/providers/GatewayProvider";
@@ -10,11 +11,13 @@ import { buildPhaseMessage } from "@/api/agents";
 // in the shell.
 export function CreatingStep({
   agentName,
+  stage,
   done,
   failed,
   error,
 }: {
   agentName: string;
+  stage: "creating" | "applying";
   done: boolean;
   failed: boolean;
   error?: string | null;
@@ -24,8 +27,20 @@ export function CreatingStep({
   // The build phase rides the replica tree: vestad records it into shared state
   // and the roster carries it, so the status line follows the real create with
   // no separate poll.
-  const phase =
-    agents.find((agent) => agent.name === agentName)?.buildPhase ?? null;
+  const agent = agents.find((candidate) => candidate.name === agentName);
+  const phase = agent?.buildPhase ?? null;
+  const applyingMessage =
+    agent && agent.status !== "unprovisioned"
+      ? agentStatusLabel(
+          agent.status,
+          agent.activityState,
+          agent.operation,
+          agent.booting,
+          agent.rateLimited,
+        )
+      : "applying provider settings...";
+  const progressMessage =
+    stage === "creating" ? buildPhaseMessage(phase) : applyingMessage;
 
   const orbState = failed ? "off" : done ? "alive" : "busy";
 
@@ -40,7 +55,9 @@ export function CreatingStep({
         ) : failed ? (
           <>
             <h2 className="text-base font-semibold leading-tight">
-              couldn&apos;t create {agentName}
+              couldn&apos;t{" "}
+              {stage === "creating" ? "create" : "finish setting up"}{" "}
+              {agentName}
             </h2>
             {error && <p className="text-xs text-destructive">{error}</p>}
           </>
@@ -48,13 +65,13 @@ export function CreatingStep({
           <>
             <AnimatePresence mode="wait">
               <motion.p
-                key={buildPhaseMessage(phase)}
+                key={progressMessage}
                 role="status"
                 aria-live="polite"
                 {...(reduced ? instant : fade)}
                 className="text-xs text-muted-foreground"
               >
-                {buildPhaseMessage(phase)}
+                {progressMessage}
               </motion.p>
             </AnimatePresence>
             <p className="text-xs text-muted-foreground">

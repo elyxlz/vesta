@@ -3,6 +3,7 @@ emoji: 😏
 title: dry
 description: lowercase, minimal, dry humor. the safe default.
 order: 1
+default: true
 sample: "nah. why though"
 ---
 

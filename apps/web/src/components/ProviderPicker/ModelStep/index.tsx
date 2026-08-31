@@ -3,9 +3,7 @@ import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Field, FieldGroup } from "@/components/ui/field";
-import { openrouterProvider } from "@/api";
-
-type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
+import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import { formatTokens } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useScrollFade } from "@/hooks/use-scroll-fade";
@@ -26,6 +24,7 @@ export function ModelStep({
   onSubmit,
   models,
   claudeLiveModels,
+  loadModels,
   submitLabel = "continue",
   logo,
   onBack,
@@ -39,6 +38,7 @@ export function ModelStep({
   /// Claude's two-tier picker: the alias buttons plus this expandable live-slug
   /// list (null while loading). Takes over the render when not undefined.
   claudeLiveModels?: OpenRouterModelOption[] | null;
+  loadModels?: () => Promise<OpenRouterModelOption[]>;
   submitLabel?: string;
   logo?: ReactNode;
   onBack?: () => void;
@@ -65,10 +65,9 @@ export function ModelStep({
   };
 
   useEffect(() => {
-    if (isFixed || isClaude) return;
+    if (isFixed || isClaude || loadModels === undefined) return;
     let cancelled = false;
-    openrouterProvider
-      .fetchTopModels()
+    loadModels()
       .then((items) => {
         if (cancelled) return;
         setTopModels(items);
@@ -85,7 +84,7 @@ export function ModelStep({
     return () => {
       cancelled = true;
     };
-  }, [isFixed, isClaude, onModelChange]);
+  }, [isFixed, isClaude, loadModels, onModelChange]);
 
   const filtered = useMemo(() => {
     if (!topModels) return [];
