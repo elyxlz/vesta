@@ -21,6 +21,7 @@ APP_ID = 2990557
 INSTALLATION_ID = 113559773
 UPSTREAM_REPO = "elyxlz/vesta"
 GITHUB_API = "https://api.github.com"
+PR_PAGE_MAX = 100  # GitHub's per_page ceiling, so one unpaginated list call sees at most this many PRs
 
 # Key lives next to this script
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -163,15 +164,39 @@ def pr_commit_authors(token, number):
     return commits[0]["commit"]["author"]["name"], {c["commit"]["author"]["name"] for c in commits}
 
 
+def window_notes(count, page_size, limit) -> list[str]:
+    """Warnings that keep a windowed read from being read as a repo-wide answer.
+
+    A full window is a lower bound: this reads ONE newest-first page, the repo is shared, and a
+    caller's PRs slide out of the window as other agents file over them, so the same command can
+    answer 2 in the morning and 0 five hours later. `--mine` is the only way to tell whose PR is
+    whose under one bot account, so a silent windowed zero reads as "you have filed nothing".
+    One page is also all a single call fetches, so a `--limit` over the API's 100-per-page
+    ceiling quietly reads 100; that cap is named too, rather than left to look like the ask.
+    """
+    notes = []
+    if limit > PR_PAGE_MAX:
+        notes.append(f"NOTE: --limit {limit} was capped at {PR_PAGE_MAX}, the most one unpaginated page can return.")
+    if page_size > 0 and count >= page_size:
+        notes.append(
+            f"NOTE: the window came back full ({count} of {page_size}), so it is very likely TRUNCATED and PRs of "
+            f"yours can sit just outside it. Treat every count below as a lower bound, and raise --limit before "
+            f"concluding anything from what is missing here."
+        )
+    return notes
+
+
 def list_my_prs(token, agent_name, state, limit):
     """Print the PRs this agent opened, and separately the ones it only pushed commits to."""
     me = commit_author_name(agent_name)
-    query = f"state={quote(state)}&per_page={min(limit, 100)}&sort=created&direction=desc"
+    page_size = min(limit, PR_PAGE_MAX)
+    query = f"state={quote(state)}&per_page={page_size}&sort=created&direction=desc"
     code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?{query}")
     if code != 0:
         print(f"Error: gh api failed: {out}", file=sys.stderr)
         sys.exit(1)
     candidates = json.loads(out)[:limit]
+    saturated = page_size > 0 and len(candidates) >= page_size
     opened, touched, unreadable = [], [], []
     for pr in candidates:
         originator, authors = pr_commit_authors(token, pr["number"])
@@ -183,11 +208,15 @@ def list_my_prs(token, agent_name, state, limit):
             unreadable.append(pr)
 
     print(f"Checked the {len(candidates)} most recent {state} PR(s) as {me}.")
+    for note in window_notes(len(candidates), page_size, limit):
+        print(note)
     print(f"\nOpened by you ({len(opened)}):")
     for pr, _ in opened:
         print(f"  #{pr['number']}  {pr['title'][:72]}\n      {pr['html_url']}")
     if not opened:
-        print("  (none: every PR here was opened by a different agent through the same bot account)")
+        windowed = "  (none in this full window, which is not evidence you have none: raise --limit and look again)"
+        whole = "  (none: every PR here was opened by a different agent through the same bot account)"
+        print(windowed if saturated else whole)
     if touched:
         print(f"\nNot yours, but you have commits on them ({len(touched)}):")
         for pr, originator in touched:
