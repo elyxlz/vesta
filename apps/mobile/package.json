@@ -76,7 +76,7 @@
     "react-native-webview": "13.16.1",
     "react-native-worklets": "0.10.1",
     "tz-lookup": "^6.1.25",
-    "zod": "^4.4.3"
+    "zod": "^4.5.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -85,7 +85,7 @@
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.2",
     "eslint-import-resolver-typescript": "^4.4.5",
-    "globals": "^16.5.0",
+    "globals": "^17.11.0",
     "patch-package": "^8.0.1",
     "typescript": "~6.0.3",
     "vitest": "^4.1.11"
