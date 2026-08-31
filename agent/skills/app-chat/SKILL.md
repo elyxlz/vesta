@@ -69,6 +69,7 @@ app-chat attachments rm <id> [<id>...] # frees the bytes, keeps the chat history
 - `send` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass
 - A numbered or bulleted list is fine to send as one message (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`
 - Send multiple short messages instead of one long one (like texting)
+- Quote `--message` with DOUBLE quotes when the text has an apostrophe (contractions like "don't", "you're"): a single-quoted shell string cannot hold an apostrophe, and the `'\''` escape is easy to get wrong and silently mangles it (e.g. `luna's` reaching the user as `luna\s`). Double quotes pass apostrophes through untouched; only `"`, `$`, `` ` `` and `\` then need escaping
 - Lowercase, no bullets, keep messages tight, texting feel, not document feel
 - Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work
 - The app reconnects its chat socket automatically if the daemon or agent restarts
