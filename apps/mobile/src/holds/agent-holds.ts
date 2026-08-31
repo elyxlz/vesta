@@ -1,6 +1,7 @@
 import {
   createKeyedHoldStore,
   type ChatState,
+  type DraftAttachment,
   type KeyedHoldStore,
 } from "@vesta/core";
 import type { LogLine } from "@/agent/log-list-model";
@@ -19,6 +20,7 @@ export interface ComposerHold {
 export interface AgentHolds {
   chat: KeyedHoldStore<ChatState>;
   composer: KeyedHoldStore<ComposerHold>;
+  attachments: KeyedHoldStore<DraftAttachment[]>;
   page: KeyedHoldStore<AgentPageKey>;
   logs: KeyedHoldStore<LogLine[]>;
 }
@@ -26,6 +28,7 @@ export interface AgentHolds {
 export const agentHolds: AgentHolds = {
   chat: createKeyedHoldStore<ChatState>(),
   composer: createKeyedHoldStore<ComposerHold>(),
+  attachments: createKeyedHoldStore<DraftAttachment[]>(),
   page: createKeyedHoldStore<AgentPageKey>(),
   logs: createKeyedHoldStore<LogLine[]>(),
 };

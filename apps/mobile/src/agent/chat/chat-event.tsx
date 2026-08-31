@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -17,7 +17,7 @@ import * as Clipboard from "expo-clipboard";
 import * as WebBrowser from "expo-web-browser";
 import Svg, { Path } from "react-native-svg";
 import { formatResetTime } from "@vesta/core";
-import type { ChatMessage } from "@vesta/core";
+import type { ChatAttachment, ChatMessage, InputMethod } from "@vesta/core";
 import contentCopyIcon from "../../../assets/menu-icons/content-copy.xml";
 import editIcon from "../../../assets/menu-icons/edit.xml";
 import replyIcon from "../../../assets/menu-icons/reply.xml";
@@ -27,12 +27,21 @@ import { Text } from "@/components/ui/Typography";
 import {
   MessageContextMenu,
   type MessageMenuAction,
+  type MessageMenuHandle,
 } from "@/components/message-context-menu";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { shareVestaMessage } from "@/sharing/share-message";
 import { radii } from "@/theme/layout";
-import { messageActionIds, type MessageActionId } from "@/agent/message-actions";
+import {
+  messageActionIds,
+  type MessageActionId,
+} from "@/agent/message-actions";
+import { useSession } from "@/session/SessionProvider";
 import { chatMarkdownStyleSet } from "@/agent/chat/chat-markdown";
+import {
+  AttachmentContent,
+  type OpenViewerRequest,
+} from "@/agent/chat/attachment-content";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
 import {
   chatDateLabel,
@@ -156,6 +165,7 @@ export const ChatDateHeader = memo(function ChatDateHeader({
 
 export const ChatEvent = memo(function ChatEvent({
   event,
+  agentName,
   startsNewBubbleGroup,
   endsBubbleGroup,
   canSpeak,
@@ -163,17 +173,31 @@ export const ChatEvent = memo(function ChatEvent({
   onEditAndResend,
   onReadAloud,
   onRetry,
+  onOpenAttachment,
 }: {
   event: ChatMessage;
+  agentName: string;
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
   canSpeak: boolean;
   onReply: (text: string, user: boolean) => void;
   onEditAndResend: (text: string) => void;
   onReadAloud: (text: string) => void;
-  onRetry: (intentId: string, text: string) => void;
+  onRetry: (
+    intentId: string,
+    text: string,
+    inputMethod?: InputMethod,
+    attachments?: ChatAttachment[],
+  ) => void;
+  onOpenAttachment: (request: OpenViewerRequest) => void;
 }) {
   const { colors } = usePreferences();
+  const { api } = useSession();
+  // Android's menu wrapper loses the long-press to a pressable attachment block, so blocks get
+  // a handler that reopens the menu; iOS's native interaction needs none.
+  const menuRef = useRef<MessageMenuHandle | null>(null);
+  const openMenuFromBlock =
+    process.env.EXPO_OS === "ios" ? undefined : () => menuRef.current?.show?.();
   // Memoized because toLocaleTimeString builds an Intl formatter per call and
   // rows legitimately re-render (bubble-group flips on each appended message).
   const timestamp = useMemo(
@@ -284,6 +308,10 @@ export const ChatEvent = memo(function ChatEvent({
   }
   if (event.type !== "user" && event.type !== "chat") return null;
   const bubbleColor = user ? colors.accent : colors.card;
+  const attachments = event.attachments ?? [];
+  // With no caption the markdown (and the spacer that reserves the timestamp's room) is absent,
+  // so the timestamp renders as its own right-aligned line under the blocks instead.
+  const hasCaption = event.text.trim().length > 0;
   const bubble = (
     <View
       accessibilityHint="Long press for message actions"
@@ -306,15 +334,41 @@ export const ChatEvent = memo(function ChatEvent({
       {endsBubbleGroup && !USES_NATIVE_BUBBLE_SHAPE ? (
         <BubbleTail user={user} fill={bubbleColor} stroke={colors.border} />
       ) : null}
-      <Markdown
-        markdownit={CHAT_MARKDOWN}
-        onLinkPress={openMarkdownLink}
-        rules={markdownRules}
-        style={user ? markdownStyleSet.user : markdownStyleSet.base}
-      >
-        {event.text}
-      </Markdown>
-      {timestamp ? (
+      {attachments.map((attachment) => (
+        <AttachmentContent
+          key={attachment.id}
+          api={api}
+          agent={agentName}
+          user={user}
+          attachment={attachment}
+          onOpen={onOpenAttachment}
+          onLongPress={openMenuFromBlock}
+        />
+      ))}
+      {hasCaption ? (
+        <Markdown
+          markdownit={CHAT_MARKDOWN}
+          onLinkPress={openMarkdownLink}
+          rules={markdownRules}
+          style={user ? markdownStyleSet.user : markdownStyleSet.base}
+        >
+          {event.text}
+        </Markdown>
+      ) : null}
+      {timestamp && !hasCaption ? (
+        <Text
+          style={[
+            styles.attachmentTimestamp,
+            {
+              color: user ? colors.accentText : colors.tertiaryText,
+              opacity: user ? 0.58 : 1,
+            },
+          ]}
+        >
+          {timestamp}
+        </Text>
+      ) : null}
+      {timestamp && hasCaption ? (
         <Text
           style={[
             styles.bubbleTimestamp,
@@ -340,6 +394,7 @@ export const ChatEvent = memo(function ChatEvent({
     >
       <MessageContextMenu
         actions={actions}
+        menuRef={menuRef}
         bubbleFillColor={bubbleColor}
         bubbleStrokeColor={user ? "transparent" : colors.border}
         bubbleStrokeWidth={user ? 0 : StyleSheet.hairlineWidth}
@@ -361,7 +416,14 @@ export const ChatEvent = memo(function ChatEvent({
           accessibilityLabel="Retry sending message"
           accessibilityRole="button"
           hitSlop={6}
-          onPress={() => onRetry(intentId, messageText)}
+          onPress={() =>
+            onRetry(
+              intentId,
+              messageText,
+              event.type === "user" ? event.input_method : undefined,
+              event.type === "user" ? event.attachments : undefined,
+            )
+          }
           style={styles.sendRetry}
         >
           <Ionicons name="alert-circle" size={13} color={colors.danger} />
@@ -522,6 +584,7 @@ const styles = StyleSheet.create({
     bottom: 10,
     fontSize: 12,
   },
+  attachmentTimestamp: { fontSize: 12, textAlign: "right", paddingTop: 2 },
   finalMarkdownParagraph: { marginBottom: 0 },
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },

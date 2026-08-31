@@ -49,6 +49,34 @@ export const ReplyPreview = memo(function ReplyPreview({
   );
 });
 
+export function AttachButton({
+  disabled,
+  onPress,
+}: {
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const { colors } = usePreferences();
+  return (
+    <Pressable
+      accessibilityLabel="Add attachment"
+      accessibilityRole="button"
+      disabled={disabled}
+      hitSlop={6}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.roundButton,
+        {
+          backgroundColor: colors.input,
+          opacity: disabled ? 0.38 : pressed ? 0.72 : 1,
+        },
+      ]}
+    >
+      <Ionicons name="add" size={20} color={colors.text} />
+    </Pressable>
+  );
+}
+
 type ActionKind = "dictate" | "confirm" | "cancel" | "conversation" | "send";
 
 function RoundAction({

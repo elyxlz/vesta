@@ -2,26 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Crypto from "expo-crypto";
 import {
   PACING,
-  beginSend,
   commitPacedChat,
   createChatSocket,
   foldLiveEvent,
   initialChatState,
-  markSend,
   prependPage,
   seedTail,
-  sendMessage,
   trimTail,
   agentHoldKey,
   typingDelay,
+  type ChatAttachment,
   type ChatMessage,
   type ChatState,
   type Controller,
   type InputMethod,
-  type SendFailure,
   type Tree,
   type VestaEvent,
 } from "@vesta/core";
+import { createChatSender } from "./chat-send-model";
 import { createRnSocket } from "@/controller/rn-socket";
 import {
   useOptionalControllerReplica,
@@ -73,6 +71,9 @@ export function useAgentSocket(
   }, [naturalPacing]);
 
   const connected = useOptionalControllerSyncState(controller) === "open";
+  // The reconnect replay of parked retry-state bubbles, assigned below once the sender exists;
+  // ref-routed so the socket effect never re-runs for it.
+  const repostRef = useRef<() => void>(() => undefined);
 
   // Built per connect, so a reconnect hours later dials with a freshly refreshed access token
   // rather than one captured at mount.
@@ -287,6 +288,9 @@ export function useAgentSocket(
             resetTyping();
             seedRetryDelay = SEED_RETRY_MS;
             runSeed();
+            // Every open, including the first: the hold persists parked retry bubbles across
+            // screen pops and remounts, and the re-post dedups on its original intent id.
+            repostRef.current();
           }
         },
       },
@@ -310,49 +314,50 @@ export function useAgentSocket(
     chatSocketUrl,
   ]);
 
-  // Reflect the POST's settled disposition into the bubble. A null outcome means queued-on-tap:
-  // delivery truth is the append echo (which clears send_state), so only a failure marks the bubble.
-  const applyOutcome = useCallback(
-    (intentId: string, outcome: Promise<SendFailure | null>) => {
-      void outcome.then((failure) => {
-        if (failure) commit((current) => markSend(current, intentId, failure));
-      });
-    },
-    [commit],
+  // The send/retry/repost model, React-free in chat-send-model.ts. Rebuilt only when the agent or
+  // controller epoch changes; the ref-routed repost keeps the socket effect from re-running for it.
+  const sender = useMemo(
+    () =>
+      name && controller
+        ? createChatSender({
+            http: controller.http,
+            agent: name,
+            commit,
+            current: () => stateRef.current,
+            makeId: () => Crypto.randomUUID(),
+          })
+        : null,
+    [name, controller, commit],
   );
 
   const send = useCallback(
-    (text: string, inputMethod: InputMethod = "typed"): boolean => {
-      if (!name || !controller) return false;
-      const { id, outcome } = sendMessage(
-        controller.http,
-        name,
-        { text, input_method: inputMethod },
-        () => Crypto.randomUUID(),
-      );
-      commit((current) => beginSend(current, text, inputMethod, id));
-      applyOutcome(id, outcome);
+    (
+      text: string,
+      inputMethod: InputMethod = "typed",
+      attachments?: ChatAttachment[],
+    ): boolean => {
+      if (!sender) return false;
+      sender.send(text, inputMethod, attachments);
       return true;
     },
-    [name, controller, commit, applyOutcome],
+    [sender],
   );
 
-  // Re-post a failed/retryable bubble under its ORIGINAL intent id (idempotent): the bubble returns
-  // to "sending" and confirms on the same echo. Text + input method come from the bubble tapped.
   const retry = useCallback(
-    (intentId: string, text: string, inputMethod: InputMethod = "typed") => {
-      if (!name || !controller) return;
-      commit((current) => markSend(current, intentId, "sending"));
-      const { outcome } = sendMessage(
-        controller.http,
-        name,
-        { text, input_method: inputMethod },
-        () => intentId,
-      );
-      applyOutcome(intentId, outcome);
+    (
+      intentId: string,
+      text: string,
+      inputMethod: InputMethod = "typed",
+      attachments?: ChatAttachment[],
+    ) => {
+      sender?.retry(intentId, text, inputMethod, attachments);
     },
-    [name, controller, commit, applyOutcome],
+    [sender],
   );
+
+  useEffect(() => {
+    repostRef.current = () => sender?.repostParked();
+  }, [sender]);
 
   const hasMore = state.cursor !== null;
 

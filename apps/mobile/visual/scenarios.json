@@ -18,7 +18,8 @@
     "maestro/visual/privacy-states.yml",
     "maestro/visual/settings-states.yml",
     "maestro/visual/gateway-update-states.yml",
-    "maestro/visual/live-states.yml"
+    "maestro/visual/live-states.yml",
+    "maestro/visual/attachment-states.yml"
   ],
   "scenarios": [
     {
@@ -775,6 +776,62 @@
       "title": "Chat, draft",
       "description": "A typed draft in the composer.",
       "group": "Chat"
+    },
+    {
+      "id": "agent-chat-attach-sheet",
+      "title": "Attach source menu",
+      "description": "The native attach menu offering the library, the camera, and files.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attach-sheet.png"
+    },
+    {
+      "id": "agent-chat-attachment-chips",
+      "title": "Attachment chips ready",
+      "description": "Two uploaded draft chips above the composer with the totals line, ready to send.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attachment-chips.png"
+    },
+    {
+      "id": "agent-chat-attachment-chips-uploading",
+      "title": "Attachment chip uploading",
+      "description": "A draft chip mid-upload with its progress ring beside an uploaded one.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attachment-chips-uploading.png"
+    },
+    {
+      "id": "agent-chat-attachment-chips-waiting",
+      "title": "Attachment chips degraded",
+      "description": "One chip parked waiting for network and one failed with its retry affordance.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attachment-chips-waiting.png"
+    },
+    {
+      "id": "agent-chat-attachments",
+      "title": "Attachment bubbles",
+      "description": "Image, video, audio, and file attachments rendered in chat bubbles.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attachments.png"
+    },
+    {
+      "id": "agent-chat-attachments-degraded",
+      "title": "Attachment tiles degraded",
+      "description": "A removed attachment's terminal tile and a broken one's retry tile.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attachments-degraded.png"
+    },
+    {
+      "id": "agent-chat-attachment-viewer",
+      "title": "Attachment viewer",
+      "description": "The fullscreen viewer with a fitted image, caption, share, and close.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attachment-viewer.png"
+    },
+    {
+      "id": "agent-chat-attachment-viewer-zoomed",
+      "title": "Attachment viewer zoomed",
+      "description": "The viewer after a double-tap, zoomed to 2x around the tap point.",
+      "group": "Chat",
+      "screenshot": "agent-chat-attachment-viewer-zoomed.png"
     },
     {
       "id": "connect-actions-no-recent",
