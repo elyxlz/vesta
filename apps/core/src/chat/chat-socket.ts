@@ -23,6 +23,11 @@ export interface ChatSocketCallbacks {
 }
 
 export interface ChatSocket {
+  // Reports whether the user is talking into a live voice conversation; the daemon holds the
+  // agent's replies while it is true. The latest value is cached and a true is replayed on
+  // reconnect open. With no open socket nothing is sent, which is the right answer: the daemon
+  // ties the flag to the connection that set it and clears it when that connection drops.
+  reportSpeaking: (speaking: boolean) => void
   close: () => void
 }
 
@@ -33,9 +38,13 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
   const base = deps.baseDelayMs ?? 1000
   const max = deps.maxDelayMs ?? 30000
   let socket: SocketLike | null = null
+  let open = false
   let timer: number | null = null
   let delay = base
   let terminal = false
+  let speaking = false
+
+  const speakingFrame = (): string => JSON.stringify({ type: "speaking", active: speaking })
   // True once close() has retired this socket for good. Read through a call because a connect in
   // flight has to re-ask after awaiting its URL.
   const retired = (): boolean => terminal
@@ -80,8 +89,11 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     socket = current
     current.onopen = () => {
       if (socket !== current) return
+      open = true
       delay = base
       callbacks.onStateChange("open")
+      // A turn that outlived a reconnect is replayed, so the daemon's fresh connection holds it.
+      if (speaking) current.send(speakingFrame())
     }
     current.onmessage = (data) => {
       if (socket === current) handleMessage(data)
@@ -89,6 +101,7 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     current.onclose = () => {
       if (socket !== current) return
       socket = null
+      open = false
       if (!terminal) scheduleReconnect()
     }
   }
@@ -96,6 +109,11 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
   void connect()
 
   return {
+    reportSpeaking: (value) => {
+      if (speaking === value) return
+      speaking = value
+      if (socket && open) socket.send(speakingFrame())
+    },
     close: () => {
       terminal = true
       if (timer !== null) {

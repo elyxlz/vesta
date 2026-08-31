@@ -2,18 +2,22 @@ import { Maximize2, PanelRightClose, Volume2, VolumeX } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { recedeTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
 import { useVoice } from "@/stores/use-voice";
 
 interface ChatHeaderActionsProps {
   fullscreen?: boolean;
+  // Recede in perspective with the chat while a conversation runs.
+  receded?: boolean;
   onCollapse?: () => void;
   agentName: string;
 }
 
 export function ChatHeaderActions({
   fullscreen,
+  receded,
   onCollapse,
   agentName,
 }: ChatHeaderActionsProps) {
@@ -26,7 +30,11 @@ export function ChatHeaderActions({
   // The fullscreen chat sits under the absolute navbar, so the actions start below it.
   return (
     <div
-      className="absolute right-3 z-10"
+      className={cn(
+        "absolute right-3 z-10",
+        recedeTransition,
+        receded ? "duration-500 -translate-y-16" : "duration-300",
+      )}
       style={{ top: fullscreen ? navbarHeight + 12 : 12 }}
     >
       <ButtonGroup>

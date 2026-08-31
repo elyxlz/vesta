@@ -9,9 +9,9 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
 import type { ChatMessage } from "@/lib/types";
+import { recedeTransition, stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
-import { stepTransition } from "@/lib/motion";
 import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
@@ -21,6 +21,7 @@ import { useChatScroll } from "./use-chat-scroll";
 
 export interface ChatScrollHandle {
   scrollToBottom: () => void;
+  pinToLatest: () => void;
 }
 
 interface ChatMessageAreaProps {
@@ -37,6 +38,9 @@ interface ChatMessageAreaProps {
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
+  // A running conversation owns the viewport: the list is pinned to the latest message,
+  // scrolling is disabled outright, and the whole list recedes into depth behind the scrim.
+  scrollLocked: boolean;
   onRetry?: RetryHandler;
   onOpenAttachment?: (request: OpenViewerRequest) => void;
   // Space reserved at the end of the list so the last message clears the floating composer.
@@ -109,13 +113,32 @@ function ChatSkeleton({ bottomPad }: { bottomPad: number }) {
 // old stacked card+list pair: near-invisible within the navbar's height, then a long dissolve
 // (3.5x/1.75x the navbar) so bubbles evaporate before reaching it. The bottom stop fades behind
 // the composer.
-function scrollerMask(
-  fullscreen: boolean,
-  isMobile: boolean,
-  navbarHeight: number,
-  bottomInset: number,
-  edges: ScrollEdges,
-): string {
+// The locked conversation scroller is bottom-anchored and clipped, so the latest message
+// cannot move when bubbles rewrap; unlocked it scrolls normally.
+function scrollerClass(scrollLocked: boolean): string {
+  return scrollLocked
+    ? "flex h-full flex-col justify-end overflow-y-hidden overflow-x-hidden"
+    : "h-full overflow-y-auto overflow-x-hidden";
+}
+
+function scrollerMask({
+  fullscreen,
+  isMobile,
+  navbarHeight,
+  bottomInset,
+  edges,
+  scrollLocked,
+}: {
+  fullscreen: boolean;
+  isMobile: boolean;
+  navbarHeight: number;
+  bottomInset: number;
+  edges: ScrollEdges;
+  scrollLocked: boolean;
+}): string | undefined {
+  // No mask while locked: the conversation's own top fade overlay covers it, and a mask under
+  // an animating transform costs a full-scroller repaint every frame.
+  if (scrollLocked) return undefined;
   const top = !edges.top
     ? "black 0px"
     : fullscreen
@@ -250,6 +273,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
   notAuthenticated,
   isTyping,
   isMobile,
+  scrollLocked,
   onRetry,
   onOpenAttachment,
   bottomInset = 0,
@@ -275,26 +299,51 @@ export const ChatMessageArea = memo(function ChatMessageArea({
   const parentRef = useRef<HTMLDivElement>(null);
   const scrollFade = useScrollFade<HTMLDivElement>({ ref: parentRef });
 
-  const { handleScroll, scrollToBottom, waitingForOlder } = useChatScroll({
-    parentRef,
-    count,
-    firstKey: decorated[0]?.key ?? null,
-    bottomInset,
-    bottomOverhang,
-    hasMore,
-    loadingMore,
-    loadMore,
-    onAtBottomChange,
-  });
+  const { handleScroll, scrollToBottom, pinToLatest, waitingForOlder } =
+    useChatScroll({
+      parentRef,
+      count,
+      firstKey: decorated[0]?.key ?? null,
+      bottomInset,
+      bottomOverhang,
+      hasMore,
+      loadingMore,
+      loadMore,
+      onAtBottomChange,
+    });
 
   const prevLastIndex = useAppendBoundary(decorated);
 
-  useImperativeHandle(scrollRef, () => ({ scrollToBottom }), [scrollToBottom]);
+  useImperativeHandle(scrollRef, () => ({ scrollToBottom, pinToLatest }), [
+    scrollToBottom,
+    pinToLatest,
+  ]);
 
   const topPad = fullscreen ? navbarHeight + 16 : 32;
+  const mask = scrollerMask({
+    fullscreen: Boolean(fullscreen),
+    isMobile,
+    navbarHeight,
+    bottomInset,
+    edges: scrollFade.edges,
+    scrollLocked,
+  });
 
   return (
-    <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+    <CardContent
+      className={cn(
+        "flex-1 min-h-0 overflow-hidden p-0 relative",
+        // Pushed back in space while a conversation runs: perspective tilt + shrink, the
+        // sheet-behind look. The ease matches the composer morph's settle.
+        // will-change keeps this on its own compositor layer, so the recede is a GPU
+        // transform rather than a per-frame repaint of the whole message list.
+        "origin-top",
+        recedeTransition,
+        scrollLocked
+          ? "duration-500 [transform:perspective(1000px)_rotateX(7deg)_scale(0.94)]"
+          : "duration-300",
+      )}
+    >
       {/* persistent live region so screen readers hear agent replies as they arrive */}
       <span className="sr-only" aria-live="polite" aria-atomic="true">
         {lastAgentText}
@@ -330,7 +379,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
         ref={parentRef}
         onScroll={handleScroll}
         className={cn(
-          "h-full overflow-y-auto overflow-x-hidden",
+          scrollerClass(scrollLocked),
           // Reserve the scrollbar gutter on both sides so the centered message column
           // shares the same center as the (scrollbar-free) floating composer.
           isDesktop && "[scrollbar-gutter:stable_both-edges]",
@@ -339,18 +388,20 @@ export const ChatMessageArea = memo(function ChatMessageArea({
         // anchoring would compensate the same prepend a second time.
         style={{
           overflowAnchor: "none",
-          maskImage: scrollerMask(
-            Boolean(fullscreen),
-            isMobile,
-            navbarHeight,
-            bottomInset,
-            scrollFade.edges,
-          ),
+          maskImage: mask,
         }}
       >
         <div
           className={cn(isDesktop && CHAT_CONTENT_COLUMN)}
-          style={{ paddingBottom: bottomInset }}
+          // The live composer reservation, published as a variable by the chat so the morph
+          // never re-renders this list; the React value is the pre-paint fallback.
+          style={{
+            paddingBottom: `var(--composer-inset, ${String(bottomInset)}px)`,
+            // During the morph the reservation rides this transform (its own layer, no
+            // repaint) while the padding holds still; they swap in one write at the end.
+            transform: "translateY(var(--composer-shift, 0px))",
+            willChange: "transform",
+          }}
         >
           <div style={{ paddingTop: topPad }}>
             {count > 0 && !hasMore && (

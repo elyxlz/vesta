@@ -1,7 +1,9 @@
 import { useState } from "react";
 import {
   Bell,
+  Cpu,
   FolderClosed,
+  Mic,
   ScrollText,
   Settings2,
   type LucideIcon,
@@ -23,10 +25,17 @@ import { FilesTab } from "./FilesTab";
 import { LogsTab } from "./LogsTab";
 import { ProviderCard } from "./ProviderCard";
 import { ServicesCard } from "./ServicesCard";
-import { SttCard, TtsCard } from "./VoiceSection";
+import {
+  ConversationCard,
+  DictationCard,
+  SttCard,
+  TtsCard,
+} from "./VoiceSection";
 
 const NAV_ITEMS: { value: string; label: string; Icon: LucideIcon }[] = [
   { value: "general", label: "general", Icon: Settings2 },
+  { value: "provider", label: "provider", Icon: Cpu },
+  { value: "voice", label: "voice", Icon: Mic },
   { value: "notifications", label: "notifications", Icon: Bell },
   { value: "files", label: "files", Icon: FolderClosed },
   { value: "logs", label: "logs", Icon: ScrollText },
@@ -58,14 +67,30 @@ export function AgentSettings() {
         className="flex flex-col gap-6 data-[state=inactive]:hidden max-md:pb-28"
       >
         <ActionsCard />
-        <ProviderCard />
         <ChatCard />
         <ServicesCard />
         <BackupsCard />
-        <SttCard />
-        <TtsCard />
         <RenameCard />
         <DeleteCard />
+      </TabsContent>
+
+      <TabsContent
+        value="provider"
+        forceMount={keepAlive("provider")}
+        className="flex flex-col gap-6 data-[state=inactive]:hidden max-md:pb-28"
+      >
+        <ProviderCard />
+      </TabsContent>
+
+      <TabsContent
+        value="voice"
+        forceMount={keepAlive("voice")}
+        className="flex flex-col gap-6 data-[state=inactive]:hidden max-md:pb-28"
+      >
+        <DictationCard />
+        <ConversationCard />
+        <SttCard />
+        <TtsCard />
       </TabsContent>
 
       <TabsContent

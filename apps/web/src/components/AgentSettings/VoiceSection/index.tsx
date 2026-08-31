@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, Volume2, ChevronDown, Play, Square } from "lucide-react";
+import {
+  AudioLines,
+  ChevronDown,
+  Mic,
+  Play,
+  Square,
+  Volume2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -35,6 +42,10 @@ import {
 import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
+import {
+  useVoiceActivation,
+  type VoiceActivationMode,
+} from "@/stores/use-voice-activation";
 
 const DEBOUNCE_MS = 400;
 
@@ -56,6 +67,144 @@ function sttUsageSummary(usageData: SttUsage | null): string {
 }
 
 // --- Exported cards ---
+
+const ACTIVATION_OPTIONS: { value: VoiceActivationMode; label: string }[] = [
+  { value: "toggle", label: "toggle" },
+  { value: "hold", label: "hold" },
+];
+
+// How dictation behaves, apart from which provider transcribes it.
+export function DictationCard() {
+  const { name: agentName } = useSelectedAgent();
+  const { sttStatus, patchStt, refreshVoiceStatus } = useVoice();
+  const activation = useVoiceActivation((s) => s.mode);
+  const setActivation = useVoiceActivation((s) => s.setMode);
+
+  const interruptSetting = sttStatus?.settings?.find(
+    (s) => s.key === "interrupt_tts",
+  );
+  const interruptValue =
+    typeof interruptSetting?.value === "boolean"
+      ? interruptSetting.value
+      : true;
+
+  const setInterrupt = (value: boolean) => {
+    if (!sttStatus?.settings || !agentName) return;
+    patchStt({
+      settings: sttStatus.settings.map((s) =>
+        s.key === "interrupt_tts" ? { ...s, value } : s,
+      ),
+    });
+    setVoiceSetting(agentName, "stt", "interrupt_tts", value).catch(() =>
+      refreshVoiceStatus(),
+    );
+  };
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
+          <Mic className="size-4 text-muted-foreground" />
+          dictation
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Field orientation="vertical" className="gap-3">
+          <Field
+            orientation="horizontal"
+            className="items-center justify-between"
+          >
+            <FieldContent>
+              <FieldLabel>activation</FieldLabel>
+              <FieldDescription>
+                hold the mic to talk, or tap once to start and again to send
+              </FieldDescription>
+            </FieldContent>
+            <div className="inline-flex rounded-md bg-muted p-0.5">
+              {ACTIVATION_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  aria-pressed={activation === opt.value}
+                  className={`rounded-sm px-2.5 py-1 text-sm transition-colors ${
+                    activation === opt.value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setActivation(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          {interruptSetting && (
+            <Field
+              orientation="horizontal"
+              className="items-center justify-between"
+            >
+              <FieldContent>
+                <FieldLabel>interrupt speech on talk</FieldLabel>
+                <FieldDescription>
+                  stop text-to-speech playback when you start speaking
+                </FieldDescription>
+              </FieldContent>
+              <Switch checked={interruptValue} onCheckedChange={setInterrupt} />
+            </Field>
+          )}
+        </Field>
+      </CardContent>
+    </Card>
+  );
+}
+
+// How a conversation behaves; a conversation always speaks back and always barges in.
+export function ConversationCard() {
+  const autoEnd = useVoice((s) => s.conversationAutoEnd);
+  const setAutoEnd = useVoice((s) => s.setConversationAutoEnd);
+  const yieldToUser = useVoice((s) => s.conversationYield);
+  const setYieldToUser = useVoice((s) => s.setConversationYield);
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="group-data-[size=sm]/card:text-base">
+          <AudioLines className="size-4 text-muted-foreground" />
+          conversation
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Field orientation="vertical" className="gap-3">
+          <Field
+            orientation="horizontal"
+            className="items-center justify-between"
+          >
+            <FieldContent>
+              <FieldLabel>never interrupt you</FieldLabel>
+              <FieldDescription>
+                hold replies while you are talking, so Vesta waits for your
+                whole thought
+              </FieldDescription>
+            </FieldContent>
+            <Switch checked={yieldToUser} onCheckedChange={setYieldToUser} />
+          </Field>
+          <Field
+            orientation="horizontal"
+            className="items-center justify-between"
+          >
+            <FieldContent>
+              <FieldLabel>end after silence</FieldLabel>
+              <FieldDescription>
+                end a conversation on its own after fifteen minutes without you
+                speaking
+              </FieldDescription>
+            </FieldContent>
+            <Switch checked={autoEnd} onCheckedChange={setAutoEnd} />
+          </Field>
+        </Field>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function SttCard() {
   const { name: agentName } = useSelectedAgent();
@@ -85,7 +234,7 @@ export function SttCard() {
       provider={sttStatus?.provider ?? null}
       enabled={enabled}
       onToggleEnabled={toggleEnabled}
-      settings={sttStatus?.settings}
+      settings={sttStatus?.settings?.filter((s) => s.key !== "interrupt_tts")}
       domain="stt"
       agentName={agentName}
       onSettingChange={(settings) => patchStt({ settings })}

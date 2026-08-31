@@ -75,6 +75,10 @@ export function useAgentSocket(
   // ref-routed so the socket effect never re-runs for it.
   const repostRef = useRef<() => void>(() => undefined);
 
+  // The live socket's speaking report, held by ref so the callback handed to the voice layer
+  // stays stable across reconnects and agent switches.
+  const reportSpeakingRef = useRef<((speaking: boolean) => void) | null>(null);
+
   // Built per connect, so a reconnect hours later dials with a freshly refreshed access token
   // rather than one captured at mount.
   const chatSocketUrl = useCallback(
@@ -296,9 +300,12 @@ export function useAgentSocket(
       },
     );
 
+    reportSpeakingRef.current = socket.reportSpeaking;
+
     return () => {
       cancelled = true;
       clearSeedRetry();
+      reportSpeakingRef.current = null;
       socket.close();
       resetTyping();
     };
@@ -359,6 +366,10 @@ export function useAgentSocket(
     repostRef.current = () => sender?.repostParked();
   }, [sender]);
 
+  const reportSpeaking = useCallback((speaking: boolean) => {
+    reportSpeakingRef.current?.(speaking);
+  }, []);
+
   const hasMore = state.cursor !== null;
 
   // Skipped while a load is in flight: trimming under an unresolved prepend would leave a hole
@@ -410,6 +421,7 @@ export function useAgentSocket(
       trimHistory,
       send,
       retry,
+      reportSpeaking,
       reseedRevision,
     }),
     [
@@ -427,6 +439,7 @@ export function useAgentSocket(
       trimHistory,
       send,
       retry,
+      reportSpeaking,
       reseedRevision,
     ],
   );

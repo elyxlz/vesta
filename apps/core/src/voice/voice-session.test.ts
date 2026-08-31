@@ -42,6 +42,7 @@ function recorder() {
     modes: [] as (VoiceMode | null)[],
     listening: [] as boolean[],
     speaking: [] as boolean[],
+    userSpeaking: [] as boolean[],
     inactivity: 0,
   }
   const callbacks: VoiceSessionCallbacks = {
@@ -51,6 +52,7 @@ function recorder() {
     onModeChange: (m) => events.modes.push(m),
     onListeningChange: (l) => events.listening.push(l),
     onSpeakingChange: (s) => events.speaking.push(s),
+    onUserSpeakingChange: (s) => events.userSpeaking.push(s),
     onInactivityStop: () => (events.inactivity += 1),
   }
   return { events, callbacks }
@@ -73,6 +75,7 @@ function setup(overrides: Partial<VoiceSessionSettings> = {}) {
   const settings: VoiceSessionSettings = {
     interruptTts: true,
     inactivityMs: 1000,
+    yieldToUser: true,
     ...overrides,
   }
   const session = createVoiceSession(
@@ -185,6 +188,68 @@ describe("the voice session", () => {
     fireTimers()
     expect(session.mode()).toBe("dictation")
     expect(events.inactivity).toBe(0)
+  })
+
+  it("a yielding conversation reports the user's turn and closes it on turn end", async () => {
+    const { socket, events, startAnd } = setup()
+    await startAnd("conversation")
+    socket.emit("StartOfTurn")
+    expect(events.userSpeaking).toEqual([true])
+    socket.emit("EndOfTurn", "hello")
+    expect(events.userSpeaking).toEqual([true, false])
+    expect(events.sends).toEqual(["hello"])
+  })
+
+  it("an empty turn still closes the user's turn and sends nothing", async () => {
+    const { socket, events, startAnd } = setup()
+    await startAnd("conversation")
+    socket.emit("StartOfTurn")
+    socket.emit("EndOfTurn")
+    expect(events.userSpeaking).toEqual([true, false])
+    expect(events.sends).toEqual([])
+  })
+
+  it("holds a reply arriving mid-turn and speaks it once the turn ends", async () => {
+    const { socket, session, startAnd } = setup()
+    await startAnd("conversation")
+    socket.emit("StartOfTurn")
+    session.speak("held reply")
+    expect(session.speaking()).toBe(false)
+    socket.emit("EndOfTurn", "go on")
+    await vi.waitFor(() => {
+      expect(session.speaking()).toBe(true)
+    })
+  })
+
+  it("drops a held reply when the session ends mid-turn", async () => {
+    const { socket, session, events, startAnd } = setup()
+    await startAnd("conversation")
+    socket.emit("StartOfTurn")
+    session.speak("held reply")
+    session.cancel()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(session.speaking()).toBe(false)
+    expect(events.userSpeaking).toEqual([true, false])
+  })
+
+  it("yieldToUser off neither reports nor holds", async () => {
+    const { socket, session, events, startAnd } = setup({ yieldToUser: false })
+    await startAnd("conversation")
+    socket.emit("StartOfTurn")
+    session.speak("straight through")
+    await vi.waitFor(() => {
+      expect(session.speaking()).toBe(true)
+    })
+    expect(events.userSpeaking).toEqual([])
+  })
+
+  it("dictation never reports the user's turn", async () => {
+    const { socket, session, events, startAnd } = setup()
+    await startAnd("dictation")
+    socket.emit("StartOfTurn")
+    socket.emit("EndOfTurn", "noted")
+    session.stop()
+    expect(events.userSpeaking).toEqual([])
   })
 
   it("reports listening once the socket is up", async () => {

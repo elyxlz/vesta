@@ -1,11 +1,7 @@
-import { Hand, Mic, Sun, PanelLeft } from "lucide-react";
+import { Mic, Sun, PanelLeft } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Kbd } from "@/components/ui/kbd";
 import { MenuSection } from "@/components/ui/menu-section";
-import {
-  useVoiceActivation,
-  type VoiceActivationMode,
-} from "@/stores/use-voice-activation";
 
 const isMac =
   typeof navigator !== "undefined" &&
@@ -40,15 +36,7 @@ const keybinds: Keybind[] = [
   },
 ];
 
-const modeOptions: { value: VoiceActivationMode; label: string }[] = [
-  { value: "toggle", label: "toggle" },
-  { value: "hold", label: "hold" },
-];
-
 export function KeybindsCard() {
-  const activation = useVoiceActivation((s) => s.mode);
-  const setActivation = useVoiceActivation((s) => s.setMode);
-
   return (
     <Card size="sm">
       <CardContent>
@@ -64,25 +52,6 @@ export function KeybindsCard() {
                 {bind.keys}
               </div>
             ))}
-            <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-base text-muted-foreground">
-              <Hand className="size-3.5" />
-              <span className="flex-1">activation mode</span>
-              <div className="inline-flex rounded-md bg-muted p-0.5">
-                {modeOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    className={`rounded-sm px-2.5 py-1 text-sm transition-colors ${
-                      activation === opt.value
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                    onClick={() => setActivation(opt.value)}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         </MenuSection>
       </CardContent>

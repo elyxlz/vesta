@@ -65,6 +65,7 @@ app-chat attachments rm <id> [<id>...] # frees the bytes, keeps the chat history
 
 ## Notes
 - Always reply to app messages using `app-chat send`, not through any other channel
+- In a live voice conversation, `send` is refused with `the user is talking right now: ...` while the user is mid-sentence. Do what the error says: drop that reply, wait for the next `source=app-chat` notification (it arrives when they finish), and answer their whole thought in one fresh reply
 - `send` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass
 - A numbered or bulleted list is fine to send as one message (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`
 - Send multiple short messages instead of one long one (like texting)

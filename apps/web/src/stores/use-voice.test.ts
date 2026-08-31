@@ -274,7 +274,7 @@ describe("recording modes", () => {
     useVoice.getState()._setTtsStatus(ENABLED_TTS);
     send = vi.fn<(text: string) => void>();
     clearInput = vi.fn<() => void>();
-    useVoice.getState().registerChat(send, clearInput);
+    useVoice.getState().registerChat(send, clearInput, () => undefined);
   });
 
   it("dials the authed STT socket url on the ws scheme", async () => {
@@ -322,6 +322,14 @@ describe("recording modes", () => {
     expect(send).toHaveBeenLastCalledWith("second", "voice");
     useVoice.getState().stopVoice();
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("an agent switch ends a live session instead of re-routing it", async () => {
+    await startRecording("conversation");
+    expect(useVoice.getState().recordingMode).toBe("conversation");
+    useVoice.getState()._setAgentContext("other-agent", {}, undefined);
+    expect(useVoice.getState().recordingMode).toBeNull();
+    useVoice.getState()._setAgentContext("test-agent", {}, undefined);
   });
 
   it("discarding a dictation sends nothing", async () => {

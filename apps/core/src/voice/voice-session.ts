@@ -21,6 +21,10 @@ export interface VoiceSessionSettings {
   // A conversation with no user turn for this long ends itself. 0 disables. Dictation
   // ignores it, since the user ends dictation by hand.
   inactivityMs: number
+  // A conversation yields the floor to the user: while their turn is live it reports them as
+  // speaking (onUserSpeakingChange, which clients mirror to the agent) and holds replies off
+  // the speaker until the turn ends. Off keeps the duplex free-for-all. Dictation ignores it.
+  yieldToUser: boolean
 }
 
 export interface VoiceSessionDeps {
@@ -43,6 +47,10 @@ export interface VoiceSessionCallbacks {
   onSpeakingChange: (speaking: boolean) => void
   // A conversation ended itself after the inactivity window; the client tells the user.
   onInactivityStop: () => void
+  // The user's live turn in a yielding conversation: true at turn start, false at turn end or
+  // when the session ends however it ends. Clients forward it to the agent's chat channel so
+  // the agent holds its reply while the user is talking. Never fires for dictation.
+  onUserSpeakingChange: (speaking: boolean) => void
 }
 
 export interface VoiceSession {
@@ -68,6 +76,16 @@ export function createVoiceSession(
   let stt: SttSession | null = null
   let mode: VoiceMode | null = null
   let idleTimer: number | null = null
+  // The user's live turn while a conversation yields: replies land in `held` instead of the
+  // speaker, and the change is reported so the client can mirror it to the agent.
+  let userTurn = false
+  let held: string[] = []
+
+  const setUserTurn = (value: boolean): void => {
+    if (userTurn === value) return
+    userTurn = value
+    callbacks.onUserSpeakingChange(value)
+  }
 
   const queue: TtsQueue = createTtsQueue(deps.player, {
     onSpeakingChange: callbacks.onSpeakingChange,
@@ -84,6 +102,9 @@ export function createVoiceSession(
   const clear = (): void => {
     clearIdleTimer()
     stt = null
+    // A held reply belonged to the session that just ended; it is dropped, not spoken late.
+    held = []
+    setUserTurn(false)
     if (mode !== null) {
       mode = null
       callbacks.onModeChange(null)
@@ -128,9 +149,17 @@ export function createVoiceSession(
         onTranscript: callbacks.onTranscript,
         onTurnStart: () => {
           if (conversation || settings().interruptTts) queue.stop()
+          if (conversation && settings().yieldToUser) setUserTurn(true)
         },
         onTurnEnd: (text) => {
           if (!conversation) return
+          // The floor returns before the send goes out, so the agent's speaking gate is open
+          // by the time the message reaches it; replies held during the turn play now.
+          setUserTurn(false)
+          const pending = held
+          held = []
+          for (const reply of pending) queue.speak(reply)
+          if (!text) return
           callbacks.onSend(text)
           armIdleTimer()
         },
@@ -168,12 +197,17 @@ export function createVoiceSession(
     mode: () => mode,
     listening: () => stt?.active() ?? false,
     speak: (text) => {
+      if (userTurn) {
+        held.push(text)
+        return
+      }
       queue.speak(text)
     },
     prefetch: (text) => {
       queue.prefetch(text)
     },
     stopSpeech: () => {
+      held = []
       queue.stop()
     },
     speaking: () => queue.speaking(),

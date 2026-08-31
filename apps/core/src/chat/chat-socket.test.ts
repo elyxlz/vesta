@@ -10,8 +10,9 @@ class FakeSocket implements SocketLike {
   onmessage: ((data: string) => void) | null = null
   onclose: (() => void) | null = null
   closed = false
-  send(): void {
-    // The chat socket is read-only; nothing is ever sent.
+  sent: string[] = []
+  send(data: string): void {
+    this.sent.push(data)
   }
   close(): void {
     this.closed = true
@@ -153,6 +154,45 @@ describe("createChatSocket", () => {
       "reconnecting",
       "connecting",
     ])
+  })
+
+  it("sends a speaking frame while open and dedups repeats", async () => {
+    const h = harness()
+    const socket = await start(h)
+    h.sockets[0]?.onopen?.()
+    socket.reportSpeaking(true)
+    socket.reportSpeaking(true)
+    socket.reportSpeaking(false)
+    expect(h.sockets[0]?.sent).toEqual([
+      JSON.stringify({ type: "speaking", active: true }),
+      JSON.stringify({ type: "speaking", active: false }),
+    ])
+  })
+
+  it("drops a speaking report with no open socket and replays a live turn on reconnect", async () => {
+    const h = harness()
+    const socket = await start(h)
+    h.sockets[0]?.onopen?.()
+    h.sockets[0]?.onclose?.()
+    socket.reportSpeaking(true)
+    expect(h.sockets[0]?.sent).toEqual([])
+    h.timers[0]?.fn()
+    await flush()
+    h.sockets[1]?.onopen?.()
+    expect(h.sockets[1]?.sent).toEqual([JSON.stringify({ type: "speaking", active: true })])
+  })
+
+  it("replays nothing on reconnect once the turn ended", async () => {
+    const h = harness()
+    const socket = await start(h)
+    h.sockets[0]?.onopen?.()
+    socket.reportSpeaking(true)
+    socket.reportSpeaking(false)
+    h.sockets[0]?.onclose?.()
+    h.timers[0]?.fn()
+    await flush()
+    h.sockets[1]?.onopen?.()
+    expect(h.sockets[1]?.sent).toEqual([])
   })
 
   it("schedules a reconnect when the url builder rejects", async () => {

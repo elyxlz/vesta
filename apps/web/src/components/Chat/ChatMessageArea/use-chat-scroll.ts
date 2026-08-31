@@ -155,9 +155,21 @@ export function useChatScroll({
     latchRef.current = startFollow(el);
   }, [parentRef]);
 
+  // Instant, latch-free pin: lands flush and marks pinned, so the resize model's instant
+  // re-pins take over from there. A smooth follow here would be re-aimed on every rewrap
+  // tick of a live width resize and fling the viewport around.
+  const pinToLatest = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    latchRef.current = IDLE_LATCH;
+    setAtBottom(true);
+  }, [parentRef, setAtBottom]);
+
   return {
     handleScroll,
     scrollToBottom,
+    pinToLatest,
     waitingForOlder: loadingMore && nearTop,
   };
 }

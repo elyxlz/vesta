@@ -244,6 +244,26 @@ async def _ingest_attachments(state: DaemonState, attach: list[str]) -> tuple[li
     return metas, None
 
 
+async def _handle_send(state: DaemonState, message: str, attach: list[str]) -> tuple[dict[str, object], str | None]:
+    """One validated send: gate on the user's live turn, ingest attachments, persist + emit.
+    Returns the response envelope (ok or error) and the toast text (None when nothing went out)."""
+    if not message and not attach:
+        return {"error": "empty message"}, None
+    refusal = state.service.refuse_send_while_speaking()
+    if refusal is not None:
+        return {"error": refusal}, None
+    metas, ingest_error = await _ingest_attachments(state, attach)
+    if ingest_error is not None:
+        return {"error": ingest_error}, None
+    event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
+    if metas:
+        event["attachments"] = metas
+    state.service.store.append(event)
+    state.service.emit(event)
+    # An attachment-only reply still deserves its toast: fall back to the filenames.
+    return {"ok": True, "message": message, "id": event["id"]}, message or ", ".join(meta["name"] for meta in metas)
+
+
 async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         data = await asyncio.wait_for(reader.read(65536), timeout=30.0)
@@ -258,21 +278,8 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
             attach = attach_raw if isinstance(attach_raw, list) and all(isinstance(one, str) for one in attach_raw) else None
             if attach is None:
                 response = {"error": "attach must be a list of paths"}
-            elif not message and not attach:
-                response = {"error": "empty message"}
             else:
-                metas, ingest_error = await _ingest_attachments(state, attach)
-                if ingest_error is not None:
-                    response = {"error": ingest_error}
-                else:
-                    event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
-                    if metas:
-                        event["attachments"] = metas
-                    state.service.store.append(event)
-                    state.service.emit(event)
-                    response = {"ok": True, "message": message, "id": event["id"]}
-                    # An attachment-only reply still deserves its toast: fall back to the filenames.
-                    notify_message = message or ", ".join(meta["name"] for meta in metas)
+                response, notify_message = await _handle_send(state, message, attach)
         elif command == "status":
             response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers)}
         else:

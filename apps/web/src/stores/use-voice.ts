@@ -54,6 +54,14 @@ interface VoiceState {
   // A per-device mute of spoken replies. A conversation speaks regardless; this silences the
   // ambient read-aloud of replies outside one.
   muted: boolean;
+  // Microphone mute inside a conversation: silence flows instead of speech, so the session
+  // (and any live turn's endpointing) stays up while nothing the user says gets through.
+  micMuted: boolean;
+  // End a silent conversation on its own after the inactivity window (on by default).
+  conversationAutoEnd: boolean;
+  // A conversation yields the floor: replies are held off the speaker while you talk, and the
+  // agent is told you are speaking so it waits for your whole thought (on by default).
+  conversationYield: boolean;
 
   // Actions
   startVoice: (mode: VoiceMode) => void;
@@ -65,11 +73,15 @@ interface VoiceState {
   speak: (text: string) => void;
   stopSpeech: () => void;
   toggleMuted: () => void;
-  // The chat's send, and its input reset: a voice mode takes the composer over, so typed
-  // text is dropped when one starts.
+  toggleMicMuted: () => void;
+  setConversationAutoEnd: (value: boolean) => void;
+  setConversationYield: (value: boolean) => void;
+  // The chat's send, its input reset (a voice mode takes the composer over, so typed text is
+  // dropped when one starts), and the chat socket's speaking report for a yielding conversation.
   registerChat: (
     send: (text: string, inputMethod?: InputMethod) => void,
     clearInput: () => void,
+    reportSpeaking: (speaking: boolean) => void,
   ) => void;
 
   // Status management
@@ -94,11 +106,15 @@ interface VoiceState {
 let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
   null;
 let clearInputCallback: (() => void) | null = null;
+let reportSpeakingCallback: ((speaking: boolean) => void) | null = null;
 
 const MUTE_STORAGE_KEY = "voice-muted";
-function loadMuted(): boolean {
-  if (typeof localStorage === "undefined") return false;
-  return localStorage.getItem(MUTE_STORAGE_KEY) === "1";
+const AUTO_END_STORAGE_KEY = "voice-conversation-auto-end";
+const YIELD_STORAGE_KEY = "voice-conversation-yield";
+function loadStoredFlag(key: string, fallback: boolean): boolean {
+  if (typeof localStorage === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  return raw === null ? fallback : raw === "1";
 }
 
 function boolSetting(
@@ -134,7 +150,7 @@ export const useVoice = create<VoiceState>((set, get) => {
     {
       buildUrl: () => voiceWsUrl(get().agentName ?? ""),
       createSocket: browserSocket,
-      capture: browserCapture(),
+      capture: browserCapture(() => get().micMuted),
       player: browserPlayer(() => get().agentName),
       setTimer: (fn, ms) => setTimeout(fn, ms),
       clearTimer: (handle) => clearTimeout(handle),
@@ -146,10 +162,13 @@ export const useVoice = create<VoiceState>((set, get) => {
       onModeChange: (mode) =>
         set({
           recordingMode: mode,
-          ...(mode === null ? { listening: false, liveTranscript: "" } : {}),
+          ...(mode === null
+            ? { listening: false, liveTranscript: "", micMuted: false }
+            : {}),
         }),
       onListeningChange: (listening) => set({ listening }),
       onSpeakingChange: (isSpeaking) => set({ isSpeaking }),
+      onUserSpeakingChange: (speaking) => reportSpeakingCallback?.(speaking),
       onInactivityStop: () =>
         useToastStore
           .getState()
@@ -160,7 +179,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     },
     () => ({
       interruptTts: boolSetting(get().sttStatus, "interrupt_tts", true),
-      inactivityMs: CONVERSATION_INACTIVITY_MS,
+      inactivityMs: get().conversationAutoEnd ? CONVERSATION_INACTIVITY_MS : 0,
+      yieldToUser: get().conversationYield,
     }),
   );
 
@@ -176,12 +196,15 @@ export const useVoice = create<VoiceState>((set, get) => {
     voiceConfigured: false,
 
     recordingMode: null,
+    micMuted: false,
+    conversationAutoEnd: loadStoredFlag(AUTO_END_STORAGE_KEY, true),
+    conversationYield: loadStoredFlag(YIELD_STORAGE_KEY, true),
     listening: false,
     liveTranscript: "",
     voiceError: null,
 
     isSpeaking: false,
-    muted: loadMuted(),
+    muted: loadStoredFlag(MUTE_STORAGE_KEY, false),
 
     startVoice: (mode) => {
       if (session.mode() !== null) return;
@@ -235,6 +258,19 @@ export const useVoice = create<VoiceState>((set, get) => {
       session.speak(text);
     },
     stopSpeech: () => session.stopSpeech(),
+    toggleMicMuted: () => {
+      set({ micMuted: !get().micMuted });
+    },
+    setConversationAutoEnd: (value) => {
+      if (typeof localStorage !== "undefined")
+        localStorage.setItem(AUTO_END_STORAGE_KEY, value ? "1" : "0");
+      set({ conversationAutoEnd: value });
+    },
+    setConversationYield: (value) => {
+      if (typeof localStorage !== "undefined")
+        localStorage.setItem(YIELD_STORAGE_KEY, value ? "1" : "0");
+      set({ conversationYield: value });
+    },
     toggleMuted: () => {
       const next = !get().muted;
       if (typeof localStorage !== "undefined")
@@ -243,9 +279,10 @@ export const useVoice = create<VoiceState>((set, get) => {
       set({ muted: next });
     },
 
-    registerChat: (send, clearInput) => {
+    registerChat: (send, clearInput, reportSpeaking) => {
       sendCallback = send;
       clearInputCallback = clearInput;
+      reportSpeakingCallback = reportSpeaking;
     },
 
     patchStt: (patch) => {
@@ -279,6 +316,10 @@ export const useVoice = create<VoiceState>((set, get) => {
     },
 
     _setAgentContext: (name, services, voiceRev) => {
+      // A live session is pinned to the agent it started with; past a switch the module-level
+      // chat callbacks belong to the new agent, so a surviving session would route its sends
+      // and speaking reports to the wrong daemon. The switch ends the session instead.
+      if (name !== get().agentName && session.mode() !== null) session.cancel();
       set({ agentName: name, services, voiceRev });
     },
 

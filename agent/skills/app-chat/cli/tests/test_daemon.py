@@ -214,6 +214,47 @@ def test_send_command_persists_chat_event_and_fans_it_to_subscribers(tmp_path, m
     state.service.store.close()
 
 
+def test_send_is_refused_while_the_user_is_talking(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    state = _daemon_state(tmp_path)
+    speaking_conn: asyncio.Queue[StoredEvent] = asyncio.Queue()
+    state.service.speaking.add(speaking_conn)
+
+    refused = asyncio.run(_socket_command(state, {"command": "send", "message": "mid-turn reply"}))
+
+    assert refused == {"error": "the user is talking right now: drop this reply, wait for their next message, then answer the whole thought"}
+    assert state.service.store.page()[0] == []
+
+    state.service.speaking.discard(speaking_conn)
+    accepted = asyncio.run(_socket_command(state, {"command": "send", "message": "after the turn"}))
+
+    assert accepted == {"ok": True, "message": "after the turn", "id": 1}
+    state.service.store.close()
+
+
+def test_refused_send_rewakes_the_agent_when_the_floor_clears(tmp_path, monkeypatch):
+    # The refusal promises a follow-up notification, and a turn can end without producing one
+    # (an empty transcript), so the floor clearing after a refusal must write it itself.
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    state = _daemon_state(tmp_path)
+    speaking_conn: asyncio.Queue[StoredEvent] = asyncio.Queue()
+    state.service.set_speaking(speaking_conn, True)
+
+    asyncio.run(_socket_command(state, {"command": "send", "message": "mid-turn reply"}))
+    state.service.set_speaking(speaking_conn, False)
+
+    files = list((tmp_path / "notifications").glob("*-app-chat-user_finished_talking.json"))
+    assert len(files) == 1
+    fields = json.loads(files[0].read_text())
+    assert fields["source"] == "app-chat" and fields["type"] == "user_finished_talking" and fields["interrupt"] is True
+
+    # A turn with no refusal clears silently: the marker was consumed by the one nudge above.
+    state.service.set_speaking(speaking_conn, True)
+    state.service.set_speaking(speaking_conn, False)
+    assert len(list((tmp_path / "notifications").glob("*-app-chat-user_finished_talking.json"))) == 1
+    state.service.store.close()
+
+
 def test_send_acks_the_client_before_the_user_notification_finishes(tmp_path, monkeypatch):
     # The user notification can block up to its timeout. The durable ack must reach the client
     # first, so a blocking notification must not stall the send response. A read that waited on
