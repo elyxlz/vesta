@@ -40,8 +40,15 @@ def _build_parser() -> argparse.ArgumentParser:
     send_p.add_argument(
         "--message",
         "-m",
-        default="",
-        help="Message text, or '-' to read the body from stdin (use a <<'MSG' heredoc for anything with apostrophes, quotes or newlines)",
+        action="append",
+        default=None,
+        help="One bubble; repeat -m for a multi-bubble reply, sent in order. '-' (as the only -m) reads one bubble from stdin",
+    )
+    send_p.add_argument(
+        "--gap",
+        type=float,
+        default=None,
+        help="Seconds between bubbles of a multi-bubble reply (default ~2.5s); pass 0 for no beat",
     )
     send_p.add_argument(
         "--attach",

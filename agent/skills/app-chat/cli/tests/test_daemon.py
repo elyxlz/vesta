@@ -222,7 +222,10 @@ def test_send_is_refused_while_the_user_is_talking(tmp_path, monkeypatch):
 
     refused = asyncio.run(_socket_command(state, {"command": "send", "message": "mid-turn reply"}))
 
-    assert refused == {"error": "the user is talking right now: drop this reply, wait for their next message, then answer the whole thought"}
+    assert refused == {
+        "error": "the user is talking right now: drop this reply, wait for their next message, then answer the whole thought",
+        "user_speaking": True,
+    }
     assert state.service.store.page()[0] == []
 
     state.service.speaking.discard(speaking_conn)
@@ -473,7 +476,7 @@ def test_send_attach_only_is_valid_and_notifies_with_the_filename(tmp_path, monk
 def _send_args(tmp_path, **overrides):
     sock = tmp_path / "app-chat.sock"
     sock.touch()
-    defaults = {"message": "", "socket": str(sock), "longform": False, "attach": []}
+    defaults = {"message": None, "socket": str(sock), "longform": False, "attach": [], "gap": None}
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -503,7 +506,7 @@ def test_cmd_send_still_lints_text_when_attaching(tmp_path, monkeypatch, capsys)
     wall = "x" * 300
 
     with pytest.raises(SystemExit):
-        commands.cmd_send(_send_args(tmp_path, message=wall, attach=["/tmp/chart.png"]))
+        commands.cmd_send(_send_args(tmp_path, message=[wall], attach=["/tmp/chart.png"]))
     assert "error" in json.loads(capsys.readouterr().err)
 
 
@@ -512,6 +515,59 @@ def test_cmd_send_requires_text_or_attach(tmp_path, monkeypatch, capsys):
 
     with pytest.raises(SystemExit):
         commands.cmd_send(_send_args(tmp_path))
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_cmd_send_paces_bubbles_in_order_and_honors_the_gap(tmp_path, monkeypatch, capsys):
+    sent: list[str] = []
+
+    async def fake_send(sock_path, message, attach):
+        sent.append(message)
+        return {"ok": True, "message": message, "id": len(sent)}
+
+    monkeypatch.setattr(commands, "_send_via_socket", fake_send)
+    gaps: list[float] = []
+
+    async def fake_sleep(secs):
+        gaps.append(secs)
+
+    monkeypatch.setattr(commands.asyncio, "sleep", fake_sleep)
+
+    commands.cmd_send(_send_args(tmp_path, message=["one", "two", "three"]))
+
+    assert sent == ["one", "two", "three"]
+    # a beat between each bubble, none after the last
+    assert gaps == [commands._DEFAULT_GAP_SECS, commands._DEFAULT_GAP_SECS]
+    out = json.loads(capsys.readouterr().out)
+    assert out["stopped_for_user"] is False
+    assert [bubble["message"] for bubble in out["sent"]] == ["one", "two", "three"]
+
+
+def test_cmd_send_stops_the_waterfall_when_the_user_starts_talking(tmp_path, monkeypatch, capsys):
+    sent: list[str] = []
+
+    async def fake_send(sock_path, message, attach):
+        sent.append(message)
+        if message == "two":
+            return {"error": "the user is talking right now: ...", "user_speaking": True}
+        return {"ok": True, "message": message, "id": len(sent)}
+
+    monkeypatch.setattr(commands, "_send_via_socket", fake_send)
+
+    commands.cmd_send(_send_args(tmp_path, message=["one", "two", "three"], gap=0))
+
+    assert sent == ["one", "two"]  # the refusal on "two" drops "three" before it is attempted
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"ok": True, "sent": [{"id": 1, "message": "one"}], "stopped_for_user": True}
+
+
+def test_cmd_send_pre_lints_every_bubble_and_sends_nothing_on_a_wall(tmp_path, monkeypatch, capsys):
+    sent = _capture_socket_request(monkeypatch)
+    wall = "x" * 300
+
+    with pytest.raises(SystemExit):
+        commands.cmd_send(_send_args(tmp_path, message=["a quick one", wall]))
+    assert sent == []  # a malformed bubble stops the whole reply before anything is sent
     assert "error" in json.loads(capsys.readouterr().err)
 
 

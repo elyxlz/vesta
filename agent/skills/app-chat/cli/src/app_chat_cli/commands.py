@@ -20,30 +20,64 @@ def _fail(payload: dict[str, object]) -> None:
     sys.exit(1)
 
 
+_DEFAULT_GAP_SECS = 2.5
+
+
+def _collect_bubbles(message: list[str] | None) -> list[str]:
+    """The reply's bubbles, in order. A lone `-` reads one bubble from stdin, so a reply with
+    apostrophes, quotes or newlines rides a quoted heredoc. Blank bubbles are dropped so a stray
+    empty -m never sends an empty message."""
+    raw = message or []
+    if raw == ["-"]:
+        raw = [sys.stdin.read().rstrip("\r\n")]
+    return [bubble for bubble in raw if bubble.strip()]
+
+
 def cmd_send(args: argparse.Namespace) -> None:
-    # `-` reads the body from stdin, so a reply with apostrophes, quotes or newlines can be passed
-    # through a quoted heredoc instead of being escaped into an inline argument.
-    message = sys.stdin.read().rstrip("\r\n") if args.message == "-" else args.message
+    bubbles = _collect_bubbles(args.message)
     # Absolute paths cross the socket: the daemon's cwd is wherever `daemon start` ran, never the
     # sender's, so a relative --attach would resolve against the wrong directory.
     attach: list[str] = [str(pl.Path(path).expanduser().resolve()) for path in args.attach or []]
-    if not message and not attach:
+    if not bubbles and not attach:
         _fail({"error": "--message is empty (pass '-' and a <<'MSG' heredoc to read the body from stdin, or --attach a file)"})
 
-    if message and not args.longform:
-        reason = bubble_lint_reason(message)
-        if reason:
-            _fail({"error": reason})
+    if not args.longform:
+        # Lint every bubble before sending any of it, so a malformed bubble never leaves a
+        # half-sent waterfall behind.
+        for bubble in bubbles:
+            reason = bubble_lint_reason(bubble)
+            if reason:
+                _fail({"error": reason})
 
     sock_path = pl.Path(args.socket or (pl.Path.home() / ".app-chat" / "app-chat.sock"))
 
     if not sock_path.exists():
         _fail({"error": f"daemon not running (no socket at {sock_path})"})
 
-    result = asyncio.run(_send_via_socket(sock_path, message, attach))
+    gap = _DEFAULT_GAP_SECS if args.gap is None else args.gap
+    result = asyncio.run(_send_bubbles(sock_path, bubbles, attach, gap))
     if "error" in result:
         _fail(result)
     print(json.dumps(result))
+
+
+async def _send_bubbles(sock_path: pl.Path, bubbles: list[str], attach: list[str], gap: float) -> dict[str, object]:
+    """Send a reply as one paced, interruptible stream: bubbles go out in order with `gap` seconds
+    between them, the attachments ride the last one, and the first refusal while the user is talking
+    stops the rest (the daemon re-wakes the agent once the floor clears)."""
+    outbound = bubbles or [""]  # an attachment-only reply is one empty-text bubble carrying the file
+    sent: list[dict[str, object]] = []
+    for index, bubble in enumerate(outbound):
+        last = index == len(outbound) - 1
+        result = await _send_via_socket(sock_path, bubble, attach if last else [])
+        if "user_speaking" in result:
+            return {"ok": True, "sent": sent, "stopped_for_user": True}
+        if "error" in result:
+            return result
+        sent.append({"id": result["id"], "message": bubble})
+        if not last:
+            await asyncio.sleep(gap)
+    return {"ok": True, "sent": sent, "stopped_for_user": False}
 
 
 async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str]) -> dict[str, object]:
