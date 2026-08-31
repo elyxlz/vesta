@@ -124,6 +124,10 @@ impl Client {
         };
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            // No keep-alive reuse: the harness makes sequential blocking calls, so a pooled
+            // connection the gateway has since closed only surfaces as `io: Peer disconnected`
+            // on the next reuse. A fresh connection per request removes that race.
+            .max_idle_connections_per_host(0)
             .tls_config(tls_config)
             .build()
             .new_agent();
