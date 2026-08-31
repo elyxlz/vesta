@@ -2,6 +2,7 @@ import { Maximize2, PanelRightClose, Volume2, VolumeX } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { recedeTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
 import { useVoice } from "@/stores/use-voice";
@@ -30,7 +31,8 @@ export function ChatHeaderActions({
   return (
     <div
       className={cn(
-        "absolute right-3 z-10 [will-change:transform] transition-transform ease-[cubic-bezier(0.32,0.72,0,1)]",
+        "absolute right-3 z-10",
+        recedeTransition,
         receded ? "duration-500 -translate-y-16" : "duration-300",
       )}
       style={{ top: fullscreen ? navbarHeight + 12 : 12 }}

@@ -246,12 +246,12 @@ async def _ingest_attachments(state: DaemonState, attach: list[str]) -> tuple[li
 
 async def _handle_send(state: DaemonState, message: str, attach: list[str]) -> tuple[dict[str, object], str | None]:
     """One validated send: gate on the user's live turn, ingest attachments, persist + emit.
-    Returns the ack and the toast text (None when nothing went out)."""
+    Returns the response envelope (ok or error) and the toast text (None when nothing went out)."""
     if not message and not attach:
         return {"error": "empty message"}, None
-    if state.service.user_speaking():
-        # A reply now would talk over the user; the error tells the model the next move.
-        return {"error": "the user is talking right now: drop this reply, wait for their next message, then answer the whole thought"}, None
+    refusal = state.service.refuse_send_while_speaking()
+    if refusal is not None:
+        return {"error": refusal}, None
     metas, ingest_error = await _ingest_attachments(state, attach)
     if ingest_error is not None:
         return {"error": ingest_error}, None

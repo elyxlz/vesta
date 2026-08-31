@@ -271,13 +271,13 @@ def test_ws_speaking_frames_flip_the_flag_and_junk_is_ignored(tmp_path):
         ws = await client.ws_connect("/ws")
         await _wait_for(lambda: len(state.subscribers) == 1)
         await ws.send_str(json.dumps({"type": "speaking", "active": True}))
-        await _wait_for(state.user_speaking)
+        await _wait_for(lambda: bool(state.speaking))
         await ws.send_str("not json")
         await ws.send_str(json.dumps({"type": "unknown-frame"}))
         await ws.send_str(json.dumps({"type": "speaking", "active": "yes"}))
-        assert state.user_speaking()
+        assert state.speaking
         await ws.send_str(json.dumps({"type": "speaking", "active": False}))
-        await _wait_for(lambda: not state.user_speaking())
+        await _wait_for(lambda: not state.speaking)
         await ws.close()
 
     asyncio.run(_with_client(state, scenario))
@@ -291,9 +291,26 @@ def test_ws_disconnect_clears_a_live_speaking_flag(tmp_path):
         ws = await client.ws_connect("/ws")
         await _wait_for(lambda: len(state.subscribers) == 1)
         await ws.send_str(json.dumps({"type": "speaking", "active": True}))
-        await _wait_for(state.user_speaking)
+        await _wait_for(lambda: bool(state.speaking))
         await ws.close()
-        await _wait_for(lambda: not state.user_speaking())
+        await _wait_for(lambda: not state.speaking)
+
+    asyncio.run(_with_client(state, scenario))
+    state.store.close()
+
+
+def test_ws_disconnect_after_a_refusal_writes_the_turn_end_notification(tmp_path):
+    state, notif_dir = _service_state(tmp_path)
+
+    async def scenario(client):
+        ws = await client.ws_connect("/ws")
+        await _wait_for(lambda: len(state.subscribers) == 1)
+        await ws.send_str(json.dumps({"type": "speaking", "active": True}))
+        await _wait_for(lambda: bool(state.speaking))
+        assert state.refuse_send_while_speaking() is not None
+        await ws.close()
+        await _wait_for(lambda: not state.speaking)
+        assert len(list(notif_dir.glob("*-app-chat-user_finished_talking.json"))) == 1
 
     asyncio.run(_with_client(state, scenario))
     state.store.close()

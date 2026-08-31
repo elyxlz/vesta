@@ -324,6 +324,14 @@ describe("recording modes", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("an agent switch ends a live session instead of re-routing it", async () => {
+    await startRecording("conversation");
+    expect(useVoice.getState().recordingMode).toBe("conversation");
+    useVoice.getState()._setAgentContext("other-agent", {}, undefined);
+    expect(useVoice.getState().recordingMode).toBeNull();
+    useVoice.getState()._setAgentContext("test-agent", {}, undefined);
+  });
+
   it("discarding a dictation sends nothing", async () => {
     const socket = await startRecording("dictation");
     socket.emit("StartOfTurn", "");

@@ -21,7 +21,10 @@ import {
 import { AnimatePresence, motion as m } from "motion/react";
 import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { Button } from "@/components/ui/button";
-import { ConversationPanel } from "@/components/Chat/ConversationPanel";
+import {
+  ConversationPanel,
+  RECORDING_BUTTON,
+} from "@/components/Chat/ConversationPanel";
 import { cn } from "@/lib/utils";
 import { useVoice, type VoiceMode } from "@/stores/use-voice";
 import {
@@ -123,9 +126,9 @@ interface ChatComposerProps {
   recordingMode: VoiceMode | null;
   listening: boolean;
   liveTranscript: string;
-  // True while the pill is animating between composer and panel: the parent freezes its
-  // measurement-driven layout for the duration so the morph stays compositor-cheap.
-  onMorphingChange?: (morphing: boolean) => void;
+  // The parent freezes its measurement-driven layout when the conversation flips; this settle
+  // report is what releases the freeze once the pill's animation lands.
+  onMorphSettled?: () => void;
   onHeightAnimation?: (animating: boolean) => void;
   startVoice: (mode: VoiceMode) => void;
   stopVoice: () => void;
@@ -148,7 +151,7 @@ export function ChatComposer({
   recordingMode,
   listening,
   liveTranscript,
-  onMorphingChange,
+  onMorphSettled,
   onHeightAnimation,
   startVoice,
   stopVoice,
@@ -206,7 +209,7 @@ export function ChatComposer({
       textareaRef={textareaRef}
       controls={controls}
       attachments={attachments}
-      onMorphingChange={onMorphingChange}
+      onMorphSettled={onMorphSettled}
       onHeightAnimation={onHeightAnimation}
     />
   );
@@ -236,7 +239,7 @@ function FloatingComposer({
   textareaRef,
   controls,
   attachments,
-  onMorphingChange,
+  onMorphSettled,
   onHeightAnimation,
 }: {
   paddingClass: string;
@@ -249,7 +252,7 @@ function FloatingComposer({
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   controls: ComposerControls;
   attachments: AttachmentDrafts;
-  onMorphingChange?: (morphing: boolean) => void;
+  onMorphSettled?: () => void;
   onHeightAnimation?: (animating: boolean) => void;
 }) {
   const { inputDisabled, recordingMode } = controls;
@@ -285,21 +288,6 @@ function FloatingComposer({
   }, [value]);
 
   const inConversation = recordingMode === "conversation";
-  useEffect(() => {
-    if (!inConversation) {
-      setMorphed(false);
-      return;
-    }
-    const id = setTimeout(
-      () => setMorphed(true),
-      CONVERSATION_PANEL_ENTER_DELAY_MS,
-    );
-    return () => clearTimeout(id);
-  }, [inConversation]);
-  // The pill grows first (overflow-hidden clips its contents during the morph), so the panel's
-  // orb and controls animate in only once it has finished growing, when they are no longer
-  // masked by the growing clip window.
-  const [morphed, setMorphed] = useState(false);
   // The box animates number-to-number, but only across the row transition (the wrap point
   // flipping) and the morph: each measurement carries whether the flip caused it, and any
   // other content growth (an extra textarea line, a chips row) applies instantly like a plain
@@ -342,14 +330,14 @@ function FloatingComposer({
               ? ROW_SPRING
               : { duration: 0 }
         }
-        // The morph's start is reported by the parent on the conversation flip itself, so a
-        // typing animation never trips the freeze; completion is safe to report from here (a
-        // settle outside a morph is a no-op). The animation edges gate the parent's inset
-        // tracking, since mid-flight heights must never become the list's reservation.
+        // The morph's start is the parent's own conversation flip, so a typing animation never
+        // trips the freeze; completion is safe to report from here (a settle outside a morph is
+        // a no-op). The animation edges gate the parent's inset tracking, since mid-flight
+        // heights must never become the list's reservation.
         onAnimationStart={() => onHeightAnimation?.(true)}
         onAnimationComplete={() => {
           onHeightAnimation?.(false);
-          onMorphingChange?.(false);
+          onMorphSettled?.();
         }}
         // Contain the box so its animating height reflows only its own subtree, never the
         // chat above it.
@@ -384,7 +372,7 @@ function FloatingComposer({
               transition={{ duration: 0.2, ease: "easeOut" }}
               className="absolute inset-0"
             >
-              <ConversationPanel morphed={morphed} />
+              <ConversationPanel />
             </m.div>
           ) : (
             <m.div
@@ -422,6 +410,7 @@ function FloatingComposer({
                   the text itself never scale-distorts. */}
               <m.div
                 layout="position"
+                layoutDependency={expanded}
                 transition={{ layout: ROW_SPRING }}
                 className={cn("shrink-0", expanded ? "order-2" : "order-1")}
               >
@@ -433,6 +422,7 @@ function FloatingComposer({
 
               <m.div
                 layout="position"
+                layoutDependency={expanded}
                 transition={{ layout: ROW_SPRING }}
                 className={cn(
                   "flex min-w-0 items-center self-stretch",
@@ -457,6 +447,7 @@ function FloatingComposer({
 
               <m.div
                 layout="position"
+                layoutDependency={expanded}
                 transition={{ layout: ROW_SPRING }}
                 className={cn(
                   "flex shrink-0 items-end gap-1 order-3",
@@ -479,13 +470,8 @@ const CONVERSATION_PANEL_HEIGHT = 264;
 // One spring for the pill growing toward wrapped text and the row pieces gliding within it,
 // so the box and its contents arrive together.
 const ROW_SPRING = { type: "spring", stiffness: 520, damping: 40 } as const;
-// The pill grows first (its overflow-hidden clips the contents); the panel's orb and
-// controls animate in this long after a conversation opens, once the growth has cleared them.
-const CONVERSATION_PANEL_ENTER_DELAY_MS = 0;
 
 const ACTION_BUTTON = "size-9 rounded-full [&_svg]:size-4";
-const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";
-
 function VoiceButtons({ controls }: { controls: ComposerControls }) {
   const {
     voiceConfigured,

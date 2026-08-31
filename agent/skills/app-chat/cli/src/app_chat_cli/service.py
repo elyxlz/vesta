@@ -64,9 +64,34 @@ class ServiceState:
         # Keyed by the connection's queue and cleared with it, so a dropped client can never
         # wedge the send gate; no timers, the socket lifecycle owns the entry.
         self.speaking: set[asyncio.Queue[StoredEvent]] = set()
+        # True once a send was refused during the live turn. The refusal tells the model a
+        # notification follows when the user finishes; a turn can end without producing one (an
+        # empty transcript, a dropped connection), so the floor-clear below writes it itself.
+        self.reply_refused = False
 
-    def user_speaking(self) -> bool:
-        return bool(self.speaking)
+    def refuse_send_while_speaking(self) -> str | None:
+        """The send gate, whole: while the user talks a reply is refused with the instruction
+        below and the marker set, and set_speaking repays the drop with the turn-end
+        notification once the floor clears; both halves of that contract live here."""
+        if not self.speaking:
+            return None
+        self.reply_refused = True
+        return "the user is talking right now: drop this reply, wait for their next message, then answer the whole thought"
+
+    def set_speaking(self, queue: asyncio.Queue[StoredEvent], active: bool) -> None:
+        """The one owner of the speaking set: every add and clear (frame or disconnect) routes
+        through here, so the refused-reply re-wake fires exactly when the floor clears."""
+        if active:
+            self.speaking.add(queue)
+            return
+        self.speaking.discard(queue)
+        if self.speaking or not self.reply_refused:
+            return
+        self.reply_refused = False
+        try:
+            _write_turn_end_notification(self)
+        except OSError as exc:
+            logger.error("failed to write app-chat turn-end notification: %s", exc)
 
     def remember(self, intent_id: str) -> None:
         self.seen_intent_ids[intent_id] = None
@@ -97,27 +122,47 @@ def _attachment_line(state: ServiceState, metas: list[attachments.AttachmentMeta
     return "; ".join(parts)
 
 
+def _emit_notification(state: ServiceState, type_: str, fields: dict[str, object]) -> None:
+    """The one writer of the monitor-loop file contract for this service: envelope basics, the
+    time-ns filename, and the atomic tmp+replace, shared by every notification type it emits."""
+    directory = state.notifications_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "timestamp": dt.datetime.now().isoformat(),
+        "source": "app-chat",
+        "type": type_,
+        "interrupt": True,
+        "reply_command": "app-chat send --message -",
+        **fields,
+    }
+    path = directory / f"{time.time_ns()}-app-chat-{type_}.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload))
+    tmp.replace(path)
+
+
 def _write_notification(state: ServiceState, text: str, metas: list[attachments.AttachmentMeta]) -> None:
     """Persist an inbound app message as the source=app-chat notification the monitor loop turns into a
     model turn. The structured reply command and behavioral hint ride along so the model receives the
     producer-owned response guidance. The client-only intent ID stays on the chat event."""
-    directory = state.notifications_dir
-    directory.mkdir(parents=True, exist_ok=True)
     fields: dict[str, object] = {
-        "timestamp": dt.datetime.now().isoformat(),
-        "source": "app-chat",
-        "type": "message",
         "message": text,
-        "interrupt": True,
-        "reply_command": "app-chat send --message -",
         "reply_hint": "think about how you can best show your personality",
     }
     if metas:
         fields["attachments"] = _attachment_line(state, metas)
-    path = directory / f"{time.time_ns()}-app-chat-message.json"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(fields))
-    tmp.replace(path)
+    _emit_notification(state, "message", fields)
+
+
+def _write_turn_end_notification(state: ServiceState) -> None:
+    """The re-wake behind the send gate: a refused reply was dropped by the model on the promise
+    that a notification follows the turn, so the floor clearing delivers one even when the turn
+    itself produced no message."""
+    _emit_notification(
+        state,
+        "user_finished_talking",
+        {"message": "the user finished talking; a reply of yours was refused mid-turn and dropped. Answer their whole thought fresh now"},
+    )
 
 
 def _build_message_event(body: dict[str, object]) -> tuple[StoredEvent, list[str]] | str:
@@ -230,10 +275,7 @@ def _apply_client_frame(state: ServiceState, queue: asyncio.Queue[StoredEvent], 
         return
     if "active" not in frame or not isinstance(frame["active"], bool):
         return
-    if frame["active"]:
-        state.speaking.add(queue)
-    else:
-        state.speaking.discard(queue)
+    state.set_speaking(queue, frame["active"])
 
 
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -267,7 +309,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         except (ConnectionResetError, RuntimeError) as exc:
             logger.debug("chat-socket pump ended on a dead client: %s", exc)
         state.subscribers.discard(queue)
-        state.speaking.discard(queue)
+        state.set_speaking(queue, False)
     return ws
 
 

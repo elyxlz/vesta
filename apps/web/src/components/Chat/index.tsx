@@ -28,6 +28,7 @@ import { AttachmentViewer } from "./AttachmentViewer";
 import type { OpenViewerRequest } from "./ChatBubble/AttachmentContent";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMeasuredSize } from "@/hooks/use-measured-size";
+import { sheetEase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
@@ -54,6 +55,14 @@ const COMPOSER_BASELINE_PX: Record<ComposerVariant, number> = {
   fullscreen: 66,
   mobile: 54,
 };
+
+// The scrim and top fade enter and leave with the conversation, on the shared sheet curve.
+const CONVERSATION_FADE = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0, transition: { duration: 0.27 } },
+  transition: { duration: 0.5, ease: sheetEase },
+} as const;
 
 interface ChatProps {
   onCollapse?: () => void;
@@ -182,7 +191,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // The composer's height animates frame by frame during the conversation morph. Feeding
   // that into React would re-pad, re-mask and re-pin the whole message list every frame, so
   // the measurement is frozen for the morph and synced once when it settles.
-  const [morphing, setMorphing] = useState(false);
   const morphingRef = useRef(false);
   const composerNodeRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -197,7 +205,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     // inset must ignore so the list never shifts under the composer.
     hasDraftRef.current = input.length > 0 || attachments.drafts.length > 0;
     inConversationRef.current = recordingMode === "conversation";
-    morphingRef.current = morphing;
   });
   const composerGap = fullscreen
     ? COMPOSER_GAP_FULLSCREEN_PX
@@ -262,9 +269,12 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     }
   }, [composerGap]);
 
-  useEffect(() => {
-    if (!morphing) resyncInset();
-  }, [morphing, resyncInset]);
+  // The composer's settle callback: the morph flag clears and the rest state lands in one step
+  // (a settle outside a morph just re-syncs, which is a no-op).
+  const onMorphSettled = useCallback(() => {
+    morphingRef.current = false;
+    resyncInset();
+  }, [resyncInset]);
 
   const handleHeightAnimation = useCallback(
     (animating: boolean) => {
@@ -303,7 +313,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     prevConversationRef.current = inConversation;
     frozenInsetRef.current = lastHeightRef.current;
     morphingRef.current = true;
-    setMorphing(true);
   }, [inConversation]);
   // While locked the list is bottom-anchored structurally; on both edges of the lock the
   // real scroller needs to sit at the end (entering: before the anchor kicks in, leaving:
@@ -417,25 +426,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         />
 
         <AnimatePresence>
-          {recordingMode === "conversation" && (
+          {inConversation && (
             <m.button
               type="button"
               aria-label="end conversation"
               onClick={stopVoice}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0, transition: { duration: 0.27 } }}
-              transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
+              {...CONVERSATION_FADE}
               className="absolute inset-0 z-10 cursor-default bg-background/60"
             />
           )}
-          {recordingMode === "conversation" && (
+          {inConversation && (
             <m.div
               aria-hidden
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0, transition: { duration: 0.27 } }}
-              transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
+              {...CONVERSATION_FADE}
               className="pointer-events-none absolute inset-x-0 top-0 z-20 h-24 bg-gradient-to-b from-background to-transparent"
             />
           )}
@@ -486,7 +489,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
               recordingMode={recordingMode}
               listening={listening}
               liveTranscript={liveTranscript}
-              onMorphingChange={setMorphing}
+              onMorphSettled={onMorphSettled}
               onHeightAnimation={handleHeightAnimation}
               startVoice={startVoice}
               stopVoice={stopVoice}

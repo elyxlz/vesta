@@ -54,7 +54,8 @@ interface VoiceState {
   // A per-device mute of spoken replies. A conversation speaks regardless; this silences the
   // ambient read-aloud of replies outside one.
   muted: boolean;
-  // Microphone mute inside a conversation: frames stop flowing, the session stays up.
+  // Microphone mute inside a conversation: silence flows instead of speech, so the session
+  // (and any live turn's endpointing) stays up while nothing the user says gets through.
   micMuted: boolean;
   // End a silent conversation on its own after the inactivity window (on by default).
   conversationAutoEnd: boolean;
@@ -315,6 +316,10 @@ export const useVoice = create<VoiceState>((set, get) => {
     },
 
     _setAgentContext: (name, services, voiceRev) => {
+      // A live session is pinned to the agent it started with; past a switch the module-level
+      // chat callbacks belong to the new agent, so a surviving session would route its sends
+      // and speaking reports to the wrong daemon. The switch ends the session instead.
+      if (name !== get().agentName && session.mode() !== null) session.cancel();
       set({ agentName: name, services, voiceRev });
     },
 

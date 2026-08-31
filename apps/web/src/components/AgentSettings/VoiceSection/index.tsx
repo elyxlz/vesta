@@ -124,6 +124,7 @@ export function DictationCard() {
               {ACTIVATION_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
+                  aria-pressed={activation === opt.value}
                   className={`rounded-sm px-2.5 py-1 text-sm transition-colors ${
                     activation === opt.value
                       ? "bg-background text-foreground shadow-sm"

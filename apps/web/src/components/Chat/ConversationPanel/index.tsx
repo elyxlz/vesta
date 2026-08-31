@@ -3,6 +3,7 @@ import { motion as m } from "motion/react";
 import { Mic, MicOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Orb } from "@/components/Orb";
+import { sheetEase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
@@ -29,7 +30,11 @@ function phaseLabel({
 
 // The live conversation surface the composer morphs into: the agent's real status orb with
 // voice motion overlaid, and one row of controls. Same width as the composer by construction.
-export function ConversationPanel({ morphed }: { morphed: boolean }) {
+// The recording red shared by every active voice control (the composer's stop button, the
+// panel's muted mic).
+export const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";
+
+export function ConversationPanel() {
   // The session is already torn down while this panel plays its exit, so what it renders is
   // held at the last live values: reading the reset store would flash "connecting" on the
   // way out.
@@ -79,18 +84,17 @@ export function ConversationPanel({ morphed }: { morphed: boolean }) {
 
   return (
     <div className="flex h-full flex-col items-center justify-end gap-4 px-4 pt-3 pb-4">
-      {/* The orb slides up and in first; the action bar follows a beat behind. */}
-      {/* The pill has finished growing before `morphed` flips, so this slide is no longer
-          masked by the container's clip reveal. Staggered: orb first, bar a beat behind. */}
+      {/* Staggered mount slide inside the still-growing clip window: orb first, action bar a
+          beat behind, both revealed by the pill's height spring as it clears them. */}
       <m.div
         initial={{ opacity: 0, y: 96 }}
-        animate={morphed ? { opacity: 1, y: 0 } : { opacity: 0, y: 96 }}
+        animate={{ opacity: 1, y: 0 }}
         exit={{
           opacity: 0,
           y: 96,
-          transition: { duration: 0.27, ease: [0.32, 0.72, 0, 1] },
+          transition: { duration: 0.27, ease: sheetEase },
         }}
-        transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
+        transition={{ duration: 0.55, ease: sheetEase }}
         className="flex justify-center"
       >
         <Orb
@@ -102,13 +106,13 @@ export function ConversationPanel({ morphed }: { morphed: boolean }) {
       </m.div>
       <m.div
         initial={{ opacity: 0, y: 28 }}
-        animate={morphed ? { opacity: 1, y: 0 } : { opacity: 0, y: 28 }}
+        animate={{ opacity: 1, y: 0 }}
         exit={{
           opacity: 0,
           y: 28,
-          transition: { duration: 0.19, ease: [0.32, 0.72, 0, 1] },
+          transition: { duration: 0.19, ease: sheetEase },
         }}
-        transition={{ delay: 0.015, duration: 0.38, ease: [0.32, 0.72, 0, 1] }}
+        transition={{ delay: 0.015, duration: 0.38, ease: sheetEase }}
         className="relative z-10 flex w-full items-end"
       >
         <Button
@@ -120,7 +124,7 @@ export function ConversationPanel({ morphed }: { morphed: boolean }) {
           aria-label={micMuted ? "unmute microphone" : "mute microphone"}
           className={cn(
             "size-10 rounded-full [&_svg]:size-4.5",
-            micMuted && "bg-red-500 text-white hover:bg-red-600",
+            micMuted && RECORDING_BUTTON,
           )}
         >
           {micMuted ? <MicOff /> : <Mic />}

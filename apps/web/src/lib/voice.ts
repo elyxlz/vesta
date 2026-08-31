@@ -254,7 +254,8 @@ export function browserSocket(url: string): VoiceSocketLike {
 }
 
 // The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped. `muted` is read
-// per frame, so a conversation's mic mute stops the flow without tearing the session down.
+// per frame; a muted mic streams silence rather than nothing, so the STT stream stays alive
+// and a turn caught mid-sentence still gets its end (which releases the yield-to-user gate).
 export function browserCapture(muted?: () => boolean): AudioCapture {
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;
@@ -311,7 +312,7 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
         channelCount: 1,
       });
       workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        if (muted?.()) return;
+        if (muted?.()) e.data.fill(0);
         onFrame(floatTo16BitPCM(e.data));
       };
       source.connect(workletNode);

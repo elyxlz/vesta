@@ -221,8 +221,7 @@ export {
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
 
 export { ORB_GRADIENT_ANGLE_DEG, orbVisual } from "./orb/orb"
-export type { OrbMotion } from "./orb/orb"
-export type { OrbHighlight, OrbPoint, OrbVisual } from "./orb/orb"
+export type { OrbHighlight, OrbMotion, OrbPoint, OrbVisual } from "./orb/orb"
 
 export {
   buildBackupTimeline,

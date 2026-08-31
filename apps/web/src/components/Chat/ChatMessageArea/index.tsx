@@ -9,9 +9,9 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
 import type { ChatMessage } from "@/lib/types";
+import { recedeTransition, stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
-import { stepTransition } from "@/lib/motion";
 import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
@@ -337,7 +337,8 @@ export const ChatMessageArea = memo(function ChatMessageArea({
         // sheet-behind look. The ease matches the composer morph's settle.
         // will-change keeps this on its own compositor layer, so the recede is a GPU
         // transform rather than a per-frame repaint of the whole message list.
-        "origin-top [will-change:transform] transition-transform ease-[cubic-bezier(0.32,0.72,0,1)]",
+        "origin-top",
+        recedeTransition,
         scrollLocked
           ? "duration-500 [transform:perspective(1000px)_rotateX(7deg)_scale(0.94)]"
           : "duration-300",
