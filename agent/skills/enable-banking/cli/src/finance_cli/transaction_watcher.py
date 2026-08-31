@@ -1,6 +1,7 @@
 """Poll Enable Banking for new transactions and write notifications."""
 
 import json
+import re
 import signal
 import sys
 import time
@@ -23,20 +24,65 @@ def atomic_write_text(path: Path, text: str) -> None:
     tmp.replace(path)
 
 
-def load_seen() -> set[str]:
-    if SEEN_FILE.exists():
-        return set(json.loads(SEEN_FILE.read_text()))
-    return set()
+# The composite `entry_reference-booking_date-amount` ids the seen file used to hold. Greedy on the
+# reference so a reference that itself ends in a date still splits at the trailing date + amount.
+COMPOSITE_ID_RE = re.compile(r"^(?P<ref>.*)-(?P<date>\d{4}-\d{2}-\d{2}|)-(?P<amount>[^-]*)$")
 
 
-def save_seen(seen: set[str]) -> None:
+def split_composite_id(tx_id: str) -> tuple[str, str]:
+    """Map a stored id to the (id, amount) pair the current keying would have produced.
+
+    A composite carrying a reference becomes that bare reference, which is what makes an existing
+    seen file survive the keying change: leaving those ids unrecognised would re-notify every
+    historical transaction at once. Anything else is kept verbatim, with an unknown amount."""
+    match = COMPOSITE_ID_RE.match(tx_id)
+    if not match or not match["ref"]:
+        return tx_id, ""
+    return match["ref"], match["amount"]
+
+
+def load_seen() -> dict[str, str]:
+    """Load the seen transactions as {id: last known amount}; "" means the amount is not known.
+
+    Accepts the legacy format, a flat list of composite ids, and migrates it on the way in."""
+    if not SEEN_FILE.exists():
+        return {}
+    raw = json.loads(SEEN_FILE.read_text())
+    if isinstance(raw, dict):
+        return {str(key): str(value) for key, value in raw.items()}
+    seen: dict[str, str] = {}
+    for entry in raw:
+        tx_id, amount = split_composite_id(str(entry))
+        # The same reference under two amounts means history already held a revision, and the file
+        # does not say which one came last, so the amount goes back to unknown rather than guessed.
+        seen[tx_id] = "" if tx_id in seen and seen[tx_id] != amount else amount
+    return seen
+
+
+def save_seen(seen: dict[str, str]) -> None:
     SEEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SEEN_FILE.write_text(json.dumps(list(seen)))
+    SEEN_FILE.write_text(json.dumps(seen))
+
+
+def tx_amount(tx: dict) -> str:
+    return str(tx.get("transaction_amount", {}).get("amount", ""))
 
 
 def make_tx_id(tx: dict) -> str:
-    """Create a unique ID for a transaction."""
-    return f"{tx.get('entry_reference', '')}-{tx.get('booking_date', '')}-{tx.get('transaction_amount', {}).get('amount', '')}"
+    """Identity of a transaction, stable across in-place revisions.
+
+    `entry_reference` is the provider's own unique reference for the record, so it is the whole id
+    whenever it is present. A pending card authorisation keeps its reference while its amount moves
+    as the merchant finalises, so an amount inside the key makes that revision read as a brand new
+    transaction. The composite stays as the fallback for providers that send no reference."""
+    reference = str(tx.get("entry_reference") or "").strip()
+    if reference:
+        return reference
+    return f"{tx.get('entry_reference', '')}-{tx.get('booking_date', '')}-{tx_amount(tx)}"
+
+
+def currency_symbol(currency: str) -> str:
+    return {"GBP": "£", "EUR": "€", "USD": "$"}.get(currency, currency + " ")
 
 
 def format_tx(tx: dict) -> str:
@@ -64,15 +110,12 @@ def format_tx(tx: dict) -> str:
     credit_debit = tx.get("credit_debit_indicator", "")
     sign = "+" if credit_debit == "CRDT" else "-" if credit_debit == "DBIT" else ""
 
-    # Currency symbol
-    symbols = {"GBP": "£", "EUR": "€", "USD": "$"}
-    sym = symbols.get(currency, currency + " ")
-
-    return f"{sign}{sym}{amount} — {details}"
+    return f"{sign}{currency_symbol(currency)}{amount} — {details}"
 
 
 def poll_once() -> list[dict]:
-    """Check for new transactions. Returns list of new ones."""
+    """Check for transactions to report: the ones never seen, plus the ones whose amount moved
+    since the last poll, tagged with `_previous_amount`."""
     from finance_cli.enablebanking import get_transactions
 
     config_path = Path.home() / ".finance" / "config.json"
@@ -84,7 +127,7 @@ def poll_once() -> list[dict]:
         return []
 
     seen = load_seen()
-    new_txs = []
+    new_txs: list[dict] = []
 
     # Only check last 2 days to keep it fast
     date_from = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
@@ -95,10 +138,20 @@ def poll_once() -> list[dict]:
             txs = get_transactions(conf, account["uid"], date_from=date_from, date_to=date_to)
             for tx in txs:
                 tx_id = make_tx_id(tx)
-                if tx_id and tx_id not in seen:
-                    seen.add(tx_id)
-                    tx["_account_currency"] = account.get("currency", "")
-                    new_txs.append(tx)
+                if not tx_id:
+                    continue
+                amount = tx_amount(tx)
+                previous = seen.get(tx_id)
+                seen[tx_id] = amount
+                # Unchanged, or a migrated id whose amount was unknown until now: record and stay
+                # quiet. Guessing on the unknown one would notify about records the user has
+                # already seen, the re-notification storm this keying change has to avoid.
+                if previous in (amount, ""):
+                    continue
+                if previous is not None:
+                    tx["_previous_amount"] = previous
+                tx["_account_currency"] = account.get("currency", "")
+                new_txs.append(tx)
         except Exception as e:
             print(f"Error checking account {account.get('uid', '?')}: {e}", file=sys.stderr)
 
@@ -106,9 +159,21 @@ def poll_once() -> list[dict]:
     return new_txs
 
 
-def write_notification(tx: dict) -> None:
-    """Write a notification JSON for a new transaction."""
+def notification_message(tx: dict) -> str:
+    """The line the user reads.
+
+    A revision names both amounts and says it replaces the earlier one, because the failure this
+    guards against is a revised authorisation read as a second, duplicate charge."""
     formatted = format_tx(tx)
+    previous = tx.get("_previous_amount", "")
+    if not previous:
+        return f"New transaction: {formatted}"
+    was = f"{currency_symbol(tx.get('transaction_amount', {}).get('currency', ''))}{previous}"
+    return f"Revised transaction (not a new charge): {formatted}, updated from {was}"
+
+
+def write_notification(tx: dict) -> None:
+    """Write a notification JSON for a new or revised transaction."""
     notification = {
         "type": "finance",
         "source": "finance",
@@ -116,7 +181,7 @@ def write_notification(tx: dict) -> None:
         # pools by default. The user can add an interrupt rule for e.g. large amounts if they want.
         "interrupt": False,
         "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
-        "message": f"New transaction: {formatted}",
+        "message": notification_message(tx),
     }
 
     filename = f"{time.time_ns()}-finance-message.json"
@@ -130,7 +195,7 @@ def seed_seen() -> None:
     config_path = Path.home() / ".finance" / "config.json"
     conf = json.loads(config_path.read_text())
 
-    seen = set()
+    seen: dict[str, str] = {}
     date_from = (datetime.now(UTC) - timedelta(days=30)).strftime("%Y-%m-%d")
     date_to = datetime.now(UTC).strftime("%Y-%m-%d")
 
@@ -140,7 +205,7 @@ def seed_seen() -> None:
             for tx in txs:
                 tx_id = make_tx_id(tx)
                 if tx_id:
-                    seen.add(tx_id)
+                    seen[tx_id] = tx_amount(tx)
         except Exception as e:
             print(f"Error seeding account {account.get('uid', '?')}: {e}", file=sys.stderr)
 
@@ -205,8 +270,7 @@ def _poll_forever() -> None:
             # started before sign-in does not have yet, so a failure just waits a cycle.
             if SEEN_FILE.exists():
                 for tx in poll_once():
-                    formatted = format_tx(tx)
-                    print(f"New: {formatted}")
+                    print(notification_message(tx))
                     write_notification(tx)
             else:
                 print("First run — seeding existing transactions...")

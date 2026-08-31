@@ -36,6 +36,7 @@ finance daemon start
 ```
 
 - **Seen transactions**: tracked in `~/.finance/seen_transactions.json`
+- **Revised amounts**: a pending card authorisation keeps its `entry_reference` while its amount moves, so the seen set is keyed on that reference. A known reference reappearing with a different amount notifies as `Revised transaction (not a new charge)`, naming both amounts: it supersedes the earlier one, it is not a second charge at the same merchant.
 - **First-run seeding**: on first start, if no seen file exists, it seeds all transactions from the last 30 days so old ones don't trigger notifications
 - **Manual seed**: `/root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher seed`
 
