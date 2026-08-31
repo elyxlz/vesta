@@ -4,14 +4,16 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
 import { formatResetTime } from "@vesta/core";
-import type { InputMethod } from "@vesta/core";
+import type { ChatAttachment, InputMethod } from "@vesta/core";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { AttachmentContent, type OpenViewerRequest } from "./AttachmentContent";
 
 export type RetryHandler = (
   intentId: string,
   text: string,
   inputMethod?: InputMethod,
+  attachments?: ChatAttachment[],
 ) => void;
 
 function formatBubbleTime(ts: string | undefined): string {
@@ -39,12 +41,16 @@ export const ChatBubble = memo(function ChatBubble({
   isMobile,
   hasTail = true,
   onRetry,
+  agentName,
+  onOpenAttachment,
 }: {
   event: ChatMessage;
   className?: string;
   isMobile: boolean;
   hasTail?: boolean;
   onRetry?: RetryHandler;
+  agentName?: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
   // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
   const large = !isMobile;
@@ -77,7 +83,7 @@ export const ChatBubble = memo(function ChatBubble({
     (event.send_state === "retry" || event.send_state === "failed")
   ) {
     const intentId = event.intent_id;
-    const { text, input_method } = event;
+    const { text, input_method, attachments } = event;
     return (
       <div className={className}>
         <MessageBubble
@@ -86,12 +92,15 @@ export const ChatBubble = memo(function ChatBubble({
           ts={ts}
           large={large}
           hasTail={hasTail}
+          attachments={attachments}
+          agentName={agentName}
+          onOpenAttachment={onOpenAttachment}
         />
         <div className="mt-0.5 flex justify-end pr-1">
           <button
             type="button"
             onClick={() => {
-              onRetry?.(intentId, text, input_method);
+              onRetry?.(intentId, text, input_method, attachments);
             }}
             className="text-[10px] text-destructive/70 transition-colors select-none hover:text-destructive"
           >
@@ -110,6 +119,9 @@ export const ChatBubble = memo(function ChatBubble({
       className={className}
       large={large}
       hasTail={hasTail}
+      attachments={event.attachments}
+      agentName={agentName}
+      onOpenAttachment={onOpenAttachment}
     />
   );
 });
@@ -121,6 +133,9 @@ function MessageBubble({
   className,
   large,
   hasTail,
+  attachments,
+  agentName,
+  onOpenAttachment,
 }: {
   isUser: boolean;
   text: string;
@@ -130,7 +145,18 @@ function MessageBubble({
   large: boolean;
   // Only the last bubble of a group carries the tighter tail corner.
   hasTail: boolean;
+  attachments?: ChatAttachment[];
+  agentName?: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
+  // Attachments need the agent name to build their URLs; a caller that omits it (the Debug
+  // stream) renders the caption alone.
+  const blocks =
+    agentName !== undefined &&
+    attachments !== undefined &&
+    attachments.length > 0
+      ? { agentName, attachments }
+      : null;
   return (
     <Message align={isUser ? "end" : "start"} className={className}>
       <Bubble
@@ -144,8 +170,21 @@ function MessageBubble({
           // corner for the conversation look.
           style={bubbleRadiusStyle(isUser, hasTail)}
         >
+          {/* Block flow (not flex) so adjacent markdown paragraphs keep their collapsed margins. */}
           <div className="min-w-0 break-words">
-            <Markdown>{text}</Markdown>
+            {blocks && (
+              <div className={cn("flex flex-col gap-1.5 py-1", text && "mb-1")}>
+                {blocks.attachments.map((attachment) => (
+                  <AttachmentContent
+                    key={attachment.id}
+                    agent={blocks.agentName}
+                    attachment={attachment}
+                    onOpen={onOpenAttachment}
+                  />
+                ))}
+              </div>
+            )}
+            {text && <Markdown>{text}</Markdown>}
           </div>
           {ts && (
             <span

@@ -447,6 +447,66 @@
       "group": "Chat"
     },
     {
+      "id": "chat-attach-menu",
+      "title": "Chat, attach menu",
+      "description": "The composer's attach popover with its two pick options.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-chips",
+      "title": "Chat, attachment chips",
+      "description": "Two uploaded draft chips with the totals footer and caption placeholder.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-chip-uploading",
+      "title": "Chat, attachment uploading",
+      "description": "A draft chip mid-upload with the progress ring; send gated off.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-chip-error",
+      "title": "Chat, attachment error",
+      "description": "A terminally failed draft chip with its retry affordance.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-chips-offline",
+      "title": "Chat, attachment waiting",
+      "description": "An offline link parks the upload as a waiting-for-network chip.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-dropzone",
+      "title": "Chat, drop zone",
+      "description": "The contained drag-and-drop overlay over the chat while files hover.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-bubbles",
+      "title": "Chat, attachment bubbles",
+      "description": "Every attachment kind across both sides: image, video, audio, and a file tile with sizes.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-bubble-states",
+      "title": "Chat, attachment states",
+      "description": "The removed (no longer available) and failed-load tiles.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-viewer",
+      "title": "Chat, attachment viewer",
+      "description": "The contained in-chat viewer: scrim inside the chat card, caption with dimensions and size.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-attachment-viewer-zoomed",
+      "title": "Chat, viewer zoomed",
+      "description": "The viewer image at double-click 2x zoom.",
+      "group": "Chat"
+    },
+    {
       "id": "chat-has-more",
       "title": "Chat, older history",
       "description": "The scroll-to-latest button after scrolling up in a long history.",

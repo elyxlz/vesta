@@ -1,6 +1,6 @@
 ---
 name: app-chat
-description: The user's chat screen in the Vesta app (web, desktop, mobile). Reply to `source=app-chat` notifications via `app-chat send`. Requires daemon.
+description: The user's chat screen in the Vesta app (web, desktop, mobile). Reply to `source=app-chat` notifications via `app-chat send`; send files with `--attach`. Requires daemon.
 ---
 
 # App Chat - CLI: app-chat
@@ -29,8 +29,10 @@ server (intake, history, and the live `/ws` chat socket).
 ```bash
 app-chat daemon status
 app-chat send --message 'Hello!'
+app-chat send --attach ~/out/chart.png --message 'here it is!'
 app-chat history --search 'query'
 app-chat history --limit 20
+app-chat attachments list
 ```
 
 ## How it works
@@ -39,6 +41,27 @@ app-chat history --limit 20
 - You receive the notification and reply with `app-chat send`: the reply is persisted to the store, then fanned to any connected `/ws` chat sockets so the app sees it live
 - Durability is the store, not the socket: a reply succeeds even with no client connected, and a client refetches history by id on reconnect to pick up anything it missed
 - History and search read the same store: `app-chat history` and `app-chat history --search`
+
+## Attachments
+
+Files the user sends from the app arrive on the message notification: the `attachments` attribute lists each file's name, type, size, and an absolute path. Open the path directly: `Read` shows images and PDFs, shell tools handle everything else. The files persist under `~/.app-chat/attachments/` (each in an id directory beside a `.meta.json` carrying name, type, and exact byte size), so you can come back to one later.
+
+Send a file with `--attach` (repeat it for several), with or without a message:
+
+```bash
+app-chat send --attach ~/out/budget-2026.pdf --message 'here it is!'
+app-chat send --attach chart.png
+```
+
+The daemon copies the file into its own store, so a temp file can be removed right after sending. The app renders by type: images and videos inline, audio as a player, anything else as a download tile. Limit 512 MB per file. The short-bubble lint applies to the message text only. When the user asks for a real document, a chart, or anything they will keep, attach the file instead of pasting its contents as text.
+
+Manage the disk they use with the CLI, never by deleting files under `~/.app-chat/attachments/` yourself (a raw delete leaves the user a broken bubble; `rm` here leaves a clean "no longer available" tile):
+
+```bash
+app-chat attachments list              # largest first, with count and total_bytes
+app-chat attachments list --sort date --limit 20
+app-chat attachments rm <id> [<id>...] # frees the bytes, keeps the chat history intact
+```
 
 ## Notes
 - Always reply to app messages using `app-chat send`, not through any other channel

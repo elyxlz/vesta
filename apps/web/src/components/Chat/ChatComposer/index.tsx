@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent,
   type KeyboardEvent,
   type PointerEvent,
   type RefObject,
@@ -11,7 +12,6 @@ import {
   AudioLines,
   Check,
   Mic,
-  Plus,
   SendHorizontal,
   Square,
   X,
@@ -24,6 +24,9 @@ import {
   type VoiceActivationMode,
 } from "@/stores/use-voice-activation";
 import { useIsMobile } from "@/hooks/use-mobile";
+import type { AttachmentDrafts } from "@/stores/use-attachment-drafts";
+import { AttachmentChips } from "../AttachmentChips";
+import { AttachMenu } from "./AttachMenu";
 import { rightSlot } from "./right-slot";
 
 interface MicHandlers {
@@ -67,21 +70,23 @@ function placeholderText({
   isSpeaking,
   notAuthenticated,
   agentName,
+  hasAttachments,
 }: {
   recordingMode: VoiceMode | null;
   listening: boolean;
   isSpeaking: boolean;
   notAuthenticated: boolean;
   agentName: string;
+  hasAttachments: boolean;
 }) {
   if (recordingMode !== null) {
     if (!listening) return "connecting...";
     if (recordingMode === "conversation" && isSpeaking) return "speaking...";
     return "listening...";
   }
-  return notAuthenticated
-    ? "sign in to chat"
-    : `message ${agentName}`.toLowerCase();
+  if (notAuthenticated) return "sign in to chat";
+  if (hasAttachments) return "add a caption";
+  return `message ${agentName}`.toLowerCase();
 }
 
 function composerPadding(fullscreen: boolean | undefined, isMobile: boolean) {
@@ -110,7 +115,10 @@ interface ChatComposerProps {
   input: string;
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: KeyboardEvent) => void;
+  onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
+  canSend: boolean;
+  attachments: AttachmentDrafts;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
@@ -129,7 +137,10 @@ export function ChatComposer({
   input,
   onInputChange,
   onKeyDown,
+  onPaste,
   onSend,
+  canSend,
+  attachments,
   textareaRef,
 }: ChatComposerProps) {
   const isMobile = useIsMobile();
@@ -140,18 +151,20 @@ export function ChatComposer({
   // disconnected is blocked with a toast in the parent instead).
   const inputDisabled = notAuthenticated;
   const value = useLiveTranscript ? liveTranscript : input;
+  const hasAttachments = attachments.drafts.length > 0;
   const placeholder = placeholderText({
     recordingMode,
     listening,
     isSpeaking,
     notAuthenticated,
     agentName,
+    hasAttachments,
   });
   const controls: ComposerControls = {
     voiceConfigured,
     recordingMode,
     inputDisabled,
-    slot: rightSlot({ input, recordingMode }),
+    slot: rightSlot({ input, recordingMode, hasAttachments }),
     micHandlers: micHandlers(activation, startVoice, stopVoice),
     onConfirm: stopVoice,
     onCancel: cancelVoice,
@@ -160,6 +173,7 @@ export function ChatComposer({
       else startVoice("conversation");
     },
     onSend,
+    canSend,
   };
 
   return (
@@ -170,8 +184,10 @@ export function ChatComposer({
       readOnly={useLiveTranscript}
       onInputChange={onInputChange}
       onKeyDown={onKeyDown}
+      onPaste={onPaste}
       textareaRef={textareaRef}
       controls={controls}
+      attachments={attachments}
     />
   );
 }
@@ -186,6 +202,7 @@ interface ComposerControls {
   onCancel: () => void;
   onConversation: () => void;
   onSend: () => void;
+  canSend: boolean;
 }
 
 function FloatingComposer({
@@ -195,8 +212,10 @@ function FloatingComposer({
   readOnly,
   onInputChange,
   onKeyDown,
+  onPaste,
   textareaRef,
   controls,
+  attachments,
 }: {
   paddingClass: string;
   value: string;
@@ -204,8 +223,10 @@ function FloatingComposer({
   readOnly: boolean;
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: KeyboardEvent) => void;
+  onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   controls: ComposerControls;
+  attachments: AttachmentDrafts;
 }) {
   const { inputDisabled, recordingMode } = controls;
 
@@ -264,16 +285,15 @@ function FloatingComposer({
           {value || " "}
         </span>
 
+        <AttachmentChips
+          drafts={attachments.drafts}
+          previewUrl={attachments.previewUrl}
+          onRetry={attachments.retry}
+          onRemove={attachments.remove}
+        />
+
         <div className={cn("shrink-0", expanded ? "order-2" : "order-1")}>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            aria-label="add attachment"
-            className="size-9 rounded-full text-muted-foreground [&_svg]:size-5"
-          >
-            <Plus />
-          </Button>
+          <AttachMenu disabled={inputDisabled} onFiles={attachments.addFiles} />
         </div>
 
         <div
@@ -287,6 +307,7 @@ function FloatingComposer({
             value={value}
             onChange={onInputChange}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             readOnly={readOnly}
             data-voice-dictate="true"
             placeholder={placeholder}
@@ -324,11 +345,12 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
     onCancel,
     onConversation,
     onSend,
+    canSend,
   } = controls;
 
   // Voice never set up: the composer is a plain send box.
   if (!voiceConfigured) {
-    return <SendButton disabled={inputDisabled} onSend={onSend} />;
+    return <SendButton disabled={inputDisabled || !canSend} onSend={onSend} />;
   }
 
   if (recordingMode === "dictation") {
@@ -378,7 +400,7 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
         </Button>
       </div>
       {slot === "send" ? (
-        <SendButton disabled={inputDisabled} onSend={onSend} />
+        <SendButton disabled={inputDisabled || !canSend} onSend={onSend} />
       ) : (
         <Button
           type="button"

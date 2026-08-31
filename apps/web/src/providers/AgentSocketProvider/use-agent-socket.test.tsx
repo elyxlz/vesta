@@ -436,3 +436,79 @@ describe("useAgentSocketState", () => {
     expect(result.current.isTyping).toBe(false);
   });
 });
+
+describe("attachments on the send path", () => {
+  const ATTACHMENT = {
+    id: "att1",
+    name: "photo.jpg",
+    mime: "image/jpeg",
+    size: 9,
+  };
+
+  it("posts finalized ids and carries metadata on the optimistic bubble", async () => {
+    const { controller, json } = makeController();
+    const { result } = render(controller);
+    await openAndFlush();
+
+    act(() => {
+      expect(result.current.send("look", "typed", [ATTACHMENT])).toBe(true);
+    });
+    await settle();
+
+    const call = json.mock.calls[0];
+    if (!call) throw new Error("send did not POST");
+    const body = JSON.parse((call[1] as { body: string }).body) as Record<
+      string,
+      unknown
+    >;
+    expect(body.attachments).toEqual(["att1"]);
+    const users = result.current.messages.filter((m) => m.type === "user");
+    expect(users[0]).toMatchObject({
+      attachments: [ATTACHMENT],
+      send_state: "sending",
+    });
+  });
+
+  it("re-posts a retry-state bubble under its original id on reconnect", async () => {
+    const { controller, json } = makeController();
+    json.mockRejectedValueOnce(new ApiError(503, "unavailable"));
+    const { result } = render(controller);
+    await openAndFlush();
+
+    act(() => {
+      result.current.send("stuck", "typed", [ATTACHMENT]);
+    });
+    await settle();
+    const users = () =>
+      result.current.messages.filter((m) => m.type === "user");
+    expect(users()[0]).toMatchObject({ send_state: "retry" });
+    const intentId = postedIntentId(json);
+
+    // The socket re-opens (a reconnect edge): the parked bubble re-posts itself once.
+    act(() => {
+      chatSockets.at(-1)?.onopen?.();
+    });
+    await settle();
+
+    expect(json).toHaveBeenCalledTimes(2);
+    expect(postedIntentId(json, 1)).toBe(intentId);
+    const replay = json.mock.calls[1];
+    if (!replay) throw new Error("no re-post");
+    const replayBody = JSON.parse(
+      (replay[1] as { body: string }).body,
+    ) as Record<string, unknown>;
+    expect(replayBody.attachments).toEqual(["att1"]);
+    expect(users()[0]).toMatchObject({ send_state: "sending" });
+  });
+
+  it("does not re-post on the very first open", async () => {
+    const { controller, json } = makeController();
+    const { result } = render(controller);
+    await openAndFlush();
+    act(() => {
+      expect(result.current.send("hello")).toBe(true);
+    });
+    await settle();
+    expect(json).toHaveBeenCalledTimes(1);
+  });
+});

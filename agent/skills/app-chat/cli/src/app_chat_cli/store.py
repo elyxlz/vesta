@@ -8,6 +8,8 @@ import pathlib as pl
 import sqlite3
 import typing as tp
 
+from .attachments import AttachmentMeta
+
 PAGE_SIZE = 50
 
 # The conversation the app renders: the user's messages and the agent's replies. Tool events are not
@@ -25,6 +27,7 @@ class StoredEvent(tp.TypedDict, total=False):
     text: str
     input_method: str
     intent_id: str
+    attachments: list[AttachmentMeta]
 
 
 def store_path(data_dir: pl.Path) -> pl.Path:
@@ -143,6 +146,27 @@ class Store:
         finally:
             conn.close()
         return _rows_to_events([(row[0], row[1], row[2]) for row in rows])
+
+    def attachment_references(self) -> dict[str, tuple[str, str]]:
+        """Every attachment id any event references, mapped to that event's (ts, type). One structured
+        scan of the `$.attachments` arrays (never a substring probe, so chat text quoting an id can not
+        pin a blob), first event wins. Backs both the GC sweep and `attachments list`."""
+        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        try:
+            rows = conn.execute(
+                """
+                SELECT json_extract(entry.value, '$.id'), events.ts, json_extract(events.data, '$.type')
+                FROM events, json_each(events.data, '$.attachments') AS entry
+                ORDER BY events.id ASC
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+        references: dict[str, tuple[str, str]] = {}
+        for attachment_id, ts, event_type in rows:
+            if isinstance(attachment_id, str) and attachment_id not in references:
+                references[attachment_id] = (ts, event_type)
+        return references
 
     def import_rows(self, rows: list[tuple[int, str, str]]) -> tuple[int, int]:
         """Copy (id, ts, data) triples from events.db preserving ids, idempotently (INSERT OR IGNORE).

@@ -7,6 +7,7 @@ import {
   initialChatState,
   markSend,
   prependPage,
+  retryableSends,
   seedTail,
   trimTail,
   type ChatMessage,
@@ -250,5 +251,50 @@ describe("chat-stream-model", () => {
     state = beginSend(state, "hi", "typed", "i-1")
     state = beginSend(state, "yo", "typed", "i-2")
     expect(trimTail(state, 1)).toBe(state)
+  })
+})
+
+describe("attachments on the stream", () => {
+  const ATTACHMENT = { id: "srv1", name: "photo.jpg", mime: "image/jpeg", size: 9 }
+
+  it("beginSend carries attachment metadata onto the optimistic bubble", () => {
+    const state = beginSend(initialChatState(), "look", "typed", "i-att", [ATTACHMENT])
+    const bubble = state.messages[0]
+    if (bubble?.type !== "user") throw new Error("expected a user bubble")
+    expect(bubble.attachments).toEqual([ATTACHMENT])
+    expect(bubble.send_state).toBe("sending")
+  })
+
+  it("the echo's attachment metadata is authoritative on confirmation", () => {
+    const begun = beginSend(initialChatState(), "look", "typed", "i-att", [ATTACHMENT])
+    const echoed = { ...ATTACHMENT, width: 100, height: 50 }
+    const { state } = foldLiveEvent(begun, {
+      type: "user",
+      id: 7,
+      ts: "2026-08-30T00:00:00Z",
+      text: "look",
+      intent_id: "i-att",
+      attachments: [echoed],
+    })
+    const bubble = state.messages[0]
+    if (bubble?.type !== "user") throw new Error("expected a user bubble")
+    expect(bubble.attachments).toEqual([echoed])
+    expect(bubble.id).toBe(7)
+    expect(bubble.send_state).toBeUndefined()
+  })
+})
+
+describe("retryableSends", () => {
+  it("collects only retry-state bubbles as idempotent re-post inputs", () => {
+    const attachment = { id: "srv1", name: "a.png", mime: "image/png", size: 1 }
+    let state = beginSend(initialChatState(), "one", "typed", "i-1", [attachment])
+    state = beginSend(state, "two", "voice", "i-2")
+    state = beginSend(state, "three", "typed", "i-3")
+    state = markSend(state, "i-1", "retry")
+    state = markSend(state, "i-3", "failed")
+
+    expect(retryableSends(state)).toEqual([
+      { intentId: "i-1", text: "one", inputMethod: "typed", attachments: [attachment] },
+    ])
   })
 })

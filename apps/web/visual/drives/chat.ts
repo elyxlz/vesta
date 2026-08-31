@@ -4,6 +4,10 @@ import {
   CONVERSATION,
   MARKDOWN_REPLY,
   agentMessage,
+  attachmentConversation,
+  attachmentRoutes,
+  attachmentServeRoutes,
+  attachmentStatesConversation,
   chatRoutes,
   errorLine,
   rateLimitedLine,
@@ -167,6 +171,26 @@ async function hoverMessageArea(page: Page): Promise<void> {
   await page.mouse.move(box.x + box.width / 2, box.y - 250);
 }
 
+// Feed files straight into the composer's hidden picker input; the popover flow
+// itself is covered by chat-attach-menu.
+async function pickFiles(
+  page: Page,
+  files: { name: string; mimeType: string; buffer: Buffer }[],
+): Promise<void> {
+  await expect(composer(page)).toBeVisible(LOADED);
+  await page
+    .getByLabel("pick a file")
+    .filter({ visible: false })
+    .first()
+    .setInputFiles(files);
+}
+
+const SMALL_FILE = {
+  name: "notes.txt",
+  mimeType: "text/plain",
+  buffer: Buffer.from("abcd"),
+};
+
 export const CHAT: Record<string, Scenario> = {
   "chat-history-skeleton": chatScenario({ hang: true }, async (page) => {
     await expect(
@@ -329,5 +353,190 @@ export const CHAT: Record<string, Scenario> = {
       await page.getByRole("tab", { name: "logs" }).click(LOADED);
     },
     settle: settleLogLines,
+  },
+
+  "chat-attach-menu": {
+    state: chatState({ events: CONVERSATION }),
+    drive: async (page) => {
+      await expect(composer(page)).toBeVisible(LOADED);
+      await page
+        .getByRole("button", { name: "add attachment" })
+        .filter({ visible: true })
+        .first()
+        .click();
+    },
+    settle: async (page) => {
+      await expect(
+        page.getByRole("button", { name: "photos & videos" }).first(),
+      ).toBeVisible(LOADED);
+      await expect(
+        page.getByRole("button", { name: "file", exact: true }).first(),
+      ).toBeVisible();
+    },
+  },
+  "chat-attachment-chips": {
+    state: chatState(
+      { events: CONVERSATION },
+      { routes: attachmentRoutes(AGENT) },
+    ),
+    drive: async (page) => {
+      await pickFiles(page, [
+        SMALL_FILE,
+        { ...SMALL_FILE, name: "summary.txt" },
+      ]);
+    },
+    settle: async (page) => {
+      await expect(chatText(page, "2 files ·").first()).toBeVisible(LOADED);
+      await expect(
+        page
+          .getByPlaceholder("add a caption")
+          .filter({ visible: true })
+          .first(),
+      ).toBeVisible();
+    },
+  },
+  "chat-attachment-chip-uploading": {
+    state: chatState(
+      { events: CONVERSATION },
+      { routes: attachmentRoutes(AGENT, { stallData: true }) },
+    ),
+    drive: async (page) => {
+      await pickFiles(page, [SMALL_FILE]);
+    },
+    settle: async (page) => {
+      await expect(chatText(page, "notes.txt").first()).toBeVisible(LOADED);
+      await expect(
+        page
+          .getByRole("button", { name: "send message" })
+          .filter({ visible: true })
+          .first(),
+      ).toBeDisabled();
+    },
+  },
+  "chat-attachment-chip-error": {
+    state: chatState(
+      { events: CONVERSATION },
+      { routes: attachmentRoutes(AGENT, { failCreate: true }) },
+    ),
+    drive: async (page) => {
+      await pickFiles(page, [SMALL_FILE]);
+    },
+    settle: async (page) => {
+      await expect(chatText(page, "upload failed").first()).toBeVisible(LOADED);
+      await expect(
+        page
+          .getByRole("button", { name: "retry uploading notes.txt" })
+          .filter({ visible: true })
+          .first(),
+      ).toBeVisible();
+    },
+  },
+  "chat-attachment-chips-offline": {
+    state: chatState(
+      { events: CONVERSATION },
+      { routes: attachmentRoutes(AGENT, { unreachableCreate: true }) },
+    ),
+    drive: async (page) => {
+      await expect(composer(page)).toBeVisible(LOADED);
+      await page.context().setOffline(true);
+      await pickFiles(page, [SMALL_FILE]);
+    },
+    settle: async (page) => {
+      await expect(chatText(page, "waiting for network").first()).toBeVisible(
+        LOADED,
+      );
+    },
+  },
+  "chat-attachment-dropzone": {
+    state: chatState({ events: CONVERSATION }),
+    drive: async (page) => {
+      // The dragenter bubbles from the visible composer up to its Chat card's
+      // drop handlers, so the right instance overlays on every layout.
+      await composer(page)
+        .first()
+        .evaluate((textarea) => {
+          const transfer = new DataTransfer();
+          transfer.items.add(
+            new File(["x"], "drop.png", { type: "image/png" }),
+          );
+          textarea.dispatchEvent(
+            new DragEvent("dragenter", {
+              bubbles: true,
+              dataTransfer: transfer,
+            }),
+          );
+        });
+    },
+    settle: async (page) => {
+      await expect(chatText(page, "drop to send to luna").first()).toBeVisible(
+        LOADED,
+      );
+    },
+  },
+
+  "chat-attachment-bubbles": chatScenario(
+    { events: attachmentConversation() },
+    async (page) => {
+      await expect(
+        page.getByAltText("beach.png").filter({ visible: true }).first(),
+      ).toBeVisible(LOADED);
+      await expect(chatText(page, "340.3 kB").first()).toBeVisible();
+      await expect(chatText(page, "memo.wav · 52 B").first()).toBeVisible();
+    },
+    { routes: attachmentServeRoutes(AGENT) },
+  ),
+  "chat-attachment-bubble-states": chatScenario(
+    { events: attachmentStatesConversation() },
+    async (page) => {
+      await expect(chatText(page, "no longer available").first()).toBeVisible(
+        LOADED,
+      );
+      await expect(
+        chatText(page, "couldn't load · tap to retry").first(),
+      ).toBeVisible();
+    },
+    { routes: attachmentServeRoutes(AGENT) },
+  ),
+  "chat-attachment-viewer": {
+    state: chatState(
+      { events: attachmentConversation() },
+      { routes: attachmentServeRoutes(AGENT) },
+    ),
+    drive: async (page) => {
+      await page
+        .getByRole("button", { name: "view beach.png" })
+        .filter({ visible: true })
+        .first()
+        .click();
+    },
+    settle: async (page) => {
+      await expect(
+        chatText(page, "beach.png · 640×480 · 2.3 MB").first(),
+      ).toBeVisible(LOADED);
+      await expect(
+        page.getByRole("button", { name: "close viewer" }).first(),
+      ).toBeVisible();
+    },
+  },
+  "chat-attachment-viewer-zoomed": {
+    state: chatState(
+      { events: attachmentConversation() },
+      { routes: attachmentServeRoutes(AGENT) },
+    ),
+    drive: async (page) => {
+      await page
+        .getByRole("button", { name: "view beach.png" })
+        .filter({ visible: true })
+        .first()
+        .click();
+      const stage = page.locator("[data-viewer-stage]").first();
+      await expect(stage.locator("img")).toBeVisible(LOADED);
+      await stage.locator("img").dblclick();
+    },
+    settle: async (page) => {
+      await expect(
+        page.locator('[data-viewer-stage] img[data-zoom-scale="2"]'),
+      ).toBeVisible(LOADED);
+    },
   },
 };

@@ -121,3 +121,15 @@ def test_bump_sequence_above_keeps_new_ids_above_imported(tmp_path):
     new_id = store.append({"type": "user", "ts": "2026-01-01T00:00:02", "text": "new"})
     assert new_id > 100
     store.close()
+
+
+def test_attachment_references_reads_structured_arrays_only(tmp_path):
+    store = Store(store_path(tmp_path))
+    store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "hi", "attachments": [{"id": "abc123"}]})
+    store.append({"type": "chat", "ts": "2026-01-02T00:00:00", "text": "the id is zzz999, quoted in plain text"})
+
+    references = store.attachment_references()
+
+    assert references == {"abc123": ("2026-01-01T00:00:00", "user")}
+    assert "zzz999" not in references  # chat text quoting an id never pins a blob
+    store.close()

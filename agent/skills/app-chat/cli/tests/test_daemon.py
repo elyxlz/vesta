@@ -1,6 +1,7 @@
 """Tests for the app-chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, and the
 start/stop/restart/status verbs against the pid and port records."""
 
+import argparse
 import asyncio
 import functools
 import json
@@ -10,7 +11,7 @@ import threading
 import types
 
 import pytest
-from app_chat_cli import daemon
+from app_chat_cli import attachments, commands, daemon
 from app_chat_cli.service import ServiceState
 from app_chat_cli.store import Store, StoredEvent, store_path
 
@@ -174,7 +175,7 @@ def test_the_help_forms_succeed_and_an_unknown_verb_does_not(records, capsys):
 
 
 def _daemon_state(tmp_path) -> daemon.DaemonState:
-    service = ServiceState(Store(store_path(tmp_path)), tmp_path / "notifications")
+    service = ServiceState(Store(store_path(tmp_path)), tmp_path / "notifications", tmp_path / "attachments")
     return daemon.DaemonState(
         sock_path=tmp_path / "app-chat.sock",
         data_dir=tmp_path,
@@ -360,3 +361,176 @@ def test_send_user_notification_is_a_noop_when_agent_name_or_script_is_absent(tm
     monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
     monkeypatch.delenv("AGENT_NAME", raising=False)
     daemon._send_user_notification("hello")
+
+
+# --- send --attach ---
+
+
+def test_send_with_attach_ingests_and_carries_metadata(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    state = _daemon_state(tmp_path)
+    source = tmp_path / "chart.png"
+    source.write_bytes(b"pngbytes")
+
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "here you go", "attach": [str(source)]}))
+
+    assert response["ok"] is True and response["id"] == 1
+    events, _ = state.service.store.page()
+    stored = events[0]["attachments"]
+    assert stored[0]["name"] == "chart.png"
+    assert stored[0]["mime"] == "image/png"
+    assert stored[0]["size"] == len(b"pngbytes")
+    assert attachments.blob_path(tmp_path / "attachments", stored[0]["id"]).read_bytes() == b"pngbytes"
+    source.unlink()  # the ingested copy stands alone
+    assert attachments.blob_path(tmp_path / "attachments", stored[0]["id"]).exists()
+    state.service.store.close()
+
+
+def test_send_with_missing_attach_path_errors_and_persists_nothing(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    state = _daemon_state(tmp_path)
+
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "hi", "attach": [str(tmp_path / "absent.bin")]}))
+
+    assert "error" in response
+    assert state.service.store.page()[0] == []
+    state.service.store.close()
+
+
+def test_send_attach_only_is_valid_and_notifies_with_the_filename(tmp_path, monkeypatch):
+    captured: list[str] = []
+    monkeypatch.setattr(daemon, "_send_user_notification", captured.append)
+    state = _daemon_state(tmp_path)
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"%PDF")
+
+    async def scenario() -> dict[str, object]:
+        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
+        async with server:
+            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
+            writer.write(json.dumps({"command": "send", "message": "", "attach": [str(source)]}).encode())
+            writer.write_eof()
+            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+            writer.close()
+            await writer.wait_closed()
+            for _ in range(500):
+                if captured:
+                    break
+                await asyncio.sleep(0.005)
+            return json.loads(data.decode())
+
+    response = asyncio.run(scenario())
+
+    assert response["ok"] is True
+    assert captured == ["report.pdf"]
+    events, _ = state.service.store.page()
+    assert events[0]["text"] == ""
+    assert events[0]["attachments"][0]["name"] == "report.pdf"
+    state.service.store.close()
+
+
+def _send_args(tmp_path, **overrides):
+    sock = tmp_path / "app-chat.sock"
+    sock.touch()
+    defaults = {"message": "", "socket": str(sock), "longform": False, "attach": []}
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def _capture_socket_request(monkeypatch):
+    sent: list[tuple[str, list[str]]] = []
+
+    async def fake_send(sock_path, message, attach):
+        sent.append((message, attach))
+        return {"ok": True, "message": message, "id": 1}
+
+    monkeypatch.setattr(commands, "_send_via_socket", fake_send)
+    return sent
+
+
+def test_cmd_send_attach_only_skips_the_bubble_lint(tmp_path, monkeypatch, capsys):
+    sent = _capture_socket_request(monkeypatch)
+
+    commands.cmd_send(_send_args(tmp_path, attach=["/tmp/chart.png"]))
+
+    assert sent == [("", ["/tmp/chart.png"])]
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_cmd_send_still_lints_text_when_attaching(tmp_path, monkeypatch, capsys):
+    _capture_socket_request(monkeypatch)
+    wall = "x" * 300
+
+    with pytest.raises(SystemExit):
+        commands.cmd_send(_send_args(tmp_path, message=wall, attach=["/tmp/chart.png"]))
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_cmd_send_requires_text_or_attach(tmp_path, monkeypatch, capsys):
+    _capture_socket_request(monkeypatch)
+
+    with pytest.raises(SystemExit):
+        commands.cmd_send(_send_args(tmp_path))
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_send_attach_count_is_capped(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    state = _daemon_state(tmp_path)
+    source = tmp_path / "one.txt"
+    source.write_bytes(b"x")
+
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "", "attach": [str(source)] * 11}))
+
+    assert "error" in response
+    assert state.service.store.page()[0] == []
+    state.service.store.close()
+
+
+def test_send_attach_directory_errors_cleanly(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    state = _daemon_state(tmp_path)
+    directory = tmp_path / "shots"
+    directory.mkdir()
+
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "here", "attach": [str(directory)]}))
+
+    assert "error" in response and "no such file" in str(response["error"])
+    assert state.service.store.page()[0] == []
+    state.service.store.close()
+
+
+def test_send_attach_must_be_a_list_of_paths(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    state = _daemon_state(tmp_path)
+
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "hi", "attach": "/tmp/x"}))
+
+    assert response == {"error": "attach must be a list of paths"}
+    state.service.store.close()
+
+
+def test_run_sweep_uses_structured_references(tmp_path, monkeypatch):
+    state = _daemon_state(tmp_path)
+    root = state.service.attachments_root
+    referenced = attachments.ingest_file(root, _seed_file(tmp_path, "keep.bin"), None)
+    orphan = attachments.ingest_file(root, _seed_file(tmp_path, "orphan.bin"), None)
+    state.service.store.append({"type": "chat", "ts": "2026-01-01T00:00:00", "text": "", "attachments": [referenced]})
+    ancient = 1000
+    for directory in (root / referenced["id"], root / orphan["id"]):
+        for child in directory.iterdir():
+            os.utime(child, (ancient, ancient))
+        os.utime(directory, (ancient, ancient))
+
+    swept = daemon._run_sweep(state.service)
+
+    assert swept == 1
+    assert attachments.read_meta(root, referenced["id"]) is not None
+    assert attachments.read_meta(root, orphan["id"]) is None
+    state.service.store.close()
+
+
+def _seed_file(tmp_path, name):
+    source = tmp_path / name
+    source.write_bytes(b"data")
+    return source

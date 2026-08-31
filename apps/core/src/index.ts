@@ -113,8 +113,50 @@ export {
   prependPage,
   seedTail,
   trimTail,
+  retryableSends,
 } from "./chat/chat-stream-model"
-export type { ChatMessage, ChatState, HistoryPage, SendState } from "./chat/chat-stream-model"
+export type {
+  ChatMessage,
+  ChatState,
+  HistoryPage,
+  RetryableSend,
+  SendState,
+} from "./chat/chat-stream-model"
+
+export {
+  appChatAttachmentPath,
+  attachmentKind,
+  formatBytes,
+  INITIAL_CHUNK_BYTES,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_CHUNK_UPLOAD_BYTES,
+  MIN_CHUNK_BYTES,
+} from "./attachments/attachment-model"
+export type { AttachmentKind, ChatAttachment } from "./attachments/attachment-model"
+export { UploadError, uploadAttachment } from "./attachments/upload"
+export type {
+  Connectivity,
+  UploadCallbacks,
+  UploadDeps,
+  UploadErrorReason,
+  UploadHandle,
+  UploadMeta,
+  UploadRunState,
+} from "./attachments/upload"
+export {
+  addDraft,
+  draftsReady,
+  draftTotalBytes,
+  failDraft,
+  finalizeDraft,
+  removeDraft,
+  setDraftProgress,
+  setDraftWaiting,
+  uploadedAttachments,
+  uploadedIds,
+} from "./attachments/attachment-draft"
+export type { DraftAttachment, DraftFile, DraftStatus } from "./attachments/attachment-draft"
 
 export {
   BUBBLE_GROUP_TIME_GAP_MS,
