@@ -419,7 +419,7 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
 async def _personalities_handler(_request: web.Request) -> web.Response:
     """The personality skill's live preset metadata and default."""
     try:
-        catalog = read_personality_catalog()
+        catalog = await asyncio.to_thread(read_personality_catalog)
     except (OSError, ValueError, pyd.ValidationError) as exc:
         logger.error("personality catalog load failed: %s", exc)
         return web.json_response({"error": "personality catalog load failed"}, status=500)

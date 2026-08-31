@@ -267,8 +267,8 @@ def _available_skills() -> list[str]:
 
 
 def _cmd_presets(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
-    # Read the live reference data from this box's vestad (the one source of truth) rather
-    # than keeping hardcoded copies; skills come from the on-box skills dir.
+    # Read the live reference data from this agent's own local API (the one source of truth)
+    # rather than keeping hardcoded copies; skills come from the on-box skills dir.
     defaults = client.fetch_agent_defaults()
     _print(
         {

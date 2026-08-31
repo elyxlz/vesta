@@ -367,9 +367,9 @@ async def openai_oauth_complete(request: web.Request) -> web.Response:
     body = parsed
     state = request.app[PROVIDER_SETUP_STATE]
     _clean_expired(state)
-    session = state.openai_sessions.get(body.session_id)
-    if session is None:
+    if body.session_id not in state.openai_sessions:
         return _error(400, "invalid or expired OpenAI auth session")
+    session = state.openai_sessions[body.session_id]
 
     try:
         poll = await _poll_openai_device(session)
