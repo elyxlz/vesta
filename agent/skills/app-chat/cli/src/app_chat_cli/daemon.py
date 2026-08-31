@@ -251,7 +251,9 @@ async def _handle_send(state: DaemonState, message: str, attach: list[str]) -> t
         return {"error": "empty message"}, None
     refusal = state.service.refuse_send_while_speaking()
     if refusal is not None:
-        return {"error": refusal}, None
+        # `user_speaking` marks the one refusal the sender must treat as "floor yielded", not an
+        # error: `send` stops the rest of a paced reply on it and exits clean.
+        return {"error": refusal, "user_speaking": True}, None
     metas, ingest_error = await _ingest_attachments(state, attach)
     if ingest_error is not None:
         return {"error": ingest_error}, None
