@@ -4,8 +4,8 @@ import json
 import subprocess
 
 from . import auth, capture, owa_rest, teams
-from .config import DEFAULT_CLIENT_SCOPES, OWA_REST_SCOPES, Config
-from .settings import DEFAULT_CLIENT_ID, OWA_REST_CLIENT_ID
+from .config import DEFAULT_CLIENT_SCOPES, OWA_REST_SCOPES, OWNED_APP_SCOPES, Config
+from .settings import DEFAULT_CLIENT_ID, OWA_REST_CLIENT_ID, account_client_id_override
 
 # JS that extracts the OWA access token from the browser's MSAL storage.
 # Returns the token secret (a JWT) or the string 'NONE'.
@@ -481,12 +481,25 @@ def _is_personal_ms_account(email: str) -> bool:
     return first in {"outlook", "hotmail", "live"}
 
 
+def _setup_client_id(account_email: str) -> str:
+    """Client id for this account's `auth setup` device flow: its own app-registration override if
+    one is configured, otherwise the default first-party public client (unchanged for every account
+    that has no override). The device flow and its completion must use the same id, since the
+    refresh token it mints is bound to that client."""
+    return account_client_id_override(account_email) or DEFAULT_CLIENT_ID
+
+
 def setup_scopes_for(account_email: str) -> list[str]:
     """Scopes to consent during `auth setup` for this account.
 
-    Every Teams Graph permission (Chat.*, Team.*, Channel.*, Presence.*) is work/school only: the
-    consumer (MSA) token endpoint never grants them, so asking a personal account for them buys
-    nothing and risks a bare sign-in error. A personal account is asked for mail + calendar alone."""
+    An account pinned to its own app registration requests ".default" (that app's own configured
+    permissions), matching the scopes its silent refresh will later use. Otherwise: every Teams
+    Graph permission (Chat.*, Team.*, Channel.*, Presence.*) is work/school only — the consumer
+    (MSA) token endpoint never grants them, so asking a personal account for them buys nothing and
+    risks a bare sign-in error, and a personal account is asked for mail + calendar alone."""
+    override = account_client_id_override(account_email)
+    if override and override != DEFAULT_CLIENT_ID:
+        return list(OWNED_APP_SCOPES)
     if _is_personal_ms_account(account_email):
         return list(DEFAULT_CLIENT_SCOPES)
     return list(_SETUP_SCOPES)
@@ -537,7 +550,7 @@ def _setup_finish_device(config: Config, *, account_email: str, flow_cache: str)
         flow = json.loads(flow_cache)
     except (json.JSONDecodeError, TypeError) as e:
         raise ValueError("Invalid flow cache data") from e
-    app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
+    app = auth.get_app(config.cache_file, _setup_client_id(account_email))
     result = app.acquire_token_by_device_flow(flow)
     if "error" in result:
         error_msg = result["error_description"] if "error_description" in result else result["error"]
@@ -613,7 +626,7 @@ def auth_setup(
         # device-code round-trip that would be rejected and hand off to the browser up front.
         return _setup_begin_browser(config, account_email=account_email)
 
-    app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
+    app = auth.get_app(config.cache_file, _setup_client_id(account_email))
     flow = app.initiate_device_flow(scopes=setup_scopes_for(account_email))
     if "user_code" not in flow:
         error_msg = flow["error_description"] if "error_description" in flow else "Unknown error"

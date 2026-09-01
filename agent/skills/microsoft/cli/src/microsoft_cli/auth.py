@@ -4,6 +4,7 @@ from typing import NamedTuple
 import msal
 
 from .backend import GraphUnavailableError
+from .config import scopes_for_client_id
 from .settings import get_settings
 
 
@@ -86,7 +87,37 @@ def account_in_cache(cache_file: pl.Path, account_email: str, *, client_id: str 
     return any((a["username"] or "").lower() == account_email.lower() for a in app.get_accounts())
 
 
-def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None) -> str:
+def _username_for_account_id(cache_file: pl.Path, account_id: str) -> str | None:
+    """Look up an account's username (email) from the MSAL cache by home_account_id.
+
+    Accounts are stored in the cache independently of client id (an RT is client-bound, an
+    Account entry is not), so any app can enumerate them — see get_accounts()."""
+    for a in get_app(cache_file).get_accounts():
+        if a["home_account_id"] == account_id:
+            return a["username"] if "username" in a else None
+    return None
+
+
+def _resolve_account_client(
+    cache_file: pl.Path, scopes: list[str], *, account_id: str | None, account_email: str | None
+) -> tuple[str | None, list[str]]:
+    """Resolve the (client_id, scopes) to refresh one account's Graph token.
+
+    An MSAL refresh token is bound to the client id that minted it, so an account on its own app
+    registration must be refreshed with that same id — and with the ".default" scopes that app
+    uses. When no per-account override is configured at all we short-circuit to the global client
+    id (returned as None so get_app applies its default) and the caller's scopes, so an
+    unconfigured account behaves exactly as before."""
+    settings = get_settings()
+    if account_email is None and not settings.has_account_overrides():
+        return None, scopes
+    if account_email is None and account_id is not None:
+        account_email = _username_for_account_id(cache_file, account_id)
+    client_id = settings.client_id_for_account(account_email)
+    return client_id, scopes_for_client_id(client_id)
+
+
+def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None, account_email: str | None = None) -> str:
     """Mint a Graph token from the MSAL cache, silently.
 
     Never starts an interactive sign-in: a data command must not mint a device code.
@@ -94,8 +125,14 @@ def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None 
     :class:`backend.GraphUnavailableError`, which is what lets ``--backend auto``
     fall through to the OWA REST path (see backend.run). Interactive sign-in lives
     only in the auth commands (`auth login`, `auth setup`, `auth teams-login`),
-    which run the device flow themselves."""
-    app = get_app(cache_file)
+    which run the device flow themselves.
+
+    The MSAL app is built with the account's resolved (possibly per-account) client id, so an
+    account on its own app registration refreshes against the client that issued its refresh
+    token. ``account_email`` is used when the caller has it; otherwise it is recovered from
+    ``account_id`` via the cache."""
+    client_id, scopes = _resolve_account_client(cache_file, scopes, account_id=account_id, account_email=account_email)
+    app = get_app(cache_file, client_id)
 
     accounts = app.get_accounts()
     account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)

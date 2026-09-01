@@ -28,8 +28,21 @@ DEFAULT_CLIENT_SCOPES = [
 OWNED_APP_SCOPES = ["https://graph.microsoft.com/.default"]
 
 
+def scopes_for_client_id(client_id: str) -> list[str]:
+    """Scopes to request for a resolved client id: dynamic-consent Graph scopes for the shared
+    default public client, or ".default" (the app's own configured permissions) for a user's own
+    app registration. Keyed on the client id so a per-account owned app selects ".default" too."""
+    return list(DEFAULT_CLIENT_SCOPES) if client_id == DEFAULT_CLIENT_ID else list(OWNED_APP_SCOPES)
+
+
+def resolve_scopes_for_account(account_email: str | None) -> list[str]:
+    """Scopes for a specific account, keyed on its resolved (possibly per-account) client id."""
+    return scopes_for_client_id(get_settings().client_id_for_account(account_email))
+
+
 def resolve_scopes() -> list[str]:
-    return list(DEFAULT_CLIENT_SCOPES) if get_settings().microsoft_mcp_client_id == DEFAULT_CLIENT_ID else list(OWNED_APP_SCOPES)
+    """Scopes for the global client id (the Config default, used when no account is in play)."""
+    return scopes_for_client_id(get_settings().microsoft_mcp_client_id)
 
 
 # Delegated scopes for the OWA REST fallback: tokens for the outlook.office.com resource,
