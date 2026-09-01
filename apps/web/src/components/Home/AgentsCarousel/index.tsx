@@ -9,7 +9,7 @@ import {
   AGENT_CAROUSEL_EDGE_SCALE,
   AGENT_CAROUSEL_ITEM_STRIDE,
 } from "./constants";
-import { useDragScroll } from "./use-drag-scroll";
+import { useDragScroll, type DragPhase } from "./use-drag-scroll";
 
 const EDGE_FADE =
   "linear-gradient(to right, transparent, black 10%, black 90%, transparent)";
@@ -75,9 +75,10 @@ export function AgentsCarousel({
   const [centeredIndex, setCenteredIndex] = useState(
     initialIndex > 0 ? initialIndex : 0,
   );
-  // Mouse drag-to-scroll; snapping is dropped mid-drag so the scroll is free, then restored to settle.
-  const [dragging, setDragging] = useState(false);
-  useDragScroll(scrollerRef, setDragging);
+  // Mouse drag-to-scroll: snapping is off while dragging and through the smooth settle, so the
+  // release glides to the nearest card instead of hard-snapping.
+  const [phase, setPhase] = useState<DragPhase>("idle");
+  useDragScroll(scrollerRef, AGENT_CAROUSEL_ITEM_STRIDE, setPhase);
 
   // Center initialIndex before paint, without animation.
   useLayoutEffect(() => {
@@ -120,11 +121,11 @@ export function AgentsCarousel({
         ref={scrollerRef}
         className={cn(
           "flex w-full items-center overflow-x-auto no-scrollbar",
-          dragging ? "cursor-grabbing select-none" : "cursor-grab",
+          phase === "dragging" ? "cursor-grabbing select-none" : "cursor-grab",
         )}
         style={{
           ...SCROLLER_STYLE,
-          scrollSnapType: dragging ? "none" : "x mandatory",
+          scrollSnapType: phase === "idle" ? "x mandatory" : "none",
         }}
       >
         {agents.map((agent) => (
