@@ -2,12 +2,14 @@ import { motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
 import type { AgentRow } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import {
   AGENT_CAROUSEL_GAP,
   AGENT_CAROUSEL_CARD_WIDTH,
   AGENT_CAROUSEL_EDGE_SCALE,
   AGENT_CAROUSEL_ITEM_STRIDE,
 } from "./constants";
+import { useDragScroll } from "./use-drag-scroll";
 
 const EDGE_FADE =
   "linear-gradient(to right, transparent, black 10%, black 90%, transparent)";
@@ -24,7 +26,6 @@ const SCROLLER_STYLE = {
   gap: AGENT_CAROUSEL_GAP,
   paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
   overscrollBehaviorX: "none",
-  scrollSnapType: "x mandatory",
   touchAction: "pan-x",
   maskImage: EDGE_FADE,
   WebkitMaskImage: EDGE_FADE,
@@ -74,6 +75,9 @@ export function AgentsCarousel({
   const [centeredIndex, setCenteredIndex] = useState(
     initialIndex > 0 ? initialIndex : 0,
   );
+  // Mouse drag-to-scroll; snapping is dropped mid-drag so the scroll is free, then restored to settle.
+  const [dragging, setDragging] = useState(false);
+  useDragScroll(scrollerRef, setDragging);
 
   // Center initialIndex before paint, without animation.
   useLayoutEffect(() => {
@@ -114,8 +118,14 @@ export function AgentsCarousel({
     <div className="relative flex min-h-0 w-full flex-1">
       <div
         ref={scrollerRef}
-        className="flex w-full items-center overflow-x-auto no-scrollbar"
-        style={SCROLLER_STYLE}
+        className={cn(
+          "flex w-full items-center overflow-x-auto no-scrollbar",
+          dragging ? "cursor-grabbing select-none" : "cursor-grab",
+        )}
+        style={{
+          ...SCROLLER_STYLE,
+          scrollSnapType: dragging ? "none" : "x mandatory",
+        }}
       >
         {agents.map((agent) => (
           <div
