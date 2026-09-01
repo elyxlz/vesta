@@ -268,10 +268,10 @@ function FileBlock({
       {fetching ? (
         <ProgressRing
           progress={download.received / download.total}
-          className="ml-1 size-4 shrink-0"
+          className="mx-2 size-4 shrink-0"
         />
       ) : (
-        <Download className="ml-1 size-4 shrink-0 text-muted-foreground" />
+        <Download className="mx-2 size-4 shrink-0 text-muted-foreground" />
       )}
     </button>
   );
