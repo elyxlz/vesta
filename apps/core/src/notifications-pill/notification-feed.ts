@@ -27,6 +27,12 @@ export interface NotificationFeed {
    * before the first session ever. 0 means the user never caught up.
    */
   seenAt: number | null
+  /**
+   * The stamp the last close optimistically marked seen up to, so the bell's dot
+   * stays down from close until the gateway's synced watermark catches up over a
+   * slow link. Monotonic; a newer arrival always out-stamps it and re-raises the dot.
+   */
+  pendingSeenAt: number | null
 }
 
 export const EMPTY_FEED: NotificationFeed = {
@@ -37,11 +43,13 @@ export const EMPTY_FEED: NotificationFeed = {
   older: "more",
   open: false,
   seenAt: null,
+  pendingSeenAt: null,
 }
 
 export type FeedAction =
   | { type: "open"; seenAt: number }
   | { type: "close" }
+  | { type: "marked_seen"; seenAt: number }
   | { type: "arrived"; entry: LoggedUserNotification; readInPlace: boolean }
   | { type: "page_loading"; before?: number }
   | { type: "page_loaded"; page: LoggedUserNotification[]; before?: number; pageSize: number }
@@ -56,6 +64,11 @@ export function reduceFeed(feed: NotificationFeed, action: FeedAction): Notifica
       return { ...feed, open: true, seenAt: action.seenAt, liveIds: [], readIds: [] }
     case "close":
       return { ...feed, open: false }
+    case "marked_seen":
+      return {
+        ...feed,
+        pendingSeenAt: Math.max(feed.pendingSeenAt ?? 0, action.seenAt),
+      }
     case "arrived":
       if (feed.entries.some((item) => item.id === action.entry.id)) return feed
       return {
@@ -115,12 +128,13 @@ export function feedUnseen(
   lastAt: number | null | undefined,
   seenAt: number | undefined,
 ): boolean {
-  if (!feedHasUnseen(lastAt, seenAt)) return false
+  // The last close's optimistic floor holds the dot down until the synced watermark catches up.
+  const watermark = Math.max(seenAt ?? 0, feed.pendingSeenAt ?? 0)
+  if (!feedHasUnseen(lastAt, watermark)) return false
   if (feed.newest !== "ready") return true
   const newest = feed.entries[0]
   if ((lastAt ?? 0) > (newest === undefined ? 0 : newest.at)) return true
   const read = new Set(feed.readIds)
-  const watermark = seenAt ?? 0
   return feed.entries.some((item) => item.at > watermark && !read.has(item.id))
 }
 

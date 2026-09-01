@@ -5,7 +5,7 @@ import type { OrbVisualState } from "../agent-status/agent-status"
 // its platform's rendering.
 
 /** How long one notification holds the pill before the queue advances. */
-export const PILL_SHOW_MS = 2500
+export const PILL_SHOW_MS = 4000
 
 export interface PillContent {
   agent: string
