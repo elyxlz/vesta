@@ -183,6 +183,12 @@ PATTERNS = [
     # events. The digit lookahead keeps camelCase docs URLs (/api/RTCPeerConnectionIceEvent) out.
     r"[?&](?:auth|sig|signature)=[A-Za-z0-9_\-]{16,}",
     r"/api/(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{25,}",
+    # Passwordless / magic sign-in links, where the credential is a bare high-entropy token in the
+    # path or URL fragment with no key-shaped name (e.g. .../magic-link#<hex>:<base64>). Query forms
+    # like ?token= / #access_token= are already caught by the key/token suffix rule; this covers the
+    # unlabelled fragment form that otherwise sails straight through. Anchored at the literal
+    # magic-link keyword (not a quantified URL prefix) so it cannot rescan from every scheme and hang.
+    r"magic[_-]?link[#/][A-Za-z0-9_\-:.=%+]{16,}",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
