@@ -166,6 +166,22 @@ describe("feedUnseen", () => {
     expect(feedUnseen(feed, 300, 300)).toBe(false)
     expect(feedUnseen(feed, null, 0)).toBe(false)
   })
+
+  it("holds the dot down after close marks seen, until the synced watermark catches up", () => {
+    const seen = loaded([
+      { type: "arrived", readInPlace: false, entry: entry(3, 300) },
+      { type: "marked_seen", seenAt: 300 },
+    ])
+    // Synced watermark still lags at 200, but the optimistic floor keeps the dot down.
+    expect(feedUnseen(seen, 300, 200)).toBe(false)
+    // A newer arrival out-stamps the floor and raises the dot again.
+    const newer = reduceFeed(seen, {
+      type: "arrived",
+      readInPlace: false,
+      entry: entry(4, 400),
+    })
+    expect(feedUnseen(newer, 400, 200)).toBe(true)
+  })
 })
 
 describe("feedSections", () => {

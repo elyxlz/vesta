@@ -8,6 +8,7 @@ import {
   type UploadErrorReason,
 } from "@vesta/core";
 import { ATTACHMENT_KIND_ICON } from "../ChatBubble/AttachmentContent/kind-icon";
+import { ProgressRing } from "../ProgressRing";
 import { cn } from "@/lib/utils";
 
 // The composer's draft chips: one per picked file, always showing name + size, with the upload
@@ -20,34 +21,6 @@ const ERROR_LABEL: Record<UploadErrorReason, string> = {
   failed: "upload failed",
   aborted: "cancelled",
 };
-
-function ProgressRing({ progress }: { progress: number }) {
-  const radius = 8;
-  const circumference = 2 * Math.PI * radius;
-  return (
-    <svg viewBox="0 0 20 20" className="size-5 -rotate-90">
-      <circle
-        cx="10"
-        cy="10"
-        r={radius}
-        fill="none"
-        strokeWidth="2.5"
-        className="stroke-border"
-      />
-      <circle
-        cx="10"
-        cy="10"
-        r={radius}
-        fill="none"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={circumference * (1 - progress)}
-        className="stroke-primary transition-[stroke-dashoffset] duration-300"
-      />
-    </svg>
-  );
-}
 
 function ChipThumb({
   draft,

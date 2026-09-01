@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { AnimatePresence, motion } from "motion/react";
@@ -16,11 +17,11 @@ import {
 } from "@vesta/core";
 import { Button } from "@/components/ui/button";
 import { useAuthedSrc } from "@/hooks/use-authed-src";
-import { attachmentRemoved, downloadAttachment } from "@/lib/download";
-import { useToastStore } from "@/stores/use-toast";
 import { stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
+import { ProgressRing } from "../ProgressRing";
+import { useDownload, useDownloadsStore } from "@/stores/use-downloads";
 import {
   panBy,
   resetZoom,
@@ -39,14 +40,32 @@ import {
 
 const WHEEL_ZOOM_RATE = 0.002;
 const PINCH_ZOOM_RATE = 0.01;
-// The media caps at this fraction of the container, so the scrim always frames it.
-const MEDIA_FRACTION = "88%";
+
+function AttachmentCaption({ attachment }: { attachment: ChatAttachment }) {
+  return (
+    <figcaption className="max-w-full shrink-0 truncate rounded-full bg-popover/90 px-3 py-1 text-xs text-muted-foreground shadow-sm">
+      {attachment.name}
+      {attachment.width && attachment.height
+        ? ` · ${String(attachment.width)}×${String(attachment.height)}`
+        : ""}
+      {" · "}
+      {formatBytes(attachment.size)}
+    </figcaption>
+  );
+}
 
 // Owns its zoom/pan state and its own geometry (offsetWidth ignores the transform, so it reads
 // the fitted scale-1 size); the parent resets everything by keying this component on the
-// attachment id.
-function ZoomableImage({ src, name }: { src: string; name: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
+// attachment id. The image is its own viewport, so the caption below it hugs its real bottom edge.
+function ZoomableImage({
+  src,
+  name,
+  caption,
+}: {
+  src: string;
+  name: string;
+  caption: ReactNode;
+}) {
   const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [zoom, setZoom] = useState<ZoomState>(resetZoom);
@@ -62,23 +81,16 @@ function ZoomableImage({ src, name }: { src: string; name: string }) {
       clientX: number,
       clientY: number,
     ) => {
-      const container = containerRef.current;
       const image = imageRef.current;
-      if (!container || !image) return;
-      const bounds = container.getBoundingClientRect();
+      if (!image) return;
+      const bounds = image.getBoundingClientRect();
       const cursor = {
         x: clientX - bounds.left - bounds.width / 2,
         y: clientY - bounds.top - bounds.height / 2,
       };
-      const containerSize = {
-        width: container.clientWidth,
-        height: container.clientHeight,
-      };
-      const contentSize = {
-        width: image.offsetWidth,
-        height: image.offsetHeight,
-      };
-      setZoom((current) => apply(current, cursor, containerSize, contentSize));
+      // Container and content are the same box: a fitted image never pans, a zoomed one pans its overhang.
+      const size = { width: image.offsetWidth, height: image.offsetHeight };
+      setZoom((current) => apply(current, cursor, size, size));
     },
     [],
   );
@@ -87,8 +99,8 @@ function ZoomableImage({ src, name }: { src: string; name: string }) {
   // preventDefault (the chat behind must not scroll while zooming). `fold` is stable, so the
   // non-passive listener binds once per mount.
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    const image = imageRef.current;
+    if (!image) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       const factor = Math.exp(
@@ -101,9 +113,9 @@ function ZoomableImage({ src, name }: { src: string; name: string }) {
         event.clientY,
       );
     };
-    container.addEventListener("wheel", onWheel, { passive: false });
+    image.addEventListener("wheel", onWheel, { passive: false });
     return () => {
-      container.removeEventListener("wheel", onWheel);
+      image.removeEventListener("wheel", onWheel);
     };
   }, [fold]);
 
@@ -130,37 +142,33 @@ function ZoomableImage({ src, name }: { src: string; name: string }) {
   };
 
   return (
-    <div
-      ref={containerRef}
-      data-viewer-stage
-      className="flex size-full items-center justify-center overflow-hidden"
-      onDoubleClick={(event) => {
-        fold(toggleZoom, event.clientX, event.clientY);
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-    >
+    <figure className="flex size-full min-h-0 flex-col items-center justify-center gap-2.5 overflow-hidden">
       <img
         ref={imageRef}
         src={src}
         alt={name}
         draggable={false}
+        data-viewer-stage
         data-zoom-scale={zoom.scale}
+        onDoubleClick={(event) => {
+          fold(toggleZoom, event.clientX, event.clientY);
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
         style={{
-          maxWidth: MEDIA_FRACTION,
-          maxHeight: MEDIA_FRACTION,
           transform: `translate(${String(zoom.x)}px, ${String(zoom.y)}px) scale(${String(zoom.scale)})`,
         }}
         className={cn(
-          "rounded-2xl object-contain shadow-lg select-none",
+          "min-h-0 max-w-full rounded-2xl object-contain shadow-lg select-none",
           zoom.scale > 1
             ? "cursor-grab active:cursor-grabbing"
             : "cursor-zoom-in",
         )}
       />
-    </div>
+      {caption}
+    </figure>
   );
 }
 
@@ -177,19 +185,8 @@ export function AttachmentViewer({
   const src = useAuthedSrc(
     attachment ? appChatAttachmentPath(agent, attachment.id) : null,
   );
-
-  const save = (target: ChatAttachment) => {
-    downloadAttachment(agent, target).catch((error: unknown) => {
-      useToastStore
-        .getState()
-        .show(
-          "error",
-          attachmentRemoved(error)
-            ? `${target.name} is no longer available`
-            : `couldn't download ${target.name}`,
-        );
-    });
-  };
+  const download = useDownload(attachment?.id ?? "");
+  const startDownload = useDownloadsStore((state) => state.start);
 
   return (
     <AnimatePresence>
@@ -224,7 +221,7 @@ export function AttachmentViewer({
                 aria-label="close viewer"
                 tabIndex={-1}
                 onClick={onClose}
-                className="absolute inset-0 cursor-default bg-background/80"
+                className="absolute inset-0 cursor-default bg-background/95"
               />
               <div className="pointer-events-none relative z-10 flex flex-1 flex-col">
                 <div className="pointer-events-auto flex items-center justify-end gap-1 p-2">
@@ -233,12 +230,19 @@ export function AttachmentViewer({
                     size="icon"
                     variant="ghost"
                     aria-label={`download ${attachment.name}`}
+                    disabled={download?.phase === "fetching"}
                     onClick={() => {
-                      save(attachment);
+                      startDownload(agent, attachment);
                     }}
                     className="size-8 rounded-full"
                   >
-                    <Download />
+                    {download?.phase === "fetching" ? (
+                      <ProgressRing
+                        progress={download.received / download.total}
+                      />
+                    ) : (
+                      <Download />
+                    )}
                   </Button>
                   <Button
                     type="button"
@@ -251,9 +255,9 @@ export function AttachmentViewer({
                     <X />
                   </Button>
                 </div>
-                <div className="pointer-events-auto min-h-0 flex-1">
+                <div className="pointer-events-auto min-h-0 flex-1 px-6 pb-4">
                   {attachmentKind(attachment.mime) === "video" ? (
-                    <div className="flex size-full items-center justify-center">
+                    <figure className="flex size-full min-h-0 flex-col items-center justify-center gap-2.5">
                       {src !== null && (
                         <video
                           src={src}
@@ -264,33 +268,21 @@ export function AttachmentViewer({
                               event.currentTarget.currentTime =
                                 request.startTime;
                           }}
-                          style={{
-                            maxWidth: MEDIA_FRACTION,
-                            maxHeight: MEDIA_FRACTION,
-                          }}
-                          className="rounded-2xl shadow-lg"
+                          className="min-h-0 max-w-full rounded-2xl object-contain shadow-lg"
                         />
                       )}
-                    </div>
+                      <AttachmentCaption attachment={attachment} />
+                    </figure>
                   ) : (
                     src !== null && (
                       <ZoomableImage
                         key={attachment.id}
                         src={src}
                         name={attachment.name}
+                        caption={<AttachmentCaption attachment={attachment} />}
                       />
                     )
                   )}
-                </div>
-                <div className="pointer-events-auto flex justify-center p-2.5">
-                  <span className="max-w-[80%] truncate rounded-full bg-popover/90 px-3 py-1 text-xs text-muted-foreground shadow-sm">
-                    {attachment.name}
-                    {attachment.width && attachment.height
-                      ? ` · ${String(attachment.width)}×${String(attachment.height)}`
-                      : ""}
-                    {" · "}
-                    {formatBytes(attachment.size)}
-                  </span>
                 </div>
               </div>
             </motion.div>

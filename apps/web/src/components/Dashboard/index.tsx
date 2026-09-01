@@ -23,6 +23,7 @@ import {
   EmptyDescription,
   EmptyMedia,
 } from "@/components/ui/empty";
+import { shouldReloadDashboard } from "./reload-on-visible";
 
 // Pre-iframe states (no dashboard, error, loading) wear the same flat chrome as the chat card and the
 // live dashboard shell — shadow-none, just the squircle + hairline ring — so the three panels are
@@ -40,13 +41,15 @@ function DashboardShell({ children }: { children?: ReactNode }) {
 // The frame's identity: which document, under which credential. A change means the mounted
 // document is stale (the service appeared, was invalidated, or its key rotated, since the
 // document loaded under the old credential), so the keyed iframe remounts and the load and
-// handshake state reset with it.
+// handshake state reset with it. `reloadNonce` is the visibility reconcile's manual remount, for
+// when an occluded frame froze mid-reload and never finished.
 function frameIdentityOf(
   hasDashboard: boolean,
   rev: number,
   key: string | null,
+  reloadNonce: number,
 ): string {
-  return `${hasDashboard ? "up" : "down"}:${String(rev)}:${key ?? ""}`;
+  return `${hasDashboard ? "up" : "down"}:${String(rev)}:${key ?? ""}:${String(reloadNonce)}`;
 }
 
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
@@ -59,6 +62,10 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const [loaded, setLoaded] = useState(false);
   const handshakeRef = useRef(false);
   const handshakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The rev whose document actually finished loading; stays behind when an occluded frame froze
+  // mid-reload, which is what the visibility reconcile checks against.
+  const loadedRevRef = useRef<number | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   const dashboardService = agent.services.dashboard;
   const hasDashboard = !!dashboardService;
@@ -86,6 +93,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     hasDashboard,
     dashboardRev,
     dashboardKey,
+    reloadNonce,
   );
   const prevFrameIdentity = useRef(frameIdentity);
   useEffect(() => {
@@ -103,6 +111,28 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
     };
   }, []);
+
+  // On the window becoming visible/focused, run any invalidation the frame missed while occluded:
+  // an occluded remount can freeze before it loads, so if the loaded rev is behind, remount now.
+  useEffect(() => {
+    const reconcile = () => {
+      if (
+        shouldReloadDashboard({
+          visible: document.visibilityState === "visible",
+          hasDashboard,
+          loadedRev: loadedRevRef.current,
+          currentRev: dashboardRev,
+        })
+      )
+        setReloadNonce((nonce) => nonce + 1);
+    };
+    window.addEventListener("focus", reconcile);
+    document.addEventListener("visibilitychange", reconcile);
+    return () => {
+      window.removeEventListener("focus", reconcile);
+      document.removeEventListener("visibilitychange", reconcile);
+    };
+  }, [hasDashboard, dashboardRev]);
 
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
@@ -243,6 +273,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
           allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
           className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
           onLoad={() => {
+            loadedRevRef.current = dashboardRev;
             sendContext();
             if (handshakeRef.current) {
               setLoaded(true);

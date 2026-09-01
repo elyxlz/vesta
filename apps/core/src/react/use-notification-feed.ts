@@ -104,6 +104,9 @@ export function useNotificationFeed(
     (lastAt: number | null) => {
       dispatch({ type: "close" })
       if (controller && feedNeedsMarkSeen(feed, lastAt)) {
+        const newest = feed.entries[0]
+        const seenAt = Math.max(lastAt ?? 0, newest === undefined ? 0 : newest.at)
+        dispatch({ type: "marked_seen", seenAt })
         markUserNotificationsSeen(controller.http).catch(() => undefined)
       }
     },

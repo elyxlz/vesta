@@ -243,7 +243,7 @@ export const APP_SETTINGS: Record<string, Scenario> = {
     drive: () => Promise.resolve(),
     settle: async (page) => {
       await expect(
-        page.getByRole("heading", { name: "app settings" }),
+        page.getByRole("heading", { name: "appearance" }),
       ).toBeVisible();
       await expect(page.getByText("lan access")).toBeVisible();
       await expect(page.getByText("remote access")).toBeVisible();

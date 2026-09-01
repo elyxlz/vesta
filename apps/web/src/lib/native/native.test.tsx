@@ -95,6 +95,8 @@ describe("electron bridge", () => {
       windowClose: vi.fn(() => Promise.resolve()),
       windowIsMaximized: vi.fn(() => Promise.resolve(false)),
       onWindowMaximizedChange: vi.fn(() => noopUnsubscribe),
+      getOpenAtLogin: vi.fn(() => Promise.resolve(false)),
+      setOpenAtLogin: vi.fn(() => Promise.resolve()),
     } satisfies VestaNativeApi;
     return { ...base, ...overrides };
   }

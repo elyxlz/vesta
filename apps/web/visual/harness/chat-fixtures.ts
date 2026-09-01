@@ -302,3 +302,14 @@ export function attachmentStatesConversation(): VestaEvent[] {
     ]),
   ];
 }
+
+// One bubble stacking several attachments, so the gap between them is visible.
+export function multiAttachmentConversation(): VestaEvent[] {
+  return [
+    withAttachments(userMessage("everything for the trip is here", 12), [
+      BUBBLE_ATTACHMENTS.image,
+      BUBBLE_ATTACHMENTS.file,
+      BUBBLE_ATTACHMENTS.audio,
+    ]),
+  ];
+}

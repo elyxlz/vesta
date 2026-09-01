@@ -135,7 +135,7 @@ export function AgentSettings() {
       <PageScroll
         contentClassName={cn(
           "flex w-full",
-          !isMobile && "mx-auto max-w-[79rem] gap-0",
+          !isMobile && "mx-auto max-w-[74rem] gap-0",
         )}
       >
         {/* Desktop: sticky sidebar hugging the content, with an equal-width
@@ -167,7 +167,7 @@ export function AgentSettings() {
 
         <div
           key="content"
-          className={cn("min-w-0", isMobile ? "w-full" : "w-[53rem]")}
+          className={cn("min-w-0", isMobile ? "w-full" : "w-[48rem]")}
         >
           {panels}
         </div>

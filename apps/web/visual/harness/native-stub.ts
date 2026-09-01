@@ -27,6 +27,8 @@ interface VestaNativeApi {
   windowClose(): Promise<void>;
   windowIsMaximized(): Promise<boolean>;
   onWindowMaximizedChange(cb: (maximized: boolean) => void): () => void;
+  getOpenAtLogin(): Promise<boolean>;
+  setOpenAtLogin(enabled: boolean): Promise<void>;
 }
 
 declare global {
@@ -98,6 +100,8 @@ export async function installNativeStub(
         windowClose: resolved,
         windowIsMaximized: () => Promise.resolve(false),
         onWindowMaximizedChange: () => noop,
+        getOpenAtLogin: () => Promise.resolve(false),
+        setOpenAtLogin: resolved,
       };
     },
     {

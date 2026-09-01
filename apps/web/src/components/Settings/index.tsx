@@ -28,6 +28,7 @@ import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { UpdatesCard } from "@/components/Settings/UpdatesCard";
+import { StartupCard } from "@/components/Settings/StartupCard";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -52,7 +53,7 @@ export function AppSettings() {
   const [showLogs, setShowLogs] = useState(false);
 
   return (
-    <div className="mx-auto mt-4 grid w-full max-w-[53rem] grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
+    <div className="mx-auto mt-4 grid w-full max-w-[48rem] grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
       <Card size="sm">
         <CardContent>
           <MenuSection title="appearance">
@@ -64,6 +65,8 @@ export function AppSettings() {
       <KeybindsCard />
 
       <UpdatesCard />
+
+      <StartupCard />
 
       <Card size="sm" className="md:col-span-2">
         <CardContent>

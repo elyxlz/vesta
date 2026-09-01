@@ -173,7 +173,7 @@ function MessageBubble({
           {/* Block flow (not flex) so adjacent markdown paragraphs keep their collapsed margins. */}
           <div className="min-w-0 break-words">
             {blocks && (
-              <div className={cn("flex flex-col gap-1.5 py-1", text && "mb-1")}>
+              <div className={cn("flex flex-col gap-2.5 py-1", text && "mb-1")}>
                 {blocks.attachments.map((attachment) => (
                   <AttachmentContent
                     key={attachment.id}
