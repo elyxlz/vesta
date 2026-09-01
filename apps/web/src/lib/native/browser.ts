@@ -79,5 +79,6 @@ export function createBrowserBridge(): NativeBridge {
     windowControls: null,
     readGeolocation: null,
     appUpdate: null,
+    loginItem: null,
   };
 }

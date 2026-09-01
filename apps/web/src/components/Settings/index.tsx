@@ -28,6 +28,7 @@ import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { UpdatesCard } from "@/components/Settings/UpdatesCard";
+import { StartupCard } from "@/components/Settings/StartupCard";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -64,6 +65,8 @@ export function AppSettings() {
       <KeybindsCard />
 
       <UpdatesCard />
+
+      <StartupCard />
 
       <Card size="sm" className="md:col-span-2">
         <CardContent>

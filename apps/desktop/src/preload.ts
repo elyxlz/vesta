@@ -51,4 +51,7 @@ contextBridge.exposeInMainWorld("vestaNative", {
     subscribe("window-maximized", (_event, maximized: boolean) => {
       cb(maximized);
     }),
+  getOpenAtLogin: () => ipcRenderer.invoke("login-item:get"),
+  setOpenAtLogin: (enabled: boolean) =>
+    ipcRenderer.invoke("login-item:set", enabled),
 });

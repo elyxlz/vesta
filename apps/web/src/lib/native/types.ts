@@ -55,6 +55,12 @@ export interface WindowControls {
   onMaximizedChange(cb: (maximized: boolean) => void): () => void;
 }
 
+// OS "launch at login" toggle, backed by the platform login item so the OS is the source of truth.
+export interface LoginItem {
+  get(): Promise<boolean>;
+  set(enabled: boolean): Promise<void>;
+}
+
 export interface NativeBridge {
   runtime: Runtime;
   platform: Platform;
@@ -74,6 +80,8 @@ export interface NativeBridge {
   readGeolocation: (() => Promise<NativeGeolocationFix | null>) | null;
   /** Manual desktop self-update, driven by the App Settings Updates card; null in the browser. */
   appUpdate: AppUpdater | null;
+  /** OS launch-at-login toggle, driven by the App Settings Startup card; null in the browser. */
+  loginItem: LoginItem | null;
 }
 
 /**
@@ -105,6 +113,8 @@ export interface VestaNativeApi {
   windowClose(): Promise<void>;
   windowIsMaximized(): Promise<boolean>;
   onWindowMaximizedChange(cb: (maximized: boolean) => void): () => void;
+  getOpenAtLogin(): Promise<boolean>;
+  setOpenAtLogin(enabled: boolean): Promise<void>;
 }
 
 declare global {
