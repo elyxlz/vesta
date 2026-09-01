@@ -7,7 +7,7 @@ import type { ChatAttachment } from "@vesta/core";
 const downloads = vi.hoisted(() => ({
   calls: [] as {
     onProgress?: (received: number, total: number) => void;
-    resolve: () => void;
+    resolve: (outcome: "saved" | "cancelled") => void;
     reject: (error: unknown) => void;
   }[],
 }));
@@ -17,7 +17,7 @@ vi.mock("@/lib/download", () => ({
     _attachment: ChatAttachment,
     onProgress?: (received: number, total: number) => void,
   ) =>
-    new Promise<void>((resolve, reject) => {
+    new Promise<"saved" | "cancelled">((resolve, reject) => {
       downloads.calls.push({ onProgress, resolve, reject });
     }),
   attachmentRemoved: (error: unknown) => error === "removed",
@@ -74,7 +74,7 @@ describe("useDownloadsStore", () => {
     call.onProgress?.(2 * MB, TOTAL);
     expect(entry("att-1")?.received).toBe(2 * MB);
 
-    call.resolve();
+    call.resolve("saved");
     await flush();
     expect(entry("att-1")).toEqual({
       received: TOTAL,
@@ -113,5 +113,13 @@ describe("useDownloadsStore", () => {
       "error",
       "couldn't download beach.png",
     );
+  });
+
+  it("clears the entry silently when the save is cancelled", async () => {
+    useDownloadsStore.getState().start("ada", ATT);
+    lastCall().resolve("cancelled");
+    await flush();
+    expect(entry("att-1")).toBeNull();
+    expect(toast.show).not.toHaveBeenCalled();
   });
 });

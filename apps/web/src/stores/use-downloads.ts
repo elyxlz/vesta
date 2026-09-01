@@ -58,7 +58,11 @@ export const useDownloadsStore = create<DownloadsStore>((set, get) => ({
         };
       });
     }).then(
-      () => {
+      (outcome) => {
+        if (outcome === "cancelled") {
+          set((state) => ({ active: without(state.active, id) }));
+          return;
+        }
         set((state) => ({
           active: {
             ...state.active,

@@ -16,6 +16,7 @@ const ATTACHMENT = {
 
 describe("downloadAttachment", () => {
   afterEach(() => {
+    window.showSaveFilePicker = undefined;
     vi.restoreAllMocks();
   });
 
@@ -70,5 +71,38 @@ describe("downloadAttachment", () => {
   it("propagates a failed fetch to the caller", async () => {
     apiFetchMock.mockRejectedValue(new Error("410"));
     await expect(downloadAttachment("ada", ATTACHMENT)).rejects.toThrow("410");
+  });
+
+  it("writes through the file picker and reports saved", async () => {
+    apiFetchMock.mockResolvedValue(new Response(new Uint8Array(8)));
+    const write = vi.fn(() => Promise.resolve());
+    const close = vi.fn(() => Promise.resolve());
+    const writable = {
+      write,
+      close,
+    } as unknown as FileSystemWritableFileStream;
+    const handle = {
+      createWritable: () => Promise.resolve(writable),
+    } as unknown as FileSystemFileHandle;
+    const picker = vi.fn(() => Promise.resolve(handle));
+    window.showSaveFilePicker = picker;
+
+    const outcome = await downloadAttachment("ada", ATTACHMENT);
+
+    expect(picker).toHaveBeenCalledWith({ suggestedName: "report.pdf" });
+    expect(write).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(outcome).toBe("saved");
+  });
+
+  it("returns cancelled when the save picker is dismissed", async () => {
+    apiFetchMock.mockResolvedValue(new Response(new Uint8Array(8)));
+    window.showSaveFilePicker = vi.fn(() =>
+      Promise.reject(new DOMException("cancelled", "AbortError")),
+    );
+
+    await expect(downloadAttachment("ada", ATTACHMENT)).resolves.toBe(
+      "cancelled",
+    );
   });
 });
