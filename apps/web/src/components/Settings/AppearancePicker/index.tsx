@@ -18,26 +18,34 @@ function SchemeFrame({ scheme }: { scheme: Scheme }) {
   const palette = schemeColors[scheme];
   return (
     <div
-      className="flex h-full w-full flex-col justify-between p-2"
+      className="h-full w-full p-1.5"
       style={{ backgroundColor: palette.background }}
     >
       <div
-        className="flex w-[56%] flex-col gap-[3px] rounded-[4px] p-1"
-        style={{ backgroundColor: palette.card }}
+        className="flex h-full w-full flex-col justify-between rounded-[5px] border p-1.5"
+        style={{
+          backgroundColor: palette.background,
+          borderColor: palette.border,
+        }}
       >
         <div
-          className="h-[2px] rounded-full opacity-55"
-          style={{ backgroundColor: palette["muted-foreground"] }}
-        />
+          className="flex w-[56%] flex-col gap-[3px] rounded-[4px] p-1"
+          style={{ backgroundColor: palette.card }}
+        >
+          <div
+            className="h-[2px] rounded-full opacity-55"
+            style={{ backgroundColor: palette["muted-foreground"] }}
+          />
+          <div
+            className="h-[2px] w-[60%] rounded-full opacity-55"
+            style={{ backgroundColor: palette["muted-foreground"] }}
+          />
+        </div>
         <div
-          className="h-[2px] w-[60%] rounded-full opacity-55"
-          style={{ backgroundColor: palette["muted-foreground"] }}
+          className="h-1.5 w-[40%] self-end rounded-full"
+          style={{ backgroundColor: palette.primary }}
         />
       </div>
-      <div
-        className="h-1.5 w-[40%] self-end rounded-full"
-        style={{ backgroundColor: palette.primary }}
-      />
     </div>
   );
 }
