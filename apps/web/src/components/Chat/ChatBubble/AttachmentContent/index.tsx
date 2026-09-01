@@ -254,7 +254,7 @@ function FileBlock({
       onClick={() => {
         startDownload(agent, attachment);
       }}
-      className="flex items-center gap-2.5 rounded-xl bg-background px-3 py-2 text-left hover:bg-muted"
+      className="flex items-center gap-2.5 rounded-xl bg-background px-3 py-2 text-left text-foreground hover:bg-muted"
     >
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
         <Icon className="size-4.5" />
