@@ -8,6 +8,7 @@ import {
   attachmentRoutes,
   attachmentServeRoutes,
   attachmentStatesConversation,
+  multiAttachmentConversation,
   chatRoutes,
   errorLine,
   rateLimitedLine,
@@ -497,6 +498,17 @@ export const CHAT: Record<string, Scenario> = {
     },
     { routes: attachmentServeRoutes(AGENT) },
   ),
+  "chat-attachment-bubble-group": chatScenario(
+    { events: multiAttachmentConversation() },
+    async (page) => {
+      await expect(
+        page.getByAltText("beach.png").filter({ visible: true }).first(),
+      ).toBeVisible(LOADED);
+      await expect(chatText(page, "340.3 kB").first()).toBeVisible();
+      await expect(chatText(page, "memo.wav · 52 B").first()).toBeVisible();
+    },
+    { routes: attachmentServeRoutes(AGENT) },
+  ),
   "chat-attachment-viewer": {
     state: chatState(
       { events: attachmentConversation() },
@@ -529,13 +541,13 @@ export const CHAT: Record<string, Scenario> = {
         .filter({ visible: true })
         .first()
         .click();
-      const stage = page.locator("[data-viewer-stage]").first();
-      await expect(stage.locator("img")).toBeVisible(LOADED);
-      await stage.locator("img").dblclick();
+      const stage = page.locator("img[data-viewer-stage]").first();
+      await expect(stage).toBeVisible(LOADED);
+      await stage.dblclick();
     },
     settle: async (page) => {
       await expect(
-        page.locator('[data-viewer-stage] img[data-zoom-scale="2"]'),
+        page.locator('img[data-viewer-stage][data-zoom-scale="2"]'),
       ).toBeVisible(LOADED);
     },
   },

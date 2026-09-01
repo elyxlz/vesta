@@ -8,10 +8,11 @@ import {
 } from "@vesta/core";
 import { apiFetch } from "@/api/client";
 import { useAuthedSrc } from "@/hooks/use-authed-src";
-import { attachmentRemoved, downloadAttachment } from "@/lib/download";
-import { useToastStore } from "@/stores/use-toast";
+import { attachmentRemoved } from "@/lib/download";
+import { useDownload, useDownloadsStore } from "@/stores/use-downloads";
 import { cn } from "@/lib/utils";
 import { ATTACHMENT_KIND_ICON } from "./kind-icon";
+import { ProgressRing } from "../../ProgressRing";
 
 // One attachment block inside a chat bubble, routed by kind: images open the in-chat viewer,
 // videos play inline with an expand handoff, audio plays inline, and everything else is a
@@ -26,10 +27,6 @@ export interface OpenViewerRequest {
 // Bubble media is capped to a phone-photo footprint; pre-sizing from the metadata dimensions
 // keeps the chat scroll stable while bytes load.
 const MEDIA_CLASS = "block max-h-[400px] max-w-[320px] rounded-xl";
-
-// How long the file tile celebrates a finished download before returning to idle: on desktop the
-// blob has only reached the save dialog, so a permanent "saved" could overclaim.
-const SAVED_NOTICE_MS = 4000;
 
 function mediaAspect(attachment: ChatAttachment): React.CSSProperties {
   if (!attachment.width || !attachment.height) return {};
@@ -54,7 +51,7 @@ async function probePhase(agent: string, id: string): Promise<MediaPhase> {
 
 function RemovedTile({ attachment }: { attachment: ChatAttachment }) {
   return (
-    <div className="flex items-center gap-2.5 rounded-xl bg-background/40 px-3 py-2 text-muted-foreground">
+    <div className="flex items-center gap-2.5 rounded-xl bg-background px-3 py-2 text-muted-foreground">
       <Ban className="size-4 shrink-0" />
       <span className="flex min-w-0 flex-col">
         <span className="max-w-52 truncate text-sm">{attachment.name}</span>
@@ -63,6 +60,21 @@ function RemovedTile({ attachment }: { attachment: ChatAttachment }) {
         </span>
       </span>
     </div>
+  );
+}
+
+// A download started from the viewer keeps running after the overlay closes; the matching bubble
+// thumbnail shows its live ring so the progress stays visible.
+function DownloadOverlay({ id }: { id: string }) {
+  const download = useDownload(id);
+  if (download?.phase !== "fetching") return null;
+  return (
+    <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/50">
+      <ProgressRing
+        progress={download.received / download.total}
+        className="size-9"
+      />
+    </span>
   );
 }
 
@@ -90,7 +102,7 @@ function ImageBlock({
           setEpoch((current) => current + 1);
           setPhase("loading");
         }}
-        className="flex items-center gap-2.5 rounded-xl bg-background/40 px-3 py-2 text-muted-foreground"
+        className="flex items-center gap-2.5 rounded-xl bg-background px-3 py-2 text-muted-foreground"
       >
         <RotateCcw className="size-4 shrink-0" />
         <span className="flex min-w-0 flex-col text-left">
@@ -129,6 +141,7 @@ function ImageBlock({
           aria-hidden
         />
       )}
+      <DownloadOverlay id={attachment.id} />
     </button>
   );
 }
@@ -187,6 +200,7 @@ function VideoBlock({
           <Maximize2 className="size-3.5" />
         </button>
       )}
+      <DownloadOverlay id={attachment.id} />
     </span>
   );
 }
@@ -211,8 +225,6 @@ function AudioBlock({
   );
 }
 
-type DownloadPhase = "idle" | "fetching" | "saved" | "removed";
-
 function FileBlock({
   agent,
   attachment,
@@ -220,57 +232,29 @@ function FileBlock({
   agent: string;
   attachment: ChatAttachment;
 }) {
-  const [phase, setPhase] = useState<DownloadPhase>("idle");
-  const [received, setReceived] = useState(0);
-  // Progress arrives per network chunk; only meaningful movement commits a render.
-  const progressStep = Math.max(attachment.size / 100, 256 * 1024);
+  const download = useDownload(attachment.id);
+  const startDownload = useDownloadsStore((state) => state.start);
 
-  if (phase === "removed") return <RemovedTile attachment={attachment} />;
+  if (download?.phase === "removed")
+    return <RemovedTile attachment={attachment} />;
 
   const Icon = ATTACHMENT_KIND_ICON[attachmentKind(attachment.mime)];
-  const start = () => {
-    setPhase("fetching");
-    setReceived(0);
-    downloadAttachment(agent, attachment, (bytes) => {
-      setReceived((previous) =>
-        bytes - previous >= progressStep || bytes >= attachment.size
-          ? bytes
-          : previous,
-      );
-    }).then(
-      () => {
-        setPhase("saved");
-        window.setTimeout(() => {
-          setPhase((current) => (current === "saved" ? "idle" : current));
-        }, SAVED_NOTICE_MS);
-      },
-      (error: unknown) => {
-        if (attachmentRemoved(error)) {
-          setPhase("removed");
-          return;
-        }
-        setPhase("idle");
-        useToastStore
-          .getState()
-          .show("error", `couldn't download ${attachment.name}`);
-      },
-    );
-  };
-
-  const detail =
-    phase === "fetching"
-      ? `${formatBytes(received)} of ${formatBytes(attachment.size)}`
-      : phase === "saved"
-        ? `${formatBytes(attachment.size)} · downloaded`
-        : formatBytes(attachment.size);
+  const fetching = download?.phase === "fetching";
+  const detail = fetching
+    ? `${formatBytes(download.received)} of ${formatBytes(attachment.size)}`
+    : download?.phase === "done"
+      ? `${formatBytes(attachment.size)} · downloaded`
+      : formatBytes(attachment.size);
 
   return (
     <button
       type="button"
       aria-label={`download ${attachment.name}`}
-      disabled={phase === "fetching"}
-      onClick={start}
-      className="flex items-center gap-2.5 rounded-xl bg-background/40 px-3 py-2 text-left hover:bg-background/60"
+      disabled={fetching}
+      onClick={() => {
+        startDownload(agent, attachment);
+      }}
+      className="flex items-center gap-2.5 rounded-xl bg-background px-3 py-2 text-left hover:bg-muted"
     >
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
         <Icon className="size-4.5" />
@@ -281,7 +265,14 @@ function FileBlock({
         </span>
         <span className="text-xs text-muted-foreground">{detail}</span>
       </span>
-      <Download className="ml-1 size-4 shrink-0 text-muted-foreground" />
+      {fetching ? (
+        <ProgressRing
+          progress={download.received / download.total}
+          className="ml-1 size-4 shrink-0"
+        />
+      ) : (
+        <Download className="ml-1 size-4 shrink-0 text-muted-foreground" />
+      )}
     </button>
   );
 }

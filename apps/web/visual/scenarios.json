@@ -501,6 +501,12 @@
       "group": "Chat"
     },
     {
+      "id": "chat-attachment-bubble-group",
+      "title": "Chat, attachment group",
+      "description": "Several attachments stacked in one bubble, showing the gap between them.",
+      "group": "Chat"
+    },
+    {
       "id": "chat-attachment-viewer",
       "title": "Chat, attachment viewer",
       "description": "The contained in-chat viewer: scrim inside the chat card, caption with dimensions and size.",
