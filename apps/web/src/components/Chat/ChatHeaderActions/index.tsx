@@ -82,7 +82,7 @@ function SpeechButton() {
       title={muted ? "unmute voice" : "mute voice"}
       className={cn(
         muted
-          ? "text-red-500 hover:text-red-600"
+          ? "text-foreground"
           : cn("text-muted-foreground", speaking && "text-foreground"),
       )}
       onClick={toggleMuted}
