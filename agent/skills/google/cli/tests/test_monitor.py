@@ -65,8 +65,8 @@ def test_notify_broken_once_writes_a_single_interrupt_notification(tmp_path):
     ctx = _ctx(tmp_path)
     error = ValueError("Token refresh failed. run 'google auth login' to sign in again.")
 
-    monitor.notify_broken_once(ctx, monitor.AUTH_BROKEN_MARKER, "auth_broken", error)
-    monitor.notify_broken_once(ctx, monitor.AUTH_BROKEN_MARKER, "auth_broken", error)
+    assert monitor.notify_broken_once(ctx, monitor.AUTH_BROKEN_MARKER, "auth_broken", error) is True
+    assert monitor.notify_broken_once(ctx, monitor.AUTH_BROKEN_MARKER, "auth_broken", error) is False
 
     files = _notif_files(ctx, "auth_broken")
     assert len(files) == 1
@@ -107,6 +107,31 @@ def test_run_surfaces_terminal_auth_failure_once_and_keeps_quiet(tmp_path, monke
     assert len(_notif_files(ctx, "auth_broken")) == 1
 
 
+def _levels(caplog, message_prefix: str) -> list[int]:
+    return [record.levelno for record in caplog.records if record.getMessage().startswith(message_prefix)]
+
+
+def test_repeated_google_auth_failure_logs_error_once_then_debug_until_the_marker_clears(tmp_path, monkeypatch, caplog):
+    ctx = _ctx(tmp_path)
+
+    def broken_auth(config):
+        ctx.monitor_stop_event.set()
+        raise ValueError("Token refresh failed. run 'google auth login' to sign in again.")
+
+    monkeypatch.setattr(monitor.api, "gmail_service", broken_auth)
+
+    with caplog.at_level(logging.DEBUG, logger=ctx.monitor_logger.name):
+        monitor.run(ctx)
+        ctx.monitor_stop_event.clear()
+        monitor.run(ctx)
+        assert _levels(caplog, "Google auth is broken") == [logging.ERROR, logging.DEBUG]
+
+        monitor.clear_broken_marker(ctx, monitor.AUTH_BROKEN_MARKER)  # auth recovered, then broke again
+        ctx.monitor_stop_event.clear()
+        monitor.run(ctx)
+        assert _levels(caplog, "Google auth is broken") == [logging.ERROR, logging.DEBUG, logging.ERROR]
+
+
 class _FakeGmail:
     """Minimal chainable gmail service returning an empty inbox."""
 
@@ -144,6 +169,28 @@ def test_run_surfaces_calendar_auth_error_once_while_gmail_works(tmp_path, monke
     assert "google auth login" in payload["error"]
     # Gmail auth is fine, so the auth_broken path never fired.
     assert _notif_files(ctx, "auth_broken") == []
+
+
+def test_repeated_calendar_auth_error_logs_error_once_then_debug_until_the_marker_clears(tmp_path, monkeypatch, caplog):
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(monitor.api, "gmail_service", lambda config: _FakeGmail())
+
+    def broken_calendar(config, **kwargs):
+        ctx.monitor_stop_event.set()
+        raise calendar.CalendarAuthError("Calendar API disabled for this client; run 'google auth login'")
+
+    monkeypatch.setattr(monitor.calendar, "list_events_between", broken_calendar)
+
+    with caplog.at_level(logging.DEBUG, logger=ctx.monitor_logger.name):
+        monitor.run(ctx)
+        ctx.monitor_stop_event.clear()
+        monitor.run(ctx)
+        assert _levels(caplog, "Error fetching calendar") == [logging.ERROR, logging.DEBUG]
+
+        monitor.clear_broken_marker(ctx, monitor.CALENDAR_BROKEN_MARKER)  # calendar recovered, then broke again
+        ctx.monitor_stop_event.clear()
+        monitor.run(ctx)
+        assert _levels(caplog, "Error fetching calendar") == [logging.ERROR, logging.DEBUG, logging.ERROR]
 
 
 # -- outage-gap recovery: a failed poll parks its own watermark ---------------
