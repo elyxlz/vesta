@@ -18,7 +18,7 @@ You implement ONE work item from the triage report the orchestrator names (`~/ve
   Branch names: `fix/<scope>-<short>` or `docs/<scope>-<short>`. For a bot branch you are amending, check that branch out instead (`git worktree add ../vesta-wt/<name> origin/<bot-branch>`, then `git checkout -b <bot-branch>` tracking it).
 - Read the superseded PRs (`gh pr view <N>`, `gh pr diff <N>`) for their problem statements, evidence, and any tests worth carrying over. Carry over good tests verbatim where the Decision says so.
 - Write the failing test first when the item is a behavior fix, then make it pass.
-- Verify: the skill's own suite (`cd agent/skills/<name>/cli && uv run pytest -q`, or `cd agent && uv run pytest tests/<file> -q` for `agent/tests`), `ruff format` + `ruff check` from `agent/` on changed Python, `./check.sh guards` from the worktree root, `bash -n` on changed shell. If `shellcheck` is not installed, say so in the report. Markdown under `agent/`: `grep -rnP '\x{2014}|\x{2013}' <changed files>` must be empty.
+- Verify: the skill's own suite (`cd agent/skills/<name>/cli && uv run pytest -q`, or `cd agent && uv run pytest tests/<file> -q` for `agent/tests`), `uvx ruff format` + `uvx ruff check` from `agent/` on changed Python (the repo config lives there; `uv run ruff` is not in that project's env), `./check.sh guards` from the worktree root, `bash -n` on changed shell. If `shellcheck` is not installed, say so in the report. Markdown under `agent/`: `grep -rnP '\x{2014}|\x{2013}' <changed files>` must be empty.
 - Commit: Conventional Commit subject (`type(scope): imperative, lowercase, no period`), body explains the why and names the superseded PRs. End the message with:
   ```
   Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
