@@ -35,6 +35,9 @@ RACE_TIMEOUT = 120
 # The whatsapp launcher answers --help off its cached binary, so this only has to outlast a cold
 # disk; the one path that would compile first is the one this probe is never taken on.
 WHATSAPP_PROBE_TIMEOUT = 120
+# A fixed past for the dashboard rig's build inputs, so the artifacts written after them are newer
+# by construction and never by the luck of a timestamp tick.
+DASHBOARD_INPUT_MTIME = 1_600_000_000
 
 # Every registration hands out a port that is free right now, as vestad does. A constant one
 # reused across a test's starts races the kernel: the port a stopped daemon just released can be
@@ -91,17 +94,31 @@ def _rig_file_host(home: pl.Path, bin_dir: pl.Path) -> None:
 
 
 def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
-    """The app is served from build artifacts, so the skill's link is swapped for a tree
-    holding both plus the real launch script, with a fake vite standing in for the server."""
+    """The app is served from build artifacts, so the skill's link is swapped for a tree holding
+    both plus the real launch scripts, with a fake vite standing in for the server. Every build
+    input is pinned older than the artifact it feeds, so the launch gate has nothing to do, and
+    npm and npx fail loudly in case it disagrees, which keeps every row off the network."""
     skill = home / "agent/skills/dashboard"
     skill.unlink()
-    (skill / "app/dist").mkdir(parents=True)
-    (skill / "scripts").mkdir()
-    (skill / "scripts/serve").symlink_to(SKILLS_DIR / "dashboard/scripts/serve")
+    app = skill / "app"
+    (skill / "scripts").mkdir(parents=True)
+    for script in ("serve", "build.sh"):
+        (skill / "scripts" / script).symlink_to(SKILLS_DIR / "dashboard/scripts" / script)
     # The legacy forwarder execs the launcher through $HOME, so the tree carries it too.
     (skill / "dashboard").symlink_to(SKILLS_DIR / "dashboard/dashboard")
-    vite = skill / "app/node_modules/.bin/vite"
-    vite.parent.mkdir(parents=True)
+    for name in ("src/App.tsx", "index.html", "vite.config.ts", "package-lock.json", "tsconfig.json"):
+        (app / name).parent.mkdir(parents=True, exist_ok=True)
+        (app / name).write_text("")
+    for path in (app, *app.rglob("*")):
+        os.utime(path, (DASHBOARD_INPUT_MTIME, DASHBOARD_INPUT_MTIME))
+    for name in ("node_modules/.package-lock.json", "dist/index.html"):
+        (app / name).parent.mkdir(parents=True)
+        (app / name).write_text("")
+    for tool in ("npm", "npx"):
+        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} ran against a current tree" >&2\nexit 1\n')
+        (bin_dir / tool).chmod(0o755)
+    vite = app / "node_modules/.bin/vite"
+    vite.parent.mkdir()
     # `vite preview --port <port> --host 0.0.0.0`, so the port is the third argument.
     vite.write_text('#!/bin/sh\nexec python3 -m http.server "$3" --bind 0.0.0.0\n')
     vite.chmod(0o755)

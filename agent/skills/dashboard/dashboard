@@ -2,8 +2,8 @@
 set -eu
 
 # `dashboard` on PATH; the skill's whole surface is its daemon. The `serve` launcher
-# rebuilds node_modules/dist when a checkout or clean dropped them, and the service is
-# private, so the app reaches it with a service key rather than the link alone.
+# reinstalls node_modules and rebuilds dist whenever their inputs are newer (scripts/build.sh),
+# and the service is private, so the app reaches it with a service key rather than the link alone.
 
 PIDFILE="$HOME/agent/data/daemons/dashboard.pid"
 PORTFILE="$HOME/agent/data/daemons/dashboard.port"

@@ -18,7 +18,6 @@
 
 These replace step 1 above; step 2 stays yours either way.
 
-1. **Install dependencies**: `cd ~/agent/skills/dashboard/app && npm install`
-2. **Build**: `cd ~/agent/skills/dashboard/app && npx vite build`
-3. **Start the daemon**: `dashboard daemon start`. Manage it with `daemon start|stop|restart|status`. Start is idempotent and never stacks a duplicate.
-4. **Check it's alive**: `dashboard daemon status` reports `running` and the `port` it serves on; fetch that port to confirm it answers.
+1. **Install and build**: `~/agent/skills/dashboard/scripts/build.sh`. It runs `npm install` when `package-lock.json` is newer than the installed tree and `npx vite build` when a source file is newer than `dist/`, so re-running it is free; `serve` runs the same script before every launch.
+2. **Start the daemon**: `dashboard daemon start`. Manage it with `daemon start|stop|restart|status`. Start is idempotent and never stacks a duplicate.
+3. **Check it's alive**: `dashboard daemon status` reports `running` and the `port` it serves on; fetch that port to confirm it answers.
