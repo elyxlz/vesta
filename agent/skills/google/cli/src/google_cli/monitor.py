@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -35,6 +36,29 @@ _FRESH_START_LOOKBACK = timedelta(hours=1)
 # re-arming the notification for a future failure).
 AUTH_BROKEN_MARKER = "auth_broken.notified"
 CALENDAR_BROKEN_MARKER = "calendar_broken.notified"
+
+# A terminal calendar failure repeats every poll cycle for as long as it lasts, and
+# the handler below already notifies the agent only once. The log line follows the
+# same rule so one unfixable condition cannot bury every other error in the file:
+# ERROR on first sight and at most once per interval after, DEBUG in between. A
+# successful read resets the throttle, so a later break is loud again.
+_CAL_AUTH_LOG_INTERVAL = timedelta(hours=6)
+_cal_auth_log_state: dict[str, datetime | None] = {"last_logged": None}
+
+
+def _log_calendar_auth_error(logger: logging.Logger, error: Exception) -> None:
+    last = _cal_auth_log_state["last_logged"]
+    now = datetime.now(UTC)
+    if last is None or now - last >= _CAL_AUTH_LOG_INTERVAL:
+        _cal_auth_log_state["last_logged"] = now
+        logger.error("Error fetching calendar: %s", error)
+    else:
+        logger.debug("Error fetching calendar (still failing, suppressed): %s", error)
+
+
+def _reset_calendar_auth_log() -> None:
+    _cal_auth_log_state["last_logged"] = None
+
 
 # Gmail's inbox-tab labels, exposed on the notification as `category` so the user's own
 # notification rules decide what interrupts vs. snoozes (notification_interrupt_policy),
@@ -267,13 +291,14 @@ def _poll_calendar(ctx: GoogleContext, new_check_time: datetime, query_since: da
         # Calendar is terminally refused (e.g. a token minted under the old
         # shared client, whose project has the Calendar API disabled) while
         # Gmail still works: tell the agent once, keep polling mail.
-        logger.error("Error fetching calendar: %s", e)
+        _log_calendar_auth_error(logger, e)
         notify_broken_once(ctx, CALENDAR_BROKEN_MARKER, "calendar_auth_broken", e)
         return False
     except Exception as e:
         # A calendar failure must not sink the whole poll cycle (Gmail still ran).
         logger.error("Error fetching calendar: %s", e)
         return False
+    _reset_calendar_auth_log()
     clear_broken_marker(ctx, CALENDAR_BROKEN_MARKER)
     return True
 
