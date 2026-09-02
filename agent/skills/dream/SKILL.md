@@ -187,6 +187,7 @@ Keep the container's filesystem organized and disk usage under control.
 - Before deleting anything large, check what it is: `du -sh <dir>/*` skips hidden entries, so a directory holding only a `.venv` reads as empty, and a multi-gigabyte CUDA or model cache may be load-bearing, so confirm against `/dev/nvidia*` and the active skill list first
 - Stop daemons nothing needs any more (`<skill> daemon stop`), e.g. a file-host or sign-service you brought up for one errand
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
+- On a night after a mailbox was disconnected (`microsoft auth remove`, or the user asked you to drop an account), run `~/agent/skills/dream/scripts/check_mail_residue.sh`: it lists files under `~/agent`, `~/downloads` and `/tmp` that hold mail-API dumps or rosters of addresses and exits 1 on a hit. Read and delete each one; a scratch file you wrote mid-session is exactly what no store's own cleanup reaches
 
 ## Sensitive Data Cleanup
 
