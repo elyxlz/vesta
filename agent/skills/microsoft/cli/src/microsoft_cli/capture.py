@@ -101,6 +101,11 @@ def _eval(js: str) -> str:
     return _run(["evaluate", js], session=_HANDOVER_SESSION, timeout=40)
 
 
+def eval_value(raw: str) -> str:
+    """Unwrap what ``browser evaluate`` prints: the JS result JSON-encoded, so a string arrives quoted."""
+    return json.loads(raw) if raw.startswith('"') else raw
+
+
 def _looks_like_jwt(value: str) -> bool:
     return value.count(".") == 2 and value.startswith("eyJ")
 
@@ -108,9 +113,8 @@ def _looks_like_jwt(value: str) -> bool:
 def _poll_token(js: str, *, tries: int = 12, delay: float = 2.5) -> str | None:
     """Evaluate ``js`` until it yields a JWT (the SPA mints the token a few seconds into load)."""
     for _ in range(tries):
-        raw = _eval(js)
-        token = json.loads(raw) if raw.startswith('"') else raw
-        if isinstance(token, str) and _looks_like_jwt(token):
+        token = eval_value(_eval(js))
+        if _looks_like_jwt(token):
             return token
         time.sleep(delay)
     return None
