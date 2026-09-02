@@ -1,17 +1,20 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest";
 import {
   notificationRowKey,
   parseNotificationContent,
   type NotificationView,
-} from "./notification-content"
+} from "./notification-content";
 
-function notification(summary: string, patch: Partial<NotificationView> = {}): NotificationView {
+function notification(
+  summary: string,
+  patch: Partial<NotificationView> = {},
+): NotificationView {
   return {
     type: "notification",
     source: "test",
     summary,
     ...patch,
-  }
+  };
 }
 
 describe("parseNotificationContent", () => {
@@ -30,8 +33,8 @@ describe("parseNotificationContent", () => {
       headline: "Hi & welcome <3",
       body: null,
       context: "Bride & squad",
-    })
-  })
+    });
+  });
 
   // The body-prose channel: a multi-line `body` rendered directly as the inner text (core/system
   // notifications), no attributes to promote.
@@ -49,8 +52,8 @@ describe("parseNotificationContent", () => {
       headline: "Line one\nLine two",
       body: null,
       context: null,
-    })
-  })
+    });
+  });
 
   it("separates an email subject, preview, and account context", () => {
     expect(
@@ -72,8 +75,8 @@ describe("parseNotificationContent", () => {
       headline: "Launch",
       body: "Ready to ship",
       context: "work@example.com · Inbox",
-    })
-  })
+    });
+  });
 
   it("uses useful structured calendar context", () => {
     expect(
@@ -91,68 +94,76 @@ describe("parseNotificationContent", () => {
       headline: "Design review",
       body: null,
       context: "Studio · 15 min",
-    })
-  })
+    });
+  });
 
   // A long run of attribute-name characters with no `=` must not extract any attribute (and the
   // linear tokenizer completes in one sweep rather than backtracking quadratically).
   it("extracts no attributes from a long attribute-less prefix", () => {
-    const garbage = "A".repeat(10_000)
-    expect(parseNotificationContent(notification(`<channel ${garbage}>hello</channel>`))).toEqual({
+    const garbage = "A".repeat(10_000);
+    expect(
+      parseNotificationContent(
+        notification(`<channel ${garbage}>hello</channel>`),
+      ),
+    ).toEqual({
       headline: "hello",
       body: null,
       context: null,
-    })
-  })
+    });
+  });
 
   it("keeps an unknown legacy summary as a safe fallback", () => {
-    expect(parseNotificationContent(notification("Legacy notification"))).toEqual({
+    expect(
+      parseNotificationContent(notification("Legacy notification")),
+    ).toEqual({
       headline: "Legacy notification",
       body: null,
       context: null,
-    })
-  })
-})
+    });
+  });
+});
 
 describe("notificationRowKey", () => {
   const dream = (ts?: string) =>
-    notification("time to dream", { notif_id: "nightly_dream-2026-01-01", ts })
+    notification("time to dream", { notif_id: "nightly_dream-2026-01-01", ts });
 
   it("separates two arrivals of one notif_id at different timestamps", () => {
     expect(notificationRowKey(dream("2026-01-01T03:00:00Z"))).not.toEqual(
       notificationRowKey(dream("2026-01-01T05:00:00Z")),
-    )
-  })
+    );
+  });
 
   it("gives a replayed arrival the same key", () => {
     expect(notificationRowKey(dream("2026-01-01T03:00:00Z"))).toEqual(
       notificationRowKey(dream("2026-01-01T03:00:00Z")),
-    )
-  })
+    );
+  });
 
   it("separates a timestamped arrival from a timestampless one", () => {
     expect(notificationRowKey(dream())).not.toEqual(
       notificationRowKey(dream("2026-01-01T03:00:00Z")),
-    )
-  })
+    );
+  });
 
   it("keys an event predating notif_id on its timestamp", () => {
-    const ts = "2026-01-01T03:00:00Z"
+    const ts = "2026-01-01T03:00:00Z";
     expect(notificationRowKey(notification("a", { ts }))).toEqual(
       notificationRowKey(notification("b", { ts, source: "email" })),
-    )
-  })
+    );
+  });
 
   it("keys an event with neither id nor timestamp on its content", () => {
-    expect(notificationRowKey(notification("a"))).not.toEqual(notificationRowKey(notification("b")))
-  })
+    expect(notificationRowKey(notification("a"))).not.toEqual(
+      notificationRowKey(notification("b")),
+    );
+  });
 
   it("never lets one rung produce another rung's key", () => {
     const keys = [
       notificationRowKey(notification("a", { notif_id: "x" })),
       notificationRowKey(notification("a", { ts: "x" })),
       notificationRowKey(notification("a")),
-    ]
-    expect(new Set(keys).size).toBe(keys.length)
-  })
-})
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});

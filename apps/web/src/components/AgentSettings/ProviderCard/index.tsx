@@ -68,8 +68,8 @@ import { formatTokens } from "@/lib/format";
 import { errorMessage } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
 import { useClaudeModels } from "@/hooks/use-claude-models";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useModals } from "@/providers/ModalsProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useModals } from "@/providers/ModalsProvider/context";
 import { useUsage } from "./use-usage";
 
 function formatResetsAt(iso: string): string {

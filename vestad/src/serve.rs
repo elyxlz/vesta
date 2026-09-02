@@ -3876,7 +3876,7 @@ mod tests {
             .join("../apps/web/src/lib/vestad-api-fixtures.ts");
         sync_fixture_file(&ts_path, &ts_content, regen);
 
-        // Sync-protocol fixtures (Stage 4): the /sync frames the @vesta/core contract test parses.
+        // Sync-protocol fixtures: the /sync frames the @vesta/core contract test parses.
         // Additive beside the web fixtures above, which retire when those clients migrate.
         let sync_json = serde_json::to_string_pretty(&crate::sync::protocol::protocol_fixtures())
             .expect("serialize sync fixtures");

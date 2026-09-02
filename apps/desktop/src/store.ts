@@ -53,14 +53,15 @@ function encryptedPayload(value: unknown): EncryptedStore {
 
 function parseEncryptedStore(value: unknown): EncryptedStore | null {
   if (value === null || typeof value !== "object") return null;
-  const record = value as { version?: unknown; encrypted?: unknown };
   if (
-    record.version !== STORE_VERSION ||
-    typeof record.encrypted !== "string"
+    !("version" in value) ||
+    value.version !== STORE_VERSION ||
+    !("encrypted" in value) ||
+    typeof value.encrypted !== "string"
   ) {
     return null;
   }
-  return { version: STORE_VERSION, encrypted: record.encrypted };
+  return { version: STORE_VERSION, encrypted: value.encrypted };
 }
 
 async function writeStore(filename: string, value: unknown): Promise<void> {

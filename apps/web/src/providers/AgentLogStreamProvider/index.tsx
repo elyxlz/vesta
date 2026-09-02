@@ -1,18 +1,11 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { streamLogs, stopLogs } from "@/api";
 import { renderAnsiHtml } from "@/lib/ansi-html";
 import { linkify } from "@/lib/linkify";
 import { createLogSession, type LogSession } from "@/lib/log-session";
 import { isAgentContainerUp } from "@/lib/log-stream-policy";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-
-const AgentLogSessionContext = createContext<LogSession | null>(null);
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { AgentLogSessionContext } from "./context";
 
 function makeSession(name: string): LogSession {
   return createLogSession({
@@ -58,14 +51,4 @@ export function AgentLogStreamProvider({ children }: { children: ReactNode }) {
       {children}
     </AgentLogSessionContext.Provider>
   );
-}
-
-export function useAgentLogSession(): LogSession {
-  const session = useContext(AgentLogSessionContext);
-  if (!session) {
-    throw new Error(
-      "useAgentLogSession must be used within AgentLogStreamProvider",
-    );
-  }
-  return session;
 }

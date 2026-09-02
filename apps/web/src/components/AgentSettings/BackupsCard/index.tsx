@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { DatabaseBackup } from "lucide-react";
+import { useResource } from "@vesta/core/react";
 import {
   Card,
   CardAction,
@@ -9,42 +10,28 @@ import {
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  fetchAgentBackupSettings,
-  setAgentBackupSettings,
-  type AgentBackupSettings,
-} from "@/api/agents";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { fetchAgentBackupSettings, setAgentBackupSettings } from "@/api/agents";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 
 // Per-agent automatic-backups toggle. Reads the effective enabled state on mount
 // and writes an override on change; the section hides its control on load failure.
 export function BackupsCard() {
   const { name } = useSelectedAgent();
-  const [settings, setSettings] = useState<AgentBackupSettings | null>(null);
+  const settings = useResource(name || null, fetchAgentBackupSettings);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!name) return;
-    let ignore = false;
-    setSettings(null);
-    fetchAgentBackupSettings(name)
-      .then((s) => {
-        if (!ignore) setSettings(s);
-      })
-      .catch((err: unknown) => {
-        if (!ignore)
-          console.warn("[settings] failed to load automatic backups:", err);
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [name]);
+    if (settings.error !== null)
+      console.warn(
+        "[settings] failed to load automatic backups:",
+        settings.error,
+      );
+  }, [settings.error]);
 
   const onToggle = async (enabled: boolean) => {
     setSaving(true);
     try {
-      const updated = await setAgentBackupSettings(name, enabled);
-      setSettings(updated);
+      settings.set(await setAgentBackupSettings(name, enabled));
     } catch (err) {
       console.warn("[settings] failed to set automatic backups:", err);
     } finally {
@@ -64,9 +51,9 @@ export function BackupsCard() {
           interrupting it.
         </CardDescription>
         <CardAction>
-          {settings ? (
+          {settings.data ? (
             <Switch
-              checked={settings.enabled}
+              checked={settings.data.enabled}
               disabled={saving}
               onCheckedChange={(checked) => {
                 void onToggle(checked);

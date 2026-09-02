@@ -1,24 +1,25 @@
-import type { FetchLike } from "../transport/http"
-import type { ReleaseChannel } from "../protocol/tree"
-import { compareReleaseVersions } from "../protocol/release-version"
+import type { FetchLike } from "../transport/http";
+import type { ReleaseChannel } from "../protocol/tree";
+import { compareReleaseVersions } from "../protocol/release-version";
 
-const RELEASES_URL = "https://api.github.com/repos/elyxlz/vesta/releases?per_page=20"
+const RELEASES_URL =
+  "https://api.github.com/repos/elyxlz/vesta/releases?per_page=20";
 
-const RELEASES_FETCH_TIMEOUT_MS = 10_000
+const RELEASES_FETCH_TIMEOUT_MS = 10_000;
 
 export interface ReleaseNote {
-  version: string
-  date: string
-  prerelease: boolean
-  message: string
-  url: string
+  version: string;
+  date: string;
+  prerelease: boolean;
+  message: string;
+  url: string;
 }
 
 interface GithubRelease {
-  tag_name: string
-  published_at: string
-  prerelease: boolean
-  body: string
+  tag_name: string;
+  published_at: string;
+  prerelease: boolean;
+  body: string;
 }
 
 function isGithubRelease(value: unknown): value is GithubRelease {
@@ -33,62 +34,65 @@ function isGithubRelease(value: unknown): value is GithubRelease {
     typeof value.prerelease === "boolean" &&
     "body" in value &&
     typeof value.body === "string"
-  )
+  );
 }
 
 export function extractWhatsNew(body: string): string | null {
-  let cursor = 0
-  let contentStart = -1
+  let cursor = 0;
+  let contentStart = -1;
   while (cursor < body.length) {
-    const commentStart = body.indexOf("<!--", cursor)
-    if (commentStart < 0) break
-    const commentEnd = body.indexOf("-->", commentStart + 4)
-    if (commentEnd < 0) break
+    const commentStart = body.indexOf("<!--", cursor);
+    if (commentStart < 0) break;
+    const commentEnd = body.indexOf("-->", commentStart + 4);
+    if (commentEnd < 0) break;
 
-    const marker = body.slice(commentStart + 4, commentEnd).trim()
+    const marker = body.slice(commentStart + 4, commentEnd).trim();
     if (marker === "whats-new") {
-      contentStart = commentEnd + 3
-      break
+      contentStart = commentEnd + 3;
+      break;
     }
-    cursor = commentEnd + 3
+    cursor = commentEnd + 3;
   }
-  if (contentStart < 0) return null
+  if (contentStart < 0) return null;
 
-  cursor = contentStart
+  cursor = contentStart;
   while (cursor < body.length) {
-    const commentStart = body.indexOf("<!--", cursor)
-    if (commentStart < 0) return null
-    const commentEnd = body.indexOf("-->", commentStart + 4)
-    if (commentEnd < 0) return null
+    const commentStart = body.indexOf("<!--", cursor);
+    if (commentStart < 0) return null;
+    const commentEnd = body.indexOf("-->", commentStart + 4);
+    if (commentEnd < 0) return null;
 
-    const marker = body.slice(commentStart + 4, commentEnd).trim()
+    const marker = body.slice(commentStart + 4, commentEnd).trim();
     if (marker === "/whats-new") {
-      const message = body.slice(contentStart, commentStart).trim()
-      return message.length > 0 ? message : null
+      const message = body.slice(contentStart, commentStart).trim();
+      return message.length > 0 ? message : null;
     }
-    cursor = commentEnd + 3
+    cursor = commentEnd + 3;
   }
 
-  return null
+  return null;
 }
 
 /** Parse a GitHub release-list response into notes, newest version first. */
 export function parseReleaseNotes(json: unknown): ReleaseNote[] {
-  if (!Array.isArray(json)) return []
-  const notes: ReleaseNote[] = []
-  for (const release of json as unknown[]) {
-    if (!isGithubRelease(release)) continue
-    const message = extractWhatsNew(release.body)
-    if (message === null) continue
+  if (!Array.isArray(json)) return [];
+  const releases: unknown[] = json;
+  const notes: ReleaseNote[] = [];
+  for (const release of releases) {
+    if (!isGithubRelease(release)) continue;
+    const message = extractWhatsNew(release.body);
+    if (message === null) continue;
     notes.push({
       version: release.tag_name.replace(/^v/, ""),
       date: release.published_at,
       prerelease: release.prerelease,
       message,
       url: `https://github.com/elyxlz/vesta/releases/tag/${encodeURIComponent(release.tag_name)}`,
-    })
+    });
   }
-  return notes.sort((a, b) => compareReleaseVersions(b.version, a.version) ?? 0)
+  return notes.sort(
+    (a, b) => compareReleaseVersions(b.version, a.version) ?? 0,
+  );
 }
 
 /**
@@ -100,29 +104,33 @@ export function filterReleaseNotes(
   connected: { version: string; channel: ReleaseChannel },
 ): ReleaseNote[] {
   return notes.filter((note) => {
-    const comparison = compareReleaseVersions(note.version, connected.version)
+    const comparison = compareReleaseVersions(note.version, connected.version);
     return (
-      comparison !== null && comparison <= 0 && (connected.channel === "beta" || !note.prerelease)
-    )
-  })
+      comparison !== null &&
+      comparison <= 0 &&
+      (connected.channel === "beta" || !note.prerelease)
+    );
+  });
 }
 
 /** Fetch and parse the release list; null on any network or HTTP failure. */
-export async function fetchReleaseNotes(fetcher: FetchLike = fetch): Promise<ReleaseNote[] | null> {
-  const controller = new AbortController()
+export async function fetchReleaseNotes(
+  fetcher: FetchLike = fetch,
+): Promise<ReleaseNote[] | null> {
+  const controller = new AbortController();
   const timeout = setTimeout(() => {
-    controller.abort()
-  }, RELEASES_FETCH_TIMEOUT_MS)
+    controller.abort();
+  }, RELEASES_FETCH_TIMEOUT_MS);
   try {
     const response = await fetcher(RELEASES_URL, {
       headers: { Accept: "application/vnd.github+json" },
       signal: controller.signal,
-    })
-    if (!response.ok) return null
-    return parseReleaseNotes(await response.json())
+    });
+    if (!response.ok) return null;
+    return parseReleaseNotes(await response.json());
   } catch {
-    return null
+    return null;
   } finally {
-    clearTimeout(timeout)
+    clearTimeout(timeout);
   }
 }

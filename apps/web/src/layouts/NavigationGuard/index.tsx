@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { useAuth } from "@/providers/AuthProvider";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { NotificationsPillProvider } from "@/providers/NotificationsPillProvider";
 import { loadOnboarding } from "@/lib/onboarding-progress";
 

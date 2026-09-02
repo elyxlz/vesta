@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { RotateCw } from "lucide-react";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {

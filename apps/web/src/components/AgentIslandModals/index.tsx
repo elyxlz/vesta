@@ -20,8 +20,8 @@ import { BackupsDialog } from "@/components/BackupsDialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ProviderPicker } from "@/components/ProviderPicker";
 import { setProvider } from "@/api/agents";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useModals } from "@/providers/ModalsProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useModals } from "@/providers/ModalsProvider/context";
 
 export function AgentIslandModals() {
   const { name } = useSelectedAgent();

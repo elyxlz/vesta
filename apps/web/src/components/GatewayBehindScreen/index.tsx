@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { triggerGatewayUpdate } from "@vesta/core";
 import { httpClient } from "@/api/client";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import {
   Empty,
   EmptyHeader,

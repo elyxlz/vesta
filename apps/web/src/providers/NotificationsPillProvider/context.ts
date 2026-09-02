@@ -12,9 +12,6 @@ import type {
 export const PILL_BUTTON_SIZE = 40;
 export const PILL_EXPANDED_HEIGHT = 38;
 
-// The context lives apart from the provider component so its identity is
-// stable across Fast Refresh (matches ControllerProvider).
-
 /** Which history surface is on screen; popover and dialog share one catch-up session. */
 export type HistorySurface = "none" | "popover" | "dialog";
 

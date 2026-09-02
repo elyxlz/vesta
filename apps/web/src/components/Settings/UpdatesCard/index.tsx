@@ -5,7 +5,7 @@ import { MenuSection } from "@/components/ui/menu-section";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { UpdatePill } from "@/components/UpdatePill";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { useAppUpdate } from "@/hooks/use-app-update";
 
 // The App Settings home for updates, replacing the navbar pill. One row per updatable component:

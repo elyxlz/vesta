@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { getConnection } from "@/lib/connection";
@@ -6,18 +12,11 @@ import { websocketUrl } from "@/lib/authed-url";
 import { native } from "@/lib/native";
 import { deviceIdentity } from "@/lib/device-identity";
 import { ensureFreshToken } from "@/lib/token-refresh";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import { createBrowserSocket } from "./browser-socket";
 import { runReauthCheck } from "./reauth-poll";
 import { ControllerContext, ControllerReconnectContext } from "./context";
-
-export {
-  ControllerContext,
-  useController,
-  useControllerReconnect,
-} from "./context";
-export { useSyncState };
 
 // Brief grace before the disconnect overlay appears, so quick socket blips don't flash it.
 const DISCONNECT_GRACE_MS = 750;
@@ -59,21 +58,40 @@ function ActiveController({ children }: { children: ReactNode }) {
   );
 }
 
-// One live controller for the lifetime of a session mount, created by the effect whose cleanup
-// closes it so the two lifetimes cannot diverge: Fast Refresh and StrictMode re-run effects
-// while preserving state, and a render-owned controller would be closed by the re-run's cleanup
-// and stranded terminal (sync state "closed", which never reconnects). Here the re-run builds a
-// live replacement instead. Children wait out the one pre-effect render with no controller.
+// A slot whose occupant the effect owns, read through useSyncExternalStore: the controller is
+// created by the effect whose cleanup closes it, so the two lifetimes cannot diverge. Fast
+// Refresh and StrictMode re-run effects while preserving state, and a render-owned controller
+// would be closed by the re-run's cleanup and stranded terminal (sync state "closed", which
+// never reconnects); here the re-run builds a live replacement instead.
+function createControllerSlot() {
+  let current: Controller | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set: (next: Controller | null) => {
+      current = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+// Children wait out the one pre-effect render with no controller.
 function ControllerSession({ children }: { children: ReactNode }) {
-  const [controller, setController] = useState<Controller | null>(null);
+  const [slot] = useState(createControllerSlot);
+  const controller = useSyncExternalStore(slot.subscribe, slot.get);
 
   useEffect(() => {
     const created = buildController();
-    setController(created);
+    slot.set(created);
     return () => {
       created.close();
+      slot.set(null);
     };
-  }, []);
+  }, [slot]);
 
   if (controller === null) return null;
   return <LiveSession controller={controller}>{children}</LiveSession>;
@@ -92,7 +110,12 @@ function LiveSession({
   children: ReactNode;
 }) {
   const syncState = useSyncState(controller);
-  const [showDisconnected, setShowDisconnected] = useState(false);
+  const connecting = syncState === "connecting" || syncState === "reconnecting";
+  // The grace timer belongs to one connecting stretch: a state change starts it over, and
+  // its expiry is what shows the overlay.
+  const [grace, setGrace] = useState({ state: syncState, elapsed: false });
+  if (grace.state !== syncState) setGrace({ state: syncState, elapsed: false });
+  const showDisconnected = connecting && grace.elapsed;
 
   useEffect(() => {
     // Also on mount, not just every poll: a session restored with an already-expired token
@@ -112,18 +135,14 @@ function LiveSession({
   }, [controller]);
 
   useEffect(() => {
-    if (syncState !== "connecting" && syncState !== "reconnecting") {
-      setShowDisconnected(false);
-      return;
-    }
-    const timer = window.setTimeout(
-      () => setShowDisconnected(true),
-      DISCONNECT_GRACE_MS,
-    );
+    if (!connecting) return;
+    const timer = window.setTimeout(() => {
+      setGrace({ state: syncState, elapsed: true });
+    }, DISCONNECT_GRACE_MS);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [syncState]);
+  }, [connecting, syncState]);
 
   return (
     <ControllerContext.Provider value={controller}>

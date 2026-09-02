@@ -7,7 +7,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { AgentServicesList } from "@/components/AgentServices";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 
 export function ServicesCard() {
   const { name } = useSelectedAgent();

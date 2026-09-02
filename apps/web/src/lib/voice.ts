@@ -3,12 +3,12 @@ import { authedUrl, websocketUrl } from "@/lib/authed-url";
 
 const SAMPLE_RATE = 16000;
 
-function voicePost(
+function voicePost<T = unknown>(
   agentName: string,
   path: string,
   body: unknown,
-): Promise<unknown> {
-  return apiJson(`/agents/${encodeURIComponent(agentName)}/voice/${path}`, {
+): Promise<T> {
+  return apiJson<T>(`/agents/${encodeURIComponent(agentName)}/voice/${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -45,9 +45,7 @@ export const setVoiceSetting = (
   key: string,
   value: unknown,
 ): Promise<SttStatus | TtsStatus> =>
-  voicePost(n, `${domain}/set`, { key, value }) as Promise<
-    SttStatus | TtsStatus
-  >;
+  voicePost<SttStatus | TtsStatus>(n, `${domain}/set`, { key, value });
 
 // --- STT ---
 

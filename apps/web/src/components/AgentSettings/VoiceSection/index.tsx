@@ -40,7 +40,7 @@ import {
   type TtsUsage,
 } from "@/lib/voice";
 import { useOptimisticToggle } from "./use-optimistic-toggle";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
 import {
   useVoiceActivation,
@@ -539,15 +539,23 @@ function NumberSetting({
   setting: SettingDef;
   updateSetting: (key: string, value: unknown) => void;
 }) {
-  const [localValue, setLocalValue] = useState(() => {
-    if (typeof setting.value === "number") return setting.value;
-    return typeof setting.default === "number" ? setting.default : 0;
-  });
+  const serverValue =
+    typeof setting.value === "number"
+      ? setting.value
+      : typeof setting.default === "number"
+        ? setting.default
+        : 0;
+  // The pending edit, keyed by the server value it was made against, so a server change
+  // (another client, a reload) shows through instead of being reset from an effect.
+  const [edit, setEdit] = useState<{ base: number; value: number } | null>(
+    null,
+  );
+  const localValue =
+    edit !== null && edit.base === serverValue ? edit.value : serverValue;
+  const setLocalValue = (value: number) => {
+    setEdit({ base: serverValue, value });
+  };
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (typeof setting.value === "number") setLocalValue(setting.value);
-  }, [setting.value]);
 
   useEffect(() => {
     return () => {

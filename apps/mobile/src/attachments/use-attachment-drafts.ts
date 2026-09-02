@@ -97,7 +97,7 @@ function startUpload(
     handle?.abort();
     release(localId);
   };
-  handle = uploadAttachment(http, agent, blob, meta, uploadDeps(), {
+  handle = uploadAttachment(http, { agent, blob, meta }, uploadDeps(), {
     onProgress: (sent, total) => {
       if (
         !mutateDraft(key, localId, (drafts) =>

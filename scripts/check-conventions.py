@@ -1,5 +1,6 @@
-"""Repo convention guards: no lint/type-checker escape hatches, no oversized comment
-blocks, no import cycles. Run from the repo root: uv run python scripts/check-conventions.py"""
+"""Repo convention guards: no lint/type-checker escape hatches, no unmarked removal notes, no
+oversized comment blocks, no import cycles, and the web app's brand copy and folder rules.
+Run from the repo root: uv run python scripts/check-conventions.py"""
 
 import ast
 import pathlib as pl
@@ -12,6 +13,8 @@ MAX_COMMENT_BLOCK = 8
 # This file necessarily spells the banned markers; nothing under .claude is product code.
 SKIP_PREFIXES = ("scripts/check-conventions.py", ".claude/")
 
+CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".rs", ".go", ".sh")
+
 ESCAPE_PATTERNS: list[tuple[str, re.Pattern[str], tuple[str, ...]]] = [
     ("noqa", re.compile(r"#\s*noqa"), (".py",)),
     ("type: ignore", re.compile(r"#\s*(type|ty):\s*ignore"), (".py",)),
@@ -21,7 +24,18 @@ ESCAPE_PATTERNS: list[tuple[str, re.Pattern[str], tuple[str, ...]]] = [
     ("#[allow]/#[expect]", re.compile(r"#!?\[\s*(allow|expect)\("), (".rs",)),
     ("nolint", re.compile(r"//\s*nolint"), (".go",)),
     ("shellcheck disable", re.compile(r"#\s*shellcheck\s+disable"), (".sh",)),
+    # Code slated for removal carries a LEGACY(remove-when: ...) marker and nothing else.
+    ("unmarked removal note", re.compile(r"\b(TEMPORARY|TODO|FIXME|XXX)\b(?!.*LEGACY\(remove-when:)"), CODE_SUFFIXES),
 ]
+
+# The client apps' source trees, minus tests: what the brand-copy scan reads.
+APP_SOURCE_RE = re.compile(r"^apps/(core|web|desktop|mobile)/src/.*\.(ts|tsx)$")
+WEB_SRC = pl.Path("apps/web/src")
+# A spaced em or en dash separating prose; a lone "—" literal is an empty-value placeholder.
+DASH_SEPARATOR_RE = re.compile("\\s[\\u2014\\u2013]\\s")
+# "box" as a word, never as a CSS term (box-shadow, flexbox) or a substring.
+BOX_WORD_RE = re.compile(r"(?<![-\w])box(?![-\w])", re.IGNORECASE)
+IMPORT_RE = re.compile(r"""from\s+["']([^"']+)["']""")
 
 # An extensionless tracked file is still Python or shell when its shebang says so. Several skill CLIs
 # are bare command names (hue, daemon, skills-install) and must keep those names to stay invocable, so
@@ -154,9 +168,118 @@ def check_import_cycles() -> list[str]:
     return errors
 
 
+def code_lines(path: pl.Path) -> list[tuple[int, str]]:
+    """Each line with its comments removed: `//` and `/* */` blocks, including JSX comment bodies."""
+    lines = []
+    in_block = False
+    for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+        text = line
+        if in_block:
+            close = text.find("*/")
+            if close == -1:
+                continue
+            text = text[close + 2 :]
+            in_block = False
+        while "/*" in text:
+            open_at = text.index("/*")
+            close = text.find("*/", open_at + 2)
+            if close == -1:
+                text = text[:open_at]
+                in_block = True
+                break
+            text = text[:open_at] + text[close + 2 :]
+        stripped = text.strip()
+        if stripped.startswith(("//", "*")):
+            continue
+        lines.append((lineno, re.sub(r"//.*$", "", text)))
+    return lines
+
+
+def check_brand_copy(files: list[str]) -> list[str]:
+    """App strings never separate prose with a dash and never call the product a box."""
+    errors = []
+    for rel in files:
+        if not APP_SOURCE_RE.match(rel) or ".test." in rel:
+            continue
+        path = pl.Path(rel)
+        if not path.exists():
+            continue
+        for lineno, text in code_lines(path):
+            if DASH_SEPARATOR_RE.search(text):
+                errors.append(f"{rel}:{lineno}: dash separator in app copy; use a period, comma, or colon")
+            if rel.startswith("apps/web/src/") and BOX_WORD_RE.search(text):
+                errors.append(f'{rel}:{lineno}: "box" in app copy; the product noun is "agent" (or "gateway")')
+    return errors
+
+
+def web_importers(files: list[str]) -> dict[str, set[str]]:
+    """Non-test importer files of every module under apps/web/src, keyed by the imported module's path."""
+    importers: dict[str, set[str]] = {}
+    for rel in files:
+        if not rel.startswith("apps/web/src/") or ".test." in rel or not rel.endswith((".ts", ".tsx")):
+            continue
+        source = pl.Path(rel)
+        if not source.exists():
+            continue
+        for match in IMPORT_RE.finditer(source.read_text(errors="replace")):
+            spec = match.group(1)
+            if spec.startswith("@/"):
+                target = WEB_SRC / spec[2:]
+            elif spec.startswith("."):
+                target = source.parent / spec
+            else:
+                continue
+            importers.setdefault(pl.Path(*target.parts).as_posix(), set()).add(rel)
+    return importers
+
+
+def check_hook_placement(files: list[str]) -> list[str]:
+    """`hooks/` holds only hooks with two or more importers; a one-consumer hook lives beside it."""
+    errors = []
+    importers = web_importers(files)
+    for hook in sorted((WEB_SRC / "hooks").glob("use-*.ts*")):
+        if ".test." in hook.name:
+            continue
+        module = hook.with_suffix("").as_posix()
+        count = len(importers.get(module, set()))
+        if count < 2:
+            errors.append(f"{hook.as_posix()}: {count} importer(s); a hook with one consumer lives beside it")
+    return errors
+
+
+def check_component_folders(files: list[str]) -> list[str]:
+    """A non-index .tsx inside a component folder is private to that folder."""
+    errors = []
+    components = WEB_SRC / "components"
+    for module, sources in web_importers(files).items():
+        target = pl.Path(module)
+        if not target.with_suffix(".tsx").exists():
+            continue
+        try:
+            inside = target.relative_to(components)
+        except ValueError:
+            continue
+        if len(inside.parts) < 2 or inside.parts[0] == "ui" or inside.name == "index":
+            continue
+        folder = components / inside.parts[0]
+        errors.extend(
+            f"{source}: imports {module}.tsx from outside its folder; give it a folder of its own"
+            for source in sorted(sources)
+            if not pl.Path(source).is_relative_to(folder)
+        )
+    return errors
+
+
 def main() -> int:
     files = tracked_files()
-    errors = check_escapes(files) + check_comment_blocks(files) + check_import_cycles()
+    errors = (
+        check_escapes(files)
+        + check_comment_blocks(files)
+        + check_import_cycles()
+        + check_brand_copy(files)
+        + check_hook_placement(files)
+        + check_component_folders(files)
+    )
     for error in errors:
         print(error, file=sys.stderr)
     if errors:

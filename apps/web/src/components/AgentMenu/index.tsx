@@ -9,9 +9,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useModals } from "@/providers/ModalsProvider";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useModals } from "@/providers/ModalsProvider/context";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { useSwitchGateway } from "@/stores/use-switch-gateway";
 import { AgentServicesList } from "@/components/AgentServices";
 import type { MenuState } from "./types";

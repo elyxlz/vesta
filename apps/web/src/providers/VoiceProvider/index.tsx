@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
 import { fetchSttStatus, fetchTtsStatus, preloadAudio } from "@/lib/voice";
 

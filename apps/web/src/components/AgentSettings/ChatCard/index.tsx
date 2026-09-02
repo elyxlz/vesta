@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/field";
 import { MenuSection } from "@/components/ui/menu-section";
 import { Switch } from "@/components/ui/switch";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
 export function ChatCard() {

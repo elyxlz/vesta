@@ -10,8 +10,6 @@ import {
 } from "@/lib/connection";
 import { AuthContext } from "./context";
 
-export { useAuth } from "./context";
-
 function hasStoredConnection(): boolean {
   return getConnection() !== null;
 }

@@ -114,7 +114,10 @@ if (!gotLock) {
     );
     // OS launch-at-login toggle; the login item is the source of truth (registry on Windows,
     // LaunchAgent on macOS, ~/.config/autostart on Linux), so nothing is persisted here.
-    ipcMain.handle("login-item:get", () => app.getLoginItemSettings().openAtLogin);
+    ipcMain.handle(
+      "login-item:get",
+      () => app.getLoginItemSettings().openAtLogin,
+    );
     ipcMain.handle("login-item:set", (_event, enabled: unknown) => {
       app.setLoginItemSettings({ openAtLogin: enabled === true });
     });

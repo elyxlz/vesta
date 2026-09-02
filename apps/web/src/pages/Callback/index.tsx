@@ -11,20 +11,16 @@ import { completeHostedLogin } from "@/lib/pkce";
 export function Callback() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [error, setError] = useState("");
+  const code = params.get("code");
+  const state = params.get("state");
+  const [exchangeError, setExchangeError] = useState("");
+  const error = !code || !state ? "missing code" : exchangeError;
   // StrictMode double-invokes effects in dev; the code is single-use, so guard.
   const ran = useRef(false);
 
   useEffect(() => {
-    if (ran.current) return;
+    if (ran.current || !code || !state) return;
     ran.current = true;
-
-    const code = params.get("code");
-    const state = params.get("state");
-    if (!code || !state) {
-      setError("missing code");
-      return;
-    }
 
     void (async () => {
       try {
@@ -40,10 +36,10 @@ export function Callback() {
         window.history.replaceState(null, "", "/");
         window.location.assign("/");
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "sign-in failed");
+        setExchangeError(e instanceof Error ? e.message : "sign-in failed");
       }
     })();
-  }, [params]);
+  }, [code, state]);
 
   return (
     <div className="flex h-full flex-1 flex-col items-center justify-center gap-3 p-page text-center">

@@ -22,7 +22,7 @@ import {
   trimTail,
   typingDelay,
 } from "@vesta/core";
-import { useController } from "@/providers/ControllerProvider";
+import { useController } from "@/providers/ControllerProvider/context";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { createBrowserSocket } from "@/providers/ControllerProvider/browser-socket";
 import { websocketUrl } from "@/lib/authed-url";
@@ -150,7 +150,7 @@ export function useAgentSocketState({
         drainQueue();
       }, delay);
     },
-    [commit, flushQueue],
+    [commit, flushQueue, name],
   );
 
   const enqueueChatMessage = useCallback(

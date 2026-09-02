@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { resolveProviderIdentity } from "@vesta/core";
 import { cn } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { AgentIslandExpanded } from "./Expanded";
 import { AgentIslandCollapsed } from "./Collapsed";
 
@@ -36,7 +36,11 @@ export function AgentIsland() {
   useEffect(() => {
     if (!expanded) return;
     function handlePointerDown(e: PointerEvent) {
-      if (islandRef.current && !islandRef.current.contains(e.target as Node)) {
+      if (
+        islandRef.current &&
+        e.target instanceof Node &&
+        !islandRef.current.contains(e.target)
+      ) {
         setExpanded(false);
       }
     }

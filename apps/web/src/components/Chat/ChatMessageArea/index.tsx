@@ -1,9 +1,9 @@
 import {
   memo,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type RefObject,
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -242,16 +242,22 @@ function MessageRow({
   );
 }
 
-// The index the previous commit's last row now sits at — read during render (the effect
-// hasn't advanced the ref yet), so rows past it are genuine appends and animate in,
-// while a history page landing above (which shifts indices) never does.
+// The index the previous render's last row now sits at, so rows past it are genuine appends and
+// animate in, while a history page landing above (which shifts indices) never does. Kept as state
+// keyed on the row list: a new list stores where the previous list's last key now sits.
 function useAppendBoundary(decorated: DecoratedRow[]): number {
-  const prevLastKeyRef = useRef<string | null>(null);
-  const prevLastIndex = lastSeenIndex(decorated, prevLastKeyRef.current);
-  useLayoutEffect(() => {
-    prevLastKeyRef.current = decorated[decorated.length - 1]?.key ?? null;
-  }, [decorated]);
-  return prevLastIndex;
+  const [boundary, setBoundary] = useState<{
+    rows: DecoratedRow[];
+    index: number;
+  }>({ rows: decorated, index: -1 });
+  if (boundary.rows !== decorated) {
+    const prevLastKey = boundary.rows[boundary.rows.length - 1]?.key ?? null;
+    setBoundary({
+      rows: decorated,
+      index: lastSeenIndex(decorated, prevLastKey),
+    });
+  }
+  return boundary.rows === decorated ? boundary.index : -1;
 }
 
 // Every fetched row stays mounted in a plain scroller: each message parses its markdown

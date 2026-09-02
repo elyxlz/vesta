@@ -1,9 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { ModalsContext, type ModalsContextValue } from "./context";
-
-export { useModals } from "./context";
 
 export function ModalsProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();

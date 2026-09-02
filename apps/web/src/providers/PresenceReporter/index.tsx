@@ -1,5 +1,5 @@
-import { useContext, useEffect, useState } from "react";
-import { ControllerContext } from "@/providers/ControllerProvider";
+import { useContext, useEffect, useSyncExternalStore } from "react";
+import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { readBrowserDeviceContext } from "@/lib/device-context";
 import { useShareLocation } from "@/stores/use-share-location";
@@ -12,18 +12,13 @@ function currentAgent(): string | null {
   return match?.params.name ?? null;
 }
 
+const subscribeToRouter = (onChange: () => void) => router.subscribe(onChange);
+
 export function PresenceReporter() {
   const controller = useContext(ControllerContext);
   const focused = useWindowFocus();
   const shareLocation = useShareLocation((s) => s.enabled);
-  const [agent, setAgent] = useState<string | null>(() => currentAgent());
-
-  useEffect(() => {
-    setAgent(currentAgent());
-    return router.subscribe(() => {
-      setAgent(currentAgent());
-    });
-  }, []);
+  const agent = useSyncExternalStore(subscribeToRouter, currentAgent);
 
   useEffect(() => {
     if (!controller) return;

@@ -20,7 +20,7 @@ const mockChat: { label: string; events: ChatMessage[] }[] = [
     label: "plain text",
     events: [
       { type: "user", text: "hey, what's up?", ts },
-      { type: "chat", text: "all good — you?", ts },
+      { type: "chat", text: "all good, you?", ts },
     ],
   },
   {
@@ -63,7 +63,7 @@ const mockChat: { label: string; events: ChatMessage[] }[] = [
       },
       {
         type: "chat",
-        text: "got it — **bold**, *italic*, ~~strike~~, `code`",
+        text: "got it: **bold**, *italic*, ~~strike~~, `code`",
         ts,
       },
     ],

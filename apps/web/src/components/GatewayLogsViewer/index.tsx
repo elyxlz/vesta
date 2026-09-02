@@ -53,17 +53,13 @@ interface GatewayLogLine {
   text: string;
 }
 
-export function GatewayLogsViewer({
-  open,
-  onOpenChange,
-}: GatewayLogsViewerProps) {
+// The stream lives in the dialog's content, mounted only while it is open, so a reopen starts
+// from an empty buffer without resetting state from an effect.
+function GatewayLogStream() {
   const [lines, setLines] = useState<GatewayLogLine[]>([]);
   const nextIdRef = useRef(0);
 
   useEffect(() => {
-    if (!open) return;
-    setLines([]);
-    nextIdRef.current = 0;
     let active = true;
 
     const append = (text: string) =>
@@ -95,8 +91,24 @@ export function GatewayLogsViewer({
       active = false;
       stopGatewayLogs();
     };
-  }, [open]);
+  }, []);
 
+  return (
+    <LogScroller
+      lines={lines}
+      fade={{ top: HEADER_H * 2, bottom: BOTTOM_FADE_PX }}
+      placeholder={<StreamingIndicator />}
+      topSpacer={<div style={{ height: HEADER_H }} />}
+      footer={<div className="h-4" />}
+      renderLine={(line) => <LogLine key={line.id} text={line.text} />}
+    />
+  );
+}
+
+export function GatewayLogsViewer({
+  open,
+  onOpenChange,
+}: GatewayLogsViewerProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -104,14 +116,7 @@ export function GatewayLogsViewer({
         className="h-[70vh] w-[70vw] max-w-[900px] sm:max-w-[900px]"
       >
         <div className="relative h-full">
-          <LogScroller
-            lines={lines}
-            fade={{ top: HEADER_H * 2, bottom: BOTTOM_FADE_PX }}
-            placeholder={<StreamingIndicator />}
-            topSpacer={<div style={{ height: HEADER_H }} />}
-            footer={<div className="h-4" />}
-            renderLine={(line) => <LogLine key={line.id} text={line.text} />}
-          />
+          <GatewayLogStream />
 
           {/* The native dialog header, floated over the terminal (like the fullscreen
               console's navbar); the fade behind it lets the log tail dissolve up under it. */}

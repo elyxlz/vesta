@@ -5,7 +5,8 @@ import type { AgentRow, LogEvent } from "@/lib/types";
 import { streamLogs, stopLogs } from "@/api";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
 import { fakeAgentRow } from "@/test/fake-controller";
-import { AgentLogStreamProvider, useAgentLogSession } from "./index";
+import { AgentLogStreamProvider } from "./index";
+import { useAgentLogSession } from "./context";
 
 vi.mock("@/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api")>()),

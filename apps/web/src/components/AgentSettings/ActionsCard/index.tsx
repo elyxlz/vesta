@@ -7,11 +7,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AgentActions } from "@/components/AgentMenu/AgentActions";
+import { AgentActions } from "@/components/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useGateway } from "@/providers/GatewayProvider";
-import { useModals } from "@/providers/ModalsProvider";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
+import { useModals } from "@/providers/ModalsProvider/context";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { agentIsDown, agentNeedsUser } from "@vesta/core";
 
 export function ActionsCard() {

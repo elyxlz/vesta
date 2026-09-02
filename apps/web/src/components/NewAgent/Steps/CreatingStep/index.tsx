@@ -1,7 +1,7 @@
 import { agentStatusLabel } from "@vesta/core";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Orb } from "@/components/Orb";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { fade, instant } from "@/lib/motion";
 import { buildPhaseMessage } from "@/api/agents";
 

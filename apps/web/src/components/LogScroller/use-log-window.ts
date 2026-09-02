@@ -12,7 +12,7 @@ import {
   grownWindow,
   isAtBottom,
   shouldGrow,
-} from "./log-window";
+} from "@/lib/log-window";
 
 interface LogWindowArgs {
   parentRef: RefObject<HTMLDivElement | null>;
@@ -40,10 +40,11 @@ export function useLogWindow({ parentRef, count, newestId }: LogWindowArgs) {
     setAtBottom((prev) => (prev === pinned ? prev : pinned));
   }, []);
 
-  // A refilled list (agent switch/resume, viewer reopen) re-pins to the tail.
+  // A refilled list (agent switch/resume, viewer reopen) re-pins to the tail. Only the ref moves
+  // here: the first append scrolls to the bottom, whose scroll event resyncs the state.
   useEffect(() => {
-    if (count === 0) setPinned(true);
-  }, [count, setPinned]);
+    if (count === 0) atBottomRef.current = true;
+  }, [count]);
 
   // Follow the tail on append, land on the bottom when the buffer first fills, and re-pin
   // after a trim, unless the user scrolled up. Growing runs only while unpinned, so this

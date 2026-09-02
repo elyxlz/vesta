@@ -1,9 +1,6 @@
 import { createContext, useContext } from "react";
 import type { Controller } from "@vesta/core";
 
-// Context + hook live here, separate from the ControllerProvider component, so the
-// ControllerContext identity is stable across Fast Refresh (matches GatewayProvider /
-// AgentSocketProvider). A single controller serves the whole connection.
 export const ControllerContext = createContext<Controller | null>(null);
 
 // A no-op default so a consumer outside an ActiveController (before a controller exists)

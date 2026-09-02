@@ -12,7 +12,7 @@ import { clearOnboarding, saveOnboarding } from "@/lib/onboarding-progress";
 import { NavigationGuard } from "./index";
 
 const auth = vi.hoisted(() => ({ connected: true }));
-vi.mock("@/providers/AuthProvider", () => ({
+vi.mock("@/providers/AuthProvider/context", () => ({
   useAuth: () => ({ connected: auth.connected, initialized: true }),
 }));
 

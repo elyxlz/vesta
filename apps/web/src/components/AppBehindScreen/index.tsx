@@ -5,7 +5,7 @@ import { Navbar } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import { useAppUpdate } from "@/hooks/use-app-update";
 import {
   Empty,

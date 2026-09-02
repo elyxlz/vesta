@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -228,6 +227,13 @@ interface ComposerControls {
   canSend: boolean;
 }
 
+// The morph springs; a row flip or the exit morph rides the row spring; other growth is instant.
+function heightTransition(inConversation: boolean, animated: boolean) {
+  if (inConversation)
+    return { type: "spring", stiffness: 300, damping: 32 } as const;
+  return animated ? ROW_SPRING : { duration: 0 };
+}
+
 function FloatingComposer({
   paddingClass,
   value,
@@ -263,6 +269,12 @@ function FloatingComposer({
   const measureRef = useRef<HTMLSpanElement>(null);
   const collapsedWidthRef = useRef(0);
   const [expanded, setExpanded] = useState(false);
+  // The box animates number-to-number, but only across the row transition (the wrap point
+  // flipping) and the morph: each measurement carries whether the flip caused it, and any
+  // other content growth (an extra textarea line, a chips row) applies instantly like a plain
+  // textarea. The measurement pauses while the composer content is unmounted mid-conversation
+  // (it would read 0 and must keep the last value).
+  const animateNextHeightRef = useRef(false);
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!expanded && el) {
@@ -277,23 +289,19 @@ function FloatingComposer({
   useLayoutEffect(() => {
     const span = measureRef.current;
     if (!span) return;
-    const avail = collapsedWidthRef.current;
-    const width = span.scrollWidth;
-    setExpanded((prev) => {
-      const next = expandedNext(prev, value, avail, width);
-      // Only the row transition animates the box; growth within a state stays instant.
-      if (next !== prev) animateNextHeightRef.current = true;
-      return next;
-    });
-  }, [value]);
+    const next = expandedNext(
+      expanded,
+      value,
+      collapsedWidthRef.current,
+      span.scrollWidth,
+    );
+    if (next === expanded) return;
+    // Only the row transition animates the box; growth within a state stays instant.
+    animateNextHeightRef.current = true;
+    setExpanded(next);
+  }, [value, expanded]);
 
   const inConversation = recordingMode === "conversation";
-  // The box animates number-to-number, but only across the row transition (the wrap point
-  // flipping) and the morph: each measurement carries whether the flip caused it, and any
-  // other content growth (an extra textarea line, a chips row) applies instantly like a plain
-  // textarea. The measurement pauses while the composer content is unmounted mid-conversation
-  // (it would read 0 and must keep the last value).
-  const animateNextHeightRef = useRef(false);
   const [contentBox, setContentBox] = useState({ height: 0, animated: false });
   const measureContentRef = useMeasuredSize(
     "height",
@@ -303,13 +311,19 @@ function FloatingComposer({
       animateNextHeightRef.current = false;
     }, []),
   );
-  // The exit morph renders with inConversation already false, so the previous value is what
-  // marks its one render as still animated.
-  const prevConversationRef = useRef(inConversation);
-  const leavingConversation = prevConversationRef.current && !inConversation;
-  useEffect(() => {
-    prevConversationRef.current = inConversation;
+  // The exit morph renders with inConversation already false, so the flip is what marks it as
+  // still animated, until the morph's own completion clears it.
+  const [conversation, setConversation] = useState({
+    seen: inConversation,
+    leaving: false,
   });
+  if (conversation.seen !== inConversation) {
+    setConversation({
+      seen: inConversation,
+      leaving: conversation.seen && !inConversation,
+    });
+  }
+  const leavingConversation = conversation.leaving;
   return (
     <div className={paddingClass}>
       <m.div
@@ -323,19 +337,19 @@ function FloatingComposer({
               ? contentBox.height
               : "auto",
         }}
-        transition={
-          inConversation
-            ? { type: "spring", stiffness: 300, damping: 32 }
-            : leavingConversation || contentBox.animated
-              ? ROW_SPRING
-              : { duration: 0 }
-        }
+        transition={heightTransition(
+          inConversation,
+          leavingConversation || contentBox.animated,
+        )}
         // The morph's start is the parent's own conversation flip, so a typing animation never
         // trips the freeze; completion is safe to report from here (a settle outside a morph is
         // a no-op). The animation edges gate the parent's inset tracking, since mid-flight
         // heights must never become the list's reservation.
         onAnimationStart={() => onHeightAnimation?.(true)}
         onAnimationComplete={() => {
+          setConversation((current) =>
+            current.leaving ? { ...current, leaving: false } : current,
+          );
           onHeightAnimation?.(false);
           onMorphSettled?.();
         }}

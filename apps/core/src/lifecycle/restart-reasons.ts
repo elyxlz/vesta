@@ -9,15 +9,16 @@ export const RESTART_REASONS = {
   signOut: "provider.signed-out",
   model: "provider.model",
   context: "provider.context",
-} as const
+} as const;
 
-export type RestartReason = (typeof RESTART_REASONS)[keyof typeof RESTART_REASONS]
+export type RestartReason =
+  (typeof RESTART_REASONS)[keyof typeof RESTART_REASONS];
 
 export interface RestartBody {
-  reason_token: RestartReason
+  reason_token: RestartReason;
 }
 
 /// The POST /restart body. Owned here so web and mobile cannot drift on the wire field name.
 export function restartBody(reason: RestartReason): RestartBody {
-  return { reason_token: reason }
+  return { reason_token: reason };
 }

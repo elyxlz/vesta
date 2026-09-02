@@ -33,7 +33,7 @@ vi.mock("@/lib/token-refresh", () => ({
   ensureFreshToken: () => refresh.result(),
 }));
 
-vi.mock("@/providers/AuthProvider", () => ({
+vi.mock("@/providers/AuthProvider/context", () => ({
   useAuth: () => ({
     initialized: true,
     connected: true,

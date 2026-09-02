@@ -63,7 +63,7 @@ export function KeyStep({
         data-1p-ignore
         data-lpignore="true"
         data-form-type="other"
-        style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
+        style={{ WebkitTextSecurity: "disc" }}
         placeholder={placeholder}
         value={key}
         onChange={(e) => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { booleanField } from "@/lib/json-shape";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Eye, EyeOff, History } from "lucide-react";
@@ -13,7 +14,7 @@ import { startHostedLogin } from "@/lib/pkce";
 import { native } from "@/lib/native";
 import { parseConnectLink } from "@/lib/connection";
 import { readRecentGateways } from "@/lib/recent-gateways";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import { useSwitchGateway } from "@/stores/use-switch-gateway";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
@@ -188,8 +189,8 @@ export function Connect() {
         const resp = await fetch(`${window.location.origin}/info`, {
           signal: AbortSignal.timeout(5000),
         });
-        const data = (await resp.json()) as { managed?: boolean };
-        if (!cancelled) setManaged(data.managed === true);
+        const data: unknown = await resp.json();
+        if (!cancelled) setManaged(booleanField(data, "managed") === true);
       } catch {
         if (!cancelled) setManaged(false);
       }

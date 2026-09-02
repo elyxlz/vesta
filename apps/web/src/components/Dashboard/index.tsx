@@ -9,8 +9,8 @@ import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { serviceKeyPathUrl } from "@vesta/core";
 import { useServiceKey } from "@vesta/core/react";
 import { Card } from "@/components/ui/card";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useTheme } from "@/providers/ThemeProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useTheme } from "@/providers/ThemeProvider/context";
 import { useRuntime } from "@/providers/RuntimeProvider";
 import { getConnection } from "@/lib/connection";
 import { parseGatewayUrl } from "@/lib/gateway-url";
@@ -249,7 +249,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
             </EmptyMedia>
             <EmptyTitle>dashboard unavailable</EmptyTitle>
             <EmptyDescription>
-              the dashboard server isn't responding — ask your agent to check on
+              the dashboard server isn't responding. ask your agent to check on
               it
             </EmptyDescription>
           </EmptyHeader>

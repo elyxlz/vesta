@@ -1,13 +1,13 @@
-import { compareReleaseVersions } from "../protocol/release-version"
+import { compareReleaseVersions } from "../protocol/release-version";
 
-const COMPACT_STAMP = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/
+const COMPACT_STAMP = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/;
 
 // vestad stamps every snapshot with restic's compact UTC form (`20260529-040001`), which no
 // `Date` constructor reads. Both apps show the moment, so the parse lives with the timeline.
 export function parseSnapshotStamp(createdAt: string): Date | null {
-  const parts = COMPACT_STAMP.exec(createdAt.trim())
-  if (!parts) return null
-  const [, year, month, day, hour, minute, second] = parts
+  const parts = COMPACT_STAMP.exec(createdAt.trim());
+  if (!parts) return null;
+  const [, year, month, day, hour, minute, second] = parts;
   const epochMs = Date.UTC(
     Number(year),
     Number(month) - 1,
@@ -15,30 +15,31 @@ export function parseSnapshotStamp(createdAt: string): Date | null {
     Number(hour),
     Number(minute),
     Number(second),
-  )
-  return Number.isNaN(epochMs) ? null : new Date(epochMs)
+  );
+  return Number.isNaN(epochMs) ? null : new Date(epochMs);
 }
 
 // The point's moment in the reader's own timezone; an unrecognized stamp is shown as it came.
 export function formatSnapshotStamp(createdAt: string): string {
-  const at = parseSnapshotStamp(createdAt)
-  if (at === null) return createdAt
+  const at = parseSnapshotStamp(createdAt);
+  if (at === null) return createdAt;
   const date = new Intl.DateTimeFormat(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
-  }).format(at)
+  }).format(at);
   const time = new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
-  }).format(at)
-  return `${date} · ${time}`
+  }).format(at);
+  return `${date} · ${time}`;
 }
 
 // What made a snapshot, as vestad tags it on the wire, plus the bucket a kind this client has no
 // copy for lands in. A new kind ships without a client bump, so `unknown` is the normal case for
 // an older app rather than a wire error.
-export type BackupKind = "periodic" | "manual" | "pre_update" | "pre_restore" | "unknown"
+export type BackupKind =
+  "periodic" | "manual" | "pre_update" | "pre_restore" | "unknown";
 
 // The one place `backup_type` stops being a plain string. Both apps read the raw wire value, and
 // this owns the narrowing so neither one asserts a kind it has not checked.
@@ -48,9 +49,9 @@ export function parseBackupKind(value: string): BackupKind {
     case "manual":
     case "pre_update":
     case "pre_restore":
-      return value
+      return value;
     default:
-      return "unknown"
+      return "unknown";
   }
 }
 
@@ -58,26 +59,26 @@ export function parseBackupKind(value: string): BackupKind {
 // compact form (`20260529-040001`), `from_version` carries a `v` prefix and `vestad_version`
 // does not, which is why only the latter is ever compared.
 export interface BackupTimelineRow {
-  id: string
-  created_at: string
-  backup_type: BackupKind
-  size: number
-  from_version?: string | null
-  vestad_version?: string | null
+  id: string;
+  created_at: string;
+  backup_type: BackupKind;
+  size: number;
+  from_version?: string | null;
+  vestad_version?: string | null;
 }
 
 // What restoring a snapshot means for the user: the gateway refuses state a newer vestad wrote,
 // takes older state behind a confirm, and anything it cannot compare restores plainly.
-export type RestoreEligibility = "ok" | "older" | "newer"
+export type RestoreEligibility = "ok" | "older" | "newer";
 
 export interface BackupTimelinePoint {
-  id: string
-  createdAt: string
-  kind: BackupKind
-  label: string
-  size: number
-  eligibility: RestoreEligibility
-  vestadVersion: string | null
+  id: string;
+  createdAt: string;
+  kind: BackupKind;
+  label: string;
+  size: number;
+  eligibility: RestoreEligibility;
+  vestadVersion: string | null;
 }
 
 // The words for a snapshot, shared so web and mobile cannot drift apart. Adding a kind is a
@@ -85,17 +86,17 @@ export interface BackupTimelinePoint {
 function backupLabel(kind: BackupKind, fromVersion: string | null): string {
   switch (kind) {
     case "periodic":
-      return "Automatic"
+      return "Automatic";
     case "manual":
-      return "Manual"
+      return "Manual";
     case "pre_update":
       return fromVersion === null || fromVersion === ""
         ? "Before update"
-        : `Before update ${fromVersion}`
+        : `Before update ${fromVersion}`;
     case "pre_restore":
-      return "Safety"
+      return "Safety";
     case "unknown":
-      return "Backup"
+      return "Backup";
   }
 }
 
@@ -105,15 +106,18 @@ function restoreEligibility(
   vestadVersion: string | null,
   gatewayVersion: string | null,
 ): RestoreEligibility {
-  if (vestadVersion === null || gatewayVersion === null) return "ok"
-  const cmp = compareReleaseVersions(vestadVersion, gatewayVersion)
-  if (cmp === null || cmp === 0) return "ok"
-  return cmp > 0 ? "newer" : "older"
+  if (vestadVersion === null || gatewayVersion === null) return "ok";
+  const cmp = compareReleaseVersions(vestadVersion, gatewayVersion);
+  if (cmp === null || cmp === 0) return "ok";
+  return cmp > 0 ? "newer" : "older";
 }
 
-function newestFirst(left: BackupTimelinePoint, right: BackupTimelinePoint): number {
-  if (left.createdAt === right.createdAt) return 0
-  return left.createdAt < right.createdAt ? 1 : -1
+function newestFirst(
+  left: BackupTimelinePoint,
+  right: BackupTimelinePoint,
+): number {
+  if (left.createdAt === right.createdAt) return 0;
+  return left.createdAt < right.createdAt ? 1 : -1;
 }
 
 export function buildBackupTimeline(
@@ -121,7 +125,7 @@ export function buildBackupTimeline(
   gatewayVersion: string | null,
 ): BackupTimelinePoint[] {
   const points: BackupTimelinePoint[] = rows.map((row) => {
-    const vestadVersion = row.vestad_version ?? null
+    const vestadVersion = row.vestad_version ?? null;
     return {
       id: row.id,
       createdAt: row.created_at,
@@ -130,9 +134,9 @@ export function buildBackupTimeline(
       size: row.size,
       eligibility: restoreEligibility(vestadVersion, gatewayVersion),
       vestadVersion,
-    }
-  })
+    };
+  });
   // `created_at` is a compact sortable stamp, so a string compare orders by time. The sort is
   // stable, so snapshots sharing a stamp keep the order the gateway listed them in.
-  return points.sort(newestFirst)
+  return points.sort(newestFirst);
 }

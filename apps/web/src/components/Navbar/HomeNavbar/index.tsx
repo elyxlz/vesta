@@ -3,7 +3,7 @@ import { Home, Plus } from "lucide-react";
 import { SettingsButton } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { useToast } from "@/stores/use-toast";
 import { NavbarLogoText } from "@/components/Logo/LogoText";

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest";
 
 import {
   buildBackupTimeline,
@@ -8,14 +8,14 @@ import {
   type BackupKind,
   type BackupTimelineRow,
   type RestoreEligibility,
-} from "./backup-timeline"
+} from "./backup-timeline";
 
 const BASE: BackupTimelineRow = {
   id: "snap-1",
   created_at: "20260529-040001",
   backup_type: "periodic",
   size: 1024,
-}
+};
 
 describe("buildBackupTimeline ordering", () => {
   it("puts the newest snapshot first whatever order the gateway listed them in", () => {
@@ -23,44 +23,45 @@ describe("buildBackupTimeline ordering", () => {
       { ...BASE, id: "middle", created_at: "20260201-040001" },
       { ...BASE, id: "oldest", created_at: "20260101-040001" },
       { ...BASE, id: "newest", created_at: "20260301-040001" },
-    ]
-    expect(buildBackupTimeline(rows, "0.1.2").map((point) => point.id)).toEqual([
-      "newest",
-      "middle",
-      "oldest",
-    ])
-  })
+    ];
+    expect(buildBackupTimeline(rows, "0.1.2").map((point) => point.id)).toEqual(
+      ["newest", "middle", "oldest"],
+    );
+  });
 
   it("keeps input order for snapshots sharing a timestamp", () => {
     const rows: BackupTimelineRow[] = [
       { ...BASE, id: "first" },
       { ...BASE, id: "second" },
       { ...BASE, id: "third" },
-    ]
-    expect(buildBackupTimeline(rows, "0.1.2").map((point) => point.id)).toEqual([
-      "first",
-      "second",
-      "third",
-    ])
-  })
+    ];
+    expect(buildBackupTimeline(rows, "0.1.2").map((point) => point.id)).toEqual(
+      ["first", "second", "third"],
+    );
+  });
 
   it("leaves the caller's array untouched", () => {
     const rows: BackupTimelineRow[] = [
       { ...BASE, id: "older", created_at: "20260101-040001" },
       { ...BASE, id: "newer", created_at: "20260301-040001" },
-    ]
-    buildBackupTimeline(rows, "0.1.2")
-    expect(rows.map((row) => row.id)).toEqual(["older", "newer"])
-  })
+    ];
+    buildBackupTimeline(rows, "0.1.2");
+    expect(rows.map((row) => row.id)).toEqual(["older", "newer"]);
+  });
 
   it("returns nothing for an agent with no snapshots", () => {
-    expect(buildBackupTimeline([], "0.1.2")).toEqual([])
-  })
-})
+    expect(buildBackupTimeline([], "0.1.2")).toEqual([]);
+  });
+});
 
 describe("backup labels", () => {
   const cases: [string, BackupKind, string | null | undefined, string][] = [
-    ["names a scheduled snapshot for what made it", "periodic", null, "Automatic"],
+    [
+      "names a scheduled snapshot for what made it",
+      "periodic",
+      null,
+      "Automatic",
+    ],
     ["names a user-made snapshot", "manual", null, "Manual"],
     [
       "names the version a pre-update snapshot came from",
@@ -80,29 +81,50 @@ describe("backup labels", () => {
       undefined,
       "Before update",
     ],
-    ["drops the version when from_version is empty", "pre_update", "", "Before update"],
-    ["names a pre-restore snapshot as the safety net it is", "pre_restore", null, "Safety"],
-    ["falls back to a plain word for a kind it does not know", "unknown", null, "Backup"],
-  ]
+    [
+      "drops the version when from_version is empty",
+      "pre_update",
+      "",
+      "Before update",
+    ],
+    [
+      "names a pre-restore snapshot as the safety net it is",
+      "pre_restore",
+      null,
+      "Safety",
+    ],
+    [
+      "falls back to a plain word for a kind it does not know",
+      "unknown",
+      null,
+      "Backup",
+    ],
+  ];
 
   it.each(cases)("%s", (_name, kind, fromVersion, label) => {
     const [point] = buildBackupTimeline(
       [{ ...BASE, backup_type: kind, from_version: fromVersion }],
       "0.1.2",
-    )
-    expect(point?.label).toBe(label)
-    expect(point?.kind).toBe(kind)
-  })
+    );
+    expect(point?.label).toBe(label);
+    expect(point?.kind).toBe(kind);
+  });
 
   it("never leaves the raw wire enum in a label", () => {
-    const kinds: BackupKind[] = ["periodic", "manual", "pre_update", "pre_restore", "unknown"]
+    const kinds: BackupKind[] = [
+      "periodic",
+      "manual",
+      "pre_update",
+      "pre_restore",
+      "unknown",
+    ];
     const labels = buildBackupTimeline(
       kinds.map((kind) => ({ ...BASE, backup_type: kind })),
       "0.1.2",
-    ).map((point) => point.label)
-    for (const label of labels) expect(label).not.toContain("_")
-  })
-})
+    ).map((point) => point.label);
+    for (const label of labels) expect(label).not.toContain("_");
+  });
+});
 
 // The wire carries `backup_type` as a plain string and may add a kind without a client bump, so
 // the parse belongs here rather than as an assertion in each app.
@@ -115,64 +137,110 @@ describe("parseBackupKind", () => {
     ["pre-update", "unknown"],
     ["quarterly", "unknown"],
     ["", "unknown"],
-  ]
+  ];
 
   it.each(cases)("reads %s as %s", (wire, kind) => {
-    expect(parseBackupKind(wire)).toBe(kind)
-  })
+    expect(parseBackupKind(wire)).toBe(kind);
+  });
 
   it("still gives an unknown kind its version eligibility", () => {
     const [point] = buildBackupTimeline(
-      [{ ...BASE, backup_type: parseBackupKind("quarterly"), vestad_version: "0.1.3" }],
+      [
+        {
+          ...BASE,
+          backup_type: parseBackupKind("quarterly"),
+          vestad_version: "0.1.3",
+        },
+      ],
       "0.1.2",
-    )
-    expect(point?.kind).toBe("unknown")
-    expect(point?.eligibility).toBe("newer")
-  })
-})
+    );
+    expect(point?.kind).toBe("unknown");
+    expect(point?.eligibility).toBe("newer");
+  });
+});
 
 describe("restore eligibility", () => {
-  const cases: [string, string | null | undefined, string | null, RestoreEligibility][] = [
+  const cases: [
+    string,
+    string | null | undefined,
+    string | null,
+    RestoreEligibility,
+  ][] = [
     ["clears a snapshot made by the running gateway", "0.1.2", "0.1.2", "ok"],
-    ["flags older state, which restores behind a confirm", "0.1.1", "0.1.2", "older"],
+    [
+      "flags older state, which restores behind a confirm",
+      "0.1.1",
+      "0.1.2",
+      "older",
+    ],
     ["flags newer state, which the gateway refuses", "0.1.3", "0.1.2", "newer"],
     ["compares numerically rather than as text", "0.2.0", "0.10.0", "older"],
     ["compares each component numerically", "0.10.0", "0.2.0", "newer"],
     ["ignores a prerelease suffix", "0.1.2-beta.1", "0.1.2", "ok"],
     ["clears a legacy snapshot carrying no version", null, "0.1.2", "ok"],
-    ["clears every snapshot when from_version is absent", undefined, "0.1.2", "ok"],
-    ["clears a snapshot when the client knows no gateway version", "0.1.2", null, "ok"],
+    [
+      "clears every snapshot when from_version is absent",
+      undefined,
+      "0.1.2",
+      "ok",
+    ],
+    [
+      "clears a snapshot when the client knows no gateway version",
+      "0.1.2",
+      null,
+      "ok",
+    ],
     ["fails open on a dev snapshot version", "dev", "0.1.2", "ok"],
     ["fails open on a dev gateway version", "0.1.2", "dev", "ok"],
-    ["fails open on a v-prefixed version, which is not the stamp's shape", "v0.1.3", "0.1.2", "ok"],
-  ]
+    [
+      "fails open on a v-prefixed version, which is not the stamp's shape",
+      "v0.1.3",
+      "0.1.2",
+      "ok",
+    ],
+  ];
 
   it.each(cases)("%s", (_name, vestadVersion, gatewayVersion, eligibility) => {
     const [point] = buildBackupTimeline(
       [{ ...BASE, vestad_version: vestadVersion }],
       gatewayVersion,
-    )
-    expect(point?.eligibility).toBe(eligibility)
-  })
+    );
+    expect(point?.eligibility).toBe(eligibility);
+  });
 
   // Shuffled, so a verdict that travelled with the wrong row through the sort shows up here.
   it("judges each snapshot against the same gateway", () => {
     const rows: BackupTimelineRow[] = [
-      { ...BASE, id: "behind", created_at: "20260101-040001", vestad_version: "0.1.1" },
-      { ...BASE, id: "ahead", created_at: "20260301-040001", vestad_version: "0.1.3" },
-      { ...BASE, id: "level", created_at: "20260201-040001", vestad_version: "0.1.2" },
-    ]
+      {
+        ...BASE,
+        id: "behind",
+        created_at: "20260101-040001",
+        vestad_version: "0.1.1",
+      },
+      {
+        ...BASE,
+        id: "ahead",
+        created_at: "20260301-040001",
+        vestad_version: "0.1.3",
+      },
+      {
+        ...BASE,
+        id: "level",
+        created_at: "20260201-040001",
+        vestad_version: "0.1.2",
+      },
+    ];
     const verdicts = buildBackupTimeline(rows, "0.1.2").map((point) => ({
       id: point.id,
       eligibility: point.eligibility,
-    }))
+    }));
     expect(verdicts).toEqual([
       { id: "ahead", eligibility: "newer" },
       { id: "level", eligibility: "ok" },
       { id: "behind", eligibility: "older" },
-    ])
-  })
-})
+    ]);
+  });
+});
 
 describe("timeline points", () => {
   it("carries the fields a surface renders", () => {
@@ -188,7 +256,7 @@ describe("timeline points", () => {
         },
       ],
       "0.1.2",
-    )
+    );
     expect(point).toEqual({
       id: "snap-7",
       createdAt: "20260529-040001",
@@ -197,21 +265,21 @@ describe("timeline points", () => {
       size: 4096,
       eligibility: "older",
       vestadVersion: "0.1.1",
-    })
-  })
+    });
+  });
 
   it("reports a missing stamp as null rather than dropping the field", () => {
-    const [point] = buildBackupTimeline([BASE], "0.1.2")
-    expect(point?.vestadVersion).toBeNull()
-  })
-})
+    const [point] = buildBackupTimeline([BASE], "0.1.2");
+    expect(point?.vestadVersion).toBeNull();
+  });
+});
 
 // The stamp is restic's own compact form, so every surface showing a moment parses it here.
 describe("parseSnapshotStamp", () => {
   it("reads the compact stamp as the UTC moment it names", () => {
-    const at = parseSnapshotStamp("20260529-040001")
-    expect(at?.getTime()).toBe(Date.UTC(2026, 4, 29, 4, 0, 1))
-  })
+    const at = parseSnapshotStamp("20260529-040001");
+    expect(at?.getTime()).toBe(Date.UTC(2026, 4, 29, 4, 0, 1));
+  });
 
   const rejected: [string, string][] = [
     ["2026-01-01T00:00:00Z", "an iso timestamp"],
@@ -219,29 +287,29 @@ describe("parseSnapshotStamp", () => {
     ["2026052-040001", "a short date"],
     ["20260529-040001Z", "a trailing zone"],
     ["", "an empty string"],
-  ]
+  ];
 
   it.each(rejected)("returns null for %s (%s)", (stamp) => {
-    expect(parseSnapshotStamp(stamp)).toBeNull()
-  })
+    expect(parseSnapshotStamp(stamp)).toBeNull();
+  });
 
   it("reads the stamp a timeline point carries", () => {
-    const [point] = buildBackupTimeline([BASE], "0.1.2")
+    const [point] = buildBackupTimeline([BASE], "0.1.2");
     expect(parseSnapshotStamp(point?.createdAt ?? "")?.getTime()).toBe(
       Date.UTC(2026, 4, 29, 4, 0, 1),
-    )
-  })
-})
+    );
+  });
+});
 
 describe("formatSnapshotStamp", () => {
   it("humanizes a compact stamp into a date and a time", () => {
-    const shown = formatSnapshotStamp("20260529-040001")
-    expect(shown).not.toContain("20260529-040001")
-    expect(shown).toContain("2026")
-    expect(shown).toContain("·")
-  })
+    const shown = formatSnapshotStamp("20260529-040001");
+    expect(shown).not.toContain("20260529-040001");
+    expect(shown).toContain("2026");
+    expect(shown).toContain("·");
+  });
 
   it("shows an unrecognized stamp as it came, rather than an invalid date", () => {
-    expect(formatSnapshotStamp("whenever")).toBe("whenever")
-  })
-})
+    expect(formatSnapshotStamp("whenever")).toBe("whenever");
+  });
+});

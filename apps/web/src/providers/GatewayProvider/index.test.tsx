@@ -15,9 +15,10 @@ import {
   fakeTree,
 } from "@/test/fake-controller";
 import type { GatewayContextValue } from "./context";
-import { GatewayProvider, useGateway } from "./index";
+import { GatewayProvider } from "./index";
+import { useGateway } from "./context";
 
-vi.mock("@/providers/AuthProvider", () => ({
+vi.mock("@/providers/AuthProvider/context", () => ({
   useAuth: () => ({ connected: true, initialized: true }),
 }));
 vi.mock("@/components/AppBehindScreen", () => ({

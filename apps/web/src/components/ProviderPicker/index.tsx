@@ -167,7 +167,9 @@ function ProviderAuthStep({
     return (
       <OpenAIAuthStep
         agentName={agentName}
-        authStart={authStart as openaiProvider.OAuthStartResult | null}
+        authStart={
+          authStart !== null && "user_code" in authStart ? authStart : null
+        }
         startError={startError}
         onCredentialsReady={onCredentialsReady}
         onBack={onBack}

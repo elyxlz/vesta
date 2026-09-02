@@ -117,6 +117,17 @@ interface ReleaseAsset {
   browser_download_url: string;
 }
 
+function isReleaseAsset(value: unknown): value is ReleaseAsset {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "name" in value &&
+    typeof value.name === "string" &&
+    "browser_download_url" in value &&
+    typeof value.browser_download_url === "string"
+  );
+}
+
 export function selectLinuxAsset(
   assets: ReleaseAsset[],
   arch: string,
@@ -164,12 +175,16 @@ async function fetchLatestRelease(): Promise<LatestRelease> {
     release === null ||
     typeof release !== "object" ||
     !("tag_name" in release) ||
-    !("assets" in release)
+    typeof release.tag_name !== "string" ||
+    !("assets" in release) ||
+    !Array.isArray(release.assets)
   )
     throw new Error("malformed latest release response");
-  const tag = (release as { tag_name: string }).tag_name;
-  const assets = (release as { assets: ReleaseAsset[] }).assets;
-  return { version: tag.replace(/^v/, ""), assets };
+  const assets: unknown[] = release.assets;
+  return {
+    version: release.tag_name.replace(/^v/, ""),
+    assets: assets.filter(isReleaseAsset),
+  };
 }
 
 async function updateLinuxToLatest(

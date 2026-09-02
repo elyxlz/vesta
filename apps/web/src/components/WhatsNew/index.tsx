@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { useWhatsNew } from "@/stores/use-whats-new";
 import { filterReleaseNotes, fetchReleaseNotes } from "@/lib/whats-new";
 import type { ReleaseNote } from "@/lib/whats-new";

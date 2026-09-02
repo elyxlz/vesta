@@ -2,6 +2,8 @@
 // mid-onboarding resumes instead of restarting from the name. The provider result (OAuth blob /
 // API key) is deliberately never stored: a resumed run re-collects the provider, then skips every
 // step it already has. Scoped to sessionStorage so it lives for the tab's onboarding, not forever.
+import { stringField } from "@/lib/json-shape";
+
 const STORAGE_KEY = "vesta:onboarding";
 
 export interface OnboardingProgress {
@@ -13,18 +15,15 @@ export function loadOnboarding(): OnboardingProgress | null {
   if (typeof sessionStorage === "undefined") return null;
   const raw = sessionStorage.getItem(STORAGE_KEY);
   if (!raw) return null;
-  let parsed: { agentName?: unknown; personality?: unknown };
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as { agentName?: unknown; personality?: unknown };
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
-  if (typeof parsed.agentName !== "string" || !parsed.agentName) return null;
-  return {
-    agentName: parsed.agentName,
-    personality:
-      typeof parsed.personality === "string" ? parsed.personality : null,
-  };
+  const agentName = stringField(parsed, "agentName");
+  if (!agentName) return null;
+  return { agentName, personality: stringField(parsed, "personality") };
 }
 
 export function saveOnboarding(progress: OnboardingProgress): void {

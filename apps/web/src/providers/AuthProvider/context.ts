@@ -1,10 +1,6 @@
 import { createContext, useContext } from "react";
 import type { ConnectionConfig } from "@/lib/connection";
 
-// Context + hook live here, separate from the AuthProvider component, so the
-// AuthContext identity is stable across Fast Refresh. Co-locating them with the
-// component made every edit re-create the context, detaching mounted consumers
-// ("useAuth must be used within AuthProvider" on hot reload).
 export interface AuthContextValue {
   loading: boolean;
   initialized: boolean;

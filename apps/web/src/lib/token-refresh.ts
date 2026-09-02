@@ -1,4 +1,5 @@
 import { getConnection, updateTokens, isTokenExpiringSoon } from "./connection";
+import { numberField, stringField } from "@/lib/json-shape";
 import { startHostedLogin } from "./pkce";
 
 /**
@@ -48,12 +49,13 @@ async function doRefresh(): Promise<RefreshResult> {
     });
     if (resp.status === 401) return "expired";
     if (!resp.ok) return "transient";
-    const data = (await resp.json()) as {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    };
-    updateTokens(data.access_token, data.refresh_token, data.expires_in);
+    const data: unknown = await resp.json();
+    const accessToken = stringField(data, "access_token");
+    const refreshToken = stringField(data, "refresh_token");
+    const expiresIn = numberField(data, "expires_in");
+    if (accessToken === null || refreshToken === null || expiresIn === null)
+      return "transient";
+    updateTokens(accessToken, refreshToken, expiresIn);
     return "ok";
   } catch {
     return "transient";

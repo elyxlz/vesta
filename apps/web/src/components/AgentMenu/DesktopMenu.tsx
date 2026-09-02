@@ -41,7 +41,7 @@ export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
                   item.variant === "destructive" ? "destructive" : undefined
                 }
               >
-                {item.icon}
+                <item.icon data-icon="inline-start" />
                 {item.label}
               </DropdownMenuItem>
             ))}

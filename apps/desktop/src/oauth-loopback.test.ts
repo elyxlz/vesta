@@ -22,6 +22,8 @@ describe("oauth loopback", () => {
   it("frees the port after cancel", async () => {
     port = await startLoopback(() => undefined);
     cancelLoopback(port);
-    await expect(fetch(`http://127.0.0.1:${String(port)}/`)).rejects.toBeTruthy();
+    await expect(
+      fetch(`http://127.0.0.1:${String(port)}/`),
+    ).rejects.toBeTruthy();
   });
 });

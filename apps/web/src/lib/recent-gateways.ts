@@ -1,4 +1,5 @@
 import type { ConnectionConfig } from "./connection";
+import { field, numberField, stringField } from "@/lib/json-shape";
 import { native } from "./native";
 import { parseConnectionConfig } from "./native/parse-connection-config";
 
@@ -67,23 +68,15 @@ export function removeRecentGateway(
 }
 
 function parseRecentGateway(value: unknown): RecentGateway | null {
-  if (value === null || typeof value !== "object") return null;
-  const record = value as {
-    id?: unknown;
-    lastConnectedAt?: unknown;
-    connection?: unknown;
-  };
-  const connection = parseConnectionConfig(record.connection);
+  const connection = parseConnectionConfig(field(value, "connection"));
   if (connection === null) return null;
-  if (typeof record.lastConnectedAt !== "number") return null;
+  const lastConnectedAt = numberField(value, "lastConnectedAt");
+  if (lastConnectedAt === null) return null;
   return {
-    id:
-      typeof record.id === "string"
-        ? record.id
-        : recentGatewayId(connection.url),
+    id: stringField(value, "id") ?? recentGatewayId(connection.url),
     url: connection.url,
     hosted: connection.hosted === true,
-    lastConnectedAt: record.lastConnectedAt,
+    lastConnectedAt,
     connection,
   };
 }

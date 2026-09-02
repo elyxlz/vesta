@@ -10,6 +10,7 @@ import {
   SlidersHorizontal,
   Square,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 
 export interface AgentActionsInput {
@@ -31,7 +32,7 @@ export interface AgentActionsInput {
 
 export interface ActionItem {
   key: string;
-  icon: React.ReactNode;
+  icon: LucideIcon;
   label: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
@@ -52,7 +53,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     if (input.onLogs) {
       toolItems.push({
         key: "logs",
-        icon: <ScrollText data-icon="inline-start" />,
+        icon: ScrollText,
         label: "logs",
         onClick: input.onLogs,
       });
@@ -60,7 +61,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     if (input.onServices) {
       toolItems.push({
         key: "services",
-        icon: <Globe data-icon="inline-start" />,
+        icon: Globe,
         label: "services",
         onClick: input.onServices,
       });
@@ -73,11 +74,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   const controlItems: ActionItem[] = [
     {
       key: "toggle",
-      icon: input.isRunning ? (
-        <Square data-icon="inline-start" />
-      ) : (
-        <Play data-icon="inline-start" />
-      ),
+      icon: input.isRunning ? Square : Play,
       label: input.isRunning ? "stop" : "start",
       onClick: input.onToggle,
       disabled: input.isBusy,
@@ -86,7 +83,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   if (input.isRunning) {
     controlItems.push({
       key: "restart",
-      icon: <RefreshCw data-icon="inline-start" />,
+      icon: RefreshCw,
       label: "restart",
       onClick: input.onRestart,
       disabled: input.isBusy,
@@ -94,7 +91,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   }
   controlItems.push({
     key: "backup",
-    icon: <Archive data-icon="inline-start" />,
+    icon: Archive,
     label: "backups",
     onClick: input.onBackup,
     // Only opens the dialog to view and manage snapshots, so it stays reachable during an
@@ -104,7 +101,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   if (input.onAuthenticate) {
     controlItems.push({
       key: "authenticate",
-      icon: <KeyRound data-icon="inline-start" />,
+      icon: KeyRound,
       label: input.isAuthenticated ? "switch provider" : "sign in",
       onClick: input.onAuthenticate,
     });
@@ -112,7 +109,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   if (input.onSwitchGateway) {
     controlItems.push({
       key: "switch-gateway",
-      icon: <ArrowLeftRight data-icon="inline-start" />,
+      icon: ArrowLeftRight,
       label: "switch gateway",
       onClick: input.onSwitchGateway,
     });
@@ -133,7 +130,7 @@ function buildOtherItems(input: AgentActionsInput): ActionItem[] {
   if (input.onAgentSettings) {
     items.push({
       key: "agent-settings",
-      icon: <SlidersHorizontal data-icon="inline-start" />,
+      icon: SlidersHorizontal,
       label: "agent settings",
       onClick: input.onAgentSettings,
     });
@@ -141,7 +138,7 @@ function buildOtherItems(input: AgentActionsInput): ActionItem[] {
   if (input.onAppSettings) {
     items.push({
       key: "app-settings",
-      icon: <Settings data-icon="inline-start" />,
+      icon: Settings,
       label: "app settings",
       onClick: input.onAppSettings,
     });
@@ -149,7 +146,7 @@ function buildOtherItems(input: AgentActionsInput): ActionItem[] {
   if (input.onDelete) {
     items.push({
       key: "delete",
-      icon: <Trash2 data-icon="inline-start" />,
+      icon: Trash2,
       label: "delete",
       onClick: input.onDelete,
       disabled: input.isBusy,

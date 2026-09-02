@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { createElement, useEffect, type ReactNode } from "react";
 import type { Controller, NotificationEvent, Tree } from "@vesta/core";
-import { ControllerContext } from "@/providers/ControllerProvider";
+import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import {
@@ -10,7 +10,8 @@ import {
   fakeController,
   fakeTree,
 } from "@/test/fake-controller";
-import { NotificationProvider, useNotifications } from "./index";
+import { NotificationProvider } from "./index";
+import { useNotifications } from "./context";
 
 vi.mock("@/lib/native", () => ({
   native: {

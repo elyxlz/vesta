@@ -7,8 +7,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { useModals } from "@/providers/ModalsProvider";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useModals } from "@/providers/ModalsProvider/context";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 
 export function DeleteCard() {
   const { name, isBusy } = useSelectedAgent();

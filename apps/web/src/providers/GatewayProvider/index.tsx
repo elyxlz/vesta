@@ -19,11 +19,11 @@ import {
 } from "@vesta/core/react";
 import { AppBehindScreen } from "@/components/AppBehindScreen";
 import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import {
   ControllerContext,
   useControllerReconnect,
-} from "@/providers/ControllerProvider";
+} from "@/providers/ControllerProvider/context";
 import { useAgentOps } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import {
@@ -31,8 +31,6 @@ import {
   disconnectedValue,
   type GatewayContextValue,
 } from "./context";
-
-export { useGateway } from "./context";
 
 // Before the version gate passes, ControllerProvider renders children with no controller;
 // hold the loading screen (versionChecked false) rather than flashing the connect screen.

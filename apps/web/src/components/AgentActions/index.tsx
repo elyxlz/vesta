@@ -1,6 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { MenuSection } from "@/components/ui/menu-section";
-import { buildActionSections, type AgentActionsInput } from "./action-sections";
+import {
+  buildActionSections,
+  type AgentActionsInput,
+} from "@/components/AgentMenu/action-sections";
 
 export function AgentActions({
   wrapper: Wrapper = PassThrough,
@@ -22,7 +25,7 @@ export function AgentActions({
                 disabled={item.disabled}
                 onClick={item.onClick}
               >
-                {item.icon}
+                <item.icon data-icon="inline-start" />
                 {item.label}
               </Button>
             </Wrapper>

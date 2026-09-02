@@ -1,28 +1,39 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest";
 
-import { encodeFrame, reauthFrame } from "./frames"
-import type { HelloFrame, SnapshotFrame } from "./frames"
-import type { NotificationEvent } from "./events"
-import type { Tree } from "./tree"
+import { encodeFrame, reauthFrame } from "./frames";
+import type { HelloFrame, SnapshotFrame } from "./frames";
+import type { NotificationEvent } from "./events";
+import type { Tree } from "./tree";
 
 describe("client frame constructors", () => {
   it("builds a reauth frame", () => {
-    expect(reauthFrame("tok")).toEqual({ type: "reauth", token: "tok" })
-  })
+    expect(reauthFrame("tok")).toEqual({ type: "reauth", token: "tok" });
+  });
 
   it("encodes a client frame as JSON", () => {
-    expect(encodeFrame(reauthFrame("tok"))).toBe('{"type":"reauth","token":"tok"}')
-  })
-})
+    expect(encodeFrame(reauthFrame("tok"))).toBe(
+      '{"type":"reauth","token":"tok"}',
+    );
+  });
+});
 
 describe("server frame and tree shapes", () => {
   it("types a hello frame with the served version window", () => {
-    const hello: HelloFrame = { type: "hello", version: "0.2.0", minSupported: "0.0.0" }
-    expect(hello.minSupported).toBe("0.0.0")
-  })
+    const hello: HelloFrame = {
+      type: "hello",
+      version: "0.2.0",
+      minSupported: "0.0.0",
+    };
+    expect(hello.minSupported).toBe("0.0.0");
+  });
 
   it("types a snapshot frame carrying the state tree", () => {
-    const event: NotificationEvent = { id: 7, type: "notification", source: "sms", summary: "hi" }
+    const event: NotificationEvent = {
+      id: 7,
+      type: "notification",
+      source: "sms",
+      summary: "hi",
+    };
     const tree: Tree = {
       gateway: {
         version: "0.2.0",
@@ -50,8 +61,8 @@ describe("server frame and tree shapes", () => {
         },
       },
       devices: [],
-    }
-    const snapshot: SnapshotFrame = { type: "snapshot", tree }
-    expect(snapshot.tree.agents.scout?.notifications.pending[0]?.id).toBe(7)
-  })
-})
+    };
+    const snapshot: SnapshotFrame = { type: "snapshot", tree };
+    expect(snapshot.tree.agents.scout?.notifications.pending[0]?.id).toBe(7);
+  });
+});

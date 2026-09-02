@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BookOpen,
   ChevronLeft,
@@ -261,7 +261,7 @@ function SkillsCard({
   selected: string | null;
   onSelect: (path: string) => void;
 }) {
-  const [nav, setNav] = useState<SkillNav>(() => {
+  const [navState, setNav] = useState<SkillNav>(() => {
     if (selected?.startsWith(SKILLS_PREFIX)) {
       const skillName = selected.slice(SKILLS_PREFIX.length).split("/")[0];
       const skill = skills.find((s) => s.name === skillName);
@@ -270,11 +270,12 @@ function SkillsCard({
     return { view: "root" };
   });
 
-  useEffect(() => {
-    if (nav.view === "skill" && !skills.some((s) => s.path === nav.skillPath)) {
-      setNav({ view: "root" });
-    }
-  }, [skills, nav]);
+  // A skill that vanished from the list drops the drill-in back to the root.
+  const nav: SkillNav =
+    navState.view === "skill" &&
+    !skills.some((s) => s.path === navState.skillPath)
+      ? { view: "root" }
+      : navState;
 
   const activeSkill =
     nav.view === "skill"

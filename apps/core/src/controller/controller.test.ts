@@ -1,21 +1,21 @@
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vitest";
 
-import { createController } from "./controller"
-import type { SocketLike } from "../transport/socket"
-import type { Delta } from "../protocol/deltas"
-import type { GatewayInfo, Tree } from "../protocol/tree"
+import { createController } from "./controller";
+import type { SocketLike } from "../transport/socket";
+import type { Delta } from "../protocol/deltas";
+import type { GatewayInfo, Tree } from "../protocol/tree";
 
 class FakeSocket implements SocketLike {
-  onopen: (() => void) | null = null
-  onmessage: ((data: string) => void) | null = null
-  onclose: (() => void) | null = null
-  readonly sent: string[] = []
-  closed = false
+  onopen: (() => void) | null = null;
+  onmessage: ((data: string) => void) | null = null;
+  onclose: (() => void) | null = null;
+  readonly sent: string[] = [];
+  closed = false;
   send(data: string): void {
-    this.sent.push(data)
+    this.sent.push(data);
   }
   close(): void {
-    this.closed = true
+    this.closed = true;
   }
 }
 
@@ -31,32 +31,32 @@ function baseGateway(): GatewayInfo {
     latestVersion: null,
     managed: false,
     operation: null,
-  }
+  };
 }
 
 function baseTree(): Tree {
-  return { gateway: baseGateway(), agents: {}, devices: [] }
+  return { gateway: baseGateway(), agents: {}, devices: [] };
 }
 
 interface Harness {
-  sockets: FakeSocket[]
-  controller: ReturnType<typeof createController>
+  sockets: FakeSocket[];
+  controller: ReturnType<typeof createController>;
 }
 
 // The URL builder is async, so the socket is created a microtask after createController returns.
 async function flush(): Promise<void> {
-  for (let i = 0; i < 5; i++) await Promise.resolve()
+  for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
 async function harness(): Promise<Harness> {
-  const sockets: FakeSocket[] = []
+  const sockets: FakeSocket[] = [];
   const controller = createController({
     sync: {
       buildUrl: () => Promise.resolve("wss://vestad.test/sync"),
       createSocket: () => {
-        const socket = new FakeSocket()
-        sockets.push(socket)
-        return socket
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
       },
       setTimer: () => 0,
       clearTimer: () => undefined,
@@ -68,63 +68,73 @@ async function harness(): Promise<Harness> {
       token: () => null,
       refresh: () => Promise.resolve(false),
     },
-  })
-  await flush()
-  return { sockets, controller }
+  });
+  await flush();
+  return { sockets, controller };
 }
 
 function hello(version: string, minSupported: string): string {
-  return JSON.stringify({ type: "hello", version, min_supported: minSupported })
+  return JSON.stringify({
+    type: "hello",
+    version,
+    min_supported: minSupported,
+  });
 }
 
 describe("createController", () => {
   it("populates the replica from a hello then a snapshot", async () => {
-    const h = await harness()
-    const socket = h.sockets[0]
-    socket?.onopen?.()
-    socket?.onmessage?.(hello("0.2.0", "0.0.0"))
-    expect(h.controller.replica.getState()).toBeNull()
-    socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
-    expect(h.controller.replica.getState()?.gateway.port).toBe(4111)
-  })
+    const h = await harness();
+    const socket = h.sockets[0];
+    socket?.onopen?.();
+    socket?.onmessage?.(hello("0.2.0", "0.0.0"));
+    expect(h.controller.replica.getState()).toBeNull();
+    socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }));
+    expect(h.controller.replica.getState()?.gateway.port).toBe(4111);
+  });
 
   it("reduces a delta into the replica", async () => {
-    const h = await harness()
-    const socket = h.sockets[0]
-    socket?.onopen?.()
-    socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
-    const value: GatewayInfo = { ...baseGateway(), version: "0.3.0", updateAvailable: true }
-    socket?.onmessage?.(JSON.stringify({ type: "state", scope: "gateway", value }))
-    expect(h.controller.replica.getState()?.gateway.version).toBe("0.3.0")
-    expect(h.controller.replica.getState()?.gateway.updateAvailable).toBe(true)
-  })
+    const h = await harness();
+    const socket = h.sockets[0];
+    socket?.onopen?.();
+    socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }));
+    const value: GatewayInfo = {
+      ...baseGateway(),
+      version: "0.3.0",
+      updateAvailable: true,
+    };
+    socket?.onmessage?.(
+      JSON.stringify({ type: "state", scope: "gateway", value }),
+    );
+    expect(h.controller.replica.getState()?.gateway.version).toBe("0.3.0");
+    expect(h.controller.replica.getState()?.gateway.updateAvailable).toBe(true);
+  });
 
   it("exposes connection state through getSyncState and subscribeSyncState", async () => {
-    const h = await harness()
-    const listener = vi.fn()
-    h.controller.subscribeSyncState(listener)
-    expect(h.controller.getSyncState()).toBe("connecting")
-    h.sockets[0]?.onopen?.()
-    expect(h.controller.getSyncState()).toBe("open")
-    expect(listener).toHaveBeenCalled()
-  })
+    const h = await harness();
+    const listener = vi.fn();
+    h.controller.subscribeSyncState(listener);
+    expect(h.controller.getSyncState()).toBe("connecting");
+    h.sockets[0]?.onopen?.();
+    expect(h.controller.getSyncState()).toBe("open");
+    expect(listener).toHaveBeenCalled();
+  });
 
   it("stops notifying sync-state listeners after unsubscribe", async () => {
-    const h = await harness()
-    const listener = vi.fn()
-    const off = h.controller.subscribeSyncState(listener)
-    off()
-    h.sockets[0]?.onopen?.()
-    expect(listener).not.toHaveBeenCalled()
-  })
+    const h = await harness();
+    const listener = vi.fn();
+    const off = h.controller.subscribeSyncState(listener);
+    off();
+    h.sockets[0]?.onopen?.();
+    expect(listener).not.toHaveBeenCalled();
+  });
 
   it("fans out every delta to subscribeDeltas, including the user_notification the reducer ignores", async () => {
-    const h = await harness()
-    const seen: Delta[] = []
-    h.controller.subscribeDeltas((delta) => seen.push(delta))
-    const socket = h.sockets[0]
-    socket?.onopen?.()
-    socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
+    const h = await harness();
+    const seen: Delta[] = [];
+    h.controller.subscribeDeltas((delta) => seen.push(delta));
+    const socket = h.sockets[0];
+    socket?.onopen?.();
+    socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }));
     const userNotification: Delta = {
       type: "user_notification",
       id: 1,
@@ -133,20 +143,20 @@ describe("createController", () => {
       kind: "message",
       title: "scout",
       body: "hi",
-    }
-    socket?.onmessage?.(JSON.stringify(userNotification))
-    expect(seen).toEqual([userNotification])
+    };
+    socket?.onmessage?.(JSON.stringify(userNotification));
+    expect(seen).toEqual([userNotification]);
     // The user notification is a transient user-facing delta: it never mutates the tree.
-    expect(h.controller.replica.getState()?.agents.scout).toBeUndefined()
-  })
+    expect(h.controller.replica.getState()?.agents.scout).toBeUndefined();
+  });
 
   it("stops fanning out deltas after unsubscribe", async () => {
-    const h = await harness()
-    const seen: Delta[] = []
-    const off = h.controller.subscribeDeltas((delta) => seen.push(delta))
-    off()
-    const socket = h.sockets[0]
-    socket?.onopen?.()
+    const h = await harness();
+    const seen: Delta[] = [];
+    const off = h.controller.subscribeDeltas((delta) => seen.push(delta));
+    off();
+    const socket = h.sockets[0];
+    socket?.onopen?.();
     socket?.onmessage?.(
       JSON.stringify({
         type: "user_notification",
@@ -157,27 +167,29 @@ describe("createController", () => {
         title: "scout",
         body: "hi",
       }),
-    )
-    expect(seen).toEqual([])
-  })
+    );
+    expect(seen).toEqual([]);
+  });
 
   it("tracks anyFocused from presence deltas", async () => {
-    const h = await harness()
-    const listener = vi.fn()
-    h.controller.subscribeAnyFocused(listener)
-    expect(h.controller.getAnyFocused()).toBe(false)
-    const socket = h.sockets[0]
-    socket?.onopen?.()
-    socket?.onmessage?.(JSON.stringify({ type: "presence", any_focused: true }))
-    expect(h.controller.getAnyFocused()).toBe(true)
-    expect(listener).toHaveBeenCalled()
-  })
+    const h = await harness();
+    const listener = vi.fn();
+    h.controller.subscribeAnyFocused(listener);
+    expect(h.controller.getAnyFocused()).toBe(false);
+    const socket = h.sockets[0];
+    socket?.onopen?.();
+    socket?.onmessage?.(
+      JSON.stringify({ type: "presence", any_focused: true }),
+    );
+    expect(h.controller.getAnyFocused()).toBe(true);
+    expect(listener).toHaveBeenCalled();
+  });
 
   it("closes the socket and reports the closed state", async () => {
-    const h = await harness()
-    h.sockets[0]?.onopen?.()
-    h.controller.close()
-    expect(h.sockets[0]?.closed).toBe(true)
-    expect(h.controller.getSyncState()).toBe("closed")
-  })
-})
+    const h = await harness();
+    h.sockets[0]?.onopen?.();
+    h.controller.close();
+    expect(h.sockets[0]?.closed).toBe(true);
+    expect(h.controller.getSyncState()).toBe("closed");
+  });
+});
