@@ -37,9 +37,9 @@ The refusal happens in the CLI before any Graph or OWA-REST call, so it covers b
 
 ## Threaded reply DRAFT (leave unsent for the user to send)
 
-`email reply` ALWAYS sends and `email draft --reply-to` overwrites the quoted history. To leave a
-threaded reply(-all) draft the user reviews + sends themselves, use `email reply-draft`
-(createReply/createReplyAll + body placed above the preserved quote + attach, no /send):
+`email reply` ALWAYS sends. To leave a threaded reply(-all) draft the user reviews + sends
+themselves, use `email reply-draft` (createReply/createReplyAll + body placed above the preserved
+quote + attach, no /send, and the draft's recipients and attachments are read back for review):
 
 ```bash
 microsoft email reply-draft --account user@example.com --id '<latest-msg-id-in-thread>' --body "draft answer for review"

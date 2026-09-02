@@ -360,8 +360,9 @@ def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: st
     if not draft or "id" not in draft:
         raise ValueError("Failed to create reply/forward draft")
     draft_id = draft["id"]
+    _compose_over_quote(config, client, draft_id, account_id, mail.body, mail.html)
 
-    updates: dict[str, Any] = {"body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body}}
+    updates: dict[str, Any] = {}
     if mail.subject:
         updates["subject"] = mail.subject
     if mail.to:
@@ -370,7 +371,8 @@ def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: st
         updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.cc]
     if mail.bcc:
         updates["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.bcc]
-    graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
+    if updates:
+        graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
 
     _attach_files(config, client, draft_id, mail.attachments, account_id)
     return {"status": "drafted", "id": draft_id, "source_id": source_id}
@@ -538,16 +540,7 @@ def reply_to_email(
             raise ValueError("Failed to create reply draft")
 
         draft_id = draft["id"]
-
-        graph.request_cfg(
-            config,
-            client,
-            "PATCH",
-            f"/me/messages/{draft_id}",
-            account_id,
-            json={"body": {"contentType": "HTML" if html else "Text", "content": body}},
-        )
-
+        _compose_over_quote(config, client, draft_id, account_id, body, html)
         _attach_files(config, client, draft_id, attachments, account_id)
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
@@ -580,6 +573,34 @@ def _reply_body_to_html(raw: str) -> str:
     return "".join(parts)
 
 
+def _quote_to_html(quote: dict[str, Any]) -> str:
+    """Graph returns the pre-filled quote of a draft as `text` when the original message was
+    plain text; inside an HTML body its line breaks would collapse into one line, so a text
+    quote is escaped and wrapped in a pre-wrap block. An HTML quote passes through as is."""
+    if quote["contentType"].casefold() == "html":
+        return quote["content"]
+    return '<pre style="white-space:pre-wrap;font-family:inherit">' + html.escape(quote["content"]) + "</pre>"
+
+
+def _compose_over_quote(config: Config, client: httpx.Client, draft_id: str, account_id: str, body: str, html: bool) -> None:
+    """Place `body` above the quoted original that createReply/createReplyAll/createForward
+    pre-filled into draft `draft_id`. PATCHing `body` replaces the whole draft body, so the
+    quote is read back first and written under the new text. A plain-text body renders through
+    `_reply_body_to_html`; an HTML body is used as is."""
+    existing = graph.request_cfg(config, client, "GET", f"/me/messages/{draft_id}", account_id, params={"$select": "body"})
+    if not existing or "body" not in existing:
+        raise ValueError("Failed to read the created draft")
+    top = body if html else _reply_body_to_html(body)
+    graph.request_cfg(
+        config,
+        client,
+        "PATCH",
+        f"/me/messages/{draft_id}",
+        account_id,
+        json={"body": {"contentType": "HTML", "content": top + "<br><br>" + _quote_to_html(existing["body"])}},
+    )
+
+
 def reply_draft(
     config: Config,
     client: httpx.Client,
@@ -593,9 +614,9 @@ def reply_draft(
 ) -> dict[str, Any]:
     """Leave an UNSENT threaded reply(-all) draft for the user to review and send.
 
-    `email reply` always sends and `email draft --reply-to` overwrites the quoted history;
-    this fills the gap. createReply/createReplyAll pre-fills recipients + the quoted thread,
-    the new body is placed above that preserved quote, files attach, and we STOP before /send.
+    `email reply` always sends; this stops before /send. createReply/createReplyAll pre-fills
+    recipients + the quoted thread, the new body is placed above that preserved quote, files
+    attach, and the draft is read back to report what the user will see.
     `--replace-draft` deletes a prior draft first so repeated edits leave exactly one draft."""
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
@@ -611,25 +632,7 @@ def reply_draft(
     if not draft or "id" not in draft:
         raise ValueError("Failed to create reply draft")
     draft_id = draft["id"]
-
-    existing = graph.request_cfg(
-        config, client, "GET", f"/me/messages/{draft_id}", account_id, params={"$select": "body,toRecipients,ccRecipients"}
-    )
-    if not existing or "body" not in existing:
-        raise ValueError("Failed to read the created reply draft")
-    quoted = existing["body"]["content"]
-    to = _extract_addresses(existing["toRecipients"] if "toRecipients" in existing else [])
-    cc = _extract_addresses(existing["ccRecipients"] if "ccRecipients" in existing else [])
-
-    graph.request_cfg(
-        config,
-        client,
-        "PATCH",
-        f"/me/messages/{draft_id}",
-        account_id,
-        json={"body": {"contentType": "HTML", "content": _reply_body_to_html(body) + "<br><br>" + quoted}},
-    )
-
+    _compose_over_quote(config, client, draft_id, account_id, body, False)
     _attach_files(config, client, draft_id, attachments, account_id)
 
     check = graph.request_cfg(
@@ -638,15 +641,15 @@ def reply_draft(
         "GET",
         f"/me/messages/{draft_id}",
         account_id,
-        params={"$select": "subject,isDraft", "$expand": "attachments($select=name,size)"},
+        params={"$select": "subject,isDraft,toRecipients,ccRecipients", "$expand": "attachments($select=name,size)"},
     )
     result: dict[str, Any] = {
         "status": "drafted",
         "id": draft_id,
         "subject": check["subject"] if check and "subject" in check else None,
         "isDraft": check["isDraft"] if check and "isDraft" in check else None,
-        "to": to,
-        "cc": cc,
+        "to": _extract_addresses(check["toRecipients"] if check and "toRecipients" in check else []),
+        "cc": _extract_addresses(check["ccRecipients"] if check and "ccRecipients" in check else []),
         "attachments": [a["name"] for a in (check["attachments"] if check and "attachments" in check else [])],
     }
     if warnings:
@@ -666,22 +669,19 @@ def forward_email(config: Config, client: httpx.Client, *, account_email: str, e
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     to_recipients = [{"emailAddress": {"address": addr}} for addr in to]
 
-    # cc / html / attachments need the draft path (the one-shot forward action only
-    # takes a plain-text comment + toRecipients); the plain case keeps the quoted original.
+    # cc / html / attachments need the draft path: the one-shot forward action only
+    # takes a plain-text comment + toRecipients.
     if attachments or cc or html:
         draft = graph.request_cfg(config, client, "POST", f"/me/messages/{email_id}/createForward", account_id)
         if not draft or "id" not in draft:
             raise ValueError("Failed to create forward draft")
         draft_id = draft["id"]
 
-        updates: dict[str, Any] = {
-            "body": {"contentType": "HTML" if html else "Text", "content": body},
-            "toRecipients": to_recipients,
-        }
+        updates: dict[str, Any] = {"toRecipients": to_recipients}
         if cc:
             updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
         graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
-
+        _compose_over_quote(config, client, draft_id, account_id, body, html)
         _attach_files(config, client, draft_id, attachments, account_id)
         graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}

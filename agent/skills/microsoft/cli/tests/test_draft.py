@@ -1,9 +1,11 @@
 """Unit tests for microsoft_cli.email.create_email_draft (mocked Graph calls)."""
 
 import pytest
-from microsoft_cli import email
+from microsoft_cli import email, pending_send
 from microsoft_cli.config import Config
 from microsoft_cli.payloads import MailDraft
+
+QUOTED = "<div>quoted original</div>"
 
 
 @pytest.fixture
@@ -21,11 +23,17 @@ def patched(monkeypatch):
             return {"id": "fwd-draft"}
         if method == "POST" and path == "/me/messages":
             return {"id": "compose-draft"}
+        if method == "GET":
+            return {"body": {"contentType": "HTML", "content": QUOTED}}
         return None
 
     monkeypatch.setattr(email.auth, "get_account_id_by_email", fake_account_id)
     monkeypatch.setattr(email.graph, "request", fake_request)
     return calls
+
+
+def _body_patch(calls):
+    return next(c for c in calls if c["method"] == "PATCH" and "body" in c["json"])
 
 
 def test_compose_draft(patched):
@@ -51,10 +59,17 @@ def test_reply_draft_is_threaded_and_not_sent(patched):
     result = email.create_email_draft(Config(), None, account_email="me@example.com", mail=MailDraft(body="thanks", reply_to_id="orig-1"))
     assert result == {"status": "drafted", "id": "reply-draft", "source_id": "orig-1"}
     assert patched[0]["path"] == "/me/messages/orig-1/createReply"
-    assert patched[1]["method"] == "PATCH"
-    assert patched[1]["path"] == "/me/messages/reply-draft"
-    assert patched[1]["json"]["body"] == {"contentType": "Text", "content": "thanks"}
+    patch = _body_patch(patched)
+    assert patch["path"] == "/me/messages/reply-draft"
+    content = patch["json"]["body"]["content"]
+    assert content.index("thanks") < content.index(QUOTED)
+    assert content.endswith("<br><br>" + QUOTED)
     assert not any(c["path"].endswith("/send") for c in patched)
+
+
+def test_reply_draft_without_body_keeps_quoted_original(patched):
+    email.create_email_draft(Config(), None, account_email="me@example.com", mail=MailDraft(reply_to_id="orig-4"))
+    assert _body_patch(patched)["json"]["body"]["content"].endswith("<br><br>" + QUOTED)
 
 
 def test_forward_draft_with_recipient(patched):
@@ -63,7 +78,38 @@ def test_forward_draft_with_recipient(patched):
     )
     assert result["id"] == "fwd-draft"
     assert patched[0]["path"] == "/me/messages/orig-2/createForward"
-    assert patched[1]["json"]["toRecipients"] == [{"emailAddress": {"address": "bob@x.com"}}]
+    recipients = next(c for c in patched if c["method"] == "PATCH" and "toRecipients" in c["json"])
+    assert recipients["json"]["toRecipients"] == [{"emailAddress": {"address": "bob@x.com"}}]
+    content = _body_patch(patched)["json"]["body"]["content"]
+    assert content.index("fyi") < content.index(QUOTED)
+
+
+def test_forward_draft_html_body_sits_above_the_quote_unescaped(patched):
+    email.create_email_draft(
+        Config(), None, account_email="me@example.com", mail=MailDraft(body="<b>fyi</b>", html=True, forward_id="orig-2", to=["bob@x.com"])
+    )
+    assert _body_patch(patched)["json"]["body"] == {"contentType": "HTML", "content": "<b>fyi</b><br><br>" + QUOTED}
+
+
+def test_queued_forward_keeps_quoted_original_below_the_body(patched, tmp_path):
+    config = Config(data_dir=tmp_path)
+    assert pending_send.delay_seconds(tmp_path) > 0
+
+    result = email.forward_email(config, None, account_email="me@example.com", email_id="orig-6", mail=MailDraft(to=["bob@x.com"], body="fyi"))
+
+    assert result["status"] == "pending"
+    content = _body_patch(patched)["json"]["body"]["content"]
+    assert content.index("fyi") < content.index(QUOTED)
+    assert content.endswith("<br><br>" + QUOTED)
+
+
+def test_queued_forward_without_body_keeps_quoted_original(patched, tmp_path):
+    config = Config(data_dir=tmp_path)
+
+    result = email.forward_email(config, None, account_email="me@example.com", email_id="orig-7", mail=MailDraft(to=["bob@x.com"]))
+
+    assert result["status"] == "pending"
+    assert _body_patch(patched)["json"]["body"]["content"].endswith("<br><br>" + QUOTED)
 
 
 def test_reply_and_forward_mutually_exclusive(patched):

@@ -5,6 +5,7 @@ from microsoft_cli import email, pending_send
 from microsoft_cli.config import Config
 from microsoft_cli.payloads import MailDraft
 
+QUOTED = "<div>quoted original</div>"
 _FOLDERS_PAGE = {
     "value": [
         {"id": "news-id", "displayName": "Newsletters", "childFolders": []},
@@ -27,6 +28,8 @@ def patched(monkeypatch):
             return {"id": "draft-1"}
         if method == "POST" and path.endswith("/move"):
             return {"id": "moved-1"}
+        if method == "GET":
+            return {"body": {"contentType": "HTML", "content": QUOTED}}
         return None
 
     monkeypatch.setattr(email.auth, "get_account_id_by_email", fake_account_id)
@@ -55,11 +58,19 @@ def test_forward_with_cc_uses_draft_path(patched, tmp_path):
         mail=MailDraft(to=["bob@x.com"], body="fyi", cc=["cc@x.com"]),
     )
     assert result == {"status": "sent"}
-    paths = [c["path"] for c in patched]
-    assert paths == ["/me/messages/m1/createForward", "/me/messages/draft-1", "/me/messages/draft-1/send"]
-    patch = patched[1]
-    assert patch["json"]["ccRecipients"] == [{"emailAddress": {"address": "cc@x.com"}}]
-    assert patch["json"]["toRecipients"] == [{"emailAddress": {"address": "bob@x.com"}}]
+    assert [(c["method"], c["path"]) for c in patched] == [
+        ("POST", "/me/messages/m1/createForward"),
+        ("PATCH", "/me/messages/draft-1"),
+        ("GET", "/me/messages/draft-1"),
+        ("PATCH", "/me/messages/draft-1"),
+        ("POST", "/me/messages/draft-1/send"),
+    ]
+    recipients = patched[1]["json"]
+    assert recipients["ccRecipients"] == [{"emailAddress": {"address": "cc@x.com"}}]
+    assert recipients["toRecipients"] == [{"emailAddress": {"address": "bob@x.com"}}]
+    content = patched[3]["json"]["body"]["content"]
+    assert content.index("fyi") < content.index(QUOTED)
+    assert content.endswith("<br><br>" + QUOTED)
 
 
 def test_forward_requires_to(patched, tmp_path):
