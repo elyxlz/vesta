@@ -45,8 +45,16 @@ def test_browser_token_expiry_none_for_device_or_missing(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# capture: persistence + refresh scheduling
+# capture: browser evaluate output, persistence + refresh scheduling
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "value"),
+    [('"eyJ.a.b"', "eyJ.a.b"), ('"NONE"', "NONE"), ("null", "null"), ("", "")],
+)
+def test_eval_value_unwraps_the_json_string_browser_evaluate_prints(raw, value):
+    assert capture.eval_value(raw) == value
 
 
 def test_save_captured_persists_both_tokens(tmp_path):
