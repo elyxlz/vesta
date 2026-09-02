@@ -157,8 +157,14 @@ def _sanitize_filename(value: str) -> str:
     return sanitized or "email"
 
 
+def email_save_dir(config: Config, account_email: str) -> pl.Path:
+    """One directory per account, so removing an account can delete exactly its saved bodies."""
+    return config.cache_file.parent / EMAIL_SAVE_SUBDIR / _sanitize_filename(account_email.lower())
+
+
 def _prepare_email_output_path(
     config: Config,
+    account_email: str,
     email_id: str,
     subject: str | None,
     override_path: str | None,
@@ -168,7 +174,7 @@ def _prepare_email_output_path(
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
-    base_dir = config.cache_file.parent / EMAIL_SAVE_SUBDIR
+    base_dir = email_save_dir(config, account_email)
     base_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S")
@@ -280,10 +286,10 @@ def get_email(
         raise ValueError(f"Email with ID {email_id} not found")
 
     graph.localize_datetime_fields(result)
-    return finalize_email_body(config, email_id, result, save_to_file)
+    return finalize_email_body(config, account_email, email_id, result, save_to_file)
 
 
-def finalize_email_body(config: Config, email_id: str, result: dict[str, Any], save_to_file: str | None) -> dict[str, Any]:
+def finalize_email_body(config: Config, account_email: str, email_id: str, result: dict[str, Any], save_to_file: str | None) -> dict[str, Any]:
     """Persist an email body to disk and replace it with a pointer in the returned
     dict. Shared by the Graph path and the OWA/EWS fallback so `email get` returns
     an identical shape regardless of which backend fetched the message. `result`
@@ -293,7 +299,7 @@ def finalize_email_body(config: Config, email_id: str, result: dict[str, Any], s
     full_body_content = (body_obj["content"] if body_obj and "content" in body_obj else "") or ""
     _remove_attachment_bytes(result)
 
-    save_path = _prepare_email_output_path(config, email_id, result["subject"] if "subject" in result else None, save_to_file)
+    save_path = _prepare_email_output_path(config, account_email, email_id, result["subject"] if "subject" in result else None, save_to_file)
 
     from_obj = result["from"] if "from" in result else {}
     from_email_obj = from_obj["emailAddress"] if "emailAddress" in from_obj else {}

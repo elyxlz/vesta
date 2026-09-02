@@ -90,7 +90,7 @@ def get_email(
 ) -> dict:
     del include_attachments  # Graph-only knob; the OWA REST message always carries its attachment list
     msg = owa_rest.get_message(client, account_email, config, item_id=email_id)
-    return email_mod.finalize_email_body(config, email_id, msg, save_to_file)
+    return email_mod.finalize_email_body(config, account_email, email_id, msg, save_to_file)
 
 
 def send_email(config: Config, client, *, account_email: str, mail: MailDraft) -> dict:
