@@ -1,5 +1,5 @@
 import type { OrbVisualState } from "@vesta/core";
-import { orbColors } from "@/components/Orb/styles";
+import { orbColors } from "@/design-tokens";
 
 const DEFAULT_HREF = "/favicon.png?v=2";
 const FAVICON_SIZE = 64;

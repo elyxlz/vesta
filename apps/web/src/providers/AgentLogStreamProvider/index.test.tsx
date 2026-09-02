@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import type { AgentRow } from "@vesta/core";
 import type { LogEvent } from "@/lib/types";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
-import { fakeAgentRow } from "@/test/fake-controller";
+import { ControllerContext } from "@/providers/ControllerProvider/context";
+import { fakeAgentRow, fakeController } from "@/test/fake-controller";
 import { AgentLogStreamProvider } from "./index";
 import { useAgentLogSession } from "./context";
 import { stopLogs, streamLogs } from "@/api/logs";
@@ -30,13 +31,17 @@ function Probe() {
   return null;
 }
 
+const { controller } = fakeController(null);
+
 function tree(agent: AgentRow, probe: boolean) {
   return (
-    <SelectedAgentProvider agent={agent}>
-      <AgentLogStreamProvider>
-        {probe ? <Probe /> : null}
-      </AgentLogStreamProvider>
-    </SelectedAgentProvider>
+    <ControllerContext.Provider value={controller}>
+      <SelectedAgentProvider agent={agent}>
+        <AgentLogStreamProvider>
+          {probe ? <Probe /> : null}
+        </AgentLogStreamProvider>
+      </SelectedAgentProvider>
+    </ControllerContext.Provider>
   );
 }
 

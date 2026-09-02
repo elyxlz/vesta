@@ -22,8 +22,9 @@ import * as Clipboard from "expo-clipboard";
 import * as WebBrowser from "expo-web-browser";
 import { Text } from "@/components/ui/Typography";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAgentRequest } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
-import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
+import { useController } from "@/controller/context";
 import {
   buildModelOptions,
   resolveProviderKind,
@@ -81,7 +82,7 @@ function isKeyProviderKind(kind: ProviderKind): kind is KeyProviderKind {
 export function ProviderSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
-  const { name, agent } = useAgent();
+  const { name } = useAgent();
   const { showError } = useToast();
   const { colors } = usePreferences();
   const [authKind, setAuthKind] = useState<ProviderKind>("claude");
@@ -117,9 +118,25 @@ export function ProviderSection() {
   const [openAIUserCode, setOpenAIUserCode] = useState("");
   const [providerKey, setProviderKey] = useState("");
   const [requestBusy, setBusy] = useState(false);
-  // Provisioning ends in an agent restart; the section stays busy until the roster shows it back.
-  const restart = useAwaitedRoundTrip(agent?.status !== "alive");
-  const busy = requestBusy || restart.busy;
+  // Provisioning is this client's own request on the agent: the orb reads "signing in..." app-wide
+  // until the gateway answers, then the roster's restart carries the rest.
+  const { requests } = useController();
+  const request = useAgentRequest(useController(), name);
+  const busy = requestBusy || request.request !== "idle";
+  const provision = async (selection: ProviderSelection) => {
+    requests.set(name, "authenticating");
+    try {
+      await provisionAgent(api, name, selection);
+      requests.clear(name);
+    } catch (cause) {
+      requests.set(
+        name,
+        "idle",
+        cause instanceof Error ? cause.message : "Provider sign-in failed",
+      );
+      throw cause;
+    }
+  };
 
   const selectAuthKind = (kind: ProviderKind) => {
     setAuthKind(kind);
@@ -244,8 +261,7 @@ export function ProviderSection() {
                 model: selectedModel,
                 maxContextTokens,
               };
-        await provisionAgent(api, name, selection);
-        restart.start();
+        await provision(selection);
         await queryClient.invalidateQueries({ queryKey: ["provider", name] });
       }
     } catch (cause) {
@@ -277,8 +293,7 @@ export function ProviderSection() {
         model: selectedModel || modelOptions[0]?.value || "",
         ...(defaultContext ? { maxContextTokens: defaultContext } : {}),
       };
-      await provisionAgent(api, name, selection);
-      restart.start();
+      await provision(selection);
       await queryClient.invalidateQueries({ queryKey: ["provider", name] });
     } catch (cause) {
       showError(cause, "Provider sign-in failed");

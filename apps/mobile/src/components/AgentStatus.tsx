@@ -1,16 +1,20 @@
+import { use } from "react";
 import { StyleSheet, View } from "react-native";
 import {
   agentNeedsUser,
-  agentStatusLabel,
+  agentVisualStatus,
   type AgentActivityState,
   type AgentOperation,
   type AgentStatus,
   type RateLimitedInfo,
 } from "@vesta/core";
+import { useAgentRequest } from "@vesta/core/react";
+import { ControllerContext } from "@/controller/context";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { Text } from "@/components/ui/Typography";
 
 export function AgentStatusBadge({
+  name,
   status,
   activityState = "idle",
   operation = null,
@@ -18,6 +22,8 @@ export function AgentStatusBadge({
   rateLimited = null,
   centered = false,
 }: {
+  // The roster agent, so this client's own in-flight request overlays the badge.
+  name?: string;
   status: AgentStatus;
   activityState?: AgentActivityState;
   operation?: AgentOperation | null;
@@ -26,18 +32,28 @@ export function AgentStatusBadge({
   centered?: boolean;
 }) {
   const { colors } = usePreferences();
+  const { request } = useAgentRequest(use(ControllerContext), name ?? null);
+  const { label, orbState } = agentVisualStatus(
+    { status, operation, booting, rateLimited },
+    request,
+    activityState,
+  );
   const active = status === "alive" && !booting;
   const limited = active && operation === null && rateLimited != null;
   const thinking = active && !limited && activityState === "thinking";
   const attention = operation === null && agentNeedsUser(status);
   const color =
-    limited || thinking
-      ? colors.warning
-      : active
-        ? colors.success
-        : attention
-          ? colors.warning
-          : colors.tertiaryText;
+    request !== "idle"
+      ? orbState === "deleting"
+        ? colors.danger
+        : colors.tertiaryText
+      : limited || thinking
+        ? colors.warning
+        : active
+          ? colors.success
+          : attention
+            ? colors.warning
+            : colors.tertiaryText;
   return (
     <View
       style={[
@@ -47,15 +63,7 @@ export function AgentStatusBadge({
       ]}
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
-      <Text style={[styles.label, { color }]}>
-        {agentStatusLabel(
-          status,
-          activityState,
-          operation,
-          booting,
-          rateLimited,
-        )}
-      </Text>
+      <Text style={[styles.label, { color }]}>{label}</Text>
     </View>
   );
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { BackupInfo } from "@vesta/core";
-import { backupTimeline, deletePrompt, restorePrompt } from "./backups-model";
+import {
+  backupRequest,
+  backupTimeline,
+  deletePrompt,
+  restorePrompt,
+} from "./backups-model";
 
 const BASE: BackupInfo = {
   id: "snap-1",
@@ -103,6 +108,18 @@ describe("restorePrompt", () => {
   it("never refers to the agent as a thing", () => {
     const prompt = restorePrompt(pointOf({}, "0.1.2"), "scout", "0.1.2");
     expect(prompt.body).not.toMatch(/\bit\b|\bits\b/);
+  });
+});
+
+describe("backupRequest", () => {
+  // The orb shows the same words web shows for the same tap: the two vestad tracks ride the
+  // roster's operation, and deleting a snapshot is no lifecycle operation at all.
+  it.each([
+    ["create", "backing-up"],
+    ["restore", "restoring"],
+    ["delete", null],
+  ] as const)("holds %s as %s on the agent", (action, request) => {
+    expect(backupRequest(action)).toBe(request);
   });
 });
 

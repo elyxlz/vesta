@@ -9,8 +9,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Orb } from "@/components/Orb";
 import type { AgentRow } from "@vesta/core";
 import { useNavigate } from "react-router-dom";
-import { useAgentOps } from "@/stores/use-agent-ops";
-import { useOrbStatus } from "@/hooks/use-orb-state";
+import { useAgentVisualStatus } from "@vesta/core/react";
+import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
@@ -22,10 +22,13 @@ export function AgentCard({ agent }: AgentCardProps) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
 
-  const opState = useAgentOps((s) => s.getOp(agent.name));
-  const { orbState, label } = useOrbStatus(agent, agent.activityState);
+  const { orbState, label, request, error } = useAgentVisualStatus(
+    useOptionalController(),
+    agent,
+    agent.activityState,
+  );
   // Work vestad is running counts even when this tab did not start it.
-  const inFlight = opState.operation !== "idle" || agent.operation !== null;
+  const inFlight = request !== "idle" || agent.operation !== null;
 
   return (
     <Card className="flex items-center justify-center h-full w-full">
@@ -50,7 +53,7 @@ export function AgentCard({ agent }: AgentCardProps) {
           </CardTitle>
 
           <AnimatePresence>
-            {(inFlight || opState.error) && (
+            {(inFlight || error) && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
@@ -64,12 +67,10 @@ export function AgentCard({ agent }: AgentCardProps) {
                 <CardDescription
                   className={cn(
                     "text-xs",
-                    opState.error
-                      ? "text-destructive"
-                      : "text-muted-foreground",
+                    error ? "text-destructive" : "text-muted-foreground",
                   )}
                 >
-                  {opState.error || label}
+                  {error || label}
                 </CardDescription>
               </motion.div>
             )}

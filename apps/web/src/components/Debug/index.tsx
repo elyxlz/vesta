@@ -2,7 +2,7 @@ import { ChatBubble } from "@/components/Chat/ChatBubble";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Orb } from "@/components/Orb";
 import type { OrbVisualState, ChatMessage } from "@vesta/core";
-import { orbColors } from "@/components/Orb/styles";
+import { orbColors } from "@/design-tokens";
 
 const states: OrbVisualState[] = [
   "alive",

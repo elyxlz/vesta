@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  createAgentRequests,
   createReplica,
   type AgentNode,
   type Controller,
@@ -58,6 +59,7 @@ function createOpenController(): Controller {
   const unsubscribe = () => noop;
   return {
     replica,
+    requests: createAgentRequests(),
     http: {
       request: async () => new Response(null, { status: 204 }),
       // The chat tail seeds from the hold; an empty page keeps it as is.

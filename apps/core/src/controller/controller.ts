@@ -1,4 +1,5 @@
 import { createReplica } from "../replica/store";
+import { createAgentRequests } from "../agent-request/agent-request";
 import { createSyncSocket } from "../transport/socket";
 import {
   REAUTH_POLL_MS,
@@ -6,6 +7,7 @@ import {
   type Session,
 } from "../session/session";
 import type { Replica } from "../replica/store";
+import type { AgentRequests } from "../agent-request/agent-request";
 import type { SyncSocketDeps, SyncState } from "../transport/socket";
 import type { HttpClient } from "../transport/http";
 import type { Delta } from "../protocol/deltas";
@@ -22,6 +24,9 @@ export interface Controller {
   replica: Replica;
   http: HttpClient;
   session: Session;
+  // This client's own in-flight request per agent (restart, delete, backup...), the fact the tree
+  // cannot carry; reconciled against the roster so a request dies with its agent.
+  requests: AgentRequests;
   // The server's always-on `user_notification` delta is not tree state, so the notification funnel
   // subscribes to it here. Every delta flows through; callers that want branch state read the replica instead.
   subscribeDeltas: (listener: (delta: Delta) => void) => () => void;
@@ -72,6 +77,11 @@ function createCell<T>(initial: T): {
 // Mobile constructs the same controller with its own adapters.
 export function createController(deps: ControllerDeps): Controller {
   const replica = createReplica();
+  const requests = createAgentRequests();
+  const reconcileRequests = (): void => {
+    const tree = replica.getState();
+    if (tree) requests.reconcile(Object.keys(tree.agents));
+  };
   const syncState = createCell<SyncState>("connecting");
   const anyFocused = createCell(false);
   const focused = createCell(false);
@@ -83,9 +93,11 @@ export function createController(deps: ControllerDeps): Controller {
     {
       onSnapshot: (tree) => {
         replica.applySnapshot(tree);
+        reconcileRequests();
       },
       onDelta: (delta) => {
         replica.applyDelta(delta);
+        if (delta.type === "agent_removed") reconcileRequests();
         for (const listener of deltaListeners) listener(delta);
         if (delta.type === "presence") anyFocused.set(delta.anyFocused);
       },
@@ -111,6 +123,7 @@ export function createController(deps: ControllerDeps): Controller {
     replica,
     http: deps.session.http,
     session: deps.session,
+    requests,
     subscribeDeltas: (listener) => {
       deltaListeners.add(listener);
       return () => {

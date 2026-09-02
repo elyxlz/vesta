@@ -1,10 +1,9 @@
 import { useCallback, type ReactNode } from "react";
-import { useResource } from "@vesta/core/react";
-import { useAgentOps, type AgentRequest } from "@/stores/use-agent-ops";
+import { useAgentVisualStatus, useResource } from "@vesta/core/react";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentRow } from "@vesta/core";
+import type { AgentRequest, AgentRow } from "@vesta/core";
 import { errorMessage } from "@/lib/utils";
-import { getAgentVisualStatus } from "@/components/Orb/styles";
+import { useController } from "@/providers/ControllerProvider/context";
 import { SelectedAgentContext } from "./context";
 import type { SelectedAgentContextValue } from "./context";
 import {
@@ -27,26 +26,23 @@ export function SelectedAgentProvider({
   children: ReactNode;
 }) {
   const name = agent.name;
-
-  const withOp = useAgentOps((s) => s.withOp);
+  const { requests } = useController();
   const clearRestartPending = useRestartPending((s) => s.clearPending);
-  const opState = useAgentOps((s) => s.getOp(name));
-  // Long-running work started anywhere disables the actions here too, not just work this tab began.
-  const isBusy = opState.operation !== "idle" || agent.operation !== null;
-
-  const { label: statusLabel, orbState } = getAgentVisualStatus(
+  const { label, orbState, request, error } = useAgentVisualStatus(
+    useController(),
     agent,
-    opState.operation,
-    opState.error,
     agent.activityState,
   );
+  // Long-running work started anywhere disables the actions here too, not just work this tab began.
+  const isBusy = request !== "idle" || agent.operation !== null;
+  const statusLabel = error || label;
 
   const op =
-    (operation: AgentRequest, run: () => Promise<unknown>, failure: string) =>
+    (request: AgentRequest, run: () => Promise<unknown>, failure: string) =>
     () =>
-      withOp(
+      requests.run(
         name,
-        operation,
+        request,
         async () => {
           await run();
         },
@@ -67,12 +63,12 @@ export function SelectedAgentProvider({
   // alone (its mount needs a recreate a boot-time change can't confirm), this button IS the owner:
   // it runs restartAgent, which recreates on mount drift and thus actually applies the grant.
   const applyPending = (
-    operation: AgentRequest,
+    request: AgentRequest,
     run: () => Promise<unknown>,
     failure: string,
   ) =>
     op(
-      operation,
+      request,
       async () => {
         await run();
         clearRestartPending(name);
@@ -109,7 +105,7 @@ export function SelectedAgentProvider({
   );
 
   const restore = (backupId: string) => {
-    void withOp(
+    void requests.run(
       name,
       "restoring",
       async () => {
@@ -121,33 +117,32 @@ export function SelectedAgentProvider({
   };
 
   // Deleting a snapshot is not an agent lifecycle operation (vestad publishes none for it), so it
-  // stays off the agent op that "backing-up"/"restoring" ride: the dialog owns its own pending
+  // stays off the agent request that "backing-up"/"restoring" ride: the dialog owns its own pending
   // state, and the agent orb never reads as "deleting" while a snapshot is removed.
   const removeBackup = async (backupId: string) => {
     await deleteBackup(httpClient, name, backupId);
     await refreshBackups();
   };
 
-  // Delete is terminal: unlike the other ops it hands off to the agent's
-  // disappearance, not to a new status. So it holds "deleting" on success and
-  // lets reconcile drop the op when the agent leaves the list, rather than
-  // clearing to idle and flashing the card back to the gray stopped orb.
+  // Delete is terminal: unlike the other requests it hands off to the agent's disappearance, not
+  // to a new status. So it holds "deleting" on success and lets the controller drop the request
+  // when the agent leaves the roster, rather than clearing to idle and flashing the card back to
+  // the gray stopped orb.
   const remove = async () => {
-    const ops = useAgentOps.getState();
-    if (ops.getOp(name).operation !== "idle") return;
-    ops.setOp(name, "deleting");
+    if (requests.get(name).request !== "idle") return;
+    requests.set(name, "deleting");
     try {
       await deleteAgent(httpClient, name);
     } catch (e) {
-      ops.setOp(name, "idle", errorMessage(e, "delete failed"));
+      requests.set(name, "idle", errorMessage(e, "delete failed"));
     }
   };
 
   const value: SelectedAgentContextValue = {
     name,
     agent,
-    operation: opState.operation,
-    error: opState.error,
+    request,
+    error,
     statusLabel,
     orbState,
     isBusy,

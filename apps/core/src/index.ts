@@ -253,13 +253,17 @@ export {
   agentIsConnectable,
   agentIsDown,
   agentNeedsUser,
-  agentOperationLabel,
-  agentOrbState,
   agentStatusKind,
   agentStatusLabel,
   formatResetTime,
 } from "./agent-status/agent-status";
 export type { OrbVisualState } from "./agent-status/agent-status";
+
+export {
+  agentVisualStatus,
+  createAgentRequests,
+} from "./agent-request/agent-request";
+export type { AgentRequest } from "./agent-request/agent-request";
 
 export { ORB_GRADIENT_ANGLE_DEG, orbVisual } from "./orb/orb";
 export type { OrbMotion } from "./orb/orb";

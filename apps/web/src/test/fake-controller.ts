@@ -1,5 +1,5 @@
 import { vi, type Mock } from "vitest";
-import { createReplica, createSession } from "@vesta/core";
+import { createAgentRequests, createReplica, createSession } from "@vesta/core";
 import type {
   AgentInfo,
   AgentNode,
@@ -116,6 +116,7 @@ export function fakeController(
   });
   const controller: Controller = {
     replica,
+    requests: createAgentRequests(),
     http: { request, json },
     session,
     subscribeDeltas: (listener) => {

@@ -24,7 +24,6 @@ import {
   useControllerReconnect,
   useOptionalController,
 } from "@/providers/ControllerProvider/context";
-import { useAgentOps } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import {
   GatewayContext,
@@ -102,11 +101,9 @@ function ConnectedGateway({
   const syncState = useSyncState(controller);
   const reconnect = useControllerReconnect();
 
-  // Clear any "restart to apply" flag whose agent has since restarted, and drop op state for
-  // agents that are gone (ends a delete's "deleting" orb).
+  // Clear any "restart to apply" flag whose agent has since restarted.
   useEffect(() => {
     useRestartPending.getState().reconcile(agents);
-    useAgentOps.getState().reconcile(agents);
   }, [agents]);
 
   const gatewayVersion = gateway?.version ?? "";

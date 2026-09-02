@@ -43,6 +43,7 @@ export function AgentIdentityCard({
     <View style={[styles.card, style]}>
       {orb ?? (
         <AgentOrb
+          name={name}
           status={status}
           activityState={activityState}
           operation={operation}
@@ -54,6 +55,7 @@ export function AgentIdentityCard({
       <View style={styles.details}>
         {showStatus ? (
           <AgentStatusBadge
+            name={name}
             status={status}
             activityState={activityState}
             operation={operation}

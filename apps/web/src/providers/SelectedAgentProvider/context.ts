@@ -1,12 +1,17 @@
 import { createContext, useContext } from "react";
-import type { AgentRequest } from "@/stores/use-agent-ops";
-import type { OrbVisualState, AgentRow, BackupInfo } from "@vesta/core";
+import type {
+  AgentRequest,
+  OrbVisualState,
+  AgentRow,
+  BackupInfo,
+} from "@vesta/core";
 
 export interface SelectedAgentContextValue {
   name: string;
   agent: AgentRow;
 
-  operation: AgentRequest;
+  // This client's own in-flight request for the agent, and its last failure.
+  request: AgentRequest;
   error: string;
   statusLabel: string;
   orbState: OrbVisualState;

@@ -4,6 +4,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 
 import { useNotificationFeed } from "./use-notification-feed";
 import { createReplica } from "../replica/store";
+import { createAgentRequests } from "../agent-request/agent-request";
 import { createSession } from "../session/session";
 import type { Controller } from "../controller/controller";
 import type { Delta } from "../protocol/deltas";
@@ -33,6 +34,7 @@ function harness(
   const requests: string[] = [];
   const controller: Controller = {
     replica: createReplica(),
+    requests: createAgentRequests(),
     http: {
       request: (path) => {
         requests.push(path);
