@@ -258,9 +258,10 @@ pub(crate) async fn proxy_authorized(
     )
 }
 
+/// The segment must pass `validate_name`, so a malformed one never names an env file to read.
 fn extract_agent_name(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    if parts.len() >= 2 && parts[0] == "agents" {
+    if parts.len() >= 2 && parts[0] == "agents" && crate::docker::validate_name(parts[1]).is_ok() {
         Some(parts[1].to_string())
     } else {
         None
@@ -448,6 +449,17 @@ mod agent_name_extraction {
         assert_eq!(extract_agent_name("/vesta-cloud/pair"), None);
         assert_eq!(extract_agent_name("/health"), None);
         assert_eq!(extract_agent_name("/agents"), None);
+    }
+
+    #[test]
+    fn malformed_segments_name_no_agent_and_so_no_env_file() {
+        for segment in ["..", "Alpha", "a%2Fb", "-bad", "alpha.env", ""] {
+            assert_eq!(
+                extract_agent_name(&format!("/agents/{segment}/status")),
+                None,
+                "segment: {segment:?}"
+            );
+        }
     }
 }
 
