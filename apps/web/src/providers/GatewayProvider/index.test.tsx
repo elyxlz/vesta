@@ -6,7 +6,6 @@ import {
   ControllerContext,
   ControllerReconnectContext,
 } from "@/providers/ControllerProvider/context";
-import { useAgentOps } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import {
   fakeAgentInfo,
@@ -79,7 +78,6 @@ function mount(
 
 beforeEach(() => {
   useRestartPending.setState({ pending: {} });
-  useAgentOps.setState({ states: {} });
 });
 
 afterEach(() => {
@@ -135,22 +133,6 @@ describe("GatewayProvider", () => {
     });
 
     expect(useRestartPending.getState().pending.ada).toBeUndefined();
-  });
-
-  // A delete's "deleting" orb ends when the agent leaves the roster, never by flashing idle first.
-  it("drops a local op once its agent leaves the roster", () => {
-    const fake = fakeController(tree({ ada: BOOT_A, grace: BOOT_A }));
-    useAgentOps.getState().setOp("grace", "deleting");
-    mount(fake);
-
-    expect(useAgentOps.getState().getOp("grace").operation).toBe("deleting");
-
-    act(() => {
-      fake.emit({ type: "agent_removed", name: "grace" });
-    });
-
-    expect(useAgentOps.getState().getOp("grace").operation).toBe("idle");
-    expect(useAgentOps.getState().getOp("ada").operation).toBe("idle");
   });
 
   // The version gate routes an incompatible hello to a blocking screen and withholds the app body.

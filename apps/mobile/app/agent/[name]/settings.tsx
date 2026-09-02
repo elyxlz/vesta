@@ -1,19 +1,24 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { resolveProviderIdentity, type AgentStatus } from "@vesta/core";
-import { Pressable, StyleSheet } from "react-native";
-import { useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
   getProvider,
+  resolveProviderIdentity,
   restartAgent,
   startAgent,
   stopAgent,
 } from "@vesta/core";
+import { useAgentRequest } from "@vesta/core/react";
+import { Pressable, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
 import { useAgent } from "@/agent/AgentProvider";
 import { sectionTitle } from "@/agent/settings/sections-model";
-import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
+import {
+  agentActionRequest,
+  type AgentAction,
+} from "@/agent/agent-action-model";
+import { useController } from "@/controller/context";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { ProviderPill } from "@/components/ProviderPill";
 import { Screen } from "@/components/layout/Screen";
@@ -38,14 +43,13 @@ function AgentSettingsContent() {
   const preferences = usePreferences();
   const { showError } = useToast();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  // The status the roster is expected to reach after a start or stop. vestad answers the request
-  // before the container has moved, so the button stays busy until the roster catches up.
-  const [awaitedStatus, setAwaitedStatus] = useState<AgentStatus | null>(null);
-  const awaitingStatus =
-    awaitedStatus !== null && agent?.status !== awaitedStatus;
   const stopped = agent?.status === "stopped";
-  const restart = useAwaitedRoundTrip(agent?.status !== "alive");
-  const backup = useAwaitedRoundTrip(agent?.operation === "backing_up");
+  // This client's own request on the agent: held from the tap until the gateway answers and shown
+  // on the orb app-wide; after that the roster carries the move. Work vestad is running counts
+  // even when this phone did not start it.
+  const { requests } = useController();
+  const { request } = useAgentRequest(useController(), name);
+  const busy = request !== "idle" || (agent?.operation ?? null) !== null;
   const providerResource = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
@@ -55,9 +59,7 @@ function AgentSettingsContent() {
     providerResource.data?.catalog,
   );
   const action = useMutation({
-    mutationFn: async (
-      operation: "start" | "stop" | "restart" | "backup" | "delete",
-    ) => {
+    mutationFn: async (operation: AgentAction) => {
       if (operation === "start") await startAgent(api, name);
       if (operation === "stop") await stopAgent(api, name);
       if (operation === "restart") await restartAgent(api, name);
@@ -65,17 +67,29 @@ function AgentSettingsContent() {
       if (operation === "delete") await deleteAgent(api, name);
       return operation;
     },
+    onMutate: (operation) => {
+      requests.set(name, agentActionRequest(operation));
+    },
+    // A delete hands off to the agent's disappearance, not to a new status: it holds "deleting"
+    // until the controller drops the request when the agent leaves the roster.
     onSuccess: (operation) => {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
-      if (operation === "delete") router.replace("/");
-      if (operation === "start") setAwaitedStatus("alive");
-      if (operation === "stop") setAwaitedStatus("stopped");
-      if (operation === "restart") restart.start();
-      if (operation === "backup") backup.start();
+      if (operation === "delete") {
+        router.replace("/");
+        return;
+      }
+      requests.clear(name);
     },
-    onError: (error) => showError(error, "The action failed"),
+    onError: (error) => {
+      requests.set(
+        name,
+        "idle",
+        error instanceof Error ? error.message : "The action failed",
+      );
+      showError(error, "The action failed");
+    },
   });
-  const starting = awaitedStatus === "alive" || action.variables === "start";
+  const starting = action.variables === "start";
   const open = (section: string) =>
     router.push({
       pathname: "/agent/[name]/details/[section]",
@@ -200,11 +214,8 @@ function AgentSettingsContent() {
             </Button>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending || backup.busy}
-              loading={
-                backup.busy ||
-                (action.isPending && action.variables === "backup")
-              }
+              disabled={busy}
+              loading={request === "backing-up"}
               loadingLabel="Backing up…"
               onPress={() => action.mutate("backup")}
             >
@@ -218,11 +229,10 @@ function AgentSettingsContent() {
           <ButtonGroup>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending || awaitingStatus || restart.busy}
+              disabled={busy}
               loading={
-                awaitingStatus ||
-                (action.isPending &&
-                  (action.variables === "start" || action.variables === "stop"))
+                request === "stopping" ||
+                (request === "starting" && action.variables === "start")
               }
               loadingLabel={starting ? "Starting…" : "Stopping…"}
               onPress={() => action.mutate(stopped ? "start" : "stop")}
@@ -231,11 +241,8 @@ function AgentSettingsContent() {
             </Button>
             <Button
               variant="cardGrouped"
-              disabled={action.isPending || awaitingStatus || restart.busy}
-              loading={
-                restart.busy ||
-                (action.isPending && action.variables === "restart")
-              }
+              disabled={busy}
+              loading={request === "starting" && action.variables === "restart"}
               loadingLabel="Restarting…"
               onPress={() => action.mutate("restart")}
             >

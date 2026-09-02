@@ -161,7 +161,7 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
     backups,
     backupsFailed,
     isBusy,
-    operation,
+    request,
     backup,
     refreshBackups,
     restore,
@@ -236,7 +236,7 @@ function BackupsDialogBody({ onClose }: { onClose: () => void }) {
             disabled={isBusy}
             onClick={backup}
           >
-            {operation === "backing-up" ? (
+            {request === "backing-up" ? (
               <Spinner className="size-4" />
             ) : (
               "back up"

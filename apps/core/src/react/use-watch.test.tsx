@@ -4,6 +4,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 
 import { useSyncState } from "./use-watch";
 import { createReplica } from "../replica/store";
+import { createAgentRequests } from "../agent-request/agent-request";
 import { createSession } from "../session/session";
 import type { Controller } from "../controller/controller";
 import type { SyncState } from "../transport/socket";
@@ -16,6 +17,7 @@ function fakeController(initial: SyncState = "connecting"): {
   let state = initial;
   const controller: Controller = {
     replica: createReplica(),
+    requests: createAgentRequests(),
     http: {
       request: () => Promise.reject(new Error("unused")),
       json: () => Promise.reject(new Error("unused")),

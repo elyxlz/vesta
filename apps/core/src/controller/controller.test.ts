@@ -144,6 +144,38 @@ describe("createController", () => {
     expect(h.controller.replica.getState()?.gateway.port).toBe(4111);
   });
 
+  // A delete's "deleting" orb ends when the agent leaves the roster, never by flashing idle first.
+  it("drops this client's request once its agent leaves the roster", async () => {
+    const h = await harness();
+    const socket = h.sockets[0];
+    socket?.onopen?.();
+    socket?.onmessage?.(hello("0.2.0", "0.0.0"));
+    const agent = {
+      info: {
+        status: "alive" as const,
+        activityState: "idle" as const,
+        buildPhase: null,
+        operation: null,
+        startedAt: null,
+        services: {},
+      },
+      notifications: { pending: [] },
+    };
+    socket?.onmessage?.(
+      JSON.stringify({
+        type: "snapshot",
+        tree: { ...baseTree(), agents: { ada: agent, grace: agent } },
+      }),
+    );
+    h.controller.requests.set("grace", "deleting");
+    h.controller.requests.set("ada", "starting");
+    socket?.onmessage?.(
+      JSON.stringify({ type: "agent_removed", name: "grace" }),
+    );
+    expect(h.controller.requests.get("grace").request).toBe("idle");
+    expect(h.controller.requests.get("ada").request).toBe("starting");
+  });
+
   it("reduces a delta into the replica", async () => {
     const h = await harness();
     const socket = h.sockets[0];

@@ -3,7 +3,8 @@ import { Navigate, useLocation, useParams } from "react-router-dom";
 import { AgentIslandModals } from "@/components/AgentIslandModals";
 import { AgentNavbar } from "@/components/Navbar/AgentNavbar";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useOrbState } from "@/hooks/use-orb-state";
+import { useAgentVisualStatus } from "@vesta/core/react";
+import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useSwipeNavigation } from "./use-swipe-navigation";
 import { agentSubpage } from "@/lib/agent-subpage";
 import {
@@ -28,7 +29,11 @@ export function AgentLayout() {
   const { name: routeName } = useParams<{ name: string }>();
   const { agents } = useGateway();
   const agent = agents.find((a) => a.name === routeName);
-  const orbState = useOrbState(agent ?? null, agent?.activityState ?? "idle");
+  const { orbState } = useAgentVisualStatus(
+    useOptionalController(),
+    agent ?? null,
+    agent?.activityState ?? "idle",
+  );
 
   useEffect(() => {
     if (!routeName) return;

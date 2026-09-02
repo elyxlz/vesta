@@ -1,19 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  agentOrbState,
+  agentVisualStatus,
   orbVisual,
   type AgentActivityState,
   type AgentOperation,
   type AgentStatus,
   type RateLimitedInfo,
 } from "@vesta/core";
+import { useAgentRequest } from "@vesta/core/react";
 import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
+import { ControllerContext } from "@/controller/context";
 import { designTokens } from "@/theme/generated";
 
 interface AgentOrbProps {
+  // The roster agent, so this client's own in-flight request overlays the orb; a nameless orb
+  // (the brand mark, the boot splash) renders the status alone.
+  name?: string;
   status: AgentStatus;
   activityState?: AgentActivityState;
   operation?: AgentOperation | null;
@@ -27,6 +32,7 @@ interface AgentOrbProps {
 }
 
 export function AgentOrb({
+  name,
   status,
   activityState = "idle",
   operation = null,
@@ -42,12 +48,11 @@ export function AgentOrb({
   const [pulse] = useState(() => new Animated.Value(1));
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
-  const orbState = agentOrbState(
-    status,
+  const { request } = useAgentRequest(use(ControllerContext), name ?? null);
+  const { orbState } = agentVisualStatus(
+    { status, operation, booting, rateLimited },
+    request,
     activityState,
-    operation,
-    booting,
-    rateLimited,
   );
   const visual = orbVisual(orbState);
   const shouldAnimate = animated && !transitionFrozen && visual.live;

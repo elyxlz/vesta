@@ -3,6 +3,7 @@ export { useResource } from "./use-resource";
 export { useServiceKey } from "./use-service-key";
 export { useSyncState } from "./use-watch";
 export { useFocused, useViewing } from "./use-presence";
+export { useAgentRequest, useAgentVisualStatus } from "./use-agent-request";
 export { useHeld } from "./use-held";
 export { useChatSession } from "./use-chat-session";
 export { useAttachmentDrafts } from "./use-attachment-drafts";

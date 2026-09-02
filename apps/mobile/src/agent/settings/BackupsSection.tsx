@@ -9,9 +9,10 @@ import {
   restoreBackup,
   setAgentBackupSettings,
 } from "@vesta/core";
+import { useAgentRequest } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
-import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
 import { useToast } from "@/components/native-toast";
+import { useController } from "@/controller/context";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
@@ -22,6 +23,7 @@ import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 import { radii } from "@/theme/layout";
 import {
+  backupRequest,
   backupTimeline,
   deletePrompt,
   NEWER_REFUSAL,
@@ -117,9 +119,10 @@ export function BackupsSection() {
     queryKey: ["backups", name],
     queryFn: () => listBackups(api, name),
   });
-  const operationTrip = useAwaitedRoundTrip(
-    (agent?.operation ?? null) !== null,
-  );
+  // This client's own request on the agent, shown on the orb and the badge app-wide from the tap
+  // until the gateway answers; after that the roster's operation carries the work.
+  const { requests } = useController();
+  const request = useAgentRequest(useController(), name);
   const action = useMutation({
     mutationFn: async (
       operation:
@@ -132,16 +135,27 @@ export function BackupsSection() {
         await deleteBackup(api, name, operation.id);
       return operation.type;
     },
+    onMutate: (operation) => {
+      const held = backupRequest(operation.type);
+      if (held !== null) requests.set(name, held);
+    },
     onSuccess: (type) => {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
-      if (type === "create" || type === "restore") operationTrip.start();
+      requests.clear(name);
       if (type === "restore")
         Alert.alert(
           "Backup restored",
           `${name} is restarting with the selected snapshot.`,
         );
     },
-    onError: (error) => showError(error, "The backup action failed"),
+    onError: (error) => {
+      requests.set(
+        name,
+        "idle",
+        error instanceof Error ? error.message : "The backup action failed",
+      );
+      showError(error, "The backup action failed");
+    },
   });
   const backupSettings = useQuery({
     queryKey: ["backup-settings", name],
@@ -170,7 +184,7 @@ export function BackupsSection() {
   // disables these actions until it settles.
   const busy =
     action.isPending ||
-    operationTrip.busy ||
+    request.request !== "idle" ||
     (agent?.operation ?? null) !== null;
   const points = backupTimeline(backups.data, gatewayVersion);
 

@@ -71,6 +71,7 @@ export function GeneralSection() {
       <Card glass>
         <View style={styles.hero}>
           <AgentOrb
+            name={name}
             status={agent?.status ?? "not_found"}
             activityState={activityState}
             booting={agent?.booting}

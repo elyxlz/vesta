@@ -8,7 +8,11 @@ import {
 } from "react";
 import { useMotionValue } from "motion/react";
 import { useNavigate } from "react-router-dom";
-import { feedUnseen, type LoggedUserNotification } from "@vesta/core";
+import {
+  agentVisualStatus,
+  feedUnseen,
+  type LoggedUserNotification,
+} from "@vesta/core";
 import {
   useFocused,
   useNotificationFeed,
@@ -17,8 +21,6 @@ import {
 } from "@vesta/core/react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { getAgentVisualStatus } from "@/components/Orb/styles";
-import { useAgentOps } from "@/stores/use-agent-ops";
 import {
   NotificationsPillContext,
   PILL_BUTTON_SIZE,
@@ -84,9 +86,8 @@ export function NotificationsPillProvider({
     orbStateFor: (name) => {
       const row = agentsRef.current.find((agent) => agent.name === name);
       if (!row) return null;
-      const operation = useAgentOps.getState().getOp(row.name).operation;
-      return getAgentVisualStatus(row, operation, "", row.activityState)
-        .orbState;
+      const request = controller?.requests.get(row.name).request ?? "idle";
+      return agentVisualStatus(row, request, row.activityState).orbState;
     },
     // While the history is on screen, arrivals skip the pill's animations and
     // just appear at the top of the list (the feed takes them in regardless).

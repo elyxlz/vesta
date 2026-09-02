@@ -111,6 +111,7 @@ export function AgentIsland({
         activityState={activityState}
       >
         <AgentOrb
+          name={name}
           status={status}
           activityState={activityState}
           operation={operation}

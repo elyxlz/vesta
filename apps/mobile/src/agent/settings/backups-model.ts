@@ -2,6 +2,7 @@ import {
   buildBackupTimeline,
   formatSnapshotStamp,
   parseBackupKind,
+  type AgentRequest,
   type BackupTimelinePoint,
   type BackupTimelineRow,
   BackupInfo,
@@ -66,6 +67,22 @@ export function restorePrompt(
     action: "Restore",
     destructive: false,
   };
+}
+
+export type BackupAction = "create" | "restore" | "delete";
+
+// The request this client holds on the agent while a backup action runs. Deleting a snapshot is
+// not an agent lifecycle operation (vestad publishes none for it), so the orb never reads as
+// busy while one is removed.
+export function backupRequest(action: BackupAction): AgentRequest | null {
+  switch (action) {
+    case "create":
+      return "backing-up";
+    case "restore":
+      return "restoring";
+    case "delete":
+      return null;
+  }
 }
 
 export function deletePrompt(point: BackupTimelinePoint): ConfirmPrompt {

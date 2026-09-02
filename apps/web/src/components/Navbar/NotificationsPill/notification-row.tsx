@@ -17,7 +17,8 @@ import {
   type LoggedUserNotification,
   type AgentRow,
 } from "@vesta/core";
-import { useOrbStatus } from "@/hooks/use-orb-state";
+import { useAgentVisualStatus } from "@vesta/core/react";
+import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { Orb } from "@/components/Orb";
 import { cn } from "@/lib/utils";
 
@@ -65,7 +66,11 @@ export const NotificationRow = memo(function NotificationRow({
   // The pill's leading-glyph rule, identically: the orb when the notification
   // names a roster agent (who, at their current state), the kind icon
   // otherwise (what).
-  const { orbState } = useOrbStatus(row, row?.activityState ?? "idle");
+  const { orbState } = useAgentVisualStatus(
+    useOptionalController(),
+    row,
+    row?.activityState ?? "idle",
+  );
   return (
     <button
       type="button"
