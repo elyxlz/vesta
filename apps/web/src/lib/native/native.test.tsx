@@ -82,6 +82,7 @@ describe("electron bridge", () => {
       storeRead: vi.fn(() => Promise.resolve(null)),
       storeWrite: vi.fn(() => Promise.resolve()),
       storeClear: vi.fn(() => Promise.resolve()),
+      storeIsSecure: vi.fn(() => Promise.resolve(true)),
       recentStoreRead: vi.fn(() => Promise.resolve(null)),
       recentStoreWrite: vi.fn(() => Promise.resolve()),
       recentStoreClear: vi.fn(() => Promise.resolve()),

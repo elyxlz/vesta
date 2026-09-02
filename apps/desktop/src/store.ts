@@ -15,6 +15,11 @@ function storePath(filename: string): string {
   return path.join(app.getPath("userData"), filename);
 }
 
+/**
+ * Whether the OS keeps the store's encryption key out of reach of other local processes: the
+ * Keychain, DPAPI, or a Linux secret service. Electron's Linux `basic_text` backend encrypts with
+ * a hardcoded key, so it persists but does not protect; the renderer shows a warning for it.
+ */
 export function storageBackendIsSecure(
   platform: string,
   encryptionAvailable: boolean,
@@ -27,7 +32,7 @@ export function storageBackendIsSecure(
   );
 }
 
-function secureStorageAvailable(): boolean {
+export function credentialStorageIsSecure(): boolean {
   const linuxBackend =
     process.platform === "linux"
       ? safeStorage.getSelectedStorageBackend()
@@ -39,10 +44,10 @@ function secureStorageAvailable(): boolean {
   );
 }
 
-function encryptedPayload(value: unknown): EncryptedStore {
-  if (!secureStorageAvailable()) {
-    throw new Error("secure credential storage is unavailable");
-  }
+// The store degrades rather than refuses: encrypted with whatever backend the OS offers, and
+// plain JSON when it offers none, so a session always survives a relaunch.
+function payload(value: unknown): unknown {
+  if (!safeStorage.isEncryptionAvailable()) return value;
   return {
     version: STORE_VERSION,
     encrypted: safeStorage
@@ -68,7 +73,7 @@ async function writeStore(filename: string, value: unknown): Promise<void> {
   const target = storePath(filename);
   await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   const temporary = `${target}.tmp`;
-  await fs.writeFile(temporary, JSON.stringify(encryptedPayload(value)), {
+  await fs.writeFile(temporary, JSON.stringify(payload(value)), {
     encoding: "utf8",
     mode: 0o600,
   });
@@ -95,13 +100,13 @@ async function readStore(filename: string): Promise<unknown> {
     }
   }
 
-  // LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION exceeds 0.2.13):
-  // Re-encrypt stores written by desktop releases that persisted plain JSON.
-  if (secureStorageAvailable()) {
+  // A plain store (written while no encryption backend was available) is encrypted in place as
+  // soon as one is.
+  if (safeStorage.isEncryptionAvailable()) {
     try {
       await writeStore(filename, parsed);
     } catch (cause) {
-      console.warn(`could not encrypt legacy ${filename}`, cause);
+      console.warn(`could not encrypt plain ${filename}`, cause);
     }
   }
   return parsed;

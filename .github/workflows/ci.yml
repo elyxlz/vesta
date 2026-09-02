@@ -961,7 +961,7 @@ jobs:
         if: inputs.release_artifacts
         run: |
           mkdir -p electron-out
-          cp apps/desktop/dist/*.deb apps/desktop/dist/*.rpm electron-out/
+          cp apps/desktop/dist/*.deb apps/desktop/dist/*.rpm apps/desktop/dist/latest-linux*.yml electron-out/
           [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7

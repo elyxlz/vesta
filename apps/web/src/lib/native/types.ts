@@ -78,6 +78,12 @@ export interface NativeBridge {
   windowControls: WindowControls | null;
   /** OS geolocation resolved by the desktop main process; null in the browser. */
   readGeolocation: (() => Promise<NativeGeolocationFix | null>) | null;
+  /**
+   * Whether the desktop connection store's encryption key is held by the OS (Keychain, DPAPI, a
+   * Linux secret service); false on Electron's Linux plaintext fallback, where the store still
+   * persists and App Settings shows a warning. Null in the browser.
+   */
+  credentialStorageIsSecure: (() => Promise<boolean>) | null;
   /** Manual desktop self-update, driven by the App Settings Updates card; null in the browser. */
   appUpdate: AppUpdater | null;
   /** OS launch-at-login toggle, driven by the App Settings Startup card; null in the browser. */
@@ -100,6 +106,7 @@ export interface VestaNativeApi {
   storeRead(): Promise<unknown>;
   storeWrite(value: unknown): Promise<void>;
   storeClear(): Promise<void>;
+  storeIsSecure(): Promise<boolean>;
   recentStoreRead(): Promise<unknown>;
   recentStoreWrite(value: unknown): Promise<void>;
   recentStoreClear(): Promise<void>;

@@ -31,5 +31,5 @@ What to check:
 Gotchas:
 
 - `timeout` is not on macOS PATH; background the app, `sleep`, `kill $(cat pid)`.
-- Ignore CoreText/IMKClient/ViewBridge stderr noise; the dev-mode CSP warning disappears in packaged builds.
+- Ignore CoreText/IMKClient/ViewBridge stderr noise.
 - Dev flow instead: `npm -w @vesta/desktop run dev` from `apps/` (vite on http://localhost:1420 + electron).

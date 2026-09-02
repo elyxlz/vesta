@@ -37,6 +37,6 @@ linux:
   target:
     - deb
     - rpm
-publish:
-  provider: generic
-  url: "https://github.com/elyxlz/vesta/releases/download/v${version}"
+# No publish block: electron-builder derives the GitHub provider from package.json's repository,
+# writes it into Resources/app-update.yml, and emits the latest*.yml manifests electron-updater
+# reads from the latest stable release.

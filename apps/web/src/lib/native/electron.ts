@@ -95,6 +95,7 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
       cancel: (port) => api.oauthCancel(port),
     },
     readGeolocation: async () => parseNativeFix(await api.readGeolocation()),
+    credentialStorageIsSecure: () => api.storeIsSecure(),
     appUpdate: {
       check: async () => parseAppUpdateStatus(await api.getAppUpdate()),
       download: async (onProgress) => {

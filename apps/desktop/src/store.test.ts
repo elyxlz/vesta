@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  credentialStorageIsSecure,
   readConnection,
   readRecentGateways,
   storageBackendIsSecure,
@@ -50,12 +51,33 @@ describe("secure storage availability", () => {
     expect(storageBackendIsSecure(platform, available, backend)).toBe(expected);
   });
 
-  it("rejects writes when encryption is unavailable", async () => {
+  it("persists plain JSON when no encryption backend exists", async () => {
     process.env.VESTA_TEST_ENCRYPTION_AVAILABLE = "false";
 
-    await expect(writeConnection(CONNECTION)).rejects.toThrow(
-      "secure credential storage is unavailable",
+    await writeConnection(CONNECTION);
+    expect(await readConnection()).toEqual(CONNECTION);
+    const stored = await fs.readFile(
+      path.join(userDataDir, "connection.json"),
+      "utf8",
     );
+    expect(stored).toContain(CONNECTION.accessToken);
+    expect(credentialStorageIsSecure()).toBe(false);
+  });
+
+  it("persists through an insecure Linux backend and reports it", async () => {
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    process.env.VESTA_TEST_STORAGE_BACKEND = "basic_text";
+    try {
+      await writeConnection(CONNECTION);
+      expect(await readConnection()).toEqual(CONNECTION);
+      expect(credentialStorageIsSecure()).toBe(false);
+    } finally {
+      if (original) Object.defineProperty(process, "platform", original);
+    }
   });
 });
 
