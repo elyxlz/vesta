@@ -29,6 +29,7 @@ import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { UpdatesCard } from "@/components/Settings/UpdatesCard";
 import { StartupCard } from "@/components/Settings/StartupCard";
+import { CredentialStorageCard } from "@/components/Settings/CredentialStorageCard";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -54,6 +55,8 @@ export function AppSettings() {
 
   return (
     <div className="mx-auto mt-4 grid w-full max-w-[48rem] grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
+      <CredentialStorageCard />
+
       <Card size="sm">
         <CardContent>
           <MenuSection title="appearance">

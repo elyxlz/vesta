@@ -15,6 +15,7 @@ interface VestaNativeApi {
   storeRead(): Promise<unknown>;
   storeWrite(value: unknown): Promise<void>;
   storeClear(): Promise<void>;
+  storeIsSecure(): Promise<boolean>;
   recentStoreRead(): Promise<unknown>;
   recentStoreWrite(value: unknown): Promise<void>;
   recentStoreClear(): Promise<void>;
@@ -82,6 +83,7 @@ export async function installNativeStub(
           stored = null;
           return Promise.resolve();
         },
+        storeIsSecure: () => Promise.resolve(true),
         recentStoreRead: () => Promise.resolve(recentStored),
         recentStoreWrite: (value: unknown) => {
           recentStored = value;

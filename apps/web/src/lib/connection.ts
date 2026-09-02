@@ -1,4 +1,6 @@
 import { native } from "./native";
+import { useCredentialStorage } from "@/stores/use-credential-storage";
+import { errorMessage } from "./utils";
 
 /** Parse the one-click connect key from a URL fragment like `#k=<key>`, which
  * `vestad status` embeds so opening the link connects without pasting the key.
@@ -42,13 +44,22 @@ export interface ConnectionConfig {
 // ── Storage backend ────────────────────────────────────────────
 // The bridge owns persistence (Electron: json in userData via the preload;
 // browser: localStorage). `cached` gives the sync accessors their value;
-// AuthProvider awaits initConnection before anything reads it.
+// AuthProvider awaits initConnection before anything reads it. A write that
+// fails is shown in App Settings (the credential storage card), since the
+// session it lost would otherwise vanish silently at the next launch.
 let cached: ConnectionConfig | null | undefined;
 
 function persist(operation: () => Promise<void>, failureMessage: string): void {
+  const { setWriteError } = useCredentialStorage.getState();
   void Promise.resolve()
     .then(operation)
-    .catch((cause: unknown) => console.warn(failureMessage, cause));
+    .then(
+      () => setWriteError(null),
+      (cause: unknown) =>
+        setWriteError(
+          `${failureMessage}: ${errorMessage(cause, "unknown error")}`,
+        ),
+    );
 }
 
 // ── Public API ─────────────────────────────────────────────────

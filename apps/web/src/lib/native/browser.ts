@@ -78,6 +78,7 @@ export function createBrowserBridge(): NativeBridge {
     oauthLoopback: null,
     windowControls: null,
     readGeolocation: null,
+    credentialStorageIsSecure: null,
     appUpdate: null,
     loginItem: null,
   };

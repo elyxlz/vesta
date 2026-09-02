@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionConfig } from "@/lib/connection";
 import { getConnection, setConnection } from "./connection";
 import { native } from "./native";
+import { useCredentialStorage } from "@/stores/use-credential-storage";
 import {
   forgetRecentGateway,
   readRecentGateways,
@@ -149,9 +150,6 @@ describe("storage-write failure survives", () => {
       },
     ],
   ])("keeps a connected session when %s", async (_name, breakStore) => {
-    const warning = vi
-      .spyOn(console, "warn")
-      .mockImplementation(() => undefined);
     breakStore();
 
     expect(() =>
@@ -164,10 +162,13 @@ describe("storage-write failure survives", () => {
     });
 
     await settle();
-    expect(warning).toHaveBeenCalledWith(
-      "could not save the active gateway",
-      expect.any(Error),
+    expect(useCredentialStorage.getState().writeError).toMatch(
+      /^could not save the active gateway: /,
     );
+
+    setConnection("https://box.example/", "access", "refresh", 60);
+    await settle();
+    expect(useCredentialStorage.getState().writeError).toBeNull();
   });
 
   it("does not fail a successful connection when saving recents throws", async () => {
