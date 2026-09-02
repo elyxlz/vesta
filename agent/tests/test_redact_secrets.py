@@ -24,9 +24,11 @@ SECRET = "AKIAABCDEFGHIJKLMNOP"
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):
-    """The scanner enumerates channel stores from $HOME at call time; point it at the test's tmp dir
-    so no test can ever open (or scrub) a real store on the machine running the suite."""
+    """The scanner enumerates channel stores, transcripts and the file walk's roots from $HOME at call
+    time; point it at the test's tmp dir so no test can ever open (or scrub) a real store on the
+    machine running the suite. /tmp is dropped from the walk: pytest's own tmp dirs live there."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(redact, "FILE_SCAN_ROOTS", (pl.Path("~"),))
 
 
 @pytest.fixture
@@ -496,6 +498,7 @@ VENDOR_TOKENS = [
     "shpat_" + "f" * 32,
     "lin_api_" + "g" * 24,
     "wak_" + "h" * 24,
+    "sk_" + "0" * 48,
 ]
 
 
@@ -556,6 +559,10 @@ def test_scan_flags_github_app_installation_tokens(event_bus, db_conn):
         'curl -H "Authorization: Bearer abcd1234efgh5678ijkl" https://api.github.com',
         "https://cdn.example.com/file?sig=abc123def456ghi789",
         "https://192.168.1.10/api/q1w2e3r4t5q1w2e3r4t5q1w2e3r4t5/lights",
+        # The abbreviated password suffix, the one name shape no other rule spells out.
+        "FOO_PASSWD=abcdefgh12345678xyz",
+        # A magic sign-in link: the token is a bare fragment with no key-shaped name in front of it.
+        "https://app.example.com/magic-link#3f10a9c2e4b7d8f1:ZWxpb0BleGFtcGxlLmNvbQ==",
     ],
 )
 def test_scan_catches_named_urlborne_and_bearer_secrets(event_bus, db_conn, text):
@@ -580,6 +587,11 @@ def test_scan_catches_named_urlborne_and_bearer_secrets(event_bus, db_conn, text
         "Bearer with us while this deploys",
         # A camelCase docs URL: 25+ chars after /api/ but no digit, so the path rule stays quiet.
         "https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnectionIceEvent",
+        # PASSWD assignments below the length floor or with no digit: identifiers, not credentials.
+        "FOO_PASSWD=short123",
+        "FOO_PASSWD=abcdefghijklmnopqrst",
+        # A docs anchor after magic-link: no digit, so the magic-link rule stays quiet.
+        "https://auth0.com/docs/authenticate/passwordless/authentication-methods/email-magic-link#configure-magic-link",
     ],
 )
 def test_scan_ignores_named_separators_that_are_not_credentials(event_bus, db_conn, text):
@@ -940,6 +952,57 @@ def test_scan_reports_a_clean_channel_store_as_scanned_and_green(tmp_path, event
     assert coverage and "scanned" in coverage[0]
 
 
+def _seed_lid_identity_columns(path: pl.Path, content: str) -> None:
+    """The same LID in every identity column of a whatsapp-shaped store, suffix stripped exactly as
+    the real stores hold it, plus one message body the caller controls."""
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO chats VALUES (?, ?)", (WHATSAPP_LID, WHATSAPP_LID))
+    conn.execute("INSERT INTO messages VALUES ('m2', ?, ?, ?, '2026-01-02')", (WHATSAPP_LID, WHATSAPP_LID, content))
+    conn.execute("INSERT INTO messages_fts(rowid, content, chat_name, sender) VALUES (2, ?, ?, ?)", (content, WHATSAPP_LID, WHATSAPP_LID))
+    conn.commit()
+    conn.close()
+
+
+def test_scan_does_not_read_a_suffix_stripped_lid_in_an_identity_column_as_a_card(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A LID kept without its `@lid` suffix passes the IIN gate and Luhn, so the suffix guard cannot
+    fire and every identity column holding it reports as a payment card."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, "see you at dinner tonight")
+    _seed_lid_identity_columns(path, "on my way")
+    assert redact.find_matches(WHATSAPP_LID) != []  # guard: bare, it IS flagged
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "No secrets found." in out
+
+
+def test_scan_still_flags_a_secret_in_a_content_column_of_an_identity_bearing_row(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """Skipping identity columns must not blind the row they belong to."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, "see you at dinner tonight")
+    _seed_lid_identity_columns(path, f"here is my aws key {SECRET}")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "whatsapp:messages:2|" in out
+    assert SECRET not in out
+
+
+def test_scrub_leaves_the_identity_columns_the_history_is_keyed_by_intact(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_whatsapp_store(tmp_path, "see you at dinner tonight")
+    _seed_lid_identity_columns(path, f"here is my aws key {SECRET}")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", "whatsapp:messages:2"])
+
+    assert redact.main() == 0
+
+    conn = sqlite3.connect(path)
+    chat_jid, sender, content = conn.execute("SELECT chat_jid, sender, content FROM messages WHERE id = 'm2'").fetchone()
+    conn.close()
+    assert (chat_jid, sender) == (WHATSAPP_LID, WHATSAPP_LID)
+    assert SECRET not in content and "[REDACTED]" in content
+
+
 def test_scan_lists_an_absent_store_so_the_scope_is_visible(tmp_path, event_bus, db_conn, monkeypatch, capsys):
     monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
 
@@ -1114,3 +1177,165 @@ def test_scrub_a_blob_payload_redacts_it_and_keeps_it_a_blob(tmp_path, event_bus
     assert b"use aws key" in payload and b"to deploy" in payload  # every other byte preserved
     for sidecar in (path, pl.Path(f"{path}-wal")):
         assert not sidecar.is_file() or SECRET.encode() not in sidecar.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# Session transcripts and files: sources the scan reads but never scrubs
+# ---------------------------------------------------------------------------
+
+
+def _file_hits(out: str) -> list[str]:
+    return [line for line in out.splitlines() if line.startswith("file:")]
+
+
+def _make_transcript(home: pl.Path, lines: list[str]) -> pl.Path:
+    """One session transcript where the real ones live, one JSON event per line."""
+    path = home / ".claude" / "projects" / "-root" / "0b6028fe-81b1-4ea2-96ee-63edfa44d7b1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("".join(f"{line}\n" for line in lines))
+    return path
+
+
+def test_scan_flags_a_secret_in_a_session_transcript_by_file_and_line(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A tool result lands in the session transcript verbatim, so a token that reached one sits
+    there while every database reads clean. Line 3 is a partial last line, the live session
+    mid-append: it parses as nothing and is scanned as text all the same."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = _make_transcript(
+        tmp_path,
+        [
+            json.dumps({"type": "user", "message": {"content": "deploy with the aws key please"}}),
+            json.dumps({"type": "tool_result", "content": f"AWS_ACCESS_KEY_ID={SECRET} exported"}),
+            '{"type": "assistant", "text": "password=hunter2longvalue and',
+        ],
+    )
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert SECRET not in out and "hunter2longvalue" not in out
+    assert f"transcript:{path}:2|" in out
+    assert f"transcript:{path}:3|" in out
+    assert f"transcript:{path}:1|" not in out
+    assert "read-only" in out and "rotating" in out
+    coverage = next(line for line in out.splitlines() if line.startswith("  transcripts ("))
+    assert "scanned 1 transcript(s), 3 line(s), 2 hit(s)" in coverage
+    assert _file_hits(out) == []  # the file walk leaves transcripts to the transcript probe
+
+
+def test_scan_finds_a_subagent_transcript_nested_under_its_session(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    path = tmp_path / ".claude" / "projects" / "-root" / "0b6028fe-81b1-4ea2-96ee-63edfa44d7b1" / "subagents" / "agent-a5a743e1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"type": "tool_result", "content": f"key {SECRET} here"}) + "\n")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert f"transcript:{path}:1|" in out
+    assert SECRET not in out
+
+
+def test_scan_reports_a_clean_transcript_as_scanned_and_green(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    _make_transcript(tmp_path, [json.dumps({"type": "user", "message": {"content": "see you at dinner tonight"}})])
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "No secrets found." in out
+    coverage = next(line for line in out.splitlines() if line.startswith("  transcripts ("))
+    assert "scanned 1 transcript(s), 1 line(s), 0 hit(s)" in coverage
+
+
+def test_scan_truncates_an_over_budget_transcript_and_says_so(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr(redact, "STORE_SCAN_BUDGET_SECS", 0)
+    path = _make_transcript(tmp_path, [json.dumps({"type": "tool_result", "content": f"key {SECRET} here"})])
+
+    out = _scan_output(monkeypatch, capsys)
+
+    coverage = next(line for line in out.splitlines() if line.startswith("  transcripts ("))
+    assert f"TRUNCATED after 0s in {path}" in coverage
+    assert "No secrets found in what was scanned" in out
+
+
+@pytest.mark.parametrize("ref", ["transcript:/root/.claude/projects/-root/session.jsonl:2", "file:/tmp/notes.txt"])
+def test_scrub_refuses_a_read_only_ref_and_names_the_remedy(tmp_path, event_bus, db_conn, monkeypatch, capsys, ref):
+    event_bus.emit(AssistantEvent(type="assistant", text="anything"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", ref])
+
+    assert redact.main() == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "read-only" in captured.err and "rotate" in captured.err
+    assert "use a numeric event id" not in captured.err
+
+
+def test_scan_flags_a_secret_in_a_file_under_home(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A token redirected into a file instead of a shell variable sits outside every database."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    note = tmp_path / "agent" / "data" / "deploy" / "notes.txt"
+    note.parent.mkdir(parents=True)
+    note.write_text(f"export AWS_ACCESS_KEY_ID={SECRET}\nthen run the deploy\n")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert SECRET not in out
+    assert f"file:{note}|" in out
+    assert "read-only" in out
+    coverage = next(line for line in out.splitlines() if line.startswith(f"  files ({tmp_path})"))
+    assert "scanned 1 file(s), 0 skipped" in coverage and "1 hit(s)" in coverage
+
+
+def test_scan_walks_every_configured_root(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "token.txt").write_text(f"key {SECRET} here\n")
+    monkeypatch.setattr(redact, "FILE_SCAN_ROOTS", (scratch, pl.Path("~") / "agent"))
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert f"file:{scratch / 'token.txt'}|" in out
+    assert f"  files ({scratch}): scanned 1 file(s)" in out
+    assert f"  files ({tmp_path / 'agent'}): absent" in out
+
+
+def test_scan_skips_a_file_over_the_size_cap_and_counts_it(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    big = tmp_path / "dump.log"
+    big.write_text("x" * redact.FILE_SCAN_MAX_BYTES + f"\nkey {SECRET} here\n")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert _file_hits(out) == []
+    coverage = next(line for line in out.splitlines() if line.startswith(f"  files ({tmp_path})"))
+    assert "scanned 0 file(s), 1 skipped" in coverage
+    assert "No secrets found." in out
+
+
+def test_scan_leaves_the_database_stores_to_their_row_refs(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """A store's db file (and its -wal sidecar) holds the same bytes its rows do; reporting them a
+    second time as a file would hand the agent an unscrubbable ref for a row it can scrub."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    _make_whatsapp_store(tmp_path, f"here is my aws key {SECRET} use it")
+    event_bus.emit(AssistantEvent(type="assistant", text=f"my key is {SECRET}"))
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert "whatsapp:messages:1|" in out
+    assert _file_hits(out) == []
+
+
+@pytest.mark.parametrize("pruned", [*sorted(redact.FILE_SCAN_PRUNE), "agent/core/prompts", "agent/skills/dream/scripts"])
+def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monkeypatch, capsys, pruned):
+    """By name anywhere (a cache, a test fixture dir) and by path (the upstream source trees)."""
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    blob = tmp_path / pruned / "blob.txt"
+    blob.parent.mkdir(parents=True)
+    blob.write_text(f"key {SECRET} here\n")
+
+    out = _scan_output(monkeypatch, capsys)
+
+    assert _file_hits(out) == []
+    assert "No secrets found." in out
