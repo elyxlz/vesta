@@ -8,11 +8,8 @@ import {
 } from "react";
 import type { AgentRow, DeviceInfo, ReleaseChannel, Tree } from "@vesta/core";
 import { devicesEqual, rosterFromTree, rostersEqual, selectDevices } from "@vesta/core";
+import { useReplica, useSyncState } from "@vesta/core/react";
 import { ControllerContext } from "@/controller/context";
-import {
-  useOptionalControllerReplica,
-  useOptionalControllerSyncState,
-} from "@/controller/optional-controller-store";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
 import {
@@ -144,18 +141,15 @@ export function RosterProvider({ children }: { children: ReactNode }) {
   const { connection } = useSession();
   const store = useRosterHold();
   const connectionKey = connectionKeyOf(connection) ?? "";
-  const syncState = useOptionalControllerSyncState(controller);
-  const agents = useOptionalControllerReplica(
-    controller,
-    rosterFromTree,
-    rostersEqual,
-  );
-  const gateway = useOptionalControllerReplica(
-    controller,
+  const replica = controller?.replica ?? null;
+  const syncState = useSyncState(controller);
+  const agents = useReplica(replica, rosterFromTree, rostersEqual);
+  const gateway = useReplica(
+    replica,
     selectGatewaySummary,
     gatewaySummariesEqual,
   );
-  const devices = useOptionalControllerReplica(controller, selectDevices, devicesEqual);
+  const devices = useReplica(replica, selectDevices, devicesEqual);
   // A non-null gateway means the summary snapshot has populated the tree; only then is the roster fresh.
   const fresh = useMemo<RosterSnapshot | null>(
     () => (gateway ? { agents, ...gateway } : null),

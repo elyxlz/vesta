@@ -12,11 +12,25 @@ export default defineConfig([
     files: ["**/*.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "Literal[value=/^\\/(agents|gateway)\\//], TemplateElement[value.raw=/^\\/(agents|gateway)\\//]",
+          message: "gateway routes live once in @vesta/core/src/api",
+        },
+      ],
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
     },
+  },
+  {
+    // The route wrappers themselves, the fake gateway the visual harness serves, and tests may
+    // spell a gateway path.
+    files: ["src/api/**", "visual/**", "**/*.test.{ts,tsx}"],
+    rules: { "no-restricted-syntax": "off" },
   },
   {
     // The visual runners are plain Node ESM outside the Expo graph: the

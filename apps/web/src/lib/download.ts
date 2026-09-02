@@ -1,5 +1,5 @@
 import { appChatAttachmentPath, type ChatAttachment } from "@vesta/core";
-import { ApiError, apiFetch } from "@/api/client";
+import { ApiError, httpClient } from "@/api/client";
 
 declare global {
   interface Window {
@@ -28,7 +28,7 @@ export async function downloadAttachment(
   attachment: ChatAttachment,
   onProgress?: (receivedBytes: number, totalBytes: number) => void,
 ): Promise<DownloadOutcome> {
-  const response = await apiFetch(
+  const response = await httpClient.request(
     appChatAttachmentPath(agent, attachment.id, true),
   );
   const blob = await readWithProgress(response, attachment.size, onProgress);

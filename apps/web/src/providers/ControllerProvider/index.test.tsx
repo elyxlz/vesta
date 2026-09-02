@@ -9,29 +9,11 @@ import {
   it,
   vi,
 } from "vitest";
+import { REAUTH_POLL_MS, TOKEN_REFRESH_BUFFER_MS } from "@vesta/core";
 import type { Controller } from "@vesta/core";
-import { ControllerProvider, REAUTH_POLL_MS } from "./index";
+import { restoreConnection } from "@/lib/connection";
+import { ControllerProvider } from "./index";
 import { ControllerContext, useControllerReconnect } from "./context";
-
-const mockConn = vi.hoisted(() => ({ tokenExpiring: false }));
-const refresh = vi.hoisted(() => ({
-  result: (): Promise<"ok" | "transient"> => Promise.resolve("ok"),
-}));
-
-vi.mock("@/lib/connection", () => ({
-  getConnection: () => ({
-    url: "https://vestad.test",
-    accessToken: "tok",
-    refreshToken: "ref",
-    expiresAt: Date.now() + 60_000,
-  }),
-  isTokenExpiringSoon: () => mockConn.tokenExpiring,
-  connectionHostname: () => "vestad.test",
-}));
-
-vi.mock("@/lib/token-refresh", () => ({
-  ensureFreshToken: () => refresh.result(),
-}));
 
 vi.mock("@/providers/AuthProvider/context", () => ({
   useAuth: () => ({
@@ -47,13 +29,14 @@ vi.mock("@/components/DisconnectedOverlay", () => ({
   DisconnectedOverlay: () => <div data-testid="disconnected" />,
 }));
 
-// A fake WebSocket capturing constructions and letting the test drive the frame callbacks
-// that core's browser-socket adapter wires up (onopen / onmessage / onclose).
+// A fake WebSocket capturing constructions and letting the test drive the events core's
+// adaptWebSocket wires up (onopen / onmessage / onclose).
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
+  binaryType = "blob";
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event: { reason: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   readonly sent: string[] = [];
   readonly url: string;
@@ -70,7 +53,7 @@ class FakeWebSocket {
 
   close(): void {
     this.closed = true;
-    this.onclose?.();
+    this.onclose?.({ reason: "" });
   }
 }
 
@@ -109,21 +92,57 @@ function openSocket(socket: FakeWebSocket): void {
   });
 }
 
-function sentReauth(socket: FakeWebSocket): boolean {
-  return socket.sent.some(
-    (frame) => (JSON.parse(frame) as { type: string }).type === "reauth",
-  );
+function reauthTokens(socket: FakeWebSocket): string[] {
+  return socket.sent
+    .map((frame) => JSON.parse(frame) as { type: string; token?: string })
+    .filter((frame) => frame.type === "reauth")
+    .map((frame) => frame.token ?? "");
 }
 
 // Far past the disconnect grace, without mirroring the constant: the overlay decision is "a blip
 // shows nothing, an outage shows it", not the exact millisecond.
 const WELL_PAST_GRACE_MS = 5_000;
+// A short-lived grant, so the poll after the mount refresh finds the token expiring again.
+const SHORT_GRANT_SECS = REAUTH_POLL_MS / 1000;
+
+const refreshAnswer = { ok: true as boolean };
+let refreshes = 0;
+const fetchStub = vi.fn((input: string): Promise<Response> => {
+  if (input.endsWith("/auth/refresh")) {
+    refreshes += 1;
+    if (!refreshAnswer.ok) return Promise.reject(new TypeError("offline"));
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          access_token: `next-${String(refreshes)}`,
+          refresh_token: "ref",
+          expires_in: SHORT_GRANT_SECS,
+        }),
+        { status: 200 },
+      ),
+    );
+  }
+  return Promise.resolve(new Response("{}", { status: 200 }));
+});
+
+function storeConnection(expiring: boolean): void {
+  restoreConnection({
+    url: "https://vestad.test",
+    accessToken: "tok",
+    refreshToken: "ref",
+    expiresAt: expiring
+      ? Date.now() + TOKEN_REFRESH_BUFFER_MS - 1
+      : Date.now() + 60 * 60 * 1000,
+  });
+}
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
-  mockConn.tokenExpiring = false;
-  refresh.result = () => Promise.resolve("ok");
+  refreshAnswer.ok = true;
+  refreshes = 0;
   vi.stubGlobal("WebSocket", FakeWebSocket);
+  vi.stubGlobal("fetch", fetchStub);
+  storeConnection(false);
 });
 
 afterEach(() => {
@@ -136,42 +155,38 @@ afterAll(() => {
 });
 
 describe("ControllerProvider", () => {
-  // A restored session whose token is expiring rotates it in-band twice: once on mount (the frame
-  // rides the still-in-flight handshake) and again on the poll interval, never waiting out a poll to
-  // start.
-  it("rotates an expiring token on mount and again on the poll interval", async () => {
-    mockConn.tokenExpiring = true;
+  // A restored session whose token is expiring refreshes before the first dial (the URL carries
+  // the fresh token) and rotates again in-band on the poll interval once the short grant nears
+  // its own expiry, never tearing the socket down to do it.
+  it("refreshes an expiring token before dialing and rotates in-band on the poll interval", async () => {
     vi.useFakeTimers();
+    storeConnection(true);
     render(
       <ControllerProvider>
         <div>app body</div>
       </ControllerProvider>,
     );
-    // Run the build + mount-refresh effects so the socket exists and a reauth is pending.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     const socket = latestSocket();
-    // The pending mount reauth rides the handshake the moment it opens, before any interval.
-    await act(async () => {
-      socket.onopen?.();
-      await vi.advanceTimersByTimeAsync(1);
-    });
-    expect(sentReauth(socket)).toBe(true);
-    const afterMount = socket.sent.length;
+    expect(socket.url).toContain("token=next-1");
+    openSocket(socket);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
+      await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS + 1);
     });
 
-    expect(socket.sent.length).toBeGreaterThan(afterMount);
+    expect(reauthTokens(socket)).toContain("next-2");
+    expect(socket.closed).toBe(false);
   });
 
-  // A refresh that cannot complete is a no-op: the socket is never torn down to rotate a token.
+  // A refresh that cannot complete is a no-op: the socket dials with the token it has and is
+  // never torn down to rotate one.
   it("keeps the socket when the reauth refresh cannot complete", async () => {
-    mockConn.tokenExpiring = true;
-    refresh.result = () => Promise.resolve("transient");
     vi.useFakeTimers();
+    storeConnection(true);
+    refreshAnswer.ok = false;
     render(
       <ControllerProvider>
         <div>app body</div>
@@ -181,12 +196,13 @@ describe("ControllerProvider", () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     const socket = latestSocket();
+    expect(socket.url).toContain("token=tok");
     await act(async () => {
       socket.onopen?.();
       await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
     });
 
-    expect(sentReauth(socket)).toBe(false);
+    expect(reauthTokens(socket)).toEqual([]);
     expect(socket.closed).toBe(false);
   });
 

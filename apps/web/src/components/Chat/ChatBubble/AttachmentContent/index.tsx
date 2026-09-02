@@ -6,7 +6,7 @@ import {
   formatBytes,
   type ChatAttachment,
 } from "@vesta/core";
-import { apiFetch } from "@/api/client";
+import { httpClient } from "@/api/client";
 import { useAuthedSrc } from "@/hooks/use-authed-src";
 import { attachmentRemoved } from "@/lib/download";
 import { useDownload, useDownloadsStore } from "@/stores/use-downloads";
@@ -42,7 +42,9 @@ type MediaPhase = "loading" | "loaded" | "removed" | "error";
 // a 410 is the terminal removed state, anything else a retryable load failure.
 async function probePhase(agent: string, id: string): Promise<MediaPhase> {
   try {
-    await apiFetch(appChatAttachmentPath(agent, id), { method: "HEAD" });
+    await httpClient.request(appChatAttachmentPath(agent, id), {
+      method: "HEAD",
+    });
     return "error";
   } catch (error) {
     return attachmentRemoved(error) ? "removed" : "error";

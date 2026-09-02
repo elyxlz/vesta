@@ -34,7 +34,7 @@ export function upsertRecentGateway(
   const next: RecentGateway = {
     id,
     url: connection.url,
-    hosted: connection.hosted,
+    hosted: connection.hosted ?? false,
     lastConnectedAt:
       options.touch || !existing ? options.now : existing.lastConnectedAt,
   };

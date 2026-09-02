@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { createSyncSocket } from "./socket";
-import type { SocketLike, SyncSocketDeps, SyncState } from "./socket";
+import type { SyncSocketDeps, SyncState } from "./socket";
+import type { SocketLike } from "./websocket";
 import type { Delta } from "../protocol/deltas";
 import type { Tree } from "../protocol/tree";
 
@@ -11,8 +12,8 @@ class FakeSocket implements SocketLike {
   onclose: (() => void) | null = null;
   readonly sent: string[] = [];
   closed = false;
-  send(data: string): void {
-    this.sent.push(data);
+  send(data: string | ArrayBuffer): void {
+    this.sent.push(typeof data === "string" ? data : "<binary>");
   }
   close(): void {
     this.closed = true;

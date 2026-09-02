@@ -5,15 +5,11 @@
 
 // About two seconds of 16 kHz 16-bit mono audio: frames captured before the socket opens
 // are kept up to this, oldest dropped first.
+import { adaptWebSocket, type SocketLike } from "../transport/websocket";
+
 export const MAX_PENDING_AUDIO_BYTES = 16_000 * 2 * 2;
 
-export interface VoiceSocketLike {
-  send: (data: ArrayBuffer) => void;
-  close: () => void;
-  onopen: (() => void) | null;
-  onmessage: ((data: string) => void) | null;
-  onclose: ((reason: string) => void) | null;
-}
+export type VoiceSocketLike = SocketLike;
 
 export interface AudioCapture {
   // Starts the microphone and resolves once frames can flow; frames are raw 16 kHz 16-bit
@@ -26,7 +22,8 @@ export interface SttSessionDeps {
   // Async and re-asked on every start, so the service key in the URL is minted or refreshed
   // at dial time rather than captured at construction.
   buildUrl: () => Promise<string>;
-  createSocket: (url: string) => VoiceSocketLike;
+  // Defaults to the platform WebSocket; tests inject a fake.
+  createSocket?: (url: string) => VoiceSocketLike;
   capture: AudioCapture;
 }
 
@@ -182,7 +179,7 @@ export function createSttSession(
     try {
       const url = await deps.buildUrl();
       if (generation !== myGeneration) return;
-      const dialed = deps.createSocket(url);
+      const dialed = (deps.createSocket ?? adaptWebSocket)(url);
       socket = dialed;
       const opened = new Promise<void>((resolve, reject) => {
         rejectOpen = reject;

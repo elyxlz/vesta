@@ -9,7 +9,6 @@ import {
 import {
   browserCapture,
   browserPlayer,
-  browserSocket,
   prepareSpeech,
   voiceWsUrl,
   fetchSttStatus,
@@ -118,7 +117,7 @@ function loadStoredFlag(key: string, fallback: boolean): boolean {
 }
 
 function boolSetting(
-  status: SttStatus | TtsStatus | null,
+  status: SttStatus | null,
   key: string,
   fallback: boolean,
 ): boolean {
@@ -149,7 +148,6 @@ export const useVoice = create<VoiceState>((set, get) => {
   const session: VoiceSession = createVoiceSession(
     {
       buildUrl: () => voiceWsUrl(get().agentName ?? ""),
-      createSocket: browserSocket,
       capture: browserCapture(() => get().micMuted),
       player: browserPlayer(() => get().agentName),
       setTimer: (fn, ms) => setTimeout(fn, ms),

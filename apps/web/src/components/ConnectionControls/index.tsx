@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { apiJson } from "@/api/client";
+import { updateGatewaySettings } from "@/api/gateway";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -55,11 +55,7 @@ export function ConnectionControls() {
   const onToggleBeta = async (enabled: boolean) => {
     setChannelSaving(true);
     try {
-      await apiJson("/gateway/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: enabled ? "beta" : "stable" }),
-      });
+      await updateGatewaySettings({ channel: enabled ? "beta" : "stable" });
       await checkForUpdate();
     } catch (err) {
       console.warn("[settings] failed to set release channel:", err);
@@ -71,11 +67,7 @@ export function ConnectionControls() {
   const onToggleAutoUpdate = async (enabled: boolean) => {
     setAutoUpdateSaving(true);
     try {
-      await apiJson("/gateway/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auto_update: enabled }),
-      });
+      await updateGatewaySettings({ auto_update: enabled });
       await checkForUpdate();
     } catch (err) {
       console.warn("[settings] failed to set auto-update:", err);

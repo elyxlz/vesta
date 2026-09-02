@@ -4,6 +4,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 
 import { useSyncState } from "./use-watch";
 import { createReplica } from "../replica/store";
+import { createSession } from "../session/session";
 import type { Controller } from "../controller/controller";
 import type { SyncState } from "../transport/socket";
 
@@ -19,7 +20,11 @@ function fakeController(initial: SyncState = "connecting"): {
       request: () => Promise.reject(new Error("unused")),
       json: () => Promise.reject(new Error("unused")),
     },
-    reauth: () => undefined,
+    session: createSession({
+      fetch: () => Promise.reject(new Error("unused")),
+      read: () => null,
+      write: () => undefined,
+    }),
     subscribeDeltas: () => () => undefined,
     getSyncState: () => state,
     subscribeSyncState: (listener) => {

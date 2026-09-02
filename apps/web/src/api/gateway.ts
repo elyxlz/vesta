@@ -1,7 +1,18 @@
-import type { ReleaseChannel, SseHandle } from "@vesta/core";
+import * as core from "@vesta/core";
+import type { GatewaySettings, SseHandle } from "@vesta/core";
 import type { LogEvent } from "@/lib/types";
-import { apiJson } from "./client";
+import { httpClient } from "./client";
 import { openLogStream } from "./log-stream";
+
+// Bound to the app's one HttpClient so call sites keep their import path.
+// LEGACY(remove-when: the chat-session epic points call sites at @vesta/core directly).
+
+export type {
+  GatewayAutoBackup,
+  GatewayEndpointInfo as GatewayInfo,
+  GatewayRetention,
+  GatewaySettings,
+} from "@vesta/core";
 
 let gatewayLogSource: SseHandle | null = null;
 
@@ -9,12 +20,10 @@ export function streamGatewayLogs(
   follow: boolean,
   onEvent: (event: LogEvent) => void,
 ): Promise<void> {
-  const params = new URLSearchParams();
-  if (follow) params.set("follow", "true");
   return new Promise((resolve) => {
     gatewayLogSource?.cancel();
     gatewayLogSource = openLogStream(
-      `/gateway/logs?${params.toString()}`,
+      core.gatewayLogsPath(follow),
       "gateway_stopped",
       onEvent,
       () => {
@@ -32,48 +41,8 @@ export function stopGatewayLogs(): void {
   }
 }
 
-export interface GatewayLan {
-  exposed: boolean;
-  url: string | null;
-}
-
-export interface GatewayInfo {
-  lan: GatewayLan;
-  tunnel_url: string | null;
-  port: number;
-}
-
-export interface GatewayRetention {
-  periodic: number;
-  pre_update_versions: number;
-}
-
-export interface GatewayAutoBackup {
-  enabled: boolean;
-  every_n_days: number;
-  retention: GatewayRetention;
-}
-
-export interface GatewaySettings {
-  auto_update: boolean;
-  channel: ReleaseChannel;
-  auto_backup: GatewayAutoBackup;
-}
-
-export async function fetchGatewayInfo(): Promise<GatewayInfo> {
-  return apiJson<GatewayInfo>("/gateway/info");
-}
-
-export async function fetchGatewaySettings(): Promise<GatewaySettings> {
-  return apiJson<GatewaySettings>("/gateway/settings");
-}
-
-export async function updateGatewaySettings(
+export const fetchGatewayInfo = () => core.fetchGatewayInfo(httpClient);
+export const fetchGatewaySettings = () => core.fetchGatewaySettings(httpClient);
+export const updateGatewaySettings = (
   patch: Partial<Pick<GatewaySettings, "auto_update" | "channel">>,
-): Promise<GatewaySettings> {
-  return apiJson<GatewaySettings>("/gateway/settings", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-}
+) => core.updateGatewaySettings(httpClient, patch);

@@ -1,68 +1,29 @@
-import { apiJson } from "./client";
+import * as core from "@vesta/core";
 import type {
-  ProviderContextPolicy,
-  ProviderContextPreset,
   ProviderCatalog as CoreProviderCatalog,
   ProviderCatalogEntry,
+  ProviderContextPolicy,
+  ProviderContextPreset,
 } from "@vesta/core";
+import { httpClient } from "./client";
+
+// Bound to the app's one HttpClient so call sites keep their import path.
+// LEGACY(remove-when: the chat-session epic points call sites at @vesta/core directly).
 
 export type ContextPreset = ProviderContextPreset;
 export type ProviderContext = ProviderContextPolicy;
 export type ProviderEntry = ProviderCatalogEntry;
-
-export function contextForModel(
-  entry: ProviderEntry | undefined,
-  model: string,
-): ProviderContext | undefined {
-  return entry?.context_by_model?.[model] ?? entry?.context;
-}
-
-export interface Personality {
-  name: string;
-  emoji: string;
-  title: string;
-  description: string;
-  sample: string;
-  order: number;
-}
-
-// Provider setup metadata is owned by each running agent and projected by GET /provider.
-// Personality presets remain a separate agent-owned catalog.
 export type ProviderCatalog = CoreProviderCatalog;
+export type {
+  AgentCatalogs,
+  Personality,
+  PersonalityCatalog,
+} from "@vesta/core";
+export { contextForModel } from "@vesta/core";
 
-export interface PersonalityCatalog {
-  default: string;
-  presets: Personality[];
-}
-
-export interface AgentCatalogs {
-  providers: ProviderCatalog;
-  personalities: PersonalityCatalog;
-}
-
-export async function fetchProviderCatalog(
-  agentName: string,
-): Promise<ProviderCatalog> {
-  const resource = await apiJson<{ catalog: ProviderCatalog }>(
-    `/agents/${encodeURIComponent(agentName)}/provider`,
-  );
-  return resource.catalog;
-}
-
-export async function fetchPersonalities(
-  agentName: string,
-): Promise<PersonalityCatalog> {
-  return apiJson<PersonalityCatalog>(
-    `/agents/${encodeURIComponent(agentName)}/personalities`,
-  );
-}
-
-export async function fetchAgentCatalogs(
-  agentName: string,
-): Promise<AgentCatalogs> {
-  const [providers, personalities] = await Promise.all([
-    fetchProviderCatalog(agentName),
-    fetchPersonalities(agentName),
-  ]);
-  return { providers, personalities };
-}
+export const fetchProviderCatalog = (agentName: string) =>
+  core.fetchProviderCatalog(httpClient, agentName);
+export const fetchPersonalities = (agentName: string) =>
+  core.fetchPersonalities(httpClient, agentName);
+export const fetchAgentCatalogs = (agentName: string) =>
+  core.fetchAgentCatalogs(httpClient, agentName);

@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apiFetch } from "@/api/client";
+import { httpClient } from "@/api/client";
 import { downloadAttachment } from "./download";
 
-vi.mock("@/api/client", () => ({ apiFetch: vi.fn() }));
+vi.mock("@/api/client", () => ({ httpClient: { request: vi.fn() } }));
 
-const apiFetchMock = vi.mocked(apiFetch);
+const apiFetchMock = vi.mocked(httpClient.request);
 
 const ATTACHMENT = {
   id: "att1",

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createChatSocket } from "./chat-socket";
 import type { ChatSocketState } from "./chat-socket";
 import type { ChatMessage } from "./chat-stream-model";
-import type { SocketLike } from "../transport/socket";
+import type { SocketLike } from "../transport/websocket";
 
 class FakeSocket implements SocketLike {
   onopen: (() => void) | null = null;
@@ -11,8 +11,8 @@ class FakeSocket implements SocketLike {
   onclose: (() => void) | null = null;
   closed = false;
   sent: string[] = [];
-  send(data: string): void {
-    this.sent.push(data);
+  send(data: string | ArrayBuffer): void {
+    this.sent.push(typeof data === "string" ? data : "<binary>");
   }
   close(): void {
     this.closed = true;

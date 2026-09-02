@@ -1,4 +1,9 @@
-import { readSse, type SseHandle, type StreamEvent } from "@vesta/core";
+import {
+  agentLogsPath,
+  readSse,
+  type SseHandle,
+  type StreamEvent,
+} from "@vesta/core";
 import type { ApiClient } from "@/api/client";
 
 // The agent log SSE read. The api client's own request is the fetch, so the stream presents
@@ -14,7 +19,7 @@ export function openAgentLogStream(
   return readSse(
     {
       fetch: api.request,
-      url: `/agents/${encodeURIComponent(name)}/logs${reconnect ? "?tail=0" : ""}`,
+      url: agentLogsPath(name, reconnect ? 0 : undefined),
       stoppedEvent: "agent_stopped",
     },
     onEvent,

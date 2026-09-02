@@ -1,5 +1,5 @@
 import { vi, type Mock } from "vitest";
-import { createReplica } from "@vesta/core";
+import { createReplica, createSession } from "@vesta/core";
 import type {
   AgentInfo,
   AgentNode,
@@ -99,10 +99,21 @@ export function fakeController(
     viewing: vi.fn<(agent: string | null) => void>(),
     deviceContext: vi.fn<(context: DeviceContext) => void>(),
   };
+  // A session over a fixed connection: its own http client is never dialed, the stubbed one is.
+  const session = createSession({
+    fetch: () => Promise.reject(new Error("fake session never fetches")),
+    read: () => ({
+      url: "https://vestad.test",
+      accessToken: "tok",
+      refreshToken: "ref",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    }),
+    write: () => undefined,
+  });
   const controller: Controller = {
     replica,
     http: { request, json },
-    reauth: vi.fn(),
+    session,
     subscribeDeltas: (listener) => {
       deltaListeners.add(listener);
       return () => deltaListeners.delete(listener);

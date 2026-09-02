@@ -5,6 +5,7 @@ import {
   type Controller,
   type GatewayOperation,
   type Tree,
+  createSession,
 } from "@vesta/core";
 import { AppBehindScreen } from "../../src/controller/AppBehindScreen";
 import { GatewayUpdateGate } from "../../src/controller/gateway-update-gate";
@@ -62,7 +63,11 @@ function createOpenController(): Controller {
       // The chat tail seeds from the hold; an empty page keeps it as is.
       json: async <T,>() => ({ events: [], cursor: null }) as T,
     },
-    reauth: noop,
+    session: createSession({
+      fetch: () => Promise.reject(new Error("the visual harness never fetches")),
+      read: () => null,
+      write: noop,
+    }),
     subscribeDeltas: unsubscribe,
     getSyncState: () => "open",
     subscribeSyncState: unsubscribe,

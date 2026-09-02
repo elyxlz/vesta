@@ -522,6 +522,49 @@ mod tests {
         assert!(serde_json::from_str::<ClientFrame>(r#"{"type":"future"}"#).is_err());
     }
 
+    // The client-to-gateway half of the fixture round trip: @vesta/core's encoder writes
+    // apps/core/fixtures/client-frames.json (REGEN_API_FIXTURES=1) and this parses it with the
+    // production types, so a renamed field on either side fails CI. Skipped in a checkout
+    // without the apps tree, like the other fixture files.
+    #[test]
+    fn client_frames_from_the_typescript_encoder_parse() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/core/fixtures/client-frames.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let fixtures: serde_json::Value = serde_json::from_str(&text).expect("parse client frame fixtures");
+        let reauth: ClientFrame =
+            serde_json::from_value(fixtures["reauth"].clone()).expect("parse the encoder's reauth");
+        assert_eq!(reauth, ClientFrame::Reauth { token: "tok".into() });
+        let context: ClientFrame = serde_json::from_value(fixtures["client_context"].clone())
+            .expect("parse the encoder's client_context");
+        assert_eq!(
+            context,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Mobile,
+                resync: false,
+                viewing: Some("scout".into()),
+                device_id: Some("device-1".into()),
+                descriptor: Some("Vesta on iPhone".into()),
+                context: DeviceContext {
+                    timezone: Some("Europe/London".into()),
+                    position: Some(crate::device_registry::PositionReport::At(crate::device_registry::DevicePosition {
+                        latitude: 51.5074,
+                        longitude: -0.1278,
+                        accuracy_m: Some(50.0),
+                        place: Some(crate::device_registry::DevicePlace {
+                            city: Some("London".into()),
+                            region: Some("England".into()),
+                            country: Some("United Kingdom".into()),
+                        }),
+                    })),
+                },
+            })
+        );
+    }
+
     #[test]
     fn client_context_frame_round_trips() {
         // resync defaults to false when the field is absent (older clients, additive-safe).

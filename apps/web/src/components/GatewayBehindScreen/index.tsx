@@ -31,7 +31,8 @@ export function GatewayBehindScreen() {
   const handleUpdate = async () => {
     setUpdating(true);
     setError(null);
-    if (!(await triggerGatewayUpdate(httpClient))) {
+    const outcome = await triggerGatewayUpdate(httpClient);
+    if (outcome.kind !== "started") {
       setError("gateway update request failed");
       setUpdating(false);
     }

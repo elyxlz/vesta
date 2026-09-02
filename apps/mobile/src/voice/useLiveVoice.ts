@@ -10,7 +10,8 @@ import {
   createVoiceSession,
   type VoiceMode,
   type VoiceSession,
-  type VoiceSocketLike,
+  sttListenPath,
+  ttsStreamPath,
 } from "@vesta/core";
 import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
 import type { SettingDef, VoiceStatus } from "@/api/types";
@@ -57,30 +58,6 @@ function boolSetting(
 ): boolean {
   const value = status?.settings?.find((s: SettingDef) => s.key === key)?.value;
   return typeof value === "boolean" ? value : fallback;
-}
-
-function createVoiceSocket(url: string): VoiceSocketLike {
-  const socket = new WebSocket(url);
-  socket.binaryType = "arraybuffer";
-  const like: VoiceSocketLike = {
-    send: (data) => {
-      try {
-        socket.send(data);
-      } catch {
-        // socket may have closed between the session's check and this send — ignore
-      }
-    },
-    close: () => socket.close(),
-    onopen: null,
-    onmessage: null,
-    onclose: null,
-  };
-  socket.onopen = () => like.onopen?.();
-  socket.onmessage = (message) => {
-    if (typeof message.data === "string") like.onmessage?.(message.data);
-  };
-  socket.onclose = (event) => like.onclose?.(event.reason);
-  return like;
 }
 
 // The mobile adapter over @vesta/core's voice session: expo-audio capture and playback as the
@@ -173,9 +150,7 @@ export function useLiveVoice({
 
   const playPrepared = useCallback(
     async (identifier: string, signal: AbortSignal) => {
-      const url = await api.authedUrl(
-        `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
-      );
+      const url = await api.authedUrl(ttsStreamPath(name, identifier));
       if (signal.aborted) return;
       const target = playerRef.current;
       await new Promise<void>((resolve) => {
@@ -218,10 +193,7 @@ export function useLiveVoice({
     const session = createVoiceSession(
       {
         buildUrl: () =>
-          api.websocketUrl(
-            `/agents/${encodeURIComponent(name)}/voice/stt/listen`,
-          ),
-        createSocket: createVoiceSocket,
+          api.websocketUrl(sttListenPath(name)),
         capture: {
           start: async (onFrame) => {
             if (!permissionGrantedRef.current) {

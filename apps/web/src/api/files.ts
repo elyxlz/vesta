@@ -1,48 +1,14 @@
-import { apiJson, jsonInit } from "./client";
+import * as core from "@vesta/core";
+import { httpClient } from "./client";
 
-export interface FileTreeEntry {
-  path: string;
-  is_dir: boolean;
-  mode: number;
-}
+// Bound to the app's one HttpClient so call sites keep their import path.
+// LEGACY(remove-when: the chat-session epic points call sites at @vesta/core directly).
 
-export interface FileReadResponse {
-  path: string;
-  content: string;
-  encoding: "utf-8" | "base64";
-  readonly: boolean;
-  mode: number;
-  size: number;
-  is_dir: boolean;
-}
+export type { FileReadResponse, FileTreeEntry } from "@vesta/core";
 
-export async function fetchFileTree(agent: string): Promise<FileTreeEntry[]> {
-  const data = await apiJson<{ tree: string[]; entries?: FileTreeEntry[] }>(
-    `/agents/${encodeURIComponent(agent)}/tree`,
-  );
-  return (
-    data.entries ??
-    data.tree.map((path) => ({ path, is_dir: false, mode: 0o644 }))
-  );
-}
-
-export async function readFile(
-  agent: string,
-  path: string,
-): Promise<FileReadResponse> {
-  const qs = new URLSearchParams({ path }).toString();
-  return apiJson<FileReadResponse>(
-    `/agents/${encodeURIComponent(agent)}/file?${qs}`,
-  );
-}
-
-export async function writeFile(
-  agent: string,
-  path: string,
-  content: string,
-): Promise<void> {
-  await apiJson(
-    `/agents/${encodeURIComponent(agent)}/file`,
-    jsonInit("PUT", { path, content }),
-  );
-}
+export const fetchFileTree = (agent: string) =>
+  core.fetchFileTree(httpClient, agent);
+export const readFile = (agent: string, path: string) =>
+  core.readFile(httpClient, agent, path);
+export const writeFile = (agent: string, path: string, content: string) =>
+  core.writeFile(httpClient, agent, path, content);

@@ -17,14 +17,12 @@ import {
   type Controller,
   type InputMethod,
   type Tree,
-  type VestaEvent,
+  type HistoryPage,
+  chatSocketPath,
+  fetchChatHistory,
 } from "@vesta/core";
 import { createChatSender } from "./chat-send-model";
-import { createRnSocket } from "@/controller/rn-socket";
-import {
-  useOptionalControllerReplica,
-  useOptionalControllerSyncState,
-} from "@/controller/optional-controller-store";
+import { useReplica, useSyncState } from "@vesta/core/react";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
@@ -33,11 +31,6 @@ import {
   selectAgentActivitySnapshot,
 } from "./agent-activity-model";
 import { agentHolds } from "@/holds/agent-holds";
-
-interface HistoryPage {
-  events: VestaEvent[];
-  cursor: number | null;
-}
 
 const SEED_RETRY_MS = 1_000;
 const SEED_RETRY_MAX_MS = 30_000;
@@ -70,7 +63,7 @@ export function useAgentSocket(
     naturalPacingRef.current = naturalPacing;
   }, [naturalPacing]);
 
-  const connected = useOptionalControllerSyncState(controller) === "open";
+  const connected = useSyncState(controller) === "open";
   // The reconnect replay of parked retry-state bubbles, assigned below once the sender exists;
   // ref-routed so the socket effect never re-runs for it.
   const repostRef = useRef<() => void>(() => undefined);
@@ -83,9 +76,7 @@ export function useAgentSocket(
   // rather than one captured at mount.
   const chatSocketUrl = useCallback(
     (): Promise<string> =>
-      apiRef.current.websocketUrl(
-        `/agents/${encodeURIComponent(name)}/app-chat/ws`,
-      ),
+      apiRef.current.websocketUrl(chatSocketPath(name)),
     [name],
   );
 
@@ -93,8 +84,8 @@ export function useAgentSocket(
     (tree: Tree | null) => selectAgentActivitySnapshot(tree, active, name),
     [active, name],
   );
-  const agentActivity = useOptionalControllerReplica(
-    controller,
+  const agentActivity = useReplica(
+    controller?.replica ?? null,
     activitySelector,
     agentActivitySnapshotsEqual,
   );
@@ -108,8 +99,8 @@ export function useAgentSocket(
         : [],
     [name],
   );
-  const pendingNotifications = useOptionalControllerReplica(
-    controller,
+  const pendingNotifications = useReplica(
+    controller?.replica ?? null,
     pendingSelector,
     idsEqual,
   );
@@ -213,12 +204,7 @@ export function useAgentSocket(
       if (!controller) {
         return Promise.reject(new Error("The gateway is not connected."));
       }
-      const parameters = new URLSearchParams();
-      if (cursor !== undefined) parameters.set("cursor", String(cursor));
-      const qs = parameters.toString();
-      return controller.http.json<HistoryPage>(
-        `/agents/${encodeURIComponent(name)}/app-chat/history${qs ? `?${qs}` : ""}`,
-      );
+      return fetchChatHistory(controller.http, name, cursor);
     },
     [controller, name],
   );
@@ -279,7 +265,6 @@ export function useAgentSocket(
     const socket = createChatSocket(
       {
         buildUrl: chatSocketUrl,
-        createSocket: createRnSocket,
         setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
         clearTimer: (handle) => clearTimeout(handle),
       },

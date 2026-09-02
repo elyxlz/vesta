@@ -1,0 +1,26 @@
+{
+  "client_context": {
+    "type": "client_context",
+    "focused": true,
+    "client": "mobile",
+    "resync": false,
+    "viewing": "scout",
+    "deviceId": "device-1",
+    "descriptor": "Vesta on iPhone",
+    "timezone": "Europe/London",
+    "position": {
+      "latitude": 51.5074,
+      "longitude": -0.1278,
+      "accuracyM": 50,
+      "place": {
+        "city": "London",
+        "region": "England",
+        "country": "United Kingdom"
+      }
+    }
+  },
+  "reauth": {
+    "type": "reauth",
+    "token": "tok"
+  }
+}

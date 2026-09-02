@@ -156,8 +156,8 @@ function UpdateNeededBody() {
 
   const handleUpdate = () => {
     setUpdating(true);
-    void triggerGatewayUpdate(api).then((ok) => {
-      if (!ok) setUpdating(false);
+    void triggerGatewayUpdate(api).then((outcome) => {
+      if (outcome.kind !== "started") setUpdating(false);
     });
   };
 

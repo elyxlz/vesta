@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { ApiError, PACING } from "@vesta/core";
-import type { Controller, SocketLike, VestaEvent } from "@vesta/core";
+import type { Controller, VestaEvent } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useVoice } from "@/stores/use-voice";
@@ -19,7 +19,7 @@ vi.mock("@/api/agents", () => ({ fetchHistory: vi.fn() }));
 // mount case pin that the token reaches the URL. Re-derivation on reconnect is covered at the owner
 // (chat-socket.test.ts).
 let tokenBuilds = 0;
-vi.mock("@/lib/authed-url", () => ({
+vi.mock("@/api/client", () => ({
   websocketUrl: (path: string) => {
     tokenBuilds += 1;
     return Promise.resolve(
@@ -28,16 +28,20 @@ vi.mock("@/lib/authed-url", () => ({
   },
 }));
 
-// A controllable chat socket: createChatSocket sets its handlers, and each test drives them. The
-// factory records every instance so a test can open it, feed a frame, or assert its URL.
-class FakeChatSocket implements SocketLike {
+// A controllable WebSocket standing in for the platform global core's adapter dials: each test
+// drives the events it wires up (onopen / onmessage / onclose). Every construction is recorded so
+// a test can open it, feed a frame, or assert its URL.
+class FakeChatSocket {
+  binaryType = "blob";
   onopen: (() => void) | null = null;
-  onmessage: ((data: string) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: ((event: { reason: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
   closed = false;
   readonly url: string;
   constructor(url: string) {
     this.url = url;
+    chatSockets.push(this);
   }
   send(): void {
     // The chat socket is read-only.
@@ -48,13 +52,7 @@ class FakeChatSocket implements SocketLike {
 }
 
 const chatSockets: FakeChatSocket[] = [];
-vi.mock("@/providers/ControllerProvider/browser-socket", () => ({
-  createBrowserSocket: (url: string) => {
-    const socket = new FakeChatSocket(url);
-    chatSockets.push(socket);
-    return socket;
-  },
-}));
+vi.stubGlobal("WebSocket", FakeChatSocket);
 
 const fetchHistoryMock = vi.mocked(fetchHistory);
 
@@ -111,7 +109,7 @@ async function openAndFlush() {
 // Deliver one live event on the chat socket, as a JSON text frame.
 function deliver(event: VestaEvent): void {
   act(() => {
-    chatSockets.at(-1)?.onmessage?.(JSON.stringify(event));
+    chatSockets.at(-1)?.onmessage?.({ data: JSON.stringify(event) });
   });
 }
 

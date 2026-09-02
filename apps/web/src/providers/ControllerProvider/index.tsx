@@ -7,37 +7,27 @@ import {
 } from "react";
 import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
-import { getConnection } from "@/lib/connection";
-import { websocketUrl } from "@/lib/authed-url";
+import { session } from "@/api/client";
 import { native } from "@/lib/native";
 import { deviceIdentity } from "@/lib/device-identity";
-import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
-import { createBrowserSocket } from "./browser-socket";
-import { runReauthCheck } from "./reauth-poll";
 import { ControllerContext, ControllerReconnectContext } from "./context";
 
 // Brief grace before the disconnect overlay appears, so quick socket blips don't flash it.
 const DISCONNECT_GRACE_MS = 750;
-export const REAUTH_POLL_MS = 60000;
 
+// The app's one session is the controller's: it dials the session's token-stamped /sync URL,
+// shares its http client, and rotates the token in-band before it expires.
 function buildController(): Controller {
   return createController({
+    session,
     sync: {
-      buildUrl: () => websocketUrl("/sync"),
-      createSocket: createBrowserSocket,
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (handle) => window.clearTimeout(handle),
       clientVersion: __CLIENT_VERSION__,
       clientKind: native.runtime === "electron" ? "desktop" : "web",
       device: deviceIdentity(),
-    },
-    http: {
-      baseUrl: () => getConnection()?.url ?? "",
-      fetch: (input, init) => fetch(input, init),
-      token: () => getConnection()?.accessToken ?? null,
-      refresh: async () => (await ensureFreshToken(true)) === "ok",
     },
   });
 }
@@ -97,11 +87,10 @@ function ControllerSession({ children }: { children: ReactNode }) {
   return <LiveSession controller={controller}>{children}</LiveSession>;
 }
 
-// Reauth rotates the socket's token in-band before it expires; the overlay tracks the sync
-// sub-store. Like mobile, the desktop app is a drifting client: it opens /sync and the served
-// version window (min_supported..version) decides compatibility. GatewayProvider turns
-// incompatible states into blocking screens while keeping the gateway context mounted for
-// their shared UI.
+// The overlay tracks the sync sub-store. Like mobile, the desktop app is a drifting client: it
+// opens /sync and the served version window (min_supported..version) decides compatibility.
+// GatewayProvider turns incompatible states into blocking screens while keeping the gateway
+// context mounted for their shared UI.
 function LiveSession({
   controller,
   children,
@@ -116,23 +105,6 @@ function LiveSession({
   const [grace, setGrace] = useState({ state: syncState, elapsed: false });
   if (grace.state !== syncState) setGrace({ state: syncState, elapsed: false });
   const showDisconnected = connecting && grace.elapsed;
-
-  useEffect(() => {
-    // Also on mount, not just every poll: a session restored with an already-expired token
-    // would otherwise keep retrying /sync with it for a whole interval.
-    const tick = () => {
-      void runReauthCheck((token) => {
-        controller.reauth(token);
-      }).catch((err: unknown) =>
-        console.warn("[controller] reauth failed:", err),
-      );
-    };
-    tick();
-    const timer = window.setInterval(tick, REAUTH_POLL_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [controller]);
 
   useEffect(() => {
     if (!connecting) return;

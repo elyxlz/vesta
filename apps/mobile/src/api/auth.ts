@@ -1,7 +1,13 @@
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import * as WebBrowser from "expo-web-browser";
-import type { ConnectionConfig } from "./types";
+import {
+  GATEWAY_CONNECT_TIMEOUT_MS,
+  mintConnection,
+  normalizeGatewayUrl,
+  refreshConnection,
+  type ConnectionConfig,
+} from "@vesta/core";
 
 export const cloudSignInEnabled =
   Constants.expoConfig?.extra?.cloudSignInEnabled === true;
@@ -10,7 +16,6 @@ const CONTROL_APEX = "https://vesta.run";
 const NATIVE_CLIENT_ID = "vesta-app";
 const UNIVERSAL_REDIRECT = "https://vesta.run/mobile/oauth/callback";
 const DEVELOPMENT_REDIRECT = "vesta://oauth/callback";
-const GATEWAY_CONNECT_TIMEOUT_MS = 8_000;
 
 function base64Url(value: string): string {
   return value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -32,6 +37,8 @@ async function pkcePair(): Promise<{
   return { verifier, challenge: base64Url(digest) };
 }
 
+// The apex (vesta.run) account sign-in: a PKCE authorize in a private browser session, the apex
+// token exchanged at the user's gateway for a session that refreshes like a keyed one.
 export async function signInWithVestaAccount(): Promise<ConnectionConfig | null> {
   const redirectUri = __DEV__ ? DEVELOPMENT_REDIRECT : UNIVERSAL_REDIRECT;
   const state = Crypto.randomUUID();
@@ -88,7 +95,7 @@ export async function signInWithVestaAccount(): Promise<ConnectionConfig | null>
     expires_in?: number;
   } = await exchangeResponse.json();
   return {
-    url: token.url.replace(/\/+$/, ""),
+    url: normalizeGatewayUrl(token.url),
     accessToken: exchange.access_token,
     refreshToken: exchange.refresh_token,
     expiresAt: Date.now() + (exchange.expires_in ?? 3600) * 1000,
@@ -96,93 +103,33 @@ export async function signInWithVestaAccount(): Promise<ConnectionConfig | null>
   };
 }
 
-export async function connectWithKey(
+// Exchange a connect key for a session (core owns the wire flow and its reachability budget,
+// GATEWAY_CONNECT_TIMEOUT_MS).
+export function connectWithKey(
   url: string,
   apiKey: string,
 ): Promise<ConnectionConfig> {
-  await assertGatewayReachable(url);
-  const response = await fetchGateway(`${url}/auth/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_key: apiKey }),
-  });
-  if (!response.ok) {
-    throw new Error(
-      response.status === 401
-        ? "This connection key is invalid."
-        : "Could not create a gateway session.",
-    );
-  }
-  const session: {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  } = await response.json();
-  return {
-    url,
-    accessToken: session.access_token,
-    refreshToken: session.refresh_token,
-    expiresAt: Date.now() + session.expires_in * 1000,
-    hosted: false,
-  };
+  return mintConnection((input, init) => fetch(input, init), url, apiKey);
 }
 
+export { GATEWAY_CONNECT_TIMEOUT_MS };
+
+// Revive a saved gateway session before reconnecting to it; an expired or refresh-less one asks
+// for a fresh connect instead.
 export async function resumeGatewaySession(
   connection: ConnectionConfig,
 ): Promise<ConnectionConfig> {
-  if (!connection.refreshToken) {
-    throw new Error(
-      "This saved gateway session has expired. Connect to it again.",
-    );
-  }
-  const response = await fetchGateway(`${connection.url}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: connection.refreshToken }),
-  });
-  if (response.status === 401) {
-    throw new Error(
-      "This saved gateway session has expired. Connect to it again.",
-    );
-  }
-  if (!response.ok) {
-    throw new Error("Could not restore this saved gateway session.");
-  }
-  const session: {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  } = await response.json();
-  if (!session.access_token || !session.refresh_token) {
-    throw new Error("Could not restore this saved gateway session.");
-  }
-  return {
-    ...connection,
-    accessToken: session.access_token,
-    refreshToken: session.refresh_token,
-    expiresAt: Date.now() + (session.expires_in ?? 3600) * 1000,
-  };
-}
-
-export async function assertGatewayReachable(url: string): Promise<void> {
-  const health = await fetchGateway(`${url}/health`);
-  if (!health.ok) throw new Error("Could not reach this Vesta gateway.");
-}
-
-async function fetchGateway(
-  url: string,
-  init?: RequestInit,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    GATEWAY_CONNECT_TIMEOUT_MS,
+  const expired = new Error(
+    "This saved gateway session has expired. Connect to it again.",
   );
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } catch {
-    throw new Error("Could not reach this Vesta gateway.");
-  } finally {
-    clearTimeout(timeout);
+  if (!connection.refreshToken) throw expired;
+  const outcome = await refreshConnection(
+    (input, init) => fetch(input, init),
+    connection,
+  );
+  if (outcome.kind === "expired") throw expired;
+  if (outcome.kind === "transient") {
+    throw new Error("Could not restore this saved gateway session.");
   }
+  return outcome.connection;
 }

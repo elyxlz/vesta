@@ -1,5 +1,5 @@
 import { useResource } from "@vesta/core/react";
-import { authedUrl } from "@/lib/authed-url";
+import { authedUrl } from "@/api/client";
 
 // How long to wait before re-attempting a URL build that failed (not connected yet, refresh
 // hiccup): cheap, bounded per mounted element, and self-healing without any caller wiring.
