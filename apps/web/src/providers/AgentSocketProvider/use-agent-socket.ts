@@ -10,6 +10,7 @@ import type {
 import {
   PACING,
   beginSend,
+  chatSocketPath,
   commitPacedChat,
   createChatSocket,
   foldLiveEvent,
@@ -24,8 +25,7 @@ import {
 } from "@vesta/core";
 import { useController } from "@/providers/ControllerProvider/context";
 import { useReplica, useSyncState } from "@vesta/core/react";
-import { createBrowserSocket } from "@/providers/ControllerProvider/browser-socket";
-import { websocketUrl } from "@/lib/authed-url";
+import { websocketUrl } from "@/api/client";
 import { fetchHistory } from "@/api/agents";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useVoice } from "@/stores/use-voice";
@@ -220,9 +220,7 @@ export function useAgentSocketState({
 
     const socket = createChatSocket(
       {
-        buildUrl: () =>
-          websocketUrl(`/agents/${encodeURIComponent(agent)}/app-chat/ws`),
-        createSocket: createBrowserSocket,
+        buildUrl: () => websocketUrl(chatSocketPath(agent)),
         setTimer: (fn, ms) => window.setTimeout(fn, ms),
         clearTimer: (handle) => window.clearTimeout(handle),
       },

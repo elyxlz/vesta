@@ -56,7 +56,7 @@ describe("gateway connection", () => {
 
     const connection = connectWithKey("https://offline.vesta.run", "key");
     const result = expect(connection).rejects.toThrow(
-      "Could not reach this Vesta gateway.",
+      "could not reach the gateway",
     );
     await vi.runAllTimersAsync();
     await result;

@@ -29,7 +29,7 @@ export interface VoiceSessionSettings {
 
 export interface VoiceSessionDeps {
   buildUrl: () => Promise<string>;
-  createSocket: (url: string) => VoiceSocketLike;
+  createSocket?: (url: string) => VoiceSocketLike;
   capture: AudioCapture;
   player: SpeechPlayer;
   setTimer: (fn: () => void, ms: number) => number;

@@ -4,6 +4,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 
 import { useNotificationFeed } from "./use-notification-feed";
 import { createReplica } from "../replica/store";
+import { createSession } from "../session/session";
 import type { Controller } from "../controller/controller";
 import type { Delta } from "../protocol/deltas";
 import type { LoggedUserNotification } from "../notifications-pill/user-notification-feed";
@@ -46,7 +47,11 @@ function harness(
         return Promise.resolve({ notifications: page } as T);
       },
     },
-    reauth: () => undefined,
+    session: createSession({
+      fetch: () => Promise.reject(new Error("unused")),
+      read: () => null,
+      write: () => undefined,
+    }),
     subscribeDeltas: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

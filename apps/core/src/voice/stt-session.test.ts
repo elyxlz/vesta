@@ -15,8 +15,8 @@ class FakeSocket implements VoiceSocketLike {
   onopen: (() => void) | null = null;
   onmessage: ((data: string) => void) | null = null;
   onclose: ((reason: string) => void) | null = null;
-  send(data: ArrayBuffer): void {
-    this.sent.push(data);
+  send(data: string | ArrayBuffer): void {
+    if (typeof data !== "string") this.sent.push(data);
   }
   close(): void {
     this.closed = true;

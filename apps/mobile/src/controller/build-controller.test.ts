@@ -1,32 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ControllerDeps } from "@vesta/core";
-import type { ConnectionConfig } from "@/api/types";
-import { buildController, type ControllerSession } from "./build-controller";
+import { createSession, type ControllerDeps } from "@vesta/core";
+import { buildController } from "./build-controller";
 
 const captured = vi.hoisted(() => ({ deps: null as ControllerDeps | null }));
 
-vi.mock("@vesta/core", () => ({
+vi.mock("@vesta/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@vesta/core")>()),
   createController: (deps: ControllerDeps) => {
     captured.deps = deps;
     return { close: vi.fn() };
   },
 }));
 
-function fakeConnection(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
-  return {
-    url: "https://gateway.test",
-    accessToken: "tok en",
-    refreshToken: "refresh",
-    expiresAt: 0,
-    hosted: false,
-    ...overrides,
-  };
-}
-
-// The api client owns token stamping and the refresh pre-flight (see client.test.ts); here it is
-// only the path buildController hands it that matters.
-function fakeWebsocketUrl(path: string): Promise<string> {
-  return Promise.resolve(`wss://gateway.test${path}?token=tok`);
+function fakeSession() {
+  return createSession({
+    fetch: () => Promise.reject(new Error("unused")),
+    read: () => ({
+      url: "https://gateway.test",
+      accessToken: "tok en",
+      refreshToken: "refresh",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+      hosted: false,
+    }),
+    write: () => undefined,
+  });
 }
 
 function deps(): ControllerDeps {
@@ -35,79 +32,23 @@ function deps(): ControllerDeps {
   return value;
 }
 
+// The session owns token stamping, the refresh pre-flight, and the http client (core's session
+// tests); here it is only what buildController hands the controller that matters.
 describe("buildController", () => {
-  it("asks the session's builder for the /sync URL", async () => {
-    const websocketUrl = vi.fn(fakeWebsocketUrl);
-    buildController({
-      getConnection: () => fakeConnection(),
-      refreshAccessToken: vi.fn(),
-      websocketUrl,
-    });
+  it("hands the controller the app's one session as a mobile client", () => {
+    const session = fakeSession();
+    buildController(session, "0.1.179", { id: "dev-1", descriptor: "Vesta on iPhone" });
 
-    await expect(deps().sync.buildUrl()).resolves.toBe(
-      "wss://gateway.test/sync?token=tok",
-    );
-    expect(websocketUrl).toHaveBeenCalledWith("/sync");
-  });
-
-  it("exposes the connection base URL and token to the http client", () => {
-    buildController({
-      getConnection: () => fakeConnection(),
-      refreshAccessToken: vi.fn(),
-      websocketUrl: fakeWebsocketUrl,
-    });
-
-    expect(deps().http.baseUrl()).toBe("https://gateway.test");
-    expect(deps().http.token()).toBe("tok en");
-  });
-
-  it("reads the connection live so a rotated token reaches the http client", () => {
-    let current = fakeConnection({ accessToken: "old" });
-    buildController({
-      getConnection: () => current,
-      refreshAccessToken: vi.fn(),
-      websocketUrl: fakeWebsocketUrl,
-    });
-
-    expect(deps().http.token()).toBe("old");
-    current = fakeConnection({ accessToken: "new" });
-    expect(deps().http.token()).toBe("new");
-  });
-
-  it("delegates http refresh to the session's refreshAccessToken", async () => {
-    const refreshAccessToken = vi.fn<ControllerSession["refreshAccessToken"]>(
-      () => Promise.resolve(true),
-    );
-    buildController({
-      getConnection: () => fakeConnection(),
-      refreshAccessToken,
-      websocketUrl: fakeWebsocketUrl,
-    });
-
-    await expect(deps().http.refresh()).resolves.toBe(true);
-    expect(refreshAccessToken).toHaveBeenCalledOnce();
-  });
-
-  it("passes the client version through to the sync socket for the drift check", () => {
-    buildController(
-      {
-        getConnection: () => fakeConnection(),
-        refreshAccessToken: vi.fn(),
-        websocketUrl: fakeWebsocketUrl,
-      },
-      "0.1.179",
-    );
-
+    expect(deps().session).toBe(session);
+    expect(deps().sync.clientKind).toBe("mobile");
     expect(deps().sync.clientVersion).toBe("0.1.179");
+    expect(deps().sync.device).toEqual({ id: "dev-1", descriptor: "Vesta on iPhone" });
   });
 
-  it("reports no token to the http client without a connection", () => {
-    buildController({
-      getConnection: () => null,
-      refreshAccessToken: vi.fn(),
-      websocketUrl: fakeWebsocketUrl,
-    });
+  it("lets a development build and an unidentified device stay unreported", () => {
+    buildController(fakeSession());
 
-    expect(deps().http.token()).toBeNull();
+    expect(deps().sync.clientVersion).toBeUndefined();
+    expect(deps().sync.device).toBeUndefined();
   });
 });

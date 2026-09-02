@@ -85,9 +85,11 @@ export {
 export { createReplica } from "./replica/store";
 export type { Replica } from "./replica/store";
 
-export { ApiError, createHttpClient } from "./transport/http";
+export { ApiError, createHttpClient, jsonInit } from "./transport/http";
 export type { FetchLike, HttpClient, HttpDeps } from "./transport/http";
-export type { SocketLike, SyncSocketDeps, SyncState } from "./transport/socket";
+export type { SyncSocketDeps, SyncState } from "./transport/socket";
+export { adaptWebSocket } from "./transport/websocket";
+export type { SocketLike } from "./transport/websocket";
 export type { DeviceContext } from "./protocol/frames";
 export { readSse, drainSsePipeline } from "./transport/sse";
 export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse";
@@ -213,12 +215,149 @@ export type {
   SentMessage,
 } from "./intents/send-message";
 
+// The gateway session: what every client holds, with the app injecting only persistence.
 export {
+  ConnectError,
+  GATEWAY_CONNECT_TIMEOUT_MS,
+  NOT_CONNECTED,
+  REAUTH_POLL_MS,
+  TOKEN_REFRESH_BUFFER_MS,
+  createSession,
+  isTokenExpiringSoon,
+  mintConnection,
+  normalizeGatewayUrl,
+  refreshConnection,
+  runReauthCheck,
+} from "./session/session";
+export type {
+  ConnectFailure,
+  ConnectionConfig,
+  RefreshOutcome,
+  RefreshResult,
+  Session,
+  SessionDeps,
+} from "./session/session";
+
+// The gateway REST catalog: every route once, as a function taking the app's HttpClient first.
+export {
+  AgentStatusError,
+  agentPath,
+  createAgent,
+  deleteAgent,
+  fetchAgentStatus,
+  fetchUsage,
+  renameAgent,
+  restartAgent,
+  startAgent,
+  stopAgent,
+  waitUntilReady,
+  waitUntilRunning,
+} from "./api/agents";
+export type {
+  Account,
+  AgentStatusResponse,
+  Usage,
+  UsageCredits,
+  UsageMeter,
+} from "./api/agents";
+export {
+  completeClaudeOAuth,
+  completeOpenAIOAuth,
+  fetchAgentClaudeModels,
+  fetchClaudeModelsWithCredentials,
+  fetchOpenRouterModels,
+  getProvider,
+  provisionAgent,
+  setContextWindow,
+  setModel,
+  signOutProvider,
+  startClaudeOAuth,
+  startOpenAIOAuth,
+  validateOpenRouterKey,
+} from "./api/provider";
+export type {
+  ClaudeOAuthStart,
+  OpenAIOAuthStart,
+  OpenRouterModelOption,
+  ProviderResource,
+} from "./api/provider";
+export {
+  createBackup,
+  deleteBackup,
+  fetchAgentBackupSettings,
+  listBackups,
+  restoreBackup,
+  setAgentBackupSettings,
+} from "./api/backups";
+export type { AgentBackupSettings, BackupInfo } from "./api/backups";
+export {
+  getNotificationInterruptRules,
+  setNotificationInterruptRules,
+} from "./api/config-rules";
+export type {
+  FieldPredicate,
+  NotificationInterruptRule,
+} from "./api/config-rules";
+export {
+  chatHistoryPath,
+  chatSocketPath,
+  fetchChatHistory,
+  fetchInternalsHistory,
+  getNotificationHistory,
+} from "./api/history";
+export { fetchFileTree, readFile, writeFile } from "./api/files";
+export type { FileReadResponse, FileTreeEntry } from "./api/files";
+export {
+  getAgentMounts,
+  getHostFolderSuggestions,
+  setAgentMounts,
+} from "./api/mounts";
+export type { HostMount } from "./api/mounts";
+export {
+  VERSION_CHECK_TIMEOUT_MS,
   checkForGatewayUpdate,
   dismissGatewayUpdate,
+  fetchGatewayInfo,
+  fetchGatewaySettings,
   triggerGatewayRestart,
   triggerGatewayUpdate,
-} from "./intents/gateway-update";
+  updateGatewaySettings,
+} from "./api/gateway";
+export type {
+  GatewayEndpointInfo,
+  GatewaySettings,
+  GatewayUpdateOutcome,
+} from "./api/gateway";
+export {
+  contextForModel,
+  fetchPersonalities,
+  fetchProviderCatalog,
+} from "./api/catalogs";
+export type { Personality, PersonalityCatalog } from "./api/catalogs";
+export {
+  fetchSttUsage,
+  fetchTtsUsage,
+  fetchVoiceStatus,
+  prepareSpeech,
+  setVoiceEnabled,
+  setVoiceSetting,
+  sttListenPath,
+  ttsStreamPath,
+} from "./api/voice";
+export type {
+  SettingDef,
+  SttUsage,
+  TtsUsage,
+  VoiceDomain,
+  VoiceStatus,
+} from "./api/voice";
+export { agentLogsPath, gatewayLogsPath } from "./api/logs";
+export {
+  registerMobileDevice,
+  reportDeviceContext,
+  unregisterMobileDevice,
+} from "./api/devices";
+export type { MobileDeviceRegistration } from "./api/devices";
 
 export {
   createServiceKeyCache,

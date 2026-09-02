@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HttpClient } from "../transport/http";
+import { ApiError, type HttpClient } from "../transport/http";
 import {
   VERSION_CHECK_TIMEOUT_MS,
   checkForGatewayUpdate,
   triggerGatewayRestart,
   triggerGatewayUpdate,
-} from "./gateway-update";
+  updateGatewaySettings,
+} from "./gateway";
 
 function httpWith(request: HttpClient["request"]): HttpClient {
   return { request, json: vi.fn() };
@@ -16,13 +17,13 @@ function httpWithJson(json: HttpClient["json"]): HttpClient {
 }
 
 describe("triggerGatewayUpdate", () => {
-  it("POSTs /gateway/update and returns true once an update is running", async () => {
+  it("POSTs /gateway/update and reports started once an update is running", async () => {
     const json = vi
       .fn()
       .mockResolvedValue({ started: true, target_version: "0.1.190" });
-    const ok = await triggerGatewayUpdate(httpWithJson(json));
+    const outcome = await triggerGatewayUpdate(httpWithJson(json));
 
-    expect(ok).toBe(true);
+    expect(outcome).toEqual({ kind: "started" });
     const call = json.mock.calls[0];
     if (!call) throw new Error("no request");
     expect(call[0]).toBe("/gateway/update");
@@ -33,21 +34,35 @@ describe("triggerGatewayUpdate", () => {
     const json = vi
       .fn()
       .mockResolvedValue({ ok: true, updated: true, restarting: true });
-    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(true);
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toEqual({
+      kind: "started",
+    });
   });
 
-  it("returns false when the gateway is already current, so nothing is left to watch", async () => {
+  it("reports current when the gateway already runs the newest release, so nothing is left to watch", async () => {
     const json = vi.fn().mockResolvedValue({
       started: false,
       reason: "already_current",
       version: "0.1.190",
     });
-    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false);
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toEqual({
+      kind: "current",
+    });
   });
 
-  it("returns false when vestad rejects the request", async () => {
-    const json = vi.fn().mockRejectedValue(new Error("down"));
-    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false);
+  it("names a refusal: busy on a 409, unreachable on anything else", async () => {
+    const busy = vi
+      .fn()
+      .mockRejectedValue(new ApiError(409, "update already running"));
+    expect(await triggerGatewayUpdate(httpWithJson(busy))).toEqual({
+      kind: "busy",
+      detail: "update already running",
+    });
+    const down = vi.fn().mockRejectedValue(new Error("down"));
+    expect(await triggerGatewayUpdate(httpWithJson(down))).toEqual({
+      kind: "unreachable",
+      detail: "down",
+    });
   });
 });
 
@@ -90,5 +105,18 @@ describe("checkForGatewayUpdate", () => {
     await expect(checkForGatewayUpdate(httpWith(request))).rejects.toThrow(
       "down",
     );
+  });
+});
+
+describe("updateGatewaySettings", () => {
+  it("PUTs the sparse patch as JSON to /gateway/settings", async () => {
+    const json = vi.fn().mockResolvedValue({ auto_update: false });
+    await updateGatewaySettings(httpWithJson(json), { auto_update: false });
+    const call = json.mock.calls[0];
+    if (!call) throw new Error("no request");
+    expect(call[0]).toBe("/gateway/settings");
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe("PUT");
+    expect(init.body).toBe(JSON.stringify({ auto_update: false }));
   });
 });

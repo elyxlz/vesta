@@ -9,14 +9,18 @@ export const ControllerReconnectContext = createContext<() => void>(
   () => undefined,
 );
 
-// Invariant: a consumer that can mount before a controller exists (e.g. GatewayProvider)
-// must read the nullable ControllerContext directly, not useController().
 export function useController(): Controller {
   const controller = useContext(ControllerContext);
   if (!controller) {
     throw new Error("useController must be used within ControllerProvider");
   }
   return controller;
+}
+
+// For a consumer that can mount before a controller exists (the gateway, notification, and
+// presence providers): the core hooks accept the null and answer with the disconnected value.
+export function useOptionalController(): Controller | null {
+  return useContext(ControllerContext);
 }
 
 export function useControllerReconnect(): () => void {

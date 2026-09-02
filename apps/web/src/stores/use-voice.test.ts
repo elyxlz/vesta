@@ -8,8 +8,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // in the query string. Everything between the edges (the store's gate and queue,
 // streamSpeech, and Transcriber) runs for real, because that is the layer that
 // decides whether audio ever reaches the voice endpoint at all.
-vi.mock("@/api/client", () => ({ apiJson: vi.fn() }));
-vi.mock("@/lib/authed-url", () => ({
+vi.mock("@/api/client", () => ({
+  httpClient: { json: vi.fn() },
   authedUrl: vi.fn((path: string) =>
     Promise.resolve(`https://host:8443${path}?token=tok`),
   ),
@@ -18,7 +18,7 @@ vi.mock("@/lib/authed-url", () => ({
   ),
 }));
 
-import { apiJson } from "@/api/client";
+import { httpClient } from "@/api/client";
 import {
   CONVERSATION_INACTIVITY_MS,
   useVoice,
@@ -27,7 +27,7 @@ import {
 import { useToastStore } from "@/stores/use-toast";
 import type { TtsStatus } from "@/lib/voice";
 
-const apiJsonMock = vi.mocked(apiJson);
+const apiJsonMock = vi.mocked(httpClient.json);
 
 // A stand-in for the browser <audio> element that reports playback finished on
 // the next microtask, so streamSpeech's await resolves without a real media

@@ -26,6 +26,16 @@ export class ApiError extends Error {
   }
 }
 
+// The one owner of the JSON request shape (method + Content-Type + serialized body), so an
+// endpoint never re-spells the header and JSON.stringify.
+export function jsonInit(method: string, body: unknown): RequestInit {
+  return {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
+
 export interface HttpClient {
   request: (path: string, init?: RequestInit) => Promise<Response>;
   json: <T>(path: string, init?: RequestInit) => Promise<T>;

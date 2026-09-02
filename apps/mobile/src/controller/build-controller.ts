@@ -1,39 +1,21 @@
-import { createController, type Controller } from "@vesta/core";
-import type { ConnectionConfig } from "@/api/types";
-import { createRnSocket } from "./rn-socket";
+import { createController, type Controller, type Session } from "@vesta/core";
 
-// The controller's view of the session: a LIVE connection accessor (base URL + token, read
-// fresh on every socket build and http call) and the single force-refresh path owned by
-// SessionProvider's api client. Reading live means a token rotation reauths in-band instead
-// of tearing the controller down. No second refresh impl.
-export interface ControllerSession {
-  getConnection: () => ConnectionConfig | null;
-  refreshAccessToken: () => Promise<boolean>;
-  // The api client's URL builder, which stamps the token and refreshes an expiring one first.
-  websocketUrl: (path: string) => Promise<string>;
-}
-
+// The controller over the app's one session (the api client's): it dials the session's
+// token-stamped /sync URL, shares its http client, and rotates the token in-band before it expires,
+// so a token rotation never tears the controller down and only a gateway switch rebuilds it.
 export function buildController(
-  session: ControllerSession,
+  session: Session,
   clientVersion?: string,
   device?: { id: string; descriptor: string },
 ): Controller {
-  const conn = () => session.getConnection();
   return createController({
+    session,
     sync: {
-      buildUrl: () => session.websocketUrl("/sync"),
-      createSocket: createRnSocket,
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (handle) => clearTimeout(handle),
       clientVersion,
       clientKind: "mobile",
       device,
-    },
-    http: {
-      baseUrl: () => conn()?.url ?? "",
-      fetch: (input, init) => fetch(input, init),
-      token: () => conn()?.accessToken ?? null,
-      refresh: () => session.refreshAccessToken(),
     },
   });
 }

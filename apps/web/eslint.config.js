@@ -30,9 +30,25 @@ export default defineConfig([
         typescript: { project: ["tsconfig.app.json", "tsconfig.node.json"] },
       },
     },
-    rules: reactHookRules,
+    rules: {
+      ...reactHookRules,
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "Literal[value=/^\\/(agents|gateway)\\//], TemplateElement[value.raw=/^\\/(agents|gateway)\\//]",
+          message: "gateway routes live once in @vesta/core/src/api",
+        },
+      ],
+    },
   },
   boundaryCastOverride,
+  // The route wrappers themselves, the fake gateway the visual harness serves, and tests may
+  // spell a gateway path.
+  {
+    files: ["src/api/**", "visual/**", "**/*.test.{ts,tsx}"],
+    rules: { "no-restricted-syntax": "off" },
+  },
   // The vendored shadcn registry follows upstream shadcn, not this app's effect rules, and
   // its CSSProperties casts stay because the dashboard mirror compiles it without the
   // custom-property augmentation in react-css.d.ts.

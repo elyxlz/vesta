@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
-import { serviceKeyPathUrl } from "@vesta/core";
+import { serviceKeyPathUrl, agentPath } from "@vesta/core";
 import { useServiceKey } from "@vesta/core/react";
 import { Card } from "@/components/ui/card";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
@@ -158,7 +158,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         {
           type: "vesta-auth",
           token: conn.accessToken,
-          baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
+          baseUrl: `${conn.url}${agentPath(name)}`,
           agentName: name,
         },
         "*",

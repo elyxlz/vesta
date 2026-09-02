@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { connectToServer } from "@/api";
+import { mintConnection } from "@vesta/core";
 import {
   clearConnection,
   getConnection,
@@ -8,6 +8,7 @@ import {
   restoreConnection,
   type ConnectionConfig,
 } from "@/lib/connection";
+import { rememberGatewayAfterConnect } from "@/lib/recent-gateways";
 import { AuthContext } from "./context";
 
 function hasStoredConnection(): boolean {
@@ -27,6 +28,18 @@ function consumeConnectKey(): string | null {
     window.location.pathname + window.location.search,
   );
   return key;
+}
+
+// Exchange a connect key for a session (core owns the wire flow), store it, and remember the
+// gateway for the switcher.
+async function connectToServer(url: string, apiKey: string): Promise<void> {
+  const connection = await mintConnection(
+    (input, init) => fetch(input, init),
+    url,
+    apiKey,
+  );
+  restoreConnection(connection);
+  await rememberGatewayAfterConnect(connection);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

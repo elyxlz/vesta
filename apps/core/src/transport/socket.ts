@@ -16,6 +16,7 @@ import {
 } from "../protocol/release-version";
 import type { Delta } from "../protocol/deltas";
 import type { Tree } from "../protocol/tree";
+import { adaptWebSocket, type SocketLike } from "./websocket";
 
 // The hello's served window (min_supported <= client <= version) drives two blocked states.
 // "app_behind" is terminal for the session: the client is older than the gateway's minimum, so
@@ -30,20 +31,13 @@ export type SyncState =
   | "gateway_behind"
   | "closed";
 
-export interface SocketLike {
-  send: (data: string) => void;
-  close: () => void;
-  onopen: (() => void) | null;
-  onmessage: ((data: string) => void) | null;
-  onclose: (() => void) | null;
-}
-
 export interface SyncSocketDeps {
   // Async so the builder can refresh an expiring token before each attempt: the URL carries the
   // access token, so a client waking from sleep would otherwise burn its whole backoff presenting
   // one that expired while it was away. Throwing means "no connectable URL", which backs off.
   buildUrl: () => Promise<string>;
-  createSocket: (url: string) => SocketLike;
+  // Defaults to the platform WebSocket; tests inject a fake.
+  createSocket?: (url: string) => SocketLike;
   setTimer: (fn: () => void, ms: number) => number;
   clearTimer: (handle: number) => void;
   // This client's own release version, used to block running ahead of the gateway. Omitted (or
@@ -189,7 +183,7 @@ export function createSyncSocket(
     }
     // close() can land while the builder is refreshing a token.
     if (retired()) return;
-    const current = deps.createSocket(url);
+    const current = (deps.createSocket ?? adaptWebSocket)(url);
     socket = current;
     current.onopen = () => {
       if (socket !== current) return;

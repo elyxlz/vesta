@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -12,7 +11,7 @@ import { useMatch, useNavigate } from "react-router-dom";
 import { feedUnseen, type LoggedUserNotification } from "@vesta/core";
 import { useNotificationFeed, useNotificationsPill } from "@vesta/core/react";
 import { useWindowFocus } from "@/hooks/use-window-focus";
-import { ControllerContext } from "@/providers/ControllerProvider/context";
+import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { useAgentOps } from "@/stores/use-agent-ops";
@@ -33,7 +32,7 @@ export function NotificationsPillProvider({
 }: {
   children: ReactNode;
 }) {
-  const controller = useContext(ControllerContext);
+  const controller = useOptionalController();
   const agentMatch = useMatch({ path: "/agent/:name", end: false });
   const viewedAgent = agentMatch?.params.name ?? null;
   const [surface, setSurface] = useState<HistorySurface>("none");

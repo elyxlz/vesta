@@ -122,7 +122,7 @@ describe("authenticated URLs", () => {
     });
 
     await expect(client.websocketUrl("/sync")).rejects.toThrow(
-      "Not connected to a Vesta gateway.",
+      "not connected to a gateway",
     );
   });
 });

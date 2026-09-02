@@ -1,48 +1,19 @@
-import { apiJson, jsonInit } from "../client";
-import type { OpenRouterModelOption } from "./openrouter";
+import * as core from "@vesta/core";
+import { httpClient } from "../client";
 
-export interface OAuthStartResult {
-  auth_url: string;
-  session_id: string;
-}
+// Bound to the app's one HttpClient so call sites keep their import path.
+// LEGACY(remove-when: the chat-session epic points call sites at @vesta/core directly).
 
-export async function startOAuth(agentName: string): Promise<OAuthStartResult> {
-  return apiJson(
-    `/agents/${encodeURIComponent(agentName)}/providers/claude/oauth/start`,
-    { method: "POST" },
-  );
-}
+export type { ClaudeOAuthStart as OAuthStartResult } from "@vesta/core";
 
-export async function completeOAuth(
+export const startOAuth = (agentName: string) =>
+  core.startClaudeOAuth(httpClient, agentName);
+export const completeOAuth = (
   agentName: string,
   sessionId: string,
   code: string,
-): Promise<string> {
-  const resp = await apiJson<{ credentials: string }>(
-    `/agents/${encodeURIComponent(agentName)}/providers/claude/oauth/complete`,
-    jsonInit("POST", { session_id: sessionId, code }),
-  );
-  return resp.credentials;
-}
-
-// The live Claude catalog during onboarding: the browser holds the fresh OAuth blob and
-// the target agent calls the Anthropic Models API with it before storing anything.
-export async function fetchClaudeModels(
-  agentName: string,
-  credentials: string,
-): Promise<OpenRouterModelOption[]> {
-  return apiJson<OpenRouterModelOption[]>(
-    `/agents/${encodeURIComponent(agentName)}/providers/claude/models`,
-    jsonInit("POST", { credentials }),
-  );
-}
-
-// The live Claude catalog in settings: the agent is signed in, so it lists models from its own
-// stored token; vestad relays the read.
-export async function fetchAgentClaudeModels(
-  agentName: string,
-): Promise<OpenRouterModelOption[]> {
-  return apiJson<OpenRouterModelOption[]>(
-    `/agents/${encodeURIComponent(agentName)}/provider/models`,
-  );
-}
+) => core.completeClaudeOAuth(httpClient, agentName, sessionId, code);
+export const fetchClaudeModels = (agentName: string, credentials: string) =>
+  core.fetchClaudeModelsWithCredentials(httpClient, agentName, credentials);
+export const fetchAgentClaudeModels = (agentName: string) =>
+  core.fetchAgentClaudeModels(httpClient, agentName);

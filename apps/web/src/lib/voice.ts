@@ -1,116 +1,36 @@
-import { apiJson } from "@/api/client";
-import { authedUrl, websocketUrl } from "@/lib/authed-url";
+import * as core from "@vesta/core";
+import type { AudioCapture, SpeechPlayer } from "@vesta/core";
+import { authedUrl, httpClient, websocketUrl } from "@/api/client";
 
 const SAMPLE_RATE = 16000;
 
-function voicePost<T = unknown>(
-  agentName: string,
-  path: string,
-  body: unknown,
-): Promise<T> {
-  return apiJson<T>(`/agents/${encodeURIComponent(agentName)}/voice/${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-// --- Dynamic settings ---
-
-export interface SettingDef {
-  key: string;
-  type: "bool" | "number" | "select";
-  label: string;
-  description?: string;
-  value: unknown;
-  default?: unknown;
-  min?: number;
-  max?: number;
-  step?: number;
-  unit?: string;
-  config?: SettingDef[];
-  config_label?: string;
-  options?: {
-    value: string;
-    label: string;
-    preview?: string;
-    custom?: boolean;
-    [k: string]: unknown;
-  }[];
-}
+// The voice routes live once in @vesta/core; these bind the app's one HttpClient so call sites
+// keep their names. The status shape is one type for both domains.
+export type { SettingDef, SttUsage, TtsUsage } from "@vesta/core";
+export type SttStatus = core.VoiceStatus;
+export type TtsStatus = core.VoiceStatus;
 
 export const setVoiceSetting = (
   n: string,
-  domain: "stt" | "tts",
+  domain: core.VoiceDomain,
   key: string,
   value: unknown,
-): Promise<SttStatus | TtsStatus> =>
-  voicePost<SttStatus | TtsStatus>(n, `${domain}/set`, { key, value });
+): Promise<SttStatus> =>
+  core.setVoiceSetting(httpClient, n, domain, key, value);
 
-// --- STT ---
-
-export interface SttStatus {
-  configured: boolean;
-  provider: string | null;
-  enabled?: boolean;
-  settings?: SettingDef[];
-}
-
-export async function fetchSttStatus(
-  agentName: string,
-  signal?: AbortSignal,
-): Promise<SttStatus> {
-  return apiJson<SttStatus>(
-    `/agents/${encodeURIComponent(agentName)}/voice/stt/status`,
-    { signal },
-  );
-}
-
-export interface SttUsage {
-  usage?: { results?: { hours?: number }[] };
-  balance?: { balances?: { amount?: number; units?: string }[] };
-}
-
-export async function fetchSttUsage(agentName: string): Promise<SttUsage> {
-  return apiJson<SttUsage>(
-    `/agents/${encodeURIComponent(agentName)}/voice/stt/usage`,
-  );
-}
-
+export const fetchSttStatus = (agentName: string, signal?: AbortSignal) =>
+  core.fetchVoiceStatus(httpClient, agentName, "stt", signal);
+export const fetchSttUsage = (agentName: string) =>
+  core.fetchSttUsage(httpClient, agentName);
 export const setSttEnabled = (n: string, value: boolean) =>
-  voicePost(n, "stt/set-enabled", { value });
+  core.setVoiceEnabled(httpClient, n, "stt", value);
 
-// --- TTS ---
-
-export interface TtsStatus {
-  configured: boolean;
-  provider: string | null;
-  enabled?: boolean;
-  settings?: SettingDef[];
-}
-
-export async function fetchTtsStatus(
-  agentName: string,
-  signal?: AbortSignal,
-): Promise<TtsStatus> {
-  return apiJson<TtsStatus>(
-    `/agents/${encodeURIComponent(agentName)}/voice/tts/status`,
-    { signal },
-  );
-}
-
-export interface TtsUsage {
-  usage?: { character_count?: number; character_limit?: number };
-}
-
-export async function fetchTtsUsage(agentName: string): Promise<TtsUsage> {
-  return apiJson<TtsUsage>(
-    `/agents/${encodeURIComponent(agentName)}/voice/tts/usage`,
-  );
-}
-
+export const fetchTtsStatus = (agentName: string, signal?: AbortSignal) =>
+  core.fetchVoiceStatus(httpClient, agentName, "tts", signal);
+export const fetchTtsUsage = (agentName: string) =>
+  core.fetchTtsUsage(httpClient, agentName);
 export const setTtsEnabled = (n: string, value: boolean) =>
-  voicePost(n, "tts/set-enabled", { value });
+  core.setVoiceEnabled(httpClient, n, "tts", value);
 
 // TTS playback runs through a native <audio> element pointed at a streamed GET,
 // not JS-fetched bytes fed to MediaSource: the native media stack streams from
@@ -125,24 +45,12 @@ export function prepareSpeech(
   agentName: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  return apiJson<{ id: string }>(
-    `/agents/${encodeURIComponent(agentName)}/voice/tts/prepare`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal,
-    },
-  ).then((res) => res.id);
+  return core.prepareSpeech(httpClient, agentName, text, signal);
 }
 
 function ttsStreamUrl(agentName: string, id: string): Promise<string> {
-  return authedUrl(
-    `/agents/${encodeURIComponent(agentName)}/voice/tts/stream/${encodeURIComponent(id)}`,
-  );
+  return authedUrl(core.ttsStreamPath(agentName, id));
 }
-
-import type { AudioCapture, SpeechPlayer, VoiceSocketLike } from "@vesta/core";
 
 // The SpeechPlayer port the TTS queue drives: prepare registers the text, play streams one
 // prepared utterance through a native <audio> element (the media stack streams from the first
@@ -214,41 +122,7 @@ export function preloadAudio(): Promise<void> {
 // --- STT capture and socket (the ports the shared STT session drives) ---
 
 export function voiceWsUrl(agentName: string): Promise<string> {
-  return websocketUrl(
-    `/agents/${encodeURIComponent(agentName)}/voice/stt/listen`,
-  );
-}
-
-// The socket port over a browser WebSocket. The shared session assigns the callbacks
-// synchronously after this returns, before the browser can fire an event, so no open is lost.
-export function browserSocket(url: string): VoiceSocketLike {
-  const ws = new WebSocket(url);
-  ws.binaryType = "arraybuffer";
-  const adapter: VoiceSocketLike = {
-    send: (data) => {
-      try {
-        ws.send(data);
-      } catch {
-        // socket may have closed between the session's check and this send — ignore
-      }
-    },
-    close: () => {
-      try {
-        ws.close();
-      } catch {
-        /* already closed */
-      }
-    },
-    onopen: null,
-    onmessage: null,
-    onclose: null,
-  };
-  ws.onopen = () => adapter.onopen?.();
-  ws.onmessage = (ev) => {
-    if (typeof ev.data === "string") adapter.onmessage?.(ev.data);
-  };
-  ws.onclose = (ev) => adapter.onclose?.(ev.reason);
-  return adapter;
+  return websocketUrl(core.sttListenPath(agentName));
 }
 
 // The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped. `muted` is read

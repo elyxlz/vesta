@@ -1,5 +1,5 @@
 import type { ChatMessage } from "./chat-stream-model";
-import type { SocketLike } from "../transport/socket";
+import { adaptWebSocket, type SocketLike } from "../transport/websocket";
 
 export type ChatSocketState = "connecting" | "open" | "reconnecting" | "closed";
 
@@ -8,7 +8,8 @@ export interface ChatSocketDeps {
   // rather than one captured at mount: the builder refreshes the access token as needed, and a
   // socket that reconnects hours later never dials with one that expired while the client was away.
   buildUrl: () => Promise<string>;
-  createSocket: (url: string) => SocketLike;
+  // Defaults to the platform WebSocket; tests inject a fake.
+  createSocket?: (url: string) => SocketLike;
   setTimer: (fn: () => void, ms: number) => number;
   clearTimer: (handle: number) => void;
   baseDelayMs?: number;
@@ -89,7 +90,7 @@ export function createChatSocket(
     }
     // close() can land while the builder is refreshing a token.
     if (retired()) return;
-    const current = deps.createSocket(url);
+    const current = (deps.createSocket ?? adaptWebSocket)(url);
     socket = current;
     current.onopen = () => {
       if (socket !== current) return;

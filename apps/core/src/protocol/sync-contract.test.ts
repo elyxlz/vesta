@@ -1,11 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import fixtures from "../../fixtures/sync-protocol.json";
+import { syncProtocolFixtures as fixtures } from "../../fixtures/sync-protocol";
 import { parseServerFrame } from "./parse";
+import type { AgentInfo, GatewayInfo, Tree } from "./tree";
+
+// The generated fixture is `as const`, so its arrays are readonly tuples; the compile-time
+// check compares against the readonly view of the canonical types.
+type DeepReadonly<T> = T extends (infer U)[]
+  ? readonly DeepReadonly<U>[]
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
 
 // The fixtures are produced by vestad's real serde path (vestad/src/sync/protocol.rs,
-// REGEN_API_FIXTURES=1). Parsing every one with the canonical types proves the Rust->TS seam.
+// REGEN_API_FIXTURES=1). Parsing every one with the canonical types proves the Rust->TS seam at
+// runtime, and the `satisfies` checks prove it at compile time: a renamed field in either the Rust
+// struct or the TypeScript type fails `npm run check` before it can reach a client.
 describe("sync protocol contract (vestad fixtures)", () => {
+  it("types the snapshot tree, the gateway state, and the agent info at compile time", () => {
+    const tree = fixtures.snapshot.tree satisfies DeepReadonly<Tree>;
+    const gateway = fixtures.deltas.state
+      .value satisfies DeepReadonly<GatewayInfo>;
+    const info = fixtures.deltas.agent.info satisfies DeepReadonly<AgentInfo>;
+    expect(tree.gateway.port).toBe(4111);
+    expect(gateway.latestVersion).toBe("0.1.1");
+    expect(info.status).toBe("alive");
+  });
+
   it("parses the hello frame vestad emits, carrying the served version window", () => {
     const parsed = parseServerFrame(JSON.stringify(fixtures.hello));
     expect(parsed.kind).toBe("hello");

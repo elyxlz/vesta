@@ -1,114 +1,100 @@
-import { apiJson, apiFetch, jsonInit } from "./client";
-import {
-  drainSsePipeline,
-  RESTART_REASONS,
-  normalizeProviderInfo,
-  agentIsConnectable,
-  agentIsDown,
-  agentNeedsUser,
-  providerPutBody,
-  restartBody,
-  type AgentStatus,
-  type BuildPhase,
-  type NotificationEvent,
-  type ProviderInfo,
-  type ProviderInfoWire,
-  type ProviderCatalog,
-  type ProviderSelection,
-  type RestartReason,
-  type VestaEvent,
+import * as core from "@vesta/core";
+import type {
+  BuildPhase,
+  HistoryPage,
+  NotificationEvent,
+  NotificationInterruptRule,
+  ProviderInfo,
+  ProviderSelection,
+  RestartReason,
 } from "@vesta/core";
+import { httpClient } from "./client";
 
-export type { BuildPhase };
+// Every route lives once in @vesta/core; these bind the app's one HttpClient so call sites keep
+// their import path. LEGACY(remove-when: the chat-session epic points call sites at @vesta/core
+// directly): delete this module then.
 
-export type { NotificationEvent };
-
+export type { BuildPhase, NotificationEvent, ProviderInfo };
 export type ProviderResult = ProviderSelection;
-export type { ProviderInfo };
+export type {
+  Account,
+  AgentBackupSettings,
+  BackupInfo,
+  FieldPredicate,
+  HostMount,
+  NotificationInterruptRule,
+  ProviderResource,
+  Usage,
+  UsageCredits,
+  UsageMeter,
+} from "@vesta/core";
+export { AgentStatusError } from "@vesta/core";
 
-export interface ProviderResource {
-  provider: ProviderInfo;
-  catalog: ProviderCatalog;
-}
-
-/// Provision/attach a provider: map the chosen `ProviderResult` to the `PUT /provider` body, write any
-/// prefs (personality/timezone) to `PUT /config`, then restart once to apply. Re-provisioning an
-/// existing agent omits timezone/personality to keep the agent's own.
-export async function setProvider(
+export const setProvider = (
   name: string,
   result: ProviderResult,
   personality?: string,
   timezone?: string,
-): Promise<void> {
-  const enc = encodeURIComponent(name);
-  const body = providerPutBody(result);
-  await apiFetch(`/agents/${enc}/provider`, jsonInit("PUT", body));
-  const prefs: Record<string, string> = {};
-  if (personality) prefs.agent_personality = personality;
-  if (timezone) prefs.timezone = timezone;
-  if (Object.keys(prefs).length > 0) {
-    await apiFetch(`/agents/${enc}/config`, jsonInit("PUT", prefs));
-  }
-  await restartAgent(name, RESTART_REASONS.provider);
-}
-
-/// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it boots
-/// not_authenticated.
-export async function signOutProvider(name: string): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "DELETE",
-  });
-  await restartAgent(name, RESTART_REASONS.signOut);
-}
-
-/// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
-/// provider is chosen (omitted when unprovisioned) plus an `authed` flag — so the UI can tell
-/// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
-export async function getProvider(name: string): Promise<ProviderResource> {
-  const resource = await apiJson<
-    ProviderInfoWire & { catalog: ProviderCatalog }
-  >(`/agents/${encodeURIComponent(name)}/provider`);
-  return {
-    provider: normalizeProviderInfo(resource),
-    catalog: resource.catalog,
-  };
-}
-
-/// Patch a provider preference (model / context) via `PATCH /provider`, then restart to apply.
-async function patchProvider(
+) => core.provisionAgent(httpClient, name, result, personality, timezone);
+export const signOutProvider = (name: string) =>
+  core.signOutProvider(httpClient, name);
+export const getProvider = (name: string) => core.getProvider(httpClient, name);
+export const setModel = (name: string, model: string) =>
+  core.setModel(httpClient, name, model);
+export const setContextWindow = (name: string, maxContextTokens: number) =>
+  core.setContextWindow(httpClient, name, maxContextTokens);
+export const createAgent = (name: string) => core.createAgent(httpClient, name);
+export const waitUntilRunning = (
   name: string,
-  patch: Record<string, unknown>,
-  reason: RestartReason,
-): Promise<void> {
-  await apiFetch(
-    `/agents/${encodeURIComponent(name)}/provider`,
-    jsonInit("PATCH", patch),
-  );
-  await restartAgent(name, reason);
-}
-
-/// Change only the model. Vestad restarts the agent so it takes effect.
-export async function setModel(name: string, model: string): Promise<void> {
-  await patchProvider(name, { model }, RESTART_REASONS.model);
-}
-
-/// Change only the context window. Vestad restarts the agent so it takes effect.
-export async function setContextWindow(
+  timeoutMs: number,
+  pollIntervalMs?: number,
+) => core.waitUntilRunning(httpClient, name, timeoutMs, pollIntervalMs);
+export const waitUntilReady = (
   name: string,
-  maxContextTokens: number,
-): Promise<void> {
-  await patchProvider(
-    name,
-    { max_context_tokens: maxContextTokens },
-    RESTART_REASONS.context,
-  );
-}
-
-/// Create an empty agent container. Credentials and preferences (provider, model, personality,
-/// context, timezone) are sent once it's up, via `setProvider`.
-export async function createAgent(name: string): Promise<void> {
-  await apiJson("/agents", jsonInit("POST", { name }));
-}
+  timeoutMs: number,
+  pollIntervalMs?: number,
+) => core.waitUntilReady(httpClient, name, timeoutMs, pollIntervalMs);
+export const startAgent = (name: string) => core.startAgent(httpClient, name);
+export const stopAgent = (name: string) => core.stopAgent(httpClient, name);
+export const restartAgent = (name: string, reason?: RestartReason) =>
+  core.restartAgent(httpClient, name, reason);
+export const deleteAgent = (name: string) => core.deleteAgent(httpClient, name);
+export const renameAgent = (name: string, newName: string) =>
+  core.renameAgent(httpClient, name, newName);
+export const createBackup = (name: string) =>
+  core.createBackup(httpClient, name);
+export const listBackups = (name: string) => core.listBackups(httpClient, name);
+export const restoreBackup = (name: string, backupId: string) =>
+  core.restoreBackup(httpClient, name, backupId);
+export const deleteBackup = (name: string, backupId: string) =>
+  core.deleteBackup(httpClient, name, backupId);
+export const fetchAgentBackupSettings = (name: string) =>
+  core.fetchAgentBackupSettings(httpClient, name);
+export const setAgentBackupSettings = (name: string, enabled: boolean) =>
+  core.setAgentBackupSettings(httpClient, name, enabled);
+export const fetchUsage = (name: string) => core.fetchUsage(httpClient, name);
+export const getNotificationInterruptRules = (name: string) =>
+  core.getNotificationInterruptRules(httpClient, name);
+export const setNotificationInterruptRules = (
+  name: string,
+  rules: NotificationInterruptRule[],
+) => core.setNotificationInterruptRules(httpClient, name, rules);
+export const getNotificationHistory = (name: string, cursor?: number) =>
+  core.getNotificationHistory(httpClient, name, cursor);
+export const fetchHistory = (
+  name: string,
+  channel: "app-chat" | "internals",
+  cursor?: number,
+): Promise<HistoryPage> =>
+  channel === "app-chat"
+    ? core.fetchChatHistory(httpClient, name, cursor)
+    : core.fetchInternalsHistory(httpClient, name, cursor);
+export const getAgentMounts = (name: string) =>
+  core.getAgentMounts(httpClient, name);
+export const setAgentMounts = (name: string, mounts: core.HostMount[]) =>
+  core.setAgentMounts(httpClient, name, mounts);
+export const getHostFolderSuggestions = () =>
+  core.getHostFolderSuggestions(httpClient);
 
 // Coarse, ordered stages of first-time agent creation reported by vestad while the create POST is in
 // flight (core owns the type). The image step (`pulling` on a release build, `building` from a local
@@ -126,344 +112,4 @@ const BUILD_PHASE_MESSAGES: Record<BuildPhase, string> = {
 /// line rather than a fabricated near-done claim.
 export function buildPhaseMessage(phase: BuildPhase | null): string {
   return phase === null ? "setting things up..." : BUILD_PHASE_MESSAGES[phase];
-}
-
-interface StatusWait {
-  ready: (response: AgentStatusResponse) => boolean;
-  failed: (response: AgentStatusResponse) => boolean;
-  timeoutLabel: string;
-}
-
-interface AgentStatusResponse {
-  status: AgentStatus;
-  booting?: boolean;
-}
-
-export class AgentStatusError extends Error {
-  readonly status: AgentStatus;
-
-  constructor(name: string, status: AgentStatus) {
-    super(`${name}: ${status}`);
-    this.name = "AgentStatusError";
-    this.status = status;
-  }
-}
-
-/// Poll /agents/{name} until its status settles into one of `ready` (resolve) or `failed` (throw);
-/// anything else (still starting up) keeps polling until `timeoutMs` elapses.
-async function waitForStatus(
-  name: string,
-  timeoutMs: number,
-  pollIntervalMs: number,
-  wait: StatusWait,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const resp = await apiJson<AgentStatusResponse>(
-      `/agents/${encodeURIComponent(name)}`,
-    );
-    if (wait.ready(resp)) return;
-    if (wait.failed(resp)) {
-      throw new AgentStatusError(name, resp.status);
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
-  throw new Error(`${name}: ${wait.timeoutLabel}`);
-}
-
-/// Poll /agents/{name} until it reports a settled HTTP-up status. A brand-new empty agent boots into
-/// "unprovisioned" (no provider chosen) until provisioned; a re-auth case reports "not_authenticated".
-export async function waitUntilRunning(
-  name: string,
-  timeoutMs: number,
-  pollIntervalMs = 500,
-): Promise<void> {
-  await waitForStatus(name, timeoutMs, pollIntervalMs, {
-    ready: ({ status }) => agentIsConnectable(status),
-    failed: ({ status }) => agentIsDown(status),
-    timeoutLabel: "timed out waiting for HTTP server",
-  });
-}
-
-export async function waitUntilReady(
-  name: string,
-  timeoutMs: number,
-  pollIntervalMs = 500,
-): Promise<void> {
-  await waitForStatus(name, timeoutMs, pollIntervalMs, {
-    ready: ({ status, booting }) => status === "alive" && booting === false,
-    // A waiting agent never becomes alive on its own, so it is a failure here even though the
-    // HTTP-up poll above treats it as ready.
-    failed: ({ status }) => agentIsDown(status) || agentNeedsUser(status),
-    timeoutLabel: "timed out waiting to become ready",
-  });
-}
-
-export async function startAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/start`, {
-    method: "POST",
-  });
-}
-
-export async function stopAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/stop`, {
-    method: "POST",
-  });
-}
-
-/// Restart an agent. `reason` is omitted for a plain manual restart, leaving vestad to name it (it
-/// prefers a mount-grant delta it can derive over a generic one).
-export async function restartAgent(
-  name: string,
-  reason?: RestartReason,
-): Promise<void> {
-  await apiJson(
-    `/agents/${encodeURIComponent(name)}/restart`,
-    reason === undefined
-      ? { method: "POST" }
-      : jsonInit("POST", restartBody(reason)),
-  );
-}
-
-export async function deleteAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-  });
-}
-
-/// Rename an agent (`PATCH /agents/{name}`). Vestad recreates the container on the new name's
-/// network, carries the backup repo and settings across, and normalizes the name server-side;
-/// the normalized final name is returned so the caller can navigate to it.
-export async function renameAgent(
-  name: string,
-  newName: string,
-): Promise<string> {
-  const resp = await apiJson<{ name: string }>(
-    `/agents/${encodeURIComponent(name)}`,
-    jsonInit("PATCH", { new_name: newName }),
-  );
-  return resp.name;
-}
-
-export interface BackupInfo {
-  id: string;
-  agent_name: string;
-  backup_type: string;
-  created_at: string;
-  size: number;
-  /// The version an update left, on a pre-update snapshot alone; carries a `v` prefix.
-  from_version?: string | null;
-  /// The vestad version that captured the snapshot; absent on pre-stamp snapshots.
-  vestad_version?: string | null;
-}
-
-export async function createBackup(name: string): Promise<void> {
-  await drainSsePipeline(
-    await apiFetch(`/agents/${encodeURIComponent(name)}/backups`, {
-      method: "POST",
-    }),
-  );
-}
-
-export async function listBackups(name: string): Promise<BackupInfo[]> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/backups`);
-}
-
-export async function restoreBackup(
-  name: string,
-  backupId: string,
-): Promise<void> {
-  await drainSsePipeline(
-    await apiFetch(
-      `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}/restore`,
-      { method: "POST" },
-    ),
-  );
-}
-
-export async function deleteBackup(
-  name: string,
-  backupId: string,
-): Promise<void> {
-  await apiJson(
-    `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}`,
-    { method: "DELETE" },
-  );
-}
-
-export interface AgentBackupSettings {
-  enabled: boolean;
-  retention: { periodic: number; pre_update_versions: number };
-  has_override: boolean;
-}
-
-export async function fetchAgentBackupSettings(
-  name: string,
-): Promise<AgentBackupSettings> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/settings/backup`);
-}
-
-export async function setAgentBackupSettings(
-  name: string,
-  enabled: boolean,
-): Promise<AgentBackupSettings> {
-  return apiJson(
-    `/agents/${encodeURIComponent(name)}/settings/backup`,
-    jsonInit("PUT", { enabled }),
-  );
-}
-
-/// Normalized, provider-agnostic plan usage (agent's GET /usage). `meters` are
-/// time-windowed quota gauges (Claude rate-limit buckets); `credits` is a spend balance
-/// (OpenRouter, or Claude extra-usage). Both already in display units (% and dollars).
-export interface UsageMeter {
-  label: string;
-  used_pct: number | null;
-  resets_at: string | null;
-}
-
-export interface UsageCredits {
-  used: number | null;
-  limit: number | null;
-}
-
-/// The account behind the active provider (best-effort). Providers with no identity endpoint
-/// report null, and any field the provider does not expose stays null.
-export interface Account {
-  name: string | null;
-  email: string | null;
-  plan: string | null;
-  organization: string | null;
-  created_at: string | null;
-}
-
-export interface Usage {
-  meters: UsageMeter[];
-  credits: UsageCredits | null;
-  account: Account | null;
-}
-
-export async function fetchUsage(name: string): Promise<Usage> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
-}
-
-// One match condition over a notification field. `field` is a concrete notification key (chat_name,
-// chat_type, …) or an alias ("sender" = the identity fields, "text" = body/message). `op` is a
-// case-insensitive substring ("contains") or regex; `negate` inverts it. Mirrors core's FieldPredicate.
-export interface FieldPredicate {
-  field: string;
-  op: "contains" | "regex";
-  value: string;
-  negate?: boolean;
-}
-
-export interface NotificationInterruptRule {
-  id: string;
-  source?: string | null;
-  type?: string | null;
-  // All conditions beyond source/type (sender, keyword, and any arbitrary field) are predicates here,
-  // ANDed together. Empty = the rule matches every notification of the given source/type.
-  match?: FieldPredicate[];
-  action: "interrupt" | "snooze" | "trash";
-}
-
-/// Read the agent's ordered notification interrupt ruleset from its config (GET /config).
-export async function getNotificationInterruptRules(
-  name: string,
-): Promise<NotificationInterruptRule[]> {
-  const resp = await apiJson<{
-    notification_rules?: NotificationInterruptRule[];
-  }>(`/agents/${encodeURIComponent(name)}/config`);
-  return resp.notification_rules ?? [];
-}
-
-/// Replace the ruleset on the agent's config (PUT /config with {notification_rules}). Live — the agent
-/// applies it on its next tick, no restart. Rule ids are generated client-side, so the saved rules are
-/// exactly what was sent.
-export async function setNotificationInterruptRules(
-  name: string,
-  rules: NotificationInterruptRule[],
-): Promise<NotificationInterruptRule[]> {
-  await apiFetch(
-    `/agents/${encodeURIComponent(name)}/config`,
-    jsonInit("PUT", { notification_rules: rules }),
-  );
-  return rules;
-}
-
-/// One page of received notifications, newest first (GET /history?channel=notifications). Pass the
-/// returned `cursor` to fetch the next older page; a null cursor means there are no older ones.
-/// Pending state isn't derived here — it's seeded from the connect snapshot and kept live via
-/// `notification_cleared` deltas.
-export async function getNotificationHistory(
-  name: string,
-  cursor?: number,
-): Promise<{ notifications: NotificationEvent[]; cursor: number | null }> {
-  const params = new URLSearchParams({ channel: "notifications" });
-  if (cursor != null) params.set("cursor", String(cursor));
-  const resp = await apiJson<{ events: VestaEvent[]; cursor: number | null }>(
-    `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
-  );
-  const items = resp.events.filter(
-    (event): event is NotificationEvent => event.type === "notification",
-  );
-  // Newest-first for the view; the history endpoint returns ascending within a page.
-  items.reverse();
-  return { notifications: items, cursor: resp.cursor };
-}
-
-export async function fetchHistory(
-  name: string,
-  channel: "app-chat" | "internals",
-  cursor?: number,
-): Promise<{ events: VestaEvent[]; cursor: number | null }> {
-  const params = new URLSearchParams();
-  if (cursor != null) params.set("cursor", String(cursor));
-  const qs = params.toString();
-  if (channel === "app-chat") {
-    return apiJson(
-      `/agents/${encodeURIComponent(name)}/app-chat/history${qs ? `?${qs}` : ""}`,
-    );
-  }
-  params.set("channel", "internals");
-  return apiJson(
-    `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
-  );
-}
-
-/// A user-granted host filesystem access: a host path bind-mounted into the agent's container at
-/// `container_path` (defaults to `host_path` when unset by the caller), read-only unless `writable`.
-export interface HostMount {
-  host_path: string;
-  container_path: string;
-  writable: boolean;
-}
-
-/// Read the agent's host filesystem grants (GET /mounts).
-export async function getAgentMounts(name: string): Promise<HostMount[]> {
-  const resp = await apiJson<{ mounts: HostMount[] }>(
-    `/agents/${encodeURIComponent(name)}/mounts`,
-  );
-  return resp.mounts;
-}
-
-/// Replace the agent's host filesystem grants (PUT /mounts). The server validates each grant
-/// (host path exists, container path isn't protected, no duplicate container paths) and returns the
-/// validated list plus whether a restart is needed to apply it (always true today).
-export async function setAgentMounts(
-  name: string,
-  mounts: HostMount[],
-): Promise<{ mounts: HostMount[]; restartRequired: boolean }> {
-  const resp = await apiJson<{
-    mounts: HostMount[];
-    restart_required: boolean;
-  }>(`/agents/${encodeURIComponent(name)}/mounts`, jsonInit("PUT", { mounts }));
-  return { mounts: resp.mounts, restartRequired: resp.restart_required };
-}
-
-/// Existing host folders vestad suggests sharing (GET /host/folders), so the user doesn't
-/// hand-type a path. Host-level (not agent-scoped) and API-key only.
-export async function getHostFolderSuggestions(): Promise<string[]> {
-  const resp = await apiJson<{ folders: string[] }>("/host/folders");
-  return resp.folders;
 }
