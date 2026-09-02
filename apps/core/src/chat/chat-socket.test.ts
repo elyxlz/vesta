@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createChatSocket } from "./chat-socket";
 import type { ChatSocketState } from "./chat-socket";
@@ -22,7 +22,6 @@ class FakeSocket implements SocketLike {
 interface Harness {
   sockets: FakeSocket[];
   urls: string[];
-  timers: { fn: () => void; ms: number }[];
   states: ChatSocketState[];
   events: ChatMessage[];
   deps: Parameters<typeof createChatSocket>[0];
@@ -31,7 +30,6 @@ interface Harness {
 function harness(): Harness {
   const sockets: FakeSocket[] = [];
   const urls: string[] = [];
-  const timers: { fn: () => void; ms: number }[] = [];
   const states: ChatSocketState[] = [];
   const events: ChatMessage[] = [];
   let builds = 0;
@@ -50,19 +48,18 @@ function harness(): Harness {
       sockets.push(socket);
       return socket;
     },
-    setTimer: (fn: () => void, ms: number) => {
-      timers.push({ fn, ms });
-      return timers.length - 1;
-    },
-    clearTimer: () => undefined,
   };
-  return { sockets, urls, timers, states, events, deps };
+  return { sockets, urls, states, events, deps };
 }
 
 // The URL builder is async, so the socket is created a microtask after createChatSocket returns.
-async function flush(): Promise<void> {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-}
+const flush = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(0);
+};
+// The first reconnect fires after the base delay; the next socket is then dialed.
+const reconnect = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(1000);
+};
 
 async function start(h: Harness): Promise<ReturnType<typeof createChatSocket>> {
   const socket = createChatSocket(h.deps, {
@@ -73,6 +70,14 @@ async function start(h: Harness): Promise<ReturnType<typeof createChatSocket>> {
   return socket;
 }
 
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("createChatSocket", () => {
   it("reports connecting then open", async () => {
     const h = harness();
@@ -82,7 +87,7 @@ describe("createChatSocket", () => {
     expect(h.states).toEqual(["connecting", "open"]);
   });
 
-  it("delivers each inbound JSON frame as a ChatMessage", async () => {
+  it("delivers each inbound JSON frame as a parsed ChatMessage", async () => {
     const h = harness();
     await start(h);
     h.sockets[0]?.onopen?.();
@@ -92,11 +97,12 @@ describe("createChatSocket", () => {
     expect(h.events).toEqual([{ type: "chat", text: "hi", id: 7 }]);
   });
 
-  it("ignores malformed JSON", async () => {
+  it("ignores malformed JSON and frames the parser cannot classify", async () => {
     const h = harness();
     await start(h);
     h.sockets[0]?.onopen?.();
     h.sockets[0]?.onmessage?.("not json");
+    h.sockets[0]?.onmessage?.(JSON.stringify({ type: "chat", id: 8 }));
     expect(h.events).toEqual([]);
   });
 
@@ -106,9 +112,8 @@ describe("createChatSocket", () => {
     h.sockets[0]?.onopen?.();
     h.sockets[0]?.onclose?.();
     expect(h.states).toEqual(["connecting", "open", "reconnecting"]);
-    expect(h.timers).toHaveLength(1);
-    h.timers[0]?.fn();
-    await flush();
+    expect(vi.getTimerCount()).toBe(1);
+    await reconnect();
     h.sockets[1]?.onopen?.();
     expect(h.states).toEqual([
       "connecting",
@@ -127,7 +132,7 @@ describe("createChatSocket", () => {
     expect(h.states.at(-1)).toBe("closed");
     expect(h.sockets[0]?.closed).toBe(true);
     h.sockets[0]?.onclose?.();
-    expect(h.timers).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   // The credential rides in the URL, so a reconnect hours after mount must re-derive it. Capturing
@@ -137,8 +142,7 @@ describe("createChatSocket", () => {
     await start(h);
     h.sockets[0]?.onopen?.();
     h.sockets[0]?.onclose?.();
-    h.timers[0]?.fn();
-    await flush();
+    await reconnect();
 
     expect(h.urls).toEqual([
       "wss://vestad.test/agents/ada/app-chat/ws?token=key-1",
@@ -150,11 +154,9 @@ describe("createChatSocket", () => {
     const h = harness();
     await start(h);
     h.sockets[0]?.onclose?.();
-    h.timers[0]?.fn();
-    await flush();
+    await reconnect();
     h.sockets[1]?.onclose?.();
-    h.timers[1]?.fn();
-    await flush();
+    await vi.advanceTimersByTimeAsync(2000);
 
     expect(h.sockets).toHaveLength(3);
     expect(h.states).toEqual([
@@ -186,8 +188,7 @@ describe("createChatSocket", () => {
     h.sockets[0]?.onclose?.();
     socket.reportSpeaking(true);
     expect(h.sockets[0]?.sent).toEqual([]);
-    h.timers[0]?.fn();
-    await flush();
+    await reconnect();
     h.sockets[1]?.onopen?.();
     expect(h.sockets[1]?.sent).toEqual([
       JSON.stringify({ type: "speaking", active: true }),
@@ -201,8 +202,7 @@ describe("createChatSocket", () => {
     socket.reportSpeaking(true);
     socket.reportSpeaking(false);
     h.sockets[0]?.onclose?.();
-    h.timers[0]?.fn();
-    await flush();
+    await reconnect();
     h.sockets[1]?.onopen?.();
     expect(h.sockets[1]?.sent).toEqual([]);
   });
@@ -213,6 +213,6 @@ describe("createChatSocket", () => {
     await start(h);
     expect(h.states).toEqual(["connecting", "reconnecting"]);
     expect(h.sockets).toHaveLength(0);
-    expect(h.timers).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(1);
   });
 });

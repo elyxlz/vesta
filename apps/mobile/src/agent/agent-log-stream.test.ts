@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { StreamEvent } from "@vesta/core";
+import type { StreamEvent, ConnectionConfig } from "@vesta/core";
 import { createApiClient } from "@/api/client";
-import type { ConnectionConfig } from "@/api/types";
 import { openAgentLogStream } from "./agent-log-stream";
 
 const connection: ConnectionConfig = {
@@ -25,9 +24,7 @@ function stubFetch(): ReturnType<typeof vi.fn<Fetch>> {
 }
 
 // Read the whole stream through a real api client, then report the single request it sent.
-async function streamAgentLogs(
-  reconnect: boolean,
-): Promise<{
+async function streamAgentLogs(reconnect: boolean): Promise<{
   url: string;
   authorization: string | null;
   events: StreamEvent[];

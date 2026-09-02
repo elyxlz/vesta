@@ -1,10 +1,14 @@
-import { claudeProvider, openaiProvider } from "@/api";
-import type { ProviderResult } from "@/api/agents";
-import type { ProviderKind } from "@vesta/core";
-import type { ProviderCatalog } from "@/api/catalogs";
+import type {
+  ProviderKind,
+  ClaudeOAuthStart,
+  OpenAIOAuthStart,
+  ProviderCatalog,
+  ProviderSelection,
+} from "@vesta/core";
+import { startClaudeOAuth, startOpenAIOAuth } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
-export type AuthStartResult =
-  claudeProvider.OAuthStartResult | openaiProvider.OAuthStartResult;
+export type AuthStartResult = ClaudeOAuthStart | OpenAIOAuthStart;
 
 const KEY_STEP_COPY = {
   openrouter: {
@@ -37,7 +41,7 @@ export function providerResult(
   key: string,
   model: string,
   maxContextTokens: number,
-): ProviderResult | null {
+): ProviderSelection | null {
   if (provider === "claude") {
     return credentials === null
       ? null
@@ -114,8 +118,8 @@ export function startProviderOAuth(
   agentName: string,
   provider: ProviderKind | null,
 ) {
-  if (provider === "openai") return openaiProvider.startOAuth(agentName);
-  if (provider === "claude") return claudeProvider.startOAuth(agentName);
+  if (provider === "openai") return startOpenAIOAuth(httpClient, agentName);
+  if (provider === "claude") return startClaudeOAuth(httpClient, agentName);
   return Promise.reject(
     new Error(`no OAuth adapter for ${provider ?? "none"}`),
   );

@@ -10,8 +10,8 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { parseNotificationContent } from "@vesta/core";
-import { type NotificationEvent } from "@/api/agents";
 import { cn } from "@/lib/utils";
+import type { NotificationEvent } from "@vesta/core";
 
 // Loading placeholder shaped like a NotificationRow cell.
 export function NotificationRowSkeleton() {

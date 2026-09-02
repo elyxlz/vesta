@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createController } from "./controller";
 import {
@@ -48,20 +48,26 @@ const NOW = 1_800_000_000_000;
 
 interface Harness {
   sockets: FakeSocket[];
-  timers: { fn: () => void; ms: number }[];
   fetch: ReturnType<typeof vi.fn>;
   controller: ReturnType<typeof createController>;
   expireToken: () => void;
 }
 
 // The URL builder is async, so the socket is created a microtask after createController returns.
-async function flush(): Promise<void> {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-}
+const flush = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(0);
+};
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 async function harness(expiresAt = NOW + 60 * 60 * 1000): Promise<Harness> {
   const sockets: FakeSocket[] = [];
-  const timers: { fn: () => void; ms: number }[] = [];
   let connection: ConnectionConfig = {
     url: "https://vestad.test",
     accessToken: "tok",
@@ -94,15 +100,12 @@ async function harness(expiresAt = NOW + 60 * 60 * 1000): Promise<Harness> {
         sockets.push(socket);
         return socket;
       },
-      setTimer: (fn, ms) => timers.push({ fn, ms }),
-      clearTimer: () => undefined,
       clientKind: "web",
     },
   });
   await flush();
   return {
     sockets,
-    timers,
     fetch,
     controller,
     expireToken: () => {
@@ -242,12 +245,33 @@ describe("createController", () => {
     expect(h.controller.getSyncState()).toBe("closed");
   });
 
+  it("owns the focus and viewing facts every consumer reads", async () => {
+    const h = await harness();
+    const focused = vi.fn();
+    const viewing = vi.fn();
+    h.controller.subscribeFocused(focused);
+    h.controller.subscribeViewing(viewing);
+    expect(h.controller.getFocused()).toBe(false);
+    expect(h.controller.getViewing()).toBeNull();
+    h.controller.reportPresence(true);
+    h.controller.reportViewing("scout");
+    expect(h.controller.getFocused()).toBe(true);
+    expect(h.controller.getViewing()).toBe("scout");
+    expect(focused).toHaveBeenCalledTimes(1);
+    expect(viewing).toHaveBeenCalledTimes(1);
+    // A repeat report changes nothing and wakes nobody.
+    h.controller.reportViewing("scout");
+    expect(viewing).toHaveBeenCalledTimes(1);
+  });
+
   describe("reauth tick", () => {
     it("leaves a fresh token alone and re-arms the poll", async () => {
       const h = await harness();
       expect(h.fetch).not.toHaveBeenCalled();
-      const poll = h.timers.find((timer) => timer.ms === REAUTH_POLL_MS);
-      expect(poll).toBeDefined();
+      await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
+      expect(h.fetch).not.toHaveBeenCalled();
+      // Still polling: the next tick is armed after each check.
+      expect(vi.getTimerCount()).toBe(1);
     });
 
     it("refreshes an already-expiring token before the socket dials, so the first URL is live", async () => {
@@ -271,27 +295,21 @@ describe("createController", () => {
       const socket = h.sockets[0];
       socket?.onopen?.();
       h.expireToken();
-      const poll = h.timers.find((timer) => timer.ms === REAUTH_POLL_MS);
-      poll?.fn();
+      await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
       await vi.waitFor(() => {
         expect(socket?.sent).toContain(
           JSON.stringify({ type: "reauth", token: "next" }),
         );
       });
-      expect(
-        h.timers.filter((timer) => timer.ms === REAUTH_POLL_MS),
-      ).toHaveLength(2);
+      // The poll re-armed itself after the rotation.
+      expect(vi.getTimerCount()).toBe(1);
     });
 
     it("stops polling once closed", async () => {
       const h = await harness();
       h.controller.close();
-      const poll = h.timers.find((timer) => timer.ms === REAUTH_POLL_MS);
-      poll?.fn();
-      await flush();
-      expect(
-        h.timers.filter((timer) => timer.ms === REAUTH_POLL_MS),
-      ).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 });

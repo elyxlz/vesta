@@ -1,4 +1,4 @@
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import type { RecentGateway } from "@/storage/recent-gateway-model";
 import { visualSwitch } from "./launch-query";
 

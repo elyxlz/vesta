@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { getProvider, type ProviderResource } from "@/api/agents";
+import { getProvider } from "@vesta/core";
+import type { ProviderResource } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 /// Fetch an agent's current provider (kind + model). Shared by the settings
 /// model switcher and the agent island's read-only provider line. Pass `revalidate`
@@ -10,7 +12,7 @@ export function useProvider(name: string | null, revalidate?: unknown) {
 
   const refresh = useCallback(() => {
     if (!name) return;
-    getProvider(name)
+    getProvider(httpClient, name)
       .then(setResource)
       .catch(() => setResource(null));
   }, [name]);

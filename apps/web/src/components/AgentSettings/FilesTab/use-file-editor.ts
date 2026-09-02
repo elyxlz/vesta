@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useResource } from "@vesta/core/react";
-import { readFile, type FileReadResponse } from "@/api/files";
 import { loadFailure } from "@/lib/utils";
+import { readFile } from "@vesta/core";
+import type { FileReadResponse } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export type SaveStatus =
   | { kind: "idle" }
@@ -14,7 +16,7 @@ export type SaveStatus =
 export function useFileEditor(agentName: string, selectedPath: string | null) {
   const file = useResource(
     agentName && selectedPath ? `${agentName}\n${selectedPath}` : null,
-    (key) => readFile(agentName, key.slice(agentName.length + 1)),
+    (key) => readFile(httpClient, agentName, key.slice(agentName.length + 1)),
   );
   const loadedFile = file.data;
   const loadError = loadFailure(file.error, "failed to load file");

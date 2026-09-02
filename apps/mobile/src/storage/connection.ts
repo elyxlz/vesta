@@ -1,6 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { z } from "zod";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 
 const CONNECTION_KEY = "vesta.connection.v1";
 

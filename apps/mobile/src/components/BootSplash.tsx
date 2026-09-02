@@ -322,10 +322,7 @@ export function BootSplash({
             style={[styles.gatewayDelayMessage, delayMessageStyle]}
           >
             <Text
-              style={[
-                styles.gatewayDelayMessageText,
-                { color: colors.text },
-              ]}
+              style={[styles.gatewayDelayMessageText, { color: colors.text }]}
             >
               Reaching the gateway is taking longer than expected
             </Text>

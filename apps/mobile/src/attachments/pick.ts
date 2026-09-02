@@ -61,7 +61,9 @@ export async function captureFromCamera(): Promise<PickResult> {
     if (!existing.canAskAgain) return { status: "blocked" };
     const asked = await ImagePicker.requestCameraPermissionsAsync();
     if (!asked.granted)
-      return asked.canAskAgain ? { status: "cancelled" } : { status: "blocked" };
+      return asked.canAskAgain
+        ? { status: "cancelled" }
+        : { status: "blocked" };
   }
   const result = await ImagePicker.launchCameraAsync({
     mediaTypes: ["images", "videos"],

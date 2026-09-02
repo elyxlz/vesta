@@ -64,19 +64,14 @@ export { createReplica } from "./replica/store";
 export { ApiError, jsonInit } from "./transport/http";
 export type { FetchLike, HttpClient } from "./transport/http";
 export type { SyncState } from "./transport/socket";
-export type { SocketLike } from "./transport/websocket";
 export type { DeviceContext } from "./protocol/frames";
 export { readSse } from "./transport/sse";
 export type { SseHandle, StreamEvent } from "./transport/sse";
 
 export type { ForegroundSignal } from "./adapters/types";
 
-export { PACING, typingDelay } from "./pacing/pacing";
-
 export { agentHoldKey, createKeyedHoldStore } from "./holds/keyed-hold";
 export type { KeyedHoldStore } from "./holds/keyed-hold";
-
-export type { RestartReason } from "./lifecycle/restart-reasons";
 
 export {
   notificationRowKey,
@@ -90,55 +85,36 @@ export {
   commitPacedChat,
   foldLiveEvent,
   initialChatState,
-  markSend,
   prependPage,
   seedTail,
-  trimTail,
-  retryableSends,
 } from "./chat/chat-stream-model";
-export type {
-  ChatMessage,
-  ChatState,
-  HistoryPage,
-} from "./chat/chat-stream-model";
+export type { ChatMessage, ChatState } from "./chat/chat-stream-model";
 
 export {
   appChatAttachmentPath,
   attachmentKind,
   formatBytes,
-  MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
 } from "./attachments/attachment-model";
 export type {
   AttachmentKind,
   ChatAttachment,
 } from "./attachments/attachment-model";
-export { UploadError, uploadAttachment } from "./attachments/upload";
 export type {
   Connectivity,
-  UploadCallbacks,
-  UploadDeps,
   UploadErrorReason,
-  UploadHandle,
   UploadMeta,
 } from "./attachments/upload";
-export {
-  addDraft,
-  draftsReady,
-  draftTotalBytes,
-  failDraft,
-  finalizeDraft,
-  removeDraft,
-  setDraftProgress,
-  setDraftWaiting,
-  uploadedAttachments,
-} from "./attachments/attachment-draft";
+export { draftTotalBytes } from "./attachments/attachment-draft";
 export type { DraftAttachment } from "./attachments/attachment-draft";
 
 export { chatMessageSide, startsNewBubbleGroup } from "./chat/bubble-grouping";
 export type { ChatMessageSide } from "./chat/bubble-grouping";
 
-export { createChatSocket } from "./chat/chat-socket";
+export { createChatSession } from "./chat/chat-session";
+export type { ChatSession } from "./chat/chat-session";
+export { createDraftStore } from "./attachments/draft-store";
+export type { DraftSource, DraftStore } from "./attachments/draft-store";
 
 export { createVoiceSession } from "./voice/voice-session";
 export type { VoiceMode, VoiceSession } from "./voice/voice-session";
@@ -146,7 +122,6 @@ export type { AudioCapture } from "./voice/stt-session";
 export type { SpeechPlayer } from "./voice/tts-queue";
 
 export { sendMessage } from "./intents/send-message";
-export type { SendFailure } from "./intents/send-message";
 
 // The gateway session: what every client holds, with the app injecting only persistence.
 export {
@@ -216,12 +191,7 @@ export type {
   FieldPredicate,
   NotificationInterruptRule,
 } from "./api/config-rules";
-export {
-  chatSocketPath,
-  fetchChatHistory,
-  fetchInternalsHistory,
-  getNotificationHistory,
-} from "./api/history";
+export { chatSocketPath, getNotificationHistory } from "./api/history";
 export { fetchFileTree, readFile, writeFile } from "./api/files";
 export type { FileReadResponse, FileTreeEntry } from "./api/files";
 export {
@@ -264,7 +234,11 @@ export type {
   VoiceStatus,
 } from "./api/voice";
 export { agentLogsPath, gatewayLogsPath } from "./api/logs";
-export { registerMobileDevice, unregisterMobileDevice } from "./api/devices";
+export {
+  registerMobileDevice,
+  reportDeviceContext,
+  unregisterMobileDevice,
+} from "./api/devices";
 
 export {
   createServiceKeyCache,
@@ -314,8 +288,9 @@ export type {
   ProviderCatalog,
   ProviderCatalogEntry,
   ProviderSelection,
-  ProviderInfoWire,
 } from "./provider/provider";
 
 export { createController } from "./controller/controller";
 export type { Controller, ControllerDeps } from "./controller/controller";
+export type { SocketLike } from "./transport/websocket";
+export type { ProviderInfoWire } from "./provider/provider";

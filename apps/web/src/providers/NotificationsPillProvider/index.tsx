@@ -7,10 +7,14 @@ import {
   type ReactNode,
 } from "react";
 import { useMotionValue } from "motion/react";
-import { useMatch, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { feedUnseen, type LoggedUserNotification } from "@vesta/core";
-import { useNotificationFeed, useNotificationsPill } from "@vesta/core/react";
-import { useWindowFocus } from "@/hooks/use-window-focus";
+import {
+  useFocused,
+  useNotificationFeed,
+  useNotificationsPill,
+  useViewing,
+} from "@vesta/core/react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
@@ -33,12 +37,11 @@ export function NotificationsPillProvider({
   children: ReactNode;
 }) {
   const controller = useOptionalController();
-  const agentMatch = useMatch({ path: "/agent/:name", end: false });
-  const viewedAgent = agentMatch?.params.name ?? null;
+  // The viewed agent and focus come from the controller, the one owner every consumer reads.
+  const viewedAgent = useViewing(controller);
+  const focused = useFocused(controller);
   const [surface, setSurface] = useState<HistorySurface>("none");
   const historyOpen = surface !== "none";
-
-  const focused = useWindowFocus();
 
   const { agents, userNotificationsSeenAt, lastUserNotificationAt } =
     useGateway();

@@ -5,8 +5,8 @@ import {
   getAgentMounts,
   getHostFolderSuggestions,
   setAgentMounts,
-} from "@/api/endpoints";
-import type { HostMount } from "@/api/types";
+} from "@vesta/core";
+import type { HostMount } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";

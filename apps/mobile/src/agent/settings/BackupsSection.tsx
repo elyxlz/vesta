@@ -4,11 +4,11 @@ import { formatSnapshotStamp, type BackupTimelinePoint } from "@vesta/core";
 import {
   createBackup,
   deleteBackup,
-  getAgentBackupSettings,
+  fetchAgentBackupSettings,
   listBackups,
   restoreBackup,
   setAgentBackupSettings,
-} from "@/api/endpoints";
+} from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
 import { useToast } from "@/components/native-toast";
@@ -145,7 +145,7 @@ export function BackupsSection() {
   });
   const backupSettings = useQuery({
     queryKey: ["backup-settings", name],
-    queryFn: () => getAgentBackupSettings(api, name),
+    queryFn: () => fetchAgentBackupSettings(api, name),
   });
   const toggleAuto = useMutation({
     mutationFn: (enabled: boolean) =>

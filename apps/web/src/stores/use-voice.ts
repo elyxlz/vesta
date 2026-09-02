@@ -141,8 +141,6 @@ export const useVoice = create<VoiceState>((set, get) => {
       buildUrl: () => voiceWsUrl(get().agentName ?? ""),
       capture: browserCapture(() => get().micMuted),
       player: browserPlayer(() => get().agentName),
-      setTimer: (fn, ms) => setTimeout(fn, ms),
-      clearTimer: (handle) => clearTimeout(handle),
     },
     {
       onTranscript: (text) => set({ liveTranscript: text }),

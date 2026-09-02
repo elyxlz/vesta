@@ -12,9 +12,10 @@ import {
   type VoiceSession,
   sttListenPath,
   ttsStreamPath,
+  SettingDef,
+  VoiceStatus,
 } from "@vesta/core";
-import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
-import type { SettingDef, VoiceStatus } from "@/api/types";
+import { fetchVoiceStatus, prepareSpeech } from "@vesta/core";
 import { useSession } from "@/session/SessionProvider";
 import { setHandsFreeSessionActive } from "@/voice/hands-free-session";
 import { setRecordingHapticsEnabled } from "@/voice/recording-haptics";
@@ -192,14 +193,15 @@ export function useLiveVoice({
   useEffect(() => {
     const session = createVoiceSession(
       {
-        buildUrl: () =>
-          api.websocketUrl(sttListenPath(name)),
+        buildUrl: () => api.websocketUrl(sttListenPath(name)),
         capture: {
           start: async (onFrame) => {
             if (!permissionGrantedRef.current) {
               const permission = await requestRecordingPermissionsAsync();
               if (!permission.granted)
-                throw new Error("Microphone permission is needed for live voice.");
+                throw new Error(
+                  "Microphone permission is needed for live voice.",
+                );
               permissionGrantedRef.current = true;
             }
             await setAudioModeAsync(RECORDING_AUDIO_MODE);
@@ -230,8 +232,6 @@ export function useLiveVoice({
           prepare: (text) => prepareSpeech(api, name, text),
           play: playPrepared,
         },
-        setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
-        clearTimer: (handle) => clearTimeout(handle),
       },
       {
         onTranscript: (text) => callbacksRef.current.onTranscript(text),
@@ -260,8 +260,7 @@ export function useLiveVoice({
   }, [api, name, playPrepared]);
 
   const start = useCallback(
-    (mode: VoiceMode) =>
-      sessionRef.current?.start(mode) ?? Promise.resolve(),
+    (mode: VoiceMode) => sessionRef.current?.start(mode) ?? Promise.resolve(),
     [],
   );
   const stop = useCallback(() => sessionRef.current?.stop(), []);

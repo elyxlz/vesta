@@ -1,13 +1,13 @@
-import { agentNeedsUser } from "@vesta/core";
-import { ApiError } from "@/api/client";
 import {
+  agentNeedsUser,
   AgentStatusError,
   createAgent,
-  setProvider,
+  provisionAgent,
   waitUntilReady,
   waitUntilRunning,
-  type ProviderResult,
-} from "@/api/agents";
+} from "@vesta/core";
+import { httpClient, ApiError } from "@/api/client";
+import type { ProviderSelection } from "@vesta/core";
 
 /// Disposition of a failed create (POST /agents) during the wizard.
 /// "already-created": a 409 on a retry, the container from the failed attempt
@@ -58,7 +58,7 @@ export async function prepareAgentShell(
   deps: ShellFlowDeps = SHELL_FLOW_DEPS,
 ): Promise<ShellFlowResult> {
   try {
-    await deps.createAgent(name);
+    await deps.createAgent(httpClient, name);
   } catch (caught: unknown) {
     const failure = classifyCreateFailure(caught, firstAttempt);
     if (failure === "name-rejected") {
@@ -67,9 +67,9 @@ export async function prepareAgentShell(
     if (failure === "retryable") throw caught;
   }
 
-  await deps.waitUntilRunning(name, timeoutMs);
+  await deps.waitUntilRunning(httpClient, name, timeoutMs);
   try {
-    await deps.waitUntilReady(name, timeoutMs);
+    await deps.waitUntilReady(httpClient, name, timeoutMs);
     return { kind: "ready" };
   } catch (caught: unknown) {
     if (caught instanceof AgentStatusError && agentNeedsUser(caught.status)) {
@@ -80,12 +80,12 @@ export async function prepareAgentShell(
 }
 
 export interface ProviderFlowDeps {
-  setProvider: typeof setProvider;
+  provisionAgent: typeof provisionAgent;
   waitUntilReady: typeof waitUntilReady;
 }
 
 const PROVIDER_FLOW_DEPS: ProviderFlowDeps = {
-  setProvider,
+  provisionAgent,
   waitUntilReady,
 };
 
@@ -96,7 +96,7 @@ export type ProviderFlowResult =
 
 export interface ProviderSetupInput {
   name: string;
-  provider: ProviderResult;
+  provider: ProviderSelection;
   personality: string;
   timezone: string;
   timeoutMs: number;
@@ -107,7 +107,8 @@ export async function applyProviderSetup(
   deps: ProviderFlowDeps = PROVIDER_FLOW_DEPS,
 ): Promise<ProviderFlowResult> {
   try {
-    await deps.setProvider(
+    await deps.provisionAgent(
+      httpClient,
       input.name,
       input.provider,
       input.personality,
@@ -121,7 +122,7 @@ export async function applyProviderSetup(
   }
 
   try {
-    await deps.waitUntilReady(input.name, input.timeoutMs);
+    await deps.waitUntilReady(httpClient, input.name, input.timeoutMs);
     return { kind: "ready" };
   } catch (caught: unknown) {
     if (caught instanceof AgentStatusError && agentNeedsUser(caught.status)) {

@@ -125,11 +125,7 @@ export function AgentIsland({
     </Pressable>
   );
 
-  return (
-    <GlassSurface style={styles.titlePill}>
-      {content}
-    </GlassSurface>
-  );
+  return <GlassSurface style={styles.titlePill}>{content}</GlassSurface>;
 }
 
 function AgentBackHeaderButton({

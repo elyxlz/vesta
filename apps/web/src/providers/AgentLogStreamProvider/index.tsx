@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { streamLogs, stopLogs } from "@/api";
 import { renderAnsiHtml } from "@/lib/ansi-html";
 import { linkify } from "@/lib/linkify";
 import { createLogSession, type LogSession } from "@/lib/log-session";
 import { isAgentContainerUp } from "@/lib/log-stream-policy";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { AgentLogSessionContext } from "./context";
+import { stopLogs, streamLogs } from "@/api/logs";
 
 function makeSession(name: string): LogSession {
   return createLogSession({

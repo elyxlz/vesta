@@ -1,9 +1,13 @@
 import { useState } from "react";
-import { agentStatusKind, resolveProviderIdentity } from "@vesta/core";
+import {
+  agentStatusKind,
+  resolveProviderIdentity,
+  getProvider,
+  renameAgent,
+} from "@vesta/core";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
-import { getProvider, renameAgent } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   agentRenameError,

@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { ChatAttachment } from "../attachments/attachment-model";
+import type { HttpClient } from "../transport/http";
+import { createChatSender } from "./chat-sender";
 import {
   initialChatState,
   markSend,
-  type ChatAttachment,
   type ChatState,
-  type HttpClient,
-} from "@vesta/core";
-import { createChatSender } from "./chat-send-model";
+} from "./chat-stream-model";
 
 interface SentBody {
   text?: string;
@@ -21,7 +21,8 @@ function harness() {
   const http: HttpClient = {
     request: () => Promise.reject(new Error("unused")),
     json: <T>(_path: string, init?: RequestInit) => {
-      requests.push(JSON.parse(String(init?.body)) as SentBody);
+      const body = typeof init?.body === "string" ? init.body : "{}";
+      requests.push(JSON.parse(body) as SentBody);
       return reject
         ? Promise.reject(new Error("network down"))
         : Promise.resolve({} as T);
@@ -53,10 +54,6 @@ function harness() {
   };
 }
 
-async function flush() {
-  for (let i = 0; i < 10; i += 1) await Promise.resolve();
-}
-
 function lastBubble(state: ChatState) {
   const message = state.messages.at(-1);
   if (message?.type !== "user") throw new Error("expected a user bubble");
@@ -68,7 +65,7 @@ const ATTACHMENTS: ChatAttachment[] = [
   { id: "att2", name: "doc.pdf", mime: "application/pdf", size: 99 },
 ];
 
-describe("chat send model", () => {
+describe("chat sender", () => {
   it("posts finalized attachment ids and gives the optimistic bubble the metadata", () => {
     const { sender, requests, state } = harness();
     sender.send("here you go", "typed", ATTACHMENTS);
@@ -96,8 +93,9 @@ describe("chat send model", () => {
     const { sender, requests, state, setReject } = harness();
     setReject(true);
     sender.send("spotty", "typed", ATTACHMENTS);
-    await flush();
-    expect(lastBubble(state()).send_state).toBe("retry");
+    await vi.waitFor(() => {
+      expect(lastBubble(state()).send_state).toBe("retry");
+    });
 
     setReject(false);
     sender.repostParked();
@@ -114,21 +112,26 @@ describe("chat send model", () => {
     setReject(true);
     sender.send("first");
     sender.send("second");
-    await flush();
+    await vi.waitFor(() => {
+      expect(lastBubble(state()).send_state).toBe("retry");
+    });
 
     sender.repostParked();
     expect(requests.slice(2).map((request) => request.intent_id)).toEqual([
       "intent-1",
       "intent-2",
     ]);
-    await flush();
-    expect(lastBubble(state()).send_state).toBe("retry");
+    await vi.waitFor(() => {
+      expect(lastBubble(state()).send_state).toBe("retry");
+    });
   });
 
   it("reposts nothing when bubbles are in flight or already echoed", async () => {
     const { sender, requests, commit, state } = harness();
     sender.send("landing");
-    await flush();
+    await vi.waitFor(() => {
+      expect(requests).toHaveLength(1);
+    });
     // Still awaiting its echo: in flight, not parked.
     expect(lastBubble(state()).send_state).toBe("sending");
     sender.repostParked();

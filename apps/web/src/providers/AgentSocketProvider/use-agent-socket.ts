@@ -1,32 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   ChatAttachment,
-  ChatMessage,
-  ChatState,
+  ChatSession,
   InputMethod,
-  SendFailure,
   Tree,
 } from "@vesta/core";
-import {
-  PACING,
-  beginSend,
-  chatSocketPath,
-  commitPacedChat,
-  createChatSocket,
-  foldLiveEvent,
-  initialChatState,
-  markSend,
-  prependPage,
-  retryableSends,
-  seedTail,
-  sendMessage,
-  trimTail,
-  typingDelay,
-} from "@vesta/core";
+import { chatSocketPath, createChatSession } from "@vesta/core";
+import { useChatSession, useReplica, useSyncState } from "@vesta/core/react";
 import { useController } from "@/providers/ControllerProvider/context";
-import { useReplica, useSyncState } from "@vesta/core/react";
-import { websocketUrl } from "@/api/client";
-import { fetchHistory } from "@/api/agents";
 import { naturalPacingFor } from "@/stores/use-preferences";
 import { useVoice } from "@/stores/use-voice";
 
@@ -41,14 +28,27 @@ interface UseAgentSocketOptions {
   onPrefetch?: (text: string) => void;
 }
 
-// The chat view-model over the core controller and the shared chat-stream model. The chat tail is a
-// per-agent app-chat socket (replay-free: it streams only events appended after connect) joined to
-// the HTTP history page, deduped at the seam by event id; the hook fetches the tail at mount, in
-// parallel with the socket handshake, and refetches it on every reconnect open so a gap self-heals.
-// agentState + pending come from the replica; gateway
-// connectedness from the single sync socket. Sends are POST intents confirmed by their chat-socket
-// echo. ChatState (mirrored into React state for rendering) is the single source of truth; every fold
-// runs synchronously against the ref so a batch of appends dedups against the running accumulation.
+// A slot whose occupant the effect owns, read through useSyncExternalStore: the session is
+// created by the effect whose cleanup closes it, so the two lifetimes cannot diverge.
+function createSessionSlot() {
+  let current: ChatSession | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set: (next: ChatSession | null) => {
+      current = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+// The web adapter over core's chat session: it injects the platform ports (the session's
+// token-stamped socket URL, the browser id maker, the pacing preference joined to the voice mode)
+// and subscribes. The session owns the socket, the seed, the pacing queue, and the send path.
 export function useAgentSocketState({
   name,
   active,
@@ -56,43 +56,36 @@ export function useAgentSocketState({
   onPrefetch,
 }: UseAgentSocketOptions) {
   const controller = useController();
+  const onReply = useEffectEvent((text: string) => onAssistantMessage?.(text));
+  const prefetch = useEffectEvent((text: string) => onPrefetch?.(text));
+  const [slot] = useState(createSessionSlot);
+  const session = useSyncExternalStore(slot.subscribe, slot.get);
 
-  const [state, setState] = useState<ChatState>(initialChatState);
-  const stateRef = useRef<ChatState>(state);
-  const commit = useCallback((fold: (current: ChatState) => ChatState) => {
-    stateRef.current = fold(stateRef.current);
-    setState(stateRef.current);
-  }, []);
+  useEffect(() => {
+    if (!active || !name) return;
+    const agent = name;
+    const created = createChatSession(
+      {
+        http: controller.http,
+        agent,
+        buildUrl: () => controller.session.websocketUrl(chatSocketPath(agent)),
+        makeId: () => crypto.randomUUID(),
+        // A voice conversation is duplex: the reply is spoken the moment it lands, not typed out.
+        naturalPacing: () =>
+          naturalPacingFor(agent) &&
+          useVoice.getState().recordingMode !== "conversation",
+      },
+      { onReply, onPrefetch: prefetch },
+    );
+    slot.set(created);
+    return () => {
+      created.close();
+      slot.set(null);
+    };
+  }, [active, name, controller, slot]);
 
-  const [isTyping, setIsTyping] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const loadingMoreRef = useRef(false);
-
-  const onAssistantMessageRef = useRef(onAssistantMessage);
-  onAssistantMessageRef.current = onAssistantMessage;
-  // The live socket's speaking report, held by ref so the callback handed to the voice store
-  // stays stable across reconnects and agent switches.
-  const reportSpeakingRef = useRef<((speaking: boolean) => void) | null>(null);
-  const onPrefetchRef = useRef(onPrefetch);
-  onPrefetchRef.current = onPrefetch;
-  const chatQueueRef = useRef<ChatMessage[]>([]);
-  const drainingRef = useRef(false);
-  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  const state = useChatSession(session);
   const connected = useSyncState(controller) === "open";
-
-  // On a reconnect, a bubble parked in the retryable state re-posts itself once under its original
-  // intent id: the 200 was never seen but dedup makes a double-send impossible, so a flaky link
-  // never strands a tap-to-retry the user walked away from. Ref-routed (like the callbacks above)
-  // so the socket effect never re-runs for it.
-  const repostRef = useRef<() => void>(() => undefined);
-
-  const activitySelector = useCallback(
-    (tree: Tree | null) =>
-      name ? (tree?.agents[name]?.info.activityState ?? "idle") : "idle",
-    [name],
-  );
-  const agentState = useReplica(controller.replica, activitySelector);
 
   const pendingSelector = useCallback(
     (tree: Tree | null): string[] =>
@@ -109,181 +102,19 @@ export function useAgentSocketState({
     idsEqual,
   );
 
-  const flushQueue = useCallback(() => {
-    for (const event of chatQueueRef.current) {
-      commit((current) => commitPacedChat(current, event));
-      if (event.type === "chat") onAssistantMessageRef.current?.(event.text);
-    }
-    chatQueueRef.current = [];
-    drainingRef.current = false;
-    setIsTyping(false);
-  }, [commit]);
-
-  const drainQueue = useCallback(
-    function drainQueue() {
-      if (drainingRef.current) return;
-      const queue = chatQueueRef.current;
-      const next = queue[0];
-      if (next === undefined) {
-        setIsTyping(false);
-        return;
-      }
-      // A voice conversation is duplex: the reply is spoken the moment it lands, not typed out.
-      if (
-        queue.length > PACING.flushThreshold ||
-        !naturalPacingFor(name ?? "") ||
-        useVoice.getState().recordingMode === "conversation"
-      ) {
-        flushQueue();
-        return;
-      }
-      drainingRef.current = true;
-      setIsTyping(true);
-      const text = next.type === "chat" ? next.text : undefined;
-      if (text) onPrefetchRef.current?.(text);
-      const delay = typingDelay(text?.length ?? 0);
-      typingTimerRef.current = setTimeout(() => {
-        queue.shift();
-        commit((current) => commitPacedChat(current, next));
-        if (text) onAssistantMessageRef.current?.(text);
-        drainingRef.current = false;
-        drainQueue();
-      }, delay);
-    },
-    [commit, flushQueue, name],
-  );
-
-  const enqueueChatMessage = useCallback(
-    (event: ChatMessage) => {
-      chatQueueRef.current.push(event);
-      drainQueue();
-    },
-    [drainQueue],
-  );
-
-  // Reflect the send POST's settled disposition into the bubble. A null outcome means queued-on-tap:
-  // delivery truth is the append echo (which clears send_state), so only a failure marks the bubble.
-  const applyOutcome = useCallback(
-    (intentId: string, outcome: Promise<SendFailure | null>) => {
-      void outcome.then((failure) => {
-        if (failure) commit((current) => markSend(current, intentId, failure));
-      });
-    },
-    [commit],
-  );
-
-  useEffect(() => {
-    if (!active || !name) return;
-    const agent = name;
-    let cancelled = false;
-
-    const resetTyping = () => {
-      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      typingTimerRef.current = null;
-      chatQueueRef.current = [];
-      drainingRef.current = false;
-      setIsTyping(false);
-    };
-
-    stateRef.current = initialChatState();
-    setState(stateRef.current);
-    resetTyping();
-
-    // Reseed the tail from the newest history page and MERGE, never replace. Runs at mount, in
-    // parallel with the socket handshake (the fetch needs only the Bearer header, so nothing
-    // gates it), and again on each reconnect open so a replay-free gap self-heals; the shared
-    // model dedups by id and reconciles pending sends against the page.
-    const seed = async () => {
-      const page = await fetchHistory(agent, "app-chat");
-      if (cancelled) return;
-      commit((current) => seedTail(current, page));
-    };
-
-    let mountSeedSucceeded = false;
-    let sawOpen = false;
-    const runSeed = (onSuccess?: () => void) => {
-      void seed()
-        .then(onSuccess)
-        .catch((err: unknown) => {
-          console.warn("chat: history load failed", err);
-        });
-    };
-    runSeed(() => {
-      mountSeedSucceeded = true;
-    });
-
-    const addLiveEvent = (event: ChatMessage) => {
-      const { state: next, paced } = foldLiveEvent(stateRef.current, event);
-      commit(() => next);
-      if (paced) enqueueChatMessage(event);
-    };
-
-    const socket = createChatSocket(
-      {
-        buildUrl: () => websocketUrl(chatSocketPath(agent)),
-        setTimer: (fn, ms) => window.setTimeout(fn, ms),
-        clearTimer: (handle) => window.clearTimeout(handle),
-      },
-      {
-        onEvent: addLiveEvent,
-        onStateChange: (socketState) => {
-          if (socketState === "open") {
-            resetTyping();
-            // The first open skips the refetch the mount seed already landed; every later open
-            // reseeds, and a first open racing a still-inflight mount seed reseeds too, so a
-            // mount fetch that fails after this check cannot strand the tail.
-            if (sawOpen || !mountSeedSucceeded) runSeed();
-            if (sawOpen) repostRef.current();
-            sawOpen = true;
-          }
-        },
-      },
-    );
-
-    reportSpeakingRef.current = socket.reportSpeaking;
-
-    return () => {
-      cancelled = true;
-      reportSpeakingRef.current = null;
-      socket.close();
-      resetTyping();
-    };
-  }, [active, name, commit, enqueueChatMessage]);
-
-  const reportSpeaking = useCallback((speaking: boolean) => {
-    reportSpeakingRef.current?.(speaking);
-  }, []);
-
   const send = useCallback(
     (
       text: string,
       inputMethod: InputMethod = "typed",
       attachments?: ChatAttachment[],
     ): boolean => {
-      if (!name) return false;
-      const ids = attachments?.map((attachment) => attachment.id);
-      const { id, outcome } = sendMessage(
-        controller.http,
-        name,
-        {
-          text,
-          input_method: inputMethod,
-          attachments: ids && ids.length > 0 ? ids : undefined,
-        },
-        () => crypto.randomUUID(),
-      );
-      commit((current) =>
-        beginSend(current, text, inputMethod, id, attachments),
-      );
-      applyOutcome(id, outcome);
+      const live = slot.get();
+      if (!live) return false;
+      live.send(text, inputMethod, attachments);
       return true;
     },
-    [name, controller, commit, applyOutcome],
+    [slot],
   );
-
-  // Re-post a failed/retryable bubble under its ORIGINAL intent id (idempotent): the bubble returns to
-  // "sending" and confirms on the same echo. Text, input method, and attachment ids come from the
-  // bubble the user tapped (the uploads are already finalized server-side).
   const retry = useCallback(
     (
       intentId: string,
@@ -291,71 +122,32 @@ export function useAgentSocketState({
       inputMethod: InputMethod = "typed",
       attachments?: ChatAttachment[],
     ) => {
-      if (!name) return;
-      commit((current) => markSend(current, intentId, "sending"));
-      const ids = attachments?.map((attachment) => attachment.id);
-      const { outcome } = sendMessage(
-        controller.http,
-        name,
-        {
-          text,
-          input_method: inputMethod,
-          attachments: ids && ids.length > 0 ? ids : undefined,
-        },
-        () => intentId,
-      );
-      applyOutcome(intentId, outcome);
+      slot.get()?.retry(intentId, text, inputMethod, attachments);
     },
-    [name, controller, commit, applyOutcome],
+    [slot],
+  );
+  const loadMore = useCallback(
+    () => slot.get()?.loadMore() ?? Promise.resolve(),
+    [slot],
+  );
+  const trimHistory = useCallback(() => {
+    slot.get()?.trimHistory();
+  }, [slot]);
+  const reportSpeaking = useCallback(
+    (speaking: boolean) => {
+      slot.get()?.reportSpeaking(speaking);
+    },
+    [slot],
   );
 
-  repostRef.current = () => {
-    for (const parked of retryableSends(stateRef.current))
-      retry(
-        parked.intentId,
-        parked.text,
-        parked.inputMethod,
-        parked.attachments,
-      );
-  };
-
-  const hasMore = state.cursor !== null;
-
-  // Skipped while a load is in flight: trimming under an unresolved prepend would leave a hole
-  // between the landed page and the kept tail.
-  const trimHistory = useCallback(() => {
-    if (loadingMoreRef.current) return;
-    commit((current) => trimTail(current));
-  }, [commit]);
-
-  const loadMore = useCallback(async () => {
-    if (!name || loadingMoreRef.current || stateRef.current.cursor === null)
-      return;
-
-    loadingMoreRef.current = true;
-    setLoadingMore(true);
-    try {
-      const page = await fetchHistory(
-        name,
-        "app-chat",
-        stateRef.current.cursor,
-      );
-      commit((current) => prependPage(current, page.events, page.cursor));
-    } finally {
-      loadingMoreRef.current = false;
-      setLoadingMore(false);
-    }
-  }, [name, commit]);
-
   return {
-    messages: state.messages,
-    agentState,
-    isTyping,
+    messages: state.chat.messages,
+    isTyping: state.typing,
     connected,
-    historyLoaded: state.historyLoaded,
+    historyLoaded: state.chat.historyLoaded,
     pendingNotifications,
-    hasMore,
-    loadingMore,
+    hasMore: state.chat.cursor !== null,
+    loadingMore: state.loadingMore,
     loadMore,
     trimHistory,
     send,

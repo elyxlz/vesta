@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { createElement, useEffect, type ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import type { Controller, NotificationEvent, Tree } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { setAppBadge } from "@/lib/app-badge";
@@ -11,7 +11,6 @@ import {
   fakeTree,
 } from "@/test/fake-controller";
 import { NotificationProvider } from "./index";
-import { useNotifications } from "./context";
 
 vi.mock("@/lib/native", () => ({
   native: {
@@ -57,17 +56,6 @@ function toasts(): { title: string; body?: string }[] {
   return built.map(({ title, body }) => ({ title, body }));
 }
 
-// Registers the actively-chatted agent through the public useNotifications contract, standing in for
-// AgentSocketProvider so the defer-to-active-chat rule can be exercised.
-function ChattingWith({ agent }: { agent: string | null }) {
-  const { setChattingAgent } = useNotifications();
-  useEffect(() => {
-    setChattingAgent(agent);
-    return () => setChattingAgent(null);
-  }, [agent, setChattingAgent]);
-  return null;
-}
-
 function mount(
   controller: Controller,
   child: ReactNode = null,
@@ -90,9 +78,11 @@ async function settle() {
   });
 }
 
-function setWindowFocus(focused: boolean) {
+// Focus and the viewed agent are facts the controller holds (PresenceReporter writes them in the
+// app); the provider reads them at call time, so a test reports them straight to the controller.
+function setWindowFocus(controller: Controller, focused: boolean) {
   act(() => {
-    window.dispatchEvent(new Event(focused ? "focus" : "blur"));
+    controller.reportPresence(focused);
   });
 }
 
@@ -255,14 +245,10 @@ describe("NotificationProvider", () => {
     const { controller, emit } = fakeController(tree(), {
       anyFocused: row.anyFocused ?? false,
     });
-    mount(
-      controller,
-      row.chatting
-        ? createElement(ChattingWith, { agent: row.chatting })
-        : null,
-    );
+    mount(controller);
     await settle();
-    setWindowFocus(row.focused);
+    controller.reportViewing(row.chatting ?? null);
+    setWindowFocus(controller, row.focused);
 
     act(() => {
       emit(userNotification(row.kind, row));
@@ -311,7 +297,7 @@ describe("NotificationProvider", () => {
     const { controller, emit } = fakeController(tree());
     mount(controller);
     await settle();
-    setWindowFocus(false);
+    setWindowFocus(controller, false);
 
     act(() => {
       emit(userNotification("message"));
@@ -330,7 +316,7 @@ describe("NotificationProvider", () => {
     const { controller, emit } = fakeController(tree());
     mount(controller, null, onOpenAgent);
     await settle();
-    setWindowFocus(false);
+    setWindowFocus(controller, false);
     act(() => {
       emit(userNotification("message", { agent: "ada", body: "pong" }));
     });

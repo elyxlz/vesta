@@ -4,8 +4,8 @@ import {
   parseBackupKind,
   type BackupTimelinePoint,
   type BackupTimelineRow,
+  BackupInfo,
 } from "@vesta/core";
-import type { BackupInfo } from "@/api/types";
 
 // The gateway refuses a snapshot a newer vestad wrote, so the point says why before the user taps.
 export const NEWER_REFUSAL =

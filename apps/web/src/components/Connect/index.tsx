@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useResource } from "@vesta/core/react";
 import { booleanField } from "@/lib/json-shape";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
@@ -137,26 +138,38 @@ function ConnectHeader() {
   );
 }
 
+// On a vestad-served bundle, whether this is a hosted (vesta.run) instance: managed instances log
+// in via the vesta.run handoff (PKCE) since the user never gets the api_key; self-hosted ones keep
+// the connect-link form. A probe that fails reads as self-hosted.
+async function probeManaged(): Promise<boolean> {
+  const resp = await fetch(`${window.location.origin}/info`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  const data: unknown = await resp.json();
+  return booleanField(data, "managed") === true;
+}
+
+// `null` while the probe is still answering; a vestad-served bundle only.
+function useManaged(): boolean | null {
+  const probed = useResource(needHostInput ? null : "managed", probeManaged);
+  if (needHostInput) return false;
+  if (probed.loading) return null;
+  return probed.error === null && probed.data === true;
+}
+
+// Re-read each time the switch dialog closes, since it can forget a gateway.
 function useHasRecentGateways(dialogOpen: boolean): boolean {
-  const [hasRecentGateways, setHasRecentGateways] = useState(false);
-
-  useEffect(() => {
-    if (dialogOpen) return;
-    let active = true;
-    void readRecentGateways()
-      .then((gateways) => {
-        if (active) setHasRecentGateways(gateways.length > 0);
-      })
-      .catch((cause: unknown) => {
-        console.warn("could not read saved gateways", cause);
-        if (active) setHasRecentGateways(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [dialogOpen]);
-
-  return hasRecentGateways;
+  const [closes, setCloses] = useState(0);
+  const [wasOpen, setWasOpen] = useState(dialogOpen);
+  if (wasOpen !== dialogOpen) {
+    setWasOpen(dialogOpen);
+    if (!dialogOpen) setCloses((count) => count + 1);
+  }
+  const saved = useResource(
+    `recent-gateways-${String(closes)}`,
+    readRecentGateways,
+  );
+  return saved.error === null && (saved.data?.length ?? 0) > 0;
 }
 
 export function Connect() {
@@ -181,29 +194,7 @@ export function Connect() {
   // instance. Probe /info.managed: managed instances log in via the vesta.run
   // handoff (PKCE, issue #19) since the user never gets the api_key; self-hosted
   // ones keep the connect-link form. `null` = still probing.
-  const [managed, setManaged] = useState<boolean | null>(
-    needHostInput ? false : null,
-  );
-
-  useEffect(() => {
-    if (managed !== null) return;
-    let cancelled = false;
-    const probe = async () => {
-      try {
-        const resp = await fetch(`${window.location.origin}/info`, {
-          signal: AbortSignal.timeout(5000),
-        });
-        const data: unknown = await resp.json();
-        if (!cancelled) setManaged(booleanField(data, "managed") === true);
-      } catch {
-        if (!cancelled) setManaged(false);
-      }
-    };
-    void probe();
-    return () => {
-      cancelled = true;
-    };
-  }, [managed]);
+  const managed = useManaged();
 
   if (connected) return <Navigate to="/" replace />;
 

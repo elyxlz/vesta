@@ -19,10 +19,11 @@ import {
 import { BackupsDialog } from "@/components/BackupsDialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ProviderPicker } from "@/components/ProviderPicker";
-import { setProvider } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useDialogs } from "@/stores/use-dialogs";
 import { useNavigate } from "react-router-dom";
+import { provisionAgent } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function AgentIslandModals() {
   const { name, remove } = useSelectedAgent();
@@ -75,7 +76,7 @@ export function AgentIslandModals() {
                     setSubmitting(true);
                     setSubmitError(null);
                     try {
-                      await setProvider(name, result);
+                      await provisionAgent(httpClient, name, result);
                       clearAuthState();
                     } catch (e: unknown) {
                       setSubmitError(

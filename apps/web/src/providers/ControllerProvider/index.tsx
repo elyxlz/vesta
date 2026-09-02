@@ -23,8 +23,6 @@ function buildController(): Controller {
   return createController({
     session,
     sync: {
-      setTimer: (fn, ms) => window.setTimeout(fn, ms),
-      clearTimer: (handle) => window.clearTimeout(handle),
       clientVersion: __CLIENT_VERSION__,
       clientKind: native.runtime === "electron" ? "desktop" : "web",
       device: deviceIdentity(),

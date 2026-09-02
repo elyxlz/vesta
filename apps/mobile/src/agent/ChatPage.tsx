@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { agentHoldKey, TRIM_HISTORY_SETTLE_MS } from "@vesta/core";
+import {
+  agentHoldKey,
+  TRIM_HISTORY_SETTLE_MS,
+  fetchVoiceStatus,
+} from "@vesta/core";
 import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -14,7 +18,6 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { fetchVoiceStatus } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   ChatComposerInput,

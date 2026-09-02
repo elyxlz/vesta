@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { OpenRouterModelOption } from "@/api/providers/openrouter";
+import type { OpenRouterModelOption } from "@vesta/core";
+import { useResource } from "@vesta/core/react";
 
 /// The live Claude catalog as picker options. `key` is whatever the fetch needs (the
 /// agent name in settings, the OAuth blob during onboarding); null disables the fetch.
@@ -10,23 +10,7 @@ export function useClaudeModels(
   key: string | null,
   fetchModels: (key: string) => Promise<OpenRouterModelOption[]>,
 ): OpenRouterModelOption[] | null {
-  const [result, setResult] = useState<{
-    key: string;
-    models: OpenRouterModelOption[];
-  } | null>(null);
-  useEffect(() => {
-    if (key === null) return;
-    let cancelled = false;
-    fetchModels(key)
-      .then((models) => {
-        if (!cancelled) setResult({ key, models });
-      })
-      .catch(() => {
-        if (!cancelled) setResult({ key, models: [] });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [key, fetchModels]);
-  return result !== null && result.key === key ? result.models : null;
+  const models = useResource(key, fetchModels);
+  if (key === null || models.loading) return null;
+  return models.error === null ? (models.data ?? []) : [];
 }

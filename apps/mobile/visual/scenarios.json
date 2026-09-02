@@ -210,10 +210,7 @@
       "description": "Colorized deterministic runtime output in the standalone log viewer.",
       "group": "Agent",
       "screenshot": "agent-logs.png",
-      "platforms": [
-        "ios",
-        "ios-dark"
-      ]
+      "platforms": ["ios", "ios-dark"]
     },
     {
       "id": "agent-files",
@@ -856,10 +853,7 @@
       "title": "Connect link, revealed",
       "description": "The pasted link shown in clear text.",
       "group": "Connect",
-      "platforms": [
-        "ios",
-        "ios-dark"
-      ]
+      "platforms": ["ios", "ios-dark"]
     },
     {
       "id": "connect-link-unreachable",

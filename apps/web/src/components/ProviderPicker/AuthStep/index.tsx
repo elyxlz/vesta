@@ -1,8 +1,10 @@
 import { AuthFlow } from "@/components/AuthFlow";
 import { ProgressBar } from "@/components/ProgressBar";
-import { claudeProvider } from "@/api";
+import { completeClaudeOAuth } from "@vesta/core";
+import type { ClaudeOAuthStart } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
-type AuthStartResult = claudeProvider.OAuthStartResult;
+type AuthStartResult = ClaudeOAuthStart;
 
 export function AuthStep({
   agentName,
@@ -23,7 +25,8 @@ export function AuthStep({
         <AuthFlow
           authUrl={authStart.auth_url}
           onSubmitCode={async (code) => {
-            const creds = await claudeProvider.completeOAuth(
+            const creds = await completeClaudeOAuth(
+              httpClient,
               agentName,
               authStart.session_id,
               code,

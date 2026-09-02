@@ -58,6 +58,8 @@ const cases: Case[] = [
 
 describe("gatewayOperationRouteAction", () => {
   it.each(cases)("$name", ({ operating, activeRoute, action }) => {
-    expect(gatewayOperationRouteAction({ operating, activeRoute })).toBe(action);
+    expect(gatewayOperationRouteAction({ operating, activeRoute })).toBe(
+      action,
+    );
   });
 });

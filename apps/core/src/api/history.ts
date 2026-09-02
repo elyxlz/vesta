@@ -1,5 +1,6 @@
 import type { HistoryPage } from "../chat/chat-stream-model";
 import type { NotificationEvent } from "../protocol/events";
+import { parseHistoryPage } from "../protocol/parse-chat";
 import type { HttpClient } from "../transport/http";
 import { agentPath } from "./agents";
 
@@ -25,19 +26,8 @@ export async function fetchChatHistory(
   name: string,
   cursor?: number,
 ): Promise<HistoryPage> {
-  return http.json<HistoryPage>(chatHistoryPath(name, cursor));
-}
-
-// One page of the agent's internal event history (GET /history?channel=internals).
-export async function fetchInternalsHistory(
-  http: HttpClient,
-  name: string,
-  cursor?: number,
-): Promise<HistoryPage> {
-  const params = cursorQuery(cursor);
-  params.set("channel", "internals");
-  return http.json<HistoryPage>(
-    agentPath(name, `/history?${params.toString()}`),
+  return parseHistoryPage(
+    await http.json<unknown>(chatHistoryPath(name, cursor)),
   );
 }
 

@@ -12,7 +12,6 @@ type LooseId<T> = T extends unknown ? Omit<T, "id"> & { id?: number } : never;
 export type ChatMessage =
   | Exclude<LooseId<VestaEvent>, { type: "user" }>
   | (Extract<LooseId<VestaEvent>, { type: "user" }> & {
-      intent_id?: string;
       send_state?: SendState;
     });
 

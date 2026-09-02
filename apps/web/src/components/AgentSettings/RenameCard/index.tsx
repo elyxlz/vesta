@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Pencil } from "lucide-react";
-import { renameAgent } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -21,6 +20,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { errorMessage } from "@/lib/utils";
+import { renameAgent } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function RenameCard() {
   const { name, isBusy } = useSelectedAgent();
@@ -41,7 +42,7 @@ export function RenameCard() {
     setSubmitting(true);
     setError(null);
     try {
-      const finalName = await renameAgent(name, trimmed);
+      const finalName = await renameAgent(httpClient, name, trimmed);
       setOpen(false);
       await navigate(`/agent/${encodeURIComponent(finalName)}/settings`);
     } catch (e: unknown) {

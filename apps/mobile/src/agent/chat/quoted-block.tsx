@@ -1,10 +1,5 @@
 import type { ReactNode } from "react";
-import {
-  StyleSheet,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 // One owner for the quoted-block frame: the composer's reply preview and the

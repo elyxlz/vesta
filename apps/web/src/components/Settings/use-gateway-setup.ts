@@ -1,35 +1,27 @@
-import { useEffect, useState } from "react";
 import {
   fetchGatewayInfo,
   fetchGatewaySettings,
-  type GatewayInfo,
+  type GatewayEndpointInfo,
   type GatewaySettings,
-} from "@/api/gateway";
+} from "@vesta/core";
+import { useResource } from "@vesta/core/react";
+import { httpClient } from "@/api/client";
 
 export interface GatewaySetup {
-  info: GatewayInfo;
+  info: GatewayEndpointInfo;
   settings: GatewaySettings;
 }
 
-// One-shot read of the daemon's setup for the read-only Gateway "Setup" section.
-// Mirrors useAgentDefaults: `undefined` until both fetches resolve; the section
-// renders nothing until then rather than flashing partial state.
+const loadSetup = async (): Promise<GatewaySetup> => {
+  const [info, settings] = await Promise.all([
+    fetchGatewayInfo(httpClient),
+    fetchGatewaySettings(httpClient),
+  ]);
+  return { info, settings };
+};
+
+// One-shot read of the daemon's setup for the read-only Gateway "Setup" section: `undefined` until
+// both fetches resolve, and stays hidden when they fail.
 export function useGatewaySetup(): GatewaySetup | undefined {
-  const [setup, setSetup] = useState<GatewaySetup | undefined>(undefined);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([fetchGatewayInfo(), fetchGatewaySettings()])
-      .then(([info, settings]) => {
-        if (!cancelled) setSetup({ info, settings });
-      })
-      .catch(() => {
-        /* noop: the section stays hidden when the fetch fails */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return setup;
+  return useResource("setup", loadSetup).data ?? undefined;
 }

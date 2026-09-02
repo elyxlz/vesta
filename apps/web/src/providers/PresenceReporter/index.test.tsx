@@ -6,7 +6,7 @@ import { fakeController, fakeTree } from "@/test/fake-controller";
 import { PresenceReporter } from "./index";
 
 const focus = vi.hoisted(() => ({ value: true }));
-vi.mock("@/hooks/use-window-focus", () => ({
+vi.mock("./use-window-focus", () => ({
   useWindowFocus: () => focus.value,
 }));
 
@@ -84,13 +84,15 @@ describe("PresenceReporter", () => {
   });
 
   // A blurred window is viewing no one and reads no context; only focus itself is reported.
-  it("reports unfocused and no viewed agent while blurred, and reads no context", () => {
+  // The open page is still reported while blurred (the socket masks it to null on the wire);
+  // only the context read waits for focus.
+  it("reports unfocused and the open page while blurred, and reads no context", () => {
     focus.value = false;
     const fake = fakeController(fakeTree());
     mount(fake);
 
     expect(fake.reports.presence).toHaveBeenLastCalledWith(false);
-    expect(fake.reports.viewing).toHaveBeenLastCalledWith(null);
+    expect(fake.reports.viewing).toHaveBeenLastCalledWith("ada");
     expect(fake.reports.deviceContext).not.toHaveBeenCalled();
   });
 

@@ -11,8 +11,6 @@ export function buildController(
   return createController({
     session,
     sync: {
-      setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
-      clearTimer: (handle) => clearTimeout(handle),
       clientVersion,
       clientKind: "mobile",
       device,

@@ -21,10 +21,7 @@ describe("inverted chat rows", () => {
   it("appends older pages without moving the existing latest rows", () => {
     const initialRows = createInvertedChatRows(events, false);
     const paginatedRows = createInvertedChatRows(
-      [
-        { type: "chat", text: "older", ts: "2026-07-15T09:59:59Z" },
-        ...events,
-      ],
+      [{ type: "chat", text: "older", ts: "2026-07-15T09:59:59Z" }, ...events],
       false,
     );
 
@@ -119,15 +116,17 @@ describe("inverted chat rows", () => {
     );
 
     expect(
-      [...rows].reverse().map((row) =>
-        row.kind === "date"
-          ? (row.timestamp ?? "earlier")
-          : row.kind === "event"
-            ? row.event.type === "chat"
-              ? row.event.text
-              : row.event.type
-            : row.kind,
-      ),
+      [...rows]
+        .reverse()
+        .map((row) =>
+          row.kind === "date"
+            ? (row.timestamp ?? "earlier")
+            : row.kind === "event"
+              ? row.event.type === "chat"
+                ? row.event.text
+                : row.event.type
+              : row.kind,
+        ),
     ).toEqual([
       "earlier",
       "legacy without embedded timestamp",

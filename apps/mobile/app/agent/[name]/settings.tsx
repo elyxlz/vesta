@@ -10,7 +10,7 @@ import {
   restartAgent,
   startAgent,
   stopAgent,
-} from "@/api/endpoints";
+} from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { sectionTitle } from "@/agent/settings/sections-model";
 import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";

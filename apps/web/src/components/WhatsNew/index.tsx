@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useResource } from "@vesta/core/react";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -61,36 +62,31 @@ export function WhatsNewDialog() {
     },
     [setDialogOpen],
   );
-  const [notes, setNotes] = useState<ReleaseNote[] | null>(null);
-  const [failed, setFailed] = useState(false);
-
+  // The auto-open already carries the visible notes; a manual open fetches them once per
+  // gateway version. fetchReleaseNotes answers null on failure rather than throwing.
+  const [autoNotes, setAutoNotes] = useState<ReleaseNote[] | null>(null);
   const handleAutoOpen = useCallback(
     (visible: ReleaseNote[]) => {
-      setNotes(visible);
+      setAutoNotes(visible);
       setOpen(true);
     },
     [setOpen],
   );
   useWhatsNewAutoOpen(handleAutoOpen);
 
-  useEffect(() => {
-    if (!open || notes !== null) return;
-    let cancelled = false;
-    void fetchReleaseNotes().then((fetched) => {
-      if (cancelled) return;
-      setFailed(fetched === null);
-      if (fetched === null) return;
-      setNotes(
-        filterReleaseNotes(fetched, {
+  const fetched = useResource(
+    open && autoNotes === null ? gatewayVersion : null,
+    () => fetchReleaseNotes(),
+  );
+  const notes =
+    autoNotes ??
+    (fetched.data
+      ? filterReleaseNotes(fetched.data, {
           version: gatewayVersion,
           channel: gatewayChannel,
-        }),
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, notes, gatewayVersion, gatewayChannel]);
+        })
+      : null);
+  const failed = open && !fetched.loading && notes === null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

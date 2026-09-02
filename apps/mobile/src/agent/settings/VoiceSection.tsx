@@ -5,8 +5,8 @@ import {
   fetchVoiceStatus,
   setVoiceEnabled,
   setVoiceSetting,
-} from "@/api/endpoints";
-import type { SettingDef, VoiceStatus } from "@/api/types";
+} from "@vesta/core";
+import type { SettingDef, VoiceStatus } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";

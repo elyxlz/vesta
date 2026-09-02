@@ -4,7 +4,6 @@ import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { errorMessage, loadFailure } from "@/lib/utils";
-import { fetchFileTree, writeFile } from "@/api/files";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useFillHeight } from "@/hooks/use-fill-height";
@@ -18,6 +17,8 @@ import {
   DrillInContainer,
   MOBILE_BOTTOM_GAP,
 } from "./editor-panels";
+import { fetchFileTree, writeFile } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function FilesTab() {
   const { name: agentName, agent } = useSelectedAgent();
@@ -27,9 +28,8 @@ export function FilesTab() {
   // down to the viewport bottom.
   const { ref: fillRef, height: fillHeight } = useFillHeight(MOBILE_BOTTOM_GAP);
 
-  const tree = useResource(
-    agentName && isAlive ? agentName : null,
-    fetchFileTree,
+  const tree = useResource(agentName && isAlive ? agentName : null, (key) =>
+    fetchFileTree(httpClient, key),
   );
   const entries = tree.data;
   const treeError = loadFailure(tree.error, "failed to load files");
@@ -85,7 +85,7 @@ export function FilesTab() {
     if (!agentName || !loadedFile || !dirty || loadedFile.readonly) return;
     setStatus({ kind: "saving" });
     try {
-      await writeFile(agentName, loadedFile.path, editorContent);
+      await writeFile(httpClient, agentName, loadedFile.path, editorContent);
       setLoadedFile({ ...loadedFile, content: editorContent });
       setStatus({ kind: "saved" });
       markRestartPending(agentName, "files", agent.startedAt);

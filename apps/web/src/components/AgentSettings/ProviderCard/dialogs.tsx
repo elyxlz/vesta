@@ -22,12 +22,13 @@ import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
 import { planContextOptions } from "@/components/ProviderPicker/context-plan";
 import { providerModelOptions } from "@/components/ProviderPicker/model-options";
-import type { ProviderInfo } from "@/api/agents";
-import { contextForModel, type ProviderCatalog } from "@/api/catalogs";
-import {
-  fetchTopModels,
-  type OpenRouterModelOption,
-} from "@/api/providers/openrouter";
+import { contextForModel, fetchOpenRouterModels } from "@vesta/core";
+import type {
+  OpenRouterModelOption,
+  ProviderCatalog,
+  ProviderInfo,
+} from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function ModelDialog({
   agentName,
@@ -53,7 +54,7 @@ export function ModelDialog({
   const isClaude = provider.kind === "claude";
   const configuredKind = provider.kind === "none" ? null : provider.kind;
   const loadOpenRouterModels = useCallback(
-    () => fetchTopModels(agentName),
+    () => fetchOpenRouterModels(httpClient, agentName),
     [agentName],
   );
   const fixedModels = providerModelOptions(

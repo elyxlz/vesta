@@ -2,13 +2,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { FileReadResponse, FileTreeEntry } from "@/api/files";
 import { DreamsViewer } from "./DreamsViewer";
 import type { SaveStatus } from "./use-file-editor";
 import { FileEditor } from "./FileEditor";
 import { SimpleView } from "./SimpleView";
 import { CONSTITUTION_PATH } from "./paths";
 import { SimpleSkeleton, FileEditorSkeleton } from "./skeletons";
+import type { FileReadResponse, FileTreeEntry } from "@vesta/core";
 
 function statusText(status: SaveStatus, dirty: boolean): string {
   switch (status.kind) {

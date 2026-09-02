@@ -30,6 +30,8 @@ export type VestaEvent =
       text: string;
       input_method?: InputMethod;
       attachments?: ChatAttachment[];
+      // The client id of the send this row echoes; a client confirms its optimistic bubble on it.
+      intent_id?: string;
     })
   | (EventBase & { type: "assistant"; text: string })
   | (EventBase & { type: "thinking"; text: string; signature: string })

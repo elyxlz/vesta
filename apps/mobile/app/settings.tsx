@@ -9,13 +9,14 @@ import {
   triggerGatewayUpdate,
   type DeviceInfo,
   type ReleaseChannel,
+  GatewayEndpointInfo,
+  GatewaySettings,
 } from "@vesta/core";
 import {
   fetchGatewayInfo,
   fetchGatewaySettings,
   updateGatewaySettings,
-} from "@/api/endpoints";
-import type { GatewayInfo, GatewaySettings } from "@/api/types";
+} from "@vesta/core";
 import { Screen } from "@/components/layout/Screen";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
@@ -72,7 +73,7 @@ type ActiveConfirm =
   | "location-always"
   | null;
 type GatewayQueryData = {
-  info: GatewayInfo;
+  info: GatewayEndpointInfo;
   settings: GatewaySettings;
 };
 

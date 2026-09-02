@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { BackupInfo } from "@/api/types";
-import {
-  backupTimeline,
-  deletePrompt,
-  restorePrompt,
-} from "./backups-model";
+import type { BackupInfo } from "@vesta/core";
+import { backupTimeline, deletePrompt, restorePrompt } from "./backups-model";
 
 const BASE: BackupInfo = {
   id: "snap-1",
@@ -43,10 +39,8 @@ describe("backupTimeline", () => {
       "Safety",
     );
     expect(
-      pointOf(
-        { backup_type: "pre_update", from_version: "v0.1.1" },
-        "0.1.2",
-      ).label,
+      pointOf({ backup_type: "pre_update", from_version: "v0.1.1" }, "0.1.2")
+        .label,
     ).toBe("Before update v0.1.1");
   });
 

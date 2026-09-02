@@ -32,8 +32,6 @@ export interface VoiceSessionDeps {
   createSocket?: (url: string) => VoiceSocketLike;
   capture: AudioCapture;
   player: SpeechPlayer;
-  setTimer: (fn: () => void, ms: number) => number;
-  clearTimer: (handle: number) => void;
 }
 
 export interface VoiceSessionCallbacks {
@@ -75,7 +73,7 @@ export function createVoiceSession(
 ): VoiceSession {
   let stt: SttSession | null = null;
   let mode: VoiceMode | null = null;
-  let idleTimer: number | null = null;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
   // The user's live turn while a conversation yields: replies land in `held` instead of the
   // speaker, and the change is reported so the client can mirror it to the agent.
   let userTurn = false;
@@ -94,7 +92,7 @@ export function createVoiceSession(
 
   const clearIdleTimer = (): void => {
     if (idleTimer !== null) {
-      deps.clearTimer(idleTimer);
+      clearTimeout(idleTimer);
       idleTimer = null;
     }
   };
@@ -132,7 +130,7 @@ export function createVoiceSession(
       const { inactivityMs } = settings();
       if (!conversation || !inactivityMs) return;
       clearIdleTimer();
-      idleTimer = deps.setTimer(() => {
+      idleTimer = setTimeout(() => {
         idleTimer = null;
         end(false);
         callbacks.onInactivityStop();

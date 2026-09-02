@@ -13,7 +13,7 @@ import type {
   ProviderCatalog,
   Usage,
   VoiceStatus,
-} from "../../src/api/types";
+} from "@vesta/core";
 import {
   SessionProvider as ProductionSessionProvider,
   useSession as useProductionSession,

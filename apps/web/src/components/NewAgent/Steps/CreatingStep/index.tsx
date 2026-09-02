@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Orb } from "@/components/Orb";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { fade, instant } from "@/lib/motion";
-import { buildPhaseMessage } from "@/api/agents";
+import { buildPhaseMessage } from "@/components/NewAgent/build-phase";
 
 // One body for the whole birth: the same mounted orb works (busy), dims on a
 // failure (off), and wakes up (alive). On a failure the orb is joined by a

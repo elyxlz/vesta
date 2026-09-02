@@ -5,7 +5,6 @@ import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
-import { useWindowFocus } from "@/hooks/use-window-focus";
 import { NotificationContext } from "./context";
 
 const PREVIEW_MAX = 100;
@@ -56,16 +55,10 @@ export function NotificationProvider({
   onOpenAgent: (agentName: string) => void;
 }) {
   // Null before the controller exists; every hook below answers the null with its idle value, so
-  // the provider's hook order never depends on the connection.
+  // the provider's hook order never depends on the connection. Focus, the viewed agent, and the
+  // fleet-wide focus flag are all read from the controller at call time: one owner, no mirror.
   const controller = useOptionalController();
-  const focused = useWindowFocus();
-  const focusedRef = useRef(focused);
-  useEffect(() => {
-    focusedRef.current = focused;
-  }, [focused]);
-
   const permissionRef = useRef<boolean>(false);
-  const chattingAgentRef = useRef<string | null>(null);
 
   useEffect(() => {
     const onVisible = () => {
@@ -89,11 +82,17 @@ export function NotificationProvider({
     setFaviconUnseen(true);
   }, []);
 
-  // Muted while this window or any client anywhere is focused (vestad broadcasts the global flag,
-  // read from the controller at call time).
+  // Muted while this window or any client anywhere is focused (vestad broadcasts the global flag).
+  const anyoneFocused = useCallback(
+    () =>
+      (controller?.getFocused() ?? false) ||
+      (controller?.getAnyFocused() ?? false),
+    [controller],
+  );
+
   const notifyAssistant = useCallback(
     (agentName: string, text: string) => {
-      if (focusedRef.current || (controller?.getAnyFocused() ?? false)) return;
+      if (anyoneFocused()) return;
       if (!permissionRef.current) return;
       const body = text.trim();
       if (!body) return;
@@ -116,7 +115,7 @@ export function NotificationProvider({
         /* ignore */
       }
     },
-    [controller, onOpenAgent],
+    [anyoneFocused, onOpenAgent],
   );
 
   // Unlike chat previews, a needs-user alert (set up, sign in, rate limited) fires even while
@@ -145,7 +144,7 @@ export function NotificationProvider({
   // same focus mute as a chat preview and opens nothing: there is no agent behind it.
   const notifyGateway = useCallback(
     (title: string, text: string) => {
-      if (focusedRef.current || (controller?.getAnyFocused() ?? false)) return;
+      if (anyoneFocused()) return;
       if (!permissionRef.current) return;
       try {
         new Notification(title, { body: truncate(text), tag: "gateway" });
@@ -153,12 +152,8 @@ export function NotificationProvider({
         /* ignore */
       }
     },
-    [controller],
+    [anyoneFocused],
   );
-
-  const setChattingAgent = useCallback((agentName: string | null) => {
-    chattingAgentRef.current = agentName;
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,7 +168,7 @@ export function NotificationProvider({
   // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display triple:
   // kind/title/body), independent of any subscription. A needs-user alert (set up, sign in, rate
   // limited) toasts even while focused, since the chat surface shows nothing for it; a chat lights
-  // the unseen badge and toasts, deferring the actively-chatted agent to AgentSocketProvider (which
+  // the unseen badge and toasts, deferring the agent whose page is open to AgentSocketProvider (which
   // fires after the typing delay so it lines up with the visible bubble).
   useEffect(() => {
     if (!controller) return;
@@ -193,7 +188,7 @@ export function NotificationProvider({
         return;
       }
       markUnseen();
-      if (chattingAgentRef.current === agent) return;
+      if (controller.getViewing() === agent) return;
       notifyAssistant(agent, body);
     });
   }, [controller, notifyAssistant, notifyNeedsUser, notifyGateway, markUnseen]);
@@ -210,10 +205,7 @@ export function NotificationProvider({
     if (grew) markUnseen();
   }, [pendingCount, markUnseen]);
 
-  const value = useMemo(
-    () => ({ notifyAssistant, setChattingAgent }),
-    [notifyAssistant, setChattingAgent],
-  );
+  const value = useMemo(() => ({ notifyAssistant }), [notifyAssistant]);
 
   return (
     <NotificationContext.Provider value={value}>

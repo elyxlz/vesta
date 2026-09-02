@@ -1,6 +1,5 @@
 export type ConnectLinkResult =
-  | { ok: true; url: string; key: string }
-  | { ok: false; message: string };
+  { ok: true; url: string; key: string } | { ok: false; message: string };
 
 function isPrivateIpv4(hostname: string): boolean {
   const parts = hostname.split(".").map(Number);
@@ -59,8 +58,7 @@ export function parseConnectLink(input: string): ConnectLinkResult {
   if (isPrivateHost(parsed.hostname)) {
     return {
       ok: false,
-      message:
-        "Direct LAN pairing isn’t supported. Use a public HTTPS tunnel",
+      message: "Direct LAN pairing isn’t supported. Use a public HTTPS tunnel",
     };
   }
 

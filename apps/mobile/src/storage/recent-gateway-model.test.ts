@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import {
   recentGatewayId,
   removeRecentGateway,
