@@ -77,18 +77,26 @@ def test_reply_draft_escapes_body(patched):
 
 def test_quote_to_html_leaves_html_quote_untouched():
     quoted = "<div>From: A</div><div>hello</div>"
-    assert email._quote_to_html(quoted) == quoted
+    # Graph reports the read contentType lowercase; an HTML quote is returned as-is.
+    assert email._quote_to_html(quoted, "html") == quoted
+    # an HTML quote with no block-level tag (the regex sniff false-wrapped) is still left alone
+    assert email._quote_to_html("plain <b>bold</b> only", "html") == "plain <b>bold</b> only"
 
 
 def test_quote_to_html_wraps_plain_text_quote_to_preserve_newlines():
     quoted = "________________________________\nFrom: A\nSent: today\n\nbody line"
-    out = email._quote_to_html(quoted)
+    out = email._quote_to_html(quoted, "text")
     assert out.startswith("<pre")
     assert "white-space:pre-wrap" in out
     # the newlines that would collapse in a bare HTML body survive inside the wrapper
     assert "\n" in out
     # markup in a plain-text quote is escaped, never injected
-    assert email._quote_to_html("From: <b>A</b>") == '<pre style="white-space:pre-wrap;font-family:inherit">From: &lt;b&gt;A&lt;/b&gt;</pre>'
+    assert (
+        email._quote_to_html("From: <b>A</b>", "text")
+        == '<pre style="white-space:pre-wrap;font-family:inherit">From: &lt;b&gt;A&lt;/b&gt;</pre>'
+    )
+    # a plain-text quote that literally contains a block tag (the regex sniff false-skipped) is still wrapped
+    assert email._quote_to_html("see <div>x</div>", "text").startswith("<pre")
 
 
 def test_reply_draft_parser_and_dispatch(monkeypatch):
