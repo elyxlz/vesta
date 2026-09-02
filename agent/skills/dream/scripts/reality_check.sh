@@ -4,12 +4,16 @@
 # one OK/RED line per probe and exits 1 if anything is RED. Probes read only fleet-generic state
 # (daemon records, logs, disk, the events DB, the notifications dir), so a RED is real on any box.
 
-# Disk-probe knobs: RED once this agent's own files could plausibly fill a disk, note the host's
-# percentage as context past the note threshold, and bound the du walk so a pathological tree or a
-# stuck filesystem can never hang the dream that runs this probe.
+# Disk knobs: own usage is RED only while the host is also at the pressure percent, the host alone
+# is RED at the RED percent, and the du walk is bounded so a stuck filesystem cannot hang the dream.
 OWN_USAGE_RED_MB=20000
-HOST_DISK_NOTE_PERCENT=90
+HOST_DISK_PRESSURE_PERCENT=85
+HOST_DISK_RED_PERCENT=97
 DU_TIMEOUT_SECS=120
+# A nightly cadence is 24h and a missed night reads as 48h, so the lapse bound sits between them.
+DREAM_LAPSE_HOURS=30
+# One or two refused turns are a transient the next turn absorbs; three in a day is a window binding.
+REFUSED_TURNS_RED=3
 
 red=0
 ok() { printf 'OK  %s\n' "$1"; }
@@ -31,35 +35,60 @@ for pid_file in "$HOME"/agent/data/daemons/*.pid; do
     fi
 done
 
-# Disk: a full disk fails writes quietly all over the box, never loudly in one place. On a shared
-# host the filesystem under $HOME is the host's, so its percentage is mostly other tenants and no
-# amount of cleanup here moves it. RED only on what this agent can actually act on, and report the
-# host figure as context, so the probe never hands you a RED you cannot clear.
+# Disk: a full disk fails writes quietly all over the box. The filesystem under $HOME is the host's,
+# so its percentage is mostly other tenants: own usage is a RED to clear here only under host
+# pressure, the host alone is a RED to escalate once writes are about to fail, reported separately.
 usage=$(df -P "$HOME" | awk 'NR==2 {gsub("%","",$5); print $5}')
 du_lines=$(timeout "$DU_TIMEOUT_SECS" du -sm "$HOME" /tmp 2>/dev/null)
 du_status=$?
 mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
 if [ "$du_status" -eq 124 ]; then
     bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
+elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ] && [ "${usage:-0}" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; then
+    bad "disk at ${usage}% and this agent holds ${mine}MB of it: clean up tonight (workspace cleanup)"
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
-    bad "this agent is using ${mine}MB across \$HOME and /tmp: clean up tonight (workspace cleanup)"
-elif [ "${usage:-0}" -ge "$HOST_DISK_NOTE_PERCENT" ]; then
-    ok "disk at ${usage}% but only ${mine}MB is this agent's; the rest is the host, not yours to clear"
+    ok "this agent holds ${mine}MB, but the disk is only at ${usage:-unknown}%: size without pressure, nothing to clear"
+fi
+if [ "${usage:-0}" -ge "$HOST_DISK_RED_PERCENT" ]; then
+    bad "host disk at ${usage}%, ${mine}MB of it this agent's: cleanup here cannot fix it, tell the user tonight; writes will start failing across the box"
+elif [ "${usage:-0}" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; then
+    ok "host disk at ${usage}%, ${mine}MB of it this agent's; the rest is the host, not yours to clear"
 else
-    ok "disk at ${usage:-unknown}%, ${mine}MB of it this agent's"
+    ok "host disk at ${usage:-unknown}%, ${mine}MB of it this agent's"
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.
+# Only lines dated today or yesterday count (an undated line takes the date of the line above it),
+# a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
+# the file's colour codes are stripped first so a dated line is seen as dated.
+today=$(date +%F)
+yesterday=$(date -d yesterday +%F)
+esc=$(printf '\033')
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | grep -icE 'error|traceback')
+    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+        BEGIN { recent = 1 }
+        /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
+        { low = tolower($0) }
+        recent && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
+        | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
-        bad "$(basename "$log"): $errors error lines in its recent tail; read it and find the producer"
+        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
     else
-        ok "$(basename "$log"): $errors error lines in its recent tail"
+        ok "$(basename "$log"): $errors error lines in the last 2 days"
     fi
 done
+
+# Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
+# a turn that ran and chose silence still reads its cache. That usage line is the one trace every
+# refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
+refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
+    bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
+else
+    ok "the provider refused $refused turns today"
+fi
 
 # Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between
 # checkpoints the recent commits touch only the -wal sibling; judge by the newest of the pair.
@@ -79,6 +108,17 @@ if mkdir -p "$notif" 2>/dev/null && touch "$notif/.reality_check" 2>/dev/null; t
     ok "notifications dir is writable"
 else
     bad "notifications dir is not writable: every producer is silently mute"
+fi
+
+# Dream cadence: every dream writes a summary, so no summary newer than the lapse bound means a night
+# was missed; a box with no summaries yet has no cadence to break.
+dreamer="$HOME/agent/dreamer"
+if [ -z "$(find "$dreamer" -name '*.md' 2>/dev/null)" ]; then
+    ok "no dreamer summaries yet, so there is no cadence to have broken"
+elif [ -n "$(find "$dreamer" -name '*.md' -mmin -$((DREAM_LAPSE_HOURS * 60)) 2>/dev/null)" ]; then
+    ok "a dreamer summary was written within ${DREAM_LAPSE_HOURS}h, cadence intact"
+else
+    bad "no dreamer summary written in ${DREAM_LAPSE_HOURS}h: a night was missed"
 fi
 
 if [ "$red" -gt 0 ]; then
