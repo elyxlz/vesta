@@ -536,7 +536,7 @@ def send(req: SendRequest) -> None:
             backend="smtp",
             payload=_encode_pending_payload(msg, req, user),
         )
-        print(json.dumps(queued.public(), indent=2))
+        print(json.dumps(queued.public()))
         return
 
     _smtp_deliver(acc, profile, user, smtp_host, smtp_port, msg)

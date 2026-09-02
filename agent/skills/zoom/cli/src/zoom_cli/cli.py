@@ -55,7 +55,7 @@ def main():
         else:
             parser.print_help()
             return
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result))
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)

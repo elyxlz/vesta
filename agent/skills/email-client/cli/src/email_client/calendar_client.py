@@ -237,7 +237,7 @@ def _master_vevent(vcal: ics.Component, uid: str) -> ics.Component:
 def cmd_list_calendars(args) -> None:
     ctx = caldav_client.caldav_account(args.account)
     out = [{"id": info.id, "summary": info.name, "primary": info.primary} for info in caldav_client.list_calendars(ctx)]
-    print(json.dumps(out, indent=2, ensure_ascii=False))
+    print(json.dumps(out, ensure_ascii=False))
 
 
 def cmd_list(args) -> None:
@@ -256,7 +256,7 @@ def cmd_list(args) -> None:
             degraded.append({"id": uid_match.group(1).strip() if uid_match else None, "parse_error": str(e)})
     occurrences.sort(key=lambda pair: ics.as_utc(pair[0].start))
     entries = [_summary_json(occ, tzmap) for occ, tzmap in occurrences]
-    print(json.dumps(entries + degraded, indent=2, ensure_ascii=False))
+    print(json.dumps(entries + degraded, ensure_ascii=False))
 
 
 def cmd_get(args) -> None:
@@ -265,7 +265,7 @@ def cmd_get(args) -> None:
     vcal = ics.parse_calendar(text)
     result = _detail_json(_master_vevent(vcal, args.id), ics.timezone_map(vcal))
     result["ics_href"] = url
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    print(json.dumps(result, ensure_ascii=False))
 
 
 def _split_attendees(raw: list[str] | None) -> list[str]:
@@ -330,7 +330,7 @@ def cmd_create(args) -> None:
         content_type="text/calendar; charset=utf-8",
         extra_headers={"If-None-Match": "*"},
     )
-    print(json.dumps({"status": "created", "id": uid, "calendar": args.calendar}, indent=2))
+    print(json.dumps({"status": "created", "id": uid, "calendar": args.calendar}))
 
 
 def cmd_update(args) -> None:
@@ -366,7 +366,7 @@ def cmd_update(args) -> None:
     _touch(vevent)
 
     caldav_client.request(ctx, "PUT", url, body=ics.serialize(vcal), content_type="text/calendar; charset=utf-8", extra_headers=_if_match(etag))
-    print(json.dumps({"status": "updated", "id": args.id, "calendar": args.calendar}, indent=2))
+    print(json.dumps({"status": "updated", "id": args.id, "calendar": args.calendar}))
 
 
 def _cancel_occurrence(ctx: caldav_client.CalDavAccount, args, url: str, text: str, etag: str | None) -> None:
@@ -401,7 +401,7 @@ def _cancel_occurrence(ctx: caldav_client.CalDavAccount, args, url: str, text: s
     vevent.props.append(exdate)
     _touch(vevent)
     caldav_client.request(ctx, "PUT", url, body=ics.serialize(vcal), content_type="text/calendar; charset=utf-8", extra_headers=_if_match(etag))
-    print(json.dumps({"status": "occurrence-cancelled", "id": args.id, "occurrence": args.occurrence}, indent=2))
+    print(json.dumps({"status": "occurrence-cancelled", "id": args.id, "occurrence": args.occurrence}))
 
 
 def cmd_delete(args) -> None:
@@ -411,7 +411,7 @@ def cmd_delete(args) -> None:
         _cancel_occurrence(ctx, args, url, text, etag)
         return
     caldav_client.request(ctx, "DELETE", url)
-    print(json.dumps({"status": "deleted", "id": args.id}, indent=2))
+    print(json.dumps({"status": "deleted", "id": args.id}))
 
 
 def cmd_respond(args) -> None:
@@ -436,7 +436,7 @@ def cmd_respond(args) -> None:
     ics.set_prop(vevent, "DTSTAMP", ics.format_utc(dt.datetime.now(dt.UTC)))
 
     caldav_client.request(ctx, "PUT", url, body=ics.serialize(vcal), content_type="text/calendar; charset=utf-8", extra_headers=_if_match(etag))
-    print(json.dumps({"status": PARTSTAT_TO_RESPONSE[partstat], "id": args.id}, indent=2))
+    print(json.dumps({"status": PARTSTAT_TO_RESPONSE[partstat], "id": args.id}))
 
 
 # -- parser + dispatch ---------------------------------------------------------

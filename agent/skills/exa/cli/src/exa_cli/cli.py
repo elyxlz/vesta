@@ -99,7 +99,7 @@ def auth_setup(api_key: str) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps({"api_key": api_key}, indent=2))
     CONFIG_FILE.chmod(0o600)
-    print(json.dumps({"status": "ok", "config_file": str(CONFIG_FILE)}, indent=2))
+    print(json.dumps({"status": "ok", "config_file": str(CONFIG_FILE)}))
 
 
 def auth_status() -> None:
@@ -119,13 +119,12 @@ def auth_status() -> None:
                     "status": "unauthenticated",
                     "hint": "run `exa auth setup --api-key <key>`",
                 },
-                indent=2,
             )
         )
         sys.exit(1)
 
     masked = key[:6] + "..." + key[-4:] if len(key) > 12 else "***"
-    print(json.dumps({"status": "authenticated", "source": source, "key": masked}, indent=2))
+    print(json.dumps({"status": "authenticated", "source": source, "key": masked}))
 
 
 # --------------------------------------------------------------------------- #
@@ -213,7 +212,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     if contents:
         body["contents"] = contents
     data = _post("/search", body)
-    print(json.dumps(data, indent=2))
+    print(json.dumps(data))
 
 
 def cmd_answer(args: argparse.Namespace) -> None:
@@ -221,7 +220,7 @@ def cmd_answer(args: argparse.Namespace) -> None:
     if args.text:
         body["text"] = True
     data = _post("/answer", body)
-    print(json.dumps(data, indent=2))
+    print(json.dumps(data))
 
 
 def cmd_similar(args: argparse.Namespace) -> None:
@@ -236,7 +235,7 @@ def cmd_similar(args: argparse.Namespace) -> None:
     if contents:
         body["contents"] = contents
     data = _post("/findSimilar", body)
-    print(json.dumps(data, indent=2))
+    print(json.dumps(data))
 
 
 def cmd_contents(args: argparse.Namespace) -> None:
@@ -251,7 +250,7 @@ def cmd_contents(args: argparse.Namespace) -> None:
     if not any(k in body for k in ("text", "highlights", "summary")):
         body["text"] = True
     data = _post("/contents", body)
-    print(json.dumps(data, indent=2))
+    print(json.dumps(data))
 
 
 def cmd_research(args: argparse.Namespace) -> None:
@@ -260,14 +259,14 @@ def cmd_research(args: argparse.Namespace) -> None:
     task_id = data.get("researchId") or data.get("id")
 
     if not args.wait:
-        print(json.dumps(data, indent=2))
+        print(json.dumps(data))
         if task_id:
             print(f"\nPoll with: exa research status {task_id}", file=sys.stderr)
         return
 
     if not task_id:
         print("No researchId returned; cannot poll.", file=sys.stderr)
-        print(json.dumps(data, indent=2))
+        print(json.dumps(data))
         sys.exit(1)
 
     deadline = time.time() + RESEARCH_MAX_WAIT
@@ -279,7 +278,7 @@ def cmd_research(args: argparse.Namespace) -> None:
             print(f"[research {task_id}] status={status}", file=sys.stderr)
             last_status = status
         if status in ("completed", "failed", "canceled"):
-            print(json.dumps(status_data, indent=2))
+            print(json.dumps(status_data))
             if status != "completed":
                 sys.exit(2)
             return
@@ -291,7 +290,7 @@ def cmd_research(args: argparse.Namespace) -> None:
 
 def cmd_research_status(args: argparse.Namespace) -> None:
     data = _get(f"/research/v1/{args.id}")
-    print(json.dumps(data, indent=2))
+    print(json.dumps(data))
 
 
 # --------------------------------------------------------------------------- #

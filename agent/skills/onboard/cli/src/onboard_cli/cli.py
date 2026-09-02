@@ -33,12 +33,12 @@ from .config import LINKS, PLAN, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    print(json.dumps(payload, ensure_ascii=False))
 
 
 def _fail(payload: dict[str, Any], code: int) -> int:
     """The one failure printer: the payload goes to stderr so stdout carries only success output."""
-    print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
+    print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
     return code
 
 

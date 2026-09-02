@@ -56,7 +56,7 @@ def _data_dir() -> pl.Path:
 
 
 def _print(config: vc.VoiceConfig) -> None:
-    print(json.dumps(config, indent=2))
+    print(json.dumps(config))
 
 
 def cmd_status(_args: argparse.Namespace) -> int:

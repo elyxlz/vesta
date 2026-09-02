@@ -13,7 +13,7 @@ from .client import SplitSpec, TricountClient
 
 
 def _out(data: object) -> None:
-    print(json.dumps(data, indent=2, ensure_ascii=False))
+    print(json.dumps(data, ensure_ascii=False))
 
 
 def _err(msg: str) -> NoReturn:

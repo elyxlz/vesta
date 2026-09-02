@@ -46,4 +46,4 @@ def status_cmd() -> None:
         "vestad_tunnel": os.environ["VESTAD_TUNNEL"] if "VESTAD_TUNNEL" in os.environ else "",
         "last_inbound": last,
     }
-    click.echo(json.dumps(out, indent=2))
+    click.echo(json.dumps(out))
