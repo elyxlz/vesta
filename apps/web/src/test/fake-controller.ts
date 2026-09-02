@@ -97,6 +97,12 @@ export function fakeController(
     viewing: vi.fn<(agent: string | null) => void>(),
     deviceContext: vi.fn<(context: DeviceContext) => void>(),
   };
+  // The reported facts, held as the real controller holds them, so a provider reading focus or
+  // the viewed agent at call time sees what the test reported.
+  let focused = false;
+  let viewing: string | null = null;
+  const focusListeners = new Set<() => void>();
+  const viewingListeners = new Set<() => void>();
   // A session over a fixed connection: its own http client is never dialed, the stubbed one is.
   const session = createSession({
     fetch: () => Promise.reject(new Error("fake session never fetches")),
@@ -121,9 +127,27 @@ export function fakeController(
       syncListeners.add(listener);
       return () => syncListeners.delete(listener);
     },
-    reportPresence: reports.presence,
-    reportViewing: reports.viewing,
+    reportPresence: (next) => {
+      focused = next;
+      reports.presence(next);
+      for (const listener of focusListeners) listener();
+    },
+    reportViewing: (agent) => {
+      viewing = agent;
+      reports.viewing(agent);
+      for (const listener of viewingListeners) listener();
+    },
     reportDeviceContext: reports.deviceContext,
+    getFocused: () => focused,
+    subscribeFocused: (listener) => {
+      focusListeners.add(listener);
+      return () => focusListeners.delete(listener);
+    },
+    getViewing: () => viewing,
+    subscribeViewing: (listener) => {
+      viewingListeners.add(listener);
+      return () => viewingListeners.delete(listener);
+    },
     getAnyFocused: () => opts.anyFocused ?? false,
     subscribeAnyFocused: () => () => undefined,
     close: () => undefined,

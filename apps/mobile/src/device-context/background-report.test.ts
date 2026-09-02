@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import {
   BACKGROUND_REPORT_MIN_INTERVAL_MINUTES,
   DEVICE_CONTEXT_TASK,

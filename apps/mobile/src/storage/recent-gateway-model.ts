@@ -1,4 +1,4 @@
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 
 export interface RecentGateway {
   id: string;

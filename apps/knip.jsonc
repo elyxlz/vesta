@@ -8,21 +8,14 @@
     "core": {
       "project": ["src/**/*.ts", "src/**/*.tsx"],
       // A name on the @vesta/core barrel must have a consumer in web, mobile, or desktop.
-      "includeEntryExports": true,
+      "includeEntryExports": true
     },
     "web": {
       "entry": ["visual/**/*.ts"],
-      "project": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
-        "src/**/*.css",
-        "visual/**/*.ts",
-      ],
+      "project": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.css", "visual/**/*.ts"],
       "ignore": [
         // The shadcn registry ships whole for the dashboard skill, so web never renders all of it.
-        "src/components/ui/**",
-        // LEGACY(remove-when: the gateway REST catalog lives in apps/core/src/api): the web
-        // api layer is being moved into core on another branch; its dead names go with it.
+        "src/components/ui/**"
       ],
       // Consumed only by the ignored registry.
       "ignoreDependencies": [
@@ -30,14 +23,14 @@
         "cmdk",
         "embla-carousel-react",
         "input-otp",
-        "recharts",
-      ],
+        "recharts"
+      ]
     },
     "desktop": {
       "entry": ["src/preload.ts"],
       "project": ["src/**/*.ts"],
       // make-icons.py runs under uv, installed on the developer's machine, never a package.
-      "ignoreBinaries": ["uv"],
+      "ignoreBinaries": ["uv"]
     },
     "mobile": {
       "entry": ["visual/**/*.ts", "visual/**/*.tsx"],
@@ -46,11 +39,11 @@
         "src/**/*.tsx",
         "app/**/*.tsx",
         "visual/**/*.ts",
-        "visual/**/*.tsx",
-      ],
+        "visual/**/*.tsx"
+      ]
     },
     "visual": {
-      "project": ["src/**/*.ts", "src/**/*.tsx"],
-    },
-  },
+      "project": ["src/**/*.ts", "src/**/*.tsx"]
+    }
+  }
 }

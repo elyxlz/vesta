@@ -30,9 +30,39 @@ export interface Controller {
   reportPresence: (focused: boolean) => void;
   reportViewing: (agent: string | null) => void;
   reportDeviceContext: (context: DeviceContext) => void;
+  // What this client last reported about itself: whether its window is focused, and the agent
+  // whose page is open (null on the roster). One owner, so every consumer reads the same fact the
+  // gateway was told; the socket masks viewing to null on the wire while unfocused.
+  getFocused: () => boolean;
+  subscribeFocused: (listener: () => void) => () => void;
+  getViewing: () => string | null;
+  subscribeViewing: (listener: () => void) => () => void;
   getAnyFocused: () => boolean;
   subscribeAnyFocused: (listener: () => void) => () => void;
   close: () => void;
+}
+
+function createCell<T>(initial: T): {
+  get: () => T;
+  set: (next: T) => void;
+  subscribe: (listener: () => void) => () => void;
+} {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next) => {
+      if (Object.is(value, next)) return;
+      value = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
 }
 
 // The single client-side orchestrator: one replica, one sync socket feeding it, the session's one
@@ -42,19 +72,11 @@ export interface Controller {
 // Mobile constructs the same controller with its own adapters.
 export function createController(deps: ControllerDeps): Controller {
   const replica = createReplica();
-
-  let syncState: SyncState = "connecting";
-  const stateListeners = new Set<() => void>();
+  const syncState = createCell<SyncState>("connecting");
+  const anyFocused = createCell(false);
+  const focused = createCell(false);
+  const viewing = createCell<string | null>(null);
   const deltaListeners = new Set<(delta: Delta) => void>();
-  const emitState = (): void => {
-    for (const listener of stateListeners) listener();
-  };
-
-  let anyFocused = false;
-  const anyFocusedListeners = new Set<() => void>();
-  const emitAnyFocused = (): void => {
-    for (const listener of anyFocusedListeners) listener();
-  };
 
   const socket = createSyncSocket(
     { ...deps.sync, buildUrl: () => deps.session.websocketUrl("/sync") },
@@ -65,28 +87,22 @@ export function createController(deps: ControllerDeps): Controller {
       onDelta: (delta) => {
         replica.applyDelta(delta);
         for (const listener of deltaListeners) listener(delta);
-        if (delta.type === "presence") {
-          anyFocused = delta.anyFocused;
-          emitAnyFocused();
-        }
+        if (delta.type === "presence") anyFocused.set(delta.anyFocused);
       },
-      onStateChange: (state) => {
-        syncState = state;
-        emitState();
-      },
+      onStateChange: syncState.set,
     },
   );
 
   // Also at once, not just every poll: a session restored with an already-expired token would
   // otherwise keep retrying /sync with it for a whole interval.
-  let reauthTimer: number | null = null;
+  let reauthTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   const reauthTick = (): void => {
     void runReauthCheck(deps.session, (token) => {
       socket.reauth(token);
     }).then(() => {
       if (closed) return;
-      reauthTimer = deps.sync.setTimer(reauthTick, REAUTH_POLL_MS);
+      reauthTimer = setTimeout(reauthTick, REAUTH_POLL_MS);
     });
   };
   reauthTick();
@@ -101,32 +117,28 @@ export function createController(deps: ControllerDeps): Controller {
         deltaListeners.delete(listener);
       };
     },
-    getSyncState: () => syncState,
-    subscribeSyncState: (listener) => {
-      stateListeners.add(listener);
-      return () => {
-        stateListeners.delete(listener);
-      };
-    },
-    reportPresence: (focused) => {
-      socket.reportPresence(focused);
+    getSyncState: syncState.get,
+    subscribeSyncState: syncState.subscribe,
+    reportPresence: (next) => {
+      focused.set(next);
+      socket.reportPresence(next);
     },
     reportViewing: (agent) => {
+      viewing.set(agent);
       socket.reportViewing(agent);
     },
     reportDeviceContext: (context) => {
       socket.reportDeviceContext(context);
     },
-    getAnyFocused: () => anyFocused,
-    subscribeAnyFocused: (listener) => {
-      anyFocusedListeners.add(listener);
-      return () => {
-        anyFocusedListeners.delete(listener);
-      };
-    },
+    getFocused: focused.get,
+    subscribeFocused: focused.subscribe,
+    getViewing: viewing.get,
+    subscribeViewing: viewing.subscribe,
+    getAnyFocused: anyFocused.get,
+    subscribeAnyFocused: anyFocused.subscribe,
     close: () => {
       closed = true;
-      if (reauthTimer !== null) deps.sync.clearTimer(reauthTimer);
+      if (reauthTimer !== null) clearTimeout(reauthTimer);
       socket.close();
     },
   };

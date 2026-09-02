@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type HttpClient } from "../transport/http";
 import {
@@ -57,9 +57,15 @@ function scriptedHttp() {
   return { http, next };
 }
 
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 function harness(online = true) {
-  const timers = new Map<number, { fn: () => void; ms: number }>();
-  let nextHandle = 0;
   let time = 0;
   let isOnline = online;
   const listeners = new Set<(online: boolean) => void>();
@@ -75,14 +81,6 @@ function harness(online = true) {
   return {
     deps: {
       connectivity,
-      setTimer: (fn: () => void, ms: number) => {
-        nextHandle += 1;
-        timers.set(nextHandle, { fn, ms });
-        return nextHandle;
-      },
-      clearTimer: (handle: number) => {
-        timers.delete(handle);
-      },
       now: () => time,
     },
     callbacks: {
@@ -95,14 +93,6 @@ function harness(online = true) {
     },
     progress,
     states,
-    timers,
-    fireNextTimer: () => {
-      const first = timers.entries().next();
-      if (first.done) throw new Error("no pending timer");
-      const [handle, timer] = first.value;
-      timers.delete(handle);
-      timer.fn();
-    },
     advance: (ms: number) => {
       time += ms;
     },
@@ -134,8 +124,8 @@ const DONE: ChatAttachment = {
 };
 
 // Let the engine's awaited catch/park path run to its next suspension point.
-const settle = async () => {
-  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+const settle = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(0);
 };
 
 describe("uploadAttachment", () => {
@@ -194,8 +184,8 @@ describe("uploadAttachment", () => {
 
     await settle();
     expect(run.states).toEqual(["uploading", "waiting"]);
-    expect([...run.timers.values()][0]?.ms).toBe(RETRY_BASE_MS);
-    run.fireNextTimer();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
 
     const probe = await next();
     expect(probe.path).toBe("/agents/apollo/app-chat/attachments/att1/status");
@@ -210,12 +200,12 @@ describe("uploadAttachment", () => {
 
   it("never shrinks below the floor", async () => {
     const { http, next } = scriptedHttp();
-    const { handle, run } = start(http, MIN_CHUNK_BYTES * 8);
+    const { handle } = start(http, MIN_CHUNK_BYTES * 8);
     (await next()).resolve({ id: "att1" });
     for (let failure = 0; failure < 4; failure += 1) {
       (await next()).reject(new TypeError("down"));
       await settle();
-      run.fireNextTimer();
+      await vi.advanceTimersToNextTimerAsync();
       (await next()).resolve({
         received: 0,
         size: MIN_CHUNK_BYTES * 8,
@@ -264,7 +254,7 @@ describe("uploadAttachment", () => {
 
     await settle();
     expect(run.states).toEqual(["uploading", "waiting"]);
-    expect(run.timers.size).toBe(0); // no backoff timer burns while offline
+    expect(vi.getTimerCount()).toBe(0); // no backoff timer burns while offline
 
     run.setOnline(true);
     const probe = await next();
@@ -317,28 +307,30 @@ describe("uploadAttachment", () => {
 
   it("aborting during a park clears the timer and rejects", async () => {
     const { http, next } = scriptedHttp();
-    const { handle, run } = start(http, 1);
+    const { handle } = start(http, 1);
     (await next()).reject(new ApiError(503, "proxy down"));
     await settle();
-    expect(run.timers.size).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
 
     handle.abort();
     await expect(handle.result).rejects.toBeInstanceOf(UploadError);
     await expect(handle.result).rejects.toMatchObject({ reason: "aborted" });
-    expect(run.timers.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("retries the create with growing backoff for retryable failures", async () => {
     const { http, next } = scriptedHttp();
-    const { handle, run } = start(http, 1);
+    const { handle } = start(http, 1);
     (await next()).reject(new ApiError(502, "bad gateway"));
     await settle();
-    expect([...run.timers.values()][0]?.ms).toBe(RETRY_BASE_MS);
-    run.fireNextTimer();
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS - 1);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
     (await next()).reject(new ApiError(502, "bad gateway"));
     await settle();
-    expect([...run.timers.values()][0]?.ms).toBe(RETRY_BASE_MS * 2);
-    run.fireNextTimer();
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS * 2 - 1);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
     (await next()).resolve({ id: "att1" });
     (await next()).resolve({ ok: true });
     (await next()).resolve({ attachment: DONE });
@@ -360,8 +352,8 @@ describe("409 recovery under a broken link", () => {
 
     // No immediate re-PUT: the engine is parked on a backoff timer.
     expect(run.states).toEqual(["uploading", "waiting"]);
-    expect([...run.timers.values()][0]?.ms).toBe(RETRY_BASE_MS);
-    run.fireNextTimer();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
     (await next()).resolve({
       received: 0,
       size: INITIAL_CHUNK_BYTES,

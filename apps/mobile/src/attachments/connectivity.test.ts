@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createNetInfoConnectivity } from "./connectivity";
+
 // The shipped package is untranspiled RN code node cannot parse; the factory under test takes
 // the module shape injected anyway.
 vi.mock("@react-native-community/netinfo", () => ({
   default: { addEventListener: () => () => undefined },
 }));
-
-import { createNetInfoConnectivity } from "./connectivity";
 
 function fakeNet() {
   const listeners = new Set<(state: { isConnected: boolean | null }) => void>();

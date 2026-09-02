@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { FlatList, StyleSheet, View, type ListRenderItem } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getNotificationHistory } from "@/api/endpoints";
+import { getNotificationHistory } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   getPendingNotificationIds,

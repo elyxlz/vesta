@@ -47,7 +47,11 @@ export function LoadingSpinner({
           key={index}
           style={[
             styles.segmentArm,
-            { transform: [{ rotate: `${String((index * 360) / SEGMENT_COUNT)}deg` }] },
+            {
+              transform: [
+                { rotate: `${String((index * 360) / SEGMENT_COUNT)}deg` },
+              ],
+            },
           ]}
         >
           <View

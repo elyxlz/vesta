@@ -37,12 +37,18 @@ function deps(): ControllerDeps {
 describe("buildController", () => {
   it("hands the controller the app's one session as a mobile client", () => {
     const session = fakeSession();
-    buildController(session, "0.1.179", { id: "dev-1", descriptor: "Vesta on iPhone" });
+    buildController(session, "0.1.179", {
+      id: "dev-1",
+      descriptor: "Vesta on iPhone",
+    });
 
     expect(deps().session).toBe(session);
     expect(deps().sync.clientKind).toBe("mobile");
     expect(deps().sync.clientVersion).toBe("0.1.179");
-    expect(deps().sync.device).toEqual({ id: "dev-1", descriptor: "Vesta on iPhone" });
+    expect(deps().sync.device).toEqual({
+      id: "dev-1",
+      descriptor: "Vesta on iPhone",
+    });
   });
 
   it("lets a development build and an unidentified device stay unreported", () => {

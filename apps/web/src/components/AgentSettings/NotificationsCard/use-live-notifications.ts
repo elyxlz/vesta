@@ -1,6 +1,6 @@
 import { useContext, useMemo } from "react";
 import { AgentSocketContext } from "@/providers/AgentSocketProvider/context";
-import type { NotificationEvent } from "@/api/agents";
+import type { NotificationEvent } from "@vesta/core";
 
 // Bridges the agent socket into the notifications view. Reads the context tolerantly (no throw) so
 // the card still renders REST-only when there's no AgentSocketProvider (e.g. in tests). Surfaces the

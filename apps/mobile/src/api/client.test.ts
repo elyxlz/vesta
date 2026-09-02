@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, createApiClient } from "./client";
-import type { ConnectionConfig } from "./types";
+import type { ConnectionConfig } from "@vesta/core";
 
 const connection: ConnectionConfig = {
   url: "https://gateway.example",
@@ -78,7 +78,11 @@ describe("authenticated URLs", () => {
   it("rotates an expiring token before handing out a URL", async () => {
     // Every socket connect goes through here, so a client returning after a long background
     // never presents the token that expired while it was away.
-    let current: ConnectionConfig = { ...connection, accessToken: "stale", expiresAt: 0 };
+    let current: ConnectionConfig = {
+      ...connection,
+      accessToken: "stale",
+      expiresAt: 0,
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(

@@ -24,15 +24,7 @@ import {
 } from "@/components/DropdownMenu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { providerMeta } from "@/components/ProviderPicker/providers";
-import type { ProviderKind } from "@vesta/core";
-import {
-  setModel,
-  setContextWindow,
-  signOutProvider,
-  type ProviderInfo,
-} from "@/api/agents";
-import { fetchAgentClaudeModels } from "@/api/providers/claude";
-import { contextForModel, type ProviderCatalog } from "@/api/catalogs";
+import type { ProviderKind, ProviderCatalog, ProviderInfo } from "@vesta/core";
 import { formatTokens } from "@/lib/format";
 import { errorMessage } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
@@ -42,6 +34,14 @@ import { useDialogs } from "@/stores/use-dialogs";
 import { useUsage } from "./use-usage";
 import { ModelDialog, ContextDialog, SignOutDialog } from "./dialogs";
 import { UsageSection } from "./usage";
+import {
+  contextForModel,
+  fetchAgentClaudeModels,
+  setContextWindow,
+  setModel,
+  signOutProvider,
+} from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 function LoadingCard() {
   return (
@@ -166,7 +166,7 @@ export function ProviderCard() {
   // stored credentials while the card shows Claude, so the dialog opens ready.
   const claudeLiveModels = useClaudeModels(
     provider?.kind === "claude" && name ? name : null,
-    fetchAgentClaudeModels,
+    (key) => fetchAgentClaudeModels(httpClient, key),
   );
 
   const {
@@ -209,19 +209,19 @@ export function ProviderCard() {
 
   const applyModel = (model: string) =>
     runAction(async () => {
-      await setModel(name, model);
+      await setModel(httpClient, name, model);
       setModelOpen(false);
     }, "failed to change model");
 
   const applyContext = (tokens: number) =>
     runAction(async () => {
-      await setContextWindow(name, tokens);
+      await setContextWindow(httpClient, name, tokens);
       setContextOpen(false);
     }, "failed to change context window");
 
   const handleSignOut = () =>
     runAction(async () => {
-      await signOutProvider(name);
+      await signOutProvider(httpClient, name);
       setSignOutOpen(false);
     }, "failed to sign out");
 

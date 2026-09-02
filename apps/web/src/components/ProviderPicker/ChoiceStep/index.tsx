@@ -1,4 +1,3 @@
-import type { ProviderCatalog } from "@/api/catalogs";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { StepHeading } from "@/components/StepHeading";
@@ -8,7 +7,7 @@ import {
   glassSurface,
 } from "@/components/NewAgent/glass";
 import { PROVIDERS } from "../providers";
-import type { ProviderKind } from "@vesta/core";
+import type { ProviderKind, ProviderCatalog } from "@vesta/core";
 
 // "compact" is the default settings look; "grid" matches the onboarding vibe
 // step: a wide centered grid of glass squircle tiles.

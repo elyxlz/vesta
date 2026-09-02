@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  assetToBlob,
+  captureFromCamera,
+  pickDocuments,
+  pickFromLibrary,
+} from "./pick";
+
 const os = vi.hoisted(() => ({
   cameraGranted: true,
   cameraCanAskAgain: true,
@@ -30,13 +37,6 @@ vi.mock("expo-document-picker", () => ({
   getDocumentAsync: () => Promise.resolve(os.documentResult),
 }));
 vi.mock("react-native", () => ({ Linking: { openSettings: vi.fn() } }));
-
-import {
-  assetToBlob,
-  captureFromCamera,
-  pickDocuments,
-  pickFromLibrary,
-} from "./pick";
 
 beforeEach(() => {
   os.cameraGranted = true;
@@ -105,7 +105,13 @@ describe("captureFromCamera", () => {
     os.cameraGranted = false;
     os.cameraResult = {
       canceled: false,
-      assets: [{ uri: "file:///tmp/cap.jpg", fileName: "cap.jpg", mimeType: "image/jpeg" }],
+      assets: [
+        {
+          uri: "file:///tmp/cap.jpg",
+          fileName: "cap.jpg",
+          mimeType: "image/jpeg",
+        },
+      ],
     };
 
     const result = await captureFromCamera();
@@ -133,11 +139,24 @@ describe("pickDocuments", () => {
   it("normalizes document assets", async () => {
     os.documentResult = {
       canceled: false,
-      assets: [{ uri: "file:///tmp/report.pdf", name: "report.pdf", mimeType: "application/pdf", size: 9 }],
+      assets: [
+        {
+          uri: "file:///tmp/report.pdf",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          size: 9,
+        },
+      ],
     };
     expect(await pickDocuments()).toEqual({
       status: "picked",
-      assets: [{ uri: "file:///tmp/report.pdf", name: "report.pdf", mime: "application/pdf" }],
+      assets: [
+        {
+          uri: "file:///tmp/report.pdf",
+          name: "report.pdf",
+          mime: "application/pdf",
+        },
+      ],
     });
   });
 });
@@ -149,7 +168,11 @@ describe("assetToBlob", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(blob));
 
-    const result = await assetToBlob({ uri: "file:///tmp/a.bin", name: "a.bin", mime: "application/octet-stream" });
+    const result = await assetToBlob({
+      uri: "file:///tmp/a.bin",
+      name: "a.bin",
+      mime: "application/octet-stream",
+    });
 
     expect(fetchSpy).toHaveBeenCalledWith("file:///tmp/a.bin");
     expect(result.size).toBe(6);

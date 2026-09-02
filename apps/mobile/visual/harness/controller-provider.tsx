@@ -64,7 +64,8 @@ function createOpenController(): Controller {
       json: async <T,>() => ({ events: [], cursor: null }) as T,
     },
     session: createSession({
-      fetch: () => Promise.reject(new Error("the visual harness never fetches")),
+      fetch: () =>
+        Promise.reject(new Error("the visual harness never fetches")),
       read: () => null,
       write: noop,
     }),
@@ -74,6 +75,10 @@ function createOpenController(): Controller {
     reportPresence: noop,
     reportViewing: noop,
     reportDeviceContext: noop,
+    getFocused: () => true,
+    subscribeFocused: unsubscribe,
+    getViewing: () => null,
+    subscribeViewing: unsubscribe,
     getAnyFocused: () => false,
     subscribeAnyFocused: unsubscribe,
     close: noop,

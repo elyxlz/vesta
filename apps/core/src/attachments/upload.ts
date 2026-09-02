@@ -33,8 +33,6 @@ export interface Connectivity {
 
 export interface UploadDeps {
   connectivity: Connectivity;
-  setTimer: (fn: () => void, ms: number) => number;
-  clearTimer: (handle: number) => void;
   now: () => number;
 }
 
@@ -118,12 +116,12 @@ export function uploadAttachment(
   // A cancellable sleep: abort() (or an online edge, via wake) releases it early.
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
-      const handle = deps.setTimer(() => {
+      const handle = setTimeout(() => {
         wake = null;
         resolve();
       }, ms);
       wake = () => {
-        deps.clearTimer(handle);
+        clearTimeout(handle);
         wake = null;
         resolve();
       };
@@ -177,7 +175,7 @@ export function uploadAttachment(
 
   const putChunk = async (id: string, offset: number, chunk: Blob) => {
     const inFlight = new AbortController();
-    const timeout = deps.setTimer(() => {
+    const timeout = setTimeout(() => {
       inFlight.abort();
     }, CHUNK_TIMEOUT_MS);
     abortInFlight = () => {
@@ -191,7 +189,7 @@ export function uploadAttachment(
       });
     } finally {
       abortInFlight = null;
-      deps.clearTimer(timeout);
+      clearTimeout(timeout);
     }
   };
 

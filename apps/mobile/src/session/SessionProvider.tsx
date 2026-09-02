@@ -16,7 +16,7 @@ import {
 } from "@/api/auth";
 import { createApiClient, type ApiClient } from "@/api/client";
 import { parseConnectLink } from "@/api/connection-link";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import {
   clearConnection as clearStoredConnection,
   readConnection,

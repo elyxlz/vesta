@@ -40,9 +40,7 @@ export function GatewaySettingsButton({
           style={[
             styles.statusDot,
             {
-              backgroundColor: reachable
-                ? connectedColor
-                : disconnectedColor,
+              backgroundColor: reachable ? connectedColor : disconnectedColor,
             },
           ]}
         />

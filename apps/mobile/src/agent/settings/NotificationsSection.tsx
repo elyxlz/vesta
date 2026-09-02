@@ -1,8 +1,11 @@
 import { Alert, Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getNotificationRules, setNotificationRules } from "@/api/endpoints";
-import type { FieldPredicate, NotificationInterruptRule } from "@/api/types";
+import {
+  getNotificationInterruptRules,
+  setNotificationInterruptRules,
+} from "@vesta/core";
+import type { FieldPredicate, NotificationInterruptRule } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { useToast } from "@/components/native-toast";
 import { Card } from "@/components/ui/Card";
@@ -122,11 +125,11 @@ export function NotificationsSection() {
   const { colors } = usePreferences();
   const query = useQuery({
     queryKey: ["notification-rules", name],
-    queryFn: () => getNotificationRules(api, name),
+    queryFn: () => getNotificationInterruptRules(api, name),
   });
   const save = useMutation({
     mutationFn: (rules: NotificationInterruptRule[]) =>
-      setNotificationRules(api, name, rules),
+      setNotificationInterruptRules(api, name, rules),
     onMutate: async (rules) => {
       await queryClient.cancelQueries({
         queryKey: ["notification-rules", name],

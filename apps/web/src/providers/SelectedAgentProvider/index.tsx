@@ -1,15 +1,5 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import {
-  startAgent,
-  stopAgent,
-  restartAgent,
-  createBackup,
-  listBackups,
-  restoreBackup,
-  deleteBackup,
-  deleteAgent,
-  type BackupInfo,
-} from "@/api";
+import { useCallback, type ReactNode } from "react";
+import { useResource } from "@vesta/core/react";
 import { useAgentOps, type AgentRequest } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import type { AgentRow } from "@vesta/core";
@@ -17,6 +7,17 @@ import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
 import type { SelectedAgentContextValue } from "./context";
+import {
+  createBackup,
+  deleteAgent,
+  deleteBackup,
+  listBackups,
+  restartAgent,
+  restoreBackup,
+  startAgent,
+  stopAgent,
+} from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function SelectedAgentProvider({
   agent,
@@ -52,8 +53,12 @@ export function SelectedAgentProvider({
         failure,
       );
 
-  const start = op("starting", () => startAgent(name), "start failed");
-  const stop = op("stopping", () => stopAgent(name), "stop failed");
+  const start = op(
+    "starting",
+    () => startAgent(httpClient, name),
+    "start failed",
+  );
+  const stop = op("stopping", () => stopAgent(httpClient, name), "stop failed");
   // A restart applies any pending saved changes, so clear the "restart to apply" reminder on
   // success (the run callback throws on failure, so a failed op keeps the reminder). For most reasons
   // reconcile (use-restart-pending) is the owner — it clears the flag once the agent is observed to
@@ -76,45 +81,28 @@ export function SelectedAgentProvider({
     );
   const restart = applyPending(
     "starting",
-    () => restartAgent(name),
+    () => restartAgent(httpClient, name),
     "restart failed",
   );
-  const [backups, setBackups] = useState<BackupInfo[]>([]);
-  // An empty list and a list that never arrived look identical, so the dialog would report a
-  // failed read as "no snapshots yet" and invite the user to trust it.
-  const [backupsFailed, setBackupsFailed] = useState(false);
-
-  // Stable per agent: the backups dialog re-reads the list every time it opens, and an identity
-  // that changed each render would make that a loop.
-  const refreshBackups = useCallback(async () => {
-    try {
-      setBackups(await listBackups(name));
-      setBackupsFailed(false);
-    } catch {
-      setBackupsFailed(true);
-    }
-  }, [name]);
-
-  useEffect(() => {
-    let ignore = false;
-    listBackups(name)
-      .then((fetched) => {
-        if (ignore) return;
-        setBackups(fetched);
-        setBackupsFailed(false);
-      })
-      .catch(() => {
-        if (!ignore) setBackupsFailed(true);
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [name]);
+  // An empty list and a list that never arrived look identical, so the dialog reports a failed
+  // read instead of "no snapshots yet". `reload` keeps one identity, so the dialog can re-read
+  // the list every time it opens without looping.
+  const {
+    data: backupList,
+    error: backupsError,
+    reload,
+  } = useResource(name, (key) => listBackups(httpClient, key));
+  const backups = backupList ?? [];
+  const backupsFailed = backupsError !== null;
+  const refreshBackups = useCallback(() => {
+    reload();
+    return Promise.resolve();
+  }, [reload]);
 
   const backup = op(
     "backing-up",
     async () => {
-      await createBackup(name);
+      await createBackup(httpClient, name);
       await refreshBackups();
     },
     "backup failed",
@@ -125,7 +113,7 @@ export function SelectedAgentProvider({
       name,
       "restoring",
       async () => {
-        await restoreBackup(name, backupId);
+        await restoreBackup(httpClient, name, backupId);
         await refreshBackups();
       },
       "restore failed",
@@ -136,7 +124,7 @@ export function SelectedAgentProvider({
   // stays off the agent op that "backing-up"/"restoring" ride: the dialog owns its own pending
   // state, and the agent orb never reads as "deleting" while a snapshot is removed.
   const removeBackup = async (backupId: string) => {
-    await deleteBackup(name, backupId);
+    await deleteBackup(httpClient, name, backupId);
     await refreshBackups();
   };
 
@@ -149,7 +137,7 @@ export function SelectedAgentProvider({
     if (ops.getOp(name).operation !== "idle") return;
     ops.setOp(name, "deleting");
     try {
-      await deleteAgent(name);
+      await deleteAgent(httpClient, name);
     } catch (e) {
       ops.setOp(name, "idle", errorMessage(e, "delete failed"));
     }

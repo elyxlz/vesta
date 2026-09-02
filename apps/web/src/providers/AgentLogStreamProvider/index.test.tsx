@@ -3,14 +3,14 @@ import { act, cleanup, render } from "@testing-library/react";
 import { useEffect } from "react";
 import type { AgentRow } from "@vesta/core";
 import type { LogEvent } from "@/lib/types";
-import { streamLogs, stopLogs } from "@/api";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
 import { fakeAgentRow } from "@/test/fake-controller";
 import { AgentLogStreamProvider } from "./index";
 import { useAgentLogSession } from "./context";
+import { stopLogs, streamLogs } from "@/api/logs";
 
-vi.mock("@/api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/api")>()),
+vi.mock("@/api/logs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/logs")>()),
   streamLogs: vi.fn(() => new Promise<void>(() => undefined)),
   stopLogs: vi.fn(() => Promise.resolve()),
 }));

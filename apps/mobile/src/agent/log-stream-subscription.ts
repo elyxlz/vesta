@@ -1,7 +1,10 @@
 import type { SseHandle, StreamEvent } from "@vesta/core";
 
 export interface LogStream {
-  open: (reconnect: boolean, onEvent: (event: StreamEvent) => void) => SseHandle;
+  open: (
+    reconnect: boolean,
+    onEvent: (event: StreamEvent) => void,
+  ) => SseHandle;
   onLine: (text: string) => void;
   onError: (message: string) => void;
   retryDelayMs: number;

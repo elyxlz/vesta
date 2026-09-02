@@ -19,10 +19,16 @@ export default function DebugScreen() {
   return (
     <Screen>
       <FormSection title="Application">
-        <FormRow label="App version" value={Constants.expoConfig?.version ?? "unknown"} />
+        <FormRow
+          label="App version"
+          value={Constants.expoConfig?.version ?? "unknown"}
+        />
         <FormRow label="Runtime" value={Constants.executionEnvironment} />
         <FormRow label="Device" value={Device.modelName ?? "unknown"} />
-        <FormRow label="Operating system" value={`${Device.osName ?? "unknown"} ${Device.osVersion ?? ""}`} />
+        <FormRow
+          label="Operating system"
+          value={`${Device.osName ?? "unknown"} ${Device.osVersion ?? ""}`}
+        />
       </FormSection>
       <FormSection title="Gateway">
         <FormRow label="Reachable" value={roster.reachable ? "yes" : "no"} />

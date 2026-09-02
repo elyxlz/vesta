@@ -1,4 +1,4 @@
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import { visualDelay } from "./launch-query";
 
 // The catalog documents the development build, where Vesta Cloud sign-in is offered.

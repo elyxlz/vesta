@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createVoiceSession,
@@ -69,8 +69,6 @@ function setup(overrides: Partial<VoiceSessionSettings> = {}) {
         });
       }),
   };
-  const timers = new Map<number, () => void>();
-  let nextTimer = 1;
   const { events, callbacks } = recorder();
   const settings: VoiceSessionSettings = {
     interruptTts: true,
@@ -84,27 +82,29 @@ function setup(overrides: Partial<VoiceSessionSettings> = {}) {
       createSocket: () => socket,
       capture: fakeCapture(),
       player,
-      setTimer: (fn) => {
-        const id = nextTimer++;
-        timers.set(id, fn);
-        return id;
-      },
-      clearTimer: (id) => timers.delete(id),
     },
     callbacks,
     () => settings,
   );
   const startAnd = async (mode: VoiceMode) => {
     const p = session.start(mode);
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.advanceTimersByTimeAsync(0);
     socket.onopen?.();
     await p;
   };
   const fireTimers = () => {
-    for (const fn of [...timers.values()]) fn();
+    vi.runOnlyPendingTimers();
   };
   return { socket, session, events, settings, startAnd, fireTimers };
 }
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("the voice session", () => {
   it("marks the mode before the microphone opens and clears it on stop", async () => {
@@ -227,7 +227,7 @@ describe("the voice session", () => {
     socket.emit("StartOfTurn");
     session.speak("held reply");
     session.cancel();
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(session.speaking()).toBe(false);
     expect(events.userSpeaking).toEqual([true, false]);
   });

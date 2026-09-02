@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
-import { useWindowFocus } from "@/hooks/use-window-focus";
+import { useWindowFocus } from "./use-window-focus";
 import { readBrowserDeviceContext } from "@/lib/device-context";
 import { usePreferences } from "@/stores/use-preferences";
 import { router } from "@/router";
@@ -14,6 +14,8 @@ function currentAgent(): string | null {
 
 const subscribeToRouter = (onChange: () => void) => router.subscribe(onChange);
 
+// The single writer of this client's focus and viewed agent: the controller holds both facts for
+// every consumer, and its socket masks the viewed agent to null on the wire while unfocused.
 export function PresenceReporter() {
   const controller = useOptionalController();
   const focused = useWindowFocus();
@@ -40,9 +42,8 @@ export function PresenceReporter() {
 
   useEffect(() => {
     if (!controller) return;
-    // Report the open agent only while focused; a blurred window is viewing no one.
-    controller.reportViewing(focused ? agent : null);
-  }, [controller, focused, agent]);
+    controller.reportViewing(agent);
+  }, [controller, agent]);
 
   return null;
 }

@@ -3,7 +3,6 @@ import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Field, FieldGroup } from "@/components/ui/field";
-import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import { formatTokens } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useScrollFade } from "@/hooks/use-scroll-fade";
@@ -17,6 +16,7 @@ import { ProviderStep } from "../ProviderStep";
 import { fuzzyMatch } from "../fuzzy";
 import { CLAUDE_ALIASES } from "../model-options";
 import { canonicalClaudeModel } from "@vesta/core";
+import type { OpenRouterModelOption } from "@vesta/core";
 
 export function ModelStep({
   initialModel,

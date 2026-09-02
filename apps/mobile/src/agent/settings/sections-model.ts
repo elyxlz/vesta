@@ -15,7 +15,8 @@ export interface AgentSettingsSection {
   title: string;
 }
 
-export const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = SECTIONS;
+export const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] =
+  SECTIONS;
 
 export function sectionTitle(key: string): string {
   return findSection(key)?.title ?? "Settings";

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { streamGatewayLogs, stopGatewayLogs } from "@/api/gateway";
 import { LOG_SCROLLBACK_LINES } from "@/lib/log-stream-policy";
 import { LogScroller, StreamingIndicator } from "@/components/LogScroller";
 import {
@@ -12,6 +11,7 @@ import {
 import { BOTTOM_FADE_PX } from "@/hooks/use-scroll-fade";
 import type { LogEvent } from "@/lib/types";
 import { LogLevelColors } from "./styles";
+import { stopGatewayLogs, streamGatewayLogs } from "@/api/logs";
 
 // The floating header sits over the terminal like the fullscreen console's navbar. The
 // first line clears the header by HEADER_H, and the top fade dissolves the tail over

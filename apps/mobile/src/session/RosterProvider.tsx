@@ -7,7 +7,12 @@ import {
   type ReactNode,
 } from "react";
 import type { AgentRow, DeviceInfo, ReleaseChannel, Tree } from "@vesta/core";
-import { devicesEqual, rosterFromTree, rostersEqual, selectDevices } from "@vesta/core";
+import {
+  devicesEqual,
+  rosterFromTree,
+  rostersEqual,
+  selectDevices,
+} from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { ControllerContext } from "@/controller/context";
 import { useSession } from "@/session/SessionProvider";
@@ -155,11 +160,13 @@ export function RosterProvider({ children }: { children: ReactNode }) {
     () => (gateway ? { agents, ...gateway } : null),
     [agents, gateway],
   );
-  const value = useServedRoster(store, connectionKey, fresh, syncState === "open");
-  const contextValue = useMemo(
-    () => ({ ...value, devices }),
-    [value, devices],
+  const value = useServedRoster(
+    store,
+    connectionKey,
+    fresh,
+    syncState === "open",
   );
+  const contextValue = useMemo(() => ({ ...value, devices }), [value, devices]);
 
   return (
     <RosterContext.Provider value={contextValue}>

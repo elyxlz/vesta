@@ -8,7 +8,8 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 // Shown when the sync socket reports "app_behind": this app is older than the gateway's minimum
 // supported client (the /sync hello's min_supported), so it fell below the served version window.
 // There is no in-app fix, so it points the user at the store to update the app.
-const STORE_NAME = process.env.EXPO_OS === "ios" ? "the App Store" : "Google Play";
+const STORE_NAME =
+  process.env.EXPO_OS === "ios" ? "the App Store" : "Google Play";
 
 export function AppBehindScreen() {
   const { colors, dark } = usePreferences();

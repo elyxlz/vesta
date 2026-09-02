@@ -130,34 +130,34 @@ vesta-dev://connect?visualPrivacy=unlocked
 
 Only modules under `visual/harness/` interpret the visual query parameters (`visual/harness/launch-query.ts` reads them once). The production controllers and routes are unchanged. The flows also handle iOS's one-time confirmation for opening a custom scheme.
 
-| Switch | Values | Effect |
-| --- | --- | --- |
-| `visualPrivacy` | `unlocked`, `opening` | Starts unlocked; `opening` never hydrates, so the launch splash holds. Absent: locked with an initialization error. |
-| `visualSession` | `connected` | Session fixture with the stub API client. |
-| `visualRoster` | `empty`, `loading` | Roster variants; absent: aria, nova, forge. |
-| `visualAgent` | any `AgentStatus`, `booting`, `thinking`, `backing_up`, `restoring` | Puts aria into that state. |
-| `visualDashboard` | `loaded`, `error` | aria's dashboard service, rendering the fixture page or a failed load. |
-| `visualServices` | `voice` | Registers a voice service on aria (microphone in the composer). |
-| `visualReachable` | `offline` | Gateway unreachable. |
-| `visualManaged` | `true` | Managed gateway (account section). |
-| `visualDevices` | `none`, `position` | No devices, or the phone carrying a reported place. |
-| `visualChannel` | `beta` | Beta release channel (prerelease notes visible). |
-| `visualGatewayUpdate` | `available`, `required` | Update pill, or the blocking update sheet. |
-| `visualGatewayOperation` | `snapshotting`, `snapshotting-all`, `applying`, `update-restarting`, `failed`, `failed-generic`, `restarting` | One gateway operation per launch. |
-| `visualGatewayUpdated` | a version | The "updated to" notice. |
-| `visualSyncState` | `app_behind` | The app-behind screen. |
-| `visualSync` | `open` | A controller whose sync socket reads as open (enabled composer, live edges). |
-| `visualLive` | `typing`, `pending` | With `visualSync=open`: a paced reply stream, or pending notifications on aria. |
-| `visualChat` | `delivery`, `errors`, `markdown`, `long` | aria's transcript variant. |
-| `visualProvider` | `none`, `unauthenticated`, `openai`, `openrouter` | aria's provider state; absent: signed-in Claude. |
-| `visualVoice` | `unconfigured` | No speech providers. |
-| `visualApi` | `error` | Every agent read fails (error states). |
-| `visualDelay` | milliseconds | Holds pending answers (loading and in-flight states). |
-| `visualLogs` | `empty`, `error` | The log stream variant. |
-| `visualReleaseNotes` | `empty`, `error` | Release notes variant. |
-| `visualWhatsNewSeen` | a version | Seeds the last-seen marker so the release notes auto-open. |
-| `visualRecentGateways` | `none` | No saved gateways. |
-| `visualTunnel` | `unavailable` | No public tunnel. |
+| Switch                   | Values                                                                                                        | Effect                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `visualPrivacy`          | `unlocked`, `opening`                                                                                         | Starts unlocked; `opening` never hydrates, so the launch splash holds. Absent: locked with an initialization error. |
+| `visualSession`          | `connected`                                                                                                   | Session fixture with the stub API client.                                                                           |
+| `visualRoster`           | `empty`, `loading`                                                                                            | Roster variants; absent: aria, nova, forge.                                                                         |
+| `visualAgent`            | any `AgentStatus`, `booting`, `thinking`, `backing_up`, `restoring`                                           | Puts aria into that state.                                                                                          |
+| `visualDashboard`        | `loaded`, `error`                                                                                             | aria's dashboard service, rendering the fixture page or a failed load.                                              |
+| `visualServices`         | `voice`                                                                                                       | Registers a voice service on aria (microphone in the composer).                                                     |
+| `visualReachable`        | `offline`                                                                                                     | Gateway unreachable.                                                                                                |
+| `visualManaged`          | `true`                                                                                                        | Managed gateway (account section).                                                                                  |
+| `visualDevices`          | `none`, `position`                                                                                            | No devices, or the phone carrying a reported place.                                                                 |
+| `visualChannel`          | `beta`                                                                                                        | Beta release channel (prerelease notes visible).                                                                    |
+| `visualGatewayUpdate`    | `available`, `required`                                                                                       | Update pill, or the blocking update sheet.                                                                          |
+| `visualGatewayOperation` | `snapshotting`, `snapshotting-all`, `applying`, `update-restarting`, `failed`, `failed-generic`, `restarting` | One gateway operation per launch.                                                                                   |
+| `visualGatewayUpdated`   | a version                                                                                                     | The "updated to" notice.                                                                                            |
+| `visualSyncState`        | `app_behind`                                                                                                  | The app-behind screen.                                                                                              |
+| `visualSync`             | `open`                                                                                                        | A controller whose sync socket reads as open (enabled composer, live edges).                                        |
+| `visualLive`             | `typing`, `pending`                                                                                           | With `visualSync=open`: a paced reply stream, or pending notifications on aria.                                     |
+| `visualChat`             | `delivery`, `errors`, `markdown`, `long`                                                                      | aria's transcript variant.                                                                                          |
+| `visualProvider`         | `none`, `unauthenticated`, `openai`, `openrouter`                                                             | aria's provider state; absent: signed-in Claude.                                                                    |
+| `visualVoice`            | `unconfigured`                                                                                                | No speech providers.                                                                                                |
+| `visualApi`              | `error`                                                                                                       | Every agent read fails (error states).                                                                              |
+| `visualDelay`            | milliseconds                                                                                                  | Holds pending answers (loading and in-flight states).                                                               |
+| `visualLogs`             | `empty`, `error`                                                                                              | The log stream variant.                                                                                             |
+| `visualReleaseNotes`     | `empty`, `error`                                                                                              | Release notes variant.                                                                                              |
+| `visualWhatsNewSeen`     | a version                                                                                                     | Seeds the last-seen marker so the release notes auto-open.                                                          |
+| `visualRecentGateways`   | `none`                                                                                                        | No saved gateways.                                                                                                  |
+| `visualTunnel`           | `unavailable`                                                                                                 | No public tunnel.                                                                                                   |
 
 nova is the agent with nothing yet (no notifications, rules, backups, mounts, or files), so its sections render the empty states; forge has no chat hold, so it renders the loading skeleton.
 

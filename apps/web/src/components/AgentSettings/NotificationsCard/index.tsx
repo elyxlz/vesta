@@ -16,12 +16,13 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { ItemGroup } from "@/components/ui/item";
-import { getNotificationHistory, type NotificationEvent } from "@/api/agents";
-import { notificationRowKey } from "@vesta/core";
+import { notificationRowKey, getNotificationHistory } from "@vesta/core";
 import { errorMessage } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
 import { useLiveNotifications } from "./use-live-notifications";
+import type { NotificationEvent } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 // The received-notifications history. Flows at its natural height and scrolls with the settings page;
 // the rules cards beside it stay sticky. Live-updating: the row list comes from the REST history
@@ -71,7 +72,7 @@ export function NotificationsCard() {
   useEffect(() => {
     if (!agentName) return;
     currentAgent.current = agentName;
-    getNotificationHistory(agentName)
+    getNotificationHistory(httpClient, agentName)
       .then((loaded) => {
         if (currentAgent.current !== agentName) return;
         seenRef.current = new Set(loaded.notifications.map(notificationRowKey));
@@ -110,7 +111,11 @@ export function NotificationsCard() {
     const requestedAgent = agentName;
     setLoadingMore(true);
     try {
-      const loaded = await getNotificationHistory(requestedAgent, cursor);
+      const loaded = await getNotificationHistory(
+        httpClient,
+        requestedAgent,
+        cursor,
+      );
       if (currentAgent.current !== requestedAgent) return;
       loaded.notifications.forEach((n) =>
         seenRef.current.add(notificationRowKey(n)),

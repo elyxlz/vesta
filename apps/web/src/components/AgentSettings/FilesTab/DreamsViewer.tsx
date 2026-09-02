@@ -4,9 +4,10 @@ import { ChevronLeft, ChevronRight, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Markdown } from "@/lib/markdown";
-import { readFile } from "@/api/files";
 import { loadFailure } from "@/lib/utils";
 import { DREAMER_PREFIX, parseDreamFilename } from "./paths";
+import { readFile } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 interface DreamsViewerProps {
   agent: string;
@@ -50,7 +51,7 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
     currentPath === null ? null : `${agent}\n${currentPath}`,
     async () => {
       if (currentPath === null) return "";
-      const file = await readFile(agent, currentPath);
+      const file = await readFile(httpClient, agent, currentPath);
       return file.encoding === "utf-8" ? file.content : "";
     },
   );

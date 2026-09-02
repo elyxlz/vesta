@@ -6,7 +6,9 @@ import {
   sortAdvertisedProviders,
 } from "./provider-model";
 
-function entryOf(overrides: Partial<ProviderCatalogEntry>): ProviderCatalogEntry {
+function entryOf(
+  overrides: Partial<ProviderCatalogEntry>,
+): ProviderCatalogEntry {
   return {
     display: "Provider",
     order: 1,

@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as BackgroundTask from "expo-background-task";
 import * as TaskManager from "expo-task-manager";
-import type { ConnectionConfig } from "@/api/types";
+import { reportDeviceContext, type ConnectionConfig } from "@vesta/core";
 import { createApiClient } from "@/api/client";
 import { deviceIdentity } from "@/controller/device-identity";
 import { PREFERENCES_KEY, readStoredPreferences } from "@/preferences/model";
@@ -38,10 +38,7 @@ export async function reportDeviceContextInBackground(): Promise<void> {
     },
     onSessionExpired: () => Promise.resolve(),
   });
-  await api.request(
-    `/devices/${encodeURIComponent(id)}/context`,
-    api.jsonInit("PUT", context),
-  );
+  await reportDeviceContext(api, id, context);
 }
 
 TaskManager.defineTask(DEVICE_CONTEXT_TASK, async () => {

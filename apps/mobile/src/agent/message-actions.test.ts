@@ -3,15 +3,21 @@ import { messageActionIds, quotedReply } from "./message-actions";
 
 describe("message actions", () => {
   it("offers sender actions for a user message", () => {
-    expect(
-      messageActionIds({ user: true, canSpeak: false }),
-    ).toEqual(["reply", "copy", "edit-resend", "share"]);
+    expect(messageActionIds({ user: true, canSpeak: false })).toEqual([
+      "reply",
+      "copy",
+      "edit-resend",
+      "share",
+    ]);
   });
 
   it("offers read aloud only for an agent message with speech enabled", () => {
-    expect(
-      messageActionIds({ user: false, canSpeak: true }),
-    ).toEqual(["reply", "copy", "read-aloud", "share"]);
+    expect(messageActionIds({ user: false, canSpeak: true })).toEqual([
+      "reply",
+      "copy",
+      "read-aloud",
+      "share",
+    ]);
   });
 });
 

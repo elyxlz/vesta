@@ -28,15 +28,15 @@ import {
   ItemGroup,
   ItemTitle,
 } from "@/components/ui/item";
-import {
-  getNotificationInterruptRules,
-  setNotificationInterruptRules,
-  type FieldPredicate,
-  type NotificationInterruptRule,
-} from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { cn, errorMessage, loadFailure } from "@/lib/utils";
 import { useResource } from "@vesta/core/react";
+import {
+  getNotificationInterruptRules,
+  setNotificationInterruptRules,
+} from "@vesta/core";
+import type { FieldPredicate, NotificationInterruptRule } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -99,7 +99,7 @@ export function NotificationInterruptRulesCard() {
   const lastSaved = useRef<NotificationInterruptRule[]>([]);
   // Loading records the accepted ruleset as it lands, so a rollback always has a base.
   const rulesResource = useResource(agentName || null, (name) =>
-    getNotificationInterruptRules(name).then((loaded) => {
+    getNotificationInterruptRules(httpClient, name).then((loaded) => {
       lastSaved.current = loaded;
       return loaded;
     }),
@@ -119,7 +119,7 @@ export function NotificationInterruptRulesCard() {
     async (next: NotificationInterruptRule[]) => {
       if (!agentName) return;
       try {
-        await setNotificationInterruptRules(agentName, next);
+        await setNotificationInterruptRules(httpClient, agentName, next);
         lastSaved.current = next;
         setSaveError(null);
       } catch (e) {

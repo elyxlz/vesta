@@ -42,7 +42,13 @@ export function AgentOrb({
   const [pulse] = useState(() => new Animated.Value(1));
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
-  const orbState = agentOrbState(status, activityState, operation, booting, rateLimited);
+  const orbState = agentOrbState(
+    status,
+    activityState,
+    operation,
+    booting,
+    rateLimited,
+  );
   const visual = orbVisual(orbState);
   const shouldAnimate = animated && !transitionFrozen && visual.live;
   const colors = designTokens.orb[orbState];
@@ -97,10 +103,7 @@ export function AgentOrb({
           return;
         }
 
-        if (
-          pulseHapticsEnabled.current &&
-          process.env.EXPO_OS === "ios"
-        ) {
+        if (pulseHapticsEnabled.current && process.env.EXPO_OS === "ios") {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft).catch(
             () => undefined,
           );

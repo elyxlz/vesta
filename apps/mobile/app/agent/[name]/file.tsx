@@ -3,7 +3,7 @@ import { StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
 import { SheetTitle } from "@/components/sheet-title";
-import { readFile, writeFile } from "@/api/endpoints";
+import { readFile, writeFile } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { Screen } from "@/components/layout/Screen";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";

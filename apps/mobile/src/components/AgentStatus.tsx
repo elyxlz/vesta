@@ -30,13 +30,14 @@ export function AgentStatusBadge({
   const limited = active && operation === null && rateLimited != null;
   const thinking = active && !limited && activityState === "thinking";
   const attention = operation === null && agentNeedsUser(status);
-  const color = limited || thinking
-    ? colors.warning
-    : active
-      ? colors.success
-      : attention
-        ? colors.warning
-        : colors.tertiaryText;
+  const color =
+    limited || thinking
+      ? colors.warning
+      : active
+        ? colors.success
+        : attention
+          ? colors.warning
+          : colors.tertiaryText;
   return (
     <View
       style={[
@@ -47,7 +48,13 @@ export function AgentStatusBadge({
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
       <Text style={[styles.label, { color }]}>
-        {agentStatusLabel(status, activityState, operation, booting, rateLimited)}
+        {agentStatusLabel(
+          status,
+          activityState,
+          operation,
+          booting,
+          rateLimited,
+        )}
       </Text>
     </View>
   );

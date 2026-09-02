@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LogEvent } from "@/lib/types";
 import { restoreConnection } from "@/lib/connection";
 import { ApiError, httpClient } from "./client";
-import { streamGatewayLogs } from "./gateway";
-import { streamLogs } from "./logs";
+import { streamGatewayLogs, streamLogs } from "./logs";
 
 // The web session is @vesta/core's over the connection store; these pin the web-side wiring:
 // the one http client stamps the stored token, and the log streams read through it.
@@ -82,7 +81,7 @@ describe("log streams", () => {
       sseResponse("event: gateway_stopped\ndata: \n\n"),
     );
     const events: LogEvent[] = [];
-    await streamGatewayLogs(true, (event) => events.push(event));
+    await streamGatewayLogs(true, (event: LogEvent) => events.push(event));
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "https://gateway.example/gateway/logs?follow=true",
     );

@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { openaiProvider } from "@/api";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/utils";
 import { ProviderStep } from "../ProviderStep";
 import { OAuthLink } from "../OAuthLink";
 import { OpenAILogo } from "../logos";
+import { completeOpenAIOAuth } from "@vesta/core";
+import type { OpenAIOAuthStart } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function OpenAIAuthStep({
   agentName,
@@ -15,7 +17,7 @@ export function OpenAIAuthStep({
   onBack,
 }: {
   agentName: string;
-  authStart: openaiProvider.OAuthStartResult | null;
+  authStart: OpenAIOAuthStart | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
   onBack: () => void;
@@ -43,7 +45,7 @@ export function OpenAIAuthStep({
     setError("");
     try {
       onCredentialsReady(
-        await openaiProvider.completeOAuth(agentName, authStart.session_id),
+        await completeOpenAIOAuth(httpClient, agentName, authStart.session_id),
       );
     } catch (caught: unknown) {
       setError(errorMessage(caught, "verification failed"));

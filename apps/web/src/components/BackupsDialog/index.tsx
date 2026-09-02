@@ -6,8 +6,8 @@ import {
   parseBackupKind,
   type BackupTimelinePoint,
   type BackupTimelineRow,
+  type BackupInfo,
 } from "@vesta/core";
-import type { BackupInfo } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {

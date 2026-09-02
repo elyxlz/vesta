@@ -1,7 +1,7 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { Personality } from "@/api/catalogs";
 import { glassHover, glassSelected, glassSurface } from "../../glass";
+import type { Personality } from "@vesta/core";
 
 export function PersonalityStep({
   personalities,

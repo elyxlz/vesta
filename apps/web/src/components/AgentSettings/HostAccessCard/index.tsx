@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FolderOpen, Lock, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,16 +21,17 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import {
-  getAgentMounts,
-  getHostFolderSuggestions,
-  setAgentMounts,
-  type HostMount,
-} from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useResource } from "@vesta/core/react";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import { errorMessage, loadFailure } from "@/lib/utils";
+import {
+  getAgentMounts,
+  getHostFolderSuggestions,
+  setAgentMounts,
+} from "@vesta/core";
+import type { HostMount } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 // Suggestions not already shared, and not the one being typed.
 function unsharedSuggestions(
@@ -41,6 +42,16 @@ function unsharedSuggestions(
   return (suggestions ?? []).filter(
     (s) => !(mounts ?? []).some((m) => m.host_path === s) && s !== typed,
   );
+}
+
+// Folder suggestions load lazily, the first time the add dialog opens, and stay loaded.
+function useHostFolderSuggestions(open: boolean): string[] | null {
+  const [wanted, setWanted] = useState(false);
+  if (open && !wanted) setWanted(true);
+  const suggested = useResource(wanted ? "host-folders" : null, () =>
+    getHostFolderSuggestions(httpClient),
+  );
+  return suggested.error === null ? suggested.data : [];
 }
 
 function folderName(path: string): string {
@@ -54,7 +65,9 @@ function folderName(path: string): string {
 export function HostAccessCard() {
   const { name: agentName, agent } = useSelectedAgent();
   const markRestartPending = useRestartPending((s) => s.markPending);
-  const mountsResource = useResource(agentName || null, getAgentMounts);
+  const mountsResource = useResource(agentName || null, (key) =>
+    getAgentMounts(httpClient, key),
+  );
   const mounts = mountsResource.data;
   const loadError = loadFailure(
     mountsResource.error,
@@ -68,30 +81,14 @@ export function HostAccessCard() {
   const [containerPath, setContainerPath] = useState("");
   const [writable, setWritable] = useState(false);
   const [showContainerPath, setShowContainerPath] = useState(false);
-  const [suggestions, setSuggestions] = useState<string[] | null>(null);
-
-  // Fetch folder suggestions lazily, the first time the add dialog opens.
-  useEffect(() => {
-    if (!open || suggestions !== null) return;
-    let ignore = false;
-    getHostFolderSuggestions()
-      .then((f) => {
-        if (!ignore) setSuggestions(f);
-      })
-      .catch(() => {
-        if (!ignore) setSuggestions([]);
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [open, suggestions]);
+  const suggestions = useHostFolderSuggestions(open);
 
   const save = async (next: HostMount[]): Promise<boolean> => {
     if (!agentName) return false;
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await setAgentMounts(agentName, next);
+      const result = await setAgentMounts(httpClient, agentName, next);
       mountsResource.set(result.mounts);
       if (result.restartRequired)
         markRestartPending(agentName, "host-access", agent.startedAt);

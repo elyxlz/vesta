@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useResource } from "@vesta/core/react";
 import { Cloud, Server, Trash2 } from "lucide-react";
 import { router } from "@/router";
 import { getConnection, restoreConnection } from "@/lib/connection";
@@ -119,28 +120,14 @@ function GatewayRow({
 function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
   const reconnect = useControllerReconnect();
   const { connected, connectSavedGateway } = useAuth();
-  const [gateways, setGateways] = useState<RecentGateway[] | null>(null);
+  const saved = useResource("recent-gateways", readRecentGateways);
+  const gateways = saved.error === null ? saved.data : [];
   const [pendingForget, setPendingForget] = useState<RecentGateway | null>(
     null,
   );
   const currentId = useMemo(() => currentGatewayId(), []);
 
   const others = gateways?.filter((gateway) => gateway.id !== currentId) ?? [];
-
-  useEffect(() => {
-    let active = true;
-    void readRecentGateways()
-      .then((saved) => {
-        if (active) setGateways(saved);
-      })
-      .catch((cause: unknown) => {
-        console.warn("could not read saved gateways", cause);
-        if (active) setGateways([]);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Restore the saved short-lived tokens and let the controller reconnect (the
   // refresh flow revives them if they expired); a gateway whose tokens have
@@ -161,7 +148,7 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
     setPendingForget(null);
     if (!gateway) return;
     void forgetRecentGateway(gateway.id)
-      .then(setGateways)
+      .then(() => saved.reload())
       .catch((cause: unknown) =>
         console.warn("could not forget saved gateway", cause),
       );

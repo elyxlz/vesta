@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { type ProviderResult } from "@/api/agents";
 import { Button } from "@/components/ui/button";
 import { usePersonalityCatalog } from "@/hooks/use-agent-catalogs";
 import { errorMessage } from "@/lib/utils";
@@ -19,6 +18,7 @@ import { PersonalityStep } from "./Steps/PersonalityStep";
 import { applyProviderSetup, prepareAgentShell } from "./create-flow";
 import { Chrome } from "./Chrome";
 import { stepChrome, type ChromeActionKind } from "./step-chrome";
+import type { ProviderSelection } from "@vesta/core";
 
 const START_TIMEOUT_MS = 10 * 60 * 1000;
 const PERSONALITY_STEPS = new Set<OnboardingStep>([
@@ -60,9 +60,8 @@ export function NewAgent() {
   const [personality, setPersonality] = useState<string | null>(
     restored?.personality ?? null,
   );
-  const [providerResult, setProviderResult] = useState<ProviderResult | null>(
-    null,
-  );
+  const [providerResult, setProviderResult] =
+    useState<ProviderSelection | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState(initialAgentName);
   const [vibeDraft, setVibeDraft] = useState<string | null>(null);

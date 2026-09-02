@@ -1,11 +1,12 @@
 import { useResource } from "@vesta/core/react";
-import {
-  fetchPersonalities,
-  fetchProviderCatalog,
-  type PersonalityCatalog,
-  type ProviderCatalog,
-} from "@/api/catalogs";
 import { loadFailure } from "@/lib/utils";
+import { fetchPersonalities, fetchProviderCatalog } from "@vesta/core";
+import type {
+  HttpClient,
+  PersonalityCatalog,
+  ProviderCatalog,
+} from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 interface CatalogLoad<T> {
   data: T | undefined;
@@ -15,12 +16,11 @@ interface CatalogLoad<T> {
 
 function useCatalog<T>(
   agentName: string,
-  fetchCatalog: (name: string) => Promise<T>,
+  fetchCatalog: (http: HttpClient, name: string) => Promise<T>,
   enabled: boolean,
 ): CatalogLoad<T> {
-  const catalog = useResource(
-    agentName && enabled ? agentName : null,
-    fetchCatalog,
+  const catalog = useResource(agentName && enabled ? agentName : null, (name) =>
+    fetchCatalog(httpClient, name),
   );
   return {
     data: catalog.data ?? undefined,

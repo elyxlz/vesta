@@ -1,14 +1,8 @@
 import { useState } from "react";
-import type { ProviderKind } from "@vesta/core";
-import { Alert, StyleSheet, View } from "react-native";
-import * as Clipboard from "expo-clipboard";
-import * as WebBrowser from "expo-web-browser";
-import { Text } from "@/components/ui/Typography";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   completeClaudeOAuth,
   completeOpenAIOAuth,
-  fetchClaudeModels,
+  fetchAgentClaudeModels,
   fetchOpenRouterModels,
   fetchUsage,
   getProvider,
@@ -19,8 +13,15 @@ import {
   startClaudeOAuth,
   startOpenAIOAuth,
   validateOpenRouterKey,
+  type Account,
+  type ProviderKind,
   type ProviderSelection,
-} from "@/api/endpoints";
+} from "@vesta/core";
+import { Alert, StyleSheet, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import * as WebBrowser from "expo-web-browser";
+import { Text } from "@/components/ui/Typography";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAgent } from "@/agent/AgentProvider";
 import { useAwaitedRoundTrip } from "@/agent/use-awaited-round-trip";
 import {
@@ -36,7 +37,6 @@ import { FormSectionSkeleton } from "@/components/ui/form-section-skeleton";
 import { ErrorState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { Account } from "@/api/types";
 
 type KeyProviderKind = Extract<ProviderSelection, { key: string }>["kind"];
 
@@ -106,7 +106,7 @@ export function ProviderSection() {
   // so before sign-in (kind "none") the endpoint can only 409.
   const claudeModels = useQuery({
     queryKey: ["claude-models", name],
-    queryFn: () => fetchClaudeModels(api, name),
+    queryFn: () => fetchAgentClaudeModels(api, name),
     enabled: provider?.kind === "claude",
     // The catalog changes on the order of months; don't re-run the two-hop
     // Anthropic call on every settings visit.
@@ -235,8 +235,7 @@ export function ProviderSection() {
                   oauthSession,
                   oauthCode.trim(),
                 ),
-                model:
-                  provider?.model ?? entry?.default_model ?? undefined,
+                model: provider?.model ?? entry?.default_model ?? undefined,
                 maxContextTokens,
               }
             : {
@@ -271,8 +270,7 @@ export function ProviderSection() {
       const key = providerKey.trim();
       if (providerKind === "openrouter")
         await validateOpenRouterKey(api, name, key);
-      const defaultContext =
-        provider?.max_context_tokens ?? context?.default;
+      const defaultContext = provider?.max_context_tokens ?? context?.default;
       const selection: ProviderSelection = {
         kind: providerKind,
         key,
@@ -289,8 +287,7 @@ export function ProviderSection() {
     }
   };
 
-  const needsAuthentication =
-    provider.kind === "none" || !provider.authed;
+  const needsAuthentication = provider.kind === "none" || !provider.authed;
   return (
     <>
       <FormSection title="Provider">

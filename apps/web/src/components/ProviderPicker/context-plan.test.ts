@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderContext } from "@/api/catalogs";
 import { planContextOptions, planFromCredentials } from "./context-plan";
+import type { ProviderContextPolicy } from "@vesta/core";
 
-const claudeContext: ProviderContext = {
+const claudeContext: ProviderContextPolicy = {
   default: 1000000,
   max: 1000000,
   defaults_by_plan: { max: 1000000, pro: 200000, free: 200000 },
@@ -15,7 +15,7 @@ const claudeContext: ProviderContext = {
 
 // A plan default that names a window the plan itself cannot see, so the
 // picker must fall through to the provider default, then the smallest preset.
-const misconfiguredContext: ProviderContext = {
+const misconfiguredContext: ProviderContextPolicy = {
   default: 1000000,
   max: 1000000,
   defaults_by_plan: { pro: 1000000 },
@@ -26,7 +26,7 @@ const misconfiguredContext: ProviderContext = {
   ],
 };
 
-const openrouterContext: ProviderContext = {
+const openrouterContext: ProviderContextPolicy = {
   default: 200000,
   max: 200000,
   presets: [
@@ -38,7 +38,7 @@ const openrouterContext: ProviderContext = {
 describe("planContextOptions", () => {
   it.each<{
     name: string;
-    context: ProviderContext;
+    context: ProviderContextPolicy;
     plan: "max" | "pro" | "free" | null;
     tokens: number[];
     initial: number;

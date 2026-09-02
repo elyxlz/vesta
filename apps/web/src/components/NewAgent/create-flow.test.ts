@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
-import { AgentStatusError, type ProviderResult } from "@/api/agents";
 import {
   applyProviderSetup,
   classifyCreateFailure,
@@ -9,6 +8,11 @@ import {
   type ProviderFlowDeps,
   type ShellFlowDeps,
 } from "./create-flow";
+import {
+  AgentStatusError,
+  type HttpClient,
+  type ProviderSelection,
+} from "@vesta/core";
 
 describe("classifyCreateFailure", () => {
   it.each<{
@@ -75,12 +79,12 @@ describe("isCredentialRejection", () => {
 
 function shellDeps(overrides: Partial<ShellFlowDeps> = {}): ShellFlowDeps {
   return {
-    createAgent: vi.fn((_name: string) => Promise.resolve()),
-    waitUntilRunning: vi.fn((_name: string, _timeout: number) =>
-      Promise.resolve(),
+    createAgent: vi.fn((_http: HttpClient, _name: string) => Promise.resolve()),
+    waitUntilRunning: vi.fn(
+      (_http: HttpClient, _name: string, _timeout: number) => Promise.resolve(),
     ),
-    waitUntilReady: vi.fn((_name: string, _timeout: number) =>
-      Promise.resolve(),
+    waitUntilReady: vi.fn(
+      (_http: HttpClient, _name: string, _timeout: number) => Promise.resolve(),
     ),
     ...overrides,
   };
@@ -97,8 +101,12 @@ describe("prepareAgentShell", () => {
     await expect(
       prepareAgentShell("luna", true, 10_000, deps),
     ).resolves.toEqual({ kind: "needs-provider" });
-    expect(deps.createAgent).toHaveBeenCalledWith("luna");
-    expect(deps.waitUntilRunning).toHaveBeenCalledWith("luna", 10_000);
+    expect(deps.createAgent).toHaveBeenCalledWith(expect.anything(), "luna");
+    expect(deps.waitUntilRunning).toHaveBeenCalledWith(
+      expect.anything(),
+      "luna",
+      10_000,
+    );
   });
 
   it("resumes an existing shell and finishes when it is already ready", async () => {
@@ -111,7 +119,11 @@ describe("prepareAgentShell", () => {
     await expect(
       prepareAgentShell("luna", false, 10_000, deps),
     ).resolves.toEqual({ kind: "ready" });
-    expect(deps.waitUntilReady).toHaveBeenCalledWith("luna", 10_000);
+    expect(deps.waitUntilReady).toHaveBeenCalledWith(
+      expect.anything(),
+      "luna",
+      10_000,
+    );
   });
 
   it("does not adopt an unrelated agent on the first create attempt", async () => {
@@ -131,22 +143,23 @@ function providerDeps(
   overrides: Partial<ProviderFlowDeps> = {},
 ): ProviderFlowDeps {
   return {
-    setProvider: vi.fn(
+    provisionAgent: vi.fn(
       (
+        _http: HttpClient,
         _name: string,
-        _provider: ProviderResult,
+        _provider: ProviderSelection,
         _personality?: string,
         _timezone?: string,
       ) => Promise.resolve(),
     ),
-    waitUntilReady: vi.fn((_name: string, _timeout: number) =>
-      Promise.resolve(),
+    waitUntilReady: vi.fn(
+      (_http: HttpClient, _name: string, _timeout: number) => Promise.resolve(),
     ),
     ...overrides,
   };
 }
 
-const CLAUDE: ProviderResult = {
+const CLAUDE: ProviderSelection = {
   kind: "claude",
   credentials: "{}",
   model: "opus-latest",
@@ -168,19 +181,24 @@ describe("applyProviderSetup", () => {
         deps,
       ),
     ).resolves.toEqual({ kind: "ready" });
-    expect(deps.setProvider).toHaveBeenCalledWith(
+    expect(deps.provisionAgent).toHaveBeenCalledWith(
+      expect.anything(),
       "luna",
       CLAUDE,
       "dry",
       "Europe/London",
     );
-    expect(deps.waitUntilReady).toHaveBeenCalledWith("luna", 10_000);
+    expect(deps.waitUntilReady).toHaveBeenCalledWith(
+      expect.anything(),
+      "luna",
+      10_000,
+    );
   });
 
   it("returns credential failures to the provider step without polling", async () => {
     const rejected = new ApiError(400, "invalid credentials");
     const deps = providerDeps({
-      setProvider: vi.fn(() => Promise.reject(rejected)),
+      provisionAgent: vi.fn(() => Promise.reject(rejected)),
     });
 
     await expect(

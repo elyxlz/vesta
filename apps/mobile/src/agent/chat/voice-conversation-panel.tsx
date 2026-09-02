@@ -111,7 +111,9 @@ export function VoiceConversationPanel({
               {transcript}
             </Text>
           ) : (
-            <Text style={[styles.transcriptHint, { color: colors.tertiaryText }]}>
+            <Text
+              style={[styles.transcriptHint, { color: colors.tertiaryText }]}
+            >
               Just start talking
             </Text>
           )}

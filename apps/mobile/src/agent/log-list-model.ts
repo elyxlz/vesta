@@ -5,9 +5,6 @@ export interface LogLine {
   text: string;
 }
 
-export function addLatestLogLine(
-  current: LogLine[],
-  line: LogLine,
-): LogLine[] {
+export function addLatestLogLine(current: LogLine[], line: LogLine): LogLine[] {
   return [line, ...current].slice(0, MAX_LOG_LINES);
 }

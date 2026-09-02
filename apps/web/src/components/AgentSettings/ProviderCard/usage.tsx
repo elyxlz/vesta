@@ -1,7 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Account, Usage, UsageCredits, UsageMeter } from "@/api/agents";
+import type { Account, Usage, UsageCredits, UsageMeter } from "@vesta/core";
 
 function formatResetsAt(iso: string): string {
   const diff = new Date(iso).getTime() - Date.now();

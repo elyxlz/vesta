@@ -20,7 +20,6 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import type { FileTreeEntry } from "@/api/files";
 import { HostAccessCard } from "../HostAccessCard";
 import {
   collectDreamPaths,
@@ -28,6 +27,7 @@ import {
   MEMORY_PATH,
   SKILLS_PREFIX,
 } from "./paths";
+import type { FileTreeEntry } from "@vesta/core";
 
 interface SimpleViewProps {
   entries: FileTreeEntry[];

@@ -15,22 +15,26 @@ import {
   ZaiLogo,
 } from "./logos";
 import { useCallback, useEffect, useState } from "react";
-import { claudeProvider, openrouterProvider } from "@/api";
-import type { ProviderResult } from "@/api/agents";
 import { ChoiceStep, type ChoiceVariant } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
 import { planContextOptions, planFromCredentials } from "./context-plan";
-import type { ProviderKind } from "@vesta/core";
+import type { ProviderKind, ProviderSelection } from "@vesta/core";
 import { useProviderCatalog } from "@/hooks/use-agent-catalogs";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { cn, errorMessage } from "@/lib/utils";
-import { contextForModel } from "@/api/catalogs";
 import { providerModelOptions } from "./model-options";
 import { ProviderAuthStep } from "./auth-step";
+import {
+  contextForModel,
+  fetchClaudeModelsWithCredentials,
+  fetchOpenRouterModels,
+  validateOpenRouterKey,
+} from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 function providerLogo(provider: ProviderKind | null) {
   if (provider === "claude") return <ClaudeLogo />;
@@ -51,7 +55,7 @@ export function ProviderPicker({
   choiceVariant,
 }: {
   agentName: string;
-  onDone: (result: ProviderResult) => void;
+  onDone: (result: ProviderSelection) => void;
   onBack?: () => void;
   className?: string;
   // Onboarding mode: every provider walks the model step, but a fixed-catalog
@@ -76,15 +80,15 @@ export function ProviderPicker({
   // it is ready by the time the model step renders.
   const fetchClaudeModels = useCallback(
     (nextCredentials: string) =>
-      claudeProvider.fetchClaudeModels(agentName, nextCredentials),
+      fetchClaudeModelsWithCredentials(httpClient, agentName, nextCredentials),
     [agentName],
   );
-  const fetchOpenRouterModels = useCallback(
-    () => openrouterProvider.fetchTopModels(agentName),
+  const fetchTopModels = useCallback(
+    () => fetchOpenRouterModels(httpClient, agentName),
     [agentName],
   );
-  const validateOpenRouterKey = useCallback(
-    (nextKey: string) => openrouterProvider.validateKey(agentName, nextKey),
+  const validateKey = useCallback(
+    (nextKey: string) => validateOpenRouterKey(httpClient, agentName, nextKey),
     [agentName],
   );
   const claudeLiveModels = useClaudeModels(
@@ -260,9 +264,7 @@ export function ProviderPicker({
             title={keyCopy.title}
             subtitle={keyCopy.subtitle}
             placeholder={keyCopy.placeholder}
-            validateKey={
-              provider === "openrouter" ? validateOpenRouterKey : undefined
-            }
+            validateKey={provider === "openrouter" ? validateKey : undefined}
           />
         )}
         {step === "model" && (
@@ -283,9 +285,7 @@ export function ProviderPicker({
             claudeLiveModels={
               provider === "claude" ? claudeLiveModels : undefined
             }
-            loadModels={
-              provider === "openrouter" ? fetchOpenRouterModels : undefined
-            }
+            loadModels={provider === "openrouter" ? fetchTopModels : undefined}
             logo={stepLogo}
             onBack={backFromModel}
           />

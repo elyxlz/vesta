@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createSyncSocket } from "./socket";
 import type { SyncSocketDeps, SyncState } from "./socket";
@@ -22,21 +22,17 @@ class FakeSocket implements SocketLike {
 
 interface Harness {
   sockets: FakeSocket[];
-  timers: { fn: () => void; ms: number }[];
   states: SyncState[];
   snapshots: Tree[];
   deltas: Delta[];
   deps: SyncSocketDeps;
-  advanceTimers: () => Promise<void>;
 }
 
 function harness(): Harness {
   const sockets: FakeSocket[] = [];
-  const timers: { fn: () => void; ms: number }[] = [];
   const states: SyncState[] = [];
   const snapshots: Tree[] = [];
   const deltas: Delta[] = [];
-  let fired = 0;
   const deps: SyncSocketDeps = {
     buildUrl: () => Promise.resolve("wss://vestad.test/sync"),
     createSocket: () => {
@@ -44,27 +40,21 @@ function harness(): Harness {
       sockets.push(socket);
       return socket;
     },
-    setTimer: (fn, ms) => {
-      timers.push({ fn, ms });
-      return timers.length - 1;
-    },
-    clearTimer: () => undefined,
     clientVersion: "0.1.179",
     clientKind: "web",
   };
-  const advanceTimers = async (): Promise<void> => {
-    while (fired < timers.length) {
-      timers[fired++]?.fn();
-    }
-    await flush();
-  };
-  return { sockets, timers, states, snapshots, deltas, deps, advanceTimers };
+  return { sockets, states, snapshots, deltas, deps };
 }
 
 // The URL builder is async, so the socket is created a microtask after createSyncSocket returns.
-async function flush(): Promise<void> {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-}
+const flush = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(0);
+};
+
+// The pending reconnect timer, if any, fires after this many ms; the next socket is then dialed.
+const reconnectAfter = async (ms: number): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+};
 
 async function start(h: Harness): Promise<ReturnType<typeof createSyncSocket>> {
   const socket = createSyncSocket(h.deps, {
@@ -83,6 +73,14 @@ function hello(version: string, minSupported: string): string {
     min_supported: minSupported,
   });
 }
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("createSyncSocket", () => {
   it("waits for the url builder before opening a socket", async () => {
@@ -109,7 +107,7 @@ describe("createSyncSocket", () => {
     await start(h);
     expect(h.states).toEqual(["connecting", "reconnecting"]);
     expect(h.sockets).toHaveLength(0);
-    expect(h.timers).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(1);
   });
 
   it("reports connecting then open", async () => {
@@ -158,7 +156,7 @@ describe("createSyncSocket", () => {
     expect(h.states.at(-1)).toBe("app_behind");
     expect(socket?.closed).toBe(true);
     socket?.onclose?.();
-    expect(h.timers).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("enters the recoverable gateway_behind state when ahead of the gateway", async () => {
@@ -172,28 +170,33 @@ describe("createSyncSocket", () => {
     // gateway restarts newer (its reconnect backoff is the retry cadence).
     expect(socket?.closed).toBe(false);
     socket?.onclose?.();
-    expect(h.timers).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(1);
   });
 
   it("grows the reconnect backoff from 1s toward the cap", async () => {
     const h = harness();
     await start(h);
     h.sockets[0]?.onclose?.();
-    h.timers[0]?.fn();
-    await flush();
+    await reconnectAfter(999);
+    expect(h.sockets).toHaveLength(1);
+    await reconnectAfter(1);
+    expect(h.sockets).toHaveLength(2);
     h.sockets[1]?.onclose?.();
-    expect(h.timers.map((timer) => timer.ms)).toEqual([1000, 2000]);
+    await reconnectAfter(1999);
+    expect(h.sockets).toHaveLength(2);
+    await reconnectAfter(1);
+    expect(h.sockets).toHaveLength(3);
   });
 
   it("resets the backoff after a successful open", async () => {
     const h = harness();
     await start(h);
     h.sockets[0]?.onclose?.();
-    h.timers[0]?.fn();
-    await flush();
+    await reconnectAfter(1000);
     h.sockets[1]?.onopen?.();
     h.sockets[1]?.onclose?.();
-    expect(h.timers.map((timer) => timer.ms)).toEqual([1000, 1000]);
+    await reconnectAfter(1000);
+    expect(h.sockets).toHaveLength(3);
   });
 
   it("sends a reauth frame without reconnecting", async () => {
@@ -241,6 +244,34 @@ describe("createSyncSocket", () => {
     );
   });
 
+  it("masks the viewed agent to null on the wire while unfocused", async () => {
+    const h = harness();
+    const socket = await start(h);
+    h.sockets[0]?.onopen?.();
+    socket.reportViewing("scout");
+    socket.reportPresence(false);
+    // A blurred window is viewing no one, whatever page is open behind it.
+    expect(h.sockets[0]?.sent.at(-1)).toBe(
+      JSON.stringify({
+        type: "client_context",
+        focused: false,
+        client: "web",
+        resync: false,
+        viewing: null,
+      }),
+    );
+    socket.reportPresence(true);
+    expect(h.sockets[0]?.sent.at(-1)).toBe(
+      JSON.stringify({
+        type: "client_context",
+        focused: true,
+        client: "web",
+        resync: false,
+        viewing: "scout",
+      }),
+    );
+  });
+
   it("sends the device context alongside cached focus, and replays it on reconnect", async () => {
     const h = harness();
     const socket = await start(h);
@@ -271,7 +302,7 @@ describe("createSyncSocket", () => {
     expect(h.sockets[0]?.sent).toHaveLength(3);
     // The reconnect replay carries the latest context as a resync.
     h.sockets[0]?.onclose?.();
-    await h.advanceTimers();
+    await reconnectAfter(1000);
     h.sockets[1]?.onopen?.();
     expect(h.sockets[1]?.sent).toContainEqual(
       JSON.stringify({
@@ -332,7 +363,7 @@ describe("createSyncSocket", () => {
     h.sockets[0]?.onopen?.();
     socket.reportPresence(true);
     h.sockets[0]?.onclose?.();
-    await h.advanceTimers();
+    await reconnectAfter(1000);
     h.sockets[1]?.onopen?.();
     // The reconnect replay carries resync:true so it isn't mistaken for a fresh focus.
     expect(h.sockets[1]?.sent).toContainEqual(
@@ -353,6 +384,23 @@ describe("createSyncSocket", () => {
     sync.close();
     expect(h.states.at(-1)).toBe("closed");
     h.sockets[0]?.onclose?.();
-    expect(h.timers).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("closes cleanly while the url builder is still refreshing a token", async () => {
+    const h = harness();
+    let release = (): void => undefined;
+    h.deps.buildUrl = async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return "wss://vestad.test/sync";
+    };
+    const sync = await start(h);
+    sync.close();
+    release();
+    await flush();
+    expect(h.sockets).toHaveLength(0);
+    expect(h.states.at(-1)).toBe("closed");
   });
 });

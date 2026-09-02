@@ -10,14 +10,17 @@ import {
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchAgentBackupSettings, setAgentBackupSettings } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { fetchAgentBackupSettings, setAgentBackupSettings } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 // Per-agent automatic-backups toggle. Reads the effective enabled state on mount
 // and writes an override on change; the section hides its control on load failure.
 export function BackupsCard() {
   const { name } = useSelectedAgent();
-  const settings = useResource(name || null, fetchAgentBackupSettings);
+  const settings = useResource(name || null, (key) =>
+    fetchAgentBackupSettings(httpClient, key),
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -31,7 +34,7 @@ export function BackupsCard() {
   const onToggle = async (enabled: boolean) => {
     setSaving(true);
     try {
-      settings.set(await setAgentBackupSettings(name, enabled));
+      settings.set(await setAgentBackupSettings(httpClient, name, enabled));
     } catch (err) {
       console.warn("[settings] failed to set automatic backups:", err);
     } finally {

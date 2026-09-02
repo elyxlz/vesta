@@ -94,10 +94,7 @@ interface DashboardWebViewProps {
 export const DashboardWebView = forwardRef<
   DashboardWebViewHandle,
   DashboardWebViewProps
->(function DashboardWebView(
-  { bridgeMessages, dark, ...props },
-  forwardedRef,
-) {
+>(function DashboardWebView({ bridgeMessages, dark, ...props }, forwardedRef) {
   const nativeRef = useRef<{
     injectJavaScript: (script: string) => void;
   }>(null);

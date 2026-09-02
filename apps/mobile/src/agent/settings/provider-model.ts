@@ -13,12 +13,10 @@ export interface LiveModel {
 
 // The two Claude aliases offered ahead of the live catalog (owned by @vesta/core), so the
 // picker still shows something useful when the live fetch fails or has not resolved yet.
-const CLAUDE_ALIAS_OPTIONS: ModelOption[] = CLAUDE_ALIASES.map(
-  (alias) => ({
-    label: alias.label,
-    value: alias.slug,
-  }),
-);
+const CLAUDE_ALIAS_OPTIONS: ModelOption[] = CLAUDE_ALIASES.map((alias) => ({
+  label: alias.label,
+  value: alias.slug,
+}));
 
 // Before sign-in the wire reports "none", so the section works off the kind the
 // user picked in the connect card; once signed in the wire's kind wins.

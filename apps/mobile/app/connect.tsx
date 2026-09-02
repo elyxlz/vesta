@@ -45,8 +45,7 @@ function ConnectContent() {
   const estimatedActionSheetHeight =
     (recentGateways?.length ? 186 : 156) - (cloudSignInEnabled ? 0 : 68);
   const canPresentSheet =
-    !privacyBlocked &&
-    (!bootTransition.active || bootTransition.pageRevealed);
+    !privacyBlocked && (!bootTransition.active || bootTransition.pageRevealed);
 
   useEffect(() => {
     if (!isFocused) {
@@ -77,10 +76,7 @@ function ConnectContent() {
       ]}
     >
       <View
-        style={[
-          styles.hero,
-          { paddingBottom: estimatedActionSheetHeight },
-        ]}
+        style={[styles.hero, { paddingBottom: estimatedActionSheetHeight }]}
       >
         <VestaBrand
           orb={
