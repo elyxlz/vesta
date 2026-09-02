@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Scan the events DB and every channel store on the box for secrets, then scrub the real leaks in place.
-A hit reference is a bare event id for the events store, or store:table:rowid for a channel store,
-exactly as the scan prints it.
-Usage: redact_secrets.py            # scan every store present, printing each hit with the value masked
+"""Scan the events DB, every channel store, every session transcript and the files under /tmp and $HOME
+for secrets, then scrub the real leaks in the stores in place.
+A hit reference is a bare event id for the events store, store:table:rowid for a channel store,
+transcript:path:line for a session transcript, or file:path for a file, exactly as the scan prints it.
+The last two are read-only: --scrub refuses them.
+Usage: redact_secrets.py            # scan every source present, printing each hit with the value masked
        redact_secrets.py --show REF # print one row's full text with every detected secret masked
        redact_secrets.py --scrub REF [REF ...]   # redact every secret in those rows
        redact_secrets.py --scrub-literal 'VALUE'   # redact one known value the scanner can't detect
@@ -23,6 +25,18 @@ DB = Path("~/agent/data/events.db").expanduser()
 STORE_SCAN_BUDGET_SECS = 120
 SCAN_BATCH_ROWS = 256
 CONN_TIMEOUT_SECS = 30
+# The file walk's roots, expanded at call time so $HOME is read when the scan runs, as the stores are.
+FILE_SCAN_ROOTS = (Path("/tmp"), Path("~"))
+# A credential is short; a file above this size is not read and is counted as skipped in the report.
+FILE_SCAN_MAX_BYTES = 256 * 1024
+# Directories the file walk never enters, by name (package caches, the git object store, test
+# fixtures and their fake credentials) and by path (the two upstream source trees, whose code spells
+# credential shapes such as `password=` on hundreds of lines; `core` is a read-only mount, and every
+# edit the agent makes under `skills` passes through the transcript, which is scanned).
+FILE_SCAN_PRUNE = frozenset({".git", ".cache", ".npm", "node_modules", "site-packages", "__pycache__", "tests"})
+FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"))
+# Refs the scan prints for sources it can only read: a file is fixed by hand, a transcript by rotation.
+READ_ONLY_REF_PREFIXES = ("file:", "transcript:")
 # The tables FTS5 creates behind a virtual table: binary index shards, never scanned directly.
 _FTS_SHADOW_SUFFIXES = ("_data", "_idx", "_content", "_docsize", "_config")
 REDACTED = "[REDACTED]"
@@ -143,6 +157,7 @@ PATTERNS = [
     r"(?-i:shpat_[a-f0-9]{32})",  # Shopify admin API access tokens
     r"(?-i:lin_api_[A-Za-z0-9]{20,})",  # Linear API keys
     r"(?-i:wak_[A-Za-z0-9._-]{20,})",  # Vesta / Double Tick WhatsApp API keys, in ~/.whatsapp/state.json
+    r"(?-i:sk_[a-f0-9]{40,})",  # ElevenLabs API keys
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
     # A real separator (: = or a quote) is mandatory, so prose like "password reuse" never matches;
@@ -159,12 +174,12 @@ PATTERNS = [
         r"|[ ]*\\?[\"'][^ \"'\\]{4,}"
         r"|\\?[\"']?(?:[ ]*[:=]+[ ]*|[ ]+)\\?[\"'][ ]+[^ \"'\\]{4,}\\?[\"'])"
     ),
-    # Any name ENDING in key/token/secret/password followed by : or =, so EXA_KEY=<tok>, an
+    # Any name ENDING in key/token/secret/password/passwd followed by : or =, so EXA_KEY=<tok>, an
     # X-Plex-Token: header, and a JSON "token" field all hit. The match anchors at the suffix word
     # itself: a quantified name-prefix here backtracks quadratically inside base64 runs and hangs
     # the scan on large events. Value guard: >=16 token chars with at least one digit keeps prose
     # ("the key = a good one") and identifier assignments (PRIMARY_KEY=account_number) out.
-    r"(?:key|token|secret|password)\\?[\"']?[ ]*\\?[:=]+[ ]*\\?[\"']?(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}",
+    r"(?:key|token|secret|passw(?:or)?d)\\?[\"']?[ ]*\\?[:=]+[ ]*\\?[\"']?(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}",
     # `Authorization: Bearer <tok>`: the secret is named by the SCHEME, not by a key name.
     r"Bearer[ ]+(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9_\-.]{16,}",
     # Apple app-specific password pasted BARE. Every rule above needs a label, prefix or URL around
@@ -183,6 +198,9 @@ PATTERNS = [
     # events. The digit lookahead keeps camelCase docs URLs (/api/RTCPeerConnectionIceEvent) out.
     r"[?&](?:auth|sig|signature)=[A-Za-z0-9_\-]{16,}",
     r"/api/(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{25,}",
+    # A magic sign-in link carries its token as a bare path segment or fragment; the digit lookahead
+    # keeps a docs anchor (magic-link#configure-magic-link) out.
+    r"magic[_-]?link[#/](?=[A-Za-z0-9_\-:.=%+]*\d)[A-Za-z0-9_\-:.=%+]{16,}",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
@@ -498,6 +516,19 @@ def _cell_text(value: CellValue) -> str | None:
     return None
 
 
+# Columns holding participant and chat identifiers, never secrets. whatsapp stores a LID with no
+# `@lid` suffix in `messages.sender` and `chats.name`: a bare digit run that clears the card IIN gate
+# and Luhn, so every row of that chat would report as a card and a scrub would rewrite the ids the
+# history is keyed by. Every text column of `chats` and `contacts` is one of these, so those tables
+# go unscanned.
+IDENTITY_COLUMNS = frozenset({"jid", "chat_jid", "sender", "name", "chat_name", "phone_number"})
+
+
+def _scannable_columns(cursor: sqlite3.Cursor) -> list[tuple[int, str]]:
+    """(index, name) of every column in the cursor's result except the identity columns."""
+    return [(index, description[0]) for index, description in enumerate(cursor.description) if description[0] not in IDENTITY_COLUMNS]
+
+
 def _scannable_cells(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str | bytes]:
     """One row's str and BLOB cells by column name, keeping each cell's storage type so a scrub
     writes a BLOB back as a BLOB; a missing row is an empty dict."""
@@ -505,8 +536,7 @@ def _scannable_cells(conn: sqlite3.Connection, table: str, rowid: int) -> dict[s
     row = cursor.fetchone()
     if row is None:
         return {}
-    names = [description[0] for description in cursor.description]
-    return {name: value for name, value in zip(names, row, strict=True) if isinstance(value, str | bytes)}
+    return {name: row[index] for index, name in _scannable_columns(cursor) if isinstance(row[index], str | bytes)}
 
 
 def _channel_row(conn: sqlite3.Connection, table: str, rowid: int) -> dict[str, str]:
@@ -652,13 +682,16 @@ def bytes_on_disk(path: Path, literals: list[str]) -> list[str]:
 
 def _parse_ref(token: str) -> tuple[str, str, int]:
     """A hit reference as (store, table, rowid): a bare integer addresses the events store, and
-    store:table:rowid addresses a channel-store row, exactly as the scan printed it."""
+    store:table:rowid addresses a channel-store row, exactly as the scan printed it. A file or
+    transcript ref names a source the scan only reads, so it is refused with the remedy."""
+    if token.startswith(READ_ONLY_REF_PREFIXES):
+        raise ValueError(f"{token} is read-only: remove a leaked copy from a file by hand, and rotate a credential a transcript holds")
     if token.isdigit():
         return ("events", "events", int(token))
     store_name, _, tail = token.rpartition(":")
     store_name, _, table = store_name.rpartition(":")
     if not store_name or not table or not tail.isdigit():
-        raise ValueError(token)
+        raise ValueError(f"{token}: use a numeric event id or store:table:rowid from the scan output")
     return (store_name, table, int(tail))
 
 
@@ -709,7 +742,7 @@ def _run_scrub(tokens: list[str]) -> int:
     try:
         refs = [_parse_ref(token) for token in tokens]
     except ValueError as exc:
-        print(f"bad reference {exc}: use a numeric event id or store:table:rowid from the scan output", file=sys.stderr)
+        print(f"bad reference {exc}", file=sys.stderr)
         return 1
     if not refs:
         print("usage: redact_secrets.sh --scrub <ref> <ref> ...", file=sys.stderr)
@@ -853,12 +886,13 @@ def scan_channel_store(conn: sqlite3.Connection, store: Store) -> StoreReport:
 
 def _scan_table(conn: sqlite3.Connection, store: Store, table: str, deadline: float, hits: list[tuple[str, str]]) -> bool:
     cursor = conn.execute(f'SELECT rowid, * FROM "{table}"')
+    columns = _scannable_columns(cursor)
     while rows := cursor.fetchmany(SCAN_BATCH_ROWS):
         if time.monotonic() > deadline:
             return False
         for row in rows:
-            for value in row[1:]:
-                text = _cell_text(value)
+            for index, _ in columns:
+                text = _cell_text(row[index])
                 if text is not None:
                     hits.extend((f"{store.name}:{table}:{row[0]}", snippet) for snippet in find_matches(text))
     return True
@@ -888,11 +922,86 @@ def _scan_one_channel(store: Store) -> StoreReport:
         return StoreReport(store, f"FAILED ({exc}): NOT scanned", [])
 
 
+def transcript_files() -> list[Path]:
+    """Every session transcript under ~/.claude/projects, resolved from $HOME at call time: each
+    session's own JSONL plus the subagent transcripts nested under it."""
+    root = Path.home() / ".claude" / "projects"
+    return sorted(path for path in root.rglob("*.jsonl") if path.is_file()) if root.is_dir() else []
+
+
+def scan_transcripts() -> StoreReport:
+    """Sweep every transcript line by line (a line is one JSON event, and a partial last line is the
+    live session mid-append), all under one time budget. Read-only: the running session holds its
+    transcript open for append, so a hit here is never scrubbed."""
+    store = Store("transcripts", Path.home() / ".claude" / "projects")
+    paths = transcript_files()
+    if not paths:
+        return StoreReport(store, "absent", [])
+    deadline = time.monotonic() + STORE_SCAN_BUDGET_SECS
+    hits: list[tuple[str, str]] = []
+    lines = 0
+    try:
+        for path in paths:
+            with path.open(encoding="utf-8", errors="replace") as handle:
+                for number, line in enumerate(handle, start=1):
+                    if time.monotonic() > deadline:
+                        return StoreReport(store, f"TRUNCATED after {STORE_SCAN_BUDGET_SECS}s in {path}: NOT fully scanned", hits)
+                    lines += 1
+                    hits.extend((f"transcript:{path}:{number}", snippet) for snippet in find_matches(line))
+    except OSError as exc:
+        return StoreReport(store, f"FAILED ({exc}): NOT scanned", hits)
+    return StoreReport(store, f"scanned {len(paths)} transcript(s), {lines} line(s)", hits)
+
+
+def _covered_files() -> set[Path]:
+    """The database stores with their -wal/-shm sidecars and the transcripts: each has its own probe
+    above, so the file walk leaves them to the refs those probes print."""
+    stores = {Path(f"{store.path}{suffix}") for store in _all_stores().values() for suffix in ("", "-wal", "-shm")}
+    return stores | set(transcript_files())
+
+
+def _file_text(path: Path) -> str | None:
+    """A regular file's content as text; None for one over the size cap, not a regular file (a
+    socket, a broken link) or unreadable, which the report counts as skipped."""
+    try:
+        if not path.is_file() or path.stat().st_size > FILE_SCAN_MAX_BYTES:
+            return None
+        return path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def scan_files(root: Path) -> StoreReport:
+    """Sweep the content of every file under one root, under the same time budget as a store.
+    Read-only: a hit names the file, and a leaked copy is removed from it by hand."""
+    store = Store("files", root)
+    if not root.is_dir():
+        return StoreReport(store, "absent", [])
+    covered = _covered_files()
+    pruned = {path.expanduser() for path in FILE_SCAN_PRUNE_PATHS}
+    deadline = time.monotonic() + STORE_SCAN_BUDGET_SECS
+    hits: list[tuple[str, str]] = []
+    scanned = skipped = 0
+    for directory, subdirs, names in root.walk():
+        subdirs[:] = [name for name in subdirs if name not in FILE_SCAN_PRUNE and directory / name not in pruned]
+        for path in (directory / name for name in names if directory / name not in covered):
+            if time.monotonic() > deadline:
+                return StoreReport(store, f"TRUNCATED after {STORE_SCAN_BUDGET_SECS}s at {path}: NOT fully scanned", hits)
+            text = _file_text(path)
+            if text is None:
+                skipped += 1
+                continue
+            scanned += 1
+            hits.extend((f"file:{path}", snippet) for snippet in find_matches(text))
+    return StoreReport(store, f"scanned {scanned} file(s), {skipped} skipped (over {FILE_SCAN_MAX_BYTES // 1024}k or unreadable)", hits)
+
+
 def _run_scan() -> int:
-    reports = [_scan_events_store(), *(_scan_one_channel(store) for store in channel_stores())]
-    if all(report.status == "absent" for report in reports):
+    stores = [_scan_events_store(), *(_scan_one_channel(store) for store in channel_stores())]
+    if all(report.status == "absent" for report in stores):
         print(f"No database at {DB}", file=sys.stderr)
         return 1
+    reports = [*stores, scan_transcripts(), *(scan_files(root.expanduser()) for root in FILE_SCAN_ROOTS)]
     print("Store coverage (a store not marked scanned was NOT checked):")
     for report in reports:
         line = f"  {report.store.name} ({report.store.path}): {report.status}"
@@ -907,6 +1016,12 @@ def _run_scan() -> int:
     refs = {token for token, _ in hits}
     print(f"Found {len(refs)} record(s) with potential secrets (value masked below).")
     print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <ref> <ref> ...")
+    if any(token.startswith(READ_ONLY_REF_PREFIXES) for token in refs):
+        print(
+            "NOTE: file: and transcript: refs are read-only, --scrub refuses them. Judge a file hit from its snippet and remove a\n"
+            "leaked copy by hand (a credential store your tooling reads is where that value belongs). The running session holds\n"
+            "its transcript open for append, so a credential in a transcript is removed by rotating it."
+        )
     # Never cap this list: matches arrive in row order, so any cap hides the newest rows' leaks.
     for token, snippet in hits:
         print(f"{token}|{snippet}")
