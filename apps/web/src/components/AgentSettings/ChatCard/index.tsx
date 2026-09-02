@@ -8,12 +8,20 @@ import {
 import { MenuSection } from "@/components/ui/menu-section";
 import { Switch } from "@/components/ui/switch";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
-import { useChatPacing } from "@/stores/use-chat-pacing";
+import { usePreferences } from "@/stores/use-preferences";
 
 export function ChatCard() {
   const { name } = useSelectedAgent();
-  const natural = useChatPacing((s) => s.byAgent[name] ?? true);
-  const setNatural = useChatPacing((s) => s.setNatural);
+  const natural = usePreferences((s) => s.naturalPacingByAgent[name] ?? true);
+  const update = usePreferences((s) => s.update);
+  const setNatural = (value: boolean) => {
+    update({
+      naturalPacingByAgent: {
+        ...usePreferences.getState().naturalPacingByAgent,
+        [name]: value,
+      },
+    });
+  };
 
   return (
     <Card size="sm">
@@ -29,10 +37,7 @@ export function ChatCard() {
                 simulate typing delay before this agent's replies appear
               </FieldDescription>
             </FieldContent>
-            <Switch
-              checked={natural}
-              onCheckedChange={(value) => setNatural(name, value)}
-            />
+            <Switch checked={natural} onCheckedChange={setNatural} />
           </Field>
         </MenuSection>
       </CardContent>

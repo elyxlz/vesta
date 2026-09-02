@@ -17,11 +17,11 @@ export function ServicesCard() {
     <div className="flex flex-col gap-2">
       <Card size="sm">
         <CardHeader>
-          <CardTitle className="group-data-[size=sm]/card:text-base">
+          <CardTitle>
             <Server className="size-4 text-muted-foreground" />
             services
           </CardTitle>
-          <CardDescription className="group-data-[size=sm]/card:text-sm">
+          <CardDescription>
             the small apps {who} runs for you, each at its own address.
           </CardDescription>
         </CardHeader>

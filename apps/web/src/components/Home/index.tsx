@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { getLastAgent } from "@/lib/last-agent";
+import { usePreferences } from "@/stores/use-preferences";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentsCarousel } from "./AgentsCarousel";
@@ -12,6 +12,7 @@ import {
   scaleForCarouselItemOffset,
 } from "./AgentsCarousel/constants";
 import { EmptyState } from "./EmptyState";
+import { UpdateProgressScreen } from "@/components/UpdateProgressScreen";
 
 function SkeletonCard({ index, opacity }: { index: number; opacity: number }) {
   const scale = scaleForCarouselItemOffset(index * AGENT_CAROUSEL_ITEM_STRIDE);
@@ -64,13 +65,17 @@ function SkeletonList() {
 }
 
 export function Home() {
-  const { agentsFetched, agents } = useGateway();
+  const { agentsFetched, agents, gatewayOperation, updatedTo } = useGateway();
 
   // Center the most recently opened agent on load while keeping gateway order.
   const lastAgentIndex = useMemo(() => {
-    const last = getLastAgent();
+    const last = usePreferences.getState().lastAgent;
     return last ? agents.findIndex((a) => a.name === last) : -1;
   }, [agents]);
+
+  if (gatewayOperation !== null || updatedTo !== null) {
+    return <UpdateProgressScreen />;
+  }
 
   return (
     <AnimatePresence mode="wait">

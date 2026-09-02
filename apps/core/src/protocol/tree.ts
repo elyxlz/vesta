@@ -56,7 +56,7 @@ export interface AgentInfo {
   services: Record<string, ServiceInfo>;
 }
 
-export interface GatewayLan {
+interface GatewayLan {
   exposed: boolean;
   url: string | null;
 }

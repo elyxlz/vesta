@@ -11,7 +11,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { CHANNEL } from "./channels";
 
-export const APP_SCHEME = "vesta";
+const APP_SCHEME = "vesta";
 const APP_ORIGIN = `${APP_SCHEME}://bundle`;
 const DEV_SERVER_URL =
   process.env.VESTA_DESKTOP_DEV === "1" ? "http://localhost:1420" : null;

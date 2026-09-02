@@ -1,42 +1,6 @@
 import type { Page } from "@playwright/test";
 import { VISUAL_CONNECTION } from "./storage";
-
-// The preload API contract, mirrored from apps/web/src/lib/native/types.ts:
-// the harness compiles in the node tsconfig project, which does not include src/.
-interface VestaNativeApi {
-  platform: string;
-  focusWindow(): Promise<void>;
-  setTheme(theme: "light" | "dark"): void;
-  openExternal(url: string): Promise<void>;
-  getAppUpdate(): Promise<unknown>;
-  downloadAppUpdate(): Promise<void>;
-  onAppUpdateProgress(cb: (percent: number) => void): () => void;
-  installAppUpdate(): Promise<void>;
-  storeRead(): Promise<unknown>;
-  storeWrite(value: unknown): Promise<void>;
-  storeClear(): Promise<void>;
-  storeIsSecure(): Promise<boolean>;
-  recentStoreRead(): Promise<unknown>;
-  recentStoreWrite(value: unknown): Promise<void>;
-  recentStoreClear(): Promise<void>;
-  oauthStart(): Promise<number>;
-  onOauthCallback(cb: (url: string) => void): () => void;
-  oauthCancel(port: number): Promise<void>;
-  onWindowFocus(cb: (focused: boolean) => void): () => void;
-  windowMinimize(): Promise<void>;
-  windowToggleMaximize(): Promise<void>;
-  windowClose(): Promise<void>;
-  windowIsMaximized(): Promise<boolean>;
-  onWindowMaximizedChange(cb: (maximized: boolean) => void): () => void;
-  getOpenAtLogin(): Promise<boolean>;
-  setOpenAtLogin(enabled: boolean): Promise<void>;
-}
-
-declare global {
-  interface Window {
-    vestaNative?: VestaNativeApi;
-  }
-}
+import type { VestaNativeApi } from "../../src/lib/native/types";
 
 // Defines window.vestaNative before app code runs, so the app takes its real
 // desktop path (.desktop, .vibrancy, data-platform, titlebar inset or custom
@@ -96,6 +60,7 @@ export async function installNativeStub(
         oauthStart: () => Promise.resolve(0),
         onOauthCallback: () => noop,
         oauthCancel: resolved,
+        readGeolocation: () => Promise.resolve(null),
         onWindowFocus: () => noop,
         windowMinimize: resolved,
         windowToggleMaximize: resolved,
@@ -104,7 +69,7 @@ export async function installNativeStub(
         onWindowMaximizedChange: () => noop,
         getOpenAtLogin: () => Promise.resolve(false),
         setOpenAtLogin: resolved,
-      };
+      } satisfies VestaNativeApi;
     },
     {
       appUpdate: options.appUpdate ?? null,

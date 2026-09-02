@@ -1,11 +1,11 @@
 import { orbIsLive, type OrbVisualState } from "../agent-status/agent-status";
 
-export interface OrbPoint {
+interface OrbPoint {
   x: number;
   y: number;
 }
 
-export interface OrbHighlight {
+interface OrbHighlight {
   cx: number;
   cy: number;
   wRatio: number;

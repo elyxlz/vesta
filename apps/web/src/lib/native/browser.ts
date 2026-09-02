@@ -17,7 +17,7 @@ function readStoredJson(key: string): unknown {
   }
 }
 
-export function parseConnection(raw: string): ConnectionConfig | null {
+function parseConnection(raw: string): ConnectionConfig | null {
   try {
     return parseConnectionConfig(JSON.parse(raw));
   } catch {

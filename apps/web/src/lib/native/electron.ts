@@ -28,7 +28,7 @@ function readLegacyRecentGateways(): unknown {
 }
 
 // Parse at the boundary: the preload answer is untyped IPC, so validate the shape here.
-export function parseNativeFix(value: unknown): NativeGeolocationFix | null {
+function parseNativeFix(value: unknown): NativeGeolocationFix | null {
   if (typeof value !== "object" || value === null) return null;
   const fix = value as Record<string, unknown>;
   const { latitude, longitude, accuracyM } = fix;
@@ -45,7 +45,7 @@ export function parseNativeFix(value: unknown): NativeGeolocationFix | null {
 }
 
 // Parse at the boundary: the preload answer is untyped IPC, so validate the shape here.
-export function parseAppUpdateStatus(value: unknown): AppUpdateStatus {
+function parseAppUpdateStatus(value: unknown): AppUpdateStatus {
   if (typeof value !== "object" || value === null)
     return { available: false, version: null };
   const status = value as Record<string, unknown>;

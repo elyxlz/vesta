@@ -6,13 +6,12 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useModals } from "@/providers/ModalsProvider/context";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { useSwitchGateway } from "@/stores/use-switch-gateway";
+import { useDialogs } from "@/stores/use-dialogs";
 import { AgentServicesList } from "@/components/AgentServices";
 import type { MenuState } from "./types";
 import { MobileMenu } from "./MobileMenu";
@@ -29,10 +28,8 @@ export function AgentMenu() {
     if (location.pathname !== path) void navigate(path);
   };
   const { name, agent, isBusy, start, stop, restart } = useSelectedAgent();
-  const { setDeleteDialogOpen, setBackupDialogOpen, handleOpenAuth } =
-    useModals();
   const gateway = useGateway();
-  const openSwitchGateway = useSwitchGateway((s) => s.setOpen);
+  const openDialog = useDialogs((s) => s.setOpen);
 
   const [open, setOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
@@ -58,12 +55,14 @@ export function AgentMenu() {
       void navigate("/settings");
     },
     onAgentSettings: () => goTo(`/agent/${encodeURIComponent(name)}/settings`),
-    onSwitchGateway: () => openSwitchGateway(true),
+    onSwitchGateway: () => openDialog("switchGateway", true),
     onRestart: () => void restart(),
-    onBackup: () => setBackupDialogOpen(true),
-    onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
+    onBackup: () => openDialog("backups", true),
+    onAuthenticate: gateway.reachable
+      ? () => openDialog("providerAuth", true)
+      : undefined,
     isAuthenticated: !agentNeedsUser(agent.status),
-    onDelete: () => setDeleteDialogOpen(true),
+    onDelete: () => openDialog("deleteAgent", true),
   };
 
   const trigger = (

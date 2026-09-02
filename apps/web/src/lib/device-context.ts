@@ -9,7 +9,7 @@ import { native } from "@/lib/native";
 
 // A fix that takes longer than this (denied prompt left open, no provider) is given up on, so the
 // zone report is never held back by the position.
-export const FRESH_FIX_TIMEOUT_MS = 15_000;
+const FRESH_FIX_TIMEOUT_MS = 15_000;
 
 // The OS zone, read live: the browser asks the platform, so a zone change lands on the next report.
 function osTimezone(): string {

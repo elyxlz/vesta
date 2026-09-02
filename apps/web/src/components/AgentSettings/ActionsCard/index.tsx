@@ -10,13 +10,13 @@ import {
 import { AgentActions } from "@/components/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { useModals } from "@/providers/ModalsProvider/context";
+import { useDialogs } from "@/stores/use-dialogs";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { agentIsDown, agentNeedsUser } from "@vesta/core";
 
 export function ActionsCard() {
   const { agent, isBusy, start, stop, restart } = useSelectedAgent();
-  const { handleOpenAuth, setBackupDialogOpen } = useModals();
+  const openDialog = useDialogs((s) => s.setOpen);
 
   const isRunning = !agentIsDown(agent.status);
   const showAliveActions = agent.status === "alive";
@@ -33,11 +33,11 @@ export function ActionsCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="group-data-[size=sm]/card:text-base">
+        <CardTitle>
           <SlidersHorizontal className="size-4 text-muted-foreground" />
           agent
         </CardTitle>
-        <CardDescription className="group-data-[size=sm]/card:text-sm">
+        <CardDescription>
           start, restart, or back up this agent.
         </CardDescription>
       </CardHeader>
@@ -47,7 +47,7 @@ export function ActionsCard() {
             variant="default"
             size="lg"
             className="mb-4 w-full"
-            onClick={() => handleOpenAuth()}
+            onClick={() => openDialog("providerAuth", true)}
           >
             <KeyRound data-icon="inline-start" />
             sign in
@@ -62,7 +62,7 @@ export function ActionsCard() {
             else start();
           }}
           onRestart={() => void restart()}
-          onBackup={() => setBackupDialogOpen(true)}
+          onBackup={() => openDialog("backups", true)}
         />
       </CardContent>
     </Card>

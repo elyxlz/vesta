@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { field } from "@/lib/json-shape";
 
-import type { AgentRow } from "@/lib/types";
+import type { AgentRow } from "@vesta/core";
 
 // Tracks agents with a saved change that only applies after a restart. Features flag their agent
 // here (each under its own reason key) so the navbar can offer a single restart action, and a
@@ -18,7 +18,7 @@ import type { AgentRow } from "@/lib/types";
 // migrate narrows untrusted persisted data against; RestartReason derives from it so the two never
 // drift. "settings" only labels flags migrated from the un-keyed v0 store.
 const ALL_REASONS = ["host-access", "files", "settings"] as const;
-export type RestartReason = (typeof ALL_REASONS)[number];
+type RestartReason = (typeof ALL_REASONS)[number];
 
 // Reasons reconcile must not clear on a boot-time change — they need a container recreate, not a
 // mere restart (see the header). host-access qualifies: bind mounts are fixed at container create.

@@ -7,12 +7,12 @@
 // settling at the bottom.
 export const BASE_WINDOW_LINES = 300;
 // Each grow renders this many more older lines from the buffer already in memory.
-export const WINDOW_STEP_LINES = 300;
+const WINDOW_STEP_LINES = 300;
 // Preload margin: within this many viewport heights of the top, the window grows, so more
 // lines land before the user reaches the top of the rendered range.
 export const LOAD_OLDER_SCREENS = 3;
 // How close to the bottom (px) still counts as pinned, driving follow-on-append and the trim.
-export const AT_BOTTOM_THRESHOLD_PX = 80;
+const AT_BOTTOM_THRESHOLD_PX = 80;
 // How long the viewport must sit at the bottom before the grown window trims back to the base.
 export const SETTLE_MS = 30_000;
 
@@ -22,7 +22,7 @@ export interface WindowMetrics {
   clientHeight: number;
 }
 
-export function distanceFromEnd(metrics: WindowMetrics): number {
+function distanceFromEnd(metrics: WindowMetrics): number {
   return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight;
 }
 

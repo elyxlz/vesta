@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { Orb } from "@/components/Orb";
-import type { AgentRow } from "@/lib/types";
+import type { AgentRow } from "@vesta/core";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps } from "@/stores/use-agent-ops";
 import { useOrbStatus } from "@/hooks/use-orb-state";

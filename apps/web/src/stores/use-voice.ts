@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { usePreferences } from "@/stores/use-preferences";
 import {
   createVoiceSession,
   type InputMethod,
@@ -9,7 +10,6 @@ import {
 import {
   browserCapture,
   browserPlayer,
-  prepareSpeech,
   voiceWsUrl,
   fetchSttStatus,
   fetchTtsStatus,
@@ -107,15 +107,6 @@ let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
 let clearInputCallback: (() => void) | null = null;
 let reportSpeakingCallback: ((speaking: boolean) => void) | null = null;
 
-const MUTE_STORAGE_KEY = "voice-muted";
-const AUTO_END_STORAGE_KEY = "voice-conversation-auto-end";
-const YIELD_STORAGE_KEY = "voice-conversation-yield";
-function loadStoredFlag(key: string, fallback: boolean): boolean {
-  if (typeof localStorage === "undefined") return fallback;
-  const raw = localStorage.getItem(key);
-  return raw === null ? fallback : raw === "1";
-}
-
 function boolSetting(
   status: SttStatus | null,
   key: string,
@@ -195,14 +186,14 @@ export const useVoice = create<VoiceState>((set, get) => {
 
     recordingMode: null,
     micMuted: false,
-    conversationAutoEnd: loadStoredFlag(AUTO_END_STORAGE_KEY, true),
-    conversationYield: loadStoredFlag(YIELD_STORAGE_KEY, true),
+    conversationAutoEnd: usePreferences.getState().conversationAutoEnd,
+    conversationYield: usePreferences.getState().conversationYield,
     listening: false,
     liveTranscript: "",
     voiceError: null,
 
     isSpeaking: false,
-    muted: loadStoredFlag(MUTE_STORAGE_KEY, false),
+    muted: usePreferences.getState().voiceMuted,
 
     startVoice: (mode) => {
       if (session.mode() !== null) return;
@@ -260,19 +251,16 @@ export const useVoice = create<VoiceState>((set, get) => {
       set({ micMuted: !get().micMuted });
     },
     setConversationAutoEnd: (value) => {
-      if (typeof localStorage !== "undefined")
-        localStorage.setItem(AUTO_END_STORAGE_KEY, value ? "1" : "0");
+      usePreferences.getState().update({ conversationAutoEnd: value });
       set({ conversationAutoEnd: value });
     },
     setConversationYield: (value) => {
-      if (typeof localStorage !== "undefined")
-        localStorage.setItem(YIELD_STORAGE_KEY, value ? "1" : "0");
+      usePreferences.getState().update({ conversationYield: value });
       set({ conversationYield: value });
     },
     toggleMuted: () => {
       const next = !get().muted;
-      if (typeof localStorage !== "undefined")
-        localStorage.setItem(MUTE_STORAGE_KEY, next ? "1" : "0");
+      usePreferences.getState().update({ voiceMuted: next });
       if (next) session.stopSpeech();
       set({ muted: next });
     },
@@ -345,5 +333,3 @@ export const useVoice = create<VoiceState>((set, get) => {
     },
   };
 });
-
-export { prepareSpeech };

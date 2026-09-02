@@ -10,7 +10,7 @@ function cursorQuery(cursor: number | undefined): URLSearchParams {
 }
 
 // The app-chat service's own paged, id-cursored history (GET .../app-chat/history).
-export function chatHistoryPath(name: string, cursor?: number): string {
+function chatHistoryPath(name: string, cursor?: number): string {
   const query = cursorQuery(cursor).toString();
   return agentPath(name, `/app-chat/history${query ? `?${query}` : ""}`);
 }

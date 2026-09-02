@@ -1,11 +1,7 @@
 import { useRef, useState, type ChangeEvent } from "react";
 import { Image, Paperclip, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/Popover";
 
 // The composer's attach entry: the Plus opens a small popover whose two options click hidden file
 // inputs (the renderer's picker works identically in the browser and Electron, so no native

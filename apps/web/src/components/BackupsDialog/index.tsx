@@ -17,7 +17,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { errorMessage } from "@/lib/utils";

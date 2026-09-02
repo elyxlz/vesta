@@ -12,7 +12,7 @@ import {
 } from "@/api";
 import { useAgentOps, type AgentRequest } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentRow } from "@/lib/types";
+import type { AgentRow } from "@vesta/core";
 import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";

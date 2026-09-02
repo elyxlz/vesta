@@ -6,11 +6,11 @@ import {
   OpenRouterLogo,
   ZaiLogo,
 } from "./logos";
-import type { ProviderMode } from "./types";
+import type { ProviderKind } from "@vesta/core";
 
 // Brand art and UI copy that are presentation. Provider display names come from the agent catalog.
 export interface ProviderMeta {
-  id: ProviderMode;
+  id: ProviderKind;
   tagline: string;
   Logo: FC<{ className?: string }>;
 }
@@ -39,7 +39,7 @@ export const PROVIDERS: ProviderMeta[] = [
   },
 ];
 
-export function providerMeta(id: ProviderMode): ProviderMeta {
+export function providerMeta(id: ProviderKind): ProviderMeta {
   const meta = PROVIDERS.find((provider) => provider.id === id);
   if (!meta) throw new Error(`unknown provider: ${id}`);
   return meta;

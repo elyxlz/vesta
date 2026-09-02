@@ -111,6 +111,7 @@ check_app_core() {
     npm -w @vesta/core run format:check
     npm -w @vesta/core run check
     npm -w @vesta/core run test
+    npx knip --workspace core --no-progress
   )
 }
 
@@ -125,6 +126,7 @@ check_app_web() {
     npm -w @vesta/web run format:check
     npm -w @vesta/web run check
     npm -w @vesta/web run test
+    npx knip --workspace web --no-progress
   )
 }
 
@@ -138,6 +140,7 @@ check_app_desktop() {
     npm -w @vesta/desktop run format:check
     npm -w @vesta/desktop run check
     npm -w @vesta/desktop run test
+    npx knip --workspace desktop --no-progress
   )
 }
 

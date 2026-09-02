@@ -30,7 +30,7 @@ export interface AgentActionsInput {
   onDelete?: () => void;
 }
 
-export interface ActionItem {
+interface ActionItem {
   key: string;
   icon: LucideIcon;
   label: React.ReactNode;

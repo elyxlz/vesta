@@ -4,16 +4,15 @@ import "./index.css";
 import App from "./App.tsx";
 import { ThemeProvider } from "@/providers/ThemeProvider";
 import { KeybindProvider } from "@/providers/KeybindProvider";
-import { native } from "@/lib/native";
+import { runtimeInfo } from "@/lib/native";
 
-const { runtime, platform } = native;
-const isDesktopApp = runtime === "electron";
+const { isDesktopApp, platform, vibrancy } = runtimeInfo;
 const d = document.documentElement;
 d.dataset.platform = platform;
 
 if (isDesktopApp) {
   d.classList.add("desktop");
-  if (platform === "macos" || platform === "windows") {
+  if (vibrancy) {
     d.classList.add("vibrancy");
   }
   if (import.meta.env.PROD) {

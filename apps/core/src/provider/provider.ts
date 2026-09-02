@@ -1,6 +1,6 @@
 export type ProviderKind = "claude" | "openrouter" | "zai" | "kimi" | "openai";
 
-export type ProviderAuthKind =
+type ProviderAuthKind =
   "claude_oauth" | "device_oauth" | "subscription_key" | "api_key";
 
 export interface ProviderContextPreset {

@@ -1,8 +1,7 @@
 import { createContext, useContext } from "react";
 import type { BackupInfo } from "@/api";
 import type { AgentRequest } from "@/stores/use-agent-ops";
-import type { OrbVisualState } from "@vesta/core";
-import type { AgentRow } from "@/lib/types";
+import type { OrbVisualState, AgentRow } from "@vesta/core";
 
 export interface SelectedAgentContextValue {
   name: string;

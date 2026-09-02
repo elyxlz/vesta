@@ -257,7 +257,7 @@ export function markSend(
 // unmounting, mobile holds persist the tail across screen pops), so paged-in history would
 // otherwise accumulate for the whole session. Settling at the latest message for the settle
 // window trims the tail to two pages; scrolling up refetches through the ordinary paging.
-export const TRIM_HISTORY_KEEP = 100;
+const TRIM_HISTORY_KEEP = 100;
 export const TRIM_HISTORY_SETTLE_MS = 30_000;
 
 // The inverse of prependPage: drop loaded older history back down to the newest `keep` rows once

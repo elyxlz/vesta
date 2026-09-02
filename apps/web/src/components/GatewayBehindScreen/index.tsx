@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { LogOut } from "lucide-react";
-import { Footer } from "@/components/Footer";
 import { NavbarLogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -79,7 +78,6 @@ export function GatewayBehindScreen() {
           )}
         </EmptyContent>
       </Empty>
-      <Footer />
     </>
   );
 }

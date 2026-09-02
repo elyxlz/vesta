@@ -8,7 +8,7 @@ import type { UploadErrorReason } from "./upload";
 // through uploading/waiting/uploaded/error by the upload engine's callbacks. Views render chips from
 // this; the send gate is draftsReady.
 
-export type DraftStatus = "uploading" | "waiting" | "uploaded" | "error";
+type DraftStatus = "uploading" | "waiting" | "uploaded" | "error";
 
 export interface DraftAttachment {
   localId: string;

@@ -4,13 +4,14 @@
 #
 # `design/tokens.json` is the canonical visual-token source and is generated
 # before the web outputs are copied. `apps/web/src/components/ui/` is the
-# CANONICAL shadcn registry for this repo:
-# it is the single source of truth that this script mirrors into the dashboard
+# CANONICAL shadcn registry for this repo: stock primitives plus the app's
+# design tokens, with no app behavior inside (app wrappers such as
+# components/Dialog compose them). This script mirrors it into the dashboard
 # skill's own `app/src/components/ui/`. Those primitives are intentionally the
 # FULL set, not only what apps/web itself renders, so the dashboard skill (which
 # the agent uses to build arbitrary UIs) always has every component on hand.
 # Do NOT delete a primitive from apps/web just because it looks unimported there
-# (knip/dead-code tools will flag them) -- the dashboard is the other consumer.
+# (knip ignores ui/ for that reason) -- the dashboard is the other consumer.
 # The ui/ mirror below uses rsync --delete so the two trees stay strictly 1-to-1
 # and CI's dashboard-sync-check catches any drift in either direction.
 set -euo pipefail

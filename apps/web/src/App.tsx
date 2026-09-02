@@ -17,7 +17,7 @@ import { SwitchGatewayDialog } from "@/components/SwitchGatewayDialog";
 import { router } from "@/router";
 import { useAutoHideScrollbars } from "./use-auto-hide-scrollbars";
 import { useIsMobile } from "./hooks/use-mobile";
-import { useRuntime } from "@/providers/RuntimeProvider";
+import { runtimeInfo } from "@/lib/native";
 
 function openAgent(agentName: string): void {
   void router.navigate(`/agent/${encodeURIComponent(agentName)}`);
@@ -53,7 +53,7 @@ function AppContent() {
 
 export default function App() {
   const isMobile = useIsMobile();
-  const { isDesktopApp } = useRuntime();
+  const { isDesktopApp } = runtimeInfo;
   const isFullscreen = isMobile || isDesktopApp;
   useAutoHideScrollbars();
 

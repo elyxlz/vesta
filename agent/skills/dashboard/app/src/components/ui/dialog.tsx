@@ -2,73 +2,33 @@
 
 import * as React from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { Drawer as DrawerPrimitive } from "vaul";
 
 import { cn } from "@/lib/utils";
-import { useOverlayScrim } from "@/hooks/use-scrim-hold";
 import { ScrollShell, ShellChrome } from "@/components/ui/scroll-shell";
 import { Button } from "@/components/ui/button";
-import { DrawerContent } from "@/components/ui/drawer";
 import { XIcon } from "lucide-react";
-import { useIsMobile } from "@/hooks/use-mobile";
-
-const DrawerModeContext = React.createContext(false);
 
 function Dialog({
-  drawerOnMobile,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Root> & {
-  drawerOnMobile?: boolean;
-}) {
-  const isMobile = useIsMobile();
-  const isDrawer = !!drawerOnMobile && isMobile;
-  // Holds the app scrim (components/Scrim) while open, like every overlay
-  // root; the drawer path keeps vaul's own drag-tracking overlay instead.
-  const handleOpenChange = useOverlayScrim(props, { enabled: !isDrawer });
-  const rootProps = { ...props, onOpenChange: handleOpenChange };
-
-  if (isDrawer) {
-    return (
-      <DrawerModeContext.Provider value={true}>
-        <DrawerPrimitive.Root data-slot="dialog" {...rootProps} />
-      </DrawerModeContext.Provider>
-    );
-  }
-
-  return (
-    <DrawerModeContext.Provider value={false}>
-      <DialogPrimitive.Root data-slot="dialog" {...rootProps} />
-    </DrawerModeContext.Provider>
-  );
+}: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
 }
 
 function DialogTrigger({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
-  const isDrawer = React.useContext(DrawerModeContext);
-  if (isDrawer) {
-    return <DrawerPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
-  }
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
 }
 
 function DialogPortal({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
-  const isDrawer = React.useContext(DrawerModeContext);
-  if (isDrawer) {
-    return <DrawerPrimitive.Portal data-slot="dialog-portal" {...props} />;
-  }
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
 }
 
 function DialogClose({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Close>) {
-  const isDrawer = React.useContext(DrawerModeContext);
-  if (isDrawer) {
-    return <DrawerPrimitive.Close data-slot="dialog-close" {...props} />;
-  }
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
@@ -76,19 +36,6 @@ function DialogOverlay({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
-  const isDrawer = React.useContext(DrawerModeContext);
-  if (isDrawer) {
-    return (
-      <DrawerPrimitive.Overlay
-        data-slot="dialog-overlay"
-        className={cn(
-          "fixed inset-0 z-50 bg-black/50 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
-          className,
-        )}
-        {...props}
-      />
-    );
-  }
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
@@ -118,8 +65,7 @@ function DialogCloseButton() {
   );
 }
 
-// The dialog sheet's floating scroll shell; it passes its own close button. The drawer path uses
-// DrawerContent's own shell instead of this.
+// The dialog sheet's floating scroll shell; it passes its own close button.
 function DialogBody({
   children,
   showCloseButton,
@@ -148,15 +94,6 @@ function DialogContent({
   // full-bleed layout (e.g. a self-scrolling log terminal with its own floating header).
   bare?: boolean;
 }) {
-  const isDrawer = React.useContext(DrawerModeContext);
-
-  // className is the desktop sheet's (widths like sm:max-w-md); the drawer spans the viewport.
-  // DrawerContent brings its own floating shell, so the children (with DialogHeader/DialogFooter)
-  // go straight in, and the header carries the grab handle instead of DrawerContent.
-  if (isDrawer) {
-    return <DrawerContent showHandle={false}>{children}</DrawerContent>;
-  }
-
   return (
     <DialogPortal>
       <DialogPrimitive.Content
@@ -182,30 +119,18 @@ function DialogContent({
   );
 }
 
-function DialogHeader({
-  className,
-  children,
-  ...props
-}: React.ComponentProps<"div">) {
-  // Floats over the shell's top (measured so the scroll's mask and top padding size to it). In the
-  // drawer it also carries the grab handle.
-  const isDrawer = React.useContext(DrawerModeContext);
+function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+  // Floats over the shell's top (measured so the scroll's mask and top padding size to it).
   return (
     <ShellChrome
       edge="top"
       data-slot="dialog-header"
       className={cn(
-        "flex flex-col gap-1.5 px-6 pb-4 text-left",
-        isDrawer ? "pt-3" : "pt-6",
+        "flex flex-col gap-1.5 px-6 pt-6 pb-4 text-left",
         className,
       )}
       {...props}
-    >
-      {isDrawer && (
-        <div className="mx-auto mb-1.5 h-1.5 w-[100px] shrink-0 rounded-full bg-muted-foreground/40" />
-      )}
-      {children}
-    </ShellChrome>
+    />
   );
 }
 
@@ -217,8 +142,7 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean;
 }) {
-  // The mirror of DialogHeader: floats crisp and full-width over the shell's bottom edge. Shared by
-  // the desktop sheet and the mobile drawer; the close acts through the mode-aware DialogClose.
+  // The mirror of DialogHeader: floats crisp and full-width over the shell's bottom edge.
   return (
     <ShellChrome
       edge="bottom"
@@ -243,19 +167,6 @@ function DialogTitle({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Title>) {
-  const isDrawer = React.useContext(DrawerModeContext);
-  if (isDrawer) {
-    return (
-      <DrawerPrimitive.Title
-        data-slot="dialog-title"
-        className={cn(
-          "font-heading text-base font-medium text-foreground",
-          className,
-        )}
-        {...props}
-      />
-    );
-  }
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
@@ -269,16 +180,6 @@ function DialogDescription({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Description>) {
-  const isDrawer = React.useContext(DrawerModeContext);
-  if (isDrawer) {
-    return (
-      <DrawerPrimitive.Description
-        data-slot="dialog-description"
-        className={cn("text-xs text-muted-foreground", className)}
-        {...props}
-      />
-    );
-  }
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"

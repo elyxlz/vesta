@@ -52,7 +52,7 @@ async function s256(verifier: string): Promise<string> {
 }
 
 /** The control-plane apex + this gateway's subdomain, derived from the page host. */
-export function tenantIdentity(): { apexOrigin: string; subdomain: string } {
+function tenantIdentity(): { apexOrigin: string; subdomain: string } {
   const host = window.location.hostname; // e.g. alice.vesta.run
   const firstDot = host.indexOf(".");
   const subdomain = firstDot === -1 ? host : host.slice(0, firstDot);

@@ -203,7 +203,12 @@ export const HOME: Record<string, Scenario> = {
           ROSTER.map((name) => [name, agentNode()] as const),
         ),
       },
-      storage: { "vesta:last-agent": "iris" },
+      storage: {
+        "vesta-preferences": JSON.stringify({
+          state: { lastAgent: "iris" },
+          version: 1,
+        }),
+      },
     },
     drive: noDrive,
     settle: async (page) => {

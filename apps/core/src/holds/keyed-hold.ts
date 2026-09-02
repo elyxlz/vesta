@@ -6,7 +6,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 // key (`useHeld` in the react entry) while imperative readers seed from `read`.
 const MAX_HOLD_CELLS = 12;
 
-export interface HeldCells<T> {
+interface HeldCells<T> {
   readonly cells: ReadonlyMap<string, T>;
 }
 

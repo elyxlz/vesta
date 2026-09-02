@@ -27,7 +27,7 @@ import { useController } from "@/providers/ControllerProvider/context";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { websocketUrl } from "@/api/client";
 import { fetchHistory } from "@/api/agents";
-import { useChatPacing } from "@/stores/use-chat-pacing";
+import { naturalPacingFor } from "@/stores/use-preferences";
 import { useVoice } from "@/stores/use-voice";
 
 function idsEqual(a: string[], b: string[]): boolean {
@@ -131,7 +131,7 @@ export function useAgentSocketState({
       // A voice conversation is duplex: the reply is spoken the moment it lands, not typed out.
       if (
         queue.length > PACING.flushThreshold ||
-        !useChatPacing.getState().naturalFor(name ?? "") ||
+        !naturalPacingFor(name ?? "") ||
         useVoice.getState().recordingMode === "conversation"
       ) {
         flushQueue();

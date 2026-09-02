@@ -20,7 +20,7 @@ export interface Point {
 }
 
 export const ZOOM_MAX = 4;
-export const DOUBLE_CLICK_SCALE = 2;
+const DOUBLE_CLICK_SCALE = 2;
 
 export function resetZoom(): ZoomState {
   return { scale: 1, x: 0, y: 0 };

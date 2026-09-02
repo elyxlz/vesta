@@ -11,11 +11,12 @@ import { ProgressBar } from "@/components/ProgressBar";
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { startHostedLogin } from "@/lib/pkce";
-import { native } from "@/lib/native";
+import { runtimeInfo } from "@/lib/native";
+import { Navbar } from "@/components/Navbar";
 import { parseConnectLink } from "@/lib/connection";
 import { readRecentGateways } from "@/lib/recent-gateways";
 import { useAuth } from "@/providers/AuthProvider/context";
-import { useSwitchGateway } from "@/stores/use-switch-gateway";
+import { useDialogs } from "@/stores/use-dialogs";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
 // window.location.origin already points at the right vestad instance.
@@ -23,7 +24,7 @@ import { useSwitchGateway } from "@/stores/use-switch-gateway";
 // server) needs the user to enter the vestad host explicitly.
 const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
 
-const isDesktopApp = native.runtime === "electron";
+const { isDesktopApp } = runtimeInfo;
 
 // A soft rise-and-fade so the connect card settles in rather than snapping on.
 const connectEntrance = {
@@ -164,8 +165,11 @@ export function Connect() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [revealed, setRevealed] = useState(false);
-  const switchGatewayOpen = useSwitchGateway((state) => state.open);
-  const setSwitchGatewayOpen = useSwitchGateway((state) => state.setOpen);
+  const switchGatewayOpen = useDialogs((state) => state.open.switchGateway);
+  const setDialogOpen = useDialogs((state) => state.setOpen);
+  const setSwitchGatewayOpen = (open: boolean) => {
+    setDialogOpen("switchGateway", open);
+  };
   const hasRecentGateways = useHasRecentGateways(switchGatewayOpen);
   const inputRef = useRef<HTMLInputElement>(null);
   // In the desktop app (and any vesta-account surface) we lead with "continue
@@ -287,93 +291,96 @@ export function Connect() {
   }
 
   return (
-    <div className="flex h-full flex-col p-page">
-      <div className="flex flex-1 items-center justify-center">
-        <motion.form
-          {...connectEntrance}
-          onSubmit={handleSubmit}
-          className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4"
-        >
-          <ConnectHeader />
-          {sessionExpired && (
-            <FieldDescription className="text-center">
-              your session expired, connect again
-            </FieldDescription>
-          )}
-
-          <Field className="w-[300px] max-w-full">
-            <FieldLabel htmlFor="connect-link" className="sr-only">
-              Connect link
-            </FieldLabel>
-            <div className="relative">
-              <Input
-                ref={inputRef}
-                id="connect-link"
-                name="connect-link"
-                type={revealed ? "text" : "password"}
-                placeholder="paste your connect link"
-                autoComplete="current-password"
-                autoFocus
-                value={value}
-                onChange={(e) => {
-                  setValue(e.target.value);
-                  setError("");
-                }}
-                className="px-9 text-center"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => setRevealed((shown) => !shown)}
-                aria-label={
-                  revealed ? "hide connect link" : "show connect link"
-                }
-                className="absolute inset-y-0 right-0.5 my-auto text-muted-foreground hover:bg-transparent hover:text-foreground"
-              >
-                {revealed ? <EyeOff /> : <Eye />}
-              </Button>
-            </div>
-          </Field>
-
-          <Button
-            type="submit"
-            disabled={busy}
-            className="w-[180px] max-w-full"
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
+      <Navbar />
+      <div className="flex h-full w-full flex-col p-page">
+        <div className="flex flex-1 items-center justify-center">
+          <motion.form
+            {...connectEntrance}
+            onSubmit={handleSubmit}
+            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4"
           >
-            {busy ? "connecting..." : "connect"}
-          </Button>
-
-          <RecentGatewaysButton
-            visible={hasRecentGateways}
-            onClick={() => setSwitchGatewayOpen(true)}
-          />
-
-          {isDesktopApp && selfHost && (
-            <button
-              type="button"
-              onClick={() => {
-                setError("");
-                setSelfHost(false);
-              }}
-              className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
-            >
-              use a vesta account instead
-            </button>
-          )}
-
-          <AnimatePresence>
-            {error && (
-              <motion.p
-                {...fade}
-                role="alert"
-                className="text-xs text-destructive text-center break-all"
-              >
-                {error}
-              </motion.p>
+            <ConnectHeader />
+            {sessionExpired && (
+              <FieldDescription className="text-center">
+                your session expired, connect again
+              </FieldDescription>
             )}
-          </AnimatePresence>
-        </motion.form>
+
+            <Field className="w-[300px] max-w-full">
+              <FieldLabel htmlFor="connect-link" className="sr-only">
+                Connect link
+              </FieldLabel>
+              <div className="relative">
+                <Input
+                  ref={inputRef}
+                  id="connect-link"
+                  name="connect-link"
+                  type={revealed ? "text" : "password"}
+                  placeholder="paste your connect link"
+                  autoComplete="current-password"
+                  autoFocus
+                  value={value}
+                  onChange={(e) => {
+                    setValue(e.target.value);
+                    setError("");
+                  }}
+                  className="px-9 text-center"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setRevealed((shown) => !shown)}
+                  aria-label={
+                    revealed ? "hide connect link" : "show connect link"
+                  }
+                  className="absolute inset-y-0 right-0.5 my-auto text-muted-foreground hover:bg-transparent hover:text-foreground"
+                >
+                  {revealed ? <EyeOff /> : <Eye />}
+                </Button>
+              </div>
+            </Field>
+
+            <Button
+              type="submit"
+              disabled={busy}
+              className="w-[180px] max-w-full"
+            >
+              {busy ? "connecting..." : "connect"}
+            </Button>
+
+            <RecentGatewaysButton
+              visible={hasRecentGateways}
+              onClick={() => setSwitchGatewayOpen(true)}
+            />
+
+            {isDesktopApp && selfHost && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setSelfHost(false);
+                }}
+                className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
+              >
+                use a vesta account instead
+              </button>
+            )}
+
+            <AnimatePresence>
+              {error && (
+                <motion.p
+                  {...fade}
+                  role="alert"
+                  className="text-xs text-destructive text-center break-all"
+                >
+                  {error}
+                </motion.p>
+              )}
+            </AnimatePresence>
+          </motion.form>
+        </div>
       </div>
     </div>
   );

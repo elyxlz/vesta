@@ -1,16 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { claudeProvider, openaiProvider, openrouterProvider } from "@/api";
-import type { ProviderResult } from "@/api/agents";
-
-type AuthStartResult =
-  claudeProvider.OAuthStartResult | openaiProvider.OAuthStartResult;
-import { ChoiceStep, type ChoiceVariant } from "./ChoiceStep";
-import { KeyStep } from "./KeyStep";
-import { ModelStep } from "./ModelStep";
-import { ContextStep } from "./ContextStep";
-import { planContextOptions, planFromCredentials } from "./context-plan";
-import { AuthStep } from "./AuthStep";
-import { OpenAIAuthStep } from "./OpenAIAuthStep";
+import {
+  type AuthStartResult,
+  providerResult,
+  modelStepInitialModel,
+  providerUsesOAuth,
+  catalogIsLive,
+  startProviderOAuth,
+  keyStepCopy,
+} from "./provider-flow";
 import {
   ClaudeLogo,
   KimiLogo,
@@ -18,37 +14,25 @@ import {
   OpenRouterLogo,
   ZaiLogo,
 } from "./logos";
-import type { ProviderMode } from "./types";
+import { useCallback, useEffect, useState } from "react";
+import { claudeProvider, openrouterProvider } from "@/api";
+import type { ProviderResult } from "@/api/agents";
+import { ChoiceStep, type ChoiceVariant } from "./ChoiceStep";
+import { KeyStep } from "./KeyStep";
+import { ModelStep } from "./ModelStep";
+import { ContextStep } from "./ContextStep";
+import { planContextOptions, planFromCredentials } from "./context-plan";
+import type { ProviderKind } from "@vesta/core";
 import { useProviderCatalog } from "@/hooks/use-agent-catalogs";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { cn, errorMessage } from "@/lib/utils";
-import { contextForModel, type ProviderCatalog } from "@/api/catalogs";
+import { contextForModel } from "@/api/catalogs";
 import { providerModelOptions } from "./model-options";
+import { ProviderAuthStep } from "./auth-step";
 
-type InternalStep = "choice" | "auth" | "key" | "model" | "context";
-
-const KEY_STEP_COPY = {
-  openrouter: {
-    title: "OpenRouter API key",
-    subtitle: "paste a key from openrouter.ai/keys. it stays on this machine.",
-    placeholder: "sk-or-v1-...",
-  },
-  zai: {
-    title: "Z.AI subscription key",
-    subtitle:
-      "paste your Coding Plan subscription key. it stays on this machine.",
-    placeholder: "Z.AI subscription key",
-  },
-  kimi: {
-    title: "Kimi Code subscription key",
-    subtitle: "paste your Kimi membership key. it stays on this machine.",
-    placeholder: "Kimi Code subscription key",
-  },
-} as const;
-
-function providerLogo(provider: ProviderMode | null) {
+function providerLogo(provider: ProviderKind | null) {
   if (provider === "claude") return <ClaudeLogo />;
   if (provider === "zai") return <ZaiLogo />;
   if (provider === "kimi") return <KimiLogo />;
@@ -56,128 +40,7 @@ function providerLogo(provider: ProviderMode | null) {
   return <OpenRouterLogo />;
 }
 
-function keyStepCopy(provider: ProviderMode | null) {
-  if (provider === "claude" || provider === "openai" || provider === null)
-    return KEY_STEP_COPY.openrouter;
-  return KEY_STEP_COPY[provider];
-}
-
-function providerResult(
-  provider: ProviderMode,
-  credentials: string | null,
-  key: string,
-  model: string,
-  maxContextTokens: number,
-): ProviderResult | null {
-  if (provider === "claude") {
-    return credentials === null
-      ? null
-      : {
-          kind: "claude",
-          credentials,
-          model: model || undefined,
-          maxContextTokens,
-        };
-  }
-  if (provider === "openai") {
-    return credentials === null
-      ? null
-      : {
-          kind: "openai",
-          credentials,
-          model,
-          ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
-        };
-  }
-  return {
-    kind: provider,
-    key,
-    model,
-    ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
-  };
-}
-
-// The initial model-step selection: the in-progress choice wins, else Claude
-// defaults to the "opus-latest" alias, else the catalog's per-provider default.
-function modelStepInitialModel(
-  provider: ProviderMode | null,
-  model: string,
-  catalog: ProviderCatalog,
-): string {
-  if (model) return model;
-  if (provider === "claude") return "opus-latest";
-  if (provider === null) return "";
-  return catalog.providers[provider]?.default_model ?? "";
-}
-
-function providerUsesOAuth(
-  provider: ProviderMode | null,
-  catalog: ProviderCatalog,
-): boolean {
-  if (provider === null) return false;
-  const authKind = catalog.providers[provider]?.auth_kind;
-  return authKind === "claude_oauth" || authKind === "device_oauth";
-}
-
-// A live-catalog provider has no static default model, so even defaults-only
-// mode must walk the model (and context) steps.
-function catalogIsLive(
-  provider: ProviderMode | null,
-  catalog: ProviderCatalog,
-): boolean {
-  if (provider === null) return false;
-  return catalog.providers[provider]?.models === "live";
-}
-
-function startProviderOAuth(agentName: string, provider: ProviderMode | null) {
-  if (provider === "openai") return openaiProvider.startOAuth(agentName);
-  if (provider === "claude") return claudeProvider.startOAuth(agentName);
-  return Promise.reject(
-    new Error(`no OAuth adapter for ${provider ?? "none"}`),
-  );
-}
-
-function ProviderAuthStep({
-  agentName,
-  provider,
-  authStart,
-  startError,
-  onCredentialsReady,
-  onBack,
-}: {
-  agentName: string;
-  provider: ProviderMode | null;
-  authStart: AuthStartResult | null;
-  startError: string | null;
-  onCredentialsReady: (credentials: string) => void;
-  onBack: () => void;
-}) {
-  if (provider === "claude") {
-    return (
-      <AuthStep
-        agentName={agentName}
-        authStart={authStart}
-        startError={startError}
-        onCredentialsReady={onCredentialsReady}
-        onBack={onBack}
-      />
-    );
-  }
-  if (provider === "openai") {
-    return (
-      <OpenAIAuthStep
-        agentName={agentName}
-        authStart={
-          authStart !== null && "user_code" in authStart ? authStart : null
-        }
-        startError={startError}
-        onCredentialsReady={onCredentialsReady}
-        onBack={onBack}
-      />
-    );
-  }
-  return null;
-}
+type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
 export function ProviderPicker({
   agentName,
@@ -203,7 +66,7 @@ export function ProviderPicker({
   const [step, setStep] = useState<InternalStep>("choice");
   // The chosen provider drives the shared model/context steps (which list to
   // show, which logo, and how the final result is shaped).
-  const [provider, setProvider] = useState<ProviderMode | null>(null);
+  const [provider, setProvider] = useState<ProviderKind | null>(null);
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
   const [credentials, setCredentials] = useState<string | null>(null);
@@ -283,7 +146,7 @@ export function ProviderPicker({
     );
   }
 
-  const handleChoice = (next: ProviderMode) => {
+  const handleChoice = (next: ProviderKind) => {
     resetAuth();
     setCredentials(null);
     setKey("");
@@ -458,5 +321,3 @@ export function ProviderPicker({
     </div>
   );
 }
-
-export type { ProviderMode };
