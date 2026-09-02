@@ -4,7 +4,8 @@ from typing import NamedTuple
 import msal
 
 from .backend import GraphUnavailableError
-from .settings import get_settings
+from .config import scopes_for
+from .settings import OWA_REST_CLIENT_ID, get_settings
 
 
 class Account(NamedTuple):
@@ -86,8 +87,23 @@ def account_in_cache(cache_file: pl.Path, account_email: str, *, client_id: str 
     return any((a["username"] or "").lower() == account_email.lower() for a in app.get_accounts())
 
 
+def _refresh_client_id(app: msal.PublicClientApplication, home_account_id: str) -> str:
+    """The client whose refresh token can mint this account's Graph tokens.
+
+    A refresh token is bound to the client that minted it, and the cache lists accounts
+    independently of client id, so an account signed in under another app (`MICROSOFT_MCP_CLIENT_ID=<app>
+    microsoft auth login`) holds a refresh token this app cannot use. The app's own client wins when it
+    has one. The OWA REST sign-in stores its refresh token in the same cache under the first-party
+    Office client for the outlook.office.com resource, so that token is never a Graph candidate."""
+    refresh_tokens = app.token_cache.search(msal.TokenCache.CredentialType.REFRESH_TOKEN, query={"home_account_id": home_account_id})
+    client_ids = [rt["client_id"] for rt in refresh_tokens if rt["client_id"] != OWA_REST_CLIENT_ID]
+    if app.client_id in client_ids or not client_ids:
+        return app.client_id
+    return client_ids[0]
+
+
 def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None) -> str:
-    """Mint a Graph token from the MSAL cache, silently.
+    """Mint a Graph token from the MSAL cache, silently, with the client that signed the account in.
 
     Never starts an interactive sign-in: a data command must not mint a device code.
     When no cached token can be refreshed this raises
@@ -99,6 +115,11 @@ def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None 
 
     accounts = app.get_accounts()
     account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)
+    if account is not None:
+        client_id = _refresh_client_id(app, account["home_account_id"])
+        if client_id != app.client_id:
+            app = get_app(cache_file, client_id)
+            scopes = scopes_for(client_id)
 
     result = app.acquire_token_silent(scopes, account=account)
 
