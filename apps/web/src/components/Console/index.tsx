@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useLayout } from "@/stores/use-layout";
 import type { LogStreamState } from "@/lib/log-session";
-import { useAgentLogSession } from "@/providers/AgentLogStreamProvider";
+import { useAgentLogSession } from "@/providers/AgentLogStreamProvider/context";
 import { LogScroller, StreamingIndicator } from "@/components/LogScroller";
 import { BOTTOM_FADE_PX } from "@/hooks/use-scroll-fade";
 import { cn } from "@/lib/utils";

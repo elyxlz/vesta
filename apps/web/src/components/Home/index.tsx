@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { getLastAgent } from "@/lib/last-agent";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";

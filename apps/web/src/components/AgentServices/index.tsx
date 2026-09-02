@@ -1,6 +1,6 @@
 import { Globe } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 
 // Read-only view of the agent's registered services, shared by the agent-menu
 // dialog and the settings card. Live from the /sync roster, so rows appear and

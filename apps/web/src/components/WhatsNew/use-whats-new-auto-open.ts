@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { compareReleaseVersions } from "@vesta/core";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import {
   fetchReleaseNotes,
   filterReleaseNotes,

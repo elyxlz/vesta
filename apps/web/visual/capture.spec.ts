@@ -72,7 +72,11 @@ for (const scenario of registry.scenarios) {
       !scenarioOnPlatform(scenario, testInfo.project.name),
       "scenario is scoped to other platforms",
     );
-    const platform = PLATFORMS[testInfo.project.name as keyof typeof PLATFORMS];
+    const platform = Object.entries(PLATFORMS).find(
+      ([id]) => id === testInfo.project.name,
+    )?.[1];
+    if (!platform)
+      throw new Error(`No platform registered for ${testInfo.project.name}`);
     const definition = SCENARIOS[scenario.id];
     if (!definition) throw new Error(`No drive registered for ${scenario.id}`);
     const dark = themedSibling(testInfo.project.name, "dark");

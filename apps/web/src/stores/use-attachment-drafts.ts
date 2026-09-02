@@ -171,25 +171,30 @@ function startUpload(key: string, agent: string, localId: string, file: File) {
       handle?.abort();
       release(localId);
     };
-    handle = uploadAttachment(httpClient, agent, file, meta, uploadDeps, {
-      onProgress: (sent, total) => {
-        if (
-          !mutateDraft(key, localId, (drafts) =>
-            setDraftProgress(drafts, localId, sent, total),
+    handle = uploadAttachment(
+      httpClient,
+      { agent, blob: file, meta },
+      uploadDeps,
+      {
+        onProgress: (sent, total) => {
+          if (
+            !mutateDraft(key, localId, (drafts) =>
+              setDraftProgress(drafts, localId, sent, total),
+            )
           )
-        )
-          orphaned();
-      },
-      onStateChange: (state) => {
-        if (state !== "waiting") return;
-        if (
-          !mutateDraft(key, localId, (drafts) =>
-            setDraftWaiting(drafts, localId),
+            orphaned();
+        },
+        onStateChange: (state) => {
+          if (state !== "waiting") return;
+          if (
+            !mutateDraft(key, localId, (drafts) =>
+              setDraftWaiting(drafts, localId),
+            )
           )
-        )
-          orphaned();
+            orphaned();
+        },
       },
-    });
+    );
     uploadHandles.set(localId, handle);
     handle.result.then(
       (attachment) => {

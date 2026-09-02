@@ -135,6 +135,7 @@ check_app_desktop() {
       npm install
     fi
     npm -w @vesta/desktop run lint
+    npm -w @vesta/desktop run format:check
     npm -w @vesta/desktop run check
     npm -w @vesta/desktop run test
   )

@@ -12,14 +12,11 @@ import {
 } from "@/api";
 import { useAgentOps, type AgentRequest } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentActivityState } from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
 import type { SelectedAgentContextValue } from "./context";
-
-export { useSelectedAgent } from "./context";
 
 export function SelectedAgentProvider({
   agent,
@@ -29,9 +26,6 @@ export function SelectedAgentProvider({
   children: ReactNode;
 }) {
   const name = agent.name;
-  const [agentState, setAgentState] = useState<AgentActivityState>(
-    agent.activityState,
-  );
 
   const withOp = useAgentOps((s) => s.withOp);
   const clearRestartPending = useRestartPending((s) => s.clearPending);
@@ -43,7 +37,7 @@ export function SelectedAgentProvider({
     agent,
     opState.operation,
     opState.error,
-    agentState,
+    agent.activityState,
   );
 
   const op =
@@ -164,8 +158,6 @@ export function SelectedAgentProvider({
   const value: SelectedAgentContextValue = {
     name,
     agent,
-    agentState,
-    setAgentState,
     operation: opState.operation,
     error: opState.error,
     statusLabel,

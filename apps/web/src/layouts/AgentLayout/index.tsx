@@ -4,7 +4,7 @@ import { AgentIslandModals } from "@/components/AgentIslandModals";
 import { AgentNavbar } from "@/components/Navbar/AgentNavbar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useOrbState } from "@/hooks/use-orb-state";
-import { useSwipeNavigation } from "@/hooks/use-swipe-navigation";
+import { useSwipeNavigation } from "./use-swipe-navigation";
 import { agentSubpage } from "@/lib/agent-subpage";
 import {
   getChatCollapsed,
@@ -16,14 +16,12 @@ import { setLastAgent } from "@/lib/last-agent";
 import { resetTabBaseTitle, setTabBaseTitle } from "@/lib/tab-title";
 import { AgentLogs } from "@/pages/AgentLogs";
 import { AgentSettingsPage } from "@/pages/AgentSettings";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { AgentLogStreamProvider } from "@/providers/AgentLogStreamProvider";
 import { AgentSocketProvider } from "@/providers/AgentSocketProvider";
 import { ModalsProvider } from "@/providers/ModalsProvider";
-import {
-  SelectedAgentProvider,
-  useSelectedAgent,
-} from "@/providers/SelectedAgentProvider";
+import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { VoiceStoreEffects } from "@/providers/VoiceProvider";
 import { DesktopPanelView } from "./DesktopPanelView";
 import { MobileSwipeView } from "./MobileSwipeView";
@@ -64,21 +62,24 @@ export function AgentLayout() {
 function AgentLayoutInner() {
   const isMobile = useIsMobile();
   const { name } = useSelectedAgent();
-  const [chatCollapsed, setChatCollapsedState] = useState(
-    () => isMobile || getChatCollapsed(name),
-  );
+  // The user's collapse choice persists per agent; the mobile swipe view forces
+  // collapsed without storing it, so a phone-sized window never overwrites the
+  // desktop preference. The choice made in this session is keyed by agent, so a
+  // switch falls back to the stored preference instead of resetting from an effect.
+  const [choice, setChoice] = useState<{
+    name: string;
+    collapsed: boolean;
+  } | null>(null);
+  const chatCollapsed =
+    isMobile ||
+    (choice !== null && choice.name === name
+      ? choice.collapsed
+      : getChatCollapsed(name));
   const { scrollRef, handleScroll, progress } = useSwipeNavigation();
   const subpage = agentSubpage(useLocation().pathname, name);
 
-  useEffect(() => {
-    setChatCollapsedState(isMobile || getChatCollapsed(name));
-  }, [isMobile, name]);
-
-  // The user's collapse choice persists per agent; the mobile swipe view forces
-  // collapsed without storing it, so a phone-sized window never overwrites the
-  // desktop preference.
   const setChatCollapsed = (collapsed: boolean) => {
-    setChatCollapsedState(collapsed);
+    setChoice({ name, collapsed });
     if (!isMobile) storeChatCollapsed(name, collapsed);
   };
 

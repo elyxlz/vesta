@@ -6,7 +6,7 @@ import {
   DrawerTrigger,
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
-import { AgentActions } from "./AgentActions";
+import { AgentActions } from "@/components/AgentActions";
 import type { MenuProps } from "./types";
 
 function DrawerCloseWrapper({ children }: { children: React.ReactNode }) {

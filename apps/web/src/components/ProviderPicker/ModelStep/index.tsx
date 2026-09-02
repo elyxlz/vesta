@@ -239,8 +239,7 @@ function ModelCardList({
   loading: boolean;
   showIcon?: boolean;
 }) {
-  const fade = useScrollFade<HTMLDivElement>();
-  const { update } = fade;
+  const { ref, style, update } = useScrollFade<HTMLDivElement>();
   // The box height is fixed, so a resize observer never fires; recompute the
   // fade when the list contents change (search filter, catalog load).
   useEffect(() => {
@@ -259,8 +258,8 @@ function ModelCardList({
   }
   return (
     <div
-      ref={fade.ref}
-      style={fade.style}
+      ref={ref}
+      style={style}
       // p-1/-m-1 keeps the layout width but gives the selected row's ring room
       // inside the padding box, so the overflow clip never cuts it.
       className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto p-1 -m-1"

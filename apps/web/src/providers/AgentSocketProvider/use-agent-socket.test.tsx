@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { ApiError, PACING } from "@vesta/core";
 import type { Controller, SocketLike, VestaEvent } from "@vesta/core";
-import { ControllerContext } from "@/providers/ControllerProvider";
+import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useVoice } from "@/stores/use-voice";
 import { fetchHistory } from "@/api/agents";

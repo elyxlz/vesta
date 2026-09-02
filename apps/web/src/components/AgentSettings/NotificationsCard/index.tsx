@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,9 +18,10 @@ import {
 import { ItemGroup } from "@/components/ui/item";
 import { getNotificationHistory, type NotificationEvent } from "@/api/agents";
 import { notificationRowKey } from "@vesta/core";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { errorMessage } from "@/lib/utils";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
-import { useLiveNotifications } from "@/hooks/use-live-notifications";
+import { useLiveNotifications } from "./use-live-notifications";
 
 // The received-notifications history. Flows at its natural height and scrolls with the settings page;
 // the rules cards beside it stay sticky. Live-updating: the row list comes from the REST history
@@ -31,10 +32,24 @@ export function NotificationsCard() {
   const { name: agentName } = useSelectedAgent();
   const { pendingSeed, arrivals, cleared } = useLiveNotifications();
 
-  const [items, setItems] = useState<NotificationEvent[] | null>(null);
-  const [cursor, setCursor] = useState<number | null>(null);
+  // The loaded page state is keyed by agent, so a switch reads as empty until its page lands
+  // instead of being reset from an effect.
+  const [page, setPage] = useState<{
+    agent: string;
+    items: NotificationEvent[] | null;
+    cursor: number | null;
+    error: string | null;
+  }>({ agent: agentName, items: null, cursor: null, error: null });
+  const forAgent = page.agent === agentName;
+  const items = forAgent ? page.items : null;
+  const cursor = forAgent ? page.cursor : null;
+  const error = forAgent ? page.error : null;
+  const setItems = (
+    update: (prev: NotificationEvent[] | null) => NotificationEvent[] | null,
+  ) => {
+    setPage((prev) => ({ ...prev, items: update(prev.items) }));
+  };
   const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   // The currently-selected agent, so an in-flight request drops its result if the user switches
   // agents mid-flight (this card is not unmounted on switch, only its effect re-runs).
   const currentAgent = useRef(agentName);
@@ -52,29 +67,31 @@ export function NotificationsCard() {
     return set;
   }, [pendingSeed, arrivals, cleared]);
 
-  // Load (or reload) the newest page of the row list. Stable: only refs + setters.
-  const loadFirstPage = useCallback((name: string) => {
-    setItems(null);
-    setError(null);
-    setLoadingMore(false);
-    getNotificationHistory(name)
-      .then((page) => {
-        if (currentAgent.current !== name) return;
-        setItems(page.notifications);
-        setCursor(page.cursor);
-        seenRef.current = new Set(page.notifications.map(notificationRowKey));
-      })
-      .catch((e: unknown) => {
-        if (currentAgent.current === name)
-          setError(e instanceof Error ? e.message : String(e));
-      });
-  }, []);
-
+  // Load the newest page of the row list for the selected agent.
   useEffect(() => {
     if (!agentName) return;
     currentAgent.current = agentName;
-    loadFirstPage(agentName);
-  }, [agentName, loadFirstPage]);
+    getNotificationHistory(agentName)
+      .then((loaded) => {
+        if (currentAgent.current !== agentName) return;
+        seenRef.current = new Set(loaded.notifications.map(notificationRowKey));
+        setPage({
+          agent: agentName,
+          items: loaded.notifications,
+          cursor: loaded.cursor,
+          error: null,
+        });
+      })
+      .catch((e: unknown) => {
+        if (currentAgent.current === agentName)
+          setPage({
+            agent: agentName,
+            items: null,
+            cursor: null,
+            error: errorMessage(e, "failed to load notifications"),
+          });
+      });
+  }, [agentName]);
 
   // Merge live arrivals into the list (newest on top), skipping any already loaded from history.
   // Runs once `items` exists, and again when it (re)loads, catching arrivals that raced the fetch.
@@ -93,16 +110,22 @@ export function NotificationsCard() {
     const requestedAgent = agentName;
     setLoadingMore(true);
     try {
-      const page = await getNotificationHistory(requestedAgent, cursor);
+      const loaded = await getNotificationHistory(requestedAgent, cursor);
       if (currentAgent.current !== requestedAgent) return;
-      page.notifications.forEach((n) =>
+      loaded.notifications.forEach((n) =>
         seenRef.current.add(notificationRowKey(n)),
       );
-      setItems((prev) => [...(prev ?? []), ...page.notifications]);
-      setCursor(page.cursor);
+      setPage((prev) => ({
+        ...prev,
+        items: [...(prev.items ?? []), ...loaded.notifications],
+        cursor: loaded.cursor,
+      }));
     } catch (e) {
       if (currentAgent.current === requestedAgent)
-        setError((e as Error).message);
+        setPage((prev) => ({
+          ...prev,
+          error: errorMessage(e, "failed to load notifications"),
+        }));
     } finally {
       if (currentAgent.current === requestedAgent) setLoadingMore(false);
     }

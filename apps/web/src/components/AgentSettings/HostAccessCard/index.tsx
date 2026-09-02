@@ -27,9 +27,21 @@ import {
   setAgentMounts,
   type HostMount,
 } from "@/api/agents";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useResource } from "@vesta/core/react";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import { errorMessage } from "@/lib/utils";
+import { errorMessage, loadFailure } from "@/lib/utils";
+
+// Suggestions not already shared, and not the one being typed.
+function unsharedSuggestions(
+  suggestions: string[] | null,
+  mounts: HostMount[] | null,
+  typed: string,
+): string[] {
+  return (suggestions ?? []).filter(
+    (s) => !(mounts ?? []).some((m) => m.host_path === s) && s !== typed,
+  );
+}
 
 function folderName(path: string): string {
   const segments = path.split("/").filter(Boolean);
@@ -42,8 +54,12 @@ function folderName(path: string): string {
 export function HostAccessCard() {
   const { name: agentName, agent } = useSelectedAgent();
   const markRestartPending = useRestartPending((s) => s.markPending);
-  const [mounts, setMounts] = useState<HostMount[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const mountsResource = useResource(agentName || null, getAgentMounts);
+  const mounts = mountsResource.data;
+  const loadError = loadFailure(
+    mountsResource.error,
+    "failed to load host access",
+  );
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
@@ -53,25 +69,6 @@ export function HostAccessCard() {
   const [writable, setWritable] = useState(false);
   const [showContainerPath, setShowContainerPath] = useState(false);
   const [suggestions, setSuggestions] = useState<string[] | null>(null);
-
-  useEffect(() => {
-    if (!agentName) return;
-    let ignore = false;
-    setMounts(null);
-    setLoadError(null);
-    getAgentMounts(agentName)
-      .then((m) => {
-        if (ignore) return;
-        setMounts(m);
-      })
-      .catch((e: unknown) => {
-        if (!ignore)
-          setLoadError(errorMessage(e, "failed to load host access"));
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [agentName]);
 
   // Fetch folder suggestions lazily, the first time the add dialog opens.
   useEffect(() => {
@@ -95,7 +92,7 @@ export function HostAccessCard() {
     setSaveError(null);
     try {
       const result = await setAgentMounts(agentName, next);
-      setMounts(result.mounts);
+      mountsResource.set(result.mounts);
       if (result.restartRequired)
         markRestartPending(agentName, "host-access", agent.startedAt);
       return true;
@@ -138,9 +135,10 @@ export function HostAccessCard() {
     );
   };
 
-  // Suggestions not already shared, and not the one being typed.
-  const availableSuggestions = (suggestions ?? []).filter(
-    (s) => !(mounts ?? []).some((m) => m.host_path === s) && s !== hostPath,
+  const availableSuggestions = unsharedSuggestions(
+    suggestions,
+    mounts,
+    hostPath,
   );
 
   return (

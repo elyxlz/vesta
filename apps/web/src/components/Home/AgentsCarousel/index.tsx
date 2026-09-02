@@ -22,7 +22,7 @@ function indexAt(scrollLeft: number) {
 }
 
 // The scroller's custom properties feed the carousel-card CSS animation.
-const SCROLLER_STYLE = {
+const SCROLLER_STYLE: React.CSSProperties = {
   gap: AGENT_CAROUSEL_GAP,
   paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
   overscrollBehaviorX: "none",
@@ -31,7 +31,7 @@ const SCROLLER_STYLE = {
   WebkitMaskImage: EDGE_FADE,
   "--carousel-stride": `${String(AGENT_CAROUSEL_ITEM_STRIDE)}px`,
   "--carousel-edge-scale": String(AGENT_CAROUSEL_EDGE_SCALE),
-} as React.CSSProperties;
+};
 
 function Pagination({
   total,

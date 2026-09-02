@@ -1,17 +1,17 @@
-import type { OrbVisualState } from "../agent-status/agent-status"
+import type { OrbVisualState } from "../agent-status/agent-status";
 
 // The shared, view-independent model of the navbar notifications pill: the
 // queue, grouping, timing, and icon vocabulary live here, and a view owns only
 // its platform's rendering.
 
 /** How long one notification holds the pill before the queue advances. */
-export const PILL_SHOW_MS = 4000
+export const PILL_SHOW_MS = 4000;
 
 export interface PillContent {
-  agent: string
-  kind: string
-  title: string
-  body: string
+  agent: string;
+  kind: string;
+  title: string;
+  body: string;
 }
 
 /**
@@ -21,8 +21,8 @@ export interface PillContent {
  * pill shows is what the agent looked like at that moment.
  */
 export interface PillNotification extends PillContent {
-  id: number
-  orbState: OrbVisualState | null
+  id: number;
+  orbState: OrbVisualState | null;
 }
 
 /**
@@ -43,12 +43,15 @@ export const PILL_KIND_ICONS: Record<string, string> = {
   gateway_updated: "sparkles",
   update_available: "circle-arrow-up",
   device_connected: "monitor-smartphone",
-}
-export const PILL_FALLBACK_ICON = "bell"
+};
+export const PILL_FALLBACK_ICON = "bell";
 
 /** A message from the agent whose page is open never shows: the chat renders it. */
-export function pillVisibleWhileViewing(item: PillContent, viewedAgent: string | null): boolean {
-  return item.kind !== "message" || item.agent !== viewedAgent
+export function pillVisibleWhileViewing(
+  item: PillContent,
+  viewedAgent: string | null,
+): boolean {
+  return item.kind !== "message" || item.agent !== viewedAgent;
 }
 
 /**
@@ -63,7 +66,7 @@ export function notificationReadInPlace(
   viewedAgent: string | null,
   focused: boolean,
 ): boolean {
-  return focused && item.kind === "message" && item.agent === viewedAgent
+  return focused && item.kind === "message" && item.agent === viewedAgent;
 }
 
 /**
@@ -77,10 +80,10 @@ export function enqueuePillNotification(
 ): PillNotification[] {
   for (let index = queue.length - 1; index >= 0; index--) {
     if (queue[index]?.kind === item.kind) {
-      return [...queue.slice(0, index + 1), item, ...queue.slice(index + 1)]
+      return [...queue.slice(0, index + 1), item, ...queue.slice(index + 1)];
     }
   }
-  return [...queue, item]
+  return [...queue, item];
 }
 
 /**
@@ -88,6 +91,8 @@ export function enqueuePillNotification(
  * or "title: body" when a body carries detail (a message preview under the
  * agent-name title). One owner, so every view joins the pair identically.
  */
-export function pillDisplayLine(item: Pick<PillContent, "title" | "body">): string {
-  return item.body ? `${item.title}: ${item.body}` : item.title
+export function pillDisplayLine(
+  item: Pick<PillContent, "title" | "body">,
+): string {
+  return item.body ? `${item.title}: ${item.body}` : item.title;
 }

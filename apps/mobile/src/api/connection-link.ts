@@ -60,7 +60,7 @@ export function parseConnectLink(input: string): ConnectLinkResult {
     return {
       ok: false,
       message:
-        "Direct LAN pairing isn’t supported — use a public HTTPS tunnel",
+        "Direct LAN pairing isn’t supported. Use a public HTTPS tunnel",
     };
   }
 

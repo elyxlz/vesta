@@ -2,13 +2,9 @@ import { createContext, useContext } from "react";
 import type { DeviceInfo, GatewayOperation, ReleaseChannel } from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
 
-// Context + hook live here, separate from the GatewayProvider component, so the
-// GatewayContext identity is stable across Fast Refresh. Co-locating them with the
-// component made every edit re-create the context, detaching mounted consumers
-// ("useGateway must be used within GatewayProvider" on hot reload).
 export interface GatewayContextValue {
   reachable: boolean;
-  /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
+  /** True iff this is a hosted (vesta.run-managed) gateway; gates the account link. */
   managed: boolean;
   gatewayVersion: string;
   gatewayChannel: ReleaseChannel;

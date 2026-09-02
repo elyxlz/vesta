@@ -3,18 +3,18 @@ export {
   clientBelowMinimum,
   compareReleaseVersions,
   resolveClientVersion,
-} from "./protocol/release-version"
+} from "./protocol/release-version";
 
 export {
   extractWhatsNew,
   fetchReleaseNotes,
   filterReleaseNotes,
   parseReleaseNotes,
-} from "./release-notes/release-notes"
-export type { ReleaseNote } from "./release-notes/release-notes"
+} from "./release-notes/release-notes";
+export type { ReleaseNote } from "./release-notes/release-notes";
 
-export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi"
-export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"
+export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi";
+export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi";
 
 export type {
   AgentActivityState,
@@ -35,16 +35,24 @@ export type {
   ReleaseChannel,
   ServiceInfo,
   Tree,
-} from "./protocol/tree"
-export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
-export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
+} from "./protocol/tree";
+export type {
+  InputMethod,
+  NotificationEvent,
+  VestaEvent,
+} from "./protocol/events";
+export type {
+  UserNotificationDelta,
+  DevicesDelta,
+  Delta,
+} from "./protocol/deltas";
 export {
   PILL_FALLBACK_ICON,
   PILL_KIND_ICONS,
   pillDisplayLine,
   type PillContent,
   type PillNotification,
-} from "./notifications-pill/notifications-pill"
+} from "./notifications-pill/notifications-pill";
 export {
   fetchUserNotifications,
   feedHasUnseen,
@@ -52,7 +60,7 @@ export {
   markUserNotificationsSeen,
   splitBySeen,
   type LoggedUserNotification,
-} from "./notifications-pill/user-notification-feed"
+} from "./notifications-pill/user-notification-feed";
 export {
   EMPTY_FEED,
   feedNeedsMarkSeen,
@@ -64,44 +72,44 @@ export {
   type FeedSections,
   type FeedView,
   type NotificationFeed,
-} from "./notifications-pill/notification-feed"
-export { parseServerFrame } from "./protocol/parse"
-export type { ParsedFrame } from "./protocol/parse"
-export { selectDevices, devicesEqual } from "./tree/devices"
+} from "./notifications-pill/notification-feed";
+export { parseServerFrame } from "./protocol/parse";
+export type { ParsedFrame } from "./protocol/parse";
+export { selectDevices, devicesEqual } from "./tree/devices";
 export {
   gatewayOperationLabel,
   gatewayOperationsEqual,
   selectGatewayOperation,
-} from "./tree/gateway-operation"
+} from "./tree/gateway-operation";
 
-export { createReplica } from "./replica/store"
-export type { Replica } from "./replica/store"
+export { createReplica } from "./replica/store";
+export type { Replica } from "./replica/store";
 
-export { ApiError, createHttpClient } from "./transport/http"
-export type { FetchLike, HttpClient, HttpDeps } from "./transport/http"
-export type { SocketLike, SyncSocketDeps, SyncState } from "./transport/socket"
-export type { DeviceContext } from "./protocol/frames"
-export { readSse, drainSsePipeline } from "./transport/sse"
-export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse"
+export { ApiError, createHttpClient } from "./transport/http";
+export type { FetchLike, HttpClient, HttpDeps } from "./transport/http";
+export type { SocketLike, SyncSocketDeps, SyncState } from "./transport/socket";
+export type { DeviceContext } from "./protocol/frames";
+export { readSse, drainSsePipeline } from "./transport/sse";
+export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse";
 
-export type { ForegroundSignal } from "./adapters/types"
+export type { ForegroundSignal } from "./adapters/types";
 
-export { PACING, typingDelay } from "./pacing/pacing"
+export { PACING, typingDelay } from "./pacing/pacing";
 
-export { agentHoldKey, createKeyedHoldStore } from "./holds/keyed-hold"
-export type { HeldCells, KeyedHoldStore } from "./holds/keyed-hold"
+export { agentHoldKey, createKeyedHoldStore } from "./holds/keyed-hold";
+export type { HeldCells, KeyedHoldStore } from "./holds/keyed-hold";
 
-export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons"
-export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons"
+export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons";
+export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons";
 
 export {
   notificationRowKey,
   parseNotificationContent,
-} from "./notification-content/notification-content"
+} from "./notification-content/notification-content";
 export type {
   NotificationContent,
   NotificationView,
-} from "./notification-content/notification-content"
+} from "./notification-content/notification-content";
 
 export {
   TRIM_HISTORY_SETTLE_MS,
@@ -114,14 +122,14 @@ export {
   seedTail,
   trimTail,
   retryableSends,
-} from "./chat/chat-stream-model"
+} from "./chat/chat-stream-model";
 export type {
   ChatMessage,
   ChatState,
   HistoryPage,
   RetryableSend,
   SendState,
-} from "./chat/chat-stream-model"
+} from "./chat/chat-stream-model";
 
 export {
   appChatAttachmentPath,
@@ -132,9 +140,12 @@ export {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_CHUNK_UPLOAD_BYTES,
   MIN_CHUNK_BYTES,
-} from "./attachments/attachment-model"
-export type { AttachmentKind, ChatAttachment } from "./attachments/attachment-model"
-export { UploadError, uploadAttachment } from "./attachments/upload"
+} from "./attachments/attachment-model";
+export type {
+  AttachmentKind,
+  ChatAttachment,
+} from "./attachments/attachment-model";
+export { UploadError, uploadAttachment } from "./attachments/upload";
 export type {
   Connectivity,
   UploadCallbacks,
@@ -143,7 +154,7 @@ export type {
   UploadHandle,
   UploadMeta,
   UploadRunState,
-} from "./attachments/upload"
+} from "./attachments/upload";
 export {
   addDraft,
   draftsReady,
@@ -155,57 +166,74 @@ export {
   setDraftWaiting,
   uploadedAttachments,
   uploadedIds,
-} from "./attachments/attachment-draft"
-export type { DraftAttachment, DraftFile, DraftStatus } from "./attachments/attachment-draft"
+} from "./attachments/attachment-draft";
+export type {
+  DraftAttachment,
+  DraftFile,
+  DraftStatus,
+} from "./attachments/attachment-draft";
 
 export {
   BUBBLE_GROUP_TIME_GAP_MS,
   chatMessageSide,
   startsNewBubbleGroup,
-} from "./chat/bubble-grouping"
-export type { ChatMessageSide } from "./chat/bubble-grouping"
+} from "./chat/bubble-grouping";
+export type { ChatMessageSide } from "./chat/bubble-grouping";
 
-export { createChatSocket } from "./chat/chat-socket"
+export { createChatSocket } from "./chat/chat-socket";
 export type {
   ChatSocket,
   ChatSocketCallbacks,
   ChatSocketDeps,
   ChatSocketState,
-} from "./chat/chat-socket"
+} from "./chat/chat-socket";
 
-export { createVoiceSession } from "./voice/voice-session"
+export { createVoiceSession } from "./voice/voice-session";
 export type {
   VoiceMode,
   VoiceSession,
   VoiceSessionCallbacks,
   VoiceSessionDeps,
   VoiceSessionSettings,
-} from "./voice/voice-session"
-export { createSttSession, MAX_PENDING_AUDIO_BYTES } from "./voice/stt-session"
-export type { AudioCapture, SttSession, VoiceSocketLike } from "./voice/stt-session"
-export { createTtsQueue } from "./voice/tts-queue"
-export type { SpeechPlayer, TtsQueue } from "./voice/tts-queue"
+} from "./voice/voice-session";
+export { createSttSession, MAX_PENDING_AUDIO_BYTES } from "./voice/stt-session";
+export type {
+  AudioCapture,
+  SttSession,
+  VoiceSocketLike,
+} from "./voice/stt-session";
+export { createTtsQueue } from "./voice/tts-queue";
+export type { SpeechPlayer, TtsQueue } from "./voice/tts-queue";
 
-export { sendMessage } from "./intents/send-message"
-export type { IdGenerator, SendFailure, SendMessageBody, SentMessage } from "./intents/send-message"
+export { sendMessage } from "./intents/send-message";
+export type {
+  IdGenerator,
+  SendFailure,
+  SendMessageBody,
+  SentMessage,
+} from "./intents/send-message";
 
 export {
   checkForGatewayUpdate,
   dismissGatewayUpdate,
   triggerGatewayRestart,
   triggerGatewayUpdate,
-} from "./intents/gateway-update"
+} from "./intents/gateway-update";
 
 export {
   createServiceKeyCache,
   isKeyFresh,
   mintServiceKey,
   serviceKeyPathUrl,
-} from "./service-keys/service-keys"
-export type { CachedServiceKey, ServiceKey, ServiceKeyCache } from "./service-keys/service-keys"
+} from "./service-keys/service-keys";
+export type {
+  CachedServiceKey,
+  ServiceKey,
+  ServiceKeyCache,
+} from "./service-keys/service-keys";
 
-export { rosterFromTree, rostersEqual } from "./tree/roster"
-export type { AgentRow } from "./tree/roster"
+export { rosterFromTree, rostersEqual } from "./tree/roster";
+export type { AgentRow } from "./tree/roster";
 
 export {
   agentIsConnectable,
@@ -217,24 +245,27 @@ export {
   agentStatusLabel,
   formatResetTime,
   orbIsLive,
-} from "./agent-status/agent-status"
-export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
+} from "./agent-status/agent-status";
+export type {
+  AgentStatusKind,
+  OrbVisualState,
+} from "./agent-status/agent-status";
 
-export { ORB_GRADIENT_ANGLE_DEG, orbVisual } from "./orb/orb"
-export type { OrbHighlight, OrbMotion, OrbPoint, OrbVisual } from "./orb/orb"
+export { ORB_GRADIENT_ANGLE_DEG, orbVisual } from "./orb/orb";
+export type { OrbHighlight, OrbMotion, OrbPoint, OrbVisual } from "./orb/orb";
 
 export {
   buildBackupTimeline,
   formatSnapshotStamp,
   parseBackupKind,
   parseSnapshotStamp,
-} from "./backups/backup-timeline"
+} from "./backups/backup-timeline";
 export type {
   BackupKind,
   BackupTimelinePoint,
   BackupTimelineRow,
   RestoreEligibility,
-} from "./backups/backup-timeline"
+} from "./backups/backup-timeline";
 
 export {
   CLAUDE_ALIASES,
@@ -242,7 +273,7 @@ export {
   normalizeProviderInfo,
   providerPutBody,
   resolveProviderIdentity,
-} from "./provider/provider"
+} from "./provider/provider";
 export type {
   ProviderAuthKind,
   ProviderContextPolicy,
@@ -255,7 +286,7 @@ export type {
   ProviderCatalogEntry,
   ProviderPutBody,
   ProviderSelection,
-} from "./provider/provider"
+} from "./provider/provider";
 
-export { createController } from "./controller/controller"
-export type { Controller, ControllerDeps } from "./controller/controller"
+export { createController } from "./controller/controller";
+export type { Controller, ControllerDeps } from "./controller/controller";

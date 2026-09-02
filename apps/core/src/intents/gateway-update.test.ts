@@ -1,86 +1,94 @@
-import { describe, expect, it, vi } from "vitest"
-import type { HttpClient } from "../transport/http"
+import { describe, expect, it, vi } from "vitest";
+import type { HttpClient } from "../transport/http";
 import {
   VERSION_CHECK_TIMEOUT_MS,
   checkForGatewayUpdate,
   triggerGatewayRestart,
   triggerGatewayUpdate,
-} from "./gateway-update"
+} from "./gateway-update";
 
 function httpWith(request: HttpClient["request"]): HttpClient {
-  return { request, json: vi.fn() }
+  return { request, json: vi.fn() };
 }
 
 function httpWithJson(json: HttpClient["json"]): HttpClient {
-  return { request: vi.fn(), json }
+  return { request: vi.fn(), json };
 }
 
 describe("triggerGatewayUpdate", () => {
   it("POSTs /gateway/update and returns true once an update is running", async () => {
-    const json = vi.fn().mockResolvedValue({ started: true, target_version: "0.1.190" })
-    const ok = await triggerGatewayUpdate(httpWithJson(json))
-
-    expect(ok).toBe(true)
-    const call = json.mock.calls[0]
-    if (!call) throw new Error("no request")
-    expect(call[0]).toBe("/gateway/update")
-    expect((call[1] as RequestInit).method).toBe("POST")
-  })
-
-  it("reads a pre-0.1.190 gateway's {ok} answer as started, since that gateway applied the update synchronously", async () => {
-    const json = vi.fn().mockResolvedValue({ ok: true, updated: true, restarting: true })
-    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(true)
-  })
-
-  it("returns false when the gateway is already current, so nothing is left to watch", async () => {
     const json = vi
       .fn()
-      .mockResolvedValue({ started: false, reason: "already_current", version: "0.1.190" })
-    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false)
-  })
+      .mockResolvedValue({ started: true, target_version: "0.1.190" });
+    const ok = await triggerGatewayUpdate(httpWithJson(json));
+
+    expect(ok).toBe(true);
+    const call = json.mock.calls[0];
+    if (!call) throw new Error("no request");
+    expect(call[0]).toBe("/gateway/update");
+    expect((call[1] as RequestInit).method).toBe("POST");
+  });
+
+  it("reads a pre-0.1.190 gateway's {ok} answer as started, since that gateway applied the update synchronously", async () => {
+    const json = vi
+      .fn()
+      .mockResolvedValue({ ok: true, updated: true, restarting: true });
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(true);
+  });
+
+  it("returns false when the gateway is already current, so nothing is left to watch", async () => {
+    const json = vi.fn().mockResolvedValue({
+      started: false,
+      reason: "already_current",
+      version: "0.1.190",
+    });
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false);
+  });
 
   it("returns false when vestad rejects the request", async () => {
-    const json = vi.fn().mockRejectedValue(new Error("down"))
-    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false)
-  })
-})
+    const json = vi.fn().mockRejectedValue(new Error("down"));
+    expect(await triggerGatewayUpdate(httpWithJson(json))).toBe(false);
+  });
+});
 
 describe("triggerGatewayRestart", () => {
   it("POSTs /gateway/restart and returns true on accept", async () => {
-    const request = vi.fn().mockResolvedValue(new Response())
-    const ok = await triggerGatewayRestart(httpWith(request))
+    const request = vi.fn().mockResolvedValue(new Response());
+    const ok = await triggerGatewayRestart(httpWith(request));
 
-    expect(ok).toBe(true)
-    const call = request.mock.calls[0]
-    if (!call) throw new Error("no request")
-    expect(call[0]).toBe("/gateway/restart")
-    expect((call[1] as RequestInit).method).toBe("POST")
-  })
+    expect(ok).toBe(true);
+    const call = request.mock.calls[0];
+    if (!call) throw new Error("no request");
+    expect(call[0]).toBe("/gateway/restart");
+    expect((call[1] as RequestInit).method).toBe("POST");
+  });
 
   it("returns false when vestad rejects the request", async () => {
-    const request = vi.fn().mockRejectedValue(new Error("down"))
-    expect(await triggerGatewayRestart(httpWith(request))).toBe(false)
-  })
-})
+    const request = vi.fn().mockRejectedValue(new Error("down"));
+    expect(await triggerGatewayRestart(httpWith(request))).toBe(false);
+  });
+});
 
 describe("checkForGatewayUpdate", () => {
   it("POSTs /version/check under the version-check timeout and ignores the body", async () => {
-    const timeout = vi.spyOn(AbortSignal, "timeout")
-    const request = vi.fn().mockResolvedValue(new Response())
-    await checkForGatewayUpdate(httpWith(request))
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const request = vi.fn().mockResolvedValue(new Response());
+    await checkForGatewayUpdate(httpWith(request));
 
-    const call = request.mock.calls[0]
-    if (!call) throw new Error("no request")
-    expect(call[0]).toBe("/version/check")
-    const init = call[1] as RequestInit
-    expect(init.method).toBe("POST")
-    expect(init.signal).toBeInstanceOf(AbortSignal)
-    expect(timeout).toHaveBeenCalledWith(VERSION_CHECK_TIMEOUT_MS)
-    timeout.mockRestore()
-  })
+    const call = request.mock.calls[0];
+    if (!call) throw new Error("no request");
+    expect(call[0]).toBe("/version/check");
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(timeout).toHaveBeenCalledWith(VERSION_CHECK_TIMEOUT_MS);
+    timeout.mockRestore();
+  });
 
   it("propagates a transport failure so callers can reflect it", async () => {
-    const request = vi.fn().mockRejectedValue(new Error("down"))
-    await expect(checkForGatewayUpdate(httpWith(request))).rejects.toThrow("down")
-  })
-})
+    const request = vi.fn().mockRejectedValue(new Error("down"));
+    await expect(checkForGatewayUpdate(httpWith(request))).rejects.toThrow(
+      "down",
+    );
+  });
+});

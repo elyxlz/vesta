@@ -1,48 +1,54 @@
-// Release-version comparison for the drift policy (distinct from the protocol floor in
-// version.ts). Fail-open by design: an unparseable version on either side yields null, so a
-// dev build carrying a non-semver string is never judged ahead of or behind the gateway.
+// Release-version comparison for the drift policy. Fail-open by design: an unparseable version
+// on either side yields null, so a dev build carrying a non-semver string is never judged ahead
+// of or behind the gateway.
 
 function parseParts(version: string): number[] | null {
-  const core = version.split("-")[0] ?? ""
-  const parts = core.split(".")
-  const nums: number[] = []
+  const core = version.split("-")[0] ?? "";
+  const parts = core.split(".");
+  const nums: number[] = [];
   for (const part of parts) {
-    if (!/^\d+$/.test(part)) return null
-    nums.push(Number(part))
+    if (!/^\d+$/.test(part)) return null;
+    nums.push(Number(part));
   }
-  return nums.length > 0 ? nums : null
+  return nums.length > 0 ? nums : null;
 }
 
 export function resolveClientVersion(
   releaseVersion: string | undefined,
   development: boolean,
 ): string | undefined {
-  return development ? "dev" : releaseVersion
+  return development ? "dev" : releaseVersion;
 }
 
 // 1 when `a` is newer, -1 when older, 0 when equal, null when either side is unparseable.
 export function compareReleaseVersions(a: string, b: string): number | null {
-  const left = parseParts(a)
-  const right = parseParts(b)
-  if (left === null || right === null) return null
-  const len = Math.max(left.length, right.length)
+  const left = parseParts(a);
+  const right = parseParts(b);
+  if (left === null || right === null) return null;
+  const len = Math.max(left.length, right.length);
   for (let index = 0; index < len; index++) {
-    const diff = (left[index] ?? 0) - (right[index] ?? 0)
-    if (diff !== 0) return diff > 0 ? 1 : -1
+    const diff = (left[index] ?? 0) - (right[index] ?? 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
   }
-  return 0
+  return 0;
 }
 
 // True only when the client is strictly newer than the gateway (the recoverable direction:
 // the gateway can update to catch up). Fails open: an unparseable version is never ahead.
-export function clientAheadOfGateway(clientVersion: string, gatewayVersion: string): boolean {
-  const cmp = compareReleaseVersions(clientVersion, gatewayVersion)
-  return cmp !== null && cmp > 0
+export function clientAheadOfGateway(
+  clientVersion: string,
+  gatewayVersion: string,
+): boolean {
+  const cmp = compareReleaseVersions(clientVersion, gatewayVersion);
+  return cmp !== null && cmp > 0;
 }
 
 // True only when the client is older than the gateway's minimum supported client (the terminal
 // direction: the app itself must update). Fails open: an unparseable version is never below.
-export function clientBelowMinimum(clientVersion: string, minSupported: string): boolean {
-  const cmp = compareReleaseVersions(clientVersion, minSupported)
-  return cmp !== null && cmp < 0
+export function clientBelowMinimum(
+  clientVersion: string,
+  minSupported: string,
+): boolean {
+  const cmp = compareReleaseVersions(clientVersion, minSupported);
+  return cmp !== null && cmp < 0;
 }

@@ -9,14 +9,12 @@ import {
 } from "react";
 import { type Controller, type Delta, type Tree } from "@vesta/core";
 import { useAnyFocused, useReplica } from "@vesta/core/react";
-import { ControllerContext } from "@/providers/ControllerProvider";
+import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { NotificationContext } from "./context";
-
-export { useNotifications } from "./context";
 
 const PREVIEW_MAX = 100;
 const NOTIFICATION_AUTO_CLOSE_MS = 6000;

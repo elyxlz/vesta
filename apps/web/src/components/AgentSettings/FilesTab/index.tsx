@@ -1,23 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useResource } from "@vesta/core/react";
 import { ChevronLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Item, ItemContent, ItemGroup, ItemMedia } from "@/components/ui/item";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn, errorMessage, loadFailure } from "@/lib/utils";
 import {
   fetchFileTree,
-  readFile,
   writeFile,
   type FileReadResponse,
   type FileTreeEntry,
 } from "@/api/files";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useFillHeight } from "@/hooks/use-fill-height";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import { DreamsViewer } from "./DreamsViewer";
+import { useFileEditor, type SaveStatus } from "./use-file-editor";
 import { FileEditor } from "./FileEditor";
 import { SimpleView } from "./SimpleView";
 import {
@@ -26,12 +27,6 @@ import {
   friendlyLabel,
   isSimpleAllowed,
 } from "./paths";
-
-type SaveStatus =
-  | { kind: "idle" }
-  | { kind: "saving" }
-  | { kind: "saved" }
-  | { kind: "error"; message: string };
 
 function statusText(status: SaveStatus, dirty: boolean): string {
   switch (status.kind) {
@@ -264,7 +259,7 @@ function EditorBody({
           onChange={onChange}
           placeholder={
             loadedFile.path === CONSTITUTION_PATH
-              ? "empty — set principles, boundaries, or facts the agent must always honor"
+              ? "empty. set principles, boundaries, or facts the agent must always honor"
               : undefined
           }
         />
@@ -321,89 +316,47 @@ export function FilesTab() {
   // down to the viewport bottom.
   const { ref: fillRef, height: fillHeight } = useFillHeight(MOBILE_BOTTOM_GAP);
 
-  const [entries, setEntries] = useState<FileTreeEntry[] | null>(null);
-  const [treeError, setTreeError] = useState<string | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [loadedFile, setLoadedFile] = useState<FileReadResponse | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [editorContent, setEditorContent] = useState("");
-  const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
+  const tree = useResource(
+    agentName && isAlive ? agentName : null,
+    fetchFileTree,
+  );
+  const entries = tree.data;
+  const treeError = loadFailure(tree.error, "failed to load files");
+  // The selection only counts while the simple view allows it, so a path the view no longer
+  // lists drops out during render.
+  const [selection, setSelection] = useState<string | null>(null);
+  const selectedPath =
+    selection !== null && isSimpleAllowed(selection) ? selection : null;
+  const {
+    loadedFile,
+    loadError,
+    editorContent,
+    setEditorContent,
+    status,
+    setStatus,
+    setLoadedFile,
+  } = useFileEditor(agentName, selectedPath);
   const markRestartPending = useRestartPending((s) => s.markPending);
   const [dreamsActive, setDreamsActive] = useState(false);
 
-  useEffect(() => {
-    if (selectedPath && !isSimpleAllowed(selectedPath)) {
-      setSelectedPath(null);
-      setLoadedFile(null);
-    }
-  }, [selectedPath]);
-
   const selectFile = (path: string) => {
     setDreamsActive(false);
-    setSelectedPath(path);
+    setSelection(path);
   };
   const showDreams = () => {
     setDreamsActive(true);
-    setSelectedPath(null);
-    setLoadedFile(null);
-    setLoadError(null);
-    setStatus({ kind: "idle" });
+    setSelection(null);
   };
   // Mobile drill-in: return from the editor/dreams detail view back to the tree.
   const goBack = () => {
-    setSelectedPath(null);
-    setLoadedFile(null);
-    setLoadError(null);
+    setSelection(null);
     setDreamsActive(false);
-    setStatus({ kind: "idle" });
   };
 
   const dreamPaths = useMemo(
     () => (entries ? collectDreamPaths(entries) : []),
     [entries],
   );
-
-  useEffect(() => {
-    if (!agentName || !isAlive) {
-      setEntries(null);
-      return;
-    }
-    setTreeError(null);
-    let cancelled = false;
-    fetchFileTree(agentName)
-      .then((entries) => {
-        if (cancelled) return;
-        setEntries(entries);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setTreeError(errorMessage(e, "failed to load files"));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agentName, isAlive]);
-
-  useEffect(() => {
-    if (!agentName || !selectedPath) return;
-    setLoadedFile(null);
-    setLoadError(null);
-    setStatus({ kind: "idle" });
-    let cancelled = false;
-    readFile(agentName, selectedPath)
-      .then((file) => {
-        if (cancelled) return;
-        setLoadedFile(file);
-        setEditorContent(file.content);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setLoadError(errorMessage(e, "failed to load file"));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agentName, selectedPath]);
 
   const headerLabel = (() => {
     if (dreamsActive) return "dreams";

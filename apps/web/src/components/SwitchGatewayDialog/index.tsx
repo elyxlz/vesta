@@ -9,8 +9,8 @@ import {
   recentGatewayId,
   type RecentGateway,
 } from "@/lib/recent-gateways";
-import { useAuth } from "@/providers/AuthProvider";
-import { useControllerReconnect } from "@/providers/ControllerProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
+import { useControllerReconnect } from "@/providers/ControllerProvider/context";
 import { useSwitchGateway } from "@/stores/use-switch-gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

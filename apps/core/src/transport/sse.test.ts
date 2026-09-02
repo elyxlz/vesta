@@ -1,98 +1,110 @@
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vitest";
 
-import { drainSsePipeline, readSse } from "./sse"
-import type { SseDeps, StreamEvent } from "./sse"
-import { ApiError } from "./http"
-import type { FetchLike } from "./http"
+import { drainSsePipeline, readSse } from "./sse";
+import type { SseDeps, StreamEvent } from "./sse";
+import { ApiError } from "./http";
+import type { FetchLike } from "./http";
 
 function fetchReturning(body: string, status = 200): FetchLike {
-  return vi.fn<FetchLike>().mockResolvedValue(new Response(body, { status }))
+  return vi.fn<FetchLike>().mockResolvedValue(new Response(body, { status }));
 }
 
 async function collect(deps: SseDeps): Promise<StreamEvent[]> {
-  const events: StreamEvent[] = []
-  readSse(deps, (event) => events.push(event))
+  const events: StreamEvent[] = [];
+  readSse(deps, (event) => events.push(event));
   await vi.waitFor(() => {
-    const last = events.at(-1)
-    expect(last?.kind === "end" || last?.kind === "error").toBe(true)
-  })
-  return events
+    const last = events.at(-1);
+    expect(last?.kind === "end" || last?.kind === "error").toBe(true);
+  });
+  return events;
 }
 
 describe("readSse", () => {
   it("emits line events for data blocks then end on the stopped event", async () => {
     const events = await collect({
-      fetch: fetchReturning("data: hello\n\ndata: world\n\nevent: logs_stopped\ndata: \n\n"),
+      fetch: fetchReturning(
+        "data: hello\n\ndata: world\n\nevent: logs_stopped\ndata: \n\n",
+      ),
       url: "https://vestad.test/logs",
       stoppedEvent: "logs_stopped",
-    })
+    });
     expect(events).toEqual([
       { kind: "line", text: "hello" },
       { kind: "line", text: "world" },
       { kind: "end" },
-    ])
-  })
+    ]);
+  });
 
   it("maps error-prefixed data to an error event", async () => {
     const events = await collect({
-      fetch: fetchReturning("data: error: boom\n\nevent: logs_stopped\ndata: \n\n"),
+      fetch: fetchReturning(
+        "data: error: boom\n\nevent: logs_stopped\ndata: \n\n",
+      ),
       url: "https://vestad.test/logs",
       stoppedEvent: "logs_stopped",
-    })
-    expect(events).toEqual([{ kind: "error", message: "error: boom" }, { kind: "end" }])
-  })
+    });
+    expect(events).toEqual([
+      { kind: "error", message: "error: boom" },
+      { kind: "end" },
+    ]);
+  });
 
   it("reports a transport error when the response is not ok", async () => {
     const events = await collect({
       fetch: fetchReturning("nope", 500),
       url: "https://vestad.test/logs",
       stoppedEvent: "logs_stopped",
-    })
-    expect(events).toEqual([{ kind: "error", message: "log stream disconnected" }])
-  })
+    });
+    expect(events).toEqual([
+      { kind: "error", message: "log stream disconnected" },
+    ]);
+  });
 
   it("reports a transport error when fetch rejects", async () => {
     const events = await collect({
       fetch: vi.fn<FetchLike>().mockRejectedValue(new Error("down")),
       url: "https://vestad.test/logs",
       stoppedEvent: "logs_stopped",
-    })
-    expect(events).toEqual([{ kind: "error", message: "log stream disconnected" }])
-  })
+    });
+    expect(events).toEqual([
+      { kind: "error", message: "log stream disconnected" },
+    ]);
+  });
 
   it("emits end when the stream closes without a stopped event", async () => {
     const events = await collect({
       fetch: fetchReturning("data: only\n\n"),
       url: "https://vestad.test/logs",
       stoppedEvent: "logs_stopped",
-    })
-    expect(events).toEqual([{ kind: "line", text: "only" }, { kind: "end" }])
-  })
+    });
+    expect(events).toEqual([{ kind: "line", text: "only" }, { kind: "end" }]);
+  });
 
   it("buffers a data line split across chunk boundaries", async () => {
-    const encoder = new TextEncoder()
+    const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        for (const part of ["data: hel", "lo\n\n"]) controller.enqueue(encoder.encode(part))
-        controller.close()
+        for (const part of ["data: hel", "lo\n\n"])
+          controller.enqueue(encoder.encode(part));
+        controller.close();
       },
-    })
+    });
     const events = await collect({
       fetch: vi.fn<FetchLike>().mockResolvedValue(new Response(stream)),
       url: "https://vestad.test/logs",
       stoppedEvent: "logs_stopped",
-    })
-    expect(events).toEqual([{ kind: "line", text: "hello" }, { kind: "end" }])
-  })
+    });
+    expect(events).toEqual([{ kind: "line", text: "hello" }, { kind: "end" }]);
+  });
 
   it("emits nothing further after cancel while a read is pending", async () => {
-    const encoder = new TextEncoder()
+    const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(encoder.encode("data: one\n\n"))
+        controller.enqueue(encoder.encode("data: one\n\n"));
       },
-    })
-    const events: StreamEvent[] = []
+    });
+    const events: StreamEvent[] = [];
     const handle = readSse(
       {
         fetch: vi.fn<FetchLike>().mockResolvedValue(new Response(stream)),
@@ -100,32 +112,39 @@ describe("readSse", () => {
         stoppedEvent: "logs_stopped",
       },
       (event) => events.push(event),
-    )
+    );
     await vi.waitFor(() => {
-      expect(events).toEqual([{ kind: "line", text: "one" }])
-    })
-    handle.cancel()
-    await new Promise<void>((resolve) => setTimeout(resolve, 20))
-    expect(events).toEqual([{ kind: "line", text: "one" }])
-  })
-})
+      expect(events).toEqual([{ kind: "line", text: "one" }]);
+    });
+    handle.cancel();
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(events).toEqual([{ kind: "line", text: "one" }]);
+  });
+});
 
 describe("drainSsePipeline", () => {
   it("resolves the done payload past keep-alive comment lines", async () => {
-    const body = ':\n\n:\n\nevent: done\ndata: {"id":"snap-1"}\n\n'
-    await expect(drainSsePipeline(new Response(body))).resolves.toBe('{"id":"snap-1"}')
-  })
+    const body = ':\n\n:\n\nevent: done\ndata: {"id":"snap-1"}\n\n';
+    await expect(drainSsePipeline(new Response(body))).resolves.toBe(
+      '{"id":"snap-1"}',
+    );
+  });
 
   it("rejects an error event as an ApiError carrying its status and message", async () => {
-    const body = 'event: error\ndata: {"status":409,"error":"made by a newer vestad"}\n\n'
+    const body =
+      'event: error\ndata: {"status":409,"error":"made by a newer vestad"}\n\n';
     await expect(drainSsePipeline(new Response(body))).rejects.toMatchObject({
       status: 409,
       message: "made by a newer vestad",
-    })
-    await expect(drainSsePipeline(new Response(body))).rejects.toBeInstanceOf(ApiError)
-  })
+    });
+    await expect(drainSsePipeline(new Response(body))).rejects.toBeInstanceOf(
+      ApiError,
+    );
+  });
 
   it("rejects when the stream closes without a terminal event", async () => {
-    await expect(drainSsePipeline(new Response(":\n\n"))).rejects.toBeInstanceOf(ApiError)
-  })
-})
+    await expect(
+      drainSsePipeline(new Response(":\n\n")),
+    ).rejects.toBeInstanceOf(ApiError);
+  });
+});

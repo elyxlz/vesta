@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Console } from "@/components/Console";
 import { useFillHeight } from "@/hooks/use-fill-height";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { cn } from "@/lib/utils";
 
 // Reserve the floating nav pill's height so the filled panel clears it (matches

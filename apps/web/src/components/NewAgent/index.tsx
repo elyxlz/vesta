@@ -267,9 +267,7 @@ export function NewAgent() {
     <div className="flex h-full flex-col">
       <div
         className="flex-1 overflow-y-auto overscroll-contain mask-t-from-[calc(100%-var(--navbar-h)-72px)] mask-t-to-[calc(100%-var(--navbar-h))]"
-        style={
-          { "--navbar-h": `${String(navbarHeight)}px` } as React.CSSProperties
-        }
+        style={{ "--navbar-h": `${String(navbarHeight)}px` }}
       >
         <div
           className="flex min-h-full w-full flex-col"

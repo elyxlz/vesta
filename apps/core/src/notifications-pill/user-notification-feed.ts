@@ -1,7 +1,7 @@
-import { record } from "../protocol/parse"
-import type { Delta } from "../protocol/deltas"
-import type { HttpClient } from "../transport/http"
-import type { PillContent } from "./notifications-pill"
+import { record } from "../protocol/parse";
+import type { Delta } from "../protocol/deltas";
+import type { HttpClient } from "../transport/http";
+import type { PillContent } from "./notifications-pill";
 
 // The durable user-notification history behind the ephemeral delta: vestad logs
 // every delivered notification and serves it at GET /notifications, newest
@@ -9,31 +9,32 @@ import type { PillContent } from "./notifications-pill"
 // the live edge to its pages by id; `before` walks arbitrarily far back.
 
 export interface LoggedUserNotification extends PillContent {
-  id: number
+  id: number;
   /** Unix seconds at delivery. */
-  at: number
+  at: number;
 }
 
 /** The `user_notification` delta as the log entry it mirrors, or null for any other delta. */
 export function loggedFromDelta(delta: Delta): LoggedUserNotification | null {
-  if (delta.type !== "user_notification") return null
-  const { id, at, agent, kind, title, body } = delta
-  return { id, at, agent, kind, title, body }
+  if (delta.type !== "user_notification") return null;
+  const { id, at, agent, kind, title, body } = delta;
+  return { id, at, agent, kind, title, body };
 }
 
 export async function fetchUserNotifications(
   http: HttpClient,
   options: { before?: number; limit?: number } = {},
 ): Promise<LoggedUserNotification[]> {
-  const params = new URLSearchParams()
-  if (options.before !== undefined) params.set("before", String(options.before))
-  if (options.limit !== undefined) params.set("limit", String(options.limit))
+  const params = new URLSearchParams();
+  if (options.before !== undefined)
+    params.set("before", String(options.before));
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
   // params.toString(), not params.size: RN's Hermes URLSearchParams lacks `size`.
-  const query = params.toString()
+  const query = params.toString();
   const body = await http.json<{ notifications?: unknown }>(
     `/notifications${query ? `?${query}` : ""}`,
-  )
-  return parseLogged(body.notifications)
+  );
+  return parseLogged(body.notifications);
 }
 
 // The awareness-feed seen model, shared by every view: one gateway-synced watermark
@@ -44,12 +45,12 @@ export function splitBySeen(
   entries: LoggedUserNotification[],
   seenAt: number,
 ): { unseen: LoggedUserNotification[]; seen: LoggedUserNotification[] } {
-  const unseen: LoggedUserNotification[] = []
-  const seen: LoggedUserNotification[] = []
+  const unseen: LoggedUserNotification[] = [];
+  const seen: LoggedUserNotification[] = [];
   for (const entry of entries) {
-    ;(entry.at > seenAt ? unseen : seen).push(entry)
+    (entry.at > seenAt ? unseen : seen).push(entry);
   }
-  return { unseen, seen }
+  return { unseen, seen };
 }
 
 /** Whether anything arrived past the watermark, from the gateway branch's two scalars alone. */
@@ -57,7 +58,7 @@ export function feedHasUnseen(
   lastAt: number | null | undefined,
   seenAt: number | undefined,
 ): boolean {
-  return (lastAt ?? 0) > (seenAt ?? 0)
+  return (lastAt ?? 0) > (seenAt ?? 0);
 }
 
 /**
@@ -65,23 +66,25 @@ export function feedHasUnseen(
  * everything unseen). The server stamps the watermark with its own clock and fans the updated
  * gateway branch to every device, so the client never computes "now" itself.
  */
-export async function markUserNotificationsSeen(http: HttpClient): Promise<void> {
-  await http.request("/notifications/seen", { method: "POST" })
+export async function markUserNotificationsSeen(
+  http: HttpClient,
+): Promise<void> {
+  await http.request("/notifications/seen", { method: "POST" });
 }
 
 // Parse at the boundary: an entry missing any field is dropped, never rendered
 // half-shaped, and an unknown extra field is ignored (additive evolution).
 function parseLogged(value: unknown): LoggedUserNotification[] {
-  if (!Array.isArray(value)) return []
-  const parsed: LoggedUserNotification[] = []
+  if (!Array.isArray(value)) return [];
+  const parsed: LoggedUserNotification[] = [];
   for (const raw of value) {
-    const entry = record(raw)
-    if (!entry) continue
-    const { id, at, agent, kind, title, body } = entry
-    if (typeof id !== "number" || typeof at !== "number") continue
-    if (typeof agent !== "string" || typeof kind !== "string") continue
-    if (typeof title !== "string" || typeof body !== "string") continue
-    parsed.push({ id, at, agent, kind, title, body })
+    const entry = record(raw);
+    if (!entry) continue;
+    const { id, at, agent, kind, title, body } = entry;
+    if (typeof id !== "number" || typeof at !== "number") continue;
+    if (typeof agent !== "string" || typeof kind !== "string") continue;
+    if (typeof title !== "string" || typeof body !== "string") continue;
+    parsed.push({ id, at, agent, kind, title, body });
   }
-  return parsed
+  return parsed;
 }

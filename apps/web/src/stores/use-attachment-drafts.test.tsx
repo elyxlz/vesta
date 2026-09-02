@@ -20,8 +20,8 @@ vi.mock("@vesta/core", async (importOriginal) => {
   return {
     ...actual,
     uploadAttachment: (...args: Parameters<typeof actual.uploadAttachment>) => {
-      const meta = args[3];
-      const callbacks = args[5];
+      const meta = args[1].meta;
+      const callbacks = args[3];
       let finish!: (attachment: ChatAttachment) => void;
       let fail!: (error: unknown) => void;
       const result = new Promise<ChatAttachment>((resolve, reject) => {

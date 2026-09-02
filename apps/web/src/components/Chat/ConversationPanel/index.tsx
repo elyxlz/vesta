@@ -1,11 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useState } from "react";
 import { motion as m } from "motion/react";
 import { Mic, MicOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Orb } from "@/components/Orb";
 import { sheetEase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
 
 const ORB_SIZE = 168;
@@ -34,6 +34,20 @@ function phaseLabel({
 // panel's muted mic).
 export const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";
 
+interface LiveFrame {
+  transcript: string;
+  phase: string;
+  motion: "talking" | "listening" | undefined;
+}
+
+function sameFrame(a: LiveFrame, b: LiveFrame): boolean {
+  return (
+    a.transcript === b.transcript &&
+    a.phase === b.phase &&
+    a.motion === b.motion
+  );
+}
+
 export function ConversationPanel() {
   // The session is already torn down while this panel plays its exit, so what it renders is
   // held at the last live values: reading the reset store would flash "connecting" on the
@@ -59,22 +73,17 @@ export function ConversationPanel() {
     : listening && !micMuted
       ? ("listening" as const)
       : undefined;
-  const lastShownRef = useRef({
+  // The last live frame, held so the exit morph keeps rendering it after the session ends.
+  const [lastShown, setLastShown] = useState({
     transcript: "",
     phase: livePhase,
     motion: liveMotion,
   });
-  useEffect(() => {
-    if (live)
-      lastShownRef.current = {
-        transcript,
-        phase: livePhase,
-        motion: liveMotion,
-      };
-  });
+  const frame = { transcript, phase: livePhase, motion: liveMotion };
+  if (live && !sameFrame(lastShown, frame)) setLastShown(frame);
   const shown = live
     ? { transcript, phase: livePhase, motion: liveMotion }
-    : lastShownRef.current;
+    : lastShown;
   const motion = shown.motion;
   const lastSpace = shown.transcript.lastIndexOf(" ");
   const spokenHead =

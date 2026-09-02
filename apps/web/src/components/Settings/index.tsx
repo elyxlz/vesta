@@ -12,9 +12,9 @@ import { AppearancePicker } from "@/components/Settings/AppearancePicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { MenuSection } from "@/components/ui/menu-section";
-import { useTheme } from "@/providers/ThemeProvider";
-import { useAuth } from "@/providers/AuthProvider";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useTheme } from "@/providers/ThemeProvider/context";
+import { useAuth } from "@/providers/AuthProvider/context";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { connectionHostname } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
 import {
@@ -42,7 +42,7 @@ import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
 const ACCOUNT_URL = "https://vesta.run/account";
 
 // The app-level settings surface, rendered as a page at /settings. App/client +
-// box concerns only — per-agent config lives at /agent/:name/settings.
+// gateway concerns only; per-agent config lives at /agent/:name/settings.
 export function AppSettings() {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();

@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { isEditableTarget } from "@/lib/dom";
 import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
-import { useTheme } from "@/providers/ThemeProvider";
+import { useTheme } from "@/providers/ThemeProvider/context";
 
 function isButtonTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest("button") !== null;

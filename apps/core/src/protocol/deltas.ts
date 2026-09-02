@@ -1,29 +1,29 @@
-import type { AgentInfo, DeviceInfo, GatewayInfo } from "./tree"
-import type { NotificationEvent } from "./events"
+import type { AgentInfo, DeviceInfo, GatewayInfo } from "./tree";
+import type { NotificationEvent } from "./events";
 
 export interface StateDelta {
-  type: "state"
-  scope: "gateway"
-  value: GatewayInfo
+  type: "state";
+  scope: "gateway";
+  value: GatewayInfo;
 }
 
 export interface AgentDelta {
-  type: "agent"
-  name: string
-  info: AgentInfo
+  type: "agent";
+  name: string;
+  info: AgentInfo;
 }
 
 export interface AgentRemovedDelta {
-  type: "agent_removed"
-  name: string
+  type: "agent_removed";
+  name: string;
 }
 
 // An agent's own pending intake notifications (the files awaiting its attention), distinct from
 // the user-facing `user_notification` feed below.
 export interface AgentNotificationsDelta {
-  type: "agent_notifications"
-  agent: string
-  pending: NotificationEvent[]
+  type: "agent_notifications";
+  agent: string;
+  pending: NotificationEvent[];
 }
 
 // The always-on, server-decided user-facing notification: the client routes on `kind` and renders
@@ -34,26 +34,26 @@ export interface AgentNotificationsDelta {
 // rather than dropped, which is what keeps a new kind additive. `id` and `at` are the durable
 // log's own (GET /notifications serves the same entry), so a feed joins the live edge by id.
 export interface UserNotificationDelta {
-  type: "user_notification"
-  id: number
+  type: "user_notification";
+  id: number;
   /** Unix seconds at delivery, the gateway's clock. */
-  at: number
-  agent: string
-  kind: string
-  title: string
-  body: string
+  at: number;
+  agent: string;
+  kind: string;
+  title: string;
+  body: string;
 }
 
 export interface PresenceDelta {
-  type: "presence"
-  anyFocused: boolean
+  type: "presence";
+  anyFocused: boolean;
 }
 
 // The whole known-device list, replaced on any change (a device connecting, disconnecting, or
 // registering push). Additive: an old client ignores it.
 export interface DevicesDelta {
-  type: "devices"
-  devices: DeviceInfo[]
+  type: "devices";
+  devices: DeviceInfo[];
 }
 
 export type Delta =
@@ -63,4 +63,4 @@ export type Delta =
   | AgentNotificationsDelta
   | UserNotificationDelta
   | PresenceDelta
-  | DevicesDelta
+  | DevicesDelta;

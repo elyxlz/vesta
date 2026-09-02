@@ -1,7 +1,7 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useShareLocation } from "@/stores/use-share-location";
-import { ControllerContext } from "@/providers/ControllerProvider";
+import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { fakeController, fakeTree } from "@/test/fake-controller";
 import { PresenceReporter } from "./index";
 

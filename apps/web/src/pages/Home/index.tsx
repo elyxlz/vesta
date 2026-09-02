@@ -1,6 +1,6 @@
 import { Home as HomeContent } from "@/components/Home";
 import { UpdateProgressScreen } from "@/components/UpdateProgressScreen";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 
 export function Home() {
   const { gatewayOperation, updatedTo } = useGateway();

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useResource } from "@vesta/core/react";
 import { ChevronLeft, ChevronRight, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Markdown } from "@/lib/markdown";
 import { readFile } from "@/api/files";
+import { loadFailure } from "@/lib/utils";
 import { DREAMER_PREFIX, parseDreamFilename } from "./paths";
 
 interface DreamsViewerProps {
@@ -34,34 +36,26 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
     return metas;
   }, [pathsKey]);
 
-  const [page, setPage] = useState(0);
-  const [content, setContent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPage(0);
-  }, [pathsKey]);
+  // The open page is keyed by the entry list, so a changed list starts from the newest dream.
+  const [paging, setPaging] = useState({ key: pathsKey, page: 0 });
+  const page = paging.key === pathsKey ? paging.page : 0;
+  const setPage = (next: number) => {
+    setPaging({ key: pathsKey, page: next });
+  };
 
   const current = entries[page];
   const currentPath = current?.path ?? null;
 
-  useEffect(() => {
-    if (!currentPath) return;
-    let cancelled = false;
-    setContent(null);
-    setError(null);
-    readFile(agent, currentPath)
-      .then((r) => {
-        if (cancelled) return;
-        setContent(r.encoding === "utf-8" ? r.content : "");
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agent, currentPath]);
+  const dream = useResource(
+    currentPath === null ? null : `${agent}\n${currentPath}`,
+    async () => {
+      if (currentPath === null) return "";
+      const file = await readFile(agent, currentPath);
+      return file.encoding === "utf-8" ? file.content : "";
+    },
+  );
+  const content = dream.data;
+  const error = loadFailure(dream.error, "read failed");
 
   return (
     <div className="flex h-full flex-col bg-gradient-to-b from-card to-muted/20">
@@ -77,7 +71,7 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
         <div className="mx-auto max-w-2xl px-6 pb-8">
           {entries.length === 0 ? (
             <p className="text-center font-serif text-sm italic text-muted-foreground/70">
-              no dreams yet — the agent journals nightly while you sleep
+              no dreams yet. the agent journals nightly while you sleep
             </p>
           ) : error ? (
             <p className="text-center text-sm text-destructive">
@@ -101,7 +95,7 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
             size="icon"
             aria-label="newer dream"
             disabled={page === 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            onClick={() => setPage(Math.max(0, page - 1))}
           >
             <ChevronLeft className="size-4" />
           </Button>
@@ -113,7 +107,7 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
             size="icon"
             aria-label="older dream"
             disabled={page === entries.length - 1}
-            onClick={() => setPage((p) => Math.min(entries.length - 1, p + 1))}
+            onClick={() => setPage(Math.min(entries.length - 1, page + 1))}
           >
             <ChevronRight className="size-4" />
           </Button>

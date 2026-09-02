@@ -1,15 +1,13 @@
 import { useEffect, type ReactNode } from "react";
 import { useAgentSocketState } from "./use-agent-socket";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useNotifications } from "@/providers/NotificationProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useNotifications } from "@/providers/NotificationProvider/context";
 import { useVoice } from "@/stores/use-voice";
 import { AgentSocketContext, type AgentSocketValue } from "./context";
 import { agentIsConnectable } from "@vesta/core";
 
-export { useAgentSocket } from "./context";
-
 export function AgentSocketProvider({ children }: { children: ReactNode }) {
-  const { name, agent, setAgentState } = useSelectedAgent();
+  const { name, agent } = useSelectedAgent();
   const { speak, prefetch } = useVoice();
   const { notifyAssistant, setChattingAgent } = useNotifications();
 
@@ -30,10 +28,6 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     },
     onPrefetch: prefetch,
   });
-
-  useEffect(() => {
-    setAgentState(socket.agentState);
-  }, [socket.agentState, setAgentState]);
 
   const value: AgentSocketValue = { ...socket };
 

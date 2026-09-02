@@ -16,21 +16,21 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
   const location = useLocation();
   const isChat =
     location.pathname === `/agent/${encodeURIComponent(name ?? "")}/chat`;
-  const isChatRef = useRef(isChat);
-  isChatRef.current = isChat;
   const mountedRef = useRef(false);
 
+  // The first mount lands on the chat pane when that is the open route; a later route change
+  // re-attaches the callback, and the mounted flag keeps it from scrolling again.
   const mountRef = useCallback(
     (node: HTMLDivElement | null) => {
       scrollRef.current = node;
       if (node && !mountedRef.current) {
         mountedRef.current = true;
-        if (isChatRef.current) {
+        if (isChat) {
           node.scrollLeft = node.scrollWidth;
         }
       }
     },
-    [scrollRef],
+    [scrollRef, isChat],
   );
 
   return (

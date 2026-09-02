@@ -1,25 +1,21 @@
-import js from "@eslint/js";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
-import tseslint from "typescript-eslint";
-import comments from "@eslint-community/eslint-plugin-eslint-comments/configs";
-import importX from "eslint-plugin-import-x";
 import { defineConfig, globalIgnores } from "eslint/config";
+import {
+  baseConfig,
+  boundaryCastOverride,
+  reactHookRules,
+} from "../eslint.base.mjs";
 
 export default defineConfig([
   globalIgnores(["dist"]),
   {
     files: ["**/*.{ts,tsx}"],
     extends: [
-      js.configs.recommended,
-      tseslint.configs.strictTypeChecked,
-      tseslint.configs.stylisticTypeChecked,
+      baseConfig,
       reactHooks.configs.flat.recommended,
       reactRefresh.configs.vite,
-      comments.recommended,
-      importX.flatConfigs.recommended,
-      importX.flatConfigs.typescript,
     ],
     languageOptions: {
       ecmaVersion: 2020,
@@ -34,49 +30,23 @@ export default defineConfig([
         typescript: { project: ["tsconfig.app.json", "tsconfig.node.json"] },
       },
     },
+    rules: reactHookRules,
+  },
+  boundaryCastOverride,
+  // The vendored shadcn registry follows upstream shadcn, not this app's effect rules, and
+  // its CSSProperties casts stay because the dashboard mirror compiles it without the
+  // custom-property augmentation in react-css.d.ts.
+  {
+    files: ["src/components/ui/**/*.{ts,tsx}"],
     rules: {
-      // Allow _prefixed unused vars (destructuring rest patterns, intentional omissions)
-      "@typescript-eslint/no-unused-vars": [
-        "error",
-        {
-          argsIgnorePattern: "^_",
-          varsIgnorePattern: "^_",
-          destructuredArrayIgnorePattern: "^_",
-        },
-      ],
-      // Escape hatches are banned repo-wide: no lint-suppressing comments, no ts-comment directives.
-      "@eslint-community/eslint-comments/no-use": "error",
-      "@typescript-eslint/ban-ts-comment": [
-        "error",
-        {
-          "ts-expect-error": true,
-          "ts-ignore": true,
-          "ts-nocheck": true,
-          "ts-check": false,
-        },
-      ],
-      // Code-smell ceilings.
-      complexity: ["error", 15],
-      "max-params": ["error", 5],
-      "max-depth": ["error", 4],
-      "import-x/no-cycle": "error",
-      // Arrow shorthand passing a void return through is idiomatic for event handlers.
-      "@typescript-eslint/no-confusing-void-expression": [
-        "error",
-        { ignoreArrowShorthand: true },
-      ],
-      // React compiler rules (new in react-hooks v7) — too strict for our codebase
-      "react-hooks/refs": "warn",
-      "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/purity": "warn",
-      "react-hooks/immutability": "warn",
+      "react-refresh/only-export-components": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "@typescript-eslint/no-unnecessary-type-assertion": "off",
     },
   },
-  // Files that legitimately export non-components alongside components/hooks
+  // Hook, store, and lib modules legitimately export non-components alongside hooks.
   {
     files: [
-      "src/components/ui/**/*.{ts,tsx}",
-      "src/providers/**/*.{ts,tsx}",
       "src/hooks/**/*.{ts,tsx}",
       "src/stores/**/*.{ts,tsx}",
       "src/lib/**/*.{ts,tsx}",

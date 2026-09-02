@@ -18,8 +18,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useGateway } from "@/providers/GatewayProvider";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { errorMessage } from "@/lib/utils";
 import { formatSnapshotSize } from "./format";
 

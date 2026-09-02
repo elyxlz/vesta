@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from "react";
-import { useLogWindow } from "@/lib/use-log-window";
+import { useLogWindow } from "./use-log-window";
 import { useScrollFade } from "@/hooks/use-scroll-fade";
 import { cn } from "@/lib/utils";
 

@@ -1,7 +1,7 @@
-import type { HttpClient } from "../transport/http"
+import type { HttpClient } from "../transport/http";
 
 // A manual check fetches from GitHub server-side, so allow longer than vestad's own 10s fetch.
-export const VERSION_CHECK_TIMEOUT_MS = 15000
+export const VERSION_CHECK_TIMEOUT_MS = 15000;
 
 // The one owner of the gateway self-update request. Returns whether an update actually started:
 // vestad answers 200 with `started: false` when the gateway already runs the newest release, which
@@ -9,15 +9,18 @@ export const VERSION_CHECK_TIMEOUT_MS = 15000
 // A started update reports its phases as gateway state on /sync; nothing here waits for it.
 export async function triggerGatewayUpdate(http: HttpClient): Promise<boolean> {
   try {
-    const body = await http.json<{ started?: unknown; ok?: unknown }>("/gateway/update", {
-      method: "POST",
-    })
+    const body = await http.json<{ started?: unknown; ok?: unknown }>(
+      "/gateway/update",
+      {
+        method: "POST",
+      },
+    );
     // LEGACY(remove-when: no gateway older than v0.1.190 remains): a pre-0.1.190 gateway answers
     // {ok: true} after applying the update synchronously, and this call is how the
     // gateway-behind screens update exactly such a gateway.
-    return body.started === true || body.ok === true
+    return body.started === true || body.ok === true;
   } catch {
-    return false
+    return false;
   }
 }
 
@@ -25,22 +28,24 @@ export async function triggerGatewayUpdate(http: HttpClient): Promise<boolean> {
 // Returns whether vestad accepted it; a running update refuses (409) and keeps its screen.
 export async function dismissGatewayUpdate(http: HttpClient): Promise<boolean> {
   try {
-    await http.request("/gateway/update/dismiss", { method: "POST" })
-    return true
+    await http.request("/gateway/update/dismiss", { method: "POST" });
+    return true;
   } catch {
-    return false
+    return false;
   }
 }
 
 // The one owner of the gateway restart request. Returns whether vestad accepted it; like an update,
 // the gateway drops every connection briefly and comes back, so the caller reuses the update flow's
 // reconnect UX to re-attach.
-export async function triggerGatewayRestart(http: HttpClient): Promise<boolean> {
+export async function triggerGatewayRestart(
+  http: HttpClient,
+): Promise<boolean> {
   try {
-    await http.request("/gateway/restart", { method: "POST" })
-    return true
+    await http.request("/gateway/restart", { method: "POST" });
+    return true;
   } catch {
-    return false
+    return false;
   }
 }
 
@@ -52,5 +57,5 @@ export async function checkForGatewayUpdate(http: HttpClient): Promise<void> {
   await http.request("/version/check", {
     method: "POST",
     signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
-  })
+  });
 }

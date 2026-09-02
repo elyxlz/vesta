@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { LogOut } from "lucide-react";
 import { connectionHostname } from "@/lib/connection";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {

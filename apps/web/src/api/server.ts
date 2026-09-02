@@ -1,4 +1,5 @@
 import { getConnection, setConnection } from "@/lib/connection";
+import { numberField, stringField } from "@/lib/json-shape";
 import { rememberGatewayAfterConnect } from "@/lib/recent-gateways";
 import { jsonInit } from "./client";
 
@@ -24,17 +25,13 @@ export async function connectToServer(
     );
   }
 
-  const data = (await resp.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  };
-  setConnection(
-    normalized,
-    data.access_token,
-    data.refresh_token,
-    data.expires_in,
-  );
+  const data: unknown = await resp.json();
+  const accessToken = stringField(data, "access_token");
+  const refreshToken = stringField(data, "refresh_token");
+  const expiresIn = numberField(data, "expires_in");
+  if (accessToken === null || refreshToken === null || expiresIn === null)
+    throw new Error("session response missing tokens");
+  setConnection(normalized, accessToken, refreshToken, expiresIn);
   const connection = getConnection();
   if (connection) await rememberGatewayAfterConnect(connection);
 }

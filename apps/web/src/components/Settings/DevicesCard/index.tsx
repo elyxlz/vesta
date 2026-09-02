@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 import { Monitor, Smartphone, Globe, HelpCircle, Circle } from "lucide-react";
 import type { DeviceInfo, DeviceKind } from "@vesta/core";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,8 +12,7 @@ import { MenuSection } from "@/components/ui/menu-section";
 import { Switch } from "@/components/ui/switch";
 import { useScrollFade } from "@/hooks/use-scroll-fade";
 import { deviceIdentity } from "@/lib/device-identity";
-import { probeGeolocation } from "@/lib/device-context";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { useShareLocation } from "@/stores/use-share-location";
 import { contextLine } from "./context-line";
 
@@ -44,28 +43,6 @@ function lastSeenLabel(lastSeen: string): string {
 function LocationToggle() {
   const enabled = useShareLocation((s) => s.enabled);
   const setEnabled = useShareLocation((s) => s.setEnabled);
-  // TEMPORARY diagnostic (remove after debugging desktop location): probe on enable and show why a
-  // fix is null, so the real per-platform error can be copied back.
-  const [probe, setProbe] = useState<{
-    status: "idle" | "probing" | "error";
-    detail: string;
-  }>({ status: "idle", detail: "" });
-
-  const onToggle = (checked: boolean) => {
-    setEnabled(checked);
-    if (!checked) {
-      setProbe({ status: "idle", detail: "" });
-      return;
-    }
-    setProbe({ status: "probing", detail: "" });
-    void probeGeolocation().then((result) => {
-      setProbe(
-        result.ok
-          ? { status: "idle", detail: "" }
-          : { status: "error", detail: result.detail },
-      );
-    });
-  };
 
   return (
     <div className="mt-3 flex flex-col gap-2">
@@ -80,18 +57,8 @@ function LocationToggle() {
             what this device shared
           </FieldDescription>
         </FieldContent>
-        <Switch checked={enabled} onCheckedChange={onToggle} />
+        <Switch checked={enabled} onCheckedChange={setEnabled} />
       </Field>
-      {probe.status === "probing" && (
-        <span className="text-xs text-muted-foreground">
-          checking location…
-        </span>
-      )}
-      {probe.status === "error" && (
-        <pre className="whitespace-pre-wrap rounded-md bg-destructive/10 p-2 text-xs text-destructive">
-          {`couldn't read a location fix:\n${probe.detail}`}
-        </pre>
-      )}
     </div>
   );
 }

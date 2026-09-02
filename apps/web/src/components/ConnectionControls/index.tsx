@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { apiJson } from "@/api/client";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { Switch } from "@/components/ui/switch";
 import {
   Field,

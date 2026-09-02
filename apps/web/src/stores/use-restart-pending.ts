@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { field } from "@/lib/json-shape";
 
 import type { AgentRow } from "@/lib/types";
 
@@ -59,9 +60,11 @@ export function migrateRestartPending(
   persisted: unknown,
   version: number,
 ): { pending: Record<string, PendingEntry> } {
-  const state = persisted as { pending?: Record<string, unknown> };
+  const stored = field(persisted, "pending");
+  const entries =
+    typeof stored === "object" && stored !== null ? Object.entries(stored) : [];
   const pending: Record<string, PendingEntry> = {};
-  for (const [agent, value] of Object.entries(state.pending ?? {})) {
+  for (const [agent, value] of entries) {
     if (version === 0) {
       // v0 stored Record<string, boolean>; carry the reminder over under a generic reason.
       if (value === true)
@@ -71,8 +74,7 @@ export function migrateRestartPending(
       // rather than trust the persisted shape — drop anything that isn't a known reason.
       const reasons = value.filter(
         (r): r is RestartReason =>
-          typeof r === "string" &&
-          (ALL_REASONS as readonly string[]).includes(r),
+          typeof r === "string" && ALL_REASONS.some((known) => known === r),
       );
       if (reasons.length) pending[agent] = { reasons, since: null };
     }

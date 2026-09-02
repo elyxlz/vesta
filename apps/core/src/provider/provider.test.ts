@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest";
 import {
   canonicalClaudeModel,
   normalizeProviderInfo,
   providerPutBody,
   resolveProviderIdentity,
   type ProviderSelection,
-} from "./provider"
+} from "./provider";
 
 describe("providerPutBody", () => {
   it.each<[ProviderSelection, object]>([
@@ -42,9 +42,9 @@ describe("providerPutBody", () => {
       },
     ],
   ])("maps %s to the API contract", (selection, expected) => {
-    expect(providerPutBody(selection)).toEqual(expected)
-  })
-})
+    expect(providerPutBody(selection)).toEqual(expected);
+  });
+});
 
 describe("normalizeProviderInfo", () => {
   it("normalizes an unprovisioned response once for every client", () => {
@@ -55,9 +55,9 @@ describe("normalizeProviderInfo", () => {
       max_context_tokens: null,
       authed: false,
       plan: null,
-    })
-  })
-})
+    });
+  });
+});
 
 describe("resolveProviderIdentity", () => {
   it("resolves provider and model display names from the catalog", () => {
@@ -90,8 +90,8 @@ describe("resolveProviderIdentity", () => {
       kind: "openai",
       providerName: "OpenAI",
       modelName: "GPT 5.6 Sol",
-    })
-  })
+    });
+  });
 
   it("labels a live Claude alias when the catalog carries no model_names", () => {
     const provider = {
@@ -101,7 +101,7 @@ describe("resolveProviderIdentity", () => {
       max_context_tokens: null,
       authed: true,
       plan: null,
-    }
+    };
     const catalog = {
       default_provider: "claude" as const,
       providers: {
@@ -114,42 +114,58 @@ describe("resolveProviderIdentity", () => {
           context: { default: 1_000_000, max: 1_000_000, presets: [] },
         },
       },
-    }
+    };
     expect(resolveProviderIdentity(provider, catalog)).toEqual({
       kind: "claude",
       providerName: "Claude",
       modelName: "Opus",
-    })
-    expect(resolveProviderIdentity({ ...provider, model: "claude-opus-5" }, catalog)).toEqual({
+    });
+    expect(
+      resolveProviderIdentity({ ...provider, model: "claude-opus-5" }, catalog),
+    ).toEqual({
       kind: "claude",
       providerName: "Claude",
       modelName: "Opus 5",
-    })
-    expect(
-      resolveProviderIdentity({ ...provider, model: "claude-opus-4-8" }, catalog)?.modelName,
-    ).toBe("Opus 4.8")
-    expect(
-      resolveProviderIdentity({ ...provider, model: "claude-haiku-4-5-20251001" }, catalog)
-        ?.modelName,
-    ).toBe("Haiku 4.5")
-    expect(
-      resolveProviderIdentity({ ...provider, model: "claude-3-5-sonnet-20241022" }, catalog)
-        ?.modelName,
-    ).toBe("claude-3-5-sonnet-20241022")
-    expect(
-      resolveProviderIdentity({ ...provider, resolved_model: "claude-opus-4-8" }, catalog)
-        ?.modelName,
-    ).toBe("Opus 4.8")
-    expect(resolveProviderIdentity({ ...provider, model: "opus-latest" }, catalog)?.modelName).toBe(
-      "Opus",
-    )
+    });
     expect(
       resolveProviderIdentity(
-        { ...provider, model: "sonnet-latest", resolved_model: "claude-sonnet-5" },
+        { ...provider, model: "claude-opus-4-8" },
         catalog,
       )?.modelName,
-    ).toBe("Sonnet 5")
-  })
+    ).toBe("Opus 4.8");
+    expect(
+      resolveProviderIdentity(
+        { ...provider, model: "claude-haiku-4-5-20251001" },
+        catalog,
+      )?.modelName,
+    ).toBe("Haiku 4.5");
+    expect(
+      resolveProviderIdentity(
+        { ...provider, model: "claude-3-5-sonnet-20241022" },
+        catalog,
+      )?.modelName,
+    ).toBe("claude-3-5-sonnet-20241022");
+    expect(
+      resolveProviderIdentity(
+        { ...provider, resolved_model: "claude-opus-4-8" },
+        catalog,
+      )?.modelName,
+    ).toBe("Opus 4.8");
+    expect(
+      resolveProviderIdentity({ ...provider, model: "opus-latest" }, catalog)
+        ?.modelName,
+    ).toBe("Opus");
+    expect(
+      resolveProviderIdentity(
+        {
+          ...provider,
+          model: "sonnet-latest",
+          resolved_model: "claude-sonnet-5",
+        },
+        catalog,
+      )?.modelName,
+    ).toBe("Sonnet 5");
+  });
 
   it("falls back to wire identifiers and hides disconnected providers", () => {
     const provider = {
@@ -159,20 +175,22 @@ describe("resolveProviderIdentity", () => {
       max_context_tokens: null,
       authed: true,
       plan: null,
-    }
+    };
     expect(resolveProviderIdentity(provider, undefined)).toMatchObject({
       providerName: "openrouter",
       modelName: "author/model",
-    })
-    expect(resolveProviderIdentity({ ...provider, authed: false }, undefined)).toBeNull()
-  })
-})
+    });
+    expect(
+      resolveProviderIdentity({ ...provider, authed: false }, undefined),
+    ).toBeNull();
+  });
+});
 
 describe("canonicalClaudeModel", () => {
   it("maps legacy bare aliases to the -latest form and leaves the rest alone", () => {
-    expect(canonicalClaudeModel("opus")).toBe("opus-latest")
-    expect(canonicalClaudeModel("sonnet")).toBe("sonnet-latest")
-    expect(canonicalClaudeModel("opus-latest")).toBe("opus-latest")
-    expect(canonicalClaudeModel("claude-opus-4-8")).toBe("claude-opus-4-8")
-  })
-})
+    expect(canonicalClaudeModel("opus")).toBe("opus-latest");
+    expect(canonicalClaudeModel("sonnet")).toBe("sonnet-latest");
+    expect(canonicalClaudeModel("opus-latest")).toBe("opus-latest");
+    expect(canonicalClaudeModel("claude-opus-4-8")).toBe("claude-opus-4-8");
+  });
+});

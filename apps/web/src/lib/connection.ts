@@ -97,7 +97,7 @@ export function setConnection(
 
 /**
  * Persist a hosted (vesta.run) connection: the PKCE-minted access token, no
- * refresh token. `url` is this box's own origin (the SPA talks to its own
+ * refresh token. `url` is this gateway's own origin (the SPA talks to its own
  * vestad). On expiry the app re-authorizes rather than refreshing.
  */
 export function setHostedConnection(
