@@ -568,7 +568,7 @@ def main():
 
         if args.group == "auth":
             result = _dispatch_auth(args, config)
-            print(json.dumps(fmt.strip_odata(result), indent=2))
+            _print_result(args, result)
         elif args.group in ("email", "calendar", "folder", "notify", "teams"):
             _guard_read_only(args.group, args.command)
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
@@ -618,7 +618,7 @@ def _print_result(args, result) -> None:
         print(formatter(result))
         return
 
-    print(json.dumps(fmt.strip_odata(result), indent=2))
+    print(json.dumps(fmt.strip_odata(result)))
 
 
 _AUTH_HANDLERS = {
