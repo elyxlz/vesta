@@ -24,7 +24,7 @@ def _app(*, accounts: list[dict], silent_result: dict | None) -> MagicMock:
     app = MagicMock()
     app.get_accounts.return_value = accounts
     app.acquire_token_silent.return_value = silent_result
-    app.token_cache = None
+    app.token_cache = auth.msal.SerializableTokenCache()
     return app
 
 

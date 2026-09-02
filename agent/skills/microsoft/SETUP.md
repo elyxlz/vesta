@@ -28,6 +28,14 @@ https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBla
 Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your-client-id>`
 (a custom client uses `.default`, i.e. exactly the permissions you configured above).
 
+To put a single account on its own app while the other accounts stay on the default client, set the
+variable on the sign-in commands only: `MICROSOFT_MCP_CLIENT_ID=<app-id> microsoft auth login`, then
+`MICROSOFT_MCP_CLIENT_ID=<app-id> microsoft auth complete --flow-cache <cache>`. The MSAL cache
+records which client minted each account's refresh token, and every later call (the daemon, `email`,
+`calendar`) refreshes that account with that client and its `.default` scope on its own, so no
+variable is needed afterwards. This is how an agent mailbox on an app granted `Mail.Send` and a user
+mailbox on the default client live side by side in one agent.
+
 ## Authentication
 
 **Run one command: `microsoft auth setup --account <email>`.** It provisions mail and calendar,

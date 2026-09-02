@@ -28,8 +28,8 @@ DEFAULT_CLIENT_SCOPES = [
 OWNED_APP_SCOPES = ["https://graph.microsoft.com/.default"]
 
 
-def resolve_scopes() -> list[str]:
-    return list(DEFAULT_CLIENT_SCOPES) if get_settings().microsoft_mcp_client_id == DEFAULT_CLIENT_ID else list(OWNED_APP_SCOPES)
+def scopes_for(client_id: str) -> list[str]:
+    return list(DEFAULT_CLIENT_SCOPES) if client_id == DEFAULT_CLIENT_ID else list(OWNED_APP_SCOPES)
 
 
 # Delegated scopes for the OWA REST fallback: tokens for the outlook.office.com resource,
@@ -58,7 +58,7 @@ FOLDERS = {
 class Config:
     data_dir: Path = Path.home() / ".microsoft"
     log_dir: Path = Path.home() / ".microsoft" / "logs"
-    scopes: list[str] = field(default_factory=resolve_scopes)
+    scopes: list[str] = field(default_factory=lambda: scopes_for(get_settings().microsoft_mcp_client_id))
     base_url: str = BASE_URL
     upload_chunk_size: int = UPLOAD_CHUNK_SIZE
     folders: dict[str, str] = field(default_factory=lambda: dict(FOLDERS))
