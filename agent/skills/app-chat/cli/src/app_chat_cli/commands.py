@@ -110,7 +110,7 @@ def cmd_history(args: argparse.Namespace) -> None:
     finally:
         store.close()
     results = [{"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events]
-    print(json.dumps(results, indent=2))
+    print(json.dumps(results))
 
 
 class _ListedAttachment(tp.TypedDict):

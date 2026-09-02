@@ -43,7 +43,7 @@ def main():
 
     try:
         result = _dispatch(args, config)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result))
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)

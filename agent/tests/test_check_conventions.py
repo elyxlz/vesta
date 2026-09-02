@@ -1,4 +1,4 @@
-"""Behavioral tests for scripts/check-conventions.py (escape hatches, comment blocks, import cycles)."""
+"""Behavioral tests for scripts/check-conventions.py (escape hatches, comment blocks, import cycles, skill envelopes)."""
 
 import importlib.util
 import pathlib as pl
@@ -91,6 +91,53 @@ def test_extensionless_scripts_are_checked_by_shebang(tmp_path, monkeypatch):
     assert len(check_conventions.check_escapes([python])) == 1
     # An extensionless file with no shell/python shebang stays out of scope.
     assert check_conventions.check_escapes([write(tmp_path, "LICENSE", f"# {noqa}\n")]) == []
+
+
+def write_skill(tmp_path: pl.Path, rel: str, content: str) -> str:
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return rel
+
+
+def test_indented_json_on_stdout_in_a_skill_command_is_flagged(tmp_path, monkeypatch):
+    """A result envelope prints as one line; `| tail -1` on an indented one reads `}` for success and failure alike."""
+    monkeypatch.chdir(tmp_path)
+    one_line = write_skill(tmp_path, "agent/skills/demo/cli/src/demo/cli.py", "import json\nprint(json.dumps(result, indent=2))\n")
+    echo = write_skill(tmp_path, "agent/skills/demo/cli/src/demo/status.py", "import json\nclick.echo(json.dumps(out, indent=2))\n")
+    wrapped = write_skill(
+        tmp_path,
+        "agent/skills/demo/cli/src/demo/show.py",
+        'import json\nprint(\n    json.dumps(\n        {"a": 1},\n        indent=2,\n    )\n)\n',
+    )
+    to_stderr = write_skill(
+        tmp_path, "agent/skills/demo/cli/src/demo/fail.py", "import json\nprint(json.dumps(err, indent=2), file=sys.stderr)\n"
+    )
+    script = write_skill(
+        tmp_path, "agent/skills/demo/scripts/demo-tool", "#!/usr/bin/env python3\nimport json\nprint(json.dumps(x, indent=1))\n"
+    )
+    errors = check_conventions.check_skill_envelopes([one_line, echo, wrapped, to_stderr, script])
+    assert [error.split(": ")[0] for error in errors] == [f"{one_line}:2", f"{echo}:2", f"{wrapped}:2", f"{to_stderr}:2", f"{script}:3"]
+
+
+def test_pretty_opt_ins_file_writes_and_other_trees_pass_envelope_check(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    opt_in = "import json\nif args.json_pretty:\n    print(json.dumps(result, indent=2))\nelif args.json:\n    print(json.dumps(result))\n"
+    want_pretty = (
+        'import json\nwant_pretty = "json_pretty" in attrs and attrs["json_pretty"]\nif want_pretty:\n    print(json.dumps(result, indent=2))\n'
+    )
+    conditional = "import json\nprint(json.dumps(payload, indent=2 if args.json_pretty else None))\n"
+    file_write = "import json\nCONFIG_FILE.write_text(json.dumps(cfg, indent=2))\n"
+    rels = [
+        write_skill(tmp_path, "agent/skills/demo/cli/src/demo/a.py", opt_in),
+        write_skill(tmp_path, "agent/skills/demo/cli/src/demo/b.py", want_pretty),
+        write_skill(tmp_path, "agent/skills/demo/cli/src/demo/c.py", conditional),
+        write_skill(tmp_path, "agent/skills/demo/cli/src/demo/d.py", file_write),
+        write_skill(tmp_path, "agent/skills/demo/cli/tests/test_a.py", "import json\nprint(json.dumps(result, indent=2))\n"),
+        write_skill(tmp_path, "agent/core/tools.py", "import json\nprint(json.dumps(result, indent=2))\n"),
+        write_skill(tmp_path, "agent/skills/demo/scripts/setup.sh", "#!/usr/bin/env bash\necho '{\"indent\": 2}'\n"),
+    ]
+    assert check_conventions.check_skill_envelopes(rels) == []
 
 
 def test_import_cycle_is_detected(tmp_path):

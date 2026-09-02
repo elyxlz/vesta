@@ -157,7 +157,7 @@ def _describe_scope(rule: dict[str, object]) -> str:
 def _render(rules: list[dict[str, object]]) -> str:
     if not rules:
         return "No rules. Every notification interrupts the agent's current turn (the default)."
-    return json.dumps(rules, indent=2)
+    return json.dumps(rules)
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -266,7 +266,7 @@ def cmd_facets(_: argparse.Namespace) -> int:
     Reads the notification history in events.db directly (read-only), mirroring the distinct query
     EventBus would run; keep in step with core/events.py if the stored facet fields change."""
     if not EVENTS_DB.exists():
-        print(json.dumps({**{label: [] for label, _field in FACET_FIELDS}, "fields": {}}, indent=2))
+        print(json.dumps({**{label: [] for label, _field in FACET_FIELDS}, "fields": {}}))
         return 0
     conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
     try:
@@ -294,7 +294,7 @@ def cmd_facets(_: argparse.Namespace) -> int:
         facets["fields"] = fields
     finally:
         conn.close()
-    print(json.dumps(facets, indent=2))
+    print(json.dumps(facets))
     return 0
 
 

@@ -218,7 +218,7 @@ def _handle_task(args, config: Config):
             initial_metadata=args.initial_metadata,
         )
         _notify_user_task(f"{_agent_name()} added a task: {subject}")
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result))
         return
     if args.command == "list":
         _print_list(args, commands.list_tasks(config, show_completed=args.show_completed, show_deleted=args.show_deleted), fmt.format_task_list)
@@ -268,7 +268,7 @@ def _handle_task(args, config: Config):
     else:
         return
 
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result))
 
 
 def _print_list(args, result: list, formatter) -> None:

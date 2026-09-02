@@ -397,7 +397,7 @@ def main():
 
     try:
         result = args.func(args)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result))
     except (ValueError, eb.ApiError) as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)

@@ -1,5 +1,6 @@
 """Repo convention guards: no lint/type-checker escape hatches, no unmarked removal notes, no
-oversized comment blocks, no import cycles, and the web app's brand copy and folder rules.
+oversized comment blocks, no import cycles, single-line JSON envelopes from skill commands, and
+the web app's brand copy and folder rules.
 Run from the repo root: uv run python scripts/check-conventions.py"""
 
 import ast
@@ -56,6 +57,13 @@ COMMENT_MARKERS = {
 
 # Packages whose intra-package import graph must stay a DAG (level-1 relative imports).
 CYCLE_CHECKED_PACKAGES = ["agent/core", "agent/core/cc_sdk"]
+
+# A skill command's code: its cli/src package and its scripts/ (Python by suffix or shebang).
+SKILL_COMMAND_RE = re.compile(r"^agent/skills/[^/]+/(cli/src/.*\.py|scripts/[^/]+)$")
+# The calls that reach a command's stdout/stderr; a json.dumps they print may indent only under a
+# pretty opt-in, an `if` whose test names it (`if args.json_pretty:`, `if want_pretty:`).
+STDOUT_WRITERS = ("print", "click.echo")
+PRETTY_OPT_IN = "pretty"
 
 
 def tracked_files() -> list[str]:
@@ -168,6 +176,40 @@ def check_import_cycles() -> list[str]:
     return errors
 
 
+def indented_stdout_dumps(node: ast.AST, pretty: bool) -> list[int]:
+    """Line numbers of `print(json.dumps(..., indent=<n>))` calls outside a pretty opt-in's `if` body."""
+    if isinstance(node, ast.If):
+        body_pretty = pretty or PRETTY_OPT_IN in ast.unparse(node.test)
+        return [
+            *(line for child in node.body for line in indented_stdout_dumps(child, body_pretty)),
+            *(line for child in node.orelse for line in indented_stdout_dumps(child, pretty)),
+        ]
+    hits = []
+    if not pretty and isinstance(node, ast.Call) and ast.unparse(node.func) in STDOUT_WRITERS:
+        for arg in node.args:
+            if isinstance(arg, ast.Call) and ast.unparse(arg.func) == "json.dumps":
+                hits.extend(
+                    node.lineno
+                    for kw in arg.keywords
+                    if kw.arg == "indent" and isinstance(kw.value, ast.Constant) and kw.value.value is not None
+                )
+    return [*hits, *(line for child in ast.iter_child_nodes(node) for line in indented_stdout_dumps(child, pretty))]
+
+
+def check_skill_envelopes(files: list[str]) -> list[str]:
+    """A skill command prints a JSON envelope as one line, so a truncated pipe still shows the verdict."""
+    errors = []
+    for rel in files:
+        path = pl.Path(rel)
+        if not SKILL_COMMAND_RE.match(rel) or not path.exists() or effective_suffix(path) != ".py":
+            continue
+        errors.extend(
+            f"{rel}:{lineno}: indented JSON printed by a skill command; an envelope prints as one line unless a pretty flag asks"
+            for lineno in indented_stdout_dumps(ast.parse(path.read_text(errors="replace")), False)
+        )
+    return errors
+
+
 def code_lines(path: pl.Path) -> list[tuple[int, str]]:
     """Each line with its comments removed: `//` and `/* */` blocks, including JSX comment bodies."""
     lines = []
@@ -276,6 +318,7 @@ def main() -> int:
         check_escapes(files)
         + check_comment_blocks(files)
         + check_import_cycles()
+        + check_skill_envelopes(files)
         + check_brand_copy(files)
         + check_hook_placement(files)
         + check_component_folders(files)

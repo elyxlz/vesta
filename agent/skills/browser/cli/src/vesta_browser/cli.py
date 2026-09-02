@@ -103,7 +103,6 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 "headless": True,
                 "mode": admin.read_mode(),
             },
-            indent=2,
         )
     )
     return 0
@@ -180,12 +179,12 @@ def cmd_stop_all(args: argparse.Namespace) -> int:
 
 
 def cmd_sessions(_args: argparse.Namespace) -> int:
-    print(json.dumps(admin.list_sessions(), indent=2))
+    print(json.dumps(admin.list_sessions()))
     return 0
 
 
 def cmd_prune(args: argparse.Namespace) -> int:
-    print(json.dumps(admin.prune_profiles(apply=args.yes), indent=2))
+    print(json.dumps(admin.prune_profiles(apply=args.yes)))
     return 0
 
 
@@ -197,7 +196,7 @@ def cmd_handover(args: argparse.Namespace) -> int:
         result = handover.stop()
     else:
         result = handover.status()
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result))
     return 0
 
 
@@ -365,7 +364,7 @@ def cmd_bidi(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     params = json.loads(args.params) if args.params else {}
     result = helpers.bidi(args.method, **params)
-    print(json.dumps(result, default=str, indent=2))
+    print(json.dumps(result, default=str))
     return 0
 
 
@@ -406,13 +405,13 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
             report["contexts"] = len(helpers.bidi("browsingContext.getTree")["contexts"])
         except RuntimeError as e:
             report["probe_error"] = str(e)
-    print(json.dumps(report, indent=2, default=str))
+    print(json.dumps(report, default=str))
     return 0
 
 
 def cmd_tabs(_args: argparse.Namespace) -> int:
     admin.ensure_daemon()
-    print(json.dumps(helpers.list_tabs(), indent=2))
+    print(json.dumps(helpers.list_tabs()))
     return 0
 
 

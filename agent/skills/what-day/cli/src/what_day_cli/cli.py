@@ -29,7 +29,6 @@ def main() -> int:
                 "full_description": f"{formatted} is a {day_name}",
                 "today": today_str,
             },
-            indent=2,
         )
     )
     return 0

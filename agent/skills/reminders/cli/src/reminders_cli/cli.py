@@ -114,7 +114,7 @@ def main():
             print(json.dumps({"error": f'"{cmd}" is not a subcommand. Set one with: reminders create "message" [options]'}), file=sys.stderr)
             sys.exit(1)
 
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result))
 
     except ValueError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
@@ -167,7 +167,7 @@ def _get_cmd(config: Config, argv: list[str]) -> None:
         values = ["" if result[f] is None else str(result[f]) for f in args.field]
         print(values[0] if len(values) == 1 else "\t".join(values))
         return
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result))
 
 
 def _delete_cmd(config: Config, argv: list[str]) -> dict:
