@@ -5,6 +5,8 @@ from microsoft_cli import backend, cli, email, owa_rest_commands, pending_send
 from microsoft_cli.config import Config
 from microsoft_cli.payloads import MailDraft
 
+QUOTED = "<div>quoted original</div>"
+
 
 def test_delay_defaults_to_thirty_seconds_and_persists(tmp_path):
     assert pending_send.delay_seconds(tmp_path) == 30
@@ -177,6 +179,8 @@ def _patch_graph(monkeypatch, calls):
             return {"id": "forward-draft"}
         if method == "POST" and path == "/me/messages":
             return {"id": "compose-draft"}
+        if method == "GET":
+            return {"body": {"contentType": "HTML", "content": QUOTED}}
         return None
 
     monkeypatch.setattr(email.graph, "request_cfg", request)
@@ -278,8 +282,38 @@ def test_graph_reply_all_creates_a_threaded_draft(tmp_path, monkeypatch):
     )
 
     assert result["status"] == "pending"
-    assert [call["path"] for call in calls] == ["/me/messages/original-1/createReplyAll", "/me/messages/reply-all-draft"]
+    assert [(call["method"], call["path"]) for call in calls] == [
+        ("POST", "/me/messages/original-1/createReplyAll"),
+        ("GET", "/me/messages/reply-all-draft"),
+        ("PATCH", "/me/messages/reply-all-draft"),
+    ]
+    assert calls[2]["json"]["body"]["content"].endswith("<br><br>" + QUOTED)
     assert pending_send.list_pending(tmp_path)[0].action == "reply-all"
+
+
+def test_graph_immediate_reply_with_attachments_sends_the_body_over_the_quote(tmp_path, monkeypatch):
+    calls = []
+    config = Config(data_dir=tmp_path)
+    pending_send.set_delay_seconds(tmp_path, 0)
+    attachment = tmp_path / "report.pdf"
+    attachment.write_bytes(b"pdf")
+    _patch_graph(monkeypatch, calls)
+
+    result = email.reply_to_email(
+        config, None, account_email="me@example.com", email_id="original-1", body="Thanks", attachments=[str(attachment)]
+    )
+
+    assert result == {"status": "sent"}
+    assert [(call["method"], call["path"]) for call in calls] == [
+        ("POST", "/me/messages/original-1/createReply"),
+        ("GET", "/me/messages/reply-draft"),
+        ("PATCH", "/me/messages/reply-draft"),
+        ("POST", "/me/messages/reply-draft/attachments"),
+        ("POST", "/me/messages/reply-draft/send"),
+    ]
+    content = calls[2]["json"]["body"]["content"]
+    assert content.index("Thanks") < content.index(QUOTED)
+    assert content.endswith("<br><br>" + QUOTED)
 
 
 def test_graph_large_attachment_is_uploaded_before_the_draft_is_queued(tmp_path, monkeypatch):
