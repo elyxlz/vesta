@@ -324,23 +324,16 @@ export {
   updateGatewaySettings,
 } from "./api/gateway";
 export type {
-  GatewayAutoBackup,
   GatewayEndpointInfo,
-  GatewayRetention,
   GatewaySettings,
   GatewayUpdateOutcome,
 } from "./api/gateway";
 export {
   contextForModel,
-  fetchAgentCatalogs,
   fetchPersonalities,
   fetchProviderCatalog,
 } from "./api/catalogs";
-export type {
-  AgentCatalogs,
-  Personality,
-  PersonalityCatalog,
-} from "./api/catalogs";
+export type { Personality, PersonalityCatalog } from "./api/catalogs";
 export {
   fetchSttUsage,
   fetchTtsUsage,

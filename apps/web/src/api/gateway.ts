@@ -8,9 +8,7 @@ import { openLogStream } from "./log-stream";
 // LEGACY(remove-when: the chat-session epic points call sites at @vesta/core directly).
 
 export type {
-  GatewayAutoBackup,
   GatewayEndpointInfo as GatewayInfo,
-  GatewayRetention,
   GatewaySettings,
 } from "@vesta/core";
 

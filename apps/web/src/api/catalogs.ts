@@ -14,16 +14,10 @@ export type ContextPreset = ProviderContextPreset;
 export type ProviderContext = ProviderContextPolicy;
 export type ProviderEntry = ProviderCatalogEntry;
 export type ProviderCatalog = CoreProviderCatalog;
-export type {
-  AgentCatalogs,
-  Personality,
-  PersonalityCatalog,
-} from "@vesta/core";
+export type { Personality, PersonalityCatalog } from "@vesta/core";
 export { contextForModel } from "@vesta/core";
 
 export const fetchProviderCatalog = (agentName: string) =>
   core.fetchProviderCatalog(httpClient, agentName);
 export const fetchPersonalities = (agentName: string) =>
   core.fetchPersonalities(httpClient, agentName);
-export const fetchAgentCatalogs = (agentName: string) =>
-  core.fetchAgentCatalogs(httpClient, agentName);

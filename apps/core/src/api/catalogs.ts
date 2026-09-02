@@ -22,11 +22,6 @@ export interface PersonalityCatalog {
   presets: Personality[];
 }
 
-export interface AgentCatalogs {
-  providers: ProviderCatalog;
-  personalities: PersonalityCatalog;
-}
-
 export function contextForModel(
   entry: ProviderCatalogEntry | undefined,
   model: string,
@@ -49,15 +44,4 @@ export async function fetchPersonalities(
   name: string,
 ): Promise<PersonalityCatalog> {
   return http.json<PersonalityCatalog>(agentPath(name, "/personalities"));
-}
-
-export async function fetchAgentCatalogs(
-  http: HttpClient,
-  name: string,
-): Promise<AgentCatalogs> {
-  const [providers, personalities] = await Promise.all([
-    fetchProviderCatalog(http, name),
-    fetchPersonalities(http, name),
-  ]);
-  return { providers, personalities };
 }

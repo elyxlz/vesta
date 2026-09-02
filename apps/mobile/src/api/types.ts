@@ -4,7 +4,6 @@
 export type {
   Account,
   AgentBackupSettings,
-  AgentCatalogs,
   BackupInfo,
   ConnectionConfig,
   FieldPredicate,

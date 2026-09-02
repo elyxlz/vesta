@@ -147,7 +147,9 @@ async function fetchWithinBudget(
 }
 
 export function normalizeGatewayUrl(url: string): string {
-  return url.trim().replace(/\/+$/, "");
+  let normalized = url.trim();
+  while (normalized.endsWith("/")) normalized = normalized.slice(0, -1);
+  return normalized;
 }
 
 // GET /health then POST /auth/session: exchange a connect key for a session. The one owner of the

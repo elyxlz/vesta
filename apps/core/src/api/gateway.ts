@@ -10,12 +10,12 @@ export interface GatewayEndpointInfo {
   port: number;
 }
 
-export interface GatewayRetention {
+interface GatewayRetention {
   periodic: number;
   pre_update_versions: number;
 }
 
-export interface GatewayAutoBackup {
+interface GatewayAutoBackup {
   enabled: boolean;
   every_n_days: number;
   retention: GatewayRetention;

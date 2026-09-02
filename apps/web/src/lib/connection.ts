@@ -1,4 +1,4 @@
-import type { ConnectionConfig } from "@vesta/core";
+import { normalizeGatewayUrl, type ConnectionConfig } from "@vesta/core";
 import { native } from "./native";
 import { useCredentialStorage } from "@/stores/use-credential-storage";
 import { errorMessage } from "./utils";
@@ -90,7 +90,7 @@ export function setHostedConnection(
   expiresIn: number,
 ): void {
   restoreConnection({
-    url: url.replace(/\/+$/, ""),
+    url: normalizeGatewayUrl(url),
     accessToken,
     refreshToken: "",
     expiresAt: Date.now() + expiresIn * 1000,
@@ -116,7 +116,7 @@ export function setConnection(
   expiresIn: number,
 ): void {
   restoreConnection({
-    url: url.replace(/\/+$/, ""),
+    url: normalizeGatewayUrl(url),
     accessToken,
     refreshToken,
     expiresAt: Date.now() + expiresIn * 1000,

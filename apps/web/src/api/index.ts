@@ -1,5 +1,4 @@
 export {
-  createAgent,
   startAgent,
   stopAgent,
   restartAgent,
