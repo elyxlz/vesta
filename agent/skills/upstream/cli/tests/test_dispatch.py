@@ -99,7 +99,8 @@ def test_pr_list_without_mine_passes_through(monkeypatch, fake_gh):
 @pytest.mark.parametrize("verb", ["list", "ls"])
 def test_pr_list_mine_is_intercepted_under_either_spelling(monkeypatch, fake_gh, agent_identity, capsys, verb):
     record, response, _ = fake_gh
-    response.write_text("[]")
+    empty_page = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}
+    response.write_text(json.dumps({"data": {"repository": {"pullRequests": empty_page}}}))
     assert run_main(monkeypatch, ["gh", "pr", verb, "--mine"]) == 0
     assert json.loads(record.read_text())["argv"][0] == "api"
     assert "as tester (vesta)" in capsys.readouterr().out

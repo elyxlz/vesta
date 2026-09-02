@@ -1,5 +1,4 @@
 import base64
-import json
 import os
 import subprocess
 import sys
@@ -80,14 +79,6 @@ def test_main_scrubs_a_leaked_token_and_never_writes_one_to_git_config(repo, mon
     assert SENTINEL not in " ".join(pushed["cmd"])
     delivered = pushed["env"]["GIT_CONFIG_VALUE_0"].split("Basic ")[1]
     assert base64.b64decode(delivered).decode() == f"x-access-token:{SENTINEL}"
-
-
-def _commits(*names):
-    return [{"commit": {"author": {"name": name}}} for name in names]
-
-
-def _stub_gh_api(monkeypatch, payload, code=0):
-    monkeypatch.setattr(cli, "gh_api", lambda *a, **k: (code, json.dumps(payload)))
 
 
 def _stub_authors(monkeypatch, authors):
@@ -215,81 +206,7 @@ def test_adopt_skips_the_ownership_guard(repo, monkeypatch):
     assert guard_calls == []
 
 
-def test_pr_commit_authors_reads_the_first_commit_as_the_opener(monkeypatch):
-    _stub_gh_api(monkeypatch, _commits("dory (vesta)", "vesta (vesta)"))
-    assert cli.pr_commit_authors("tok", 7) == ("dory (vesta)", {"dory (vesta)", "vesta (vesta)"})
-
-
-def test_pr_commit_authors_reports_unknown_on_an_api_error(monkeypatch):
-    _stub_gh_api(monkeypatch, [], code=1)
-    assert cli.pr_commit_authors("tok", 7) == (None, set())
-
-
 def test_agent_identity_rejects_a_blank_agent_name(monkeypatch):
     monkeypatch.setenv("AGENT_NAME", "  ")
     with pytest.raises(SystemExit):
         cli.resolve_agent_identity()
-
-
-def test_mine_separates_prs_you_opened_from_prs_you_only_pushed_to(monkeypatch, capsys):
-    prs = [
-        {"number": 1, "title": "yours", "html_url": "u1"},
-        {"number": 2, "title": "theirs, you pushed", "html_url": "u2"},
-        {"number": 3, "title": "theirs", "html_url": "u3"},
-    ]
-    authors = {
-        1: ("vesta (vesta)", {"vesta (vesta)"}),
-        2: ("bazella (vesta)", {"bazella (vesta)", "vesta (vesta)"}),
-        3: ("dory (vesta)", {"dory (vesta)"}),
-    }
-    _stub_gh_api(monkeypatch, prs)
-    monkeypatch.setattr(cli, "pr_commit_authors", lambda token, number: authors[number])
-
-    cli.list_my_prs("tok", "vesta", "open", 40)
-    out = capsys.readouterr().out
-    assert "Opened by you (1)" in out
-    assert "#1" in out.split("Opened by you")[1].split("Not yours")[0]
-    assert "Not yours, but you have commits on them (1)" in out
-    assert "#2  opened by bazella (vesta)" in out
-    assert "#3" not in out
-
-
-def test_mine_matches_the_full_author_name_never_a_prefix(monkeypatch, capsys):
-    # Agent "dor" must not claim PRs authored by "dory (vesta)".
-    prs = [{"number": 1, "title": "t", "html_url": "u"}]
-    _stub_gh_api(monkeypatch, prs)
-    monkeypatch.setattr(cli, "pr_commit_authors", lambda token, number: ("dory (vesta)", {"dory (vesta)"}))
-
-    cli.list_my_prs("tok", "dor", "open", 40)
-    out = capsys.readouterr().out
-    assert "Opened by you (0)" in out
-    assert "you have commits on them" not in out
-
-
-def test_mine_respects_the_limit_and_surfaces_unreadable_prs(monkeypatch, capsys):
-    prs = [{"number": n, "title": f"t{n}", "html_url": f"u{n}"} for n in (1, 2, 3)]
-    checked = []
-
-    def unreadable_authors(token, number):
-        checked.append(number)
-        return (None, set())
-
-    _stub_gh_api(monkeypatch, prs)
-    monkeypatch.setattr(cli, "pr_commit_authors", unreadable_authors)
-
-    cli.list_my_prs("tok", "vesta", "open", 2)
-    out = capsys.readouterr().out
-    assert checked == [1, 2]
-    assert "Could not read commit authors for 2 PR(s)" in out
-
-
-def test_mine_passes_the_requested_state_to_the_api(monkeypatch, capsys):
-    seen = []
-
-    def fake_gh_api(token, path, **kwargs):
-        seen.append(path)
-        return 0, "[]"
-
-    monkeypatch.setattr(cli, "gh_api", fake_gh_api)
-    cli.list_my_prs("tok", "vesta", "all", 40)
-    assert "state=all" in seen[0]

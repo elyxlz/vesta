@@ -149,53 +149,69 @@ def commit_author_name(agent_name) -> str:
     return f"{agent_name} (vesta)"
 
 
-def pr_commit_authors(token, number):
-    """(originator, all authors) for one PR, by commit author name. Every agent pushes through the
-    same GitHub App, so `pull.user.login` is `vesta-upstream[bot]` on EVERY PR in the repo and
-    identifies nobody. The commit author is the only field carrying which agent wrote it, and the
-    FIRST commit's author is the one who opened the PR."""
-    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls/{number}/commits?per_page=100")
-    if code != 0:
-        return None, set()
-    commits = json.loads(out)
-    if not commits:
-        return None, set()
-    return commits[0]["commit"]["author"]["name"], {c["commit"]["author"]["name"] for c in commits}
+PR_STATES = {"open": "[OPEN]", "closed": "[CLOSED, MERGED]", "all": "[OPEN, CLOSED, MERGED]"}
+PR_PAGE_SIZE = 100
+
+
+def prs_with_authors_query(state) -> str:
+    """One page of PRs, newest first, each carrying its commit author names in order. The state list
+    is written into the query text: `gh api -f` sends every variable as a string, and GraphQL takes
+    an enum list only as a literal."""
+    owner, name = UPSTREAM_REPO.split("/", maxsplit=1)
+    return (
+        f'query($cursor: String) {{ repository(owner: "{owner}", name: "{name}") {{ pullRequests('
+        f"states: {PR_STATES[state]}, first: {PR_PAGE_SIZE}, after: $cursor, orderBy: {{field: CREATED_AT, direction: DESC}}"
+        ") { pageInfo { hasNextPage endCursor } nodes { number title url"
+        " commits(first: 100) { nodes { commit { author { name } } } } } } } }"
+    )
+
+
+def fetch_prs_with_authors(token, state):
+    """Every PR in `state`, following the cursor to the last page."""
+    fields = {"query": prs_with_authors_query(state)}
+    prs = []
+    while True:
+        code, out = gh_api(token, "graphql", method="POST", fields=fields)
+        if code != 0:
+            print(f"Error: gh api graphql failed: {out}", file=sys.stderr)
+            sys.exit(1)
+        page = json.loads(out)["data"]["repository"]["pullRequests"]
+        prs.extend(page["nodes"])
+        if not page["pageInfo"]["hasNextPage"]:
+            return prs
+        fields["cursor"] = page["pageInfo"]["endCursor"]
+
+
+def print_capped(rows, limit):
+    for row in rows[:limit]:
+        print(row)
+    if len(rows) > limit:
+        print(f"  ... {len(rows) - limit} more not printed: raise --limit to see them")
 
 
 def list_my_prs(token, agent_name, state, limit):
-    """Print the PRs this agent opened, and separately the ones it only pushed commits to."""
+    """Print the PRs this agent opened, and separately the ones it only pushed commits to. Every
+    agent files through the same GitHub App, so `user.login` is `vesta-upstream[bot]` on EVERY PR
+    and identifies nobody; the commit authors are the only field naming the agent, and the FIRST
+    commit's author opened the PR. Every PR in `state` is classified; `limit` caps the printed rows."""
     me = commit_author_name(agent_name)
-    query = f"state={quote(state)}&per_page={min(limit, 100)}&sort=created&direction=desc"
-    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls?{query}")
-    if code != 0:
-        print(f"Error: gh api failed: {out}", file=sys.stderr)
-        sys.exit(1)
-    candidates = json.loads(out)[:limit]
-    opened, touched, unreadable = [], [], []
-    for pr in candidates:
-        originator, authors = pr_commit_authors(token, pr["number"])
-        if originator == me:
-            opened.append((pr, originator))
+    prs = fetch_prs_with_authors(token, state)
+    opened, touched = [], []
+    for pr in prs:
+        authors = [node["commit"]["author"]["name"] for node in pr["commits"]["nodes"]]
+        if authors[:1] == [me]:
+            opened.append(f"  #{pr['number']}  {pr['title'][:72]}\n      {pr['url']}")
         elif me in authors:
-            touched.append((pr, originator))
-        elif originator is None:
-            unreadable.append(pr)
+            touched.append(f"  #{pr['number']}  opened by {authors[0]}: {pr['title'][:56]}\n      {pr['url']}")
 
-    print(f"Checked the {len(candidates)} most recent {state} PR(s) as {me}.")
+    print(f"Checked all {len(prs)} {state} PR(s) as {me}.")
     print(f"\nOpened by you ({len(opened)}):")
-    for pr, _ in opened:
-        print(f"  #{pr['number']}  {pr['title'][:72]}\n      {pr['html_url']}")
+    print_capped(opened, limit)
     if not opened:
         print("  (none: every PR here was opened by a different agent through the same bot account)")
     if touched:
         print(f"\nNot yours, but you have commits on them ({len(touched)}):")
-        for pr, originator in touched:
-            print(f"  #{pr['number']}  opened by {originator}: {pr['title'][:56]}\n      {pr['html_url']}")
-    if unreadable:
-        print(f"\nCould not read commit authors for {len(unreadable)} PR(s), so ownership is unknown, not ruled out:")
-        for pr in unreadable:
-            print(f"  #{pr['number']}  {pr['title'][:72]}")
+        print_capped(touched, limit)
 
 
 GUARD_BRANCH_REF = "refs/vesta-guard/branch"
@@ -387,7 +403,7 @@ def pr_list_mine(rest):
     args = _parse_intercepted(
         {
             "--mine": {"action": "store_true"},
-            "--state": {"default": "open"},
+            "--state": {"default": "open", "choices": list(PR_STATES)},
             "--limit": {"type": int, "default": 40},
         },
         rest,
