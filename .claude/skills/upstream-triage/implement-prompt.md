@@ -26,8 +26,10 @@ You implement ONE work item from the triage report the orchestrator names (`~/ve
 - Push: `git push -u origin <branch>` (for a bot branch: `git push origin HEAD:<bot-branch>`).
 - Open the PR (skip for a bot-branch amendment; the PR exists):
   ```bash
-  gh pr create --base master --title "<same as commit subject>" --body-file <body.md>
+  body="$(git rev-parse --git-dir)/pr-body.md"   # this worktree's private git dir
+  gh pr create --base master --title "<same as commit subject>" --body-file "$body"
   ```
+  Write the body file in your own worktree's git dir, never a shared scratch path: several agents run at once and a shared path gets overwritten between your write and `gh`'s read. Re-read the PR body after creating it.
   Body structure: `## Problem` (one paragraph, from the superseded PRs, credit them by number), `## Change` (bullets, what and why at the design level), `## Evidence` (test names, counts, commands run), then a final line `Supersedes #N, #M.` No `fixes`/`closes` keywords for PRs. If a superseded PR body had `fixes #<issue>`, carry that line over verbatim on its own line.
 - Then `gh pr checks <n> --watch` until done. If CI fails, fix on the branch and push again. Report a PR done only when checks are green.
 - **Do NOT merge. Do NOT close or comment on any other PR or issue.** That happens centrally.
