@@ -8,7 +8,7 @@ import {
   glassSurface,
 } from "@/components/NewAgent/glass";
 import { PROVIDERS } from "../providers";
-import type { ProviderMode } from "../types";
+import type { ProviderKind } from "@vesta/core";
 
 // "compact" is the default settings look; "grid" matches the onboarding vibe
 // step: a wide centered grid of glass squircle tiles.
@@ -34,7 +34,7 @@ export function ChoiceStep({
   variant = "compact",
   onBack,
 }: {
-  onPick: (mode: ProviderMode) => void;
+  onPick: (mode: ProviderKind) => void;
   catalog: ProviderCatalog;
   variant?: ChoiceVariant;
   onBack?: () => void;

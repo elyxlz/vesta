@@ -4,8 +4,7 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
 import { formatResetTime } from "@vesta/core";
-import type { ChatAttachment, InputMethod } from "@vesta/core";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatAttachment, InputMethod, ChatMessage } from "@vesta/core";
 import { cn } from "@/lib/utils";
 import { AttachmentContent, type OpenViewerRequest } from "./AttachmentContent";
 

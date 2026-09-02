@@ -12,7 +12,8 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
-    "noEmit": true
+    "noEmit": true,
+    "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["vite.config.ts", "visual/**/*.ts"]
+  "include": ["vite.config.ts", "visual/**/*.ts", "src/lib/native/types.ts"]
 }

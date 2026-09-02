@@ -7,21 +7,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { useModals } from "@/providers/ModalsProvider/context";
+import { useDialogs } from "@/stores/use-dialogs";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 
 export function DeleteCard() {
   const { name, isBusy } = useSelectedAgent();
-  const { setDeleteDialogOpen } = useModals();
+  const openDialog = useDialogs((s) => s.setOpen);
 
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="group-data-[size=sm]/card:text-base">
+        <CardTitle>
           <Trash2 className="size-4 text-destructive" />
           delete agent
         </CardTitle>
-        <CardDescription className="group-data-[size=sm]/card:text-sm">
+        <CardDescription>
           permanently remove {name} and all its data. this cannot be undone.
         </CardDescription>
       </CardHeader>
@@ -29,7 +29,7 @@ export function DeleteCard() {
         <Button
           variant="destructive"
           disabled={isBusy}
-          onClick={() => setDeleteDialogOpen(true)}
+          onClick={() => openDialog("deleteAgent", true)}
         >
           delete {name}
         </Button>

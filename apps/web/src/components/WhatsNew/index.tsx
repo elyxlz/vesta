@@ -7,12 +7,12 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { useWhatsNew } from "@/stores/use-whats-new";
-import { filterReleaseNotes, fetchReleaseNotes } from "@/lib/whats-new";
-import type { ReleaseNote } from "@/lib/whats-new";
+import { useDialogs } from "@/stores/use-dialogs";
+import { filterReleaseNotes, fetchReleaseNotes } from "@vesta/core";
+import type { ReleaseNote } from "@vesta/core";
 import { useWhatsNewAutoOpen } from "./use-whats-new-auto-open";
 
 function formatReleaseDate(iso: string): string {
@@ -25,7 +25,13 @@ function formatReleaseDate(iso: string): string {
 
 export function WhatsNewButton() {
   const { reachable } = useGateway();
-  const setOpen = useWhatsNew((s) => s.setOpen);
+  const setDialogOpen = useDialogs((s) => s.setOpen);
+  const setOpen = useCallback(
+    (next: boolean) => {
+      setDialogOpen("whatsNew", next);
+    },
+    [setDialogOpen],
+  );
 
   if (!reachable) return null;
 
@@ -47,8 +53,14 @@ export function WhatsNewButton() {
 // the settings navbar button opens the same instance via the store.
 export function WhatsNewDialog() {
   const { gatewayVersion, gatewayChannel } = useGateway();
-  const open = useWhatsNew((s) => s.open);
-  const setOpen = useWhatsNew((s) => s.setOpen);
+  const open = useDialogs((s) => s.open.whatsNew);
+  const setDialogOpen = useDialogs((s) => s.setOpen);
+  const setOpen = useCallback(
+    (next: boolean) => {
+      setDialogOpen("whatsNew", next);
+    },
+    [setDialogOpen],
+  );
   const [notes, setNotes] = useState<ReleaseNote[] | null>(null);
   const [failed, setFailed] = useState(false);
 

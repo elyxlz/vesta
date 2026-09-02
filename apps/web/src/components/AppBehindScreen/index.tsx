@@ -1,5 +1,4 @@
 import { LogOut } from "lucide-react";
-import { Footer } from "@/components/Footer";
 import { NavbarLogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
@@ -73,7 +72,6 @@ export function AppBehindScreen() {
           </div>
         </EmptyContent>
       </Empty>
-      <Footer />
     </>
   );
 }

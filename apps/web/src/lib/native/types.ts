@@ -3,13 +3,13 @@ import type { Platform } from "@/lib/platform";
 
 export type Runtime = "electron" | "browser";
 
-export interface ConnectionStore {
+interface ConnectionStore {
   read(): Promise<ConnectionConfig | null>;
   write(config: ConnectionConfig): Promise<void>;
   clear(): Promise<void>;
 }
 
-export interface ValueStore {
+interface ValueStore {
   read(): Promise<unknown>;
   write(value: unknown): Promise<void>;
   clear(): Promise<void>;
@@ -40,13 +40,13 @@ export interface AppUpdateStatus {
 
 // Manual desktop self-update: the App Settings Updates card and the AppBehindScreen drive
 // check -> download -> relaunch on a click, so the app never silently runs ahead of the gateway.
-export interface AppUpdater {
+interface AppUpdater {
   check(): Promise<AppUpdateStatus>;
   download(onProgress: (percent: number) => void): Promise<void>;
   install(): Promise<void>;
 }
 
-export interface WindowControls {
+interface WindowControls {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;
@@ -56,7 +56,7 @@ export interface WindowControls {
 }
 
 // OS "launch at login" toggle, backed by the platform login item so the OS is the source of truth.
-export interface LoginItem {
+interface LoginItem {
   get(): Promise<boolean>;
   set(enabled: boolean): Promise<void>;
 }

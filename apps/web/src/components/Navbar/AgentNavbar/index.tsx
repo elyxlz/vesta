@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { useModals } from "@/providers/ModalsProvider/context";
+import { useDialogs } from "@/stores/use-dialogs";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useLayout } from "@/stores/use-layout";
 import { useRestartPending } from "@/stores/use-restart-pending";
@@ -37,7 +37,7 @@ export function AgentNavbar({
   const { connected } = useAuth();
   const { reachable } = useGateway();
   const { name, agent, restart } = useSelectedAgent();
-  const { handleOpenAuth } = useModals();
+  const openDialog = useDialogs((s) => s.setOpen);
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
@@ -105,7 +105,7 @@ export function AgentNavbar({
               restartPending={restartPending}
               restarting={restarting}
               onRestart={applyRestart}
-              onOpenAuth={handleOpenAuth}
+              onOpenAuth={() => openDialog("providerAuth", true)}
               showChatButton={Boolean(showChatButton)}
               onExpandChat={() => setChatCollapsed(false)}
             />

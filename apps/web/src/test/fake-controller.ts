@@ -16,9 +16,7 @@ import type {
 // Shared test fixtures for the provider suites: an inert Controller stub over a real replica, with a
 // delta fan-out so a test can drive the provider through the same path /sync deltas take at runtime.
 
-export function fakeGatewayInfo(
-  overrides: Partial<GatewayInfo> = {},
-): GatewayInfo {
+function fakeGatewayInfo(overrides: Partial<GatewayInfo> = {}): GatewayInfo {
   return {
     version: "0.2.0",
     channel: "stable",

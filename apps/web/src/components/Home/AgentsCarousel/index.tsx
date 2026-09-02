@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
-import type { AgentRow } from "@/lib/types";
+import type { AgentRow } from "@vesta/core";
 import { cn } from "@/lib/utils";
 import {
   AGENT_CAROUSEL_GAP,

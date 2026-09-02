@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage } from "@vesta/core";
 import { buildDecorated, lastSeenIndex } from "./rows";
 
 function userMsg(ts: string): ChatMessage {

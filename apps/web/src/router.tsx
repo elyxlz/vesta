@@ -3,14 +3,12 @@ import { RouteErrorBoundary } from "@/components/ErrorBoundary";
 import { AgentLayout } from "@/layouts/AgentLayout";
 import { HomeLayout } from "@/layouts/HomeLayout";
 import { NavigationGuard } from "@/layouts/NavigationGuard";
-import {
-  AppSettingsPage,
-  Callback,
-  Connect,
-  Debug,
-  Home,
-  NewAgent,
-} from "@/pages";
+import { AppSettingsPage } from "@/components/AppSettingsPage";
+import { Callback } from "@/components/Callback";
+import { Connect } from "@/components/Connect";
+import { Debug } from "@/components/Debug";
+import { Home } from "@/components/Home";
+import { NewAgent } from "@/components/NewAgent";
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 

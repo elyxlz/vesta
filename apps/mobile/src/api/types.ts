@@ -3,7 +3,6 @@
 // this module then.
 export type {
   Account,
-  AgentBackupSettings,
   BackupInfo,
   ConnectionConfig,
   FieldPredicate,

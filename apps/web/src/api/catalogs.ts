@@ -1,7 +1,6 @@
 import * as core from "@vesta/core";
 import type {
   ProviderCatalog as CoreProviderCatalog,
-  ProviderCatalogEntry,
   ProviderContextPolicy,
   ProviderContextPreset,
 } from "@vesta/core";
@@ -12,7 +11,6 @@ import { httpClient } from "./client";
 
 export type ContextPreset = ProviderContextPreset;
 export type ProviderContext = ProviderContextPolicy;
-export type ProviderEntry = ProviderCatalogEntry;
 export type ProviderCatalog = CoreProviderCatalog;
 export type { Personality, PersonalityCatalog } from "@vesta/core";
 export { contextForModel } from "@vesta/core";

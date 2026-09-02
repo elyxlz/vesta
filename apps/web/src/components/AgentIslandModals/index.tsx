@@ -15,25 +15,28 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { BackupsDialog } from "@/components/BackupsDialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ProviderPicker } from "@/components/ProviderPicker";
 import { setProvider } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
-import { useModals } from "@/providers/ModalsProvider/context";
+import { useDialogs } from "@/stores/use-dialogs";
+import { useNavigate } from "react-router-dom";
 
 export function AgentIslandModals() {
-  const { name } = useSelectedAgent();
-  const {
-    showAuth,
-    clearAuthState,
-    deleteDialogOpen,
-    setDeleteDialogOpen,
-    handleDelete,
-    backupDialogOpen,
-    setBackupDialogOpen,
-  } = useModals();
+  const { name, remove } = useSelectedAgent();
+  const navigate = useNavigate();
+  const dialogs = useDialogs((s) => s.open);
+  const setDialogOpen = useDialogs((s) => s.setOpen);
+  const showAuth = dialogs.providerAuth;
+  const clearAuthState = () => {
+    setDialogOpen("providerAuth", false);
+  };
+  const handleDelete = async () => {
+    await navigate("/");
+    await remove();
+  };
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -97,7 +100,12 @@ export function AgentIslandModals() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <AlertDialog
+        open={dialogs.deleteAgent}
+        onOpenChange={(open) => {
+          setDialogOpen("deleteAgent", open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>delete {name}?</AlertDialogTitle>
@@ -121,8 +129,10 @@ export function AgentIslandModals() {
       </AlertDialog>
 
       <BackupsDialog
-        open={backupDialogOpen}
-        onOpenChange={setBackupDialogOpen}
+        open={dialogs.backups}
+        onOpenChange={(open) => {
+          setDialogOpen("backups", open);
+        }}
       />
     </>
   );

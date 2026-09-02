@@ -17,7 +17,7 @@ export interface NativeFix {
 }
 
 // A step (one process spawn) never outlives this; the Windows one-shot gets the full budget.
-export const NATIVE_FIX_TIMEOUT_MS = 15_000;
+const NATIVE_FIX_TIMEOUT_MS = 15_000;
 const EXEC_TIMEOUT_MS = 5_000;
 const LINUX_POLL_INTERVAL_MS = 500;
 
@@ -96,11 +96,11 @@ const GEOCLUE_CLIENT = "org.freedesktop.GeoClue2.Client";
 // GeoClue accuracy level EXACT: the daemon still answers with whatever its sources allow.
 const GEOCLUE_ACCURACY_EXACT = "<uint32 8>";
 
-export function parseObjectPath(stdout: string): string | null {
+function parseObjectPath(stdout: string): string | null {
   return /objectpath '([^']+)'/.exec(stdout)?.[1] ?? null;
 }
 
-export function parseVariantNumber(stdout: string): number | null {
+function parseVariantNumber(stdout: string): number | null {
   const match = /<(?:double )?(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)>/i.exec(stdout);
   if (!match) return null;
   const value = Number(match[1]);

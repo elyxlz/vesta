@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { readBrowserDeviceContext } from "@/lib/device-context";
-import { useShareLocation } from "@/stores/use-share-location";
+import { usePreferences } from "@/stores/use-preferences";
 import { router } from "@/router";
 
 // The agent whose page is open, from the router's matched `agent/:name` param, or null off it. Read
@@ -17,7 +17,7 @@ const subscribeToRouter = (onChange: () => void) => router.subscribe(onChange);
 export function PresenceReporter() {
   const controller = useOptionalController();
   const focused = useWindowFocus();
-  const shareLocation = useShareLocation((s) => s.enabled);
+  const shareLocation = usePreferences((s) => s.shareLocation);
   const agent = useSyncExternalStore(subscribeToRouter, currentAgent);
 
   useEffect(() => {

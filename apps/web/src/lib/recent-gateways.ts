@@ -60,7 +60,7 @@ export function upsertRecentGateway(
   );
 }
 
-export function removeRecentGateway(
+function removeRecentGateway(
   gateways: readonly RecentGateway[],
   id: string,
 ): RecentGateway[] {

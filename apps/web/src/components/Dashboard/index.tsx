@@ -11,11 +11,9 @@ import { useServiceKey } from "@vesta/core/react";
 import { Card } from "@/components/ui/card";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useTheme } from "@/providers/ThemeProvider/context";
-import { useRuntime } from "@/providers/RuntimeProvider";
 import { getConnection } from "@/lib/connection";
 import { parseGatewayUrl } from "@/lib/gateway-url";
 import { serviceKeys } from "@/lib/service-key-cache";
-import { openExternalUrl } from "@/lib/open-external-url";
 import {
   Empty,
   EmptyHeader,
@@ -24,6 +22,7 @@ import {
   EmptyMedia,
 } from "@/components/ui/empty";
 import { shouldReloadDashboard } from "./reload-on-visible";
+import { native, runtimeInfo } from "@/lib/native";
 
 // Pre-iframe states (no dashboard, error, loading) wear the same flat chrome as the chat card and the
 // live dashboard shell — shadow-none, just the squircle + hairline ring — so the three panels are
@@ -56,8 +55,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { resolvedTheme } = useTheme();
-  const { isDesktopApp, platform, isDesktop, isMobile, vibrancy } =
-    useRuntime();
+  const { isDesktopApp, platform, isDesktop, isMobile, vibrancy } = runtimeInfo;
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const handshakeRef = useRef(false);
@@ -203,7 +201,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
           /^mailto:/i.test(url) ||
           /^tel:/i.test(url)
         ) {
-          void openExternalUrl(url);
+          void native.openExternal(url);
         }
       }
     };

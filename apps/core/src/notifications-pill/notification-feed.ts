@@ -10,9 +10,9 @@ import {
 // same row), and the catch-up session holds the seen watermark it opened with.
 
 /** The newest page's lifecycle; the skeletons show while it is `idle` or `loading` with no rows. */
-export type NewestPageStatus = "idle" | "loading" | "ready" | "failed";
+type NewestPageStatus = "idle" | "loading" | "ready" | "failed";
 /** Whether the archive extends past the oldest loaded row. */
-export type OlderPagesStatus = "more" | "loading" | "exhausted" | "failed";
+type OlderPagesStatus = "more" | "loading" | "exhausted" | "failed";
 
 export interface NotificationFeed {
   /** Newest first, unique by id. */

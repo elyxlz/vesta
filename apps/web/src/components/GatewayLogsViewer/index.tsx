@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { BOTTOM_FADE_PX } from "@/hooks/use-scroll-fade";
 import type { LogEvent } from "@/lib/types";
 import { LogLevelColors } from "./styles";

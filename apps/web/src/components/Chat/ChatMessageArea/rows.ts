@@ -1,6 +1,6 @@
 import { startsNewBubbleGroup } from "@vesta/core";
 import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage } from "@vesta/core";
 
 export interface DecoratedRow {
   key: string;
@@ -13,7 +13,7 @@ export interface DecoratedRow {
   isGroupEnd: boolean;
 }
 
-export function rowKey(event: ChatMessage, idxFallback: number): string {
+function rowKey(event: ChatMessage, idxFallback: number): string {
   return event.ts ? `${event.ts}-${event.type}` : `i-${String(idxFallback)}`;
 }
 

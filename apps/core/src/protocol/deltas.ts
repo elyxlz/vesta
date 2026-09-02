@@ -1,26 +1,26 @@
 import type { AgentInfo, DeviceInfo, GatewayInfo } from "./tree";
 import type { NotificationEvent } from "./events";
 
-export interface StateDelta {
+interface StateDelta {
   type: "state";
   scope: "gateway";
   value: GatewayInfo;
 }
 
-export interface AgentDelta {
+interface AgentDelta {
   type: "agent";
   name: string;
   info: AgentInfo;
 }
 
-export interface AgentRemovedDelta {
+interface AgentRemovedDelta {
   type: "agent_removed";
   name: string;
 }
 
 // An agent's own pending intake notifications (the files awaiting its attention), distinct from
 // the user-facing `user_notification` feed below.
-export interface AgentNotificationsDelta {
+interface AgentNotificationsDelta {
   type: "agent_notifications";
   agent: string;
   pending: NotificationEvent[];
@@ -44,14 +44,14 @@ export interface UserNotificationDelta {
   body: string;
 }
 
-export interface PresenceDelta {
+interface PresenceDelta {
   type: "presence";
   anyFocused: boolean;
 }
 
 // The whole known-device list, replaced on any change (a device connecting, disconnecting, or
 // registering push). Additive: an old client ignores it.
-export interface DevicesDelta {
+interface DevicesDelta {
   type: "devices";
   devices: DeviceInfo[];
 }

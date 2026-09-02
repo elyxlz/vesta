@@ -195,11 +195,11 @@ export function NotificationInterruptRulesCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="group-data-[size=sm]/card:text-base">
+        <CardTitle>
           <ListFilter className="size-4 text-muted-foreground" />
           interrupt rules
         </CardTitle>
-        <CardDescription className="group-data-[size=sm]/card:text-sm">
+        <CardDescription>
           what interrupts {agentName || "the agent"}, and what can wait for a
           quiet moment.
         </CardDescription>

@@ -5,24 +5,11 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
-import { useOverlayScrim } from "@/hooks/use-scrim-hold";
 
-function DropdownMenu(
-  props: React.ComponentProps<typeof DropdownMenuPrimitive.Root>,
-) {
-  // Holds the app scrim (components/Scrim) while open, like every overlay root.
-  const handleOpenChange = useOverlayScrim({
-    open: props.open,
-    defaultOpen: props.defaultOpen,
-    onOpenChange: (next) => props.onOpenChange?.(next),
-  });
-  return (
-    <DropdownMenuPrimitive.Root
-      data-slot="dropdown-menu"
-      {...props}
-      onOpenChange={handleOpenChange}
-    />
-  );
+function DropdownMenu({
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
+  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
 }
 
 function DropdownMenuPortal({

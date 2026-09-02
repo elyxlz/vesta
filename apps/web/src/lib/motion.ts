@@ -20,7 +20,7 @@ export const fade = {
   transition: { duration: 0.15 },
 };
 
-export const floatSpring: Transition = {
+const floatSpring: Transition = {
   type: "spring",
   stiffness: 300,
   damping: 28,

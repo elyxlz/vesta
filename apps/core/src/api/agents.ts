@@ -75,7 +75,7 @@ export interface AgentStatusResponse {
   booting?: boolean;
 }
 
-export async function fetchAgentStatus(
+async function fetchAgentStatus(
   http: HttpClient,
   name: string,
 ): Promise<AgentStatusResponse> {

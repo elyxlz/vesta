@@ -3,8 +3,7 @@ import { useResource } from "@vesta/core/react";
 import { native } from "@/lib/native";
 import type { AppUpdateStatus } from "@/lib/native/types";
 
-export type AppUpdatePhase =
-  "idle" | "checking" | "downloading" | "ready" | "error";
+type AppUpdatePhase = "idle" | "checking" | "downloading" | "ready" | "error";
 
 export interface AppUpdate {
   /** True only in the desktop app; the browser cannot self-update. */

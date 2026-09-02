@@ -23,8 +23,7 @@ import {
   FieldDescription,
   FieldLabel,
 } from "@/components/ui/field";
-import { useSwitchGateway } from "@/stores/use-switch-gateway";
-import { openExternalUrl } from "@/lib/open-external-url";
+import { useDialogs } from "@/stores/use-dialogs";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { UpdatesCard } from "@/components/Settings/UpdatesCard";
@@ -37,6 +36,7 @@ import {
   type GatewaySetup,
 } from "@/components/Settings/use-gateway-setup";
 import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
+import { native } from "@/lib/native";
 
 // Hosted (managed) boxes are always under vesta.run; the account + billing page
 // lives on the control plane. Self-hosted boxes never reach this.
@@ -50,7 +50,7 @@ export function AppSettings() {
   const { reachable, managed, gatewayVersion } = useGateway();
   const hostname = connectionHostname();
   const gatewaySetup = useGatewaySetup();
-  const openSwitchGateway = useSwitchGateway((s) => s.setOpen);
+  const openDialog = useDialogs((s) => s.setOpen);
   const [showLogs, setShowLogs] = useState(false);
 
   return (
@@ -110,7 +110,7 @@ export function AppSettings() {
                 <Button
                   variant="outline"
                   className="w-full shrink-0 whitespace-nowrap sm:w-auto"
-                  onClick={() => openSwitchGateway(true)}
+                  onClick={() => openDialog("switchGateway", true)}
                 >
                   <ArrowLeftRight data-icon="inline-start" />
                   switch gateway
@@ -143,7 +143,7 @@ export function AppSettings() {
                 variant="outline"
                 className="w-full justify-start"
                 onClick={() => {
-                  void openExternalUrl(ACCOUNT_URL);
+                  void native.openExternal(ACCOUNT_URL);
                 }}
               >
                 <CreditCard data-icon="inline-start" />

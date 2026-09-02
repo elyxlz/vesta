@@ -42,11 +42,11 @@ export function BackupsCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="group-data-[size=sm]/card:text-base">
+        <CardTitle>
           <DatabaseBackup className="size-4 text-muted-foreground" />
           automatic backups
         </CardTitle>
-        <CardDescription className="group-data-[size=sm]/card:text-sm">
+        <CardDescription>
           snapshot this agent on a schedule and before every update, without
           interrupting it.
         </CardDescription>

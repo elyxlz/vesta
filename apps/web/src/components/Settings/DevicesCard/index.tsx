@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { useScrollFade } from "@/hooks/use-scroll-fade";
 import { deviceIdentity } from "@/lib/device-identity";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { useShareLocation } from "@/stores/use-share-location";
+import { usePreferences } from "@/stores/use-preferences";
 import { contextLine } from "./context-line";
 
 function kindIcon(kind: DeviceKind): ReactNode {
@@ -41,8 +41,11 @@ function lastSeenLabel(lastSeen: string): string {
 // real consent. Off reports only the timezone and retracts the position the gateway stored for
 // this device, so changing your mind wipes it.
 function LocationToggle() {
-  const enabled = useShareLocation((s) => s.enabled);
-  const setEnabled = useShareLocation((s) => s.setEnabled);
+  const enabled = usePreferences((s) => s.shareLocation);
+  const update = usePreferences((s) => s.update);
+  const setEnabled = (shareLocation: boolean) => {
+    update({ shareLocation });
+  };
 
   return (
     <div className="mt-3 flex flex-col gap-2">

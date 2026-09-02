@@ -39,7 +39,7 @@ export function isTokenExpiringSoon(
 // "ok": the token is fresh, or was just refreshed. "transient": the refresh could not complete
 // (network, a server error, a hosted re-authorization in flight); retrying later may succeed.
 // "expired": the gateway definitively rejected the refresh token; only a new sign-in recovers.
-export type RefreshResult = "ok" | "transient" | "expired";
+type RefreshResult = "ok" | "transient" | "expired";
 
 export type RefreshOutcome =
   | { kind: "ok"; connection: ConnectionConfig }
@@ -204,7 +204,7 @@ export interface Session {
   http: HttpClient;
 }
 
-export const NOT_CONNECTED = "not connected to a gateway";
+const NOT_CONNECTED = "not connected to a gateway";
 
 export function createSession(deps: SessionDeps): Session {
   const now = deps.now ?? Date.now;

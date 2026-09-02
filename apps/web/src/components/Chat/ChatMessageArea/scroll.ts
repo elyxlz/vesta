@@ -6,10 +6,10 @@
 export const AT_BOTTOM_THRESHOLD_PX = 80;
 // Preload margin: within this many viewport heights of the top, the previous page starts
 // loading, so it lands before the user can reach the top of loaded history.
-export const LOAD_OLDER_SCREENS = 3;
+const LOAD_OLDER_SCREENS = 3;
 // Within this many px of the absolute top the user has outrun the fetch and is actually
 // waiting on it — the only time the loading pill shows.
-export const WAITING_AT_TOP_PX = 120;
+const WAITING_AT_TOP_PX = 120;
 // Sub-pixel rounding slack: a pinned viewport within this of the end is already flush,
 // so no re-pin write is issued.
 const REPIN_EPSILON_PX = 1;

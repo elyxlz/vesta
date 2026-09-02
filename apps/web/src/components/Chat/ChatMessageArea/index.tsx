@@ -8,7 +8,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage } from "@vesta/core";
 import { recedeTransition, stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";

@@ -1,6 +1,6 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useShareLocation } from "@/stores/use-share-location";
+import { usePreferences } from "@/stores/use-preferences";
 import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { fakeController, fakeTree } from "@/test/fake-controller";
 import { PresenceReporter } from "./index";
@@ -47,7 +47,7 @@ function mount(fake: ReturnType<typeof fakeController>) {
 beforeEach(() => {
   focus.value = true;
   routerStub.navigate("ada");
-  useShareLocation.setState({ enabled: true });
+  usePreferences.setState({ shareLocation: true });
 });
 
 afterEach(() => {
@@ -72,7 +72,7 @@ describe("PresenceReporter", () => {
   });
 
   it("retracts the position when this device's sharing is switched off", async () => {
-    useShareLocation.setState({ enabled: false });
+    usePreferences.setState({ shareLocation: false });
     const fake = fakeController(fakeTree());
     mount(fake);
 

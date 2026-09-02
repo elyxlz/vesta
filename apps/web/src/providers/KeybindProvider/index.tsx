@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { isEditableTarget } from "@/lib/dom";
 import { useVoice } from "@/stores/use-voice";
-import { useVoiceActivation } from "@/stores/use-voice-activation";
+import { usePreferences } from "@/stores/use-preferences";
 import { useTheme } from "@/providers/ThemeProvider/context";
 
 function isButtonTarget(target: EventTarget | null): boolean {
@@ -44,7 +44,7 @@ function handleDictationKey(
 
 export function KeybindProvider({ children }: { children: ReactNode }) {
   const { cycleTheme } = useTheme();
-  const activation = useVoiceActivation((s) => s.mode);
+  const activation = usePreferences((s) => s.voiceActivation);
 
   useEffect(() => {
     // Space is the keyboard twin of the mic: it starts a dictation and confirms it, on

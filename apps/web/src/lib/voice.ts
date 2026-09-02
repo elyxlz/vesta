@@ -40,7 +40,7 @@ export const setTtsEnabled = (n: string, value: boolean) =>
 // header and uses GET (no body), so the text is first registered via POST
 // /tts/prepare; the element then streams GET /tts/stream/{id}?token=...
 
-export function prepareSpeech(
+function prepareSpeech(
   text: string,
   agentName: string,
   signal?: AbortSignal,

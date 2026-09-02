@@ -4,7 +4,7 @@ import { createElement, type ReactNode } from "react";
 import { ApiError, PACING } from "@vesta/core";
 import type { Controller, VestaEvent } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider/context";
-import { useChatPacing } from "@/stores/use-chat-pacing";
+import { usePreferences } from "@/stores/use-preferences";
 import { useVoice } from "@/stores/use-voice";
 import { fetchHistory } from "@/api/agents";
 import {
@@ -145,7 +145,7 @@ beforeEach(() => {
   tokenBuilds = 0;
   fetchHistoryMock.mockReset();
   fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
-  useChatPacing.setState({ byAgent: {} });
+  usePreferences.setState({ naturalPacingByAgent: {} });
 });
 
 afterEach(() => {
@@ -388,7 +388,7 @@ describe("useAgentSocketState", () => {
   // Pacing is a feel, not a contract: with natural pacing off every event commits at once, and a
   // burst past the flush threshold is dumped after the first delay rather than typed out one by one.
   it("commits at once with natural pacing off", async () => {
-    useChatPacing.setState({ byAgent: { [AGENT]: false } });
+    usePreferences.setState({ naturalPacingByAgent: { [AGENT]: false } });
     const { controller } = makeController();
     const { result } = render(controller);
     await openAndFlush();

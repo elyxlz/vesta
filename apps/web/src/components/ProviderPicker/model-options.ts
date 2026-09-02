@@ -1,7 +1,7 @@
 import { CLAUDE_ALIASES as CORE_CLAUDE_ALIASES } from "@vesta/core";
 import type { ProviderCatalog } from "@/api/catalogs";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
-import type { ProviderMode } from "./types";
+import type { ProviderKind } from "@vesta/core";
 
 /// The two Claude aliases every picker offers as primary buttons ahead of the
 /// expandable live-slug list, owned by @vesta/core so web and mobile never drift.
@@ -12,7 +12,7 @@ export const CLAUDE_ALIASES: OpenRouterModelOption[] = CORE_CLAUDE_ALIASES.map(
 /** Build fixed-model picker options from the provider catalog. Live providers
  * (OpenRouter, Claude) return undefined: they feed the picker their own way. */
 export function providerModelOptions(
-  provider: ProviderMode | null,
+  provider: ProviderKind | null,
   catalog: ProviderCatalog | undefined,
   currentModel?: string | null,
 ): OpenRouterModelOption[] | undefined {

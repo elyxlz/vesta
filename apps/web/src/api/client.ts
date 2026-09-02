@@ -1,4 +1,4 @@
-import { ApiError, createSession, jsonInit } from "@vesta/core";
+import { ApiError, createSession } from "@vesta/core";
 import { getConnection, restoreConnection } from "@/lib/connection";
 import { startHostedLogin } from "@/lib/pkce";
 
@@ -20,4 +20,4 @@ export const httpClient = session.http;
 export const authedUrl = session.authedUrl;
 export const websocketUrl = session.websocketUrl;
 
-export { ApiError, jsonInit };
+export { ApiError };

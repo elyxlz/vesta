@@ -4,7 +4,7 @@ import { useScrim } from "@/stores/use-scrim";
 // One overlay's grip on the app scrim: held while open, released on close or
 // unmount. Lives in the overlay root wrappers (popover, dropdown, dialog), so
 // every usage participates without wiring.
-export function useScrimHold(open: boolean) {
+function useScrimHold(open: boolean) {
   useEffect(() => {
     if (!open) return;
     useScrim.getState().acquire();

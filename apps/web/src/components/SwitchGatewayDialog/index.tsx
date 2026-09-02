@@ -11,7 +11,7 @@ import {
 } from "@/lib/recent-gateways";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { useControllerReconnect } from "@/providers/ControllerProvider/context";
-import { useSwitchGateway } from "@/stores/use-switch-gateway";
+import { useDialogs } from "@/stores/use-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 
 function gatewayHost(url: string): string {
   try {
@@ -248,8 +248,11 @@ function SwitchGatewayBody({ onClose }: { onClose: () => void }) {
 }
 
 export function SwitchGatewayDialog() {
-  const open = useSwitchGateway((s) => s.open);
-  const setOpen = useSwitchGateway((s) => s.setOpen);
+  const open = useDialogs((s) => s.open.switchGateway);
+  const setDialogOpen = useDialogs((s) => s.setOpen);
+  const setOpen = (next: boolean) => {
+    setDialogOpen("switchGateway", next);
+  };
   return (
     <Dialog drawerOnMobile open={open} onOpenChange={setOpen}>
       <DialogContent className="max-h-[min(60vh,480px)] sm:max-w-md">

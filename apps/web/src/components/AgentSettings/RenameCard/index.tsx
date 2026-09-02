@@ -17,7 +17,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { Input } from "@/components/ui/input";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { errorMessage } from "@/lib/utils";
@@ -54,11 +54,11 @@ export function RenameCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="group-data-[size=sm]/card:text-base">
+        <CardTitle>
           <Pencil className="size-4" />
           rename agent
         </CardTitle>
-        <CardDescription className="group-data-[size=sm]/card:text-sm">
+        <CardDescription>
           give {name} a new name. they restart to take it, and their memory and
           backups carry over.
         </CardDescription>

@@ -39,6 +39,10 @@ export const baseConfig = tseslint.config(
       complexity: ["error", { max: 15, variant: "modified" }],
       "max-params": ["error", 5],
       "max-depth": ["error", 4],
+      "max-lines": [
+        "error",
+        { max: 400, skipBlankLines: true, skipComments: true },
+      ],
       "import-x/no-cycle": "error",
       // Parse at the boundary; a cast is never the fix (boundary parsers are excepted below).
       "@typescript-eslint/consistent-type-assertions": [
@@ -51,6 +55,12 @@ export const baseConfig = tseslint.config(
         { ignoreArrowShorthand: true },
       ],
     },
+  },
+  // Vendored primitives follow upstream shadcn; a test file or a visual scenario script grows
+  // with its cases.
+  {
+    files: ["src/components/ui/**", "**/*.test.{ts,tsx}", "visual/**"],
+    rules: { "max-lines": "off" },
   },
   eslintConfigPrettier,
 );

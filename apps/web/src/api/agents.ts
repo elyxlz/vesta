@@ -18,7 +18,6 @@ export type { BuildPhase, NotificationEvent, ProviderInfo };
 export type ProviderResult = ProviderSelection;
 export type {
   Account,
-  AgentBackupSettings,
   BackupInfo,
   FieldPredicate,
   HostMount,

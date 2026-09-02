@@ -16,7 +16,7 @@ export const INITIAL_FILL_QUIESCE_MS = 150;
 // ...or this long has passed regardless, so a perpetually-chatty agent still renders.
 export const INITIAL_FILL_MAX_MS = 1500;
 
-export interface LogLine {
+interface LogLine {
   id: number;
   html: string;
 }
@@ -25,7 +25,7 @@ export interface LogLine {
 // agent_stopped (terminal — no reconnect), "reconnecting" during transport-drop backoff.
 export type LogStreamState = "live" | "stopped" | "reconnecting";
 
-export interface LogSnapshot {
+interface LogSnapshot {
   lines: readonly LogLine[];
   streamState: LogStreamState;
 }

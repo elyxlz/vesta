@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { useEffect } from "react";
-import type { AgentRow, LogEvent } from "@/lib/types";
+import type { AgentRow } from "@vesta/core";
+import type { LogEvent } from "@/lib/types";
 import { streamLogs, stopLogs } from "@/api";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
 import { fakeAgentRow } from "@/test/fake-controller";

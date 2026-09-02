@@ -4,7 +4,7 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/DropdownMenu";
 import { buildActionSections } from "./action-sections";
 import type { MenuProps } from "./types";
 
