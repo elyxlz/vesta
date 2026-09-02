@@ -72,21 +72,53 @@ part; leave the personal remainder local.
 
 ## Before filing (REQUIRED)
 
+The maintainer merges a small fix at the right layer the same day. A fix that adds state,
+a script, a flag, or a config format waits weeks and is usually rewritten, because the
+clean fix is visible from the maintainer's full checkout and not from a box. These checks
+are what separate the two.
+
 - **Does it already exist?** `grep -rn` the codebase for the mechanism first, by feature
   name across all skills and core. Improve the existing one; never add a second.
 - **Your box is a stale snapshot.** Any claim about what upstream does must be checked
   against `upstream/master` (`git -C ~ show upstream/master:<path>`), never your local
   copy, or the PR is a revert dressed as a fix.
+- **Find the fact before adding state.** If the fix adds a variable, file, marker, timer,
+  flag, env var, or config format, first name the thing on `upstream/master` that already
+  holds that fact: a marker the same handler writes, a cache entry, a helper's return
+  value, an artifact's mtime. Read the whole module and its callers, not the failing line.
+  When that thing exists, the fix reads it; new state beside it is the shape that gets
+  rewritten.
+- **Fix the producer, not the line.** A guard in front of the failing line (`if value:`)
+  treats one symptom. Follow the value to where it was produced and fix it there, once.
+  If a second guard elsewhere seems necessary, the cause is still unfound.
+- **Copy the neighbours' guards.** When adding an entry to a list of rules (a regex, a
+  threshold, a column, a probe), read what the sibling entries carry (a case anchor, a
+  digit lookahead, a `LEGACY(` marker, a matching test fixture) and carry the same. The
+  siblings encode the false positives already paid for.
+- **Size is a design signal.** A fix over about 40 lines, a new script, a new flag, or a new
+  config format is a design decision, not a fix. File an issue instead of the PR, with the
+  cause, file, line, and the change you would make; the maintainer shapes it from the full
+  tree. Two symptoms of one mechanism (a stale install and a stale build behind the same
+  gate) are one fix and one PR, never two.
 - **One file, one PR.** List your open PRs and their files before opening; two changes to
-  one file belong in one PR. Do not check what other agents filed; duplicates are cheap
-  confirmation.
+  one file belong in one PR. Search open PRs for your scope
+  (`upstream gh pr list --state open --search "in:title <scope>"`); when one already names
+  your problem, do not file a second: the maintainer keeps one fix per problem and closes
+  the rest, so the duplicate costs a consolidation and adds nothing. Add your evidence as
+  an issue if it is new.
 - **Issue, PR, or both?** Fix in your workspace: PR + issue, with `fixes #N` on its own
   line in the PR body (never the commit). Problem in `agent/core/` (read-only): issue
   only, with cause, file, line, and the fix you would make. No fix yet: issue only.
 - **Strip the story.** Agent-facing files state mechanism and constraint, never what
-  changed or the incident behind it; that goes in the commit and PR body.
+  changed or the incident behind it; that goes in the commit and PR body. A code comment
+  states the rule in one line, with no date and no PR number; a comment that needs a
+  paragraph means the code needs simplifying.
 - **Strip personal information.** Upstream is public: no names, addresses, credentials,
-  or one user's quirks. Describe the pattern, not the instance.
+  or one user's quirks. Describe the pattern, not the instance. A script that encodes your
+  user's file names, language, headings, or box paths is workspace tooling: keep it local.
+- **Evidence names what is in the diff.** Every test the PR body mentions exists in the
+  diff by name, and the body pastes the run's count. A claim the diff does not contain is
+  read as the behavior being untested, and it costs the PR its credibility.
 
 ## Creating a PR
 
