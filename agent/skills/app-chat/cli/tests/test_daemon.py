@@ -4,6 +4,7 @@ start/stop/restart/status verbs against the pid and port records."""
 import argparse
 import asyncio
 import functools
+import io
 import json
 import os
 import signal
@@ -541,6 +542,23 @@ def test_cmd_send_paces_bubbles_in_order_and_honors_the_gap(tmp_path, monkeypatc
     out = json.loads(capsys.readouterr().out)
     assert out["stopped_for_user"] is False
     assert [bubble["message"] for bubble in out["sent"]] == ["one", "two", "three"]
+
+
+@pytest.mark.parametrize(
+    ("longform", "bubbles"),
+    [
+        (False, ["can't wait", "see you at 8"]),
+        (True, ["can't wait\n\nsee you at 8"]),
+    ],
+)
+def test_cmd_send_reads_a_stdin_reply_as_one_bubble_per_paragraph(tmp_path, monkeypatch, capsys, longform, bubbles):
+    sent = _capture_socket_request(monkeypatch)
+    monkeypatch.setattr(commands.sys, "stdin", io.StringIO("can't wait\n\nsee you at 8\n"))
+
+    commands.cmd_send(_send_args(tmp_path, message=["-"], gap=0, longform=longform))
+
+    assert [message for message, _ in sent] == bubbles
+    assert [bubble["message"] for bubble in json.loads(capsys.readouterr().out)["sent"]] == bubbles
 
 
 def test_cmd_send_stops_the_waterfall_when_the_user_starts_talking(tmp_path, monkeypatch, capsys):

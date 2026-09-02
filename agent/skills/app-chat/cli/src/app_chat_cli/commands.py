@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import pathlib as pl
+import re
 import sqlite3
 import sys
 import typing as tp
@@ -23,18 +24,20 @@ def _fail(payload: dict[str, object]) -> None:
 _DEFAULT_GAP_SECS = 2.5
 
 
-def _collect_bubbles(message: list[str] | None) -> list[str]:
-    """The reply's bubbles, in order. A lone `-` reads one bubble from stdin, so a reply with
+def _collect_bubbles(message: list[str] | None, longform: bool) -> list[str]:
+    """The reply's bubbles, in order. A lone `-` reads the whole reply from stdin, one bubble per
+    blank-line-separated paragraph (one bubble in all under --longform), so a reply with
     apostrophes, quotes or newlines rides a quoted heredoc. Blank bubbles are dropped so a stray
     empty -m never sends an empty message."""
     raw = message or []
     if raw == ["-"]:
-        raw = [sys.stdin.read().rstrip("\r\n")]
+        body = sys.stdin.read()
+        raw = [paragraph.strip("\r\n") for paragraph in ([body] if longform else re.split(r"\n\s*\n", body))]
     return [bubble for bubble in raw if bubble.strip()]
 
 
 def cmd_send(args: argparse.Namespace) -> None:
-    bubbles = _collect_bubbles(args.message)
+    bubbles = _collect_bubbles(args.message, args.longform)
     # Absolute paths cross the socket: the daemon's cwd is wherever `daemon start` ran, never the
     # sender's, so a relative --attach would resolve against the wrong directory.
     attach: list[str] = [str(pl.Path(path).expanduser().resolve()) for path in args.attach or []]

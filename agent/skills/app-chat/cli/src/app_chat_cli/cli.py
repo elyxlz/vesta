@@ -42,7 +42,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "-m",
         action="append",
         default=None,
-        help="One bubble; repeat -m for a multi-bubble reply, sent in order. '-' (as the only -m) reads one bubble from stdin",
+        help=(
+            "One bubble; repeat -m for a multi-bubble reply, sent in order. '-' (as the only -m) reads the reply from stdin, "
+            "one bubble per blank-line-separated paragraph (one bubble in all under --longform)"
+        ),
     )
     send_p.add_argument(
         "--gap",
