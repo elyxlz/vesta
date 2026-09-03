@@ -170,11 +170,7 @@ def request(
 ) -> tuple[int, str, str]:
     """Issue one CalDAV request, following redirects, and return (status, body, final_url).
 
-    Exits with an actionable message on failure, except for the status codes in
-    ``tolerate``, which are returned so the caller can fall back: 404 lets a UID
-    search retry a conventional resource name, and 412 lets a read that the
-    server rejects (iCloud answers a UID prop-filter REPORT with a bare 412) fall
-    back rather than be mislabelled as an optimistic-lock failure.
+    Status codes in ``tolerate`` are returned instead of exiting.
     """
     auth_header = _auth_header(ctx)
     current = url

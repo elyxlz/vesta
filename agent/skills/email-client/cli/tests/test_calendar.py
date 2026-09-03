@@ -605,9 +605,8 @@ def test_get_falls_back_to_resource_name_when_report_is_empty(rec, capsys):
 
 
 def test_get_falls_back_to_resource_name_when_report_precondition_fails(rec, capsys):
-    # iCloud answers a UID prop-filter calendar-query REPORT with a bare 412;
-    # find_event must treat that as "prop-filter unsupported" and fall back to
-    # the {uid}.ics resource rather than exiting as an optimistic-lock failure.
+    # iCloud answers the UID prop-filter REPORT with a bare 412; find_event
+    # tolerates it and falls back to the {uid}.ics resource.
     rec.responses = [
         ("REPORT", "/events/", (412, "")),
         ("GET", "/events/evt-timed%40google.com.ics", (200, EXISTING_ICS)),
