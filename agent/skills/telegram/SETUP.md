@@ -27,7 +27,7 @@ download nothing.
    ```
    Idempotent (a running daemon is a no-op) and defaults `--notifications-dir` to `~/agent/notifications`. Check with `telegram daemon status`.
 4. Then have them open the bot and send any message (hitting Start counts). Wait for that first inbound notification and confirm back on the new channel before declaring it live: the channel does not exist until you have replied to them on it.
-5. Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, on its own line:
+5. Read the `restart` skill and add this line to your restart daemons:
    ```
    telegram daemon start
    ```

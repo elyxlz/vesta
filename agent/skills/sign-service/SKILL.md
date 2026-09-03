@@ -38,7 +38,7 @@ uv run --with PyMuPDF python3 ~/agent/skills/sign-service/stamp.py \
 # 4. Send the user the signed PDF(s) for visual approval, THEN deliver on their OK.
 ```
 
-To keep the pad up across a container restart, add this line inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, marked TEMP because it comes back out at teardown:
+To keep the pad up across a container restart, read the `restart` skill and add this line to your restart daemons, marked TEMP because it comes back out at teardown:
 ```
 sign-service daemon start  # TEMP
 ```
