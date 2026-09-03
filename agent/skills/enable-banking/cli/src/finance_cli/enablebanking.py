@@ -219,8 +219,9 @@ def aggregate_by_category(transactions: list[dict]) -> dict:
       - creditor_name
       - bank_transaction_code.proprietary.code (category hint)
     """
-    totals: dict[str, float] = {}
-    counts: dict[str, int] = {}
+    # Keyed by (category, currency): amounts in different currencies are never added together.
+    totals: dict[tuple[str, str], float] = {}
+    counts: dict[tuple[str, str], int] = {}
 
     for tx in transactions:
         indicator = tx.get("credit_debit_indicator", "DBIT")
@@ -233,25 +234,33 @@ def aggregate_by_category(transactions: list[dict]) -> dict:
             amount = float(amt_obj.get("amount", 0))
         except (ValueError, TypeError):
             amount = 0.0
+        currency = amt_obj.get("currency") or tx.get("_account_currency", "")
 
         # Try to derive a category label
         category = _extract_category(tx)
 
-        totals[category] = totals.get(category, 0.0) + amount
-        counts[category] = counts.get(category, 0) + 1
+        key = (category, currency)
+        totals[key] = totals.get(key, 0.0) + amount
+        counts[key] = counts.get(key, 0) + 1
 
     summary = [
         {
             "category": cat,
-            "total": round(totals[cat], 2),
-            "count": counts[cat],
+            "currency": cur,
+            "total": round(totals[(cat, cur)], 2),
+            "count": counts[(cat, cur)],
         }
-        for cat in sorted(totals, key=lambda c: totals[c], reverse=True)
+        for cat, cur in sorted(totals, key=lambda k: totals[k], reverse=True)
     ]
+
+    by_currency: dict[str, float] = {}
+    for (_cat, cur), value in totals.items():
+        by_currency[cur] = by_currency.get(cur, 0.0) + value
 
     return {
         "categories": summary,
-        "grand_total": round(sum(totals.values()), 2),
+        # One total per currency; this module has no exchange rates, so there is no cross-currency figure.
+        "grand_total": {cur: round(value, 2) for cur, value in sorted(by_currency.items())},
         "transaction_count": sum(counts.values()),
     }
 

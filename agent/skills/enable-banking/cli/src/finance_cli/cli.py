@@ -300,6 +300,8 @@ def cmd_summary(args) -> dict:
             date_from=_fmt_date(from_dt),
             date_to=_fmt_date(to_dt),
         )
+        for tx in txns:
+            tx["_account_currency"] = acc.get("currency", "")
         all_txns.extend(txns)
 
     summary = eb.aggregate_by_category(all_txns)
