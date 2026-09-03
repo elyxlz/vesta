@@ -55,19 +55,6 @@ func pairAttemptsInWindow(attempts []time.Time, now time.Time) int {
 	return len(liveAttempts(attempts, now))
 }
 
-// pairBudgetNotice summarizes how much of the hard pairing budget the attempt
-// history now consumes, so a freshly minted pairing code carries the cost the
-// caller just paid. Each code spends one of the daily/weekly hard caps whether
-// or not it is ever entered, so this is what tells a caller to wait rather than
-// regenerate. Given the RAW attempt history including the just-recorded attempt.
-func pairBudgetNotice(attempts []time.Time, now time.Time) string {
-	day := len(attemptsWithin(attempts, now, PairDayWindow))
-	week := len(attemptsWithin(attempts, now, PairWeekWindow))
-	return fmt.Sprintf(
-		"pairing attempt %d of %d in the last 24h (%d of %d in 7d); each code spends one of these hard caps whether or not it is entered, so wait for the user to enter this one rather than regenerating",
-		day, MaxPairPerDay, week, MaxPairPer7d)
-}
-
 // oldestAttempt returns the earliest attempt in a non-empty slice.
 func oldestAttempt(attempts []time.Time) time.Time {
 	oldest := attempts[0]
