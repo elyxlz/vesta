@@ -93,7 +93,7 @@ The port is registered private, so vestad is the gate in front of it and the API
 service-key mint moneypot --label "what it is for"
 ```
 
-Register this line for restart yourself, as `~/agent/skills/restart/SKILL.md` describes:
+Read the `restart` skill and add this line to your restart daemons:
 ```
 moneypot daemon start
 ```

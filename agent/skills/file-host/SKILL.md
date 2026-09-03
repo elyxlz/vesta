@@ -36,4 +36,4 @@ Off vesta, bind any port with `serve.py --port N` and expose it with your own tu
 
 - **Public means public.** Anything in the served directory is reachable by anyone with the URL (the route has no auth). Never host secrets, credentials, or sensitive personal documents unless the user explicitly asked you to share that exact file, and use an unguessable filename when sharing anything personal.
 - **Clean up.** Remove files from the served directory once the user has them, and run `file-host daemon stop` when no longer needed.
-- **Persist it** by registering the serve command for restart as `~/agent/skills/restart/SKILL.md` describes, if you want it always available.
+- **Persist it**: read the `restart` skill and add the serve command to your restart daemons, if you want it always available.

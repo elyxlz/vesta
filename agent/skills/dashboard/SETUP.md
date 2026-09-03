@@ -8,7 +8,7 @@
    ```
    It fails loudly on a real problem rather than leaving a half-set-up dashboard: check its output, don't assume success.
 
-2. **Register the restart line yourself**, so the dashboard survives a container restart. Register this line for restart as `~/agent/skills/restart/SKILL.md` describes:
+2. **Register the restart line yourself**, so the dashboard survives a container restart. Read the `restart` skill and add this line to your restart daemons:
    ```
    dashboard daemon start
    ```
