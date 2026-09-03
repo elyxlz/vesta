@@ -3,19 +3,20 @@ set -euo pipefail
 
 CONFIG_DIR="$HOME/.vpn"
 CONFIG_FILE="$CONFIG_DIR/config.json"
+PLACEHOLDER_HOST="your-proxy-host"
 
 # Ensure config directory exists
 mkdir -p "$CONFIG_DIR"
 
 # Initialize default config if missing
 if [[ ! -f "$CONFIG_FILE" ]]; then
-    cat > "$CONFIG_FILE" <<'INIT'
+    cat > "$CONFIG_FILE" <<INIT
 {
   "active_provider": "default",
   "providers": {
     "default": {
       "type": "socks5",
-      "host": "your-proxy-host",
+      "host": "$PLACEHOLDER_HOST",
       "port": 1080,
       "username_env": "SOCKS5_USER",
       "password_env": "SOCKS5_PASS"
@@ -184,6 +185,12 @@ cmd_status() {
     local proxy_url
     proxy_url=$(build_proxy_url 2>/dev/null) || { echo "Status: MISCONFIGURED (cannot build proxy URL)" >&2; return 1; }
 
+    # The shipped default config holds the placeholder host: nothing is set up, so nothing is down.
+    if [[ "$host" == "$PLACEHOLDER_HOST" ]]; then
+        echo "Connectivity:    NOT CONFIGURED (placeholder host; add a provider to $CONFIG_FILE, then \`vpn set-provider <name>\`)"
+        return 0
+    fi
+
     echo -n "Connectivity:    "
     if curl -sk --proxy "$proxy_url" --connect-timeout 10 --max-time 15 "https://api.ipify.org?format=json" >/dev/null 2>&1; then
         echo "CONNECTED"
@@ -191,7 +198,7 @@ cmd_status() {
         ip=$(curl -sk --proxy "$proxy_url" --connect-timeout 10 --max-time 15 "https://api.ipify.org?format=json" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['ip'])" 2>/dev/null || echo "unknown")
         echo "External IP:     $ip"
     else
-        echo "UNREACHABLE"
+        echo "UNREACHABLE ($host:$port did not answer; check the provider is up and the env vars named by username_env/password_env in $CONFIG_FILE are exported)"
     fi
 }
 
