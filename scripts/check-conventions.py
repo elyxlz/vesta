@@ -1,13 +1,15 @@
 """Repo convention guards: no lint/type-checker escape hatches, no unmarked removal notes, no
-oversized comment blocks, no import cycles, single-line JSON envelopes from skill commands, and
-the web app's brand copy and folder rules.
+oversized comment blocks, no import cycles, single-line JSON envelopes from skill commands, no
+narration of a previous design in agent/ prose, and the web app's brand copy and folder rules.
 Run from the repo root: uv run python scripts/check-conventions.py"""
 
 import ast
+import io
 import pathlib as pl
 import re
 import subprocess
 import sys
+import tokenize
 
 MAX_COMMENT_BLOCK = 8
 
@@ -64,6 +66,15 @@ SKILL_COMMAND_RE = re.compile(r"^agent/skills/[^/]+/(cli/src/.*\.py|scripts/[^/]
 # pretty opt-in, an `if` whose test names it (`if args.json_pretty:`, `if want_pretty:`).
 STDOUT_WRITERS = ("print", "click.echo")
 PRETTY_OPT_IN = "pretty"
+
+# The agent reads everything under agent/ cold, so prose there states the mechanism and never what
+# came before it. MEMORY.md is one box's dated history and a migration describes the state it converges.
+AGENT_PROSE_RE = re.compile(r"^agent/(?!MEMORY\.md$|core/migrations/).*")
+# A phrase that narrates the old design, or a new value set against the old one ("120, not 30");
+# a dotted address pair ("0.0.0.0, not 127.0.0.1") is a contrast of two live choices.
+NARRATION_RE = re.compile(
+    r"\b(previously|formerly|used to (be|say|do|have)|before this (change|fix|PR))\b|(?<![\d.])\d+, not \d+(?!\.\d)", re.IGNORECASE
+)
 
 
 def tracked_files() -> list[str]:
@@ -210,6 +221,43 @@ def check_skill_envelopes(files: list[str]) -> list[str]:
     return errors
 
 
+def python_prose_lines(text: str) -> list[tuple[int, str]]:
+    """Each comment and docstring line of a Python source, the lines a reader takes as prose."""
+    lines = text.splitlines()
+    prose: dict[int, str] = {}
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                prose.update((lineno, lines[lineno - 1]) for lineno in range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type == tokenize.COMMENT:
+            prose[token.start[0]] = token.string
+    return sorted(prose.items())
+
+
+def check_narration(files: list[str]) -> list[str]:
+    """Prose under agent/ (Markdown, Python comments and docstrings) never describes a previous design."""
+    errors = []
+    for rel in files:
+        path = pl.Path(rel)
+        if not AGENT_PROSE_RE.match(rel) or not path.exists():
+            continue
+        suffix = effective_suffix(path)
+        if suffix == ".md":
+            prose = list(enumerate(path.read_text(errors="replace").splitlines(), 1))
+        elif suffix == ".py":
+            prose = python_prose_lines(path.read_text(errors="replace"))
+        else:
+            continue
+        errors.extend(
+            f"{rel}:{lineno}: narrates a previous design ({match.group(0)!r}); state the mechanism, the change goes in the commit"
+            for lineno, line in prose
+            if (match := NARRATION_RE.search(line))
+        )
+    return errors
+
+
 def code_lines(path: pl.Path) -> list[tuple[int, str]]:
     """Each line with its comments removed: `//` and `/* */` blocks, including JSX comment bodies."""
     lines = []
@@ -319,6 +367,7 @@ def main() -> int:
         + check_comment_blocks(files)
         + check_import_cycles()
         + check_skill_envelopes(files)
+        + check_narration(files)
         + check_brand_copy(files)
         + check_hook_placement(files)
         + check_component_folders(files)

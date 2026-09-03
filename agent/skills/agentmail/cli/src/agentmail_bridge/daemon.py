@@ -38,7 +38,7 @@ def _budget(name: str, default: int) -> int:
     return int(os.environ[name]) if name in os.environ else default
 
 
-# 120, not 30. A readiness budget is a bet about disk speed, and boot is when that bet is worst:
+# A readiness budget is a bet about disk speed, and boot is when that bet is worst:
 # every call cold, nothing in page cache, several daemons starting at once. A miss is not a retry.
 # `_abandon` TERMs then KILLs a child that `child.poll()` just showed to be ALIVE, so a daemon that
 # is merely slow to import is destroyed and the caller is handed an error that reads like a crash.

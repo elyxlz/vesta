@@ -162,7 +162,7 @@ def _notify_hard_deletes(notif_dir: Path, title: str, prev_entries: dict, curren
 
 def diff_tricount(t: Tricount, prev: dict, notif_dir: Path) -> None:
     """Compare current tricount state against the stored snapshot and emit
-    notifications for every delta. ``prev`` is the previously stored snapshot
+    notifications for every delta. ``prev`` is the last stored snapshot
     for this tricount (its 'entries'/'members' maps)."""
     prev_entries: dict = prev.get("entries", {})
     prev_members: dict = prev.get("members", {})

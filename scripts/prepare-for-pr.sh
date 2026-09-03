@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the fast, local-runnable subset of CI checks before opening a PR.
 # Mirrors .github/workflows/{ci,pr-checks}.yml — catches the "insta-fail on
-# ruff/ty/clippy/lockfile" cases without waiting for CI.
+# ruff/ty/convention-guards/clippy/lockfile" cases without waiting for CI.
 #
 # Skipped (out of scope for local): test-integration (Docker + slow),
 # Windows/macOS builds, Electron bundling, install-script-check
@@ -115,6 +115,7 @@ if [ "${SKIP_AGENT:-0}" = "1" ]; then
 else
   run_in . "ruff check (repo-wide)"          uv run --project agent/core ruff check .
   run_in . "ruff format --check (repo-wide)" uv run --project agent/core ruff format --check .
+  run_in . "convention guards"               uv run --project agent/core python scripts/check-conventions.py
   run_in agent "ty check"            uv run ty check
   run_in agent "pytest"              uv run pytest tests/ --ignore=tests/test_e2e.py -q
 fi
