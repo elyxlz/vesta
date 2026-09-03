@@ -81,6 +81,8 @@ def search_emails(
             client, account_email, config, folder=folder, date_filter=_owa_date_filter(since, until), limit=email_mod.MAX_FILTER_SCAN
         )
         matched = [row for row in rows if email_mod._email_matches_query(row, query)]
+        if len(rows) >= email_mod.MAX_FILTER_SCAN and len(matched) < limit:
+            email_mod._note_scan_cap(len(rows))
         return matched[:limit]
     return owa_rest.search_messages(client, account_email, config, query=query, folder=folder, limit=limit)
 

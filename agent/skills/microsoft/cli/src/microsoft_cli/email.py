@@ -4,6 +4,7 @@ import base64
 import dataclasses
 import html
 import pathlib as pl
+import sys
 from datetime import UTC, datetime
 from typing import Any
 
@@ -78,6 +79,14 @@ def _email_matches_query(email: dict[str, Any], query: str) -> bool:
     return needle in haystack
 
 
+def _note_scan_cap(scanned: int) -> None:
+    """Say on stderr that the scan stopped at MAX_FILTER_SCAN, so the date window was not fully read."""
+    print(
+        f"NOTE: stopped after scanning {scanned} messages (MAX_FILTER_SCAN); the date window was not fully read. Narrow --since/--until.",
+        file=sys.stderr,
+    )
+
+
 def _filter_mailbox_messages(
     config: Config,
     client: httpx.Client,
@@ -112,6 +121,8 @@ def _filter_mailbox_messages(
         results.append(email)
         if len(results) >= limit or scanned >= MAX_FILTER_SCAN:
             break
+    if scanned >= MAX_FILTER_SCAN and len(results) < limit:
+        _note_scan_cap(scanned)
     return results
 
 
