@@ -238,6 +238,27 @@ func TestRecordDeviceLoggedOutPersistsAndNotifies(t *testing.T) {
 	}
 }
 
+// TestClientOutdatedSurfacesUpdateDepsOnStatus: a 405 leaves the daemon up but disconnected,
+// with the device still linked, so status must point at the dependency bump rather than
+// reading as a lost link that invites a re-pair.
+func TestClientOutdatedSurfacesUpdateDepsOnStatus(t *testing.T) {
+	dir := t.TempDir()
+	wac := &WhatsAppClient{state: newStateStore(dir), logger: waLog.Noop}
+
+	wac.eventHandler(&events.ClientOutdated{})
+
+	got := simpleStatus(map[string]any{"logged_in": false}, dir)
+	if got["linked"] != true || got["connected"] != false {
+		t.Fatalf("an outdated client keeps its link: %#v", got)
+	}
+	if got["next"] != "whatsapp update-deps, then whatsapp daemon restart" {
+		t.Errorf("next = %v, want the update-deps hint", got["next"])
+	}
+	if reason, _ := got["reason"].(string); !strings.Contains(reason, "405") {
+		t.Errorf("reason = %v, want the recorded 405 rejection", got["reason"])
+	}
+}
+
 func TestLoggedOutReason(t *testing.T) {
 	onConnect := loggedOutReason(&events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureLoggedOut})
 	if onConnect == "" {

@@ -56,6 +56,12 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 	case *events.StreamError:
 		wac.logger.Errorf("WhatsApp stream error: code=%s", v.Code)
 		go wac.recoverOrRestart("stream_error:" + v.Code)
+	case *events.ClientOutdated:
+		// The server refused this client version (405) and whatsmeow stops reconnecting.
+		// The device stays linked, so record the reason for status; only a dependency
+		// bump reconnects it, never a restart or a re-pair.
+		wac.logger.Errorf("WhatsApp rejected this client version (405); run `whatsapp update-deps`, then `whatsapp daemon restart`")
+		wac.recordExit(exitClientOutdated, "WhatsApp rejected this client version (405 client outdated); the pinned whatsmeow is behind the protocol")
 	case *events.Disconnected:
 		wac.applyConnAction(classifyConnEvent(v), "")
 	case *events.StreamReplaced:
@@ -126,6 +132,10 @@ func loggedOutReason(evt *events.LoggedOut) string {
 	}
 	return "unlinked from the phone (stream:error logout)"
 }
+
+// exitClientOutdated is the exit status of a 405 rejection; status maps it to the
+// dependency bump that clears it.
+const exitClientOutdated = "client_outdated"
 
 // recordExit persists why the device session ended, so status can surface it after
 // the daemon has gone quiescent.

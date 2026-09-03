@@ -102,8 +102,9 @@ instances at the same account/device store.
 ## Operational notes
 
 - For five minutes after a successful link, history sync locks daemon
-  stop/restart. A brief websocket EOF or `can't send presence without PushName
-  set` is normal in this window; do not bounce the daemon.
+  stop/restart. A brief websocket EOF is normal in this window; do not bounce the
+  daemon. Past the window, `can't send presence without PushName set` means no
+  push name is set and the account never appears online; run `whatsapp profile name`.
 - Use a dedicated account for the assistant. Linking a personal account grants it
   access to that account's chats.
 
