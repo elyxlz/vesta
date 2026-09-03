@@ -23,10 +23,20 @@ LABEL org.opencontainers.image.title="Vesta" \
 # without them every `browser launch` exits 255 before BiDi. The t64 names are trixie's time_t
 # rename; gdk-pixbuf comes in via GTK3.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git gh ca-certificates tzdata gnupg screen tmux \
+    curl git ca-certificates tzdata gnupg screen tmux \
     libgtk-3-0t64 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2t64 && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# gh from GitHub's own apt repository, not Debian's: trixie ships 2.46, whose `pr edit` queries a
+# sunset GraphQL field, prints the error, and exits 0 without applying the edit. GitHub's package
+# tracks the current release, so the upstream skill's documented commands keep working.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y --no-install-recommends gh && \
     rm -rf /var/lib/apt/lists/*
 
 # ── browser handover: stream a headed Camoufox to the user so they sign in by hand ──
