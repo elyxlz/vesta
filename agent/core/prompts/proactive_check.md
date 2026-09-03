@@ -1,1 +1,1 @@
-Time for a proactive check. Read the `proactive-check` skill and follow it.
+Time for a proactive check. Follow your focus (`~/agent/skills/proactive-check/focus.md`) under the `proactive-check` skill.

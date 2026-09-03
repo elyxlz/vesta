@@ -475,11 +475,44 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
 # --- Proactive & dreamer ---
 
 
-def check_proactive_task(*, config: cfg.VestaConfig) -> None:
-    prompt = load_prompt("proactive_check", config)
-    if not prompt:
+def _skill_file_mtime(skill: str, name: str, *, config: cfg.VestaConfig) -> dt.datetime | None:
+    path = config.skills_dir / skill / name
+    if not path.exists():
+        return None
+    return dt.datetime.fromtimestamp(path.stat().st_mtime)
+
+
+def _changed_since(mtime: dt.datetime | None, since: dt.datetime | None) -> bool:
+    return mtime is not None and (since is None or mtime > since)
+
+
+def _read_nudge(skill: str, name: str) -> str:
+    return f"Read `~/agent/skills/{skill}/{name}`, it has changed since last time."
+
+
+def proactive_check_prompt(base: str, *, focus_mtime: dt.datetime | None, skill_mtime: dt.datetime | None, since: dt.datetime | None) -> str:
+    """The check's prompt: the base plus a read nudge per skill file edited after the previous check
+    (`since`). The first check after boot has no `since` and nudges focus.md alone; core only ever
+    reads mtimes, never the files."""
+    nudges: list[str] = []
+    if _changed_since(focus_mtime, since):
+        nudges.append(_read_nudge("proactive-check", "focus.md"))
+    if since is not None and _changed_since(skill_mtime, since):
+        nudges.append(_read_nudge("proactive-check", "SKILL.md"))
+    return " ".join([base.rstrip(), *nudges])
+
+
+def check_proactive_task(*, config: cfg.VestaConfig, since: dt.datetime | None) -> None:
+    base = load_prompt("proactive_check", config)
+    if not base:
         return
     logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
+    prompt = proactive_check_prompt(
+        base,
+        focus_mtime=_skill_file_mtime("proactive-check", "focus.md", config=config),
+        skill_mtime=_skill_file_mtime("proactive-check", "SKILL.md", config=config),
+        since=since,
+    )
     drop_core_notification(type_=TYPE_PROACTIVE_CHECK, body=prompt, config=config)
 
 
@@ -523,7 +556,9 @@ def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
     if now < night_start + _dream_delay(night_start.date(), config=config):
         return
     logger.dreamer("Nightly dreamer starting...")
-    prompt = load_prompt("nightly_dream", config) or ""
+    prompt = (load_prompt("nightly_dream", config) or "").rstrip()
+    if _changed_since(_skill_file_mtime("dream", "SKILL.md", config=config), last):
+        prompt = f"{prompt} {_read_nudge('dream', 'SKILL.md')}"
     name = f"{TYPE_NIGHTLY_DREAM}-{night_start.date().isoformat()}"
     drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config, name=name)
     logger.dreamer("Dreamer notification dropped")
@@ -617,7 +652,9 @@ async def _scan_notifications(
 
 
 async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: cfg.VestaConfig) -> None:
-    last_proactive = _now()
+    boot_at = _now()
+    # None until the first check after boot: that check re-reads its focus whatever the file's mtime.
+    last_proactive: dt.datetime | None = None
     # Log a busy-deferral once per due window, not every 2s tick while the agent stays busy.
     proactive_defer_logged = False
     # Init one hour back so the first dreamer check runs on the first tick after boot.
@@ -643,15 +680,16 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
 
             now = _now()
 
-            if config.proactive_check_interval and (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
+            proactive_due_from = boot_at if last_proactive is None else last_proactive
+            if config.proactive_check_interval and (now - proactive_due_from).total_seconds() >= config.proactive_check_interval * 60:
                 if state.processor_busy or not queue.empty():
                     if not proactive_defer_logged:
                         logger.debug("Proactive check deferred: agent busy, will run when idle")
                         proactive_defer_logged = True
                 else:
+                    check_proactive_task(config=config, since=last_proactive)
                     last_proactive = now
                     proactive_defer_logged = False
-                    check_proactive_task(config=config)
 
             if (now - last_dreamer_check).total_seconds() >= 3600:
                 process_nightly_memory(state=state, config=config)
