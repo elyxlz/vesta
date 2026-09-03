@@ -28,6 +28,10 @@ def test_bubble_lint_passes():
         "hmm... ok",
         "it's in main.py",
         "check example.com later",
+        # A bare multi-part domain is one token: an interior "co." must not read as a full
+        # stop, and a hyphenated multi-part host stays protected too.
+        "order off UGG.co.uk today, they do next-day",
+        "the site is sub-domain.example.co.uk honestly",
         # A multiline list is one send, each item a short thought: the line-leading
         # marker ("1.", "2)") must not read as a full stop.
         "1. eggs\n2. milk",
@@ -72,6 +76,8 @@ def test_text_after_full_stop():
         ("first. second.", True),
         ("first. second. third.", True),
         ("meet at 8.30 sharp", False),
+        ("order off ugg.co.uk today", False),
+        ("go to example.com. then leave", True),  # domain then a real second thought still trips
         ("the U.K. office opens at 9", False),
         ("check https://a.com/x.y now", False),
         ("e.g. this should not count", False),
