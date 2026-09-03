@@ -1,3 +1,3 @@
-Time to dream. `Read` `~/agent/skills/dream/SKILL.md` from disk and follow it: a skill remembered from earlier context or a compaction summary is a paraphrase, and a paraphrase invents specifics (a cap, a path, a flag) the file never stated.
+Time to dream. Follow the `dream` skill.
 
 **When the dream is fully complete, call `mark_dreamer_complete` only after the retrospective ran and every fix was either validated or explicitly logged unresolved. Do not mark complete just because the summary is written or MEMORY.md was updated.** That call records today's run so the dreamer does not fire again on the next hourly check. Compacting this conversation and restarting into it is the separate final step the `dream` skill spells out: `compact_context` with `restart` true, which resumes the compacted session so you keep continuous (not blank) context.
