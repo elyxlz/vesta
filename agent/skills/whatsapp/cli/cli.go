@@ -1361,12 +1361,16 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
 	wac.state.recordAccountSource(sourceSelfManaged)
-	wac.markPhonePairingPending(time.Now())
+	now := time.Now()
+	wac.markPhonePairingPending(now)
+	attempts := wac.state.snapshot().PairAttempts
+	day := len(attemptsWithin(attempts, now, PairDayWindow))
+	week := len(attemptsWithin(attempts, now, PairWeekWindow))
 	return map[string]any{
 		"pairing_code": code,
 		"phone":        phone,
 		"confirm":      fmt.Sprintf("Code generated for %s. CONFIRM this is exactly the number being linked: a typo'd number produces a code that silently never matches.", phone),
-		"instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number",
+		"instructions": fmt.Sprintf("Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number. This is pairing attempt %d of %d in 24h (%d of %d in 7d); each code spends one whether or not it is entered, so wait for the user to enter this one rather than regenerating.", day, MaxPairPerDay, week, MaxPairPer7d),
 	}, nil
 }
 
