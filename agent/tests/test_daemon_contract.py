@@ -246,6 +246,12 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "upstream/cli"), "upstream"],
+        name="upstream",
+        serves_port=False,
+        emits_daemon_died=True,
+    ),
+    Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "microsoft/cli"), "microsoft"],
         name="microsoft",
         serves_port=False,
