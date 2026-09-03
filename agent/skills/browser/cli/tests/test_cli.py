@@ -200,6 +200,30 @@ def test_cmd_wait_requires_a_condition(monkeypatch, capsys):
     assert "wait needs one of" in err
 
 
+def test_cmd_wait_fails_when_the_condition_never_matches(monkeypatch, capsys):
+    """A wait that gives up is a failed wait: a zero exit with `matched: false` on stdout
+    reads exactly like a slow page, so only the exit code and stderr can say otherwise."""
+    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
+    monkeypatch.setattr(cli.helpers, "wait_for_text", lambda *a, **kw: False)
+    args = argparse.Namespace(text="Ready", url=None, load_state=None, time=None, timeout=1.0)
+    rc = cli.cmd_wait(args)
+    assert rc == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err.strip() == '{"matched": false}'
+
+
+def test_cmd_wait_reports_a_match_on_stdout(monkeypatch, capsys):
+    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
+    monkeypatch.setattr(cli.helpers, "wait_for_text", lambda *a, **kw: True)
+    args = argparse.Namespace(text="Ready", url=None, load_state=None, time=None, timeout=1.0)
+    rc = cli.cmd_wait(args)
+    assert rc == 0
+    out, err = capsys.readouterr()
+    assert out.strip() == '{"matched": true}'
+    assert err == ""
+
+
 def test_cmd_click_requires_ref_or_at(monkeypatch, capsys):
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
     args = argparse.Namespace(at=None, ref=None, double=False, right=False)
