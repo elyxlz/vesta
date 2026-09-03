@@ -4,6 +4,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -526,6 +527,51 @@ def _refuse_bad_title(title):
         print(f"Warning: {warning}", file=sys.stderr)
 
 
+IDENTITY_SENTINEL = "[Unknown]"
+IDENTITY_WORD = re.compile(r"[^\W\d_]+")
+MIN_IDENTITY_WORD_LEN = 4
+
+
+def identity_words(home: Path) -> dict[str, str]:
+    """Every word that names the owner, mapped to the kind of source it came from: the
+    `- **Name**:` line of MEMORY.md section 4 and the stem of each `~/.contacts/*.md`. A word
+    shorter than four letters is skipped, since a two- or three-letter name is also a common
+    word and refusing every body that carries it would block ordinary prose."""
+    names: list[tuple[str, str]] = []
+    memory = home / "agent/MEMORY.md"
+    for line in memory.read_text().splitlines() if memory.is_file() else []:
+        if line.startswith("- **Name**:"):
+            name = line.removeprefix("- **Name**:").split("(", maxsplit=1)[0].strip()
+            names.append(("the user's name", "" if name == IDENTITY_SENTINEL else name))
+    names.extend(("a contact's name", path.stem) for path in (home / ".contacts").glob("*.md"))
+    return {word: kind for kind, name in names for word in IDENTITY_WORD.findall(name.lower()) if len(word) >= MIN_IDENTITY_WORD_LEN}
+
+
+def refuse_identifying(body: str) -> str | None:
+    """The kind of identity word the body carries as a whole word in any case, or None for a
+    clean body. Never the word itself: the answer is printed, and the transcript it lands in is
+    one more place the owner's name must not appear."""
+    words = identity_words(Path.home())
+    for word in IDENTITY_WORD.findall(body.lower()):
+        if word in words:
+            return words[word]
+    return None
+
+
+def _refuse_identifying_body(body):
+    kind = refuse_identifying(body)
+    if kind is not None:
+        print(f"Error: body names the owner ({kind}); describe the pattern, not the person.", file=sys.stderr)
+        sys.exit(1)
+
+
+def comment_body(rest) -> str:
+    """The `--body` text of a comment call, in every spelling gh accepts for the flag."""
+    parts = [rest[i + 1] for i, arg in enumerate(rest[:-1]) if arg in ("--body", "-b")]
+    parts += [arg.removeprefix("--body=") for arg in rest if arg.startswith("--body=")]
+    return "\n".join(parts)
+
+
 def pr_create(rest):
     args = _parse_intercepted(
         {
@@ -542,12 +588,14 @@ def pr_create(rest):
         CREATE_UNSUPPORTED_HELP,
     )
     _refuse_bad_title(args.title)
+    _refuse_identifying_body(args.body)
     submit_pr(args)
 
 
 def issue_create(rest):
     args = _parse_intercepted({"--title": {"required": True}, "--body": {"default": ""}}, rest, CREATE_UNSUPPORTED_HELP)
     _refuse_bad_title(args.title)
+    _refuse_identifying_body(args.body)
     agent_name, vesta_version = resolve_agent_identity()
     token = get_installation_token()
     body = body_with_attribution(args.body, agent_name, vesta_version)
@@ -609,6 +657,8 @@ def main():
     elif args[:2] == ["pr", "list"] and "--mine" in args:
         pr_list_mine(args[2:])
     else:
+        if args[:2] in (["pr", "comment"], ["issue", "comment"]):
+            _refuse_identifying_body(comment_body(args[2:]))
         completed = _run_gh(get_installation_token(), args, capture=False)
         sys.exit(completed.returncode)
 
