@@ -2,6 +2,7 @@
 
 import functools
 import pathlib as pl
+import time
 import typing as tp
 
 import pytest
@@ -54,6 +55,16 @@ def test_whisper_tag_only_output_is_silence(tmp_path: pl.Path, monkeypatch: pyte
 def test_whisper_real_output_is_kept(tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch, text: str) -> None:
     _fake_whisper(tmp_path, monkeypatch, stdout=text)
     assert transcribe._whisper_transcript(tmp_path / "note.ogg", None) == text
+
+
+def test_silence_check_stays_linear_on_a_long_tag_run() -> None:
+    text = "[Z] " * 20000 + "still speech"
+
+    started = time.perf_counter()
+    silence = transcribe._is_silence(text)
+
+    assert not silence
+    assert time.perf_counter() - started < 1.0
 
 
 class _FakeStt:

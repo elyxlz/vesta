@@ -20,8 +20,12 @@ from . import providers
 WHISPER_SCRIPT = pl.Path(__file__).resolve().parents[4] / "whisper" / "scripts" / "whisper_transcribe.sh"
 
 # whisper.cpp prints a bracketed tag ("[BLANK_AUDIO]", "[Musica]") instead of text for a
-# near-silent clip; output made only of such tags is silence, not a transcript.
-_TAG_ONLY = re.compile(r"^(\s*\[[^\[\]]+\]\s*)+$")
+# near-silent clip; output that is nothing but such tags is silence, not a transcript.
+_TAG = re.compile(r"\[[^\[\]]+\]")
+
+
+def _is_silence(text: str) -> bool:
+    return not _TAG.sub("", text).strip()
 
 
 async def _provider_transcript(path: pl.Path, language: str | None) -> str:
@@ -53,7 +57,7 @@ def _whisper_transcript(path: pl.Path, language: str | None) -> str:
         detail = " ".join(result.stderr.split()) or f"exited {result.returncode}"
         raise RuntimeError(detail)
     text = result.stdout.strip()
-    return "" if _TAG_ONLY.match(text) else text
+    return "" if _is_silence(text) else text
 
 
 def main(argv: list[str] | None = None) -> int:
