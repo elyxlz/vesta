@@ -42,25 +42,30 @@ usage=$(df -P "$HOME" | awk 'NR==2 {gsub("%","",$5); print $5}')
 du_lines=$(timeout "$DU_TIMEOUT_SECS" du -sm "$HOME" /tmp 2>/dev/null)
 du_status=$?
 mine=$(printf '%s\n' "$du_lines" | awk '{t+=$1} END {print t+0}')
-if [ "$du_status" -eq 124 ]; then
-    bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: the tree is enormous or a filesystem is stuck; investigate tonight"
+if [ "$du_status" -eq 124 ]; then share="unmeasured"; else share="${mine}MB"; fi
+# A du walk a busy host starves says nothing about the disk; df decides whether the share matters.
+if [ "$du_status" -eq 124 ] && [ "${usage:-0}" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; then
+    bad "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s with the disk at ${usage}%: this agent's share is unmeasured while it matters; investigate tonight"
+elif [ "$du_status" -eq 124 ]; then
+    ok "sizing \$HOME and /tmp took over ${DU_TIMEOUT_SECS}s: footprint unmeasured, disk at ${usage:-unknown}%"
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ] && [ "${usage:-0}" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; then
     bad "disk at ${usage}% and this agent holds ${mine}MB of it: clean up tonight (workspace cleanup)"
 elif [ "${mine:-0}" -ge "$OWN_USAGE_RED_MB" ]; then
     ok "this agent holds ${mine}MB, but the disk is only at ${usage:-unknown}%: size without pressure, nothing to clear"
 fi
 if [ "${usage:-0}" -ge "$HOST_DISK_RED_PERCENT" ]; then
-    bad "host disk at ${usage}%, ${mine}MB of it this agent's: cleanup here cannot fix it, tell the user tonight; writes will start failing across the box"
+    bad "host disk at ${usage}%, $share of it this agent's: cleanup here cannot fix it, tell the user tonight; writes will start failing across the box"
 elif [ "${usage:-0}" -ge "$HOST_DISK_PRESSURE_PERCENT" ]; then
-    ok "host disk at ${usage}%, ${mine}MB of it this agent's; the rest is the host, not yours to clear"
+    ok "host disk at ${usage}%, $share of it this agent's; the rest is the host, not yours to clear"
 else
-    ok "host disk at ${usage:-unknown}%, ${mine}MB of it this agent's"
+    ok "host disk at ${usage:-unknown}%, $share of it this agent's"
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.
 # Only lines dated today or yesterday count (an undated line takes the date of the line above it),
 # a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
-# the file's colour codes are stripped first so a dated line is seen as dated.
+# the file's colour codes are stripped first so a dated line is seen as dated. vesta.log interleaves
+# daemon output with the agent's own [AGENT] narration, which is prose, not a component's failure.
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
@@ -71,7 +76,7 @@ for log in "$HOME"/agent/logs/*.log; do
         BEGIN { recent = 1 }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
-        recent && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
+        recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
         | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
