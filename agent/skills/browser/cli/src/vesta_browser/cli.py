@@ -349,7 +349,10 @@ def cmd_wait(args: argparse.Namespace) -> int:
     else:
         print("wait needs one of: --text, --url, --load-state, --time", file=sys.stderr)
         return 2
-    print(json.dumps({"matched": ok}))
+    if not ok:
+        print(json.dumps({"matched": False}), file=sys.stderr)
+        return 1
+    print(json.dumps({"matched": True}))
     return 0
 
 

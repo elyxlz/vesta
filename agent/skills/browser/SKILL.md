@@ -274,6 +274,9 @@ Occasional topics live in their own files so this one stays lean:
   because the page after such a click looks exactly like success while every control kept its
   default. Dismiss the overlay, take a fresh snapshot, click again, and verify the control changed
   (read the checked input) before trusting a value the page renders.
+- **A wait that times out is usually a wrong sentinel, not a slow page.** Top-level `let`/`const`
+  declarations are not `window` properties, so polling `window.<name>` never matches. Wait on rendered
+  state instead (`wait_for_text`, a node count), and check the wait's exit code: no match exits 1.
 - **A block on one route does not characterise the host.** A WAF can answer per route: on one site a
   `GET` of an HTML page returned 200 with a JS challenge page (`<title>Waiting</title>`) while a
   `POST` to its internal JSON API returned 403 with a block page. So "curl gets 403 here" and "curl
