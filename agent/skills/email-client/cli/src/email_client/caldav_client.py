@@ -166,12 +166,11 @@ def request(
     depth: str | None = None,
     content_type: str = "application/xml; charset=utf-8",
     extra_headers: dict[str, str] | None = None,
-    allow_missing: bool = False,
+    tolerate: tuple[int, ...] = (),
 ) -> tuple[int, str, str]:
     """Issue one CalDAV request, following redirects, and return (status, body, final_url).
 
-    Exits with an actionable message on failure; a 404 is returned (not fatal)
-    when ``allow_missing`` is set so callers can fall back to a UID search.
+    Status codes in ``tolerate`` are returned instead of exiting.
     """
     auth_header = _auth_header(ctx)
     current = url
@@ -194,8 +193,8 @@ def request(
                 current = urllib.parse.urljoin(current, e.headers["Location"])
                 continue
             detail = e.read().decode("utf-8", errors="replace")[:500]
-            if e.code == 404 and allow_missing:
-                return 404, detail, current
+            if e.code in tolerate:
+                return e.code, detail, current
             if e.code in (401, 403):
                 sys.exit(f"CalDAV refused the request (HTTP {e.code}). {_refused_hint(ctx)} (details: {detail[:300]})")
             if e.code == 412:
@@ -374,12 +373,13 @@ def find_event(ctx: CalDavAccount, calendar_id: str, uid: str) -> tuple[str, str
     """
     collection = collection_url(ctx, calendar_id)
     body = UID_QUERY.format(uid=xml_escape(uid))
-    _, text, final = request(ctx, "REPORT", collection, body=body, depth="1")
-    for record in parse_multistatus(text):
-        if record.calendar_data and record.href:
-            return urllib.parse.urljoin(final, record.href), record.calendar_data, record.etag
+    status, text, final = request(ctx, "REPORT", collection, body=body, depth="1", tolerate=(412,))
+    if status != 412:
+        for record in parse_multistatus(text):
+            if record.calendar_data and record.href:
+                return urllib.parse.urljoin(final, record.href), record.calendar_data, record.etag
     direct = collection + urllib.parse.quote(uid, safe="") + ".ics"
-    status, text, final = request(ctx, "GET", direct, allow_missing=True)
+    status, text, final = request(ctx, "GET", direct, tolerate=(404,))
     if status == 200:
         return final, text, None
     sys.exit(f"event {uid!r} not found in calendar {calendar_id!r}")
