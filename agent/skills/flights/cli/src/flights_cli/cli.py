@@ -33,10 +33,7 @@ def _fmt_duration(minutes: int) -> str:
     return f"{h}h{m:02d}m"
 
 
-# The Google-backed search prices in a currency chosen by IP/locale, so a request that sends none
-# comes back as a bare number whose unit depends on where the box sits. Holding the query fixed and
-# varying only this parameter: curr=None -> 114.0, GBP -> 114.0, USD -> 155.0, EUR -> 133.0
-# (FCO-LHR, 5 Sep 2026). Send an explicit currency and report it alongside every price.
+# Google Flights prices in the currency the IP/locale implies unless one is sent, so every search pins one.
 DEFAULT_CURRENCY = "USD"
 
 
@@ -181,8 +178,7 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
             duration=query.duration if query.round_trip else None,
         )
 
-        currency = query.currency
-        results = SearchDates().search(filters, currency=currency)
+        results = SearchDates().search(filters, currency=query.currency)
         if not results:
             return []
 
@@ -193,7 +189,7 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
             if len(r.date) == 2:
                 entry = {
                     "price": round(r.price, 2),
-                    "currency": currency,
+                    "currency": r.currency or query.currency,
                     "depart": r.date[0].strftime("%Y-%m-%d"),
                     "depart_day": r.date[0].strftime("%A"),
                     "return": r.date[1].strftime("%Y-%m-%d"),
@@ -202,7 +198,7 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
             else:
                 entry = {
                     "price": round(r.price, 2),
-                    "currency": currency,
+                    "currency": r.currency or query.currency,
                     "depart": r.date[0].strftime("%Y-%m-%d"),
                     "depart_day": r.date[0].strftime("%A"),
                 }

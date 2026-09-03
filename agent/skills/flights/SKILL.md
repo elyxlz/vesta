@@ -196,12 +196,8 @@ To configure your home airports for the `cheapest` command, edit `LONDON_AIRPORT
 ## Gotchas
 
 - **Google Flights destination must be single IATA code.** Multi-origin works, multi-destination does NOT
-- **A price is only meaningful with its currency.** Every result carries `price` plus the `currency`
-  it is quoted in; read both together and quote both onward.
-- **Google Flights prices in whatever currency the IP/locale implies**, so pin it with `--currency`
-  on `search`, `dates` and `cheapest` (default `USD`). The same query returns a different number per
-  currency, and an unpinned request quietly answers in the box's local one. Trip.com and Duffel
-  prices likewise depend on currency/locale/IP.
+- **Google Flights prices in the currency the IP/locale implies**, so pin it with `--currency` on `search`, `dates` and `cheapest` (default `USD`); every result carries `price` plus the `currency` it is quoted in, so quote both onward. Trip.com and Duffel prices likewise depend on currency/locale/IP.
+- Results carry no `price_usd` field: a script or note that reads `price_usd` reads `price` and `currency` instead.
 
 ## Saved Profiles
 
