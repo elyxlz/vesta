@@ -19,6 +19,12 @@ BUBBLE_MAX_CHARS = 220  # a genuinely long single bubble
 _URL_RE = re.compile(r"https?://\S+")  # urls
 _DECIMAL_RE = re.compile(r"\b\d+[.,]\d+\b")  # decimals: 8.6, 86,5
 _INITIALISM_RE = re.compile(r"\b(?:[A-Za-z]\.){2,}")  # initialisms: W.A.S.T.E., U.K.
+# Bare, schemeless hostnames: UGG.co.uk, example.com, sub-domain.example.co.uk. A dot-connected
+# run with no interior whitespace is one token, never a full stop. Must run BEFORE _ABBR_RE, or an
+# interior segment on the abbreviation allowlist ("co.", "st.") gets blanked mid-host and forges a
+# false gap ("UGG.co.uk" -> "UGG. uk", which then trips). It matches no trailing dot, so a real stop
+# after a host ("go to example.com. then leave") is preserved and still caught.
+_HOST_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+)+\b")
 # Abbreviations, an allowlist, so an unlisted one reads as a full stop. Every entry is a word
 # that is always followed by more, never one that can end a thought: protecting "etc." or "min."
 # would blank the stop in "eggs, milk, etc. also bread" and let the wall through. Dotted forms
@@ -40,7 +46,7 @@ _SPACE = " \t\r\n\v\f"
 
 def _strip_protected(text: str) -> str:
     """Blank out spans whose '.', '?' or '!' are not sentence boundaries."""
-    for rx in (_LIST_MARKER_RE, _URL_RE, _DECIMAL_RE, _INITIALISM_RE, _ABBR_RE, _ELLIPSIS_RE):
+    for rx in (_LIST_MARKER_RE, _URL_RE, _DECIMAL_RE, _INITIALISM_RE, _HOST_RE, _ABBR_RE, _ELLIPSIS_RE):
         text = rx.sub(" ", text)
     return text
 

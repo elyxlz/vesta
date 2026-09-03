@@ -28,6 +28,8 @@ func TestBubbleLintPasses(t *testing.T) {
 		"hmm... ok",                                     // ellipsis is a beat, not a full stop
 		"it's in main.py",                               // no whitespace gap, so not a full stop
 		"check example.com later",                       // no whitespace gap, so not a full stop
+		"order off UGG.co.uk today, they do next-day",   // bare multi-part domain: an interior "co." must not read as a full stop
+		"the site is sub-domain.example.co.uk honestly", // hyphenated multi-part host protected too
 		"1. eggs\n2. milk",                              // multiline numbered list: line-leading markers are not full stops
 		"1. eggs\n2) milk",                              // "2)" marker style is also exempt
 		"here are steps:\n1. open\n2. run",              // list under a lead-in line
@@ -84,6 +86,8 @@ func TestTextAfterFullStop(t *testing.T) {
 		{"first. second.", true},
 		{"first. second. third.", true},
 		{"meet at 8.30 sharp", false},
+		{"order off ugg.co.uk today", false},
+		{"go to example.com. then leave", true}, // domain then a real second thought still trips
 		{"the U.K. office opens at 9", false},
 		{"check https://a.com/x.y now", false},
 		{"e.g. this should not count", false},
