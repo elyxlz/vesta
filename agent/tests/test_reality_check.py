@@ -98,6 +98,41 @@ def test_error_storm_in_a_recent_log_goes_red(tmp_path):
     assert "RED stormy.log" in run.stdout
 
 
+def test_error_storm_survives_nul_bytes_in_the_log(tmp_path):
+    # An unclean write leaves NUL bytes in a log, which grep reads as binary; the storm still counts.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "truncated.log").write_bytes(b"INFO fine\n" * 10 + b"\x00" * 200 + b"\nERROR boom\n" * 300)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED truncated.log" in run.stdout
+
+
+def test_agent_narration_does_not_count_as_an_error_storm(tmp_path):
+    # vesta.log interleaves daemon output with the agent's own narration, so a day spent reading
+    # about ERROR correction must not be indistinguishable from a component failing all night.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "vesta.log").write_text("[AGENT] reading about Reed-Solomon ERROR correction\n" * 260)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  vesta.log: 0 error lines in the last 2 days" in run.stdout
+
+
+def test_an_untagged_daemon_log_still_storms(tmp_path):
+    # The exclusion subtracts [AGENT]; it must not become a whitelist for [SYSTEM], or the five
+    # daemon logs that carry neither tag would score zero forever and never RED again.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "whatsapp.log").write_text("ERROR send failed\n" * 260)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED whatsapp.log" in run.stdout
+
+
 def test_quiet_recent_log_stays_green(tmp_path):
     home = _healthy_home(tmp_path)
     (home / "agent" / "logs" / "calm.log").write_text("INFO fine\n" * 300)
@@ -285,18 +320,37 @@ def test_a_full_host_disk_reports_even_when_this_agent_is_also_over(tmp_path):
     assert "RED host disk at 99%" in run.stdout
 
 
-def test_a_du_walk_that_never_finishes_goes_red(tmp_path):
+def _fake_du_timeout(home: pl.Path) -> None:
     # The walk is bounded by `timeout`, so a pathological tree or a stuck filesystem cannot hang
     # the dream; the shim stands in for the bound firing (exit 124) without waiting it out.
-    home = _healthy_home(tmp_path)
     fake_timeout = home / "bin" / "timeout"
     fake_timeout.write_text("#!/bin/sh\nexit 124\n")
     fake_timeout.chmod(0o755)
+
+
+def test_a_du_walk_that_never_finishes_on_a_healthy_disk_stays_green(tmp_path):
+    # df is the disk-full signal; du only sizes this agent's share, and a slow walk over a large
+    # tree on a busy host says nothing about disk health. The share is reported as unmeasured, not 0.
+    home = _healthy_home(tmp_path)
+    _fake_du_timeout(home)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "footprint unmeasured, disk at 42%" in run.stdout
+    assert "0MB" not in run.stdout
+
+
+def test_a_du_walk_that_never_finishes_on_a_full_disk_goes_red(tmp_path):
+    home = _healthy_home(tmp_path)
+    _fake_disk_usage(home, 90)
+    _fake_du_timeout(home)
 
     run = _run(home)
 
     assert run.returncode == 1, run.stdout + run.stderr
     assert "RED sizing" in run.stdout
+    assert "0MB" not in run.stdout
 
 
 def test_wal_only_writes_keep_events_db_green(tmp_path):
