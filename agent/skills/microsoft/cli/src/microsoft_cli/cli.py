@@ -600,8 +600,31 @@ _COMPACT_FORMATTERS = {
 }
 
 
+_SEARCH_GAP_NOTE = (
+    "NOTE: search does not cover Junk Email or Deleted Items, so an empty result is not proof the message never arrived."
+    " Check those folders with `email list --folder junk` / `--folder deleted`."
+)
+
+
+def _warn_result_gaps(args, result) -> None:
+    """Print one stderr NOTE when a list result can hide mail: it fills --limit exactly,
+    or an unfoldered search came back empty (Graph $search skips Junk and Deleted)."""
+    if not isinstance(result, list):
+        return
+    attrs = vars(args)
+    if "limit" in attrs and len(result) == attrs["limit"]:
+        print(f"NOTE: exactly --limit ({attrs['limit']}) items returned; more may exist. Raise --limit to see them.", file=sys.stderr)
+    if result or attrs["group"] != "email":
+        return
+    unfoldered_search = attrs["command"] == "search" and attrs["folder"] is None
+    unfoldered_list_query = attrs["command"] == "list" and attrs["search"] is not None and attrs["folder"] == "inbox"
+    if unfoldered_search or unfoldered_list_query:
+        print(_SEARCH_GAP_NOTE, file=sys.stderr)
+
+
 def _print_result(args, result) -> None:
     """Route a command result to the compact formatter or a JSON variant."""
+    _warn_result_gaps(args, result)
     attrs = vars(args)
     want_json = "json" in attrs and attrs["json"]
     want_pretty = "json_pretty" in attrs and attrs["json_pretty"]
