@@ -1,22 +1,17 @@
 import { createContext, useContext } from "react";
-import type { BackupInfo } from "@/api";
-import type { AgentRequest } from "@/stores/use-agent-ops";
-import type { AgentActivityState } from "@vesta/core";
-import type { AgentRow } from "@/lib/types";
-import type { OrbVisualState } from "@vesta/core";
+import type {
+  AgentRequest,
+  OrbVisualState,
+  AgentRow,
+  BackupInfo,
+} from "@vesta/core";
 
-// Context + hook live here, separate from the SelectedAgentProvider component, so
-// the SelectedAgentContext identity is stable across Fast Refresh. Co-locating them
-// with the component made every edit re-create the context, detaching mounted
-// consumers ("useSelectedAgent must be used within SelectedAgentProvider" on hot
-// reload).
 export interface SelectedAgentContextValue {
   name: string;
   agent: AgentRow;
-  agentState: AgentActivityState;
-  setAgentState: (state: AgentActivityState) => void;
 
-  operation: AgentRequest;
+  // This client's own in-flight request for the agent, and its last failure.
+  request: AgentRequest;
   error: string;
   statusLabel: string;
   orbState: OrbVisualState;
@@ -27,9 +22,11 @@ export interface SelectedAgentContextValue {
   restart: () => Promise<void>;
   backup: () => void;
   backups: BackupInfo[];
+  // The last read failed. An empty list alone cannot say whether the agent has no snapshots.
+  backupsFailed: boolean;
   refreshBackups: () => Promise<void>;
   restore: (backupId: string) => void;
-  removeBackup: (backupId: string) => void;
+  removeBackup: (backupId: string) => Promise<void>;
   remove: () => Promise<void>;
 }
 

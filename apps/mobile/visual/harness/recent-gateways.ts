@@ -1,5 +1,6 @@
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import type { RecentGateway } from "@/storage/recent-gateway-model";
+import { visualSwitch } from "./launch-query";
 
 export interface RecentGatewayCredential {
   connection: ConnectionConfig;
@@ -27,7 +28,8 @@ const initialGateways: RecentGateway[] = [
   },
 ];
 
-let gateways = [...initialGateways];
+let gateways =
+  visualSwitch("visualRecentGateways") === "none" ? [] : [...initialGateways];
 
 export async function readRecentGateways(): Promise<RecentGateway[]> {
   return [...gateways];

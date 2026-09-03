@@ -7,31 +7,52 @@ or answers an error status (on success it would have killed the container before
 returned as False so the caller can surface it."""
 
 import os
+import typing as tp
 
 import aiohttp
+import pydantic as pyd
 
 from . import lifecycle, logger
 
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
-async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | None = None) -> bool:
-    """POST /agents/{me}/{action} to vestad (action = "restart" | "stop"). Returns True when vestad
-    accepted it — including the connection being cut mid-request, the expected path once vestad
-    starts tearing the container down — and False only when vestad could not be reached at all."""
+class AgentEndpoint(tp.NamedTuple):
+    url: str
+    token: str
+
+
+def _agent_endpoint(path: str) -> AgentEndpoint | None:
+    """The self-scoped vestad URL `/agents/{me}/{path}` plus this agent's token, or None (logged) when
+    the identity env is incomplete."""
     host = os.environ["BOX_HOST"] if "BOX_HOST" in os.environ else ""
     port = os.environ["VESTAD_PORT"] if "VESTAD_PORT" in os.environ else ""
     name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
     token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ else ""
     if not (host and port and name and token):
-        logger.error("cannot reach vestad: missing BOX_HOST/VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
+        logger.error(f"cannot reach vestad for {path}: missing BOX_HOST/VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
+        return None
+    return AgentEndpoint(url=f"https://{host}:{port}/agents/{name}/{path}", token=token)
+
+
+def _agent_session(token: str) -> aiohttp.ClientSession:
+    """One session per call to vestad: its self-signed TLS, the shared timeout, and the agent token
+    header on every request."""
+    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=_TIMEOUT, headers={"X-Agent-Token": token})
+
+
+async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | None = None) -> bool:
+    """POST /agents/{me}/{action} to vestad (action = "restart" | "stop"). Returns True when vestad
+    accepted it — including the connection being cut mid-request, the expected path once vestad
+    starts tearing the container down — and False only when vestad could not be reached at all."""
+    endpoint = _agent_endpoint(action)
+    if endpoint is None:
         return False
-    url = f"https://{host}:{port}/agents/{name}/{action}"
+    url, token = endpoint
     body = None if reason is None else {"reason": reason.log_reason, "agent_message": reason.agent_message}
-    connector = aiohttp.TCPConnector(ssl=False)
     try:
-        async with aiohttp.ClientSession(connector=connector, timeout=_TIMEOUT) as session:
-            resp = await session.post(url, headers={"X-Agent-Token": token}, json=body)
+        async with _agent_session(token) as session:
+            resp = await session.post(url, json=body)
             resp.raise_for_status()
         # vestad answered 2xx without tearing us down yet (rare — a real restart/stop usually cuts
         # the connection first, below). The action was accepted.
@@ -54,30 +75,25 @@ async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | N
         return False
 
 
-async def send_user_notification(kind: str, title: str, body: str) -> None:
-    """POST /agents/{me}/user-notification to vestad, which fans a `user_notification` delta to
-    connected clients and an Expo push to backgrounded mobile. Best-effort: any missing identity,
-    transport failure, non-2xx, or timeout is logged and swallowed, so surfacing a user notification
-    never disrupts the turn that emitted it (the durable work it describes already happened). `kind` is
-    one of "message"/"rate_limited"."""
-    host = os.environ["BOX_HOST"] if "BOX_HOST" in os.environ else ""
-    port = os.environ["VESTAD_PORT"] if "VESTAD_PORT" in os.environ else ""
-    name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
-    token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ else ""
-    if not (host and port and name and token):
-        logger.error("cannot send user notification to vestad: missing BOX_HOST/VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
-        return
-    url = f"https://{host}:{port}/agents/{name}/user-notification"
-    payload = {"kind": kind, "title": title, "body": body}
-    connector = aiohttp.TCPConnector(ssl=False)
+async def fetch_user_devices() -> pyd.JsonValue | None:
+    """GET /agents/{me}/devices: every device the user has, with what each reported about itself (its
+    IANA timezone; on a phone that shares it, its position plus the macro place). None (logged) when
+    vestad cannot answer, so the caller reports that instead of guessing."""
+    endpoint = _agent_endpoint("devices")
+    if endpoint is None:
+        return None
+    url, token = endpoint
     try:
-        async with aiohttp.ClientSession(connector=connector, timeout=_TIMEOUT) as session:
-            resp = await session.post(url, headers={"X-Agent-Token": token}, json=payload)
+        async with _agent_session(token) as session:
+            resp = await session.get(url)
             resp.raise_for_status()
+            body: pyd.JsonValue = await resp.json()
+            return body
     except aiohttp.ClientError as exc:
-        logger.warning(f"user notification to vestad failed ({kind}): {exc}")
+        logger.warning(f"user devices fetch from vestad failed: {exc}")
     except TimeoutError:
-        logger.warning(f"user notification to vestad timed out ({kind})")
+        logger.warning("user devices fetch from vestad timed out")
+    return None
 
 
 async def request_restart(reason: lifecycle.RestartReason = lifecycle.AGENT_RESTART) -> bool:

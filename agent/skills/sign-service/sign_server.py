@@ -137,6 +137,11 @@ class S(socketserver.TCPServer):
 
 
 if __name__ == "__main__":
-    with S(("127.0.0.1", PORT), H) as httpd:
-        print(f"sign-service on 127.0.0.1:{PORT}", flush=True)
+    # Bind 0.0.0.0, not 127.0.0.1. The container sits on its own Docker network, so
+    # vestad's reverse proxy reaches the service from OUTSIDE the container and a
+    # loopback-only bind makes the public URL answer 502 while `daemon status` still
+    # reports running. The service is reachable only through the vestad proxy, and
+    # every request already needs a minted service key.
+    with S(("0.0.0.0", PORT), H) as httpd:
+        print(f"sign-service on 0.0.0.0:{PORT}", flush=True)
         httpd.serve_forever()

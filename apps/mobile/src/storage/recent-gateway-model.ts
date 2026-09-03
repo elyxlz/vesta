@@ -1,4 +1,4 @@
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 
 export interface RecentGateway {
   id: string;
@@ -34,7 +34,7 @@ export function upsertRecentGateway(
   const next: RecentGateway = {
     id,
     url: connection.url,
-    hosted: connection.hosted,
+    hosted: connection.hosted ?? false,
     lastConnectedAt:
       options.touch || !existing ? options.now : existing.lastConnectedAt,
   };

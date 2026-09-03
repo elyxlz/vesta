@@ -40,6 +40,10 @@ pub struct AgentStatusView {
     /// pre-restart window where an older agent process omits the field, so it never reads as booting.
     #[serde(default = "default_true")]
     pub boot_complete: bool,
+    /// The rate-limit window currently binding the agent, when its provider has rejected work.
+    /// Absent on older agents, which is the same as not limited.
+    #[serde(default)]
+    pub rate_limited: Option<crate::docker::RateLimitedWindow>,
 }
 
 fn default_true() -> bool {
@@ -208,5 +212,22 @@ mod tests {
         )
         .unwrap();
         assert!(s.authed && !s.setup_complete);
+    }
+
+    #[test]
+    fn parses_rate_limited_and_treats_the_absent_field_as_not_limited() {
+        // Older agents omit the field entirely; a limited agent reports the window snake_case.
+        let absent: AgentStatusView = serde_json::from_str(r#"{"authed":true}"#).unwrap();
+        assert!(absent.rate_limited.is_none());
+        let limited: AgentStatusView = serde_json::from_str(
+            r#"{"authed":true,"rate_limited":{"window":"seven_day","resets_at":1787986800}}"#,
+        )
+        .unwrap();
+        let window = limited.rate_limited.expect("limited window");
+        assert_eq!(window.window.as_deref(), Some("seven_day"));
+        assert_eq!(window.resets_at, Some(1_787_986_800));
+        let bare: AgentStatusView =
+            serde_json::from_str(r#"{"authed":true,"rate_limited":{"window":null,"resets_at":null}}"#).unwrap();
+        assert_eq!(bare.rate_limited, Some(crate::docker::RateLimitedWindow { window: None, resets_at: None }));
     }
 }

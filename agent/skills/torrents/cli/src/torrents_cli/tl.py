@@ -90,7 +90,7 @@ def cmd_search(a: argparse.Namespace) -> None:
     rows.sort(key=lambda r: -r["seeders"])
     rows = rows[: a.limit]
     if a.json:
-        print(json.dumps(rows, indent=1))
+        print(json.dumps(rows))
         return
     for r in rows:
         print(f"  {r['seeders']:>4}s {r['size'] / 1e9:6.1f}GB  {r['fid']:<12} {r['name'][:60]}")

@@ -26,7 +26,7 @@ def test_cli_synthesized_error_text_is_routed_to_the_error_channel_not_published
     msg.content = [TextBlock(error_text)]
 
     with patch("core.sdk_parsing.logger.warning") as mock_warning:
-        texts, thinking_blocks, session_id, error_texts = parse_sdk_message(msg)
+        texts, thinking_blocks, session_id, error_texts, _rate_limited = parse_sdk_message(msg)
 
     assert texts == []
     assert thinking_blocks == []
@@ -41,7 +41,7 @@ def test_normal_assistant_text_passes_through_unchanged():
     msg.content = [TextBlock(normal_text)]
 
     with patch("core.sdk_parsing.logger.warning") as mock_warning:
-        texts, thinking_blocks, session_id, error_texts = parse_sdk_message(msg)
+        texts, thinking_blocks, session_id, error_texts, _rate_limited = parse_sdk_message(msg)
 
     assert texts == [normal_text]
     assert thinking_blocks == []

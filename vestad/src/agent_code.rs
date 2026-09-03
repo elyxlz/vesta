@@ -145,7 +145,7 @@ mod tests {
         assert!(dir.join("skills/skills-registry/SKILL.md").is_file());
         assert!(dir.join("MEMORY.md").is_file());
         assert!(dir.join(".gitignore").is_file());
-        assert!(dir.join("ruff.toml").is_file()); // box needs it for upstream-pr formatting
+        assert!(dir.join("ruff.toml").is_file()); // box needs it for upstream formatting
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

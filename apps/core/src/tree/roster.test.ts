@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest"
-import type { NotificationEvent } from "../protocol/events"
-import type { AgentInfo, GatewayInfo, Tree } from "../protocol/tree"
-import { rosterFromTree, rostersEqual } from "./roster"
+import { describe, expect, it } from "vitest";
+import type { NotificationEvent } from "../protocol/events";
+import type { AgentInfo, GatewayInfo, Tree } from "../protocol/tree";
+import { rosterFromTree, rostersEqual } from "./roster";
 
 function gateway(): GatewayInfo {
   return {
@@ -15,7 +15,7 @@ function gateway(): GatewayInfo {
     latestVersion: null,
     managed: false,
     operation: null,
-  }
+  };
 }
 
 function agentInfo(overrides: Partial<AgentInfo> = {}): AgentInfo {
@@ -27,10 +27,12 @@ function agentInfo(overrides: Partial<AgentInfo> = {}): AgentInfo {
     startedAt: "2026-01-01T00:00:00Z",
     services: {},
     ...overrides,
-  }
+  };
 }
 
-function tree(agents: Record<string, { info: AgentInfo; pending?: NotificationEvent[] }>): Tree {
+function tree(
+  agents: Record<string, { info: AgentInfo; pending?: NotificationEvent[] }>,
+): Tree {
   return {
     gateway: gateway(),
     agents: Object.fromEntries(
@@ -40,7 +42,7 @@ function tree(agents: Record<string, { info: AgentInfo; pending?: NotificationEv
       ]),
     ),
     devices: [],
-  }
+  };
 }
 
 const notification: NotificationEvent = {
@@ -48,15 +50,15 @@ const notification: NotificationEvent = {
   type: "notification",
   source: "chat",
   summary: "hello",
-}
+};
 
 describe("rosterFromTree", () => {
   it.each([
     { name: "null tree yields no rows", input: null, expected: [] },
     { name: "empty agents yields no rows", input: tree({}), expected: [] },
   ])("$name", ({ input, expected }) => {
-    expect(rosterFromTree(input)).toEqual(expected)
-  })
+    expect(rosterFromTree(input)).toEqual(expected);
+  });
 
   it("flattens each agent's name and info into a row", () => {
     const rows = rosterFromTree(
@@ -64,13 +66,13 @@ describe("rosterFromTree", () => {
         aria: { info: agentInfo({ status: "alive" }) },
         nova: { info: agentInfo({ status: "stopped" }) },
       }),
-    )
+    );
     expect(rows).toEqual([
       { name: "aria", ...agentInfo({ status: "alive" }) },
       { name: "nova", ...agentInfo({ status: "stopped" }) },
-    ])
-  })
-})
+    ]);
+  });
+});
 
 describe("rostersEqual", () => {
   it.each([
@@ -83,50 +85,84 @@ describe("rostersEqual", () => {
     {
       name: "different length is unequal",
       a: rosterFromTree(tree({ aria: { info: agentInfo() } })),
-      b: rosterFromTree(tree({ aria: { info: agentInfo() }, nova: { info: agentInfo() } })),
+      b: rosterFromTree(
+        tree({ aria: { info: agentInfo() }, nova: { info: agentInfo() } }),
+      ),
       expected: false,
     },
     {
       name: "changed status is unequal",
-      a: rosterFromTree(tree({ aria: { info: agentInfo({ status: "alive" }) } })),
-      b: rosterFromTree(tree({ aria: { info: agentInfo({ status: "stopped" }) } })),
+      a: rosterFromTree(
+        tree({ aria: { info: agentInfo({ status: "alive" }) } }),
+      ),
+      b: rosterFromTree(
+        tree({ aria: { info: agentInfo({ status: "stopped" }) } }),
+      ),
       expected: false,
     },
     {
       name: "changed buildPhase is unequal",
-      a: rosterFromTree(tree({ aria: { info: agentInfo({ buildPhase: null }) } })),
-      b: rosterFromTree(tree({ aria: { info: agentInfo({ buildPhase: "building" }) } })),
+      a: rosterFromTree(
+        tree({ aria: { info: agentInfo({ buildPhase: null }) } }),
+      ),
+      b: rosterFromTree(
+        tree({ aria: { info: agentInfo({ buildPhase: "building" }) } }),
+      ),
       expected: false,
     },
     {
       name: "changed operation is unequal",
-      a: rosterFromTree(tree({ aria: { info: agentInfo({ operation: null }) } })),
-      b: rosterFromTree(tree({ aria: { info: agentInfo({ operation: "backing_up" }) } })),
+      a: rosterFromTree(
+        tree({ aria: { info: agentInfo({ operation: null }) } }),
+      ),
+      b: rosterFromTree(
+        tree({ aria: { info: agentInfo({ operation: "backing_up" }) } }),
+      ),
       expected: false,
     },
     {
       name: "changed booting is unequal",
-      a: rosterFromTree(tree({ aria: { info: agentInfo({ status: "alive", booting: true }) } })),
-      b: rosterFromTree(tree({ aria: { info: agentInfo({ status: "alive", booting: false }) } })),
+      a: rosterFromTree(
+        tree({ aria: { info: agentInfo({ status: "alive", booting: true }) } }),
+      ),
+      b: rosterFromTree(
+        tree({
+          aria: { info: agentInfo({ status: "alive", booting: false }) },
+        }),
+      ),
       expected: false,
     },
     {
       name: "changed service revision is unequal",
       a: rosterFromTree(
-        tree({ aria: { info: agentInfo({ services: { web: { port: 1, rev: 1 } } }) } }),
+        tree({
+          aria: {
+            info: agentInfo({
+              services: { web: { port: 1, rev: 1, public: false } },
+            }),
+          },
+        }),
       ),
       b: rosterFromTree(
-        tree({ aria: { info: agentInfo({ services: { web: { port: 1, rev: 2 } } }) } }),
+        tree({
+          aria: {
+            info: agentInfo({
+              services: { web: { port: 1, rev: 2, public: false } },
+            }),
+          },
+        }),
       ),
       expected: false,
     },
   ])("$name", ({ a, b, expected }) => {
-    expect(rostersEqual(a, b)).toBe(expected)
-  })
+    expect(rostersEqual(a, b)).toBe(expected);
+  });
 
   it("stays equal when only an unrelated notification branch changes", () => {
-    const before = rosterFromTree(tree({ aria: { info: agentInfo() } }))
-    const after = rosterFromTree(tree({ aria: { info: agentInfo(), pending: [notification] } }))
-    expect(rostersEqual(before, after)).toBe(true)
-  })
-})
+    const before = rosterFromTree(tree({ aria: { info: agentInfo() } }));
+    const after = rosterFromTree(
+      tree({ aria: { info: agentInfo(), pending: [notification] } }),
+    );
+    expect(rostersEqual(before, after)).toBe(true);
+  });
+});

@@ -1,17 +1,12 @@
-import { useEffect, useState } from "react";
-import { ChevronLeftIcon } from "lucide-react";
-import { claudeProvider, openaiProvider, openrouterProvider } from "@/api";
-import type { ProviderResult } from "@/api/agents";
-
-type AuthStartResult =
-  claudeProvider.OAuthStartResult | openaiProvider.OAuthStartResult;
-import { ChoiceStep } from "./ChoiceStep";
-import { KeyStep } from "./KeyStep";
-import { ModelStep } from "./ModelStep";
-import { ContextStep } from "./ContextStep";
-import { planContextOptions, planFromCredentials } from "./context-plan";
-import { AuthStep } from "./AuthStep";
-import { OpenAIAuthStep } from "./OpenAIAuthStep";
+import {
+  type AuthStartResult,
+  providerResult,
+  modelStepInitialModel,
+  providerUsesOAuth,
+  catalogIsLive,
+  startProviderOAuth,
+  keyStepCopy,
+} from "./provider-flow";
 import {
   ClaudeLogo,
   KimiLogo,
@@ -19,36 +14,29 @@ import {
   OpenRouterLogo,
   ZaiLogo,
 } from "./logos";
-import type { ProviderMode } from "./types";
-import { useManifest } from "@/hooks/use-manifest";
+import { useCallback, useEffect, useState } from "react";
+import { ChoiceStep, type ChoiceVariant } from "./ChoiceStep";
+import { KeyStep } from "./KeyStep";
+import { ModelStep } from "./ModelStep";
+import { ContextStep } from "./ContextStep";
+import { planContextOptions, planFromCredentials } from "./context-plan";
+import type { ProviderKind, ProviderSelection } from "@vesta/core";
+import { useProviderCatalog } from "@/hooks/use-agent-catalogs";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { cn, errorMessage } from "@/lib/utils";
-import { contextForModel, type Manifest } from "@/api/manifest";
 import { providerModelOptions } from "./model-options";
+import { ProviderAuthStep } from "./auth-step";
+import {
+  contextForModel,
+  fetchClaudeModelsWithCredentials,
+  fetchOpenRouterModels,
+  validateOpenRouterKey,
+} from "@vesta/core";
+import { httpClient } from "@/api/client";
 
-type InternalStep = "choice" | "auth" | "key" | "model" | "context";
-
-const KEY_STEP_COPY = {
-  openrouter: {
-    title: "OpenRouter API key",
-    subtitle: "paste a key from openrouter.ai/keys. it stays on this machine.",
-    placeholder: "sk-or-v1-...",
-  },
-  zai: {
-    title: "Z.AI subscription key",
-    subtitle:
-      "paste your Coding Plan subscription key. it stays on this machine.",
-    placeholder: "Z.AI subscription key",
-  },
-  kimi: {
-    title: "Kimi Code subscription key",
-    subtitle: "paste your Kimi membership key. it stays on this machine.",
-    placeholder: "Kimi Code subscription key",
-  },
-} as const;
-
-function providerLogo(provider: ProviderMode | null) {
+function providerLogo(provider: ProviderKind | null) {
   if (provider === "claude") return <ClaudeLogo />;
   if (provider === "zai") return <ZaiLogo />;
   if (provider === "kimi") return <KimiLogo />;
@@ -56,141 +44,33 @@ function providerLogo(provider: ProviderMode | null) {
   return <OpenRouterLogo />;
 }
 
-function keyStepCopy(provider: ProviderMode | null) {
-  if (provider === "claude" || provider === "openai" || provider === null)
-    return KEY_STEP_COPY.openrouter;
-  return KEY_STEP_COPY[provider];
-}
-
-function providerResult(
-  provider: ProviderMode,
-  credentials: string | null,
-  key: string,
-  model: string,
-  maxContextTokens: number,
-): ProviderResult | null {
-  if (provider === "claude") {
-    return credentials === null
-      ? null
-      : {
-          kind: "claude",
-          credentials,
-          model: model || undefined,
-          maxContextTokens,
-        };
-  }
-  if (provider === "openai") {
-    return credentials === null
-      ? null
-      : {
-          kind: "openai",
-          credentials,
-          model,
-          ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
-        };
-  }
-  return {
-    kind: provider,
-    key,
-    model,
-    ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
-  };
-}
-
-// The initial model-step selection: the in-progress choice wins, else Claude
-// defaults to the "opus-latest" alias, else the manifest's per-provider default.
-function modelStepInitialModel(
-  provider: ProviderMode | null,
-  model: string,
-  manifest: Manifest,
-): string {
-  if (model) return model;
-  if (provider === "claude") return "opus-latest";
-  if (provider === null) return "";
-  return manifest.providers[provider]?.default_model ?? "";
-}
-
-function providerUsesOAuth(
-  provider: ProviderMode | null,
-  manifest: Manifest,
-): boolean {
-  if (provider === null) return false;
-  const authKind = manifest.providers[provider]?.auth_kind;
-  return authKind === "claude_oauth" || authKind === "device_oauth";
-}
-
-// A live-catalog provider has no static default model, so even defaults-only
-// mode must walk the model (and context) steps.
-function catalogIsLive(
-  provider: ProviderMode | null,
-  manifest: Manifest,
-): boolean {
-  if (provider === null) return false;
-  return manifest.providers[provider]?.models === "live";
-}
-
-function startProviderOAuth(provider: ProviderMode | null) {
-  if (provider === "openai") return openaiProvider.startOAuth();
-  if (provider === "claude") return claudeProvider.startOAuth();
-  return Promise.reject(
-    new Error(`no OAuth adapter for ${provider ?? "none"}`),
-  );
-}
-
-function ProviderAuthStep({
-  provider,
-  authStart,
-  startError,
-  onCredentialsReady,
-  onCancel,
-}: {
-  provider: ProviderMode | null;
-  authStart: AuthStartResult | null;
-  startError: string | null;
-  onCredentialsReady: (credentials: string) => void;
-  onCancel: () => void;
-}) {
-  if (provider === "claude") {
-    return (
-      <AuthStep
-        authStart={authStart}
-        startError={startError}
-        onCredentialsReady={onCredentialsReady}
-        onCancel={onCancel}
-      />
-    );
-  }
-  if (provider === "openai") {
-    return (
-      <OpenAIAuthStep
-        authStart={authStart as openaiProvider.OAuthStartResult | null}
-        startError={startError}
-        onCredentialsReady={onCredentialsReady}
-        onCancel={onCancel}
-      />
-    );
-  }
-  return null;
-}
+type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
 export function ProviderPicker({
+  agentName,
   onDone,
   onBack,
   className,
   defaultsOnly,
+  choiceVariant,
 }: {
-  onDone: (result: ProviderResult) => void;
+  agentName: string;
+  onDone: (result: ProviderSelection) => void;
   onBack?: () => void;
   className?: string;
-  // Skip ModelStep/ContextStep when the manifest supplies a static default. Live-catalog
-  // providers still require a model choice. Onboarding uses this mode; both values stay
-  // editable afterward in AgentSettings' full picker.
+  // Onboarding mode: every provider walks the model step, but a fixed-catalog
+  // provider finishes right after with the default context for the chosen model
+  // instead of walking ContextStep. Context stays editable afterward in
+  // AgentSettings' full picker.
   defaultsOnly?: boolean;
+  // The provider chooser's layout: "grid" is the onboarding glass-tile look,
+  // undefined keeps the compact settings look.
+  choiceVariant?: ChoiceVariant;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   // The chosen provider drives the shared model/context steps (which list to
   // show, which logo, and how the final result is shaped).
-  const [provider, setProvider] = useState<ProviderMode | null>(null);
+  const [provider, setProvider] = useState<ProviderKind | null>(null);
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
   const [credentials, setCredentials] = useState<string | null>(null);
@@ -198,24 +78,40 @@ export function ProviderPicker({
   const [authStartError, setAuthStartError] = useState<string | null>(null);
   // The live Claude catalog, fetched as soon as auth stashes the credentials so
   // it is ready by the time the model step renders.
+  const fetchClaudeModels = useCallback(
+    (nextCredentials: string) =>
+      fetchClaudeModelsWithCredentials(httpClient, agentName, nextCredentials),
+    [agentName],
+  );
+  const fetchTopModels = useCallback(
+    () => fetchOpenRouterModels(httpClient, agentName),
+    [agentName],
+  );
+  const validateKey = useCallback(
+    (nextKey: string) => validateOpenRouterKey(httpClient, agentName, nextKey),
+    [agentName],
+  );
   const claudeLiveModels = useClaudeModels(
     provider === "claude" ? credentials : null,
-    claudeProvider.fetchClaudeModels,
+    fetchClaudeModels,
   );
-  // Creation catalog (per-provider context window + presets) comes from the manifest, not a local copy.
-  const manifest = useManifest();
-  const providerModels = providerModelOptions(provider, manifest);
+  const {
+    data: catalog,
+    error: catalogError,
+    retry: retryCatalog,
+  } = useProviderCatalog(agentName);
+  const providerModels = providerModelOptions(provider, catalog);
   const stepLogo = providerLogo(provider);
   const keyCopy = keyStepCopy(provider);
 
-  // Kick off the standalone OAuth session once when entering the auth substep.
+  // Kick off this agent's OAuth session once when entering the auth substep.
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
   // PKCE session and invalidate any code the user already pasted.
   useEffect(() => {
     if (step !== "auth" || authStart !== null || authStartError !== null)
       return;
     let cancelled = false;
-    startProviderOAuth(provider)
+    startProviderOAuth(agentName, provider)
       .then((res) => {
         if (!cancelled) setAuthStart(res);
       })
@@ -226,11 +122,22 @@ export function ProviderPicker({
     return () => {
       cancelled = true;
     };
-  }, [step, provider, authStart, authStartError]);
+  }, [step, provider, authStart, authStartError, agentName]);
 
-  // Wait for the manifest before rendering any step that needs the context window.
+  if (catalogError) {
+    return (
+      <div className="flex w-[380px] max-w-full flex-col items-center gap-3 px-4 text-center">
+        <p className="text-xs text-destructive">{catalogError}</p>
+        <Button type="button" variant="outline" onClick={retryCatalog}>
+          retry
+        </Button>
+      </div>
+    );
+  }
+
+  // Wait for the catalog before rendering any step that needs the context window.
   // The user reaches this picker after the personality step, so it is loaded in practice.
-  if (!manifest) {
+  if (!catalog) {
     return (
       <div
         className={cn(
@@ -243,7 +150,7 @@ export function ProviderPicker({
     );
   }
 
-  const handleChoice = (next: ProviderMode) => {
+  const handleChoice = (next: ProviderKind) => {
     resetAuth();
     setCredentials(null);
     setKey("");
@@ -251,48 +158,36 @@ export function ProviderPicker({
     setProvider(next);
     // Claude authenticates first; key-backed providers take a key first. All then walk
     // the shared model -> context steps.
-    setStep(providerUsesOAuth(next, manifest) ? "auth" : "key");
+    setStep(providerUsesOAuth(next, catalog) ? "auth" : "key");
   };
 
   // Claude auth no longer ends the flow: stash the credentials and continue to
-  // model + context, mirroring the OpenRouter path.
+  // the model step, mirroring the OpenRouter path. Every provider now picks a
+  // model, a fixed-catalog one from the catalog list.
   const handleCredentialsReady = (creds: string) => {
     setCredentials(creds);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
-      finishWithDefaults(creds, key);
-      return;
-    }
     setStep("model");
   };
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
-    if (defaultsOnly && !catalogIsLive(provider, manifest)) {
-      finishWithDefaults(credentials, newKey);
-      return;
-    }
     setStep("model");
   };
 
-  // Onboarding skips ModelStep/ContextStep entirely: finish with the
-  // manifest's default model and context window as soon as the provider is
-  // ready, mirroring handleContextSubmit's result shape.
-  const finishWithDefaults = (creds: string | null, apiKey: string) => {
+  // Onboarding (defaultsOnly) finishes a fixed-catalog provider right after the
+  // model step, taking the default context window for the chosen model instead
+  // of walking ContextStep. Context stays editable later in AgentSettings.
+  const finishWithModel = (selectedModel: string) => {
     if (provider === null) return;
-    const defaultModel = manifest.providers[provider]?.default_model ?? "";
-    const context = contextForModel(manifest.providers[provider], defaultModel);
-    const plan =
-      provider === "claude" && creds !== null
-        ? planFromCredentials(creds)
-        : null;
+    const context = contextForModel(catalog.providers[provider], selectedModel);
     const { initial } = context
-      ? planContextOptions(context, plan)
+      ? planContextOptions(context, null)
       : { initial: 0 };
     const result = providerResult(
       provider,
-      creds,
-      apiKey,
-      defaultModel,
+      credentials,
+      key,
+      selectedModel,
       initial,
     );
     if (result) onDone(result);
@@ -315,8 +210,8 @@ export function ProviderPicker({
     setAuthStartError(null);
   };
 
-  // Cancel abandons the chosen provider and returns to the choice screen,
-  // distinct from the back-chevron which steps back one screen at a time.
+  // Abandon the chosen provider and return to the choice screen. Auth and key
+  // back out here; model and context step back one screen without resetting.
   const cancelToChoice = () => {
     resetAuth();
     setCredentials(null);
@@ -326,46 +221,38 @@ export function ProviderPicker({
     setStep("choice");
   };
 
-  const back = (() => {
-    if (step === "choice") return onBack;
-    // The model step's previous screen depends on how the provider started.
-    if (step === "model")
-      return () =>
-        setStep(providerUsesOAuth(provider, manifest) ? "auth" : "key");
-    if (step === "context") return () => setStep("model");
-    // auth and key both return to the choice screen.
-    return cancelToChoice;
-  })();
+  // The model step's previous screen depends on how the provider started.
+  const backFromModel = () =>
+    setStep(providerUsesOAuth(provider, catalog) ? "auth" : "key");
 
+  // The grid choice step is as wide as the onboarding vibe grid; every other
+  // step keeps the compact column.
+  const gridChoice = step === "choice" && choiceVariant === "grid";
   return (
     <div
       className={cn(
-        "relative flex w-[380px] max-w-full flex-col items-start gap-4 px-4",
+        "flex max-w-full flex-col items-start gap-4 px-4",
+        gridChoice ? "w-[560px]" : "w-[380px]",
         className,
       )}
     >
-      {back && (
-        <button
-          type="button"
-          onClick={back}
-          className="absolute top-0 left-0 -ml-1 flex size-6 items-center justify-center rounded-full text-muted-foreground transition hover:bg-input/60 hover:text-foreground"
-          aria-label="back"
-        >
-          <ChevronLeftIcon className="size-4" />
-        </button>
-      )}
-
       <div className="w-full">
         {step === "choice" && (
-          <ChoiceStep onPick={handleChoice} manifest={manifest} />
+          <ChoiceStep
+            onPick={handleChoice}
+            catalog={catalog}
+            variant={choiceVariant}
+            onBack={onBack}
+          />
         )}
         {step === "auth" && (
           <ProviderAuthStep
+            agentName={agentName}
             provider={provider}
             authStart={authStart}
             startError={authStartError}
             onCredentialsReady={handleCredentialsReady}
-            onCancel={cancelToChoice}
+            onBack={cancelToChoice}
           />
         )}
         {step === "key" && (
@@ -373,25 +260,23 @@ export function ProviderPicker({
             initialKey={key}
             onNext={handleKeyNext}
             logo={stepLogo}
-            onCancel={cancelToChoice}
+            onBack={cancelToChoice}
             title={keyCopy.title}
             subtitle={keyCopy.subtitle}
             placeholder={keyCopy.placeholder}
-            validateKey={
-              provider === "openrouter"
-                ? openrouterProvider.validateKey
-                : undefined
-            }
+            validateKey={provider === "openrouter" ? validateKey : undefined}
           />
         )}
         {step === "model" && (
           <ModelStep
-            initialModel={modelStepInitialModel(provider, model, manifest)}
+            initialModel={modelStepInitialModel(provider, model, catalog)}
             onModelChange={setModel}
             onSubmit={(m) => {
               setModel(m);
               if (provider === "openrouter") {
                 onDone({ kind: "openrouter", key, model: m });
+              } else if (defaultsOnly && !catalogIsLive(provider, catalog)) {
+                finishWithModel(m);
               } else {
                 setStep("context");
               }
@@ -400,18 +285,18 @@ export function ProviderPicker({
             claudeLiveModels={
               provider === "claude" ? claudeLiveModels : undefined
             }
-            allowCustom={provider === "openrouter"}
+            loadModels={provider === "openrouter" ? fetchTopModels : undefined}
             logo={stepLogo}
-            onCancel={cancelToChoice}
+            onBack={backFromModel}
           />
         )}
         {step === "context" &&
           provider &&
           (() => {
             const selectedModel =
-              model || (manifest.providers[provider]?.default_model ?? "");
+              model || (catalog.providers[provider]?.default_model ?? "");
             const context = contextForModel(
-              manifest.providers[provider],
+              catalog.providers[provider],
               selectedModel,
             );
             // Claude gates >200K windows on the plan tier, read from the stashed OAuth blob.
@@ -428,7 +313,7 @@ export function ProviderPicker({
                 initial={initial}
                 onSubmit={handleContextSubmit}
                 logo={stepLogo}
-                onCancel={cancelToChoice}
+                onBack={() => setStep("model")}
               />
             );
           })()}
@@ -436,5 +321,3 @@ export function ProviderPicker({
     </div>
   );
 }
-
-export type { ProviderMode };

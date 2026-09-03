@@ -29,7 +29,7 @@ func (resp SocketResponse) render() ([]byte, int) {
 	if body == nil && resp.Error != "" {
 		body = map[string]any{"error": resp.Error}
 	}
-	data, _ := json.MarshalIndent(body, "", "  ")
+	data, _ := json.Marshal(body)
 	if resp.Error != "" {
 		return data, 1
 	}

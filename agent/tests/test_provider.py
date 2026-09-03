@@ -20,6 +20,7 @@ from core.config import (
     update_config_store,
 )
 from core.provider import (
+    Account,
     ProviderAuthState,
     UsageCredits,
     UsageError,
@@ -454,66 +455,99 @@ def test_runtime_failure_clears_reported_model(prov):
     assert flipped.model is None
 
 
-# --- provider-agnostic plan usage ---
+# --- provider-agnostic plan usage + account ---
+
+
+def _write_claude_creds(provider_mod):
+    provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "refreshToken": "r"}}))
 
 
 @pytest.mark.anyio
 async def test_get_usage_empty_when_no_provider(prov):
     # No credentials on disk and no openrouter key -> kind none -> nothing to report (not an error).
-    usage = await get_usage(cfg.VestaConfig())
-    assert usage.meters == []
-    assert usage.credits is None
+    status = await get_usage(cfg.VestaConfig())
+    assert status.meters == []
+    assert status.credits is None
+    assert status.account is None
 
 
 @pytest.mark.anyio
-async def test_get_usage_claude_normalizes_buckets_and_credits(prov, monkeypatch):
+async def test_get_usage_claude_normalizes_buckets_credits_and_account(prov, monkeypatch):
     from core import provider as provider_mod
 
     update_config_store({"provider": {"kind": "claude", "model": "opus"}})
-    provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "refreshToken": "r"}}))
-    sample = {
+    _write_claude_creds(provider_mod)
+    usage_sample = {
         "five_hour": {"utilization": 42, "resets_at": "2026-06-22T12:00:00Z"},
         "seven_day": {"utilization": 10, "resets_at": "2026-06-28T00:00:00Z"},
         "seven_day_opus": {"utilization": 5, "resets_at": "2026-06-28T00:00:00Z"},
         "extra_usage": {"is_enabled": True, "used_credits": 1234, "monthly_limit": 5000},
     }
+    profile_sample = {
+        "account": {"full_name": "Ada L", "email": "ada@example.com", "has_claude_max": True, "created_at": "2023-07-18T19:44:58Z"},
+        "organization": {"name": "Ada's Org"},
+    }
 
     async def fake_fetch(url, *, headers):
+        if "oauth/profile" in url:
+            return profile_sample
         assert "oauth/usage" in url
-        return sample
+        return usage_sample
 
     monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
-    usage = await get_usage(cfg.VestaConfig())
-    assert [m.label for m in usage.meters] == ["current session", "current week", "current week (opus)"]
-    assert usage.meters[0].used_pct == 42
-    assert usage.meters[0].resets_at == "2026-06-22T12:00:00Z"
-    assert usage.credits == UsageCredits(used=12.34, limit=50.0)
+    status = await get_usage(cfg.VestaConfig())
+    assert [m.label for m in status.meters] == ["current session", "current week", "current week (opus)"]
+    assert status.meters[0].used_pct == 42
+    assert status.meters[0].resets_at == "2026-06-22T12:00:00Z"
+    assert status.credits == UsageCredits(used=12.34, limit=50.0)
+    assert status.account == Account(
+        name="Ada L", email="ada@example.com", plan="Claude Max", organization="Ada's Org", created_at="2023-07-18T19:44:58Z"
+    )
 
 
 @pytest.mark.anyio
-async def test_get_usage_openrouter_normalizes_credits(prov, monkeypatch):
+async def test_get_usage_account_best_effort_when_profile_fails(prov, monkeypatch):
+    from core import provider as provider_mod
+
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
+    _write_claude_creds(provider_mod)
+
+    async def fake_fetch(url, *, headers):
+        # A failed profile fetch must not blank the usage meters that fetched successfully.
+        if "oauth/profile" in url:
+            raise UsageError("upstream returned 401")
+        return {"five_hour": {"utilization": 5, "resets_at": "2026-06-22T12:00:00Z"}}
+
+    monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
+    status = await get_usage(cfg.VestaConfig())
+    assert [m.label for m in status.meters] == ["current session"]
+    assert status.account is None
+
+
+@pytest.mark.anyio
+async def test_get_usage_openrouter_normalizes_credits_and_account(prov, monkeypatch):
     from core import provider as provider_mod
 
     set_key_provider("openrouter", "sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
 
     async def fake_fetch(url, *, headers):
         assert url == provider_mod.OPENROUTER_KEY_URL
-        return {"data": {"usage": 3.5, "limit": 10.0}}
+        return {"data": {"usage": 3.5, "limit": 10.0, "label": "sk-or key", "is_free_tier": False}}
 
     monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
-    usage = await get_usage(cfg.VestaConfig())
-    assert usage.meters == []
-    assert usage.credits == UsageCredits(used=3.5, limit=10.0)
+    status = await get_usage(cfg.VestaConfig())
+    assert status.meters == []
+    assert status.credits == UsageCredits(used=3.5, limit=10.0)
+    assert status.account == Account(name="sk-or key", email=None, plan="Paid", organization=None, created_at=None)
 
 
 @pytest.mark.anyio
-async def test_get_usage_propagates_fetch_error(prov, monkeypatch):
+async def test_get_usage_propagates_usage_fetch_error(prov, monkeypatch):
     from core import provider as provider_mod
 
     update_config_store({"provider": {"kind": "claude", "model": "opus"}})
-    provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "refreshToken": "r"}}))
+    _write_claude_creds(provider_mod)
 
     async def fake_fetch(url, *, headers):
         raise UsageError("upstream returned 500")

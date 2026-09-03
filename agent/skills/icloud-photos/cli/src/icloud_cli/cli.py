@@ -392,7 +392,7 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
         api = PyiCloudService(creds["account"], cookie_directory=str(COOKIE_DIR))
         if api.is_trusted_session:
             _write_state(phase="trusted", account=creds["account"], message="already trusted")
-            print(json.dumps({"status": "already_trusted", "account": creds["account"]}, indent=2))
+            print(json.dumps({"status": "already_trusted", "account": creds["account"]}))
             return
     except Exception as e:
         logger.debug("trusted-session probe failed: %s", e)
@@ -427,7 +427,7 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
             break
 
     state = _load_state()
-    print(json.dumps(state, indent=2, default=str))
+    print(json.dumps(state, default=str))
     if state.get("phase") == "error":
         sys.exit(1)
     if state.get("phase") == "awaiting_code":
@@ -461,7 +461,7 @@ def cmd_auth_verify(args: argparse.Namespace) -> None:
             break
 
     state = _load_state()
-    print(json.dumps(state, indent=2, default=str))
+    print(json.dumps(state, default=str))
     if state.get("phase") != "trusted":
         sys.exit(1)
 
@@ -489,7 +489,7 @@ def cmd_auth_status(_args: argparse.Namespace) -> None:
         except Exception as e:
             info["session_error"] = f"{type(e).__name__}:{e}"
 
-    print(json.dumps(info, indent=2, default=str))
+    print(json.dumps(info, default=str))
     if not info.get("is_trusted_session"):
         sys.exit(1)
 
@@ -551,7 +551,7 @@ def cmd_albums(args: argparse.Namespace) -> None:
                 out["owned"].append(_serialize_album(album, "owned"))
         except Exception as e:
             out["errors"]["owned"] = f"{type(e).__name__}:{e}"
-    print(json.dumps(out, indent=2, default=str))
+    print(json.dumps(out, default=str))
 
 
 def _find_album(api: Any, key: str) -> Any:
@@ -699,7 +699,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         "errors": failed[:20],
         "elapsed_seconds": round(time.time() - started, 1),
     }
-    print(json.dumps(summary, indent=2, default=str))
+    print(json.dumps(summary, default=str))
 
 
 def cmd_sync_shared(args: argparse.Namespace) -> None:
@@ -746,7 +746,7 @@ def cmd_sync_shared(args: argparse.Namespace) -> None:
                 "failed": failed,
             }
         )
-    print(json.dumps({"root": str(root), "albums": results}, indent=2, default=str))
+    print(json.dumps({"root": str(root), "albums": results}, default=str))
 
 
 # --------------------------------------------------------------------------- #

@@ -6,7 +6,8 @@ usage() {
 Usage: ./release.sh [patch|minor|major] "<message>"
 
 Set MOBILE_DELIVERY=testflight (the default) or MOBILE_DELIVERY=skip to control
-whether this prerelease is delivered to internal TestFlight testers.
+whether this prerelease is delivered to mobile testers: an internal TestFlight
+build on iOS plus an internal-distribution APK attached to the GitHub release.
 
 The message is required: user-facing "What's new" copy shown in the app and on
 the changelog. Style:

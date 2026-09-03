@@ -17,7 +17,7 @@
    ```bash
    discord daemon start
    ```
-7. Add this line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so the daemon survives restarts:
+7. So the daemon survives restarts, read the `restart` skill and add this line to your restart daemons:
    ```
    discord daemon start
    ```

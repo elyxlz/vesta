@@ -9,7 +9,9 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 ## Preflight: daemon liveness (do this first, every tick)
 
-Before anything else, confirm the daemons the `restart` skill starts are actually alive: ask each line in its Daemons block with the matching `<skill> daemon status`. Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring a dead daemon back with its own start line from that block, or re-run the whole Daemons block, which is idempotent and a no-op when everything is already up.
+Before anything else, confirm the daemons the `restart` skill starts are actually alive: ask each one it starts with the matching `<skill> daemon status`. Treat an error, a missing command, or any answer not reporting running as down, not only an explicit `"running": false`. A daemon can die silently (container up, daemon down), and a dead messaging daemon means you cannot reach the user at all, which is why this check comes first. Bring a dead daemon back with its own `<skill> daemon start`, or re-run the `restart` skill, which is idempotent and a no-op when everything is already up.
+
+This check is your duty and stays yours: never build a watchdog, cron job, or auto-restarting script to do it for you. An automation restarts blindly, hides the cause from you, and becomes one more thing that breaks silently; you can read the log, fix the cause, and judge when the user must be involved. When a daemon you brought back died for a reason worth fixing, fix it in that skill, not with a new layer of machinery on top.
 
 ## Two questions, every time
 
@@ -41,7 +43,7 @@ Roughly once a week, one quiet tick becomes a deep block instead of a normal pas
 - **Cadence and slot**: after the preflight, check the newest file in `~/agent/deep-dives/`. If it is seven or more days old (or the directory is empty) and the tick is genuinely quiet (nothing pending for the user, no snoozed backlog, typically the small hours), this tick is the dive. Otherwise carry on normally.
 - **Go deep on one thread**: pick a single live thread from MEMORY.md §6 and work it properly: read the primary sources themselves (the paper, the code, the archive), fan out subagents in parallel for the reading, and follow the question past where a skim would stop. Budget: about one dream's worth of work, a handful of subagents and a focused block, not an all-night crawl.
 - **Write the piece**: a short internal note to `~/agent/deep-dives/YYYY-MM-DD-<slug>.md`: the question, what the sources actually said, your take, what stays open. Writing it is the point; a dive that ends without the piece was a skim with extra steps. Then update §6 with the take and what to pick up next. The file's date is also the cadence marker, so the dive isn't done until it exists.
-- **Spanning turns**: if the block ends before the piece does, park the state in §6 (done so far, next step) and set a reminder on your own channel (`tasks` skill) for the next quiet stretch. The dive is allowed to span turns; it doesn't die at one.
+- **Spanning turns**: if the block ends before the piece does, park the state in §6 (done so far, next step) and set a reminder on your own channel (`reminders` skill) for the next quiet stretch. The dive is allowed to span turns; it doesn't die at one.
 - **Internal only**: the piece is yours. Never mention it unprompted; it surfaces only when a conversation already touches the topic and it genuinely belongs in the reply.
 - **The user always wins**: if anything for the user lands mid-dive, drop the dive without ceremony. The note in progress and §6 hold the state for next time.
 
@@ -64,4 +66,4 @@ Reach out if you found something good, something needs attention, or you just ha
 ## How to decide
 
 - Read MEMORY.md's user state and the recent conversation before acting
-- Check for anything overdue or upcoming: `tasks list` and `tasks remind list`
+- Check for anything overdue or upcoming: `tasks list` and `reminders list`

@@ -1,7 +1,21 @@
 import Stack from "expo-router/stack";
 import { AgentProvider } from "@/agent/AgentProvider";
 import { usePreferences } from "@/preferences/PreferencesProvider";
-import { fontNames } from "@/theme/typography";
+import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
+
+// iOS presents logs and notifications sheet-like on its own, because they
+// push from the settings form sheet's modal context; Android has no such
+// inheritance, so the sheet presentation is spelled out there.
+const androidSheetOptions =
+  process.env.EXPO_OS === "android"
+    ? {
+        presentation: "formSheet" as const,
+        ...formSheetCorners,
+        sheetAllowedDetents: [1],
+        sheetGrabberVisible: false,
+        sheetExpandsWhenScrolledToEdge: false,
+      }
+    : {};
 
 export default function AgentLayout() {
   const { colors } = usePreferences();
@@ -14,11 +28,7 @@ export default function AgentLayout() {
           headerTransparent: true,
           headerStyle: { backgroundColor: "transparent" },
           headerTintColor: colors.text,
-          headerTitleStyle: {
-            fontFamily: fontNames.heading.native["500"],
-            fontSize: 24,
-            fontWeight: "500",
-          },
+          headerTitleStyle,
           headerShadowVisible: false,
           headerBackButtonDisplayMode: "minimal",
         }}
@@ -30,16 +40,29 @@ export default function AgentLayout() {
             title: "Settings",
             headerTitleAlign: "center",
             presentation: "formSheet",
+            ...formSheetCorners,
             sheetAllowedDetents: [1],
             sheetGrabberVisible: false,
             sheetExpandsWhenScrolledToEdge: false,
             contentStyle: { backgroundColor: colors.background },
           }}
         />
-        <Stack.Screen name="logs" />
-        <Stack.Screen name="notifications" />
-        <Stack.Screen name="file" />
-        <Stack.Screen name="details/[section]" />
+        <Stack.Screen name="logs" options={androidSheetOptions} />
+        <Stack.Screen name="notifications" options={androidSheetOptions} />
+        <Stack.Screen
+          name="file"
+          // Android has no automatic content inset for transparent headers,
+          // so the toolbar goes opaque and lays the editor out below it.
+          options={
+            process.env.EXPO_OS === "android"
+              ? {
+                  headerTransparent: false,
+                  headerStyle: { backgroundColor: colors.background },
+                }
+              : {}
+          }
+        />
+        <Stack.Screen name="details/[section]" options={androidSheetOptions} />
       </Stack>
     </AgentProvider>
   );

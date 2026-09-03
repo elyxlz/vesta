@@ -15,16 +15,23 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useLocalSearchParams } from "expo-router";
 import ChatPage from "@/agent/ChatPage";
+import { PagerScrollLockProvider } from "@/agent/pager-scroll-lock";
 import DashboardPage from "@/agent/DashboardPage";
 import LogsPage from "@/agent/LogsPage";
 import NotificationsPage from "@/agent/NotificationsPage";
 import { getAgentPageKeys, type AgentPageKey } from "@/agent/pager-model";
 import { AgentStackHeader } from "@/components/AgentHeader";
+import { agentHoldKey } from "@vesta/core";
+import { agentHolds } from "@/holds/agent-holds";
+import { useSession } from "@/session/SessionProvider";
+import { connectionKeyOf } from "@/session/session-model";
 import {
   AgentPagerTabs,
   type AgentPagerTab,
 } from "@/components/AgentPagerTabs";
+import { HeaderFade } from "@/components/header-fade";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
@@ -62,9 +69,20 @@ const PAGE_TABS = {
 
 function AgentPages() {
   const insets = useSafeAreaInsets();
-  const { showNotificationsPage, showLogsPage } = usePreferences();
+  const {
+    showChatPage,
+    showDashboardPage,
+    showNotificationsPage,
+    showLogsPage,
+  } = usePreferences();
+  // The name comes from the route, not useAgent(): the agent context re-identifies on every
+  // chat tick and would re-render the whole pager shell with it.
+  const parameters = useLocalSearchParams<{ name?: string }>();
+  const name = typeof parameters.name === "string" ? parameters.name : "";
+  const { connection } = useSession();
+  const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
   const pager = useRef<PagerView>(null);
-  const pageProgress = useSharedValue(0);
+  const [pagerScrollLocked, setPagerScrollLocked] = useState(false);
   const tabVisibility = useSharedValue(1);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabInteractionTimer = useRef<ReturnType<typeof setTimeout> | null>(
@@ -72,18 +90,41 @@ function AgentPages() {
   );
   const tabTransitionId = useRef(0);
   const pageTouchStart = useRef<{ x: number; y: number } | null>(null);
-  const hapticPageKey = useRef<AgentPageKey>("chat");
-  const [activePageKey, setActivePageKey] = useState<AgentPageKey>("chat");
+  const pages = useMemo(
+    () =>
+      getAgentPageKeys({
+        showChatPage,
+        showDashboardPage,
+        showNotificationsPage,
+        showLogsPage,
+      }),
+    [showChatPage, showDashboardPage, showLogsPage, showNotificationsPage],
+  );
+  // Reopen on the page the user last used for this agent (held above navigation), falling back to
+  // chat when the held page is hidden by preferences.
+  const [activePageKey, setActivePageKey] = useState<AgentPageKey>(() => {
+    const held = agentHolds.page.read(holdKey);
+    return held !== null && pages.includes(held) ? held : "chat";
+  });
+  // Non-chat pages mount on their first visit (or as a drag approaches them) and stay mounted, so
+  // the dashboard webview and the log stream cost nothing until seen, then keep their state.
+  const [visitedPages, setVisitedPages] = useState<readonly AgentPageKey[]>(
+    () => (activePageKey === "chat" ? ["chat"] : ["chat", activePageKey]),
+  );
+  const hapticPageKey = useRef<AgentPageKey>(activePageKey);
   const [tabsVisible, setTabsVisible] = useState(true);
   const [tabsInteractive, setTabsInteractive] = useState(true);
-  const pages = useMemo(
-    () => getAgentPageKeys({ showNotificationsPage, showLogsPage }),
-    [showLogsPage, showNotificationsPage],
-  );
   const pagerKey = pages.join(":");
   const selectedPageIndex = pages.indexOf(activePageKey);
   const activePage = selectedPageIndex >= 0 ? selectedPageIndex : 0;
+  const pageProgress = useSharedValue(activePage);
   const tabs = useMemo(() => pages.map((page) => PAGE_TABS[page]), [pages]);
+  const markVisited = useCallback((keys: AgentPageKey[]) => {
+    setVisitedPages((current) => {
+      const missing = keys.filter((page) => !current.includes(page));
+      return missing.length > 0 ? [...current, ...missing] : current;
+    });
+  }, []);
   const onPageScroll = useEvent<{ position: number; offset: number }>(
     (event) => {
       "worklet";
@@ -134,13 +175,10 @@ function AgentPages() {
     const transitionId = ++tabTransitionId.current;
     setTabsVisible(false);
     tabVisibility.set(
-      withTiming(
-        0,
-        {
-          duration: TAB_ANIMATION_DURATION_MS,
-          easing: Easing.in(Easing.cubic),
-        },
-      ),
+      withTiming(0, {
+        duration: TAB_ANIMATION_DURATION_MS,
+        easing: Easing.in(Easing.cubic),
+      }),
     );
     tabInteractionTimer.current = setTimeout(() => {
       tabInteractionTimer.current = null;
@@ -194,18 +232,18 @@ function AgentPages() {
       clearTabInteractionTimer();
       cancelAnimation(tabVisibility);
     };
-  }, [
-    animateTabsOut,
-    clearHideTimer,
-    clearTabInteractionTimer,
-    tabVisibility,
-  ]);
+  }, [animateTabsOut, clearHideTimer, clearTabInteractionTimer, tabVisibility]);
 
   const onPageScrollStateChanged = useCallback(
     (event: PageScrollStateChangedNativeEvent) => {
       const state = event.nativeEvent.pageScrollState;
       if (state === "dragging") {
         void KeyboardController.dismiss().catch(() => undefined);
+        markVisited(
+          [pages[activePage - 1], pages[activePage + 1]].filter(
+            (page): page is AgentPageKey => page !== undefined,
+          ),
+        );
       }
       if (state === "idle") {
         hideTabs();
@@ -213,7 +251,7 @@ function AgentPages() {
         showTabs();
       }
     },
-    [hideTabs, showTabs],
+    [activePage, hideTabs, markVisited, pages, showTabs],
   );
 
   const onPageSelected = useCallback(
@@ -223,18 +261,25 @@ function AgentPages() {
       pageProgress.set(position);
       if (page) {
         setActivePageKey(page);
+        markVisited([page]);
+        agentHolds.page.persist(holdKey, page);
         if (page !== hapticPageKey.current) {
           hapticPageKey.current = page;
           void Haptics.selectionAsync().catch(() => undefined);
         }
       }
     },
-    [pageProgress, pages],
+    [holdKey, markVisited, pageProgress, pages],
   );
 
   const selectPage = useCallback(
     (page: number) => {
       const target = pages[page];
+      // Mount every page the animated jump slides across, or an unvisited
+      // intermediate pane renders blank mid-flight.
+      const [first, last] =
+        activePage <= page ? [activePage, page] : [page, activePage];
+      markVisited(pages.slice(first, last + 1));
       if (target && target !== hapticPageKey.current) {
         hapticPageKey.current = target;
         void Haptics.selectionAsync().catch(() => undefined);
@@ -242,7 +287,7 @@ function AgentPages() {
       showTabs();
       pager.current?.setPage(page);
     },
-    [pages, showTabs],
+    [activePage, markVisited, pages, showTabs],
   );
 
   return (
@@ -253,8 +298,12 @@ function AgentPages() {
         ref={pager}
         style={styles.pager}
         initialPage={activePage}
+        // Keep every page's native view attached on Android; the default ViewPager2 limit detaches
+        // pages more than one position away, which blanks the webview and drops list state.
+        offscreenPageLimit={Math.max(pages.length - 1, 1)}
         orientation="horizontal"
         overdrag
+        scrollEnabled={!pagerScrollLocked}
         onTouchStart={onPageTouchStart}
         onTouchEnd={onPageTouchEnd}
         onTouchCancel={() => {
@@ -268,13 +317,25 @@ function AgentPages() {
       >
         {pages.map((page) => (
           <View key={page} collapsable={false} style={styles.page}>
-            {page === "chat" ? <ChatPage /> : null}
-            {page === "dashboard" ? <DashboardPage /> : null}
-            {page === "notifications" ? <NotificationsPage /> : null}
-            {page === "logs" ? <LogsPage /> : null}
+            {visitedPages.includes(page) ? (
+              page === "chat" ? (
+                // Keyed by holdKey so a gateway switch under a retained screen remounts the
+                // composer and reseeds from the new key's cell instead of persisting stale state.
+                <PagerScrollLockProvider value={setPagerScrollLocked}>
+                  <ChatPage key={holdKey} />
+                </PagerScrollLockProvider>
+              ) : page === "dashboard" ? (
+                <DashboardPage />
+              ) : page === "notifications" ? (
+                <NotificationsPage />
+              ) : (
+                <LogsPage />
+              )
+            ) : null}
           </View>
         ))}
       </AnimatedPagerView>
+      <HeaderFade />
       <AgentPagerTabs
         activePage={activePage}
         bottom={insets.bottom + TAB_BOTTOM_MARGIN}

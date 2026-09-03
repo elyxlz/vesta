@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -101,12 +102,15 @@ def _poll_unit(ctx: GoogleContext, state: MonitorState, unit: str, new_check_tim
     units[unit] = new_check_time.isoformat() if read else query_since.isoformat()
 
 
-def notify_broken_once(ctx: GoogleContext, marker_name: str, notif_type: str, error: Exception) -> None:
+def notify_broken_once(ctx: GoogleContext, marker_name: str, notif_type: str, error: Exception) -> bool:
+    """Return True on the cycle that reports the failure, so the caller logs it at ERROR exactly once
+    and at DEBUG while the marker stands: a terminal failure repeats every cycle until the user acts."""
     marker = ctx.monitor_base_dir / marker_name
     if marker.exists():
-        return
+        return False
     notifications.write_notification(ctx.notif_dir, notif_type, interrupt=True, error=str(error))
     marker.write_text(datetime.now(UTC).isoformat())
+    return True
 
 
 def clear_broken_marker(ctx: GoogleContext, marker_name: str) -> None:
@@ -267,8 +271,8 @@ def _poll_calendar(ctx: GoogleContext, new_check_time: datetime, query_since: da
         # Calendar is terminally refused (e.g. a token minted under the old
         # shared client, whose project has the Calendar API disabled) while
         # Gmail still works: tell the agent once, keep polling mail.
-        logger.error("Error fetching calendar: %s", e)
-        notify_broken_once(ctx, CALENDAR_BROKEN_MARKER, "calendar_auth_broken", e)
+        reported = notify_broken_once(ctx, CALENDAR_BROKEN_MARKER, "calendar_auth_broken", e)
+        logger.log(logging.ERROR if reported else logging.DEBUG, "Error fetching calendar: %s", e)
         return False
     except Exception as e:
         # A calendar failure must not sink the whole poll cycle (Gmail still ran).
@@ -294,8 +298,8 @@ def run(ctx: GoogleContext):
                 # Terminal auth failure (no token, dead refresh): every poll would
                 # fail, so tell the agent once and leave every watermark parked; the
                 # next healthy cycle re-reads the gap (clamped to MAX_CATCHUP_LOOKBACK).
-                logger.error("Google auth is broken: %s", e)
-                notify_broken_once(ctx, AUTH_BROKEN_MARKER, "auth_broken", e)
+                reported = notify_broken_once(ctx, AUTH_BROKEN_MARKER, "auth_broken", e)
+                logger.log(logging.ERROR if reported else logging.DEBUG, "Google auth is broken: %s", e)
                 if ctx.monitor_stop_event.wait(45):
                     break
                 continue

@@ -1,13 +1,12 @@
 import * as React from "react";
 import { native } from "@/lib/native";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import {
   ThemeProviderContext,
   type ResolvedTheme,
   type Theme,
   type ThemeProviderState,
 } from "./context";
-
-export { useTheme } from "./context";
 
 interface ThemeProviderProps {
   children: React.ReactNode;
@@ -17,22 +16,10 @@ interface ThemeProviderProps {
 }
 
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
-const THEME_VALUES: Theme[] = ["dark", "light", "system"];
+const THEME_VALUES: readonly Theme[] = ["dark", "light", "system"];
 
 function isTheme(value: string | null): value is Theme {
-  if (value === null) {
-    return false;
-  }
-
-  return THEME_VALUES.includes(value as Theme);
-}
-
-function getSystemTheme(): ResolvedTheme {
-  if (window.matchMedia(COLOR_SCHEME_QUERY).matches) {
-    return "dark";
-  }
-
-  return "light";
+  return THEME_VALUES.some((theme) => theme === value);
 }
 
 function disableTransitionsTemporarily() {
@@ -70,52 +57,32 @@ export function ThemeProvider({
     return defaultTheme;
   });
 
-  const [resolvedTheme, setResolvedTheme] = React.useState<ResolvedTheme>(() =>
-    theme === "system" ? getSystemTheme() : theme,
-  );
+  // The resolved theme is derived: the chosen theme, or the OS scheme while following "system".
+  const systemDark = useMediaQuery(COLOR_SCHEME_QUERY);
+  const resolvedTheme: ResolvedTheme =
+    theme === "system" ? (systemDark ? "dark" : "light") : theme;
 
   const setTheme = (nextTheme: Theme) => {
     localStorage.setItem(storageKey, nextTheme);
     setThemeState(nextTheme);
   };
 
-  const applyTheme = (nextTheme: Theme) => {
+  React.useEffect(() => {
     const root = document.documentElement;
-    const resolved = nextTheme === "system" ? getSystemTheme() : nextTheme;
     const restoreTransitions = disableTransitionOnChange
       ? disableTransitionsTemporarily()
       : null;
 
     root.classList.remove("light", "dark");
-    root.classList.add(resolved);
-    root.style.colorScheme = resolved;
-    setResolvedTheme(resolved);
+    root.classList.add(resolvedTheme);
+    root.style.colorScheme = resolvedTheme;
 
-    native.setNativeTheme(resolved);
+    native.setNativeTheme(theme === "system" ? "system" : resolvedTheme);
 
     if (restoreTransitions) {
       restoreTransitions();
     }
-  };
-
-  React.useEffect(() => {
-    applyTheme(theme);
-
-    if (theme !== "system") {
-      return undefined;
-    }
-
-    const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY);
-    const handleChange = () => {
-      applyTheme("system");
-    };
-
-    mediaQuery.addEventListener("change", handleChange);
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleChange);
-    };
-  }, [theme, disableTransitionOnChange]);
+  }, [theme, resolvedTheme, disableTransitionOnChange]);
 
   const cycleTheme = React.useCallback(() => {
     setThemeState((currentTheme) => {
@@ -124,7 +91,7 @@ export function ThemeProvider({
           ? "light"
           : currentTheme === "light"
             ? "dark"
-            : getSystemTheme() === "dark"
+            : window.matchMedia(COLOR_SCHEME_QUERY).matches
               ? "light"
               : "dark";
 

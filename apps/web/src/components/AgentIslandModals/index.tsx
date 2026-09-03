@@ -15,25 +15,29 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
+import { BackupsDialog } from "@/components/BackupsDialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ProviderPicker } from "@/components/ProviderPicker";
-import { setProvider } from "@/api/agents";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useModals } from "@/providers/ModalsProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useDialogs } from "@/stores/use-dialogs";
+import { useNavigate } from "react-router-dom";
+import { provisionAgent } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function AgentIslandModals() {
-  const { name } = useSelectedAgent();
-  const {
-    showAuth,
-    clearAuthState,
-    deleteDialogOpen,
-    setDeleteDialogOpen,
-    handleDelete,
-    backupDialogOpen,
-    setBackupDialogOpen,
-    handleBackup,
-  } = useModals();
+  const { name, remove } = useSelectedAgent();
+  const navigate = useNavigate();
+  const dialogs = useDialogs((s) => s.open);
+  const setDialogOpen = useDialogs((s) => s.setOpen);
+  const showAuth = dialogs.providerAuth;
+  const clearAuthState = () => {
+    setDialogOpen("providerAuth", false);
+  };
+  const handleDelete = async () => {
+    await navigate("/");
+    await remove();
+  };
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -65,13 +69,14 @@ export function AgentIslandModals() {
           ) : (
             <div className="flex min-w-0 flex-col items-center gap-3 py-2">
               <ProviderPicker
+                agentName={name}
                 className="w-full px-0"
                 onDone={(result) => {
                   const submit = async () => {
                     setSubmitting(true);
                     setSubmitError(null);
                     try {
-                      await setProvider(name, result);
+                      await provisionAgent(httpClient, name, result);
                       clearAuthState();
                     } catch (e: unknown) {
                       setSubmitError(
@@ -96,7 +101,12 @@ export function AgentIslandModals() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <AlertDialog
+        open={dialogs.deleteAgent}
+        onOpenChange={(open) => {
+          setDialogOpen("deleteAgent", open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>delete {name}?</AlertDialogTitle>
@@ -119,27 +129,12 @@ export function AgentIslandModals() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={backupDialogOpen} onOpenChange={setBackupDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>back up {name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              this captures a snapshot of {name} now. {name} pauses briefly
-              while it runs.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                handleBackup();
-              }}
-            >
-              back up
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <BackupsDialog
+        open={dialogs.backups}
+        onOpenChange={(open) => {
+          setDialogOpen("backups", open);
+        }}
+      />
     </>
   );
 }

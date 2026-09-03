@@ -198,6 +198,7 @@ function Sidebar({
     return (
       <Drawer open={openMobile} onOpenChange={setOpenMobile}>
         <DrawerContent
+          bare
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
@@ -213,7 +214,7 @@ function Sidebar({
             <DrawerDescription>dashboard navigation</DrawerDescription>
           </DrawerHeader>
           <div
-            className="flex flex-col gap-2 overflow-y-auto px-1 sm:px-2 md:px-4 [&_[data-sidebar=header]]:p-0"
+            className="flex flex-col gap-2 overflow-y-auto px-4 [&_[data-sidebar=header]]:p-0"
             onClick={(e) => {
               const target = e.target as HTMLElement;
               const button = target.closest(

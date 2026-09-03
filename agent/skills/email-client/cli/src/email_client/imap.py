@@ -465,7 +465,7 @@ def _fetch_summaries(args, *, include_to: bool, criteria, charset: str = "US-ASC
             print("[]")
             return
         out = [_msg_summary(m, include_to=include_to) for m in msgs]
-        print(json.dumps(out, indent=2, ensure_ascii=False))
+        print(json.dumps(out, ensure_ascii=False))
 
 
 def cmd_list(args):
@@ -645,7 +645,7 @@ def cmd_get(args):
         if len(body) > args.body_chars:
             out["body_truncated"] = True
             out["body_chars_total"] = len(body)
-        print(json.dumps(out, indent=2, ensure_ascii=False))
+        print(json.dumps(out, ensure_ascii=False))
 
 
 def cmd_attachments(args):
@@ -677,7 +677,7 @@ def cmd_attachments(args):
 
     if not args.download:
         listing = [{k: v for k, v in it.items() if k != "payload"} for it in items]
-        print(json.dumps(listing, indent=2, ensure_ascii=False))
+        print(json.dumps(listing, ensure_ascii=False))
         return
 
     if args.part is not None:
@@ -686,7 +686,7 @@ def cmd_attachments(args):
             sys.exit(f"no attachment with part_index={args.part} on uid={args.uid}")
 
     if not items:
-        print(json.dumps({"saved": [], "uid": args.uid}, indent=2))
+        print(json.dumps({"saved": [], "uid": args.uid}))
         return
 
     out_dir = pathlib.Path(args.out_dir).expanduser() if args.out_dir else _state_dir() / "attachments" / str(args.uid)
@@ -715,7 +715,7 @@ def cmd_attachments(args):
                 "path": str(target),
             }
         )
-    print(json.dumps({"uid": args.uid, "saved": saved}, indent=2, ensure_ascii=False))
+    print(json.dumps({"uid": args.uid, "saved": saved}, ensure_ascii=False))
 
 
 # -- mark / move / archive / delete --------------------------------
@@ -830,7 +830,6 @@ def cmd_status(args):
                 "uidnext": st["UIDNEXT"],
                 "uidvalidity": st["UIDVALIDITY"],
             },
-            indent=2,
         )
     )
 
@@ -875,7 +874,7 @@ def _save_notify_folders(acc: str, folders: list[str]) -> None:
 
 def cmd_notify_list(args):
     acc = resolve_account(args.account)
-    print(json.dumps({"account": acc, "folders": notify_folders(acc)}, indent=2))
+    print(json.dumps({"account": acc, "folders": notify_folders(acc)}))
 
 
 def cmd_notify_add(args):
@@ -902,12 +901,12 @@ def cmd_notify_remove(args):
 
 def cmd_send_delay(args):
     seconds = pending_send.delay_seconds(_state_dir()) if args.seconds is None else pending_send.set_delay_seconds(_state_dir(), args.seconds)
-    print(json.dumps({"send_delay_seconds": seconds}, indent=2))
+    print(json.dumps({"send_delay_seconds": seconds}))
 
 
 def cmd_pending(args):
     account = resolve_account(args.account) if args.account else None
-    print(json.dumps([queued.public() for queued in pending_send.list_pending(_state_dir(), account=account)], indent=2))
+    print(json.dumps([queued.public() for queued in pending_send.list_pending(_state_dir(), account=account)]))
 
 
 def cmd_undo(args):
@@ -916,7 +915,7 @@ def cmd_undo(args):
     except ValueError as error:
         sys.exit(str(error))
     pending_send.finish_cancel(_state_dir(), queued.id)
-    print(json.dumps({"id": queued.id, "status": "cancelled"}, indent=2))
+    print(json.dumps({"id": queued.id, "status": "cancelled"}))
 
 
 # -- auth subcommands (multi-account management) -------------------
@@ -941,7 +940,7 @@ def cmd_auth_list(_args):
                 "has_token": tok is not None,
             }
         )
-    print(json.dumps(out, indent=2))
+    print(json.dumps(out))
 
 
 def cmd_auth_remove(args):
@@ -975,9 +974,9 @@ def cmd_auth_probe(args):
     else:
         results = google_health.run_probe_all(notify=notify)
         if not results:
-            print(json.dumps({"status": "skipped", "reason": "no Gmail accounts registered"}, indent=2))
+            print(json.dumps({"status": "skipped", "reason": "no Gmail accounts registered"}))
             return
-    print(json.dumps(results if len(results) != 1 else results[0], indent=2))
+    print(json.dumps(results if len(results) != 1 else results[0]))
     if any(r.get("status") in google_health.CLIENT_FAULT_STATUSES for r in results):
         sys.exit(1)
 

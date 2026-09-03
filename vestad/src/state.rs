@@ -1,6 +1,6 @@
 //! The HTTP layer's shared vocabulary, below every handler module: the daemon's
 //! `AppState`, the JSON response helpers, and the request-layer constants. Handler
-//! modules (serve.rs, auth.rs, `agent_proxy.rs`, providers/*) all
+//! modules (serve.rs, auth.rs, `agent_proxy.rs`) all
 //! import from here; this module imports none of them.
 
 use std::collections::HashMap;
@@ -21,36 +21,6 @@ pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 // by the edge after ~100s of silence; a periodic ping keeps frames flowing so the socket
 // survives an idle client. Must stay comfortably under that window.
 pub(crate) const WS_KEEPALIVE_INTERVAL_SECS: u64 = 30;
-
-const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
-
-/// One in-flight Claude OAuth PKCE session (see providers/claude.rs).
-pub(crate) struct AuthSession {
-    pub code_verifier: String,
-    pub state: String,
-    pub created: std::time::Instant,
-}
-
-/// One in-flight `ChatGPT` device-code session (see providers/openai.rs).
-#[derive(Clone)]
-pub(crate) struct OpenAiAuthSession {
-    pub device_auth_id: String,
-    pub user_code: String,
-    pub created: std::time::Instant,
-}
-
-
-impl OpenAiAuthSession {
-    pub fn is_expired(&self) -> bool {
-        self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
-    }
-}
-
-impl AuthSession {
-    pub fn is_expired(&self) -> bool {
-        self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
-    }
-}
 
 /// One refresh-token family (one login). `live` is the only currently-valid jti;
 /// `prev` is the jti it was just rotated from, honored ONCE as a retry-grace so a
@@ -105,8 +75,6 @@ pub struct AppState {
     pub(crate) api_key: String,
     pub(crate) env_config: docker::AgentEnvConfig,
     pub(crate) docker: bollard::Docker,
-    pub(crate) auth_sessions: Mutex<HashMap<String, AuthSession>>,
-    pub(crate) openai_auth_sessions: Mutex<HashMap<String, OpenAiAuthSession>>,
     /// Serializes the daemon's Vesta Cloud pairing handlers. The pairing state
     /// itself lives ONLY in `<config_dir>/vesta-cloud-pairing.json` (single
     /// source of truth shared with `vestad vesta-cloud login` and a restarted
@@ -122,6 +90,10 @@ pub struct AppState {
     /// The gateway's one operation slot (see operation.rs): what the gateway is doing to itself
     /// right now, and the lock that keeps an update and a restart from racing each other.
     pub(crate) operation: Arc<operation::OperationSlot>,
+    /// Flipped by serve's shutdown branch when SIGTERM/Ctrl-C arrives. The update's restart
+    /// phase reads it to tell a `systemctl restart` error caused by the restart killing this
+    /// process (the success path) from a restart that genuinely failed.
+    pub(crate) shutdown_tx: tokio::sync::watch::Sender<bool>,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
     /// Revocable, per-service credentials the agent proxy accepts for a private service.
@@ -133,6 +105,11 @@ pub struct AppState {
     /// Per-connection client presence fed by the `/sync` socket. Read by the mobile push path to
     /// suppress a push while any client is focused, and fanned to sessions for return-to-focus.
     pub(crate) presence: Arc<crate::sync::Presence>,
+    /// The durable, uncapped log of user-facing notifications, appended by every
+    /// `UserNotifier::notify` and paged by `GET /notifications`.
+    pub(crate) user_notification_log: Arc<crate::user_notification_log::UserNotificationLog>,
+    /// Which agents have been told which device zone or place, so each change is delivered once.
+    pub(crate) user_context: crate::user_context::UserContext,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     /// The client-protocol aggregator's fan-out state: the per-agent pending-notifications
@@ -181,6 +158,9 @@ impl AppState {
         let http_client = reqwest::Client::new();
         let presence = Arc::new(crate::sync::Presence::new());
         let device_registry = Arc::new(crate::device_registry::DeviceRegistry::load(&env_config.config_dir));
+        let user_notification_log = Arc::new(
+            crate::user_notification_log::UserNotificationLog::load(&env_config.config_dir),
+        );
         let (mobile_app, mobile_app_worker) =
             mobile_app::MobileApp::new(device_registry.clone(), http_client.clone(), presence.clone());
         (
@@ -188,20 +168,21 @@ impl AppState {
                 api_key,
                 env_config,
                 docker,
-                auth_sessions: Mutex::new(HashMap::new()),
-                openai_auth_sessions: Mutex::new(HashMap::new()),
                 vesta_cloud_pairing_lock: Mutex::new(()),
                 refresh_live: Mutex::new(refresh_live),
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
                 update_info: Mutex::new(None),
                 operation: Arc::new(operation::OperationSlot::new()),
+                shutdown_tx: tokio::sync::watch::channel(false).0,
                 http_client,
                 settings: RwLock::new(settings),
                 service_keys: RwLock::new(crate::service_keys::load_store()),
                 mobile_app,
                 device_registry,
                 presence,
+                user_notification_log,
+                user_context: crate::user_context::UserContext::default(),
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
                 sync_hub: Arc::new(crate::sync::SyncHub::new()),
@@ -214,6 +195,17 @@ impl AppState {
         )
     }
 
+    /// The delivery targets of one user notification, with the live push overrides read once.
+    /// Every producer builds one of these per notification, so delivery has a single shape.
+    pub(crate) async fn user_notifier(&self) -> crate::user_notifications::UserNotifier {
+        crate::user_notifications::UserNotifier {
+            sync_hub: self.sync_hub.clone(),
+            mobile_app: self.mobile_app.clone(),
+            log: self.user_notification_log.clone(),
+            push_overrides: self.settings.read().await.push_notifications.clone(),
+        }
+    }
+
     pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
         let mut locks = self.agent_locks.lock().await;
         locks
@@ -222,13 +214,6 @@ impl AppState {
             .clone()
     }
 
-    pub(crate) async fn clean_expired_sessions(&self) {
-        let mut sessions = self.auth_sessions.lock().await;
-        sessions.retain(|_, s| !s.is_expired());
-        drop(sessions);
-        let mut sessions = self.openai_auth_sessions.lock().await;
-        sessions.retain(|_, s| !s.is_expired());
-    }
 }
 
 pub type SharedState = Arc<AppState>;

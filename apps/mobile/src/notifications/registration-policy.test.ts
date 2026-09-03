@@ -106,13 +106,19 @@ describe("registration identity", () => {
 
   it("differs when the token was replaced by a newer registration", () => {
     expect(
-      isSameRegistration(target, { gatewayUrl: "https://a.test", token: "tok-2" }),
+      isSameRegistration(target, {
+        gatewayUrl: "https://a.test",
+        token: "tok-2",
+      }),
     ).toBe(false);
   });
 
   it("differs when the gateway differs", () => {
     expect(
-      isSameRegistration(target, { gatewayUrl: "https://b.test", token: "tok-1" }),
+      isSameRegistration(target, {
+        gatewayUrl: "https://b.test",
+        token: "tok-1",
+      }),
     ).toBe(false);
   });
 

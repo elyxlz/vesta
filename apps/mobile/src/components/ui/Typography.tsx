@@ -6,10 +6,11 @@ import {
   type TextProps,
   type TextStyle,
 } from "react-native";
-import type { Ref } from "react";
+import type { ReactNode, Ref } from "react";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 import { fontNames } from "@/theme/typography";
 
-export type FontFamily = "sans" | "heading" | "wordmark" | "mono";
+export type FontFamily = "sans" | "heading" | "serif" | "wordmark" | "mono";
 
 function numericWeight(weight: TextStyle["fontWeight"]): number {
   if (typeof weight === "number") return weight;
@@ -31,6 +32,12 @@ function fontFor(family: FontFamily, weight: TextStyle["fontWeight"]): string {
     if (value >= 600) return fontNames.heading.native["600"];
     if (value >= 500) return fontNames.heading.native["500"];
     return fontNames.heading.native["400"];
+  }
+  if (family === "serif") {
+    if (value >= 700) return fontNames.serif.native["700"];
+    if (value >= 600) return fontNames.serif.native["600"];
+    if (value >= 500) return fontNames.serif.native["500"];
+    return fontNames.serif.native["400"];
   }
   if (family === "mono") {
     if (value >= 700) return fontNames.mono.native["700"];
@@ -75,10 +82,21 @@ export function TextInput({
   ref?: Ref<NativeTextInput>;
 }) {
   return (
-    <NativeTextInput
-      ref={ref}
-      {...props}
-      style={themedStyle(style, family)}
-    />
+    <NativeTextInput ref={ref} {...props} style={themedStyle(style, family)} />
   );
 }
+
+// An example phrase the user could say, set apart inside running copy: the serif voice in the
+// foreground color, so a quoted prompt reads as a voice rather than more instructions.
+export function Quote({ children }: { children: ReactNode }) {
+  const { colors } = usePreferences();
+  return (
+    <Text family="serif" style={[styles.quote, { color: colors.text }]}>
+      {children}
+    </Text>
+  );
+}
+
+const styles = StyleSheet.create({
+  quote: { fontWeight: "500" },
+});

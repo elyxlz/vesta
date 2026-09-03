@@ -8,7 +8,7 @@ use ureq::http::Response;
 use ureq::Body;
 
 use crate::types::{
-    AccessToken, AuthFlowResponse, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
+    AccessToken, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
 };
 
 // ── HTTP client ─────────────────────────────────────────────────
@@ -124,6 +124,10 @@ impl Client {
         };
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            // No keep-alive reuse: the harness makes sequential blocking calls, so a pooled
+            // connection the gateway has since closed only surfaces as `io: Peer disconnected`
+            // on the next reuse. A fresh connection per request removes that race.
+            .max_idle_connections_per_host(0)
             .tls_config(tls_config)
             .build()
             .new_agent();
@@ -356,28 +360,6 @@ impl Client {
         }
     }
 
-    /// Standalone Claude OAuth start (not agent-scoped). Returns the auth URL and session id.
-    pub fn oauth_start(&self) -> Result<AuthFlowResponse, String> {
-        let resp = self.post("/providers/claude/oauth/start")?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
-    }
-
-    /// Standalone Claude OAuth completion. Returns the credentials JSON on success.
-    pub fn oauth_complete(&self, session_id: &str, code: &str) -> Result<String, String> {
-        let body = serde_json::json!({"session_id": session_id, "code": code});
-        let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
-        let v: serde_json::Value = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))?;
-        v["credentials"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| "missing credentials in response".to_string())
-    }
-
     /// Sign an agent in with an `OpenRouter` key + model via `PUT /provider`. The write doesn't restart
     /// — callers (e.g. `provision_and_settle`) restart afterwards. The agent must be running (its WS
     /// port bound) to receive the call, so this waits first.
@@ -454,7 +436,7 @@ impl Client {
 
     /// Post an agent-injected user-facing notification via `POST /agents/{name}/user-notification`
     /// carrying the agent's own `X-Agent-Token` (self-scoped, the loopback path the app-chat reply hook
-    /// and the rate-limit notice use). `kind` is the closed set `message`/`rate_limited`; an unknown
+    /// and the rate-limit notice use). `kind` is the closed set `message`/`needs_user`; an unknown
     /// kind is a 400 (surfaced here as the mapped error string). On success vestad fans a
     /// `user_notification` delta `{agent,kind,title,body}` to every connected `/sync` session.
     pub fn send_user_notification(
@@ -474,6 +456,35 @@ impl Client {
             .map_err(|e| map_error(&e))?;
         check_response(resp)?;
         Ok(())
+    }
+
+    /// Mark the user-notification feed seen via `POST /notifications/seen` (client auth): vestad
+    /// advances the synced watermark to its own now and returns it as `{seenAt}`.
+    pub fn mark_notifications_seen(&self) -> Result<u64, String> {
+        let resp = self.post_json("/notifications/seen", &serde_json::json!({}))?;
+        let body: serde_json::Value = check_response(resp)?
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        body["seenAt"].as_u64().ok_or_else(|| format!("seenAt missing: {body}"))
+    }
+
+    /// Report a device's context outside the `/sync` socket via `PUT /devices/{device_id}/context`
+    /// (client auth), the mobile background poll's carrier. `context` is `{timezone?, position?}`.
+    pub fn report_device_context(&self, device_id: &str, context: &serde_json::Value) -> Result<(), String> {
+        let resp = self.put_json(&format!("/devices/{device_id}/context"), context)?;
+        check_response(resp)?;
+        Ok(())
+    }
+
+    /// Read every device the user has via `GET /agents/{name}/devices` carrying the agent's own
+    /// `X-Agent-Token` (self-scoped, what the agent's `user_devices` tool calls).
+    pub fn agent_devices(&self, name: &str, agent_token: &str) -> Result<serde_json::Value, String> {
+        let (status, body) = self.proxy_get(&format!("/agents/{name}/devices"), ProxyAuth::AgentToken(agent_token))?;
+        if status != 200 {
+            return Err(format!("HTTP {status}: {body}"));
+        }
+        serde_json::from_str(&body).map_err(|e| format!("parse error: {e}"))
     }
 
     /// Mint a JWT access token (+ rotating refresh token) via `POST /auth/session`, exchanging the
@@ -590,6 +601,26 @@ impl Client {
             request = request.header(header, &value);
         }
         let response = request.call().map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// POST JSON to a proxied path with a chosen credential, preserving the upstream status/body.
+    pub fn proxy_post_json(
+        &self,
+        path: &str,
+        auth: ProxyAuth,
+        body: &serde_json::Value,
+    ) -> Result<(u16, String), String> {
+        let mut request = self.agent.post(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.send_json(body).map_err(|e| map_error(&e))?;
         let status = response.status().as_u16();
         let body = response
             .into_body()

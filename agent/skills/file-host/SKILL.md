@@ -22,7 +22,7 @@ mkdir -p ~/.file-host && cp /path/to/report.pdf ~/.file-host/
 file-host daemon start
 ```
 
-Shareable URL: `$VESTAD_TUNNEL/agents/$AGENT_NAME/file-host/<filename>` (public route, no token needed).
+Shareable URL: `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/file-host/<filename>` (public route, no token needed).
 
 Off vesta, bind any port with `serve.py --port N` and expose it with your own tunnel/ssh.
 

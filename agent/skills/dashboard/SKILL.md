@@ -70,9 +70,8 @@ Example, for a request like "show me my running this week":
 `vite build` does NOT typecheck: it strips types, so a data file that violates its own interface
 builds clean and renders wrong (a field under the wrong name reads as `undefined`). The symptom is a
 page showing empty cells or dead links from data that looks right; typecheck before debugging the
-page. The builder runs the real check before every build; if you ever check by hand, run
-`npx tsc --noEmit -p tsconfig.app.json` from `~/agent/skills/dashboard/app`. Never `-p .`: the root
-tsconfig is solution-style, so that compiles zero files and always passes.
+page. The builder runs the real check with every build; if you ever check by hand, run `npx tsc -b`
+from `~/agent/skills/dashboard/app`.
 
 ## Verify and relay
 

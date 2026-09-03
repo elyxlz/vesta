@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, StyleSheet, View } from "react-native";
-import type { WebViewMessageEvent, ShouldStartLoadRequest } from "react-native-webview/lib/WebViewTypes";
+import type {
+  WebViewMessageEvent,
+  ShouldStartLoadRequest,
+} from "react-native-webview/lib/WebViewTypes";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { serviceKeyPathUrl } from "@vesta/core";
+import { agentPath, serviceKeyPathUrl } from "@vesta/core";
 import { useServiceKey } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
-import { DashboardWebView, type DashboardWebViewHandle } from "@/components/DashboardWebView";
+import {
+  DashboardWebView,
+  type DashboardWebViewHandle,
+} from "@/components/DashboardWebView";
 import { EmptyState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -69,7 +75,7 @@ export default function DashboardPage() {
             {
               type: "vesta-auth",
               token: connection.accessToken,
-              baseUrl: `${connection.url}/agents/${encodeURIComponent(name)}`,
+              baseUrl: `${connection.url}${agentPath(name)}`,
               agentName: name,
             },
           ]

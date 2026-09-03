@@ -3,10 +3,11 @@ import {
   use,
   useCallback,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import * as Linking from "expo-linking";
+import { visualDelay, visualSwitch } from "./launch-query";
 
 interface PrivacyValue {
   appLockEnabled: boolean;
@@ -28,10 +29,10 @@ const initializationMessage =
   "Vesta could not safely load your privacy settings.";
 const unlockMessage =
   "Device authentication is temporarily locked. Unlock your device and try again.";
-const launchUrl = Linking.getLinkingURL();
-const startsUnlocked =
-  launchUrl !== null &&
-  Linking.parse(launchUrl).queryParams?.visualPrivacy === "unlocked";
+const privacyVariant = visualSwitch("visualPrivacy");
+const startsUnlocked = privacyVariant === "unlocked";
+// `opening` never hydrates, which holds the "Opening Vesta" splash sheet.
+const neverHydrates = privacyVariant === "opening";
 
 export function PrivacyProvider({ children }: { children: ReactNode }) {
   const [locked, setLocked] = useState(!startsUnlocked);
@@ -47,11 +48,17 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
     setLocked(true);
   }, []);
 
+  const unlockAttempts = useRef(0);
+  // The first attempt models a dismissed system prompt (no error), so the
+  // locked state stays capturable through the gate's automatic unlock;
+  // later attempts model the lockout fixture.
   const unlock = useCallback(async (): Promise<boolean> => {
     setAuthenticating(true);
     await new Promise((resolve) => setTimeout(resolve, 300));
+    await visualDelay();
     setAuthenticating(false);
-    setUnlockError(unlockMessage);
+    unlockAttempts.current += 1;
+    if (unlockAttempts.current > 1) setUnlockError(unlockMessage);
     return false;
   }, []);
 
@@ -59,10 +66,11 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
     () => ({
       appLockEnabled: true,
       hideAppSwitcherPreview: true,
-      hydrated: true,
+      hydrated: !neverHydrates,
       locked,
       authenticating,
-      authenticationName: "Face ID",
+      authenticationName:
+        process.env.EXPO_OS === "ios" ? "Face ID" : "fingerprint",
       initializationError,
       unlockError,
       retryInitialization,

@@ -3,8 +3,10 @@ compile_error!("vestad only supports Linux");
 
 use clap::Parser;
 
+mod agent_bundle;
 mod agent_code;
 mod agent_embed;
+mod agent_notification;
 mod agent_provider;
 mod agent_proxy;
 mod agent_status;
@@ -14,17 +16,14 @@ mod backup;
 mod channel;
 mod device_registry;
 mod docker;
-mod geoip;
 mod jwt;
 mod lifecycle;
 mod maintenance;
 mod maintenance_window;
-mod manifest;
 mod mobile_app;
 mod mounts;
 mod operation;
 mod paths;
-mod providers;
 mod restic;
 mod self_log;
 mod serve;
@@ -39,6 +38,9 @@ mod tunnel;
 mod types;
 mod update;
 mod upstream;
+mod user_context;
+mod user_notification_log;
+mod user_notifications;
 mod vendored_bin;
 mod vesta_cloud;
 
@@ -105,10 +107,23 @@ enum Command {
         #[command(subcommand)]
         action: TunnelAction,
     },
-    /// Export or import agent backups as files
-    Backup {
-        #[command(subcommand)]
-        action: BackupAction,
+    /// Export an agent to a portable bundle file (credentials are stripped)
+    Export {
+        /// Agent name
+        name: String,
+        /// Output file path (.tar.gz)
+        output: std::path::PathBuf,
+    },
+    /// Import an agent from an export bundle
+    Import {
+        /// Bundle file path (.tar.gz), or an http(s) URL to download it from
+        input: String,
+        /// Agent name to create (defaults to the name embedded in the bundle)
+        #[arg(long)]
+        name: Option<String>,
+        /// Answer the older-bundle confirmation with yes (for scripts and non-interactive shells)
+        #[arg(long)]
+        yes: bool,
     },
     /// Update vestad to the latest version
     Update,
@@ -124,24 +139,6 @@ enum VestaCloudAction {
     Login,
     /// Unpair this box from its Vesta Cloud account
     Logout,
-}
-
-#[derive(clap::Subcommand)]
-enum BackupAction {
-    /// Export an agent to a compressed file
-    Export {
-        /// Agent name
-        name: String,
-        /// Output file path (.tar.gz)
-        output: std::path::PathBuf,
-    },
-    /// Import an agent from a compressed file
-    Import {
-        /// Agent name to create
-        name: String,
-        /// Input file path (.tar.gz)
-        input: std::path::PathBuf,
-    },
 }
 
 #[derive(clap::Subcommand)]
@@ -162,6 +159,124 @@ enum TunnelAction {
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("error: {msg}");
     std::process::exit(1);
+}
+
+/// Ask a yes/no question on stderr and read the answer from stdin. Anything but `y` is a no,
+/// an unreadable stdin included.
+fn confirm(prompt: &str) -> bool {
+    eprint!("{prompt} [y/N] ");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    answer.trim().eq_ignore_ascii_case("y")
+}
+
+/// Decide what this vestad does with the version that wrote a bundle, before the import takes
+/// the agent lock and loads a multi-GB image. `Ok(false)` is the user declining an older
+/// bundle: not a failure, so the caller still cleans up before it exits. The import creates a
+/// new agent, so nothing here is replaced, and the agent converges its state on its first boot.
+fn confirm_import_version(bundle_version: Option<&str>, yes: bool) -> Result<bool, String> {
+    match update::version_gate(bundle_version, env!("CARGO_PKG_VERSION")) {
+        update::VersionGate::Proceed => Ok(true),
+        update::VersionGate::RefuseNewer { stamped, current } => Err(format!(
+            "this bundle was exported by vestad v{stamped}; this vestad is v{current} \
+             and cannot import newer state; update vestad first"
+        )),
+        update::VersionGate::ConfirmOlder { stamped, current } => {
+            eprintln!("this bundle was exported by vestad v{stamped} and this vestad is v{current}.");
+            eprintln!("the import creates a new agent, so no agent on this machine is replaced.");
+            eprintln!("the new agent converges its state to v{current} on its first boot.");
+            if yes {
+                return Ok(true);
+            }
+            if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                return Err("cannot ask for confirmation without a terminal; pass --yes to import this bundle".to_string());
+            }
+            if confirm("continue?") {
+                return Ok(true);
+            }
+            eprintln!("Aborted.");
+            Ok(false)
+        }
+    }
+}
+
+/// One import, from a bundle already on this filesystem to a created agent. `Ok(None)` is the
+/// declined confirmation above. Every outcome returns instead of exiting, so the caller can
+/// remove a downloaded temp file whichever way this went.
+fn import_from_file(
+    input: &std::path::Path,
+    name: Option<&str>,
+    yes: bool,
+    config: &std::path::Path,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<Option<agent_bundle::ImportOutcome>, String> {
+    let peek = agent_bundle::peek_import(input, name).map_err(|e| e.to_string())?;
+    if !confirm_import_version(peek.vestad_version.as_deref(), yes)? {
+        return Ok(None);
+    }
+    let _lock = backup::agent_file_lock(&peek.name).map_err(|e| e.to_string())?;
+
+    let env_config = docker::AgentEnvConfig {
+        config_dir: config.to_path_buf(),
+        agents_dir: config.join("agents"),
+        vestad_port: read_port_file(config).unwrap_or(0),
+        vestad_tunnel: tunnel::get_tunnel_config(config).map(|tc| tc.url()),
+        vestad_lan_url: Status::load(config).and_then(|s| s.lan_url),
+    };
+    let code_dir =
+        agent_code::ensure_agent_code(config).map_err(|e| format!("failed to populate agent code: {e}"))?;
+    // The container bind-mounts the upstream dir; build it here like server startup does, or
+    // rootful Docker would create the missing host path as root and the next vestad startup
+    // could no longer write into it.
+    upstream::ensure_upstream(config, &code_dir).map_err(|e| e.to_string())?;
+
+    let docker = docker::connect().map_err(|e| e.to_string())?;
+    let outcome = runtime
+        .block_on(agent_bundle::import_agent(
+            &docker,
+            agent_bundle::ImportRequest {
+                input,
+                name_override: name,
+                env_config: &env_config,
+            },
+        ))
+        .map_err(|e| format!("import failed: {e}"))?;
+
+    let mut settings = settings::load_settings();
+    let entry = settings.agents.entry(outcome.name.clone()).or_default();
+    if let Some(manifest) = &outcome.manifest {
+        entry.user_desired = manifest.user_desired;
+    }
+    settings::save_settings(&settings);
+    Ok(Some(outcome))
+}
+
+/// An import's notes on stderr, then its one result line on stdout. A legacy file carries no
+/// manifest: nothing was scrubbed, no mounts are known, and the agent is always started.
+fn report_import(outcome: &agent_bundle::ImportOutcome) {
+    if let Some(manifest) = &outcome.manifest {
+        if !manifest.mounts.is_empty() {
+            eprintln!("the source agent had host folder access; re-grant from the app if wanted:");
+            for mount in &manifest.mounts {
+                let mode = if mount.writable { "read-write" } else { "read-only" };
+                eprintln!("  {} -> {} ({mode})", mount.host_path, mount.container_path);
+            }
+        }
+        eprintln!("the LLM provider is signed out; sign in from the app.");
+    }
+    let running = outcome
+        .manifest
+        .as_ref()
+        .is_none_or(|manifest| manifest.user_desired == settings::UserDesired::Running);
+    println!(
+        "imported: {} (port {}, {})",
+        outcome.name,
+        outcome.port,
+        if running { "running" } else { "stopped" },
+    );
 }
 
 /// Run `docker <args>` with the parent's stdio inherited (for interactive TTY
@@ -491,13 +606,18 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool, f
                 )
             };
 
-            docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             // Only advertise a LAN address when the API is actually bound to the
             // LAN (--expose-lan); otherwise the URL would be unreachable.
             let lan_url = expose_lan
                 .then(local_lan_ip)
                 .flatten()
                 .map(|ip| format!("https://{ip}:{port}"));
+            docker::update_all_agent_env_files(
+                &config.join("agents"),
+                port,
+                tunnel_url.as_deref(),
+                lan_url.as_deref(),
+            );
             let user = std::env::var("USER")
                 .or_else(|_| std::env::var("LOGNAME"))
                 .unwrap_or_else(|_| "unknown".into());
@@ -791,150 +911,72 @@ fn main() {
             docker_exec_inherit(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"]);
         }
 
-        Command::Backup { action } => {
+        Command::Import { input, name, yes } => {
+            let config = config_dir();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime builds");
+            // A downloaded bundle is this process's temp file, so it is removed once the import
+            // that reads it is over, whichever way that went.
+            let (source, temporary) = if agent_bundle::is_download_url(&input) {
+                let path = rt
+                    .block_on(agent_bundle::download_bundle(&input, &config))
+                    .unwrap_or_else(|e| die(&e));
+                (path, true)
+            } else {
+                let path = std::path::PathBuf::from(&input);
+                if !path.exists() {
+                    die(format!("file not found: {}", path.display()));
+                }
+                (path, false)
+            };
+
+            let result = import_from_file(&source, name.as_deref(), yes, &config, &rt);
+            if temporary {
+                std::fs::remove_file(&source).ok();
+            }
+            match result {
+                Err(message) => die(message),
+                Ok(None) => std::process::exit(0),
+                Ok(Some(outcome)) => report_import(&outcome),
+            }
+        }
+
+        Command::Export { name, output } => {
             let docker = docker::connect().unwrap_or_else(|e| die(&e));
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("tokio runtime builds");
+            docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+            let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
+            let config = config_dir();
+            let code_dir = agent_code::ensure_agent_code(&config)
+                .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
+            let settings = settings::load_settings();
+            let agent_settings = settings.agents.get(&name).cloned().unwrap_or_default();
+            let constitution_path = docker::constitution_host_path(&config.join("agents"), &name);
+            let constitution = std::fs::read_to_string(&constitution_path).unwrap_or_default();
+            rt.block_on(agent_bundle::export_agent(
+                &docker,
+                agent_bundle::ExportRequest {
+                    name: &name,
+                    output: &output,
+                    core_dir: &code_dir.join("core"),
+                    constitution,
+                    user_desired: agent_settings.user_desired,
+                    mounts: agent_settings.mounts,
+                },
+            ))
+            .unwrap_or_else(|e| die(format!("export failed: {e}")));
 
-            match action {
-                BackupAction::Export { name, output } => {
-                    docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-                    let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
-                    let cname = docker::container_name(&name);
-
-                    rt.block_on(async {
-                        let cs = docker::container_status(&docker, &cname).await;
-                        if cs == docker::ContainerStatus::NotFound {
-                            die(format!("agent '{name}' not found"));
-                        }
-
-                        let was_running = cs == docker::ContainerStatus::Running;
-                        if was_running {
-                            eprintln!("stopping agent...");
-                            docker::handoff_shutdown_reason(
-                                &docker,
-                                &name,
-                                &cname,
-                                &lifecycle::BACKUP_EXPORT,
-                            )
-                            .await;
-                            docker::stop_container_with_timeout(
-                                &docker,
-                                &cname,
-                                backup::BACKUP_STOP_TIMEOUT_SECS,
-                            )
-                            .await
-                            .unwrap_or_else(|e| die(format!("failed to stop container: {e}")));
-                        }
-
-                        eprintln!("snapshotting container...");
-                        let temp_tag = format!("vesta-export:{name}-temp");
-                        if let Err(e) =
-                            docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await
-                        {
-                            if was_running {
-                                docker::handoff_boot_reason(
-                                    &docker,
-                                    &name,
-                                    &cname,
-                                    &lifecycle::BACKUP_EXPORT,
-                                )
-                                .await;
-                                docker::start_container(&docker, &cname).await;
-                            }
-                            die(format!("snapshot failed: {e}"));
-                        }
-
-                        if was_running {
-                            docker::handoff_boot_reason(
-                                &docker,
-                                &name,
-                                &cname,
-                                &lifecycle::BACKUP_EXPORT,
-                            )
-                            .await;
-                            docker::start_container(&docker, &cname).await;
-                        }
-
-                        eprintln!("exporting to {}...", output.display());
-                        docker::export_image_gzip(&docker, &temp_tag, &output)
-                            .await
-                            .unwrap_or_else(|e| die(format!("export failed: {e}")));
-
-                        docker::remove_image(&docker, &temp_tag)
-                            .await
-                            .unwrap_or_else(|e| die(format!("failed to remove temp image: {e}")));
-
-                        eprintln!("exported: {}", output.display());
-                    });
-                }
-                BackupAction::Import { name, input } => {
-                    docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-                    let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
-
-                    if !input.exists() {
-                        die(format!("file not found: {}", input.display()));
-                    }
-
-                    let cname = docker::container_name(&name);
-
-                    rt.block_on(async {
-                        if docker::container_status(&docker, &cname).await != docker::ContainerStatus::NotFound {
-                            die(format!("agent '{name}' already exists — destroy it first or pick a different name"));
-                        }
-
-                        eprintln!("loading image from {}...", input.display());
-                        let loaded_image = docker::import_image_gzip(&docker, &input).await
-                            .unwrap_or_else(|e| die(format!("import failed: {e}")));
-                        let loaded_image = loaded_image.as_str();
-
-                        eprintln!("creating agent '{name}'...");
-                        let config = config_dir();
-                        let vestad_port = read_port_file(&config).unwrap_or(0);
-                        let vestad_tunnel = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
-                        let env_config = docker::AgentEnvConfig {
-                            config_dir: config.clone(),
-                            agents_dir: config.join("agents"),
-                            vestad_port,
-                            vestad_tunnel,
-                        };
-                        let code_dir = agent_code::ensure_agent_code(&config)
-                            .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
-                        // The container bind-mounts the upstream dir; build it here like server
-                        // startup does, or rootful Docker would create the missing host path as
-                        // root and the next vestad startup could no longer write into it.
-                        upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
-                        let port = docker::allocate_port().unwrap_or_else(|e| die(&e));
-                        docker::create_container(
-                            &docker,
-                            &env_config,
-                            docker::ContainerSpec {
-                                cname: &cname,
-                                image: loaded_image,
-                                port,
-                                agent_name: &name,
-                                user_mounts: &[],
-                            },
-                        )
-                        .await
-                        .unwrap_or_else(|e| die(&e));
-
-                        docker::handoff_boot_reason(
-                            &docker,
-                            &name,
-                            &cname,
-                            &lifecycle::BACKUP_IMPORT,
-                        )
-                        .await;
-                        if !docker::start_container(&docker, &cname).await {
-                            die("failed to start imported agent");
-                        }
-                        eprintln!("imported: {name} (port {port})");
-                    });
-                }
-            }
+            eprintln!("the LLM provider sign-in is stripped; other in-container credentials ride along.");
+            // The bundle is written and readable, so a failed stat or canonicalize means the
+            // path moved under us: name what was asked for rather than fail a finished export.
+            let path = std::fs::canonicalize(&output).unwrap_or_else(|_| output.clone());
+            let size = std::fs::metadata(&output).map_or(0, |meta| meta.len());
+            println!("exported: {} ({})", path.display(), agent_bundle::human_size(size));
         }
 
         Command::Connect => {
@@ -1022,16 +1064,12 @@ fn main() {
         }
 
         Command::Uninstall => {
-            use std::io::Write;
-
-            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
-            std::io::stderr().flush().ok();
-            let mut answer = String::new();
-            if std::io::stdin().read_line(&mut answer).is_err() {
-                eprintln!("failed to read input");
-                std::process::exit(1);
+            // No --yes to fall back on, so a stdin that cannot answer must fail loudly: scripting
+            // `vestad uninstall < /dev/null` once reported success having removed nothing.
+            if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                die("uninstall needs a terminal to confirm; run it interactively");
             }
-            if !answer.trim().eq_ignore_ascii_case("y") {
+            if !confirm("This will stop vestad, remove its systemd service, config, and binary. Continue?") {
                 eprintln!("Aborted.");
                 std::process::exit(0);
             }

@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::ops::ControlFlow;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, RawQuery, State};
+use axum::extract::{RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
@@ -16,12 +15,13 @@ use crate::device_registry::{DeviceInfo, DeviceRegistry};
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 use crate::time_utils::now_epoch_secs;
 use crate::types::ClientKind;
+use crate::user_context::UserPresence;
 
 use super::hub::UserNotification;
 use super::presence::PRESENCE_NOTIFY_DELAY;
 use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
-    NotificationsBranch, ServiceInfo, Tree,
+    NotificationsBranch, RateLimitedInfo, ServiceInfo, Tree,
 };
 use super::MIN_SUPPORTED_CLIENT_VERSION;
 
@@ -31,69 +31,11 @@ pub(crate) async fn sync_ws_handler(
     State(state): State<SharedState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> Response {
     // auth_middleware already validated the connect token; capture it to derive the reauth deadline.
     let token = connect_token(&headers, raw_query.as_deref());
-    let client_ip = client_ip(&headers, Some(peer));
-    ws.on_upgrade(move |socket| sync_session(state, socket, token, client_ip))
-}
-
-const CF_CONNECTING_IP: &str = "cf-connecting-ip";
-const X_FORWARDED_FOR: &str = "x-forwarded-for";
-
-/// The best client IP for geo: the cloudflared tunnel's CF-Connecting-IP, else the first
-/// X-Forwarded-For hop, else the direct peer address.
-fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<IpAddr> {
-    if let Some(ip) = header_ip(headers, CF_CONNECTING_IP) {
-        return Some(ip);
-    }
-    if let Some(value) = headers.get(X_FORWARDED_FOR).and_then(|value| value.to_str().ok()) {
-        if let Some(first) = value.split(',').next() {
-            if let Ok(ip) = first.trim().parse::<IpAddr>() {
-                return Some(ip);
-            }
-        }
-    }
-    peer.map(|peer| peer.ip())
-}
-
-fn header_ip(headers: &HeaderMap, name: &str) -> Option<IpAddr> {
-    headers.get(name)?.to_str().ok()?.trim().parse().ok()
-}
-
-/// Whether an IP is a routable public address worth a geo lookup.
-fn is_routable(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            !v4.is_loopback() && !v4.is_private() && !v4.is_link_local() && !v4.is_unspecified() && !v4.is_broadcast()
-        }
-        IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_unspecified() && !is_unique_local(v6) && !is_link_local(v6),
-    }
-}
-
-fn is_unique_local(ip: Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xfe00) == 0xfc00
-}
-
-fn is_link_local(ip: Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xffc0) == 0xfe80
-}
-
-/// If the IP is public and the device needs a location, spawn one background ipwho.is lookup and
-/// store the result. The connect path never blocks on the network.
-fn resolve_location(state: &SharedState, device_id: String, ip: IpAddr) {
-    if !is_routable(ip) || !state.device_registry.note_ip(&device_id, ip) {
-        return;
-    }
-    let registry = state.device_registry.clone();
-    let client = state.http_client.clone();
-    tokio::spawn(async move {
-        if let Some(location) = crate::geoip::lookup(&client, ip).await {
-            registry.set_location(&device_id, ip, location);
-        }
-    });
+    ws.on_upgrade(move |socket| sync_session(state, socket, token))
 }
 
 /// The connect token, from either `Authorization: Bearer` or `?token=` (browser WS connects cannot
@@ -122,27 +64,26 @@ fn token_deadline(token: &str, api_key: &str) -> Option<tokio::time::Instant> {
     Some(tokio::time::Instant::now() + Duration::from_secs(remaining))
 }
 
-/// Wait the settle window, then drop the return-to-focus notification into every tapped agent,
-/// unless `confirm_return` reports the return was only a glance. Runs detached so the sleep never
-/// stalls the session loop's keepalive and deltas.
-async fn settle_and_notify(state: SharedState) {
+/// Wait the settle window, then drop the presence notification into the one agent whose page was
+/// opened, unless `confirm_return` reports the user navigated away (a glance) or the agent has
+/// opted out of presence notifications. Runs detached so the sleep never stalls the session loop's
+/// keepalive and deltas.
+async fn settle_and_notify(state: SharedState, agent: String) {
     tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
-    let Some(client) = state.presence.confirm_return(tokio::time::Instant::now()) else {
+    let Some(client) = state.presence.confirm_return(&agent, tokio::time::Instant::now()) else {
         return;
     };
-    let agents = state.agent_status_cache.presence_notification_agents();
-    // The docker uploads are untimed, so run them concurrently rather than serializing behind the
-    // slowest; best-effort, each failure logs itself.
-    let docker = &state.docker;
-    let drops = agents.iter().map(|agent| async move {
-        if let Err(error) = crate::serve::drop_presence_notification(docker, agent, client).await {
-            tracing::warn!(%agent, %error, "could not drop presence notification");
-        }
-    });
-    futures_util::future::join_all(drops).await;
+    if !state.agent_status_cache.presence_notification_target(&agent) {
+        return;
+    }
+    // Best-effort: a stopped agent or write failure logs itself, never fatal.
+    let notification = crate::agent_notification::user_presence(client);
+    if let Err(error) = crate::agent_notification::drop(&state.docker, &agent, &notification).await {
+        tracing::warn!(%agent, %error, "could not drop presence notification");
+    }
 }
 
-async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>, client_ip: Option<IpAddr>) {
+async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>) {
     let (mut tx, mut rx) = socket.split();
 
     // Register this connection's presence and a RAII guard that clears it on every break path, then
@@ -170,6 +111,9 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     let mut services_rx = state.agent_status_cache.subscribe_services();
     let mut invalidations_rx = state.agent_status_cache.subscribe_invalidations();
     let mut notifications_rx = state.sync_hub.subscribe_notifications();
+    // The user-notification feed's scalars ride the gateway branch, so its wake re-runs the
+    // gateway diff exactly as a roster wake does.
+    let mut user_feed_rx = state.sync_hub.subscribe_user_feed();
     // User notifications are live-only (no snapshot backlog), so subscribing before the snapshot send
     // just avoids missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
     let mut user_notifications_rx = state.sync_hub.subscribe_user_notifications();
@@ -183,6 +127,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     services_rx.borrow_and_update();
     invalidations_rx.borrow_and_update();
     notifications_rx.borrow_and_update();
+    user_feed_rx.borrow_and_update();
     devices_rx.borrow_and_update();
 
     // 2. immediate snapshot: gateway + agents (info + pending sets) + known devices, no tails.
@@ -216,6 +161,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = services_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
+            r = user_feed_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = presence_rx.changed() => { if r.is_err() { break } Wake::Presence }
             r = devices_rx.changed() => { if r.is_err() { break } Wake::Devices }
             r = operation_rx.changed() => { if r.is_err() { break } Wake::Roster }
@@ -258,6 +204,8 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             }
             Wake::UserNotification(Ok(user_notification)) => {
                 let frame = Frame::UserNotification {
+                    id: user_notification.id,
+                    at: user_notification.at,
                     agent: user_notification.agent.clone(),
                     kind: user_notification.kind.clone(),
                     title: user_notification.title.clone(),
@@ -269,17 +217,29 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             }
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
-                    Ok(ClientFrame::ClientContext(ctx)) => {
+                    Ok(ClientFrame::ClientContext(mut ctx)) => {
                         if let Some(device_id) = ctx.device_id.clone() {
-                            let newly = device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
-                            if newly {
-                                if let Some(ip) = client_ip {
-                                    resolve_location(&state, device_id, ip);
-                                }
+                            let first_sighting =
+                                device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
+                            if first_sighting {
+                                state
+                                    .user_notifier()
+                                    .await
+                                    .notify_device_connected(ctx.descriptor.clone());
+                            }
+                            let context = std::mem::take(&mut ctx.context);
+                            if !context.is_empty() {
+                                // The user is at a focused device; an unfocused frame or a resync
+                                // replay (context the gateway already had) only stores.
+                                let presence = if ctx.focused && !ctx.resync { UserPresence::AtDevice } else { UserPresence::StoreOnly };
+                                let state = state.clone();
+                                tokio::spawn(async move {
+                                    crate::user_context::report_device_context(&state, &device_id, context, presence).await;
+                                });
                             }
                         }
-                        if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
-                            tokio::spawn(settle_and_notify(state.clone()));
+                        if let Some(agent) = state.presence.record(conn, ctx, tokio::time::Instant::now()) {
+                            tokio::spawn(settle_and_notify(state.clone(), agent));
                         }
                     }
                     Ok(ClientFrame::Reauth { token }) => {
@@ -388,7 +348,7 @@ fn notifications_deltas(
             continue;
         }
         if last.get(&agent) != Some(&pending) {
-            deltas.push(Frame::Notifications { agent: agent.clone(), pending: pending.clone() });
+            deltas.push(Frame::AgentNotifications { agent: agent.clone(), pending: pending.clone() });
         }
         recorded.insert(agent, pending);
     }
@@ -430,6 +390,8 @@ struct DeviceGuard {
 }
 
 impl DeviceGuard {
+    /// Returns whether this attach was the device id's first sighting ever (see
+    /// `DeviceRegistry::mark_connected`), which keys the new-device notification.
     fn attach(&mut self, device_id: &str, kind: ClientKind, descriptor: Option<String>) -> bool {
         if self.device.as_deref() == Some(device_id) {
             return false;
@@ -437,9 +399,10 @@ impl DeviceGuard {
         if let Some(previous) = self.device.take() {
             self.registry.mark_disconnected(&previous, now_epoch_secs());
         }
-        self.registry.mark_connected(device_id, kind, descriptor, now_epoch_secs());
+        let first_sighting =
+            self.registry.mark_connected(device_id, kind, descriptor, now_epoch_secs());
         self.device = Some(device_id.to_string());
-        true
+        first_sighting
     }
 }
 
@@ -500,6 +463,7 @@ fn synthetic_building_info(phase: BuildPhase) -> AgentInfo {
         build_phase: Some(phase),
         operation: None,
         booting: false,
+        rate_limited: None,
         started_at: None,
         services: BTreeMap::new(),
     }
@@ -521,7 +485,7 @@ fn agent_info(
             svc.iter()
                 .map(|(svc_name, e)| {
                     let rev = agent_revs.and_then(|m| m.get(svc_name)).copied().unwrap_or(0);
-                    (svc_name.clone(), ServiceInfo { port: e.port, rev })
+                    (svc_name.clone(), ServiceInfo { port: e.port, rev, public: e.public })
                 })
                 .collect()
         })
@@ -532,6 +496,10 @@ fn agent_info(
         build_phase,
         operation,
         booting: entry.booting,
+        rate_limited: entry.rate_limited.as_ref().map(|window| RateLimitedInfo {
+            window: window.window.clone(),
+            resets_at: window.resets_at,
+        }),
         started_at: entry.started_at.clone(),
         services,
     }
@@ -584,6 +552,8 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
     };
     let tunnel_url = state.tunnel_url.lock().await.clone();
     let operation = state.operation.snapshot().map(Into::into);
+    let user_notifications_seen_at = state.user_notification_log.seen_at();
+    let last_user_notification_at = state.user_notification_log.last_at();
     GatewayInfo {
         version: crate::update::running_version().to_string(),
         channel,
@@ -595,6 +565,8 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
         latest_version,
         managed: crate::is_cloud_managed(),
         operation,
+        user_notifications_seen_at,
+        last_user_notification_at,
     }
 }
 
@@ -604,7 +576,7 @@ mod tests {
     use crate::agent_status::AgentStatusCache;
 
     fn entry(name: &str, status: AgentStatus) -> ListEntry {
-        ListEntry { name: name.to_string(), status, ws_port: 4200, booting: false, started_at: Some("2026-01-01T00:00:00Z".into()) }
+        ListEntry { name: name.to_string(), status, ws_port: 4200, booting: false, rate_limited: None, started_at: Some("2026-01-01T00:00:00Z".into()) }
     }
 
     #[test]
@@ -618,15 +590,32 @@ mod tests {
 
         let info = agent_info(&entry("scout", AgentStatus::Alive), &activity, &svc, &revs, None, None);
         assert_eq!(info.activity_state, "thinking");
-        assert_eq!(info.services["dashboard"], ServiceInfo { port: 8080, rev: 3 });
+        assert_eq!(info.services["dashboard"], ServiceInfo { port: 8080, rev: 3, public: true });
 
         // An agent with no activity entry defaults to idle.
         let idle = agent_info(&entry("mona", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);
         assert_eq!(idle.activity_state, "idle");
     }
 
+    #[test]
+    fn agent_info_projects_the_rate_limit_overlay_camelcase_and_omits_it_when_clear() {
+        let mut limited = entry("scout", AgentStatus::Alive);
+        limited.rate_limited = Some(crate::docker::RateLimitedWindow {
+            window: Some("seven_day".to_string()),
+            resets_at: Some(1_787_986_800),
+        });
+        let info = agent_info(&limited, &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);
+        let value = serde_json::to_value(info).expect("serialize");
+        assert_eq!(value["rateLimited"]["window"], serde_json::json!("seven_day"));
+        assert_eq!(value["rateLimited"]["resetsAt"], serde_json::json!(1_787_986_800));
+
+        let clear = agent_info(&entry("scout", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);
+        let value = serde_json::to_value(clear).expect("serialize");
+        assert!(value.get("rateLimited").is_none(), "an unlimited agent carries no rateLimited key");
+    }
+
     fn info_of(status: AgentStatus) -> AgentInfo {
-        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, booting: false, started_at: None, services: BTreeMap::new() }
+        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, booting: false, rate_limited: None, started_at: None, services: BTreeMap::new() }
     }
 
     #[test]
@@ -663,7 +652,7 @@ mod tests {
         // Roster upsert lands; the next emit with the same pending now delivers and records it.
         let roster = BTreeMap::from([("newbie".to_string(), info_of(AgentStatus::Alive))]);
         let (deltas, recorded) = notifications_deltas(&recorded, current, &roster);
-        assert_eq!(deltas, vec![Frame::Notifications { agent: "newbie".into(), pending: pending.clone() }]);
+        assert_eq!(deltas, vec![Frame::AgentNotifications { agent: "newbie".into(), pending: pending.clone() }]);
         assert_eq!(recorded.get("newbie"), Some(&pending));
     }
 
@@ -753,35 +742,6 @@ mod tests {
         assert_eq!(connect_token(&headers, None).as_deref(), Some("abc"));
         assert_eq!(connect_token(&HeaderMap::new(), Some("x=1&token=q2&y=3")).as_deref(), Some("q2"));
         assert_eq!(connect_token(&HeaderMap::new(), None), None);
-    }
-
-    #[test]
-    fn client_ip_prefers_cf_connecting_ip() {
-        let mut headers = HeaderMap::new();
-        headers.insert("cf-connecting-ip", "203.0.113.7".parse().expect("header"));
-        headers.insert("x-forwarded-for", "198.51.100.2, 10.0.0.1".parse().expect("header"));
-        let peer: SocketAddr = "127.0.0.1:9000".parse().expect("peer");
-        assert_eq!(client_ip(&headers, Some(peer)).map(|ip| ip.to_string()).as_deref(), Some("203.0.113.7"));
-    }
-
-    #[test]
-    fn client_ip_falls_back_to_forwarded_then_peer() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "198.51.100.2, 10.0.0.1".parse().expect("header"));
-        let peer: SocketAddr = "8.8.8.8:9000".parse().expect("peer");
-        assert_eq!(client_ip(&headers, Some(peer)).map(|ip| ip.to_string()).as_deref(), Some("198.51.100.2"));
-        assert_eq!(client_ip(&HeaderMap::new(), Some(peer)).map(|ip| ip.to_string()).as_deref(), Some("8.8.8.8"));
-        assert_eq!(client_ip(&HeaderMap::new(), None), None);
-    }
-
-    #[test]
-    fn is_routable_rejects_local_and_private() {
-        for private in ["127.0.0.1", "10.0.0.5", "192.168.1.4", "169.254.0.1", "::1", "fe80::1", "fc00::1"] {
-            assert!(!is_routable(private.parse().expect("ip")), "{private} should be non-routable");
-        }
-        for public in ["203.0.113.7", "8.8.8.8", "2606:4700:4700::1111"] {
-            assert!(is_routable(public.parse().expect("ip")), "{public} should be routable");
-        }
     }
 
     #[test]

@@ -1,9 +1,11 @@
 """Authentication commands for Microsoft CLI."""
 
 import json
+import shutil
 import subprocess
 
 from . import auth, capture, owa_rest, teams
+from . import email as email_mod
 from .config import DEFAULT_CLIENT_SCOPES, OWA_REST_SCOPES, Config
 from .settings import DEFAULT_CLIENT_ID, OWA_REST_CLIENT_ID
 
@@ -62,7 +64,7 @@ def list_accounts(config: Config) -> list[dict[str, str]]:
     return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(config.cache_file)]
 
 
-def remove_account(config: Config, *, account_email: str) -> dict[str, str]:
+def remove_account(config: Config, *, account_email: str) -> dict[str, str | int]:
     app = auth.get_app(config.cache_file)
     email_lower = account_email.lower()
     matches = [a for a in app.get_accounts() if (a["username"] if "username" in a else "").lower() == email_lower]
@@ -76,7 +78,11 @@ def remove_account(config: Config, *, account_email: str) -> dict[str, str]:
     if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
         auth._write_cache(config.cache_file, content=cache.serialize())
 
-    return {"status": "removed", "email": account_email}
+    save_dir = email_mod.email_save_dir(config, account_email)
+    cached_bodies_deleted = sum(1 for _ in save_dir.iterdir()) if save_dir.is_dir() else 0
+    shutil.rmtree(save_dir, ignore_errors=True)
+
+    return {"status": "removed", "email": account_email, "cached_bodies_deleted": cached_bodies_deleted}
 
 
 def authenticate_account(config: Config) -> dict[str, str]:
@@ -274,9 +280,9 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
 
     _run("launch", "--stealth")
     _run("open", "https://outlook.office.com/mail/")
-    token = _run("evaluate", _OWA_TOKEN_JS)
+    token = capture.eval_value(_run("evaluate", _OWA_TOKEN_JS))
 
-    if not token or token == "NONE":
+    if not capture._looks_like_jwt(token):
         return {
             "status": "sign_in_required",
             "account": account_email,
@@ -430,9 +436,9 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
 
     _run("launch", "--stealth")
     _run("open", "https://teams.microsoft.com/")
-    token = _run("evaluate", capture._TEAMS_TOKEN_JS)
+    token = capture.eval_value(_run("evaluate", capture._TEAMS_TOKEN_JS))
 
-    if not token or token == "NONE":
+    if not capture._looks_like_jwt(token):
         return {
             "status": "sign_in_required",
             "account": account_email,

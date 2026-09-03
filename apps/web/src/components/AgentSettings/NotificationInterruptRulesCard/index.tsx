@@ -28,14 +28,15 @@ import {
   ItemGroup,
   ItemTitle,
 } from "@/components/ui/item";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { cn, errorMessage, loadFailure } from "@/lib/utils";
+import { useResource } from "@vesta/core/react";
 import {
   getNotificationInterruptRules,
   setNotificationInterruptRules,
-  type FieldPredicate,
-  type NotificationInterruptRule,
-} from "@/api/agents";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { cn } from "@/lib/utils";
+} from "@vesta/core";
+import type { FieldPredicate, NotificationInterruptRule } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -96,8 +97,16 @@ export function NotificationInterruptRulesCard() {
   const pendingSave = useRef<NotificationInterruptRule[] | null>(null);
   // Last successfully-saved ruleset, so a rejected save can roll the optimistic change back.
   const lastSaved = useRef<NotificationInterruptRule[]>([]);
-  const [rules, setRules] = useState<NotificationInterruptRule[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // Loading records the accepted ruleset as it lands, so a rollback always has a base.
+  const rulesResource = useResource(agentName || null, (name) =>
+    getNotificationInterruptRules(httpClient, name).then((loaded) => {
+      lastSaved.current = loaded;
+      return loaded;
+    }),
+  );
+  const rules = rulesResource.data;
+  const setRules = rulesResource.set;
+  const loadError = loadFailure(rulesResource.error, "failed to load rules");
   const [saveError, setSaveError] = useState<string | null>(null);
   // The rule row currently being dragged, for reordering (null when not dragging).
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -106,40 +115,20 @@ export function NotificationInterruptRulesCard() {
     null,
   );
 
-  useEffect(() => {
-    if (!agentName) return;
-    let cancelled = false;
-    setRules(null);
-    setLoadError(null);
-    getNotificationInterruptRules(agentName)
-      .then((r) => {
-        if (cancelled) return;
-        setRules(r);
-        lastSaved.current = r;
-      })
-      .catch((e: unknown) => {
-        if (!cancelled)
-          setLoadError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agentName]);
-
   const save = useCallback(
     async (next: NotificationInterruptRule[]) => {
       if (!agentName) return;
       try {
-        await setNotificationInterruptRules(agentName, next);
+        await setNotificationInterruptRules(httpClient, agentName, next);
         lastSaved.current = next;
         setSaveError(null);
       } catch (e) {
         // The server rejected the set — roll the optimistic change back to the last accepted ruleset.
         setRules(lastSaved.current);
-        setSaveError((e as Error).message);
+        setSaveError(errorMessage(e, "save failed"));
       }
     },
-    [agentName],
+    [agentName, setRules],
   );
 
   // Every change auto-saves after a short debounce; the live endpoint applies it on the next tick.
@@ -153,7 +142,7 @@ export function NotificationInterruptRulesCard() {
         void save(next);
       }, SAVE_DEBOUNCE_MS);
     },
-    [save],
+    [save, setRules],
   );
 
   // Flush any debounced edit on unmount or agent switch so an edit is never silently dropped.
@@ -218,7 +207,7 @@ export function NotificationInterruptRulesCard() {
       <CardContent>
         <div className="flex flex-col gap-3">
           {loadError ? (
-            <p className="text-xs text-destructive">
+            <p className="text-sm text-destructive">
               failed to load: {loadError}
             </p>
           ) : rules === null ? (
@@ -280,7 +269,7 @@ export function NotificationInterruptRulesCard() {
                         ) : null}
                         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                           {conditions.length === 0 ? (
-                            <span className="text-[11px] text-muted-foreground/60">
+                            <span className="text-xs text-muted-foreground/60">
                               any notification
                             </span>
                           ) : (
@@ -326,7 +315,7 @@ export function NotificationInterruptRulesCard() {
                     {rules.length === 0 ? "no rules yet" : "add a rule"}
                   </ItemTitle>
                   <ItemDescription className="line-clamp-none">
-                    just ask {agentName || "the agent"} — e.g.{" "}
+                    just ask {agentName || "the agent"}, e.g.{" "}
                     <span className="text-foreground">
                       "don't let Twitter interrupt you"
                     </span>{" "}
@@ -340,7 +329,7 @@ export function NotificationInterruptRulesCard() {
               </Item>
 
               {saveError ? (
-                <p className="text-xs text-destructive">{saveError}</p>
+                <p className="text-sm text-destructive">{saveError}</p>
               ) : null}
             </>
           )}
@@ -356,7 +345,7 @@ export function NotificationInterruptRulesCard() {
           <AlertDialogHeader>
             <AlertDialogTitle>trash matching notifications?</AlertDialogTitle>
             <AlertDialogDescription>
-              a trash rule drops every matching notification entirely — they
+              a trash rule drops every matching notification entirely. they
               never reach {agentName || "the agent"} and create no turn. they
               still show in history, and you can change the rule back anytime.
             </AlertDialogDescription>

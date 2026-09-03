@@ -17,11 +17,16 @@ from .daemon import log_path, pid_path, socket_path
 from .launcher import EPHEMERAL_ROOT, PROFILE_ROOT, RunningCamoufox, _profile_has_live_owner, launch
 
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
+SESSION_ROOT = Path("/tmp")
 PROC = Path("/proc")
 GRACEFUL_EXIT_POLLS = 25
 GRACEFUL_POLL_INTERVAL_S = 0.2
 # Above the daemon's largest per-command bound (the navigate wait), so its error (which names the method) wins the race.
 DAEMON_RESPONSE_TIMEOUT_S = 120.0
+# Concurrent session launches contend for CPU (each is a full Camoufox start), so the daemon's
+# BiDi handshake that takes seconds alone can take minutes in a fan-out. The startup wait scales
+# up when other live sessions exist, keeping the solo bound tight.
+CONTENDED_STARTUP_MULTIPLIER = 4
 
 
 def _session_name(name: str | None = None) -> str:
@@ -208,6 +213,19 @@ def stop_browser(name: str | None = None) -> None:
     _session_file(session, "mode").unlink(missing_ok=True)
 
 
+def _discard_own_spawn(session: str, pid: int) -> None:
+    """Kill a spawn that never became healthy and clear the records IT wrote.
+
+    Only our own spawn's records are removed: under same-session contention another spawn can win
+    the socket and record its own pid while still coming up, so ripping those files out would
+    orphan a live daemon.
+    """
+    _terminate_pid(pid)
+    if _read_pid(Path(pid_path(session))) == pid:
+        for p in (socket_path(session), pid_path(session)):
+            Path(p).unlink(missing_ok=True)
+
+
 def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     """Spawn the daemon if not already healthy. Self-heals stale daemons."""
     session = _session_name(name)
@@ -250,7 +268,9 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
         start_new_session=True,
     )
 
-    deadline = time.time() + wait_s
+    other_sessions = [s["name"] for s in list_sessions() if s["name"] != session and (s["browser_alive"] or s["daemon_alive"])]
+    budget = wait_s * CONTENDED_STARTUP_MULTIPLIER if other_sessions else wait_s
+    deadline = time.time() + budget
     while time.time() < deadline:
         if daemon_healthy(session):
             return
@@ -258,10 +278,23 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
             break
         time.sleep(0.2)
 
+    # A concurrent command's spawn may have won the race: its daemon answers, ours exited with
+    # "already running". Healthy is healthy, whoever started it.
+    if daemon_healthy(session):
+        return
+    # Fail closed: a spawn that missed its deadline is killed and its records removed, so a
+    # half-started one never lingers to confuse the next attempt.
+    _discard_own_spawn(session, proc.pid)
     tail = ""
     with contextlib.suppress(FileNotFoundError, IndexError):
         tail = Path(log_path(session)).read_text().splitlines()[-1]
-    raise RuntimeError(f"daemon {session!r} did not come up within {wait_s}s. Last log line: {tail or '(none)'}")
+    contended = (
+        f" {len(other_sessions)} other live browser session(s) ({', '.join(other_sessions)}) contend for CPU during startup:"
+        " retry after they settle, or use http_get for pages that do not need the browser."
+        if other_sessions
+        else ""
+    )
+    raise RuntimeError(f"daemon {session!r} did not come up within {budget:g}s. Last log line: {tail or '(none)'}.{contended}")
 
 
 def send(req: dict, name: str | None = None) -> dict:
@@ -289,19 +322,28 @@ def send(req: dict, name: str | None = None) -> dict:
 
 
 def list_sessions() -> list[dict]:
-    """Enumerate sessions we know about by scanning /tmp/vesta-browser-*.browser-pid files."""
+    """Enumerate sessions by scanning the session-record files.
+
+    A record whose browser AND daemon are both dead describes nothing running, so it is
+    reaped on sight (`shutdown` on a dead session is a pure file cleanup) instead of being
+    listed as a session to chase. A dead browser under a live daemon stays listed: that is
+    real state, and `ensure_daemon` heals it."""
     out = []
-    for pid_f in Path("/tmp").glob("vesta-browser-*.browser-pid"):
+    for pid_f in SESSION_ROOT.glob("vesta-browser-*.browser-pid"):
         name = pid_f.name.removeprefix("vesta-browser-").removesuffix(".browser-pid")
         browser_pid = _read_pid(pid_f)
         alive = _pid_alive(browser_pid)
+        daemon_up = daemon_alive(name)
+        if not alive and not daemon_up:
+            shutdown(name)
+            continue
         out.append(
             {
                 "name": name,
                 "browser_pid": browser_pid or 0,
                 "browser_alive": alive,
                 "bidi_ws": read_session_ws_url(name),
-                "daemon_alive": daemon_alive(name),
+                "daemon_alive": daemon_up,
             }
         )
     return out

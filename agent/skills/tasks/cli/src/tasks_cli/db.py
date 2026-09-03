@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Head schema version. Bump this in the same commit as a new _migrate_vN_to_vN+1, and assert against
 # it in tests rather than hard-coding an integer, so adding a migration cannot break unrelated tests.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 
 class Task(TypedDict, total=False):
@@ -27,18 +27,7 @@ class Task(TypedDict, total=False):
     metadata_content: str | None
     created_at: str
     completed_at: str | None
-
-
-class Reminder(TypedDict, total=False):
-    id: str
-    task_id: str | None
-    message: str
-    schedule_type: str | None
-    scheduled_time: str | None
-    completed: int
-    created_at: str
-    trigger_data: str | None
-    auto_generated: int
+    deleted_at: str | None
 
 
 def get_db(data_dir: Path) -> sqlite3.Connection:
@@ -88,7 +77,8 @@ def _migrate_metadata_to_files(data_dir: Path, conn: sqlite3.Connection):
 def _migrate_v1_to_v2(conn: sqlite3.Connection, data_dir: Path):
     """v1 -> v2: Create reminders table, drop notified_thresholds, import old reminders."""
 
-    # Create reminders table
+    # LEGACY(remove-when: all fleet agents past the release that shipped the reminders skill): dormant
+    # reminders table + its migrations, read once by the reminders skill's import then never again.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS reminders (
             id TEXT PRIMARY KEY,
@@ -196,6 +186,9 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     logger.info("Migrated schema v2 -> v3")
 
 
+# --- Materialized auto-reminder ladder, frozen for the released v1->v2 and v3->v4 migration
+# steps above and below, which built these rows for dbs that predate them. Live checkpoints are
+# computed in commands.py (checkpoint_times / fire_due_checkpoints); nothing else calls this block.
 AUTO_REMINDER_TAIL = [
     ("1 week", timedelta(weeks=1)),
     ("1 day", timedelta(days=1)),
@@ -222,16 +215,6 @@ _LEAD_SCHEDULE_SUFFIX = " before due"
 
 def lead_time_schedule(label: str) -> str:
     return f"{_LEAD_SCHEDULE_PREFIX}{label}{_LEAD_SCHEDULE_SUFFIX}"
-
-
-def lead_time_label(schedule_type: str | None) -> str | None:
-    """The lead time a rung's label names, or None when the label names no rung.
-
-    A row the user snoozed carries a `once at ...` label instead, so its lead time is gone.
-    """
-    if schedule_type and schedule_type.startswith(_LEAD_SCHEDULE_PREFIX) and schedule_type.endswith(_LEAD_SCHEDULE_SUFFIX):
-        return schedule_type[len(_LEAD_SCHEDULE_PREFIX) : -len(_LEAD_SCHEDULE_SUFFIX)]
-    return None
 
 
 def parse_datetime(s: str) -> datetime:
@@ -281,14 +264,6 @@ def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, du
 
     if due_dt > now and due_dt.isoformat() not in taken:
         _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), AT_DUE_SCHEDULE, due_dt)
-
-
-def delete_task_reminders(conn: sqlite3.Connection, task_id: str):
-    conn.execute("DELETE FROM reminders WHERE task_id = ?", (task_id,))
-
-
-def delete_auto_reminders(conn: sqlite3.Connection, task_id: str):
-    conn.execute("DELETE FROM reminders WHERE task_id = ? AND auto_generated = 1", (task_id,))
 
 
 def _create_auto_reminders_for_existing(conn: sqlite3.Connection):
@@ -349,6 +324,51 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection):
     logger.info("Migrated schema v5 -> v6")
 
 
+def _migrate_v7_to_v8(conn: sqlite3.Connection):
+    """v7 -> v8: due-date checkpoints become computed instead of stored.
+
+    Adds tasks.checkpoint_fired_through (the single piece of checkpoint state), deletes the
+    materialized auto-reminder rows, and rebuilds reminders without the auto_generated column.
+    A rung the user rewrote carries auto_generated = 0 and survives as the plain reminder it
+    became. checkpoint_fired_through starts at now so an in-flight ladder continues from here
+    instead of refiring rungs the deleted rows already delivered."""
+    # Idempotent: a box whose tasks.db already reached this shape (e.g. a fork that carried the
+    # column before the stock numbering did) must not crash on a re-run. Guard each structural step
+    # by what is actually on disk, not by the schema-version counter alone.
+    task_cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+    if "checkpoint_fired_through" not in task_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN checkpoint_fired_through TEXT")
+    conn.execute(
+        "UPDATE tasks SET checkpoint_fired_through = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now') "
+        "WHERE due_date IS NOT NULL AND checkpoint_fired_through IS NULL"
+    )
+    reminder_cols = [r[1] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()]
+    if "auto_generated" in reminder_cols:
+        conn.execute("DELETE FROM reminders WHERE auto_generated = 1")
+        conn.execute("""
+            CREATE TABLE reminders_v8 (
+                id TEXT PRIMARY KEY,
+                task_id TEXT,
+                message TEXT NOT NULL,
+                schedule_type TEXT,
+                scheduled_time TEXT,
+                completed INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                trigger_data TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            INSERT INTO reminders_v8 (id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data)
+            SELECT id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data FROM reminders
+        """)
+        conn.execute("DROP TABLE reminders")
+        conn.execute("ALTER TABLE reminders_v8 RENAME TO reminders")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_task_id ON reminders(task_id)")
+    logger.info("Migrated schema v7 -> v8")
+
+
 def _migrate_v6_to_v7(conn: sqlite3.Connection):
     """v6 -> v7: rename the `title` column to `subject` and the `done` status value to `completed`.
     SQLite cannot alter a column name inside a CHECK in place, so rebuild the table, preserving
@@ -373,6 +393,16 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection):
     conn.execute("DROP TABLE tasks")
     conn.execute("ALTER TABLE tasks_v7 RENAME TO tasks")
     logger.info("Migrated schema v6 -> v7")
+
+
+def _migrate_v8_to_v9(conn: sqlite3.Connection):
+    """v8 -> v9: add the nullable `deleted_at` column that carries a soft delete.
+
+    NULL means the task is live. A `tasks delete` stamps it with the delete time, which keeps the
+    row and its metadata file, stops its checkpoints and its place in the digest, and hides it from
+    the default list. There is no undelete, so the column only ever goes from NULL to a timestamp."""
+    conn.execute("ALTER TABLE tasks ADD COLUMN deleted_at TEXT")
+    logger.info("Migrated schema v8 -> v9")
 
 
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
@@ -449,6 +479,16 @@ def init_db(data_dir: Path):
             _migrate_v6_to_v7(conn)
             conn.execute("UPDATE schema_version SET version = 7")
             version = 7
+
+        if version < 8:
+            _migrate_v7_to_v8(conn)
+            conn.execute("UPDATE schema_version SET version = 8")
+            version = 8
+
+        if version < 9:
+            _migrate_v8_to_v9(conn)
+            conn.execute("UPDATE schema_version SET version = 9")
+            version = 9
 
         conn.commit()
 

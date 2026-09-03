@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import * as fc from "fast-check";
 import { linkify } from "./linkify";
 
-describe("linkify", () => {
+describe("linkify examples", () => {
   it.each<[string, string, string]>([
     [
       "returns plain text with HTML escaping",
@@ -13,39 +14,95 @@ describe("linkify", () => {
     ["renders inline code", "`code`", "<code>code</code>"],
     ["escapes ampersands in text", "a & b", "a &amp; b"],
     ["handles empty string", "", ""],
+    [
+      "converts a URL to an anchor carrying target and rel",
+      "visit https://example.com today",
+      'visit <a href="https://example.com" target="_blank" rel="noopener">https://example.com</a> today',
+    ],
+    [
+      "escapes ampersands in both the href and the display text",
+      "https://example.com?a=1&b=2",
+      '<a href="https://example.com?a=1&amp;b=2" target="_blank" rel="noopener">https://example.com?a=1&amp;b=2</a>',
+    ],
+    [
+      "escapes HTML in the surrounding text around a link",
+      '<script> https://example.com "test"',
+      '&lt;script&gt; <a href="https://example.com" target="_blank" rel="noopener">https://example.com</a> &quot;test&quot;',
+    ],
   ])("%s", (_name, input, expected) => {
     expect(linkify(input)).toBe(expected);
   });
+});
 
-  it("converts URLs to anchor tags", () => {
-    const result = linkify("visit https://example.com today");
-    expect(result).toContain('<a href="https://example.com"');
-    expect(result).toContain("https://example.com</a>");
-    expect(result).toContain('target="_blank"');
+describe("linkify properties", () => {
+  // Generator mixing URLs, markdown markers, HTML-dangerous chars, placeholder-injection
+  // attempts, and plain text.
+  const linkifyText = fc.string({
+    unit: fc.constantFrom(
+      "http://a.b/c",
+      "https://x.y/z?q=1&r=2",
+      "**",
+      "*",
+      "`",
+      "\x00",
+      "\x00URL0\x00",
+      "URL",
+      "<script>",
+      "</script>",
+      "<",
+      ">",
+      "&",
+      '"',
+      "'",
+      "word",
+      " ",
+      "\n",
+      "0",
+    ),
+    maxLength: 20,
   });
 
-  it("handles multiple URLs", () => {
-    const result = linkify("a https://a.com b http://b.com c");
-    expect(result).toContain("https://a.com</a>");
-    expect(result).toContain("http://b.com</a>");
+  const TAG_RE = /<\/?(?:a|code|strong|em)(?:\s[^>]*)?>/g;
+  const NUL = "\x00";
+  const MARKER_RE = new RegExp(`[*\`${NUL}]`);
+
+  it("never throws on any input", () => {
+    fc.assert(
+      fc.property(linkifyText, (text) => {
+        linkify(text);
+        return true;
+      }),
+    );
+    fc.assert(
+      fc.property(fc.string({ unit: "binary", maxLength: 200 }), (text) => {
+        linkify(text);
+        return true;
+      }),
+    );
   });
 
-  it("escapes HTML in surrounding text and URL href", () => {
-    const result = linkify('<script> https://example.com "test"');
-    expect(result).toContain("&lt;script&gt;");
-    expect(result).toContain("&quot;test&quot;");
-    expect(result).toContain("https://example.com");
-    expect(result).toContain('target="_blank"');
+  it("output never contains a raw < outside the tags linkify itself generates (XSS safety)", () => {
+    fc.assert(
+      fc.property(linkifyText, (text) => {
+        const withoutGeneratedTags = linkify(text).replace(TAG_RE, "");
+        return !withoutGeneratedTags.includes("<");
+      }),
+    );
   });
 
-  it("escapes ampersands in both URL href and display text", () => {
-    const result = linkify("https://example.com?a=1&b=2");
-    expect(result).toContain('href="https://example.com?a=1&amp;b=2"');
-    expect(result).toContain("&amp;b=2</a>");
-  });
-
-  it("includes rel=noopener on links", () => {
-    const result = linkify("https://example.com");
-    expect(result).toContain('rel="noopener"');
+  it("equals plain HTML escaping when there are no URLs, markdown markers, or placeholders", () => {
+    const plainText = fc
+      .string({ unit: "grapheme", maxLength: 200 })
+      .filter((s) => !/https?:\/\//.test(s) && !MARKER_RE.test(s));
+    fc.assert(
+      fc.property(plainText, (text) => {
+        const expected = text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+        return linkify(text) === expected;
+      }),
+    );
   });
 });

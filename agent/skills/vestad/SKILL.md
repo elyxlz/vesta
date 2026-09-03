@@ -13,14 +13,18 @@ Every call authenticates with the agent's own token:
 -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
-`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, and `$BOX_HOST` come
-from `/run/vestad-env`, already exported into the environment. The API is
-`https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
+`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, `$VESTAD_PUBLIC_URL`,
+`$VESTAD_HOSTNAME`, and `$BOX_HOST` come from `/run/vestad-env`, already exported into
+the environment. The API is `https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert,
+so always `curl -sk`. `$BOX_HOST` resolves only inside this container: use it for API
+calls, never in a link for the user. `$VESTAD_HOSTNAME` is the name of the host machine
+vestad runs on, for when you talk about the machine itself. `$VESTAD_PUBLIC_URL` is the
+one base URL for links the user opens (see Public URLs below).
 
-This skill's helpers are commands: `register-service`, `service-key`, `user-notification`, and
-`vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
+This skill's helpers are commands: `register-service`, `deregister-service`, `service-key`,
+`user-notification`, and `vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
 `PATH` under its filename, so a full path like
-`~/agent/skills/vestad/scripts/register-service` runs exactly the same script. These four helpers
+`~/agent/skills/vestad/scripts/register-service` runs exactly the same script. These helpers
 are the only commands startup links; every other skill puts its own command on PATH from its own
 setup: `uv tool install --editable <skill>/cli` for a `cli/` project, or
 `ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>` for a single launcher.
@@ -48,7 +52,7 @@ reaches it over this container's network, so a `127.0.0.1` bind is invisible to 
 with the port registered correctly. Register one when something outside the process needs to
 reach it: a web UI, an inbound webhook, an API the app calls.
 A background process that needs no inbound port is just a daemon: it does not register here,
-it only goes in the restart skill's `## Daemons` section.
+it only goes in your restart daemons, which the `restart` skill explains.
 
 Skills that run a service register it with vestad to get a port, then start it. The
 `register-service` helper does the curl and prints the port (idempotent: same port per name, so
@@ -65,6 +69,18 @@ PORT=$(register-service file-host --public)
 The dashboard is private, and the app reaches it with a minted service key, so pass `--public`
 only for something that must load with no credential at all, like a QR link a stranger's phone
 opens or a webhook an external service posts to.
+
+**A registration outlives the process that created it, so remove one that is no longer serving.**
+Stopping a daemon frees the port but leaves vestad still advertising the name, and for a `--public`
+service that means a public route pointing at nothing. Anything that registers a service for the
+duration of a SESSION (a handover, a one-off share link) must remove it when the session ends:
+
+```bash
+deregister-service browser
+```
+
+Idempotent, and a name that is not registered counts as success, so it is safe on every teardown
+path including one that runs twice.
 
 ## Every skill command: the output contract
 
@@ -120,9 +136,9 @@ State lives in the same three places for every skill, under one name the daemon 
   `/proc` is unreadable. Read the pid as the first field rather than as the whole file, and read
   a record carrying a pid alone as trusted rather than as a mismatch.
 - log: `~/agent/logs/<name>.log`, appended, never truncated
-- budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start (default 30, and 300 for whatsapp and
-  telegram, which compile their CLI on the way up), `DAEMON_STOP_TIMEOUT_SECS` bounds a stop
-  (default 15)
+- budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start and each daemon owns its own default (120
+  for most, 300 for whatsapp and telegram, which compile their CLI on the way up), so set it per
+  daemon and never as one exported value; `DAEMON_STOP_TIMEOUT_SECS` bounds a stop (default 15)
 
 Boot empties the records directory before any daemon runs, because a pid written by the previous
 container can already belong to something else in the fresh pid space, which would read as live
@@ -175,9 +191,9 @@ tests hold to the behavior above: shell is `~/agent/skills/file-host/file-host`,
 `~/agent/skills/whatsapp/cli/daemon.go`. Read the one in the language you are writing in
 and follow it.
 
-Then add the startup line yourself, inside the fenced block in the `## Daemons` section of
-`~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart. It is the
-bare command, nothing around it, because start is idempotent:
+Then read the `restart` skill and add the startup line yourself to your restart daemons, so the
+daemon comes back after a container restart. It is the bare command, nothing around it, because
+start is idempotent:
 
 ```bash
 file-host daemon start
@@ -260,7 +276,7 @@ it exactly once, so put it straight into the link:
 
 ```bash
 KEY=$(service-key mint expenses --label accountant)
-echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/expenses/k/$KEY/"
+echo "$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/expenses/k/$KEY/"
 ```
 
 Add `--ttl <secs>` for a shorter life than the 30 day default, or `--never-expires` for a
@@ -277,20 +293,30 @@ the helper says so and exits non-zero, so register it first.
 
 ## Public URLs (how to reach a service from outside)
 
-vestad exposes registered services under the tunnel. The stable patterns:
-- **Skill/service routes**: `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/...`. A service registered `public: true` needs no credential. A private one is gated by vestad, which accepts the app's api key or a service key minted for that service, carried as an `Authorization: Bearer <key>` header, a `?token=<key>` query param, or a `/k/<key>/` prefix right after the service name. `X-Agent-Token` is not a credential here: the proxy never accepts it, so a curl that only sets that header gets a 401. A dashboard registered as service `dashboard` is at `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/`, and a link someone else can open is `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/k/<key>/`. Prefer the path form for anything a browser loads: a page's relative assets inherit the prefix, while a header or a query param reaches only the first request. Reach for the `?token=` form when the client cannot send a header at all, which in practice means a media element's `src` or a browser `WebSocket`. The voice service's audio stream and STT socket URLs carry their service key that way for that reason.
-- **User-facing web app**: `$VESTAD_TUNNEL/app`.
+`$VESTAD_PUBLIC_URL` is the single base for every link the user opens: vestad sets it to
+the tunnel URL when a tunnel exists, else to a LAN address like `https://<lan-ip>:<port>`
+when the gateway is exposed on the local network. Build links on it directly; you never
+need to pick between the two yourself. When you do care which one you got: `$VESTAD_TUNNEL`
+set means the link works from anywhere; unset means `$VESTAD_PUBLIC_URL` is LAN-only, so
+tell the user the link works only on their own network. When `$VESTAD_PUBLIC_URL` is
+unset, no user-reachable URL exists at all: the user must connect a tunnel
+(`vestad connect` on the host) before you can hand out any link. These values are read at
+container start, so a tunnel connected later appears after a restart.
+
+The stable patterns:
+- **Skill/service routes**: `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/<service>/...`. A service registered `public: true` needs no credential. A private one is gated by vestad, which accepts the app's api key or a service key minted for that service, carried as an `Authorization: Bearer <key>` header, a `?token=<key>` query param, or a `/k/<key>/` prefix right after the service name. `X-Agent-Token` is not a credential here: the proxy never accepts it, so a curl that only sets that header gets a 401. A dashboard registered as service `dashboard` is at `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/dashboard/`, and a link someone else can open is `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/dashboard/k/<key>/`. Prefer the path form for anything a browser loads: a page's relative assets inherit the prefix, while a header or a query param reaches only the first request. Reach for the `?token=` form when the client cannot send a header at all, which in practice means a media element's `src` or a browser `WebSocket`. The voice service's audio stream and STT socket URLs carry their service key that way for that reason.
+- **User-facing web app**: `$VESTAD_PUBLIC_URL/app`.
 
 Reach for these instead of reverse-engineering the route when you need to hand the user a link.
 
 ### Building an interactive web app served this way
-The browser sits at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/...`, so the prefix is a **client-side** concern only:
-- **Keep client URLs relative.** An absolute `fetch('/api/x')` resolves against the tunnel root rather than the service, and the same goes for asset and link hrefs. Use relative URLs, or derive a base from `location.pathname`.
+The browser sits at `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/<svc>/...`, so the prefix is a **client-side** concern only:
+- **Keep client URLs relative.** An absolute `fetch('/api/x')` resolves against the gateway root rather than the service, and the same goes for asset and link hrefs. Use relative URLs, or derive a base from `location.pathname`.
 - **The server needs no prefix handling.** vestad splits the service name off and forwards the exact subpath, so a request to `<svc>/api/x` reaches the handler as `/api/x`. Match routes with `==`.
 - **WebSockets work for a registered service.** vestad upgrades the connection and bridges it, pinging the client on a keepalive interval so an idle socket survives the tunnel. Only the raw agent port refuses to upgrade, because that carries the internal event bus; use `/sync` for that. A browser `WebSocket` cannot set headers, so carry a private service's key as `?token=<key>`.
 - **Bind `0.0.0.0`, not `127.0.0.1`.** The container has its own network and vestad proxies in from outside, so a loopback-only bind answers 502.
 - **Default to private** and hand the user a minted `/k/<key>/` link, the shape the signature pad uses. `public: true` is only for a page that must load with no credential at all (the QR-link-page shape), carries nothing sensitive, and is the rare exception, never the convenient default.
-- A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in the restart skill's Daemons block, so the link survives reboots.
+- A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in your restart daemons (the `restart` skill explains how), so the link survives reboots.
 
 ## Update vestad
 

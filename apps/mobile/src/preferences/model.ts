@@ -1,27 +1,35 @@
 export type ThemePreference = "system" | "light" | "dark";
 
+// The AsyncStorage key the preferences persist under; read headless by the background report too.
+export const PREFERENCES_KEY = "vesta.preferences.v1";
+
 export interface PreferencesState {
   theme: ThemePreference;
-  naturalChatPacingDefault: boolean;
   naturalChatPacingByAgent: Record<string, boolean>;
+  showChatPage: boolean;
+  showDashboardPage: boolean;
   showNotificationsPage: boolean;
   showLogsPage: boolean;
   remoteNotifications: boolean;
   pushChatReplies: boolean;
-  pushStatusChanges: boolean;
   notificationPreviews: boolean;
+  // Report the phone's position (and the place the OS geocodes for it) to the gateway, so the
+  // agents learn where the user is. On by default; the OS location grant is the consent, and the
+  // Privacy toggle is the per-device off switch (off retracts the stored position).
+  shareLocation: boolean;
 }
 
 export const initialPreferences: PreferencesState = {
   theme: "system",
-  naturalChatPacingDefault: true,
   naturalChatPacingByAgent: {},
+  showChatPage: true,
+  showDashboardPage: true,
   showNotificationsPage: false,
   showLogsPage: false,
   remoteNotifications: true,
   pushChatReplies: true,
-  pushStatusChanges: true,
   notificationPreviews: false,
+  shareLocation: true,
 };
 
 function isThemePreference(value: unknown): value is ThemePreference {
@@ -39,16 +47,10 @@ function readBooleanRecord(value: unknown): Record<string, boolean> {
 }
 
 export function getNaturalChatPacingForAgent(
-  preferences: Pick<
-    PreferencesState,
-    "naturalChatPacingDefault" | "naturalChatPacingByAgent"
-  >,
+  preferences: Pick<PreferencesState, "naturalChatPacingByAgent">,
   agentName: string,
 ): boolean {
-  return (
-    preferences.naturalChatPacingByAgent[agentName] ??
-    preferences.naturalChatPacingDefault
-  );
+  return preferences.naturalChatPacingByAgent[agentName] ?? true;
 }
 
 export function readStoredPreferences(value: string | null): PreferencesState {
@@ -57,15 +59,15 @@ export function readStoredPreferences(value: string | null): PreferencesState {
     const parsed: Record<string, unknown> = JSON.parse(value);
     return {
       theme: isThemePreference(parsed.theme) ? parsed.theme : "system",
-      naturalChatPacingDefault:
-        typeof parsed.naturalChatPacingDefault === "boolean"
-          ? parsed.naturalChatPacingDefault
-          : typeof parsed.naturalChatPacing === "boolean"
-            ? parsed.naturalChatPacing
-            : true,
       naturalChatPacingByAgent: readBooleanRecord(
         parsed.naturalChatPacingByAgent,
       ),
+      showChatPage:
+        typeof parsed.showChatPage === "boolean" ? parsed.showChatPage : true,
+      showDashboardPage:
+        typeof parsed.showDashboardPage === "boolean"
+          ? parsed.showDashboardPage
+          : true,
       showNotificationsPage:
         typeof parsed.showNotificationsPage === "boolean"
           ? parsed.showNotificationsPage
@@ -80,14 +82,12 @@ export function readStoredPreferences(value: string | null): PreferencesState {
         typeof parsed.pushChatReplies === "boolean"
           ? parsed.pushChatReplies
           : true,
-      pushStatusChanges:
-        typeof parsed.pushStatusChanges === "boolean"
-          ? parsed.pushStatusChanges
-          : true,
       notificationPreviews:
         typeof parsed.notificationPreviews === "boolean"
           ? parsed.notificationPreviews
           : false,
+      shareLocation:
+        typeof parsed.shareLocation === "boolean" ? parsed.shareLocation : true,
     };
   } catch {
     return initialPreferences;

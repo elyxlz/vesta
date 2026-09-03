@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, type ReactNode } from "react";
+import { useCallback, useEffect, type ReactNode } from "react";
 import type { Controller, SyncState, Tree } from "@vesta/core";
 import {
   checkForGatewayUpdate,
@@ -19,20 +19,17 @@ import {
 } from "@vesta/core/react";
 import { AppBehindScreen } from "@/components/AppBehindScreen";
 import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import {
-  ControllerContext,
   useControllerReconnect,
-} from "@/providers/ControllerProvider";
-import { useAgentOps } from "@/stores/use-agent-ops";
+  useOptionalController,
+} from "@/providers/ControllerProvider/context";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import {
   GatewayContext,
   disconnectedValue,
   type GatewayContextValue,
 } from "./context";
-
-export { useGateway } from "./context";
 
 // Before the version gate passes, ControllerProvider renders children with no controller;
 // hold the loading screen (versionChecked false) rather than flashing the connect screen.
@@ -45,6 +42,36 @@ function selectGateway(tree: Tree | null) {
   return tree?.gateway ?? null;
 }
 
+// The gateway-branch slice of the context value, defaulted for the not-yet-synced
+// null tree in one place so the component stays under the complexity ceiling.
+function gatewayValues(gateway: ReturnType<typeof selectGateway>) {
+  if (gateway === null) {
+    return {
+      managed: false,
+      gatewayChannel: "stable" as const,
+      gatewayAutoUpdate: true,
+      gatewayPort: 0,
+      updateAvailable: false,
+      latestVersion: null,
+      agentsFetched: false,
+      userNotificationsSeenAt: 0,
+      lastUserNotificationAt: null,
+    };
+  }
+  return {
+    managed: gateway.managed,
+    gatewayChannel: gateway.channel,
+    gatewayAutoUpdate: gateway.autoUpdate,
+    gatewayPort: gateway.port,
+    updateAvailable: gateway.updateAvailable,
+    latestVersion: gateway.latestVersion,
+    agentsFetched: true,
+    // Absent on an older gateway: treat as never caught up / empty log.
+    userNotificationsSeenAt: gateway.userNotificationsSeenAt ?? 0,
+    lastUserNotificationAt: gateway.lastUserNotificationAt ?? null,
+  };
+}
+
 // Route compatibility screens inside the provider because their shared navbar reads gateway state.
 function routeContent(syncState: SyncState, children: ReactNode): ReactNode {
   if (syncState === "app_behind") return <AppBehindScreen />;
@@ -52,48 +79,59 @@ function routeContent(syncState: SyncState, children: ReactNode): ReactNode {
   return children;
 }
 
-function ReplicaGateway({
+// Tolerates the ControllerProvider "checking" phase: the controller is null until the version gate
+// passes and the controller builds, and every core hook answers a null controller with its
+// disconnected value, so the hook order never depends on it.
+function ConnectedGateway({
   controller,
   children,
 }: {
-  controller: Controller;
+  controller: Controller | null;
   children: ReactNode;
 }) {
-  const gateway = useReplica(controller.replica, selectGateway);
+  const replica = controller?.replica ?? null;
+  const gateway = useReplica(replica, selectGateway);
   const gatewayOperation = useReplica(
-    controller.replica,
+    replica,
     selectGatewayOperation,
     gatewayOperationsEqual,
   );
-  const agents = useReplica(controller.replica, rosterFromTree, rostersEqual);
-  const devices = useReplica(controller.replica, selectDevices, devicesEqual);
+  const agents = useReplica(replica, rosterFromTree, rostersEqual);
+  const devices = useReplica(replica, selectDevices, devicesEqual);
   const syncState = useSyncState(controller);
   const reconnect = useControllerReconnect();
 
-  // The reconcile calls previously fired on every control-WS `agents` frame; they now key
-  // off the replica-derived roster. Clear any "restart to apply" flag whose agent has since
-  // restarted, and drop op state for agents that are gone (ends a delete's "deleting" orb).
+  // Clear any "restart to apply" flag whose agent has since restarted.
   useEffect(() => {
     useRestartPending.getState().reconcile(agents);
-    useAgentOps.getState().reconcile(agents);
   }, [agents]);
 
   const gatewayVersion = gateway?.version ?? "";
   const updatedTo = useUpdateResolution(gatewayOperation, gatewayVersion);
 
   // An update no longer ends the socket the moment it is asked for: vestad accepts it and reports
-  // its phases on /sync, and the live socket reconnects on its own through the restart phase.
-  const triggerGatewayUpdate = useCallback(
-    () => requestGatewayUpdate(controller.http),
-    [controller],
-  );
+  // its phases on /sync, and the live socket reconnects on its own through the restart phase. A
+  // started update is the only outcome with something to watch; current, busy, and unreachable all
+  // bring a spinner started on the click back down.
+  const triggerGatewayUpdate = useCallback(async (): Promise<boolean> => {
+    if (!controller) return false;
+    const outcome = await requestGatewayUpdate(controller.http);
+    if (outcome.kind === "busy" || outcome.kind === "unreachable") {
+      console.warn("[gateway] update request refused:", outcome.detail);
+    }
+    return outcome.kind === "started";
+  }, [controller]);
 
   const dismissUpdate = useCallback(
-    () => requestDismissUpdate(controller.http),
+    () =>
+      controller
+        ? requestDismissUpdate(controller.http)
+        : Promise.resolve(false),
     [controller],
   );
 
   const triggerGatewayRestart = useCallback(async (): Promise<boolean> => {
+    if (!controller) return false;
     const ok = await requestGatewayRestart(controller.http);
     // A restart drops the gateway just like an update; re-attach the same way.
     if (ok) reconnect();
@@ -101,6 +139,7 @@ function ReplicaGateway({
   }, [controller, reconnect]);
 
   const checkForUpdate = useCallback(async (): Promise<void> => {
+    if (!controller) return;
     try {
       await checkForGatewayUpdate(controller.http);
     } catch (err) {
@@ -109,20 +148,22 @@ function ReplicaGateway({
     // The refreshed update info flows back as a gateway `state` delta into the replica.
   }, [controller]);
 
+  if (!controller) {
+    return (
+      <GatewayContext.Provider value={checkingValue}>
+        {children}
+      </GatewayContext.Provider>
+    );
+  }
+
   const value: GatewayContextValue = {
+    ...gatewayValues(gateway),
     reachable: syncState === "open",
-    managed: gateway?.managed ?? false,
     gatewayVersion,
-    gatewayChannel: gateway?.channel ?? "stable",
-    gatewayAutoUpdate: gateway?.autoUpdate ?? true,
-    gatewayPort: gateway?.port ?? 0,
     versionChecked: true,
-    updateAvailable: gateway?.updateAvailable ?? false,
-    latestVersion: gateway?.latestVersion ?? null,
     gatewayOperation,
     updatedTo,
     agents,
-    agentsFetched: gateway !== null,
     devices,
     triggerGatewayUpdate,
     triggerGatewayRestart,
@@ -137,25 +178,14 @@ function ReplicaGateway({
   );
 }
 
-// Tolerates the ControllerProvider "checking" phase: the controller context is null until the
-// version gate passes and the controller builds, so read it nullable (not useController()).
-function ConnectedGateway({ children }: { children: ReactNode }) {
-  const controller = useContext(ControllerContext);
-  if (!controller) {
-    return (
-      <GatewayContext.Provider value={checkingValue}>
-        {children}
-      </GatewayContext.Provider>
-    );
-  }
-  return <ReplicaGateway controller={controller}>{children}</ReplicaGateway>;
-}
-
 export function GatewayProvider({ children }: { children: ReactNode }) {
   const { connected, initialized } = useAuth();
+  const controller = useOptionalController();
 
   if (initialized && connected) {
-    return <ConnectedGateway>{children}</ConnectedGateway>;
+    return (
+      <ConnectedGateway controller={controller}>{children}</ConnectedGateway>
+    );
   }
 
   return (

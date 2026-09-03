@@ -36,8 +36,9 @@ BROWSER_SESSION=agent-2 browser open "https://b.com"
 ```
 
 Each session's state lives under `/tmp/vesta-browser-<name>.*` (socket, pid, bidi-ws, log).
-`browser stop` cleans its own; `browser stop-all` stops every session in the container, so never
-run it while sibling agents may be browsing: stop your own named session instead. Memory warning:
+`browser stop [session]` cleans one session; `browser stop-all` stops every session in the
+container, refusing while other sessions are live unless you pass `--force`, so stop your own
+named session and reserve `--force` for a cleanup you truly mean. Memory warning:
 each Camoufox uses several hundred MB, so 3+ concurrently on a small host can OOM. Prefer
 sequential for wide-scrape tasks.
 
@@ -68,7 +69,7 @@ Xvfb to provision; headless is the stealthy default.
 ## Contribute back what you learn
 
 If you figured out something non-obvious about a site or mechanic, or wrote a broadly useful
-helper, contribute it upstream before you finish via the `upstream-pr` skill. Three kinds, in
+helper, contribute it upstream before you finish via the `upstream` skill. Three kinds, in
 order of frequency:
 
 1. **Domain skill** under `domain-skills/<host>/<topic>.md`. Private APIs, stable selectors,
@@ -84,4 +85,4 @@ locate the target instead), narration of the specific task you just did, or secr
 session tokens / personal credentials.
 
 Flow: edit locally (takes effect immediately via `uv tool install --editable`), verify, then use
-the `upstream-pr` skill to open a PR to `elyxlz/vesta`.
+the `upstream` skill to open a PR to `elyxlz/vesta`.

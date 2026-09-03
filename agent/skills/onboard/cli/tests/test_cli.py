@@ -79,16 +79,20 @@ def test_presets_lists_live_reference_data(capsys, monkeypatch):
 
 
 def test_live_claude_catalog_reads_as_aliases(monkeypatch):
-    # A live catalog carries models:"live" and default_model:null (fetched from Anthropic at
-    # request time rather than pinned in the manifest). fetch_claude_models / fetch_agent_defaults
-    # must still hand the picker something usable: the two stable aliases, "opus-latest" as the default.
-    live_manifest = {
+    # A live provider catalog carries models:"live" and default_model:null. The picker still
+    # receives the two stable aliases, with "opus-latest" as the default.
+    live_catalog = {
         "default_provider": "claude",
-        "default_personality": "dry",
         "providers": {"claude": {"models": "live", "default_model": None}},
     }
-    monkeypatch.setattr(cli_mod.Client, "fetch_manifest", lambda self: live_manifest)
-    cfg = cli_mod.Config(base_url="https://vesta.run/api", referral_code=None, vestad_base="https://box:1234")
+    monkeypatch.setattr(cli_mod.Client, "fetch_provider_catalog", lambda self: live_catalog)
+    monkeypatch.setattr(cli_mod.Client, "_agent_get", lambda self, path: {"default": "dry"})
+    cfg = cli_mod.Config(
+        base_url="https://vesta.run/api",
+        referral_code=None,
+        agent_base="http://127.0.0.1:1234",
+        agent_token="ATOK",
+    )
     client = cli_mod.Client(cfg)
     assert client.fetch_claude_models() == [{"id": "opus-latest"}, {"id": "sonnet-latest"}]
     assert client.fetch_agent_defaults() == {"model": "opus-latest", "personality": "dry"}
@@ -280,13 +284,24 @@ def test_create_agent_stashes_personality_and_seed(capsys, monkeypatch):
 # --- claude connect ---------------------------------------------------------
 
 
+def test_claude_start_requires_created_agent_shell(capsys):
+    _verified()
+    rc, data = _run(["claude-start", "--email", E], capsys)
+    assert rc == 2
+    assert "agent shell" in data["error"]
+
+
 def test_claude_start_stores_session(capsys, monkeypatch):
     _verified()
+    state_mod.update(E, agent_name="ada")
     _active_server(monkeypatch)
     monkeypatch.setattr(
         cli_mod.Client,
         "claude_oauth_start",
-        lambda self, *, subdomain, server_token: {"auth_url": "https://claude.ai/oauth", "session_id": "CS"},
+        lambda self, *, subdomain, server_token, name: {
+            "auth_url": "https://claude.ai/oauth",
+            "session_id": "CS",
+        },
     )
     rc, data = _run(["claude-start", "--email", E], capsys)
     assert rc == 0 and data["auth_url"] == "https://claude.ai/oauth"
@@ -301,7 +316,7 @@ def test_claude_finish_connects_and_clears(capsys, monkeypatch):
     monkeypatch.setattr(
         cli_mod.Client,
         "claude_oauth_complete",
-        lambda self, *, subdomain, server_token, session_id, code: (
+        lambda self, *, subdomain, server_token, name, session_id, code: (
             "CREDS" if (session_id == "CS" and code == "PASTE") else pytest.fail("bad relay")
         ),
     )
@@ -312,8 +327,12 @@ def test_claude_finish_connects_and_clears(capsys, monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(cli_mod.Client, "set_provider", fake_set)
-    # No --model: the default is read from the box's vestad, not a hardcoded onboard constant.
-    monkeypatch.setattr(cli_mod.Client, "fetch_agent_defaults", lambda self: {"model": "opus"})
+    # No --model: the default is read from the target agent's provider catalog.
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "fetch_target_default_model",
+        lambda self, *, subdomain, server_token, name: "opus",
+    )
     rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
     assert rc == 0 and data["connected"] is True and data["name"] == "Ada"
     assert captured == {
@@ -341,9 +360,13 @@ def test_claude_finish_clears_session_when_attach_fails(capsys, monkeypatch):
     monkeypatch.setattr(
         cli_mod.Client,
         "claude_oauth_complete",
-        lambda self, *, subdomain, server_token, session_id, code: "CREDS",
+        lambda self, *, subdomain, server_token, name, session_id, code: "CREDS",
     )
-    monkeypatch.setattr(cli_mod.Client, "fetch_agent_defaults", lambda self: {"model": "opus"})
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "fetch_target_default_model",
+        lambda self, *, subdomain, server_token, name: "opus",
+    )
     # The attach (set_provider) fails after OAuth was consumed on the VM.
     monkeypatch.setattr(
         cli_mod.Client,

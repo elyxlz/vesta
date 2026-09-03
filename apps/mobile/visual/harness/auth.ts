@@ -1,9 +1,12 @@
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
+import { visualDelay } from "./launch-query";
 
-export async function signInWithVestaAccount(): Promise<
-  ConnectionConfig | null
-> {
+// The catalog documents the development build, where Vesta Cloud sign-in is offered.
+export const cloudSignInEnabled = true;
+
+export async function signInWithVestaAccount(): Promise<ConnectionConfig | null> {
   await new Promise((resolve) => setTimeout(resolve, 4_000));
+  await visualDelay();
   throw new Error("Sign-in failed");
 }
 
@@ -11,6 +14,7 @@ export async function connectWithKey(
   _url: string,
   _apiKey: string,
 ): Promise<ConnectionConfig> {
+  await visualDelay();
   throw new Error("Could not reach this Vesta gateway.");
 }
 
@@ -21,5 +25,6 @@ export async function resumeGatewaySession(
 }
 
 export async function assertGatewayReachable(_url: string): Promise<void> {
+  await visualDelay();
   throw new Error("Could not reach this Vesta gateway.");
 }

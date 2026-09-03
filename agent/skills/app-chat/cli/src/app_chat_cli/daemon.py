@@ -20,6 +20,7 @@ import json
 import os
 import pathlib as pl
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ from datetime import UTC, datetime
 
 from aiohttp import web
 
+from . import attachments
 from .service import ServiceState, create_app
 from .store import Store, StoredEvent, store_path
 
@@ -53,8 +55,20 @@ def _budget(name: str, default: int) -> int:
     return int(os.environ[name]) if name in os.environ else default
 
 
-READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
+# 120, not 30. A readiness budget is a bet about disk speed, and boot is when that bet is worst:
+# every call cold, nothing in page cache, several daemons starting at once. A miss is not a retry.
+# `_abandon` TERMs then KILLs a child that `child.poll()` just showed to be ALIVE, so a daemon that
+# is merely slow to import is destroyed and the caller is handed an error that reads like a crash.
+# This is a user-facing channel, so a boot that silently loses it is the expensive failure.
+# Raising the ceiling costs a healthy start nothing: it returns the moment the port answers,
+# in about a second.
+READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 120)
 STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
+
+# Attachment GC cadence: soon after start (off the readiness path), then a few times a day. Uploads
+# abandoned mid-stage age out at attachments.STALE_SESSION_MAX_AGE_SECS.
+SWEEP_STARTUP_DELAY_SECS = 60.0
+SWEEP_INTERVAL_SECS = 6 * 3600.0
 
 
 def _fail(message: str) -> int:
@@ -111,7 +125,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
     if port is None:
         sys.exit(_fail(f"could not register {NAME} with vestad"))
 
-    service = ServiceState(Store(store_path(data_dir)), default_notifications_dir())
+    store = Store(store_path(data_dir))
+    service = ServiceState(store, default_notifications_dir(), attachments.attachments_root(data_dir))
     state = DaemonState(
         sock_path=_sock_path(data_dir),
         data_dir=data_dir,
@@ -140,16 +155,43 @@ async def _run(state: DaemonState) -> None:
     await site.start()
     _log(f"service on port {state.port}")
     socket_task = asyncio.create_task(_socket_server(state))
+    sweep_task = asyncio.create_task(_sweep_loop(state))
     try:
         await state.shutdown.wait()
         socket_task.cancel()
-        await asyncio.gather(socket_task, return_exceptions=True)
+        sweep_task.cancel()
+        await asyncio.gather(socket_task, sweep_task, return_exceptions=True)
     finally:
         await runner.cleanup()
         state.service.store.close()
         state.sock_path.unlink(missing_ok=True)
         if not state.asked_to_stop:
             write_death_notification(state.notifications_dir)
+
+
+def _run_sweep(service: ServiceState) -> int:
+    """One GC pass: abandoned staging sessions and finalized-but-never-sent attachments older than the
+    max age. Referenced ids come from one structured scan of the store."""
+    references = service.store.attachment_references()
+    swept = attachments.sweep(service.attachments_root, time.time(), lambda attachment_id: attachment_id in references)
+    return len(swept)
+
+
+async def _sweep_loop(state: DaemonState) -> None:
+    """Periodic GC, first pass shortly after start (never before the port binds: a large history scan
+    or a big rmtree must not delay readiness), then every interval while the daemon lives. One bad
+    pass (db busy, a raced rmtree) is logged and the loop lives on; the next pass reconciles."""
+    delay = SWEEP_STARTUP_DELAY_SECS
+    while True:
+        await asyncio.sleep(delay)
+        delay = SWEEP_INTERVAL_SECS
+        try:
+            swept = await asyncio.to_thread(_run_sweep, state.service)
+        except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
+            _log(f"attachment sweep failed: {exc}")
+            continue
+        if swept:
+            _log(f"swept {swept} abandoned attachment dirs")
 
 
 def write_death_notification(notifications_dir: pl.Path) -> None:
@@ -177,29 +219,82 @@ async def _socket_server(state: DaemonState) -> None:
         await server.wait_closed()
 
 
+def _ingest_one(root: pl.Path, path: str) -> attachments.AttachmentMeta:
+    source = pl.Path(path).expanduser()
+    if not source.is_file():
+        raise FileNotFoundError(path)
+    return attachments.ingest_file(root, source, None)
+
+
+async def _ingest_attachments(state: DaemonState, attach: list[str]) -> tuple[list[attachments.AttachmentMeta], str | None]:
+    """Copy each source file into the attachment store. Any failure fails the whole send with a clear
+    error and nothing persisted to chat; ingested copies of a partly failed batch age out to the sweep."""
+    if len(attach) > attachments.MAX_ATTACHMENTS_PER_MESSAGE:
+        return [], f"at most {attachments.MAX_ATTACHMENTS_PER_MESSAGE} attachments per message"
+    metas: list[attachments.AttachmentMeta] = []
+    for path in attach:
+        try:
+            metas.append(await asyncio.to_thread(_ingest_one, state.service.attachments_root, path))
+        except FileNotFoundError:
+            return [], f"no such file: {path}"
+        except attachments.SizeError as exc:
+            return [], str(exc)
+        except OSError as exc:
+            return [], f"cannot read {path}: {exc}"
+    return metas, None
+
+
+async def _handle_send(state: DaemonState, message: str, attach: list[str]) -> tuple[dict[str, object], str | None]:
+    """One validated send: gate on the user's live turn, ingest attachments, persist + emit.
+    Returns the response envelope (ok or error) and the toast text (None when nothing went out)."""
+    if not message and not attach:
+        return {"error": "empty message"}, None
+    refusal = state.service.refuse_send_while_speaking()
+    if refusal is not None:
+        # `user_speaking` marks the one refusal the sender must treat as "floor yielded", not an
+        # error: `send` stops the rest of a paced reply on it and exits clean.
+        return {"error": refusal, "user_speaking": True}, None
+    metas, ingest_error = await _ingest_attachments(state, attach)
+    if ingest_error is not None:
+        return {"error": ingest_error}, None
+    event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
+    if metas:
+        event["attachments"] = metas
+    state.service.store.append(event)
+    state.service.emit(event)
+    # An attachment-only reply still deserves its toast: fall back to the filenames.
+    return {"ok": True, "message": message, "id": event["id"]}, message or ", ".join(meta["name"] for meta in metas)
+
+
 async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         data = await asyncio.wait_for(reader.read(65536), timeout=30.0)
         request = json.loads(data.decode())
         command = request["command"]
 
+        notify_message: str | None = None
+        response: dict[str, object]
         if command == "send":
             message = request["message"].strip()
-            if not message:
-                response: dict[str, object] = {"error": "empty message"}
+            attach_raw = request["attach"] if "attach" in request else []
+            attach = attach_raw if isinstance(attach_raw, list) and all(isinstance(one, str) for one in attach_raw) else None
+            if attach is None:
+                response = {"error": "attach must be a list of paths"}
             else:
-                event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
-                state.service.store.append(event)
-                state.service.emit(event)
-                await asyncio.to_thread(_send_user_notification, message)
-                response = {"ok": True, "message": message, "id": event["id"]}
+                response, notify_message = await _handle_send(state, message, attach)
         elif command == "status":
             response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers)}
         else:
             response = {"error": f"unknown command: {command}"}
 
         writer.write(json.dumps(response).encode())
-        await writer.drain()
+        # The notification runs after the ack so it never delays it, but a durable reply must
+        # still notify even if the caller died before reading the ack, so a broken pipe on the
+        # ack must not skip it.
+        with contextlib.suppress(OSError):
+            await writer.drain()
+        if notify_message is not None:
+            await asyncio.to_thread(_send_user_notification, notify_message)
     except (json.JSONDecodeError, KeyError, TimeoutError, OSError) as exc:
         _log(f"socket error: {exc}")
     finally:

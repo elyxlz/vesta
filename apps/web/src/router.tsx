@@ -3,16 +3,12 @@ import { RouteErrorBoundary } from "@/components/ErrorBoundary";
 import { AgentLayout } from "@/layouts/AgentLayout";
 import { HomeLayout } from "@/layouts/HomeLayout";
 import { NavigationGuard } from "@/layouts/NavigationGuard";
-import {
-  AgentLogs,
-  AgentSettingsPage,
-  AppSettingsPage,
-  Callback,
-  Connect,
-  Debug,
-  Home,
-  NewAgent,
-} from "@/pages";
+import { AppSettingsPage } from "@/components/AppSettingsPage";
+import { Callback } from "@/components/Callback";
+import { Connect } from "@/components/Connect";
+import { Debug } from "@/components/Debug";
+import { Home } from "@/components/Home";
+import { NewAgent } from "@/components/NewAgent";
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 
@@ -40,11 +36,13 @@ export const router = createBrowserRouter(
               path: "agent/:name",
               element: <AgentLayout />,
               errorElement: <RouteErrorBoundary />,
+              // Subpages render as null: AgentLayout keeps every pane mounted
+              // in an Activity and shows the one matching the location.
               children: [
                 { index: true, element: null },
                 { path: "chat", element: null },
-                { path: "logs", element: <AgentLogs /> },
-                { path: "settings", element: <AgentSettingsPage /> },
+                { path: "logs", element: null },
+                { path: "settings", element: null },
               ],
             },
             { path: "*", element: <Navigate to="/" replace /> },

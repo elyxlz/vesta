@@ -31,7 +31,7 @@ def test_skips_dream_before_first_start_done(tmp_path):
     config = _setup(tmp_path)
     state = vm.State()
     assert state.persisted.first_start_done is False
-    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
+    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 59, 0)
 
     # No load_prompt patch: the first_start_done guard returns before load_prompt is reached.
     with patch("core.loops._now", return_value=fake_now):
@@ -44,7 +44,8 @@ def test_drops_dream_notification(tmp_path):
     config = _setup(tmp_path)
     state = vm.State()
     state.persisted.first_start_done = True
-    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
+    # Minute 59 is at or past every possible jitter instant, so this pins the drop itself.
+    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 59, 0)
 
     with (
         patch("core.loops._now", return_value=fake_now),
@@ -65,7 +66,7 @@ def test_drops_dream_notification(tmp_path):
 @pytest.mark.parametrize(
     "dreamer_hour,last_dreamer_run,now,expected_files",
     [
-        (4, dt.datetime(2025, 6, 15, 4, 0, 0), dt.datetime(2025, 6, 15, 4, 0, 0), 0),  # already ran today
+        (4, dt.datetime(2025, 6, 15, 4, 0, 0), dt.datetime(2025, 6, 15, 4, 59, 0), 0),  # already ran today
         (4, None, dt.datetime(2025, 6, 15, 2, 0, 0), 0),  # before the dreamer hour
         (4, dt.datetime(2025, 6, 14, 4, 0, 0), dt.datetime(2025, 6, 15, 7, 30, 0), 1),  # not done today, retry past the hour
         # Late dreamer_hour (22:00) must catch up after midnight: the window is circular (modulo-24), so
@@ -75,7 +76,7 @@ def test_drops_dream_notification(tmp_path):
         # Completion is judged against the night the window opened, not the calendar day, so a dream
         # that finished before midnight suppresses the rest of its own night and only its own night.
         (22, dt.datetime(2025, 6, 15, 22, 30, 0), dt.datetime(2025, 6, 16, 0, 0, 0), 0),  # same night, past midnight
-        (22, dt.datetime(2025, 6, 15, 22, 30, 0), dt.datetime(2025, 6, 16, 22, 0, 0), 1),  # the next night still fires
+        (22, dt.datetime(2025, 6, 15, 22, 30, 0), dt.datetime(2025, 6, 16, 22, 59, 0), 1),  # the next night still fires
         # Checks land at an arbitrary minute: a completion earlier in its hour still counts as this night's.
         (4, dt.datetime(2025, 6, 15, 4, 10, 0), dt.datetime(2025, 6, 15, 5, 50, 0), 0),  # unaligned check
         (4, None, dt.datetime(2025, 6, 15, 7, 30, 0), 1),  # never marked complete: retries inside the window
@@ -122,8 +123,8 @@ def _dream_files(config):
 @pytest.mark.parametrize(
     "dreamer_hour,first,second",
     [
-        (4, dt.datetime(2025, 6, 15, 4, 0, 0), dt.datetime(2025, 6, 15, 4, 20, 0)),
-        (22, dt.datetime(2025, 6, 14, 22, 0, 0), dt.datetime(2025, 6, 15, 1, 0, 0)),
+        (4, dt.datetime(2025, 6, 15, 4, 59, 0), dt.datetime(2025, 6, 15, 5, 20, 0)),
+        (22, dt.datetime(2025, 6, 14, 22, 59, 0), dt.datetime(2025, 6, 15, 1, 0, 0)),
     ],
     ids=["same-day", "catchup-past-midnight"],
 )
@@ -146,8 +147,8 @@ def test_unconsumed_dream_from_yesterday_does_not_suppress_today(tmp_path):
     state = vm.State()
     state.persisted.first_start_done = True
 
-    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 0, 0))
-    _drop_dream(config, state, dt.datetime(2025, 6, 16, 4, 0, 0))
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 59, 0))
+    _drop_dream(config, state, dt.datetime(2025, 6, 16, 4, 59, 0))
 
     assert _dream_files(config) == ["nightly_dream-2025-06-15.json", "nightly_dream-2025-06-16.json"]
 
@@ -158,12 +159,52 @@ def test_consumed_dream_is_recreated_by_the_catchup_retry(tmp_path):
     state = vm.State()
     state.persisted.first_start_done = True
 
-    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 0, 0))
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 59, 0))
     for dream in config.notifications_dir.glob("nightly_dream-*.json"):
         dream.unlink()
     _drop_dream(config, state, dt.datetime(2025, 6, 15, 7, 30, 0))
 
     assert _dream_files(config) == ["nightly_dream-2025-06-15.json"]
+
+
+# --- nightly jitter: each night's dream starts at a per-night minute, never at the hour sharp ---
+
+
+def _jitter_setup(tmp_path):
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", agent_name="dreamer-test", nightly_memory_hour=4)
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    state = vm.State()
+    state.persisted.first_start_done = True
+    return config, state
+
+
+@pytest.mark.parametrize(
+    "now,expected_files",
+    [
+        (dt.datetime(2025, 6, 15, 4, 0, 0), 0),  # window open, jitter instant not reached
+        (dt.datetime(2025, 6, 15, 4, 42, 0), 0),  # one minute short of the jitter instant
+        (dt.datetime(2025, 6, 15, 4, 43, 0), 1),  # sha256("dreamer-test:2025-06-15") % 60 == 43
+    ],
+    ids=["at-the-hour", "minute-before-jitter", "at-jitter-instant"],
+)
+def test_dream_waits_for_its_per_night_jitter_instant(tmp_path, now, expected_files):
+    config, state = _jitter_setup(tmp_path)
+
+    _drop_dream(config, state, now)
+
+    assert len(_dream_files(config)) == expected_files
+
+
+def test_jitter_instant_changes_across_nights(tmp_path):
+    """The delay derives from (agent name, night): the 16th fires at 4:31 where the 15th held to 4:43,
+    so a fleet's dreams land on different minutes each night rather than re-synchronizing."""
+    config, state = _jitter_setup(tmp_path)
+
+    # sha256("dreamer-test:2025-06-16") % 60 == 31
+    _drop_dream(config, state, dt.datetime(2025, 6, 16, 4, 31, 0))
+
+    assert _dream_files(config) == ["nightly_dream-2025-06-16.json"]
 
 
 # --- mark_dreamer_complete: keep the session, then compact + restart (not a hard reset) ---

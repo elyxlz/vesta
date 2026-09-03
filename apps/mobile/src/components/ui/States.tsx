@@ -1,4 +1,6 @@
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import type { ReactNode } from "react";
+import { StyleSheet, View } from "react-native";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Button } from "./Button";
 import { Text } from "./Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -7,8 +9,10 @@ export function LoadingState({ label = "Loading…" }: { label?: string }) {
   const { colors } = usePreferences();
   return (
     <View style={styles.state}>
-      <ActivityIndicator color={colors.accent} size="large" />
-      <Text style={[styles.detail, { color: colors.secondaryText }]}>{label}</Text>
+      <LoadingSpinner color={colors.accent} size="large" />
+      <Text style={[styles.detail, { color: colors.secondaryText }]}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -19,14 +23,18 @@ export function EmptyState({
   action,
 }: {
   title: string;
-  detail: string;
+  detail: ReactNode;
   action?: { label: string; onPress: () => void };
 }) {
   const { colors } = usePreferences();
   return (
     <View style={styles.state}>
-      <Text family="heading" style={[styles.title, { color: colors.text }]}>{title}</Text>
-      <Text style={[styles.detail, { color: colors.secondaryText }]}>{detail}</Text>
+      <Text family="heading" style={[styles.title, { color: colors.text }]}>
+        {title}
+      </Text>
+      <Text style={[styles.detail, { color: colors.secondaryText }]}>
+        {detail}
+      </Text>
       {action ? <Button onPress={action.onPress}>{action.label}</Button> : null}
     </View>
   );
@@ -42,8 +50,12 @@ export function ErrorState({
   const { colors } = usePreferences();
   return (
     <View style={styles.state}>
-      <Text family="heading" style={[styles.title, { color: colors.danger }]}>Something went wrong</Text>
-      <Text style={[styles.detail, { color: colors.secondaryText }]}>{message}</Text>
+      <Text family="heading" style={[styles.title, { color: colors.text }]}>
+        Something went wrong
+      </Text>
+      <Text style={[styles.detail, { color: colors.secondaryText }]}>
+        {message}
+      </Text>
       {retry ? <Button onPress={retry}>Try again</Button> : null}
     </View>
   );

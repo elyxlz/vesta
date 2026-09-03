@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::device_registry::DeviceInfo;
+use crate::device_registry::{DeviceContext, DeviceInfo};
 use crate::docker::{AgentOperation, AgentStatus, BuildPhase};
 use crate::types::ClientKind;
 
@@ -26,6 +26,15 @@ pub(crate) struct GatewayInfo {
     /// the field existed) still parses.
     #[serde(default)]
     pub operation: Option<GatewayOperation>,
+    /// The user-notification feed's synced seen watermark: unix seconds of the user's last
+    /// catch-up on any device, 0 before the first. Advanced by `POST /notifications/seen`.
+    /// Defaulted so a tree written by an older gateway still parses.
+    #[serde(default)]
+    pub user_notifications_seen_at: u64,
+    /// The newest user-notification log entry's delivery stamp, `None` on an empty log. With the
+    /// watermark above, clients derive "anything unseen?" without fetching the feed.
+    #[serde(default)]
+    pub last_user_notification_at: Option<u64>,
 }
 
 /// The kinds of gateway operation there are. An enum rather than a bare string so a third kind
@@ -126,6 +135,17 @@ pub(crate) struct GatewayLan {
 pub(crate) struct ServiceInfo {
     pub port: u16,
     pub rev: u64,
+    /// Registered `--public`: served with no gateway credential (see `register-service`).
+    pub public: bool,
+}
+
+/// The rate-limit window binding an alive agent: the agent serves but its provider rejects work
+/// until the window resets. Clients overlay it on the status the way they overlay `booting`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RateLimitedInfo {
+    pub window: Option<String>,
+    pub resets_at: Option<i64>,
 }
 
 /// The per-agent `info` branch. camelCase to match `AgentInfo`. `activity_state` is a plain string
@@ -140,6 +160,9 @@ pub(crate) struct AgentInfo {
     /// An `Alive` agent still working through its boot turns; clients label it as waking up.
     #[serde(default)]
     pub booting: bool,
+    /// Present exactly while a rate limit binds the agent. Absent on older gateways.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limited: Option<RateLimitedInfo>,
     pub started_at: Option<String>,
     pub services: BTreeMap<String, ServiceInfo>,
 }
@@ -185,8 +208,8 @@ pub(crate) enum Frame {
     State { scope: GatewayScope, value: GatewayInfo },
     Agent { name: String, info: AgentInfo },
     AgentRemoved { name: String },
-    Notifications { agent: String, pending: Vec<serde_json::Value> },
-    UserNotification { agent: String, kind: String, title: String, body: String },
+    AgentNotifications { agent: String, pending: Vec<serde_json::Value> },
+    UserNotification { id: u64, at: u64, agent: String, kind: String, title: String, body: String },
     Presence { any_focused: bool },
     Devices { devices: Vec<DeviceInfo> },
 }
@@ -211,7 +234,9 @@ pub(crate) enum ClientFrame {
 /// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
 /// web visibility/window focus or mobile foreground state. `client` identifies the surface that
 /// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
-/// reconnect never looks like the user returning.
+/// reconnect never looks like the user returning. `viewing` is the agent whose page is open on this
+/// client, or `None` on the roster, a non-agent screen, or a blurred window: it drives the per-agent
+/// presence notification, independently of `focused`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientContext {
@@ -220,6 +245,8 @@ pub(crate) struct ClientContext {
     pub client: ClientKind,
     #[serde(default)]
     pub resync: bool,
+    #[serde(default)]
+    pub viewing: Option<String>,
     /// The client-minted installation id identifying the device across reconnects. Absent from
     /// older clients, which are simply not tracked in the device registry.
     #[serde(default)]
@@ -227,6 +254,11 @@ pub(crate) struct ClientContext {
     /// A human label the client composes for itself, e.g. "Chrome on macOS".
     #[serde(default)]
     pub descriptor: Option<String>,
+    /// What the device reports about itself (`timezone`, `position`), read when the frame is built
+    /// so a change after mount is reported on the next focus edge or reconnect. The same shape the
+    /// registry stores and `PUT /devices/{id}/context` takes.
+    #[serde(flatten)]
+    pub context: DeviceContext,
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -255,15 +287,21 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             warnings: vec!["other-agent: backup failed (disk full)".into()],
             error: None,
         }),
+        user_notifications_seen_at: 1_700_000_000,
+        last_user_notification_at: Some(1_700_000_400),
     };
     let mut services = BTreeMap::new();
-    services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3 });
+    services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3, public: false });
     let info = AgentInfo {
         status: AgentStatus::Alive,
         activity_state: "thinking".into(),
         build_phase: None,
         operation: Some(AgentOperation::BackingUp),
         booting: false,
+        rate_limited: Some(RateLimitedInfo {
+            window: Some("seven_day".into()),
+            resets_at: Some(1_787_986_800),
+        }),
         started_at: Some("2026-01-01T00:00:00Z".into()),
         services,
     };
@@ -283,7 +321,18 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         present: true,
         last_seen: "2026-01-01T00:00:00Z".into(),
         push_enabled: false,
-        location: Some("London, United Kingdom".into()),
+        timezone: Some("Europe/London".into()),
+        position: Some(crate::device_registry::DevicePosition {
+            latitude: 51.5074,
+            longitude: -0.1278,
+            accuracy_m: Some(50.0),
+            place: Some(crate::device_registry::DevicePlace {
+                city: Some("London".into()),
+                region: Some("England".into()),
+                country: Some("United Kingdom".into()),
+            }),
+        }),
+        position_at: Some("2026-01-01T00:00:00Z".into()),
     }];
     let tree = Tree { gateway: gateway.clone(), agents, devices: devices.clone() };
 
@@ -297,9 +346,9 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "state": to_value(Frame::State { scope: GatewayScope::Gateway, value: gateway }).expect("serialize state"),
             "agent": to_value(Frame::Agent { name: "sample-agent".into(), info }).expect("serialize agent"),
             "agent_removed": to_value(Frame::AgentRemoved { name: "stopped-agent".into() }).expect("serialize agent_removed"),
-            "notifications": to_value(Frame::Notifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize notifications"),
+            "agent_notifications": to_value(Frame::AgentNotifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize agent_notifications"),
             "user_notification": to_value(Frame::UserNotification {
-                agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
+                id: 3, at: 1_700_000_400, agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize user_notification"),
             "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
             "devices": to_value(Frame::Devices { devices }).expect("serialize devices"),
@@ -323,6 +372,8 @@ mod tests {
             latest_version: None,
             managed: false,
             operation: None,
+            user_notifications_seen_at: 0,
+            last_user_notification_at: None,
         }
     }
 
@@ -410,6 +461,7 @@ mod tests {
             build_phase: None,
             operation: None,
             booting: false,
+            rate_limited: None,
             started_at: Some("2026-07-18T00:00:00Z".into()),
             services: std::collections::BTreeMap::new(),
         };
@@ -428,6 +480,7 @@ mod tests {
             build_phase: None,
             operation: None,
             booting: false,
+            rate_limited: None,
             started_at: None,
             services: BTreeMap::new(),
         }
@@ -441,8 +494,8 @@ mod tests {
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
-            (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
-            (Frame::UserNotification { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
+            (Frame::AgentNotifications { agent: "scout".into(), pending: vec![] }, "agent_notifications"),
+            (Frame::UserNotification { id: 1, at: 1_700_000_000, agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
             (Frame::Presence { any_focused: true }, "presence"),
         ];
         for (frame, tag) in cases {
@@ -467,6 +520,49 @@ mod tests {
         assert_eq!(reauth, ClientFrame::Reauth { token: "tok".into() });
         // An unknown client frame is a parse error the handler treats as "ignore".
         assert!(serde_json::from_str::<ClientFrame>(r#"{"type":"future"}"#).is_err());
+    }
+
+    // The client-to-gateway half of the fixture round trip: @vesta/core's encoder writes
+    // apps/core/fixtures/client-frames.json (REGEN_API_FIXTURES=1) and this parses it with the
+    // production types, so a renamed field on either side fails CI. Skipped in a checkout
+    // without the apps tree, like the other fixture files.
+    #[test]
+    fn client_frames_from_the_typescript_encoder_parse() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/core/fixtures/client-frames.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let fixtures: serde_json::Value = serde_json::from_str(&text).expect("parse client frame fixtures");
+        let reauth: ClientFrame =
+            serde_json::from_value(fixtures["reauth"].clone()).expect("parse the encoder's reauth");
+        assert_eq!(reauth, ClientFrame::Reauth { token: "tok".into() });
+        let context: ClientFrame = serde_json::from_value(fixtures["client_context"].clone())
+            .expect("parse the encoder's client_context");
+        assert_eq!(
+            context,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Mobile,
+                resync: false,
+                viewing: Some("scout".into()),
+                device_id: Some("device-1".into()),
+                descriptor: Some("Vesta on iPhone".into()),
+                context: DeviceContext {
+                    timezone: Some("Europe/London".into()),
+                    position: Some(crate::device_registry::PositionReport::At(crate::device_registry::DevicePosition {
+                        latitude: 51.5074,
+                        longitude: -0.1278,
+                        accuracy_m: Some(50.0),
+                        place: Some(crate::device_registry::DevicePlace {
+                            city: Some("London".into()),
+                            region: Some("England".into()),
+                            country: Some("United Kingdom".into()),
+                        }),
+                    })),
+                },
+            })
+        );
     }
 
     #[test]
@@ -509,6 +605,55 @@ mod tests {
                 focused: false,
                 client: ClientKind::Unknown,
                 resync: true,
+                ..Default::default()
+            })
+        );
+        // `timezone` and `position` are the device's reported context, camelCase like the rest.
+        let context: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"mobile","timezone":"Asia/Tokyo",
+                "position":{"latitude":35.6762,"longitude":139.6503,"accuracyM":50.0,"place":{"city":"Tokyo","country":"Japan"}}}"#,
+        )
+        .expect("parse client_context with context");
+        assert_eq!(
+            context,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Mobile,
+                context: DeviceContext {
+                    timezone: Some("Asia/Tokyo".into()),
+                    position: Some(crate::device_registry::PositionReport::At(crate::device_registry::DevicePosition {
+                        latitude: 35.6762,
+                        longitude: 139.6503,
+                        accuracy_m: Some(50.0),
+                        place: Some(crate::device_registry::DevicePlace {
+                            city: Some("Tokyo".into()),
+                            region: None,
+                            country: Some("Japan".into()),
+                        }),
+                    })),
+                },
+                ..Default::default()
+            })
+        );
+        // A `position: null` is a retraction (location sharing turned off), distinct from absent.
+        let retracted: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"mobile","timezone":"Asia/Tokyo","position":null}"#,
+        )
+        .expect("parse client_context retracting the position");
+        let ClientFrame::ClientContext(retracted) = retracted else { panic!("client_context expected") };
+        assert_eq!(retracted.context.position, Some(crate::device_registry::PositionReport::Retract));
+        // `viewing` carries the open agent's name; absent it defaults to None (additive-safe).
+        let viewing: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"web","viewing":"scout"}"#,
+        )
+        .expect("parse client_context viewing");
+        assert_eq!(
+            viewing,
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Web,
+                resync: false,
+                viewing: Some("scout".into()),
                 ..Default::default()
             })
         );

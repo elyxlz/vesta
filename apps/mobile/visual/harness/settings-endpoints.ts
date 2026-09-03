@@ -1,9 +1,14 @@
 import type { ApiClient } from "../../src/api/client";
-import type { GatewayInfo, GatewaySettings } from "../../src/api/types";
+import type { GatewayEndpointInfo, GatewaySettings } from "@vesta/core";
+import { visualSwitch } from "./launch-query";
 
-const info: GatewayInfo = {
+// visualTunnel=unavailable reports no public tunnel.
+const info: GatewayEndpointInfo = {
   lan: { exposed: true, url: "http://vesta.local:8080" },
-  tunnel_url: "https://home.vesta.run",
+  tunnel_url:
+    visualSwitch("visualTunnel") === "unavailable"
+      ? null
+      : "https://home.vesta.run",
   port: 8080,
 };
 const settings: GatewaySettings = {
@@ -16,7 +21,9 @@ const settings: GatewaySettings = {
   },
 };
 
-export async function fetchGatewayInfo(_api: ApiClient): Promise<GatewayInfo> {
+export async function fetchGatewayInfo(
+  _api: ApiClient,
+): Promise<GatewayEndpointInfo> {
   return info;
 }
 

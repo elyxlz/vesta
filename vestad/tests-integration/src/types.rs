@@ -14,6 +14,8 @@ pub struct ServerConfig {
 pub struct StatusJson {
     pub name: String,
     pub status: String,
+    #[serde(default)]
+    pub booting: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub ws_port: u16,
@@ -24,12 +26,6 @@ pub struct ListEntry {
     pub name: String,
     pub status: String,
     pub ws_port: u16,
-}
-
-#[derive(Deserialize)]
-pub struct AuthFlowResponse {
-    pub auth_url: String,
-    pub session_id: String,
 }
 
 /// The `POST /auth/session` response: a fresh JWT access token plus its rotating refresh token

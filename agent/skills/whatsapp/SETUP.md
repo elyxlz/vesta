@@ -11,9 +11,8 @@ the agent image.
 1. Run `~/agent/skills/whatsapp/setup.sh`. It links the launcher onto `PATH`,
    warms the build cache, downloads the transcription model, and starts the
    daemon. Safe to re-run.
-2. Add `whatsapp daemon start` on its own line inside the fenced block under
-   `## Daemons` in `~/agent/skills/restart/SKILL.md`, so inbound notifications
-   survive a container restart.
+2. Add `whatsapp daemon start` to your restart daemons, so inbound notifications
+   survive a container restart. The `restart` skill owns that list.
 
 ## Select one account method
 
@@ -32,10 +31,10 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
 3. **`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` both set?** Run
    `whatsapp connect --source doubletick --opener '<text>'`. See the
    [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) guide.
-4. **Otherwise, ask the user** which they want, then run that one command:
-   - Double Tick credentials in hand:
-     `whatsapp connect --source doubletick --opener '<text>'`. A provisioning
-     service that hands the agent a ready headless account. See the
+4. **Otherwise, ask the user** which they want:
+   - **Double Tick**, a provisioning service that hands the agent a ready headless
+     account: ask whether they have Double Tick credentials. When they do, get the
+     API URL and key from them, then follow the
      [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) guide.
    - Their own account: `whatsapp connect --source self-managed`. The user
      supplies a dedicated WhatsApp account on their own SIM (a second account on
@@ -46,6 +45,7 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
 
 `whatsapp status` is the primary diagnostic:
 
+- `{"running":false,...}`: the daemon is down; start it with `whatsapp daemon start`.
 - `{"linked":true,"connected":true,...}`: healthy.
 - `{"linked":true,"connected":false,...}`: let the daemon reconnect; use the
   returned `next` only if it cannot.
@@ -55,8 +55,8 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
   approval first (see the [linking rule](SKILL.md#the-linking-rule)).
 
 `whatsapp daemon status` adds pairing-attempt and sync-lock detail;
-`~/agent/logs/whatsapp.log` has daemon output. Use `whatsapp daemon start` to
-idempotently bring up a stopped daemon; never run `whatsapp serve` by hand.
+`~/agent/logs/whatsapp.log` has daemon output. No command starts the daemon for you.
+Use `whatsapp daemon start` to bring up a stopped one. Never run `whatsapp serve` by hand.
 
 A headless (Vesta Cloud or Double Tick) `whatsapp connect` returns a terminal
 status. Handle each:
@@ -85,7 +85,7 @@ whatsapp messages --instance personal --limit 10
 ```
 
 For a read-only or silent instance, start its daemon with the flag BEFORE the first
-connect, so the instance is never even briefly write-capable:
+connect:
 
 ```bash
 whatsapp daemon start --instance personal --read-only
@@ -93,11 +93,11 @@ whatsapp connect --source self-managed --instance personal
 ```
 
 `--read-only` blocks sending, receipts, and presence; `--no-notifications` silences
-notifications. `whatsapp connect` takes neither flag, so running it first cold-starts the
-daemon write-capable, after which `daemon start --read-only` only reports `already_running`.
-Connecting after the daemon is up links through it and leaves the flag in force. Keep the
-flag on that instance's `whatsapp daemon start` line under `## Daemons` in the restart skill
-so it survives every restart. Never point two instances at the same account/device store.
+notifications. `whatsapp connect` requires a running daemon, so it links through the daemon you
+started and the flag stays in force. A later `whatsapp daemon start` that omits the flag replays it
+from the recorded run, so the instance comes back read-only. Keep the flag on that instance's
+`whatsapp daemon start` line in your restart daemons so it survives every restart. Never point two
+instances at the same account/device store.
 
 ## Operational notes
 

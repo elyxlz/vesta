@@ -8,19 +8,23 @@ import {
   type Controller,
   type Tree,
 } from "@vesta/core";
-import { useSyncState, useUpdateResolution } from "@vesta/core/react";
+import {
+  useReplica,
+  useRestartResolution,
+  useSyncState,
+  useUpdateResolution,
+} from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
 import { buildController } from "./build-controller";
 import { deviceIdentity } from "./device-identity";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
-import { createAppStateForegroundSignal } from "./foreground-signal";
 import {
-  useOptionalControllerReplica,
-  useOptionalControllerSyncState,
-} from "./optional-controller-store";
-import { runReauthCheck } from "./reauth-poll";
+  latchedGatewayBehind,
+  type GatewayBehindLatch,
+} from "./gateway-update-gate-model";
+import { createAppStateForegroundSignal } from "./foreground-signal";
 import { AppBehindScreen } from "./AppBehindScreen";
 import { GatewayOperationContext } from "./gateway-operation-context";
 import { gatewayOperationRouteAction } from "./gateway-operation-route-model";
@@ -36,8 +40,6 @@ const CLIENT_VERSION = resolveClientVersion(
 export { useController } from "./context";
 export { useSyncState };
 
-const REAUTH_POLL_MS = 60000;
-
 // Module scope keeps the selector identity stable across renders, which the replica store memo needs.
 const selectGatewayVersion = (tree: Tree | null) => tree?.gateway.version ?? "";
 
@@ -47,12 +49,14 @@ const selectGatewayVersion = (tree: Tree | null) => tree?.gateway.version ?? "";
 // the key and reauths in-band (the reauth poll below), only a gateway switch rebuilds.
 // Backgrounding closes the socket; returning to foreground builds a new epoch.
 function ConnectedController({ children }: { children: ReactNode }) {
-  const { connection, api, refreshAccessToken } = useSession();
+  const { connection, api } = useSession();
   const router = useRouter();
   const segments = useSegments();
   const [signal] = useState(createAppStateForegroundSignal);
   const [controller, setController] = useState<Controller | null>(null);
-  const [device, setDevice] = useState<{ id: string; descriptor: string } | undefined>(undefined);
+  const [device, setDevice] = useState<
+    { id: string; descriptor: string } | undefined
+  >(undefined);
   const connectionKey = connectionKeyOf(connection);
 
   // Resolve this device's identity once (the id lives in AsyncStorage). When it lands it enters the
@@ -66,25 +70,41 @@ function ConnectedController({ children }: { children: ReactNode }) {
       active = false;
     };
   }, []);
-  const syncState = useOptionalControllerSyncState(controller);
+  const syncState = useSyncState(controller);
+  // Derived during render: the previous render's latch is the carried state, and the model
+  // (latchedGatewayBehind) owns the decision.
+  const [behindLatch, setBehindLatch] = useState<GatewayBehindLatch>({
+    key: connectionKey,
+    behind: false,
+  });
+  const gatewayBehind = latchedGatewayBehind(
+    behindLatch,
+    connectionKey,
+    syncState,
+  );
+  if (
+    behindLatch.key !== connectionKey ||
+    behindLatch.behind !== gatewayBehind
+  ) {
+    setBehindLatch({ key: connectionKey, behind: gatewayBehind });
+  }
   // A gateway update takes the app back to home for as long as it runs: every agent may be
   // mid-backup and the gateway is about to restart, so home renders the update and only settings
   // stays reachable beside it.
-  const updateOperation = useOptionalControllerReplica(
-    controller,
+  const replica = controller?.replica ?? null;
+  const updateOperation = useReplica(
+    replica,
     selectGatewayOperation,
     gatewayOperationsEqual,
   );
-  const gatewayVersion = useOptionalControllerReplica(
-    controller,
-    selectGatewayVersion,
-  );
+  const gatewayVersion = useReplica(replica, selectGatewayVersion);
   // The other half of the same story: once the operation clears against a new version, home says so
   // for a moment. A client that sees this is one the gateway never has to notify.
   const updatedTo = useUpdateResolution(updateOperation, gatewayVersion);
+  const restarted = useRestartResolution(updateOperation);
   const operationState = useMemo(
-    () => ({ operation: updateOperation, updatedTo }),
-    [updateOperation, updatedTo],
+    () => ({ operation: updateOperation, updatedTo, restarted }),
+    [updateOperation, updatedTo, restarted],
   );
   const routeAction = gatewayOperationRouteAction({
     operating: updateOperation !== null,
@@ -99,15 +119,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
       const action = controllerGateAction(prev, next);
       prev = next;
       if (action === "build") {
-        current = buildController(
-          {
-            getConnection: api.getConnection,
-            refreshAccessToken,
-            websocketUrl: api.websocketUrl,
-          },
-          CLIENT_VERSION,
-          device,
-        );
+        current = buildController(api.session, CLIENT_VERSION, device);
         setController(current);
       } else if (action === "close") {
         current?.close();
@@ -122,30 +134,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
       current?.close();
       setController(null);
     };
-  }, [connectionKey, api, refreshAccessToken, signal, device]);
-
-  useEffect(() => {
-    if (!controller) return;
-    // Also on mount, not just every poll: a session restored (or returned to the foreground)
-    // with an already-expired token would otherwise keep retrying /sync with it for a whole
-    // interval.
-    const tick = () => {
-      void runReauthCheck({
-        getConnection: api.getConnection,
-        refreshAccessToken,
-        reauth: (token) => {
-          controller.reauth(token);
-        },
-      }).catch((err: unknown) =>
-        console.warn("[controller] reauth failed:", err),
-      );
-    };
-    tick();
-    const timer = setInterval(tick, REAUTH_POLL_MS);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [controller, api, refreshAccessToken]);
+  }, [connectionKey, api, signal, device]);
 
   useEffect(() => {
     if (routeAction === "none") return;
@@ -158,7 +147,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
         {syncState === "app_behind" ? (
           <AppBehindScreen />
         ) : (
-          <GatewayUpdateGate blocked={syncState === "gateway_behind"}>
+          <GatewayUpdateGate blocked={gatewayBehind}>
             {children}
           </GatewayUpdateGate>
         )}

@@ -1,96 +1,124 @@
-import { describe, expect, it, vi } from "vitest";
-import { checkForAppUpdate, isNewerVersion, selectLinuxAsset } from "./updater";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  downloadAppUpdate,
+  getAppUpdate,
+  quitAndInstallUpdate,
+} from "./updater";
 
-// A stand-in for electron-updater's autoUpdater that records the event handlers the code
-// registers, so the test can assert an "error" handler exists and swallows.
+interface CheckResult {
+  isUpdateAvailable: boolean;
+  updateInfo: { version: string };
+}
+
+// A stand-in for electron-updater's autoUpdater that lets a test steer the check result and
+// records the handlers the code registers.
 const updaterMock = vi.hoisted(() => {
   const handlers: Record<string, (arg: unknown) => void> = {};
+  let checkResult: CheckResult | null = null;
+  let checkError: Error | null = null;
   const autoUpdater = {
-    autoDownload: false,
-    autoInstallOnAppQuit: false,
+    autoDownload: true,
+    autoInstallOnAppQuit: true,
     allowDowngrade: true,
+    downloaded: 0,
+    installed: 0,
     on(event: string, cb: (arg: unknown) => void): void {
       handlers[event] = cb;
     },
-    setFeedURL(): void {
+    removeAllListeners(): void {
       /* noop */
     },
-    checkForUpdates(): Promise<null> {
-      return Promise.resolve(null);
+    checkForUpdates(): Promise<CheckResult | null> {
+      if (checkError) return Promise.reject(checkError);
+      return Promise.resolve(checkResult);
+    },
+    downloadUpdate(): Promise<string[]> {
+      autoUpdater.downloaded += 1;
+      return Promise.resolve([]);
+    },
+    quitAndInstall(): void {
+      autoUpdater.installed += 1;
     },
   };
-  return { autoUpdater, handlers };
+  return {
+    autoUpdater,
+    handlers,
+    reset(): void {
+      checkResult = null;
+      checkError = null;
+      autoUpdater.allowDowngrade = true;
+      autoUpdater.autoDownload = true;
+      autoUpdater.autoInstallOnAppQuit = true;
+      autoUpdater.downloaded = 0;
+      autoUpdater.installed = 0;
+    },
+    setCheckResult(result: CheckResult | null): void {
+      checkError = null;
+      checkResult = result;
+    },
+    setCheckError(error: Error): void {
+      checkError = error;
+    },
+  };
 });
 
-vi.mock("electron-updater", () => ({
-  default: { autoUpdater: updaterMock.autoUpdater },
-}));
-vi.mock("electron", () => ({
-  app: { getPath: () => "/tmp", getVersion: () => "0.1.0" },
-}));
+vi.mock("electron-updater", () => ({ autoUpdater: updaterMock.autoUpdater }));
 
-const asset = (name: string) => ({
-  name,
-  browser_download_url: `https://example.test/${name}`,
+beforeEach(() => {
+  updaterMock.reset();
 });
 
-const RELEASE = [
-  "Vesta_0.1.176_amd64.deb",
-  "Vesta_0.1.176_arm64.deb",
-  "Vesta_0.1.176_x86_64.rpm",
-  "Vesta_0.1.176_aarch64.rpm",
-  "Vesta_0.1.176_universal.dmg",
-].map(asset);
+describe("manual app-update check", () => {
+  it("reports available with the version electron-updater resolved", async () => {
+    updaterMock.setCheckResult({
+      isUpdateAvailable: true,
+      updateInfo: { version: "0.2.0" },
+    });
+    expect(await getAppUpdate()).toEqual({ available: true, version: "0.2.0" });
+  });
 
-const FOREIGN_ARCH = ["Vesta_0.1.176_armv7l.deb"].map(asset);
+  it("reports not-available when electron-updater finds nothing newer", async () => {
+    updaterMock.setCheckResult({
+      isUpdateAvailable: false,
+      updateInfo: { version: "0.1.0" },
+    });
+    expect(await getAppUpdate()).toEqual({ available: false, version: null });
+  });
 
-describe("linux release asset selection", () => {
-  it.each([
-    { assets: RELEASE, arch: "arm64", ext: ".deb", expected: "Vesta_0.1.176_arm64.deb" },
-    { assets: RELEASE, arch: "x64", ext: ".deb", expected: "Vesta_0.1.176_amd64.deb" },
-    { assets: RELEASE, arch: "arm64", ext: ".rpm", expected: "Vesta_0.1.176_aarch64.rpm" },
-    { assets: RELEASE, arch: "x64", ext: ".rpm", expected: "Vesta_0.1.176_x86_64.rpm" },
-    { assets: RELEASE, arch: "x64", ext: ".AppImage", expected: undefined },
-    { assets: FOREIGN_ARCH, arch: "arm64", ext: ".deb", expected: undefined },
-  ])("$arch $ext -> $expected", ({ assets, arch, ext, expected }) => {
-    expect(selectLinuxAsset(assets, arch, ext)?.name).toBe(expected);
+  it("reports not-available when the check yields no result", async () => {
+    updaterMock.setCheckResult(null);
+    expect(await getAppUpdate()).toEqual({ available: false, version: null });
+  });
+
+  it("fails closed when the check throws", async () => {
+    updaterMock.setCheckError(new Error("network blip"));
+    expect(await getAppUpdate()).toEqual({ available: false, version: null });
+  });
+
+  it("configures the updater manual and up-only", async () => {
+    updaterMock.setCheckResult(null);
+    await getAppUpdate();
+    expect(updaterMock.autoUpdater.allowDowngrade).toBe(false);
+    expect(updaterMock.autoUpdater.autoDownload).toBe(false);
+    expect(updaterMock.autoUpdater.autoInstallOnAppQuit).toBe(false);
   });
 });
 
-describe("latest-channel version comparison", () => {
-  it.each([
-    { candidate: "0.1.180", current: "0.1.179", expected: true },
-    { candidate: "0.2.0", current: "0.1.179", expected: true },
-    { candidate: "1.0.0", current: "0.9.9", expected: true },
-    { candidate: "0.1.180-beta", current: "0.1.179", expected: true },
-    { candidate: "0.1.179", current: "0.1.179", expected: false },
-    { candidate: "0.1.178", current: "0.1.179", expected: false },
-    { candidate: "0.1.9", current: "0.1.10", expected: false },
-  ])(
-    "$candidate newer than $current -> $expected",
-    ({ candidate, current, expected }) => {
-      expect(isNewerVersion(candidate, current)).toBe(expected);
-    },
-  );
-});
-
-describe("background auto-update errors", () => {
-  it("attaches an error listener so a mid-download failure is consumed, not thrown", async () => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    // Force the electron-updater path (Linux uses the manual package path instead).
-    Object.defineProperty(process, "platform", {
-      value: "darwin",
-      configurable: true,
+describe("manual app-update download and install", () => {
+  it("downloads once and relays progress as a percentage", async () => {
+    updaterMock.setCheckResult({
+      isUpdateAvailable: true,
+      updateInfo: { version: "0.2.0" },
     });
-    try {
-      await checkForAppUpdate();
-      // Node throws on an "error" EventEmitter event with no listener; registering one turns a
-      // mid-download failure into a logged no-op instead of an uncaught main-process exception.
-      const errorHandler = updaterMock.handlers.error;
-      expect(errorHandler).toBeDefined();
-      expect(() => errorHandler?.(new Error("network blip"))).not.toThrow();
-    } finally {
-      if (platform) Object.defineProperty(process, "platform", platform);
-    }
+    const seen: number[] = [];
+    await downloadAppUpdate((percent) => seen.push(percent));
+    updaterMock.handlers["download-progress"]?.({ percent: 42 });
+    expect(updaterMock.autoUpdater.downloaded).toBe(1);
+    expect(seen).toEqual([42]);
+  });
+
+  it("hands the install to electron-updater", () => {
+    quitAndInstallUpdate();
+    expect(updaterMock.autoUpdater.installed).toBe(1);
   });
 });

@@ -11,7 +11,7 @@ Commands:
 import argparse
 import sys
 
-from app_chat_cli.commands import cmd_history, cmd_import, cmd_send
+from app_chat_cli.commands import cmd_attachments_list, cmd_attachments_rm, cmd_history, cmd_import, cmd_send
 from app_chat_cli.daemon import cmd_serve, daemon_cmd
 
 _HELP_ARGS = ("--help", "-h", "help")
@@ -40,8 +40,25 @@ def _build_parser() -> argparse.ArgumentParser:
     send_p.add_argument(
         "--message",
         "-m",
-        required=True,
-        help="Message text, or '-' to read the body from stdin (use a <<'MSG' heredoc for anything with apostrophes, quotes or newlines)",
+        action="append",
+        default=None,
+        help=(
+            "One bubble; repeat -m for a multi-bubble reply, sent in order. '-' (as the only -m) reads the reply from stdin, "
+            "one bubble per blank-line-separated paragraph (one bubble in all under --longform)"
+        ),
+    )
+    send_p.add_argument(
+        "--gap",
+        type=float,
+        default=None,
+        help="Seconds between bubbles of a multi-bubble reply (default ~2.5s); pass 0 for no beat",
+    )
+    send_p.add_argument(
+        "--attach",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Attach a file (repeatable); the daemon copies it into its own store, so a temp file may be deleted after",
     )
     send_p.add_argument("--socket", default=None, help="Unix socket path (default: ~/.app-chat/app-chat.sock)")
     send_p.add_argument(
@@ -49,6 +66,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Bypass the bubble lint for genuine reference material (a brief, code block, or list they asked for)",
     )
+
+    attachments_p = sub.add_parser("attachments", help="Inspect and clean up attachment disk usage")
+    att_sub = attachments_p.add_subparsers(dest="action")
+    att_list_p = att_sub.add_parser("list", help="List attachments with sizes and totals (largest first)")
+    att_list_p.add_argument("--sort", choices=("size", "date"), default="size", help="Order: size (largest first) or date (newest first)")
+    att_list_p.add_argument("--limit", type=int, default=None, help="Trim the printed array (count/total_bytes still cover everything)")
+    att_list_p.add_argument("--min-size", dest="min_size", type=int, default=None, metavar="BYTES", help="Only attachments at least this big")
+    att_list_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
+    att_rm_p = att_sub.add_parser("rm", help="Free an attachment's bytes; chat history keeps a clean 'no longer available' tile")
+    att_rm_p.add_argument("ids", nargs="+", metavar="ID")
+    att_rm_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
@@ -76,6 +104,14 @@ def main() -> None:
         sys.exit(daemon_cmd(args.action))
     elif args.command == "send":
         cmd_send(args)
+    elif args.command == "attachments":
+        if args.action == "list":
+            cmd_attachments_list(args)
+        elif args.action == "rm":
+            cmd_attachments_rm(args)
+        else:
+            parser.print_help()
+            sys.exit(1)
     elif args.command == "history":
         cmd_history(args)
     elif args.command == "import":

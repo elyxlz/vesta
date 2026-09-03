@@ -7,12 +7,10 @@ from microsoft_cli import backend, cli, email
 from microsoft_cli.config import Config
 
 QUOTED = "<div>quoted original</div>"
+PLAIN_QUOTE = "________________________________\nFrom: A <a@x.com>\nSent: today\n\nbody line"
 
 
-@pytest.fixture
-def patched(monkeypatch):
-    calls: list[dict] = []
-
+def _patch_graph(monkeypatch, calls, quote):
     def fake_account_id(account_email, cache_file):
         return "acct-1"
 
@@ -22,18 +20,26 @@ def patched(monkeypatch):
             return {"id": "reply-draft"}
         if method == "POST" and path.endswith("/createReplyAll"):
             return {"id": "replyall-draft"}
-        if method == "GET" and "$select" in (kwargs["params"] if "params" in kwargs else {}) and "body" in kwargs["params"]["$select"]:
+        if method == "GET" and kwargs["params"]["$select"] == "body":
+            return {"body": quote}
+        if method == "GET":
             return {
-                "body": {"contentType": "HTML", "content": QUOTED},
+                "subject": "Re: hi",
+                "isDraft": True,
                 "toRecipients": [{"emailAddress": {"address": "sender@x.com"}}],
                 "ccRecipients": [{"emailAddress": {"address": "cc@x.com"}}],
+                "attachments": [],
             }
-        if method == "GET":
-            return {"subject": "Re: hi", "isDraft": True, "attachments": []}
         return None
 
     monkeypatch.setattr(email.auth, "get_account_id_by_email", fake_account_id)
     monkeypatch.setattr(email.graph, "request", fake_request)
+
+
+@pytest.fixture
+def patched(monkeypatch):
+    calls: list[dict] = []
+    _patch_graph(monkeypatch, calls, {"contentType": "HTML", "content": QUOTED})
     return calls
 
 
@@ -53,6 +59,19 @@ def test_reply_draft_threads_body_above_quote_and_never_sends(patched):
     assert content.index("thanks") < content.index(QUOTED)
     assert "<li>one</li>" in content
     assert not any(c["path"].endswith("/send") for c in patched)
+
+
+def test_reply_draft_keeps_the_line_breaks_of_a_plain_text_quote(monkeypatch):
+    calls: list[dict] = []
+    _patch_graph(monkeypatch, calls, {"contentType": "text", "content": PLAIN_QUOTE})
+
+    email.reply_draft(Config(), None, account_email="me@example.com", email_id="orig-1", body="hi")
+
+    content = next(c for c in calls if c["method"] == "PATCH")["json"]["body"]["content"]
+    assert content.endswith(
+        '<br><br><pre style="white-space:pre-wrap;font-family:inherit">'
+        "________________________________\nFrom: A &lt;a@x.com&gt;\nSent: today\n\nbody line</pre>"
+    )
 
 
 def test_reply_all_uses_create_reply_all(patched):

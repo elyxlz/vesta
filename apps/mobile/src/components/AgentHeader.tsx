@@ -1,16 +1,17 @@
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
 import { Ionicons } from "@expo/vector-icons";
-import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type {
   AgentActivityState,
   AgentOperation,
   AgentStatus,
+  RateLimitedInfo,
 } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
+import { GlassSurface } from "@/components/ui/glass-surface";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
@@ -20,10 +21,11 @@ const IS_IOS = process.env.EXPO_OS === "ios";
 export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const router = useRouter();
   const { name, agent, activityState } = useAgent();
-  const { colors, dark } = usePreferences();
+  const { colors } = usePreferences();
   const status = agent?.status ?? "not_found";
   const operation = agent?.operation ?? null;
   const booting = agent?.booting;
+  const agentRateLimited = agent?.rateLimited ?? null;
   const openSettings = () =>
     router.push({
       pathname: "/agent/[name]/settings",
@@ -40,6 +42,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerBackButtonDisplayMode: "minimal",
+          headerTitleAlign: "center",
           headerLeft: IS_IOS
             ? undefined
             : () => (
@@ -54,10 +57,8 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           activityState={activityState}
           operation={operation}
           booting={booting}
+          rateLimited={agentRateLimited}
           color={colors.text}
-          dark={dark}
-          fallbackColor={colors.elevated}
-          borderColor={colors.border}
           onPress={openSettings}
         />
       </Stack.Title>
@@ -81,10 +82,8 @@ export function AgentIsland({
   activityState,
   operation,
   booting = false,
+  rateLimited = null,
   color,
-  dark,
-  fallbackColor,
-  borderColor,
   onPress,
 }: {
   name: string;
@@ -92,10 +91,8 @@ export function AgentIsland({
   activityState: AgentActivityState;
   operation: AgentOperation | null;
   booting?: boolean;
+  rateLimited?: RateLimitedInfo | null;
   color: string;
-  dark: boolean;
-  fallbackColor: string;
-  borderColor: string;
   onPress: () => void;
 }) {
   const content = (
@@ -114,43 +111,22 @@ export function AgentIsland({
         activityState={activityState}
       >
         <AgentOrb
+          name={name}
           status={status}
           activityState={activityState}
           operation={operation}
           booting={booting}
+          rateLimited={rateLimited}
           size={24}
         />
       </BootTransitionTarget>
-      <Text family="heading" numberOfLines={1} style={[styles.name, { color }]}>
+      <Text family="serif" numberOfLines={1} style={[styles.name, { color }]}>
         {name}
       </Text>
     </Pressable>
   );
 
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView
-        glassEffectStyle="regular"
-        colorScheme={dark ? "dark" : "light"}
-        isInteractive
-        style={styles.titlePill}
-      >
-        {content}
-      </GlassView>
-    );
-  }
-
-  return (
-    <View
-      style={[
-        styles.titlePill,
-        styles.titleFallback,
-        { backgroundColor: fallbackColor, borderColor },
-      ]}
-    >
-      {content}
-    </View>
-  );
+  return <GlassSurface style={styles.titlePill}>{content}</GlassSurface>;
 }
 
 function AgentBackHeaderButton({
@@ -175,13 +151,11 @@ function AgentBackHeaderButton({
 
 const styles = StyleSheet.create({
   titlePill: {
+    alignSelf: "center",
     maxWidth: 220,
     borderRadius: radii.pill,
     borderCurve: "continuous",
     overflow: "hidden",
-  },
-  titleFallback: {
-    borderWidth: StyleSheet.hairlineWidth,
   },
   titleContent: {
     minHeight: 42,

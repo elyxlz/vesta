@@ -3,12 +3,22 @@ import type { UserNotificationDelta } from "@vesta/core";
 import { shouldPresentUserNotification } from "./user-notification-presentation";
 
 function chatUserNotification(agent: string): UserNotificationDelta {
-  return { type: "user_notification", agent, kind: "message", title: agent, body: "hi" };
+  return {
+    type: "user_notification",
+    id: 1,
+    at: 1_700_000_000,
+    agent,
+    kind: "message",
+    title: agent,
+    body: "hi",
+  };
 }
 
 function rateLimitedUserNotification(agent: string): UserNotificationDelta {
   return {
     type: "user_notification",
+    id: 1,
+    at: 1_700_000_000,
     agent,
     kind: "rate_limited",
     title: agent,
@@ -16,9 +26,23 @@ function rateLimitedUserNotification(agent: string): UserNotificationDelta {
   };
 }
 
+function needsUserNotification(agent: string): UserNotificationDelta {
+  return {
+    type: "user_notification",
+    id: 1,
+    at: 1_700_000_000,
+    agent,
+    kind: "needs_user",
+    title: `${agent} needs to be set up`,
+    body: "Choose a provider and sign in.",
+  };
+}
+
 // The gateway's own announcement names no agent, so it can never be the one on screen.
 const gatewayUpdatedNotification: UserNotificationDelta = {
   type: "user_notification",
+  id: 1,
+  at: 1_700_000_000,
   agent: "",
   kind: "gateway_updated",
   title: "Updated to v0.1.190",
@@ -33,7 +57,13 @@ describe("shouldPresentUserNotification", () => {
     expected: boolean;
   }[] = [
     {
-      name: "a rate-limit user notification always shows, even for the active agent",
+      name: "a needs-user notification always shows, even for the active agent",
+      delta: needsUserNotification("alex"),
+      activeAgent: "alex",
+      expected: true,
+    },
+    {
+      name: "an older gateway's rate-limit notification always shows, even for the active agent",
       delta: rateLimitedUserNotification("alex"),
       activeAgent: "alex",
       expected: true,

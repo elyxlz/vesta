@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   connectWithKey,
@@ -15,7 +16,7 @@ import {
 } from "@/api/auth";
 import { createApiClient, type ApiClient } from "@/api/client";
 import { parseConnectLink } from "@/api/connection-link";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import {
   clearConnection as clearStoredConnection,
   readConnection,
@@ -23,13 +24,15 @@ import {
 } from "@/storage/connection";
 import type { RecentGateway } from "@/storage/recent-gateway-model";
 import {
-  clearRecentGateways as clearStoredRecentGateways,
   forgetRecentGateway as forgetStoredRecentGateway,
   readRecentGatewayCredential,
   readRecentGateways,
   saveRecentGateway,
 } from "@/storage/recent-gateways";
-import { changesGateway } from "@/session/session-model";
+import {
+  changesGateway,
+  rotatedStoredConnection,
+} from "@/session/session-model";
 
 type SessionStatus = "booting" | "disconnected" | "connected";
 
@@ -42,7 +45,6 @@ interface SessionValue {
   connectLink: (link: string) => Promise<void>;
   connectRecentGateway: (id: string) => Promise<void>;
   forgetRecentGateway: (id: string) => Promise<void>;
-  clearRecentGateways: () => Promise<void>;
   signIn: () => Promise<boolean>;
   disconnect: () => Promise<void>;
 }
@@ -151,6 +153,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, [connectionStore]);
 
+  // The background device-context poll may refresh the session and write SecureStore while the app
+  // is suspended; adopt those tokens on foreground so the next in-app refresh presents the live one.
+  useEffect(() => {
+    const adopt = async () => {
+      const rotated = rotatedStoredConnection(
+        connectionStore.read(),
+        await readConnection(),
+      );
+      if (!rotated) return;
+      connectionStore.write(rotated);
+      setConnection(rotated);
+    };
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void adopt();
+    });
+    return () => sub.remove();
+  }, [connectionStore]);
+
   const connectLink = useCallback(
     async (link: string): Promise<void> => {
       const parsed = parseConnectLink(link);
@@ -191,11 +211,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setRecentGateways(await forgetStoredRecentGateway(id));
   }, []);
 
-  const clearRecentGateways = useCallback(async (): Promise<void> => {
-    await clearStoredRecentGateways();
-    setRecentGateways([]);
-  }, []);
-
   const signIn = useCallback(async (): Promise<boolean> => {
     const connection = await signInWithVestaAccount();
     if (!connection) return false;
@@ -215,7 +230,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
-      clearRecentGateways,
       signIn,
       disconnect,
     }),
@@ -227,7 +241,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
-      clearRecentGateways,
       signIn,
       disconnect,
     ],

@@ -1,49 +1,40 @@
 import { useEffect, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { DatabaseBackup } from "lucide-react";
+import { useResource } from "@vesta/core/react";
 import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldLabel,
-} from "@/components/ui/field";
+  Card,
+  CardAction,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  fetchAgentBackupSettings,
-  setAgentBackupSettings,
-  type AgentBackupSettings,
-} from "@/api/agents";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { fetchAgentBackupSettings, setAgentBackupSettings } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 // Per-agent automatic-backups toggle. Reads the effective enabled state on mount
 // and writes an override on change; the section hides its control on load failure.
 export function BackupsCard() {
   const { name } = useSelectedAgent();
-  const [settings, setSettings] = useState<AgentBackupSettings | null>(null);
+  const settings = useResource(name || null, (key) =>
+    fetchAgentBackupSettings(httpClient, key),
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!name) return;
-    let ignore = false;
-    setSettings(null);
-    fetchAgentBackupSettings(name)
-      .then((s) => {
-        if (!ignore) setSettings(s);
-      })
-      .catch((err: unknown) => {
-        if (!ignore)
-          console.warn("[settings] failed to load automatic backups:", err);
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [name]);
+    if (settings.error !== null)
+      console.warn(
+        "[settings] failed to load automatic backups:",
+        settings.error,
+      );
+  }, [settings.error]);
 
   const onToggle = async (enabled: boolean) => {
     setSaving(true);
     try {
-      const updated = await setAgentBackupSettings(name, enabled);
-      setSettings(updated);
+      settings.set(await setAgentBackupSettings(httpClient, name, enabled));
     } catch (err) {
       console.warn("[settings] failed to set automatic backups:", err);
     } finally {
@@ -53,21 +44,19 @@ export function BackupsCard() {
 
   return (
     <Card size="sm">
-      <CardContent>
-        <Field
-          orientation="horizontal"
-          className="items-center justify-between"
-        >
-          <FieldContent>
-            <FieldLabel className="text-sm">automatic backups</FieldLabel>
-            <FieldDescription>
-              snapshot this agent on a schedule and before every update, without
-              interrupting it
-            </FieldDescription>
-          </FieldContent>
-          {settings ? (
+      <CardHeader>
+        <CardTitle>
+          <DatabaseBackup className="size-4 text-muted-foreground" />
+          automatic backups
+        </CardTitle>
+        <CardDescription>
+          snapshot this agent on a schedule and before every update, without
+          interrupting it.
+        </CardDescription>
+        <CardAction>
+          {settings.data ? (
             <Switch
-              checked={settings.enabled}
+              checked={settings.data.enabled}
               disabled={saving}
               onCheckedChange={(checked) => {
                 void onToggle(checked);
@@ -76,8 +65,8 @@ export function BackupsCard() {
           ) : (
             <Skeleton className="h-5 w-9" />
           )}
-        </Field>
-      </CardContent>
+        </CardAction>
+      </CardHeader>
     </Card>
   );
 }

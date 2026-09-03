@@ -3,16 +3,21 @@ import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingScreen } from "@/components/LoadingScreen";
-import { AuthProvider, useAuth } from "@/providers/AuthProvider";
+import { AuthProvider } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import { ControllerProvider } from "@/providers/ControllerProvider";
-import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
+import { GatewayProvider } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { NotificationProvider } from "@/providers/NotificationProvider";
 import { PresenceReporter } from "@/providers/PresenceReporter";
 import { InsetFrame } from "@/components/InsetFrame";
+import { Scrim } from "@/components/Scrim";
 import { WhatsNewDialog } from "@/components/WhatsNew";
+import { SwitchGatewayDialog } from "@/components/SwitchGatewayDialog";
 import { router } from "@/router";
+import { useAutoHideScrollbars } from "./use-auto-hide-scrollbars";
 import { useIsMobile } from "./hooks/use-mobile";
-import { useRuntime } from "@/providers/RuntimeProvider";
+import { runtimeInfo } from "@/lib/native";
 
 function openAgent(agentName: string): void {
   void router.navigate(`/agent/${encodeURIComponent(agentName)}`);
@@ -48,8 +53,9 @@ function AppContent() {
 
 export default function App() {
   const isMobile = useIsMobile();
-  const { isDesktopApp } = useRuntime();
+  const { isDesktopApp } = runtimeInfo;
   const isFullscreen = isMobile || isDesktopApp;
+  useAutoHideScrollbars();
 
   const content = (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -61,6 +67,8 @@ export default function App() {
                 <GatewayProvider>
                   <NotificationProvider onOpenAgent={openAgent}>
                     <PresenceReporter />
+                    <Scrim />
+                    <SwitchGatewayDialog />
                     <AppContent />
                   </NotificationProvider>
                 </GatewayProvider>

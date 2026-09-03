@@ -1,19 +1,23 @@
 import { AuthFlow } from "@/components/AuthFlow";
 import { ProgressBar } from "@/components/ProgressBar";
-import { claudeProvider } from "@/api";
+import { completeClaudeOAuth } from "@vesta/core";
+import type { ClaudeOAuthStart } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
-type AuthStartResult = claudeProvider.OAuthStartResult;
+type AuthStartResult = ClaudeOAuthStart;
 
 export function AuthStep({
+  agentName,
   authStart,
   startError,
   onCredentialsReady,
-  onCancel,
+  onBack,
 }: {
+  agentName: string;
   authStart: AuthStartResult | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
-  onCancel: () => void;
+  onBack: () => void;
 }) {
   return (
     <div className="flex w-full flex-col items-center gap-3">
@@ -21,13 +25,15 @@ export function AuthStep({
         <AuthFlow
           authUrl={authStart.auth_url}
           onSubmitCode={async (code) => {
-            const creds = await claudeProvider.completeOAuth(
+            const creds = await completeClaudeOAuth(
+              httpClient,
+              agentName,
               authStart.session_id,
               code,
             );
             onCredentialsReady(creds);
           }}
-          onCancel={onCancel}
+          onBack={onBack}
         />
       ) : startError ? (
         <p className="text-xs text-destructive text-center py-2">

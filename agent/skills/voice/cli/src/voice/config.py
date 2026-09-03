@@ -35,9 +35,6 @@ def load(data_dir: pl.Path) -> VoiceConfig:
         "tts": raw.get("tts") or None,
     }
     # Migrate top-level preferences into their domains.
-    stt = cfg["stt"]
-    if "voice_auto_send" in raw and stt:
-        stt.setdefault("auto_send", raw["voice_auto_send"])
     tts = cfg["tts"]
     if "speech_enabled" in raw and tts:
         tts.setdefault("speech_enabled", raw["speech_enabled"])
@@ -210,14 +207,6 @@ def set_eot_timeout_ms(data_dir: pl.Path, timeout_ms: int) -> VoiceConfig:
         if not stt:
             raise ValueError("STT not configured; set a provider key first")
         cfg["stt"] = {**stt, "eot_timeout_ms": validated}
-        return cfg
-
-    return mutate(data_dir, _update)
-
-
-def set_stt_auto_send(data_dir: pl.Path, value: bool) -> VoiceConfig:
-    def _update(cfg: VoiceConfig) -> VoiceConfig:
-        cfg["stt"] = {**(cfg["stt"] or {}), "auto_send": value}
         return cfg
 
     return mutate(data_dir, _update)

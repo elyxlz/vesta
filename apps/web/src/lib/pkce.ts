@@ -11,15 +11,16 @@
 //
 // The token never rides in a URL; only the single-use, PKCE-bound code does.
 //
-// The desktop app isn't served by a box, so it can't full-navigate to /cb on
+// The desktop app isn't served by a gateway, so it can't full-navigate to /cb on
 // its own origin. It instead runs a transient loopback server (the Electron
 // main process, via the runtime bridge) and registers
 // `http://127.0.0.1:<port>/cb` as the redirect; the control plane returns the
-// box `url` alongside the token, and we upgrade that token to a rotating
-// refresh at the box's `/auth/exchange`. See `startNativeLogin` and the
+// gateway `url` alongside the token, and we upgrade that token to a rotating
+// refresh at the gateway's `/auth/exchange`. See `startNativeLogin` and the
 // `vesta-app` native client in the control plane's functions/api/oauth.ts.
 
 import { native } from "./native";
+import { numberField, stringField } from "@/lib/json-shape";
 import { setConnection } from "./connection";
 
 const VERIFIER_KEY = "vesta-pkce-verifier";
@@ -50,8 +51,8 @@ async function s256(verifier: string): Promise<string> {
   return base64url(new Uint8Array(digest));
 }
 
-/** The control-plane apex + this box's subdomain, derived from the page host. */
-export function tenantIdentity(): { apexOrigin: string; subdomain: string } {
+/** The control-plane apex + this gateway's subdomain, derived from the page host. */
+function tenantIdentity(): { apexOrigin: string; subdomain: string } {
   const host = window.location.hostname; // e.g. alice.vesta.run
   const firstDot = host.indexOf(".");
   const subdomain = firstDot === -1 ? host : host.slice(0, firstDot);
@@ -115,24 +116,25 @@ export async function completeHostedLogin(
     body: JSON.stringify({ code, code_verifier: verifier }),
   });
   if (!resp.ok) throw new Error("could not complete sign-in");
-  const data = (await resp.json()) as {
-    access_token?: string;
-    expires_in?: number;
+  const data: unknown = await resp.json();
+  const accessToken = stringField(data, "access_token");
+  if (!accessToken) throw new Error("no token returned");
+  return {
+    accessToken,
+    expiresIn: numberField(data, "expires_in") ?? 600,
   };
-  if (!data.access_token) throw new Error("no token returned");
-  return { accessToken: data.access_token, expiresIn: data.expires_in ?? 600 };
 }
 
 /**
  * Native (desktop app) hosted login. The main process spins up a loopback
  * server, the system browser opens the control plane's single sign-in page,
- * and the redirect lands there — no box origin to bounce off.
+ * and the redirect lands there, with no gateway origin to bounce off.
  *
  *   loopback :<port>  →  open https://vesta.run/api/authorize?client_id=vesta-app
  *                        &redirect_uri=http://127.0.0.1:<port>/cb&...
  *     ← callback: http://127.0.0.1:<port>/cb?code=...&state=...
  *     → POST https://vesta.run/api/token { code, code_verifier }
- *     ← { access_token, url }                       (url = this user's box)
+ *     ← { access_token, url }                       (url = this user's gateway)
  *     → POST <url>/auth/exchange  (Bearer access_token)
  *     ← { access_token, refresh_token, expires_in } (rotating, on-box)
  */
@@ -204,8 +206,8 @@ export async function startNativeLogin(): Promise<void> {
 }
 
 /**
- * Finish a native login: code → control-plane access token + box url, then
- * upgrade that token to a rotating refresh at the box's /auth/exchange and
+ * Finish a native login: code → control-plane access token + gateway url, then
+ * upgrade that token to a rotating refresh at the gateway's /auth/exchange and
  * persist the connection. Throws on any failure (the caller surfaces it).
  */
 async function completeNativeLogin(
@@ -218,18 +220,17 @@ async function completeNativeLogin(
     body: JSON.stringify({ code, code_verifier: verifier }),
   });
   if (!tokenResp.ok) throw new Error("could not complete sign-in");
-  const tok = (await tokenResp.json()) as {
-    access_token?: string;
-    url?: string;
-  };
-  if (!tok.access_token || !tok.url) {
-    throw new Error("sign-in response missing token or box url");
+  const tok: unknown = await tokenResp.json();
+  const controlToken = stringField(tok, "access_token");
+  const gatewayUrl = stringField(tok, "url");
+  if (!controlToken || !gatewayUrl) {
+    throw new Error("sign-in response missing token or gateway url");
   }
 
-  const exchangeResp = await fetch(`${tok.url}/auth/exchange`, {
+  const exchangeResp = await fetch(`${gatewayUrl}/auth/exchange`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${tok.access_token}`,
+      Authorization: `Bearer ${controlToken}`,
       "Content-Type": "application/json",
     },
     body: "{}",
@@ -237,18 +238,16 @@ async function completeNativeLogin(
   if (!exchangeResp.ok) {
     throw new Error("could not finish connecting to your vesta");
   }
-  const ex = (await exchangeResp.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-  if (!ex.access_token || !ex.refresh_token) {
+  const ex: unknown = await exchangeResp.json();
+  const accessToken = stringField(ex, "access_token");
+  const refreshToken = stringField(ex, "refresh_token");
+  if (!accessToken || !refreshToken) {
     throw new Error("exchange returned no tokens");
   }
   setConnection(
-    tok.url,
-    ex.access_token,
-    ex.refresh_token,
-    ex.expires_in ?? 3600,
+    gatewayUrl,
+    accessToken,
+    refreshToken,
+    numberField(ex, "expires_in") ?? 3600,
   );
 }

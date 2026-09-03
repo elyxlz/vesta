@@ -231,7 +231,7 @@ def cmd_search(args):
     if len(origins) > 1:
         all_results = _sort_by_price(all_results, args.max_results)
 
-    print(json.dumps(all_results, indent=2))
+    print(json.dumps(all_results))
 
 
 def cmd_dates(args):
@@ -261,7 +261,7 @@ def cmd_dates(args):
     if len(origins) > 1:
         all_results = _sort_by_price(all_results, args.max_results)
 
-    print(json.dumps(all_results, indent=2))
+    print(json.dumps(all_results))
 
 
 def cmd_cheapest(args):
@@ -293,7 +293,7 @@ def cmd_cheapest(args):
     all_results.sort(key=lambda x: x.get("price_usd", float("inf")))
     top = all_results[: args.top]
 
-    print(json.dumps(top, indent=2))
+    print(json.dumps(top))
 
 
 # ===========================================================================
@@ -405,10 +405,10 @@ def cmd_offer(args):
             "showing": len(formatted),
             "offers": formatted,
         }
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output))
 
     except Exception as e:
-        print(json.dumps({"error": str(e)}, indent=2), file=sys.stderr)
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -485,10 +485,10 @@ def cmd_book(args):
             slices.append({"segments": segs})
         output["slices"] = slices
 
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output))
 
     except Exception as e:
-        print(json.dumps({"error": str(e)}, indent=2), file=sys.stderr)
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -521,10 +521,10 @@ def cmd_orders(args):
             entry["route"] = ", ".join(route_parts)
             formatted.append(entry)
 
-        print(json.dumps(formatted, indent=2))
+        print(json.dumps(formatted))
 
     except Exception as e:
-        print(json.dumps({"error": str(e)}, indent=2), file=sys.stderr)
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -534,9 +534,9 @@ def cmd_order(args):
 
     try:
         order = duffel.get_order(args.order_id)
-        print(json.dumps(order, indent=2))
+        print(json.dumps(order))
     except Exception as e:
-        print(json.dumps({"error": str(e)}, indent=2), file=sys.stderr)
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -553,9 +553,9 @@ def cmd_cancel(args):
             "refund_currency": result.get("refund_currency", "?"),
             "order_id": result.get("order_id", args.order_id),
         }
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output))
     except Exception as e:
-        print(json.dumps({"error": str(e)}, indent=2), file=sys.stderr)
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -578,18 +578,18 @@ def cmd_passenger(args):
             "phone_number": args.phone,
         }
         duffel.save_profile(args.name, profile)
-        print(json.dumps({"status": "saved", "name": args.name, "profile": profile}, indent=2))
+        print(json.dumps({"status": "saved", "name": args.name, "profile": profile}))
 
     elif args.passenger_action == "list":
         profiles = duffel.load_profiles()
-        print(json.dumps(profiles, indent=2))
+        print(json.dumps(profiles))
 
     elif args.passenger_action == "show":
         try:
             profile = duffel.get_profile(args.name)
-            print(json.dumps({args.name: profile}, indent=2))
+            print(json.dumps({args.name: profile}))
         except RuntimeError as e:
-            print(json.dumps({"error": str(e)}, indent=2), file=sys.stderr)
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
             sys.exit(1)
 
     elif args.passenger_action == "delete":
@@ -597,9 +597,9 @@ def cmd_passenger(args):
         if args.name in profiles:
             del profiles[args.name]
             duffel.PROFILES_FILE.write_text(json.dumps(profiles, indent=2))
-            print(json.dumps({"status": "deleted", "name": args.name}, indent=2))
+            print(json.dumps({"status": "deleted", "name": args.name}))
         else:
-            print(json.dumps({"error": f"Profile '{args.name}' not found"}, indent=2), file=sys.stderr)
+            print(json.dumps({"error": f"Profile '{args.name}' not found"}), file=sys.stderr)
             sys.exit(1)
 
 

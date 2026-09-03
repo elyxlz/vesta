@@ -1,7 +1,8 @@
 import { StyleSheet, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/layout/Screen";
+import { useBottomInset } from "@/components/layout/use-bottom-inset";
+import { SheetChrome } from "@/components/sheet-chrome";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -10,56 +11,51 @@ import { useSession } from "@/session/SessionProvider";
 export default function NewAgentScreen() {
   const { connection } = useSession();
   const { colors } = usePreferences();
+  const bottomPadding = useBottomInset(24);
   const webUrl = connection
     ? `${connection.url.replace(/\/+$/, "")}/app/new`
     : "https://vesta.run/app/new";
 
   return (
-    <Screen scroll={false} contentStyle={styles.screen}>
-      <View style={[styles.icon, { backgroundColor: colors.accentSoft }]}>
-        <Ionicons name="desktop-outline" size={28} color={colors.accent} />
-      </View>
-      <View style={styles.copy}>
-        <Text family="heading" style={[styles.title, { color: colors.text }]}>
-          Coming soon
-        </Text>
-        <Text style={[styles.detail, { color: colors.secondaryText }]}>
-          Agent creation is coming to mobile. For now, create new agents in
-          Vesta Web. They’ll appear here automatically.
-        </Text>
-      </View>
-      <Button
-        pill
-        icon="open-outline"
-        onPress={() => {
-          void WebBrowser.openBrowserAsync(webUrl, {
-            presentationStyle:
-              WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-          });
-        }}
+    <>
+      <SheetChrome grabber />
+      <Screen
+        scroll={false}
+        contentStyle={[styles.screen, { paddingBottom: bottomPadding }]}
       >
-        Open Vesta Web
-      </Button>
-    </Screen>
+        <View style={styles.copy}>
+          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+            Only on web
+          </Text>
+          <Text style={[styles.detail, { color: colors.secondaryText }]}>
+            Agent creation is coming to mobile. For now, create new agents in
+            Vesta Web. They’ll appear here automatically.
+          </Text>
+        </View>
+        <Button
+          pill
+          icon="open-outline"
+          onPress={() => {
+            void WebBrowser.openBrowserAsync(webUrl, {
+              presentationStyle:
+                WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+            });
+          }}
+        >
+          Open Vesta Web
+        </Button>
+      </Screen>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   screen: {
-    minHeight: 320,
     alignItems: "center",
     justifyContent: "center",
     gap: 24,
     paddingHorizontal: 24,
     paddingTop: 36,
-    paddingBottom: 24,
-  },
-  icon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    alignItems: "center",
-    justifyContent: "center",
   },
   copy: { alignItems: "center", gap: 8 },
   title: {

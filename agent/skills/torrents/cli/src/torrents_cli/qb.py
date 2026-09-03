@@ -115,7 +115,7 @@ def cmd_ls(server: qbapi.Server, a: argparse.Namespace) -> None:
     if a.filter:
         torrents = [t for t in torrents if matches(" ".join(a.filter), t["name"])]
     if a.json:
-        print(json.dumps(torrents, indent=1))
+        print(json.dumps(torrents))
     else:
         show(torrents)
 

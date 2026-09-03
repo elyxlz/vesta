@@ -13,17 +13,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$DIR/../dashboard" "$HOME/.local/bin/dashboard"
 
-cd "$DIR/../app"
-
-if [ ! -d node_modules ]; then
-  echo "Installing dependencies..."
-  npm install
-fi
-
-if [ ! -d dist ]; then
-  echo "Building dashboard..."
-  npx vite build
-fi
+echo "Installing dependencies and building..."
+"$DIR/build.sh"
 
 echo "Starting daemon..."
 "$DIR/../dashboard" daemon start
@@ -46,6 +37,6 @@ fi
 
 echo "Dashboard setup complete."
 echo
-echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
-echo "of ~/agent/skills/restart/SKILL.md, on its own line."
+echo "Remaining step, yours to do: so the dashboard survives restarts, read the"
+echo "restart skill and add this line to your restart daemons:"
 echo '  dashboard daemon start'

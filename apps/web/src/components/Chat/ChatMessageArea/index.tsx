@@ -1,38 +1,27 @@
 import {
-  useCallback,
+  memo,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type RefObject,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage } from "@vesta/core";
+import { recedeTransition, stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-import { stepTransition } from "@/lib/motion";
+import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
+import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
-import { buildDecorated } from "./virtual";
-
-// First-paint estimate per row (actual heights are measured).
-const ESTIMATED_MESSAGE_HEIGHT = 64;
-// How close to the bottom (px) still counts as "pinned" — drives follow-on-append and
-// gates the load-older check (don't page up while sitting at the bottom).
-const AT_BOTTOM_THRESHOLD_PX = 80;
-// Scrolling within this many px of the top loads the previous page.
-const LOAD_OLDER_TOP_PX = 120;
-// Rows rendered beyond the visible window on each side — a measurement margin. Bigger =
-// rows are rendered and measured BEFORE they scroll into view, so they appear at their real
-// height instead of resizing in front of you (this is the "measure then show" that smooths
-// scroll-up and prepends). Small values make the mount/unmount visible for debugging.
-const OVERSCAN_ROWS = 12;
+import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
+import { CHAT_CONTENT_COLUMN } from "../content-column";
+import { buildDecorated, lastSeenIndex, type DecoratedRow } from "./rows";
+import { useChatScroll } from "./use-chat-scroll";
 
 export interface ChatScrollHandle {
   scrollToBottom: () => void;
+  pinToLatest: () => void;
 }
 
 interface ChatMessageAreaProps {
@@ -49,7 +38,18 @@ interface ChatMessageAreaProps {
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
+  // A running conversation owns the viewport: the list is pinned to the latest message,
+  // scrolling is disabled outright, and the whole list recedes into depth behind the scrim.
+  scrollLocked: boolean;
   onRetry?: RetryHandler;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
+  // Space reserved at the end of the list so the last message clears the floating composer.
+  bottomInset?: number;
+  // A tall draft's extra composer height beyond the baseline inset. It extends the scroll
+  // range so covered bubbles stay reachable, without moving the pinned viewport.
+  bottomOverhang?: number;
+  // Fires when pinned-to-latest flips; drives the parent's scroll-to-bottom button.
+  onAtBottomChange: (atBottom: boolean) => void;
 }
 
 // Placeholder bubbles shown while the first page of history is in flight, so a slow
@@ -74,12 +74,16 @@ const SKELETON_ROWS: { side: "agent" | "user"; size: string }[] = [
   { side: "user", size: "h-9 w-40" },
 ];
 
-function ChatSkeleton() {
+function ChatSkeleton({ bottomPad }: { bottomPad: number }) {
   return (
-    <div className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4 pb-4">
+    <div
+      className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4"
+      style={{ paddingBottom: bottomPad }}
+    >
       {SKELETON_ROWS.map((row, i) => {
         const isUser = row.side === "user";
         const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1]?.side === row.side;
+        const isGroupEnd = SKELETON_ROWS[i + 1]?.side !== row.side;
         return (
           <div
             key={i}
@@ -91,12 +95,11 @@ function ChatSkeleton() {
           >
             <div
               className={cn(
-                "animate-pulse rounded-squircle-sm [corner-shape:squircle]",
+                "animate-pulse",
                 row.size,
-                isUser
-                  ? "bg-primary rounded-br-sm"
-                  : "bg-secondary rounded-bl-sm",
+                isUser ? "bg-primary" : "bg-secondary",
               )}
+              style={bubbleRadiusStyle(isUser, isGroupEnd)}
             />
           </div>
         );
@@ -105,7 +108,164 @@ function ChatSkeleton() {
   );
 }
 
-export function ChatMessageArea({
+// One mask owns both fades, each shown only on the edge that can still scroll so the oldest
+// message at the top and the newest at the bottom stay crisp. Fullscreen's top approximates the
+// old stacked card+list pair: near-invisible within the navbar's height, then a long dissolve
+// (3.5x/1.75x the navbar) so bubbles evaporate before reaching it. The bottom stop fades behind
+// the composer.
+// The locked conversation scroller is bottom-anchored and clipped, so the latest message
+// cannot move when bubbles rewrap; unlocked it scrolls normally.
+function scrollerClass(scrollLocked: boolean): string {
+  return scrollLocked
+    ? "flex h-full flex-col justify-end overflow-y-hidden overflow-x-hidden"
+    : "h-full overflow-y-auto overflow-x-hidden";
+}
+
+function scrollerMask({
+  fullscreen,
+  isMobile,
+  navbarHeight,
+  bottomInset,
+  edges,
+  scrollLocked,
+}: {
+  fullscreen: boolean;
+  isMobile: boolean;
+  navbarHeight: number;
+  bottomInset: number;
+  edges: ScrollEdges;
+  scrollLocked: boolean;
+}): string | undefined {
+  // No mask while locked: the conversation's own top fade overlay covers it, and a mask under
+  // an animating transform costs a full-scroller repaint every frame.
+  if (scrollLocked) return undefined;
+  const top = !edges.top
+    ? "black 0px"
+    : fullscreen
+      ? `rgb(0 0 0 / 0) 0px, rgb(0 0 0 / 0.25) ${String(navbarHeight)}px, black ${String(Math.round(navbarHeight * (isMobile ? 1.75 : 3.5)))}px`
+      : "transparent, black 48px";
+  const bottom = edges.bottom
+    ? `black calc(100% - ${String(bottomInset)}px), transparent`
+    : "black 100%";
+  return `linear-gradient(to bottom, ${top}, ${bottom})`;
+}
+
+function ChatEmptyState({
+  connected,
+  historyLoaded,
+  notAuthenticated,
+  agentName,
+  bottomInset,
+}: {
+  connected: boolean;
+  historyLoaded: boolean;
+  notAuthenticated: boolean;
+  agentName: string;
+  bottomInset: number;
+}) {
+  if (connected && !historyLoaded) {
+    // The extra 16px mirrors the real list's trailing pb-4 (the typing
+    // indicator slot after the last row), so the skeleton's last bubble
+    // sits exactly where a real last bubble does.
+    return <ChatSkeleton bottomPad={bottomInset + 16} />;
+  }
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center"
+      style={{ paddingBottom: bottomInset + 24 }}
+    >
+      <span className="text-xs text-muted-foreground">
+        {!connected
+          ? "connecting..."
+          : notAuthenticated
+            ? `${agentName} needs to sign in`
+            : `${agentName} is setting things up`}
+      </span>
+    </div>
+  );
+}
+
+function MessageRow({
+  row,
+  index,
+  isMobile,
+  isNewAppend,
+  onRetry,
+  agentName,
+  onOpenAttachment,
+}: {
+  row: DecoratedRow;
+  index: number;
+  isMobile: boolean;
+  isNewAppend: boolean;
+  onRetry?: RetryHandler;
+  agentName: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
+}) {
+  const bubble = (
+    <ChatBubble
+      event={row.event}
+      className={row.gap}
+      isMobile={isMobile}
+      hasTail={row.isGroupEnd}
+      onRetry={onRetry}
+      agentName={agentName}
+      onOpenAttachment={onOpenAttachment}
+    />
+  );
+  return (
+    <>
+      {row.showDayStamp && row.dayLabel && (
+        <div className={cn("flex justify-center", index > 0 && "mt-5")}>
+          <span
+            className={cn(
+              "text-muted-foreground/60 select-none",
+              isMobile ? "text-[11px]" : "text-sm",
+            )}
+          >
+            {row.dayLabel}
+          </span>
+        </div>
+      )}
+      {isNewAppend ? (
+        <motion.div
+          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={stepTransition.transition}
+        >
+          {bubble}
+        </motion.div>
+      ) : (
+        bubble
+      )}
+    </>
+  );
+}
+
+// The index the previous render's last row now sits at, so rows past it are genuine appends and
+// animate in, while a history page landing above (which shifts indices) never does. Kept as state
+// keyed on the row list: a new list stores where the previous list's last key now sits.
+function useAppendBoundary(decorated: DecoratedRow[]): number {
+  const [boundary, setBoundary] = useState<{
+    rows: DecoratedRow[];
+    index: number;
+  }>({ rows: decorated, index: -1 });
+  if (boundary.rows !== decorated) {
+    const prevLastKey = boundary.rows[boundary.rows.length - 1]?.key ?? null;
+    setBoundary({
+      rows: decorated,
+      index: lastSeenIndex(decorated, prevLastKey),
+    });
+  }
+  return boundary.rows === decorated ? boundary.index : -1;
+}
+
+// Every fetched row stays mounted in a plain scroller: each message parses its markdown
+// once, ever, and scrolling moves static DOM (the same choice the Console makes, for the
+// same reason — no windowing, no size estimates, no remount cost). History paging bounds
+// the DOM, so long conversations stay cheap. memo keeps the parent's per-keystroke
+// composer re-renders from re-invoking every mounted row.
+export const ChatMessageArea = memo(function ChatMessageArea({
   scrollRef,
   loadMore,
   hasMore,
@@ -119,9 +279,21 @@ export function ChatMessageArea({
   notAuthenticated,
   isTyping,
   isMobile,
+  scrollLocked,
   onRetry,
+  onOpenAttachment,
+  bottomInset = 0,
+  bottomOverhang = 0,
+  onAtBottomChange,
 }: ChatMessageAreaProps) {
-  const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
+  // Desktop treatment (floating-composer inset, spacious gaps, sizes, the capped centered
+  // column) applies to both the fullscreen and split-panel chats; only mobile keeps the plain,
+  // full-width layout.
+  const isDesktop = !isMobile;
+  const decorated = useMemo(
+    () => buildDecorated(chatMessages, isDesktop),
+    [chatMessages, isDesktop],
+  );
   const count = decorated.length;
   const lastAgentText = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i--) {
@@ -131,119 +303,68 @@ export function ChatMessageArea({
     return "";
   }, [chatMessages]);
   const parentRef = useRef<HTMLDivElement>(null);
-  // Drives the scroll-to-bottom button: true while pinned near the latest message, false once
-  // the user scrolls up. Recomputed on scroll and on content resize (see below).
-  const [atBottom, setAtBottom] = useState(true);
+  const scrollFade = useScrollFade<HTMLDivElement>({ ref: parentRef });
 
-  const getItemKey = useCallback(
-    (index: number) => decorated[index]?.key ?? String(index),
-    [decorated],
-  );
+  const { handleScroll, scrollToBottom, pinToLatest, waitingForOlder } =
+    useChatScroll({
+      parentRef,
+      count,
+      firstKey: decorated[0]?.key ?? null,
+      bottomInset,
+      bottomOverhang,
+      hasMore,
+      loadingMore,
+      loadMore,
+      onAtBottomChange,
+    });
 
-  const estimateSize = useCallback(() => ESTIMATED_MESSAGE_HEIGHT, []);
+  const prevLastIndex = useAppendBoundary(decorated);
 
-  const virtualizer = useVirtualizer({
-    count,
-    getScrollElement: () => parentRef.current,
-    estimateSize,
-    getItemKey,
-    // End-anchored chat scrolling: TanStack captures the visible keyed row before a data
-    // change and re-pins it after — keeping scroll stable across prepends (load older)
-    // and streaming growth.
-    anchorTo: "end",
-    followOnAppend: "smooth",
-    scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,
-    overscan: OVERSCAN_ROWS,
-    // Apply row positions straight to the DOM instead of through a React re-render on every
-    // scroll frame. Critical for smooth upward scrolling, where measuring newly-revealed rows
-    // constantly nudges offsets — going through React there is what stutters.
-    directDomUpdates: true,
+  useImperativeHandle(scrollRef, () => ({ scrollToBottom, pinToLatest }), [
+    scrollToBottom,
+    pinToLatest,
+  ]);
+
+  const topPad = fullscreen ? navbarHeight + 16 : 32;
+  const mask = scrollerMask({
+    fullscreen: Boolean(fullscreen),
+    isMobile,
+    navbarHeight,
+    bottomInset,
+    edges: scrollFade.edges,
+    scrollLocked,
   });
 
-  useImperativeHandle(
-    scrollRef,
-    () => ({
-      scrollToBottom: () => virtualizer.scrollToEnd({ behavior: "smooth" }),
-    }),
-    [virtualizer],
-  );
-
-  // Jump to the latest message when the first page of history arrives, and again whenever
-  // the list resets to empty (agent switch / reconnect) and repopulates.
-  const hadRowsRef = useRef(false);
-  useLayoutEffect(() => {
-    const hasRows = count > 0;
-    if (hasRows && !hadRowsRef.current) virtualizer.scrollToEnd();
-    hadRowsRef.current = hasRows;
-  }, [count, virtualizer]);
-
-  // Highest row index seen as of the last commit — read during render (holds the prior
-  // value, since this effect hasn't fired yet) to tell a genuine append from a history
-  // page landing or an unrelated re-render, then advanced after commit. Gated on
-  // hadRowsRef so the first page of history never plays the entrance animation.
-  const maxSeenIndexRef = useRef(-1);
-  useLayoutEffect(() => {
-    maxSeenIndexRef.current = count - 1;
-  }, [count]);
-
-  const handleScroll = useCallback(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    // Distance-from-end straight off the DOM rather than virtualizer.isAtEnd(): the latter
-    // reads a measurement cache that can lag a row resize, and we recompute this from a
-    // ResizeObserver too, so a single authoritative source keeps the two in agreement.
-    const atEnd =
-      el.scrollHeight - el.scrollTop - el.clientHeight <=
-      AT_BOTTOM_THRESHOLD_PX;
-    setAtBottom(atEnd);
-    if (hasMore && !loadingMore && !atEnd && el.scrollTop < LOAD_OLDER_TOP_PX) {
-      loadMore();
-    }
-  }, [hasMore, loadingMore, loadMore]);
-
-  // "At bottom" depends on content height, not just scroll position: after the first paint the
-  // virtualizer measures real row heights (vs. the estimates scrollToEnd used), which moves the
-  // end without firing a scroll event. Recompute on every content resize so the button doesn't
-  // get stuck showing when we're actually pinned to the latest message.
-  useLayoutEffect(() => {
-    const el = parentRef.current;
-    const content = el?.firstElementChild;
-    if (!el || !content) return;
-    const ro = new ResizeObserver(() => {
-      setAtBottom(
-        el.scrollHeight - el.scrollTop - el.clientHeight <=
-          AT_BOTTOM_THRESHOLD_PX,
-      );
-    });
-    ro.observe(content);
-    return () => ro.disconnect();
-  }, []);
-
-  const items = virtualizer.getVirtualItems();
-  const topPad = fullscreen ? navbarHeight + 16 : 32;
-
   return (
-    <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+    <CardContent
+      className={cn(
+        "flex-1 min-h-0 overflow-hidden p-0 relative",
+        // Pushed back in space while a conversation runs: perspective tilt + shrink, the
+        // sheet-behind look. The ease matches the composer morph's settle.
+        // will-change keeps this on its own compositor layer, so the recede is a GPU
+        // transform rather than a per-frame repaint of the whole message list.
+        "origin-top",
+        recedeTransition,
+        scrollLocked
+          ? "duration-500 [transform:perspective(1000px)_rotateX(7deg)_scale(0.94)]"
+          : "duration-300",
+      )}
+    >
       {/* persistent live region so screen readers hear agent replies as they arrive */}
       <span className="sr-only" aria-live="polite" aria-atomic="true">
         {lastAgentText}
       </span>
-      {count === 0 &&
-        (connected && !historyLoaded ? (
-          <ChatSkeleton />
-        ) : (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
-            <span className="text-xs text-muted-foreground">
-              {!connected
-                ? "connecting..."
-                : notAuthenticated
-                  ? `${agentName} needs to sign in`
-                  : `${agentName} is setting things up`}
-            </span>
-          </div>
-        ))}
+      {count === 0 && (
+        <ChatEmptyState
+          connected={connected}
+          historyLoaded={historyLoaded}
+          notAuthenticated={notAuthenticated}
+          agentName={agentName}
+          bottomInset={bottomInset}
+        />
+      )}
       <AnimatePresence>
-        {loadingMore && (
+        {waitingForOlder && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -254,7 +375,7 @@ export function ChatMessageArea({
               fullscreen ? "top-[5rem]" : "top-10",
             )}
           >
-            <span className="rounded-full border border-muted-foreground/20 bg-muted/80 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground">
+            <span className="rounded-full border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
               loading...
             </span>
           </motion.div>
@@ -263,117 +384,71 @@ export function ChatMessageArea({
       <div
         ref={parentRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto overflow-x-hidden"
+        className={cn(
+          scrollerClass(scrollLocked),
+          // Reserve the scrollbar gutter on both sides so the centered message column
+          // shares the same center as the (scrollbar-free) floating composer.
+          isDesktop && "[scrollbar-gutter:stable_both-edges]",
+        )}
+        // The prepend restore owns anchoring; the browser's native scroll
+        // anchoring would compensate the same prepend a second time.
         style={{
-          maskImage: `linear-gradient(to bottom, transparent, black ${String(fullscreen ? navbarHeight : 48)}px, black calc(100% - 20px), transparent)`,
+          overflowAnchor: "none",
+          maskImage: mask,
         }}
       >
         <div
-          ref={virtualizer.containerRef}
-          style={{ position: "relative", width: "100%" }}
+          className={cn(isDesktop && CHAT_CONTENT_COLUMN)}
+          // The live composer reservation, published as a variable by the chat so the morph
+          // never re-renders this list; the React value is the pre-paint fallback.
+          style={{
+            paddingBottom: `var(--composer-inset, ${String(bottomInset)}px)`,
+            // During the morph the reservation rides this transform (its own layer, no
+            // repaint) while the padding holds still; they swap in one write at the end.
+            transform: "translateY(var(--composer-shift, 0px))",
+            willChange: "transform",
+          }}
         >
-          {items.map((item) => {
-            const row = decorated[item.index];
-            if (!row) return null;
-            const isLast = item.index === count - 1;
-            const isNewAppend =
-              hadRowsRef.current && item.index > maxSeenIndexRef.current;
-            return (
-              <div
-                key={item.key}
-                ref={virtualizer.measureElement}
-                data-index={item.index}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                }}
-              >
-                {row.isFirst && (
-                  <div style={{ paddingTop: topPad }}>
-                    {!hasMore && (
-                      <div className="flex justify-center py-3">
-                        <span className="text-[11px] text-muted-foreground/40">
-                          beginning of conversation
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="flex flex-col px-4">
-                  {row.showDayStamp && row.dayLabel && (
-                    <div
-                      className={cn(
-                        "flex justify-center",
-                        !row.isFirst && "mt-5",
-                      )}
-                    >
-                      <span className="text-[11px] text-muted-foreground/60 select-none">
-                        {row.dayLabel}
-                      </span>
-                    </div>
-                  )}
-                  {isNewAppend ? (
-                    <motion.div
-                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      transition={stepTransition.transition}
-                    >
-                      <ChatBubble
-                        event={row.event}
-                        className={row.gap}
-                        fullscreen={fullscreen}
-                        isMobile={isMobile}
-                        onRetry={onRetry}
-                      />
-                    </motion.div>
-                  ) : (
-                    <ChatBubble
-                      event={row.event}
-                      className={row.gap}
-                      fullscreen={fullscreen}
-                      isMobile={isMobile}
-                      onRetry={onRetry}
-                    />
-                  )}
-                </div>
-                {isLast && (
-                  <div className="px-4 pb-4">
-                    {isTyping && (
-                      <div className="flex justify-start mt-2">
-                        <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-                          <span className="sr-only">typing...</span>
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:300ms]" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+          <div style={{ paddingTop: topPad }}>
+            {count > 0 && !hasMore && (
+              <div className="flex justify-center py-3">
+                <span className="text-[11px] text-muted-foreground/40">
+                  beginning of conversation
+                </span>
               </div>
-            );
-          })}
+            )}
+          </div>
+          <div className="flex flex-col px-4">
+            {decorated.map((row, index) => (
+              <MessageRow
+                key={row.key}
+                row={row}
+                index={index}
+                isMobile={isMobile}
+                isNewAppend={prevLastIndex >= 0 && index > prevLastIndex}
+                onRetry={onRetry}
+                agentName={agentName}
+                onOpenAttachment={onOpenAttachment}
+              />
+            ))}
+          </div>
+          <div className="px-4 pb-4">
+            {isTyping && (
+              <div className="flex justify-start mt-2">
+                <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
+                  <span className="sr-only">typing...</span>
+                  <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
+                  <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />
+                  <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:300ms]" />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+        {/* The draft's overhang sits outside the resize-observed content div, so a growing
+            draft extends the scroll range without ever triggering the pinned re-pin. */}
+        <div style={{ height: bottomOverhang }} />
       </div>
-      {count > 0 && (
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-sm"
-          aria-label="Scroll to latest message"
-          data-active={!atBottom}
-          onClick={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
-          className={cn(
-            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm transition-all duration-200",
-            "data-[active=false]:pointer-events-none data-[active=false]:translate-y-full data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[active=false]:duration-150 data-[active=false]:ease-[cubic-bezier(0.7,0,0.84,0)]",
-            "data-[active=true]:translate-y-0 data-[active=true]:scale-100 data-[active=true]:opacity-100 data-[active=true]:ease-[cubic-bezier(0.23,1,0.32,1)]",
-          )}
-        >
-          <ArrowDown />
-        </Button>
-      )}
     </CardContent>
   );
-}
+});

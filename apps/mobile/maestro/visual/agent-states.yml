@@ -1,0 +1,282 @@
+appId: ${APP_ID}
+name: Agent states
+tags:
+  - visual
+  - connected
+---
+- clearState
+- setPermissions:
+    permissions:
+      location: inuse
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=starting"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-starting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-starting.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=setting_up"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-setting-up
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-setting-up.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=booting"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-booting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-booting.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=thinking"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-thinking
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-thinking.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=restarting"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-restarting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-restarting.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=rebuilding"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-rebuilding
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-rebuilding.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=stopped"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-stopped
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-stopped.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=dead"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-dead
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-dead.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=not_found"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-not-found
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-not-found.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=not_authenticated"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-not-authenticated
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-not-authenticated.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=unprovisioned"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-unprovisioned
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-unprovisioned.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=backing_up"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-backing-up
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-backing-up.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=restoring"
+- extendedWaitUntil:
+    visible: '.*Open aria.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-agent-restoring
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agent-restoring.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=stopped"
+- extendedWaitUntil:
+    visible: '.*Provider and model.*'
+    timeout: 30000
+- swipe:
+    start: "50%,20%"
+    end: "50%,5%"
+    duration: 250
+- scrollUntilVisible:
+    element:
+      text: '.*Start agent.*'
+    direction: DOWN
+    timeout: 15000
+    speed: 40
+    visibilityPercentage: 60
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-settings-stopped
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-settings-stopped.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=not_authenticated"
+- extendedWaitUntil:
+    visible: '.*Provider and model.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-settings-needs-auth
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-settings-needs-auth.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=thinking"
+- extendedWaitUntil:
+    visible: '.*Provider and model.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-settings-thinking
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-settings-thinking.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/backups?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=backing_up"
+- extendedWaitUntil:
+    visible: '.*Back up now.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-backups-busy
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-backups-busy.png

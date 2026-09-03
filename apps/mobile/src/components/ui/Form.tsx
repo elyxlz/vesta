@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
-import { Pressable, StyleSheet, Switch, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FormSwitch } from "@/components/ui/form-switch";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
 import { Text, TextInput } from "./Typography";
@@ -77,6 +78,14 @@ export function Field({
       ) : null}
     </View>
   );
+}
+
+// Space between sibling cards that belong to one block of settings.
+const GROUP_CARD_GAP = 12;
+
+/** Stacks several FormSections as one block under the first one's heading. */
+export function FormGroup({ children }: { children: ReactNode }) {
+  return <View style={styles.group}>{children}</View>;
 }
 
 interface SectionProps {
@@ -234,16 +243,14 @@ export function SwitchRow({
   disabled = false,
   ...rowProps
 }: SwitchRowProps) {
-  const { colors } = usePreferences();
   return (
     <FormRow
       {...rowProps}
       trailing={
-        <Switch
+        <FormSwitch
           value={value}
           onValueChange={onValueChange}
           disabled={disabled}
-          trackColor={{ false: colors.input, true: colors.accent }}
         />
       }
     />
@@ -279,6 +286,7 @@ const styles = StyleSheet.create({
   error: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
   secondaryError: { fontWeight: "400" },
   section: { gap: 8 },
+  group: { gap: GROUP_CARD_GAP },
   sectionTitle: {
     fontSize: 15,
     lineHeight: 20,
@@ -297,7 +305,7 @@ const styles = StyleSheet.create({
   sectionActions: { gap: 10 },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16 },
   row: {
-    minHeight: 54,
+    minHeight: 44,
     paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",

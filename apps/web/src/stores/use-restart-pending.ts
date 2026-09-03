@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { field } from "@/lib/json-shape";
 
-import type { AgentRow } from "@/lib/types";
+import type { AgentRow } from "@vesta/core";
 
 // Tracks agents with a saved change that only applies after a restart. Features flag their agent
 // here (each under its own reason key) so the navbar can offer a single restart action, and a
@@ -17,7 +18,7 @@ import type { AgentRow } from "@/lib/types";
 // migrate narrows untrusted persisted data against; RestartReason derives from it so the two never
 // drift. "settings" only labels flags migrated from the un-keyed v0 store.
 const ALL_REASONS = ["host-access", "files", "settings"] as const;
-export type RestartReason = (typeof ALL_REASONS)[number];
+type RestartReason = (typeof ALL_REASONS)[number];
 
 // Reasons reconcile must not clear on a boot-time change — they need a container recreate, not a
 // mere restart (see the header). host-access qualifies: bind mounts are fixed at container create.
@@ -59,9 +60,11 @@ export function migrateRestartPending(
   persisted: unknown,
   version: number,
 ): { pending: Record<string, PendingEntry> } {
-  const state = persisted as { pending?: Record<string, unknown> };
+  const stored = field(persisted, "pending");
+  const entries =
+    typeof stored === "object" && stored !== null ? Object.entries(stored) : [];
   const pending: Record<string, PendingEntry> = {};
-  for (const [agent, value] of Object.entries(state.pending ?? {})) {
+  for (const [agent, value] of entries) {
     if (version === 0) {
       // v0 stored Record<string, boolean>; carry the reminder over under a generic reason.
       if (value === true)
@@ -71,8 +74,7 @@ export function migrateRestartPending(
       // rather than trust the persisted shape — drop anything that isn't a known reason.
       const reasons = value.filter(
         (r): r is RestartReason =>
-          typeof r === "string" &&
-          (ALL_REASONS as readonly string[]).includes(r),
+          typeof r === "string" && ALL_REASONS.some((known) => known === r),
       );
       if (reasons.length) pending[agent] = { reasons, since: null };
     }

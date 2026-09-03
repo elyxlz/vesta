@@ -5,12 +5,63 @@ import { filterReleaseNotes } from "@vesta/core";
 import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/layout/Screen";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
+import { SheetChrome } from "@/components/sheet-chrome";
+import { EmptyState, ErrorState } from "@/components/ui/States";
+import { SkeletonPulse } from "@/components/ui/skeleton-pulse";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { releaseNotesQueryOptions } from "@/releases/release-notes-query";
 import { useRoster } from "@/session/RosterProvider";
 import { radii } from "@/theme/layout";
+
+const SKELETON_CARDS = [
+  { lines: ["100%", "88%", "64%"] },
+  { lines: ["100%", "72%"] },
+  { lines: ["96%", "80%", "40%"] },
+] as const;
+
+function ReleaseNotesSkeleton() {
+  const { colors } = usePreferences();
+  return (
+    <SkeletonPulse label="Loading release notes" style={styles.releaseList}>
+      {SKELETON_CARDS.map((card, index) => (
+        <View
+          key={index}
+          style={[
+            styles.releaseCard,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          <View style={styles.releaseHeader}>
+            <View
+              style={[
+                styles.skeletonLine,
+                styles.skeletonVersion,
+                { backgroundColor: colors.border },
+              ]}
+            />
+            <View
+              style={[
+                styles.skeletonLine,
+                styles.skeletonDate,
+                { backgroundColor: colors.border },
+              ]}
+            />
+          </View>
+          {card.lines.map((width, lineIndex) => (
+            <View
+              key={lineIndex}
+              style={[
+                styles.skeletonLine,
+                { width, backgroundColor: colors.border },
+              ]}
+            />
+          ))}
+        </View>
+      ))}
+    </SkeletonPulse>
+  );
+}
 
 function formatReleaseDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -36,72 +87,81 @@ export default function WhatsNewScreen() {
       : [];
 
   return (
-    <Screen contentStyle={styles.content}>
-      <NativeSheetCloseButton
-        accessibilityLabel="Close release notes"
-        visibleFromDetentIndex={1}
+    <>
+      <SheetChrome
+        grabber
+        title="What’s new"
+        closeLabel="Close release notes"
       />
-      {notes.isPending || !roster.gatewayVersion || !roster.gatewayChannel ? (
-        <LoadingState label="Loading release notes…" />
-      ) : notes.isError ? (
-        <ErrorState
-          message="Couldn’t load release notes."
-          retry={() => void notes.refetch()}
+      <Screen contentStyle={styles.content}>
+        <NativeSheetCloseButton
+          accessibilityLabel="Close release notes"
+          visibleFromDetentIndex={1}
         />
-      ) : visible.length === 0 ? (
-        <EmptyState
-          title="Nothing new yet"
-          detail="Check back after the next update."
-        />
-      ) : (
-        <View style={styles.releaseList}>
-          {visible.map((entry) => (
-            <View
-              key={entry.version}
-              style={[
-                styles.releaseCard,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-            >
-              <View style={styles.releaseHeader}>
-                <Text style={[styles.version, { color: colors.text }]}>
-                  v{entry.version}
-                </Text>
-                <Text style={[styles.date, { color: colors.tertiaryText }]}>
-                  {formatReleaseDate(entry.date)}
-                </Text>
-                <Pressable
-                  accessibilityRole="link"
-                  accessibilityLabel={`View release v${entry.version} on GitHub`}
-                  hitSlop={13}
-                  onPress={() => {
-                    void WebBrowser.openBrowserAsync(entry.url, {
-                      presentationStyle:
-                        WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-                    });
-                  }}
-                  style={styles.releaseLink}
-                >
-                  {({ pressed }) => (
-                    <Ionicons
-                      name="open-outline"
-                      size={16}
-                      color={pressed ? colors.interactive : colors.tertiaryText}
-                    />
-                  )}
-                </Pressable>
-              </View>
-              <Text
-                selectable
-                style={[styles.message, { color: colors.secondaryText }]}
+        {notes.isPending || !roster.gatewayVersion || !roster.gatewayChannel ? (
+          <ReleaseNotesSkeleton />
+        ) : notes.isError ? (
+          <ErrorState
+            message="Couldn’t load release notes."
+            retry={() => void notes.refetch()}
+          />
+        ) : visible.length === 0 ? (
+          <EmptyState
+            title="Nothing new yet"
+            detail="Check back after the next update."
+          />
+        ) : (
+          <View style={styles.releaseList}>
+            {visible.map((entry) => (
+              <View
+                key={entry.version}
+                style={[
+                  styles.releaseCard,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
               >
-                {entry.message}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </Screen>
+                <View style={styles.releaseHeader}>
+                  <Text style={[styles.version, { color: colors.text }]}>
+                    v{entry.version}
+                  </Text>
+                  <Text style={[styles.date, { color: colors.tertiaryText }]}>
+                    {formatReleaseDate(entry.date)}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="link"
+                    accessibilityLabel={`View release v${entry.version} on GitHub`}
+                    hitSlop={13}
+                    onPress={() => {
+                      void WebBrowser.openBrowserAsync(entry.url, {
+                        presentationStyle:
+                          WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+                      });
+                    }}
+                    style={styles.releaseLink}
+                  >
+                    {({ pressed }) => (
+                      <Ionicons
+                        name="open-outline"
+                        size={16}
+                        color={
+                          pressed ? colors.interactive : colors.tertiaryText
+                        }
+                      />
+                    )}
+                  </Pressable>
+                </View>
+                <Text
+                  selectable
+                  style={[styles.message, { color: colors.secondaryText }]}
+                >
+                  {entry.message}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </Screen>
+    </>
   );
 }
 
@@ -120,4 +180,7 @@ const styles = StyleSheet.create({
   date: { fontSize: 13 },
   message: { fontSize: 15, lineHeight: 21 },
   releaseLink: { alignSelf: "center", marginLeft: "auto" },
+  skeletonLine: { height: 12, borderRadius: 6 },
+  skeletonVersion: { width: 56, height: 14 },
+  skeletonDate: { width: 72 },
 });

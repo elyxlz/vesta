@@ -23,6 +23,7 @@ const NATIVE_SHEET_ROUTES = new Set([
   "recent-gateways",
   "scan",
   "settings",
+  "switch-gateway",
   "whats-new",
 ]);
 
@@ -104,9 +105,12 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
     void privacy.unlock();
   }, [presentationReady, privacy, privacyRouteActive]);
 
+  // Before hydration the lock state is unknown and the boot splash already
+  // covers the app, so painting the hero then only flashes it over the splash.
   return (
     <BlockingSheetGateView
-      blocked={blocked}
+      blocked={blocked && privacy.hydrated}
+      presented={privacyRouteActive}
       estimatedSheetHeight={ESTIMATED_PRIVACY_SHEET_HEIGHT}
     >
       {children}

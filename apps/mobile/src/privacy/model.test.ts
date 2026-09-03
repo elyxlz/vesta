@@ -13,12 +13,12 @@ describe("privacy settings", () => {
     expect(readPrivacySettings("not json")).toEqual(initialPrivacySettings);
   });
 
-  it("restores valid fields without trusting malformed values", () => {
+  it("restores app lock and ignores the withheld app switcher setting", () => {
     expect(
       readPrivacySettings(
         JSON.stringify({
           appLockEnabled: true,
-          hideAppSwitcherPreview: "yes",
+          hideAppSwitcherPreview: true,
         }),
       ),
     ).toEqual({

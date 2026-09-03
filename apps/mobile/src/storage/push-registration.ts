@@ -1,6 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { z } from "zod";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import { connectionSchema } from "@/storage/connection";
 
 const PUSH_REGISTRATION_KEY = "vesta.push-registration.v1";

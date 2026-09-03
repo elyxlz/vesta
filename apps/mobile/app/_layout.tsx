@@ -43,7 +43,7 @@ import {
   useRoster,
 } from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
-import { ChatHoldProvider } from "@/chat/ChatHoldProvider";
+import { AndroidBottomInset } from "@/components/layout/android-bottom-inset";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
@@ -54,6 +54,9 @@ import {
   type BootTargetFrame,
 } from "@/components/BootTransition";
 import { fontNames } from "@/theme/typography";
+import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
+
+const IS_ANDROID = process.env.EXPO_OS === "android";
 
 WebBrowser.maybeCompleteAuthSession();
 void SplashScreen.preventAutoHideAsync();
@@ -150,11 +153,7 @@ function SessionNavigation() {
               headerTransparent: true,
               headerStyle: { backgroundColor: "transparent" },
               headerTintColor: colors.text,
-              headerTitleStyle: {
-                fontFamily: fontNames.heading.native["500"],
-                fontSize: 24,
-                fontWeight: "500",
-              },
+              headerTitleStyle,
               headerLargeTitleStyle: {
                 fontFamily: fontNames.heading.native["500"],
                 fontWeight: "500",
@@ -163,17 +162,6 @@ function SessionNavigation() {
               headerBackButtonDisplayMode: "minimal",
             }}
           >
-            <Stack.Screen
-              name="privacy"
-              options={{
-                headerShown: false,
-                presentation: "formSheet",
-                sheetAllowedDetents: "fitToContents",
-                sheetGrabberVisible: false,
-                gestureEnabled: false,
-                contentStyle: { backgroundColor: colors.card },
-              }}
-            />
             <Stack.Protected guard={status !== "connected"}>
               <Stack.Screen
                 name="connect"
@@ -188,6 +176,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: false,
                   sheetLargestUndimmedDetentIndex: "last",
@@ -200,6 +189,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
                   contentStyle: { backgroundColor: colors.card },
@@ -210,6 +200,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
                   contentStyle: { backgroundColor: colors.card },
@@ -222,6 +213,7 @@ function SessionNavigation() {
                   headerShown: true,
                   headerTitleAlign: "center",
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: [1],
                   sheetGrabberVisible: false,
                   sheetExpandsWhenScrolledToEdge: false,
@@ -239,6 +231,7 @@ function SessionNavigation() {
                 options={{
                   headerShown: false,
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: "fitToContents",
                   sheetInitialDetentIndex: 0,
                   sheetGrabberVisible: true,
@@ -247,14 +240,23 @@ function SessionNavigation() {
               />
               <Stack.Screen
                 name="gateway-update"
-                options={{
-                  headerShown: false,
-                  presentation: "formSheet",
-                  sheetAllowedDetents: "fitToContents",
-                  sheetGrabberVisible: false,
-                  gestureEnabled: false,
-                  contentStyle: { backgroundColor: colors.card },
-                }}
+                options={
+                  IS_ANDROID
+                    ? {
+                        headerShown: false,
+                        animation: "none",
+                        gestureEnabled: false,
+                        contentStyle: { backgroundColor: colors.background },
+                      }
+                    : {
+                        headerShown: false,
+                        presentation: "formSheet",
+                        sheetAllowedDetents: "fitToContents",
+                        sheetGrabberVisible: false,
+                        gestureEnabled: false,
+                        contentStyle: { backgroundColor: colors.card },
+                      }
+                }
               />
               <Stack.Screen
                 name="settings"
@@ -262,11 +264,23 @@ function SessionNavigation() {
                   title: "Settings",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: [0.5, 1],
                   sheetInitialDetentIndex: 0,
                   sheetGrabberVisible: true,
                   sheetExpandsWhenScrolledToEdge: true,
                   contentStyle: { backgroundColor: colors.background },
+                }}
+              />
+              <Stack.Screen
+                name="switch-gateway"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  ...formSheetCorners,
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: true,
+                  contentStyle: { backgroundColor: colors.card },
                 }}
               />
               <Stack.Screen
@@ -275,6 +289,7 @@ function SessionNavigation() {
                   title: "What’s new",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
+                  ...formSheetCorners,
                   sheetAllowedDetents: [0.5, 1],
                   sheetInitialDetentIndex: 0,
                   sheetGrabberVisible: true,
@@ -282,12 +297,48 @@ function SessionNavigation() {
                   contentStyle: { backgroundColor: colors.background },
                 }}
               />
-              <Stack.Screen name="debug" options={{ title: "Diagnostics" }} />
+              <Stack.Screen
+                name="debug"
+                options={{
+                  title: "Diagnostics",
+                  // Android has no automatic content inset for transparent
+                  // headers, so the toolbar goes opaque and offsets content.
+                  ...(IS_ANDROID
+                    ? {
+                        headerTransparent: false,
+                        headerStyle: { backgroundColor: colors.background },
+                      }
+                    : {}),
+                }}
+              />
               <Stack.Screen
                 name="agent/[name]"
                 options={{ headerShown: false }}
               />
             </Stack.Protected>
+            {/* Declared after both groups: a screen listed before them becomes the router's
+                fallback base route whenever the guarded initial route is unavailable, and a base
+                screen renders inline instead of presenting as the privacy gate's sheet. */}
+            <Stack.Screen
+              name="privacy"
+              options={
+                IS_ANDROID
+                  ? {
+                      headerShown: false,
+                      animation: "none",
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.background },
+                    }
+                  : {
+                      headerShown: false,
+                      presentation: "formSheet",
+                      sheetAllowedDetents: "fitToContents",
+                      sheetGrabberVisible: false,
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: colors.card },
+                    }
+              }
+            />
           </Stack>
           <GatewayConnectionBanner
             visible={
@@ -348,15 +399,15 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <KeyboardProvider>
-        <QueryClientProvider client={queryClient}>
-          <PreferencesProvider>
-            <ToastProvider>
-              <PrivacyProvider>
-                <SessionProvider>
-                  <PrivacyGate>
-                    <RosterHoldProvider>
-                      <ChatHoldProvider>
+      <AndroidBottomInset>
+        <KeyboardProvider>
+          <QueryClientProvider client={queryClient}>
+            <PreferencesProvider>
+              <ToastProvider>
+                <PrivacyProvider>
+                  <SessionProvider>
+                    <PrivacyGate>
+                      <RosterHoldProvider>
                         <ControllerProvider>
                           <RosterProvider>
                             <UserNotifications />
@@ -365,15 +416,15 @@ export default function RootLayout() {
                             <SessionNavigation />
                           </RosterProvider>
                         </ControllerProvider>
-                      </ChatHoldProvider>
-                    </RosterHoldProvider>
-                  </PrivacyGate>
-                </SessionProvider>
-              </PrivacyProvider>
-            </ToastProvider>
-          </PreferencesProvider>
-        </QueryClientProvider>
-      </KeyboardProvider>
+                      </RosterHoldProvider>
+                    </PrivacyGate>
+                  </SessionProvider>
+                </PrivacyProvider>
+              </ToastProvider>
+            </PreferencesProvider>
+          </QueryClientProvider>
+        </KeyboardProvider>
+      </AndroidBottomInset>
     </GestureHandlerRootView>
   );
 }

@@ -33,12 +33,12 @@ from .config import LINKS, PLAN, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    print(json.dumps(payload, ensure_ascii=False))
 
 
 def _fail(payload: dict[str, Any], code: int) -> int:
     """The one failure printer: the payload goes to stderr so stdout carries only success output."""
-    print(json.dumps(payload, indent=2, ensure_ascii=False), file=sys.stderr)
+    print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
     return code
 
 
@@ -180,10 +180,14 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, _cfg: Config) ->
 def _cmd_claude_start(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     email = _email(args)
     token = _require_token(email)
+    st = state.load(email)
+    name = st["agent_name"] if "agent_name" in st else None
+    if not name:
+        raise _InvalidError({"error": "create the agent shell before starting Claude auth"})
     server = _require_active_server(client, token)
 
     server_token = client.server_token(token, server["id"])
-    result = client.claude_oauth_start(subdomain=server["subdomain"], server_token=server_token)
+    result = client.claude_oauth_start(subdomain=server["subdomain"], server_token=server_token, name=name)
     if "error" in result:
         raise _InvalidError(result)
     state.update(email, claude_session_id=result["session_id"])
@@ -207,6 +211,7 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, _cfg: Config) -
     credentials = client.claude_oauth_complete(
         subdomain=server["subdomain"],
         server_token=server_token,
+        name=name,
         session_id=session_id,
         code=args.code.strip(),
     )
@@ -219,7 +224,7 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, _cfg: Config) -
         server_token=server_token,
         name=name,
         credentials=credentials,
-        model=(args.model or client.fetch_agent_defaults()["model"]),
+        model=(args.model or client.fetch_target_default_model(subdomain=server["subdomain"], server_token=server_token, name=name)),
         personality=st["personality"] if "personality" in st else None,
         seed_context=st["seed_context"] if "seed_context" in st else None,
     )
@@ -262,8 +267,8 @@ def _available_skills() -> list[str]:
 
 
 def _cmd_presets(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
-    # Read the live reference data from this box's vestad (the one source of truth) rather
-    # than keeping hardcoded copies; skills come from the on-box skills dir.
+    # Read the live reference data from this agent's own local API (the one source of truth)
+    # rather than keeping hardcoded copies; skills come from the on-box skills dir.
     defaults = client.fetch_agent_defaults()
     _print(
         {

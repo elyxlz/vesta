@@ -189,7 +189,7 @@ pub(crate) async fn resolve_bridge_ip(
 // a hard crash-loop so a wedged agent eventually stays down instead of thrashing forever.
 const RESTART_MAX_RETRIES: i64 = 5;
 const ENV_MOUNT_DEST: &str = "/run/vestad-env";
-const CORE_MOUNT_DEST: &str = "/root/agent/core";
+pub(crate) const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// User-authored charter, bind-mounted read-only so the agent reads but cannot edit it.
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
@@ -420,9 +420,19 @@ impl Drop for RebuildMark {
 pub struct StatusJson {
     pub name: String,
     pub status: AgentStatus,
+    pub booting: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub ws_port: u16,
+}
+
+/// The provider rate-limit window binding an agent, exactly as its `GET /status` reports it
+/// (`snake_case`, the agent's JSON). `None` fields mean unknown, not unlimited: a bare 429 carries
+/// neither the window name nor the reset instant.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RateLimitedWindow {
+    pub window: Option<String>,
+    pub resets_at: Option<i64>,
 }
 
 #[derive(Serialize, Clone, PartialEq)]
@@ -434,6 +444,10 @@ pub struct ListEntry {
     /// API serves and chat queues durably, but clients label it as still waking up.
     #[serde(default)]
     pub booting: bool,
+    /// The rate-limit window binding this agent, from its readiness flags: alive but unable to
+    /// work until the window resets. Overlaid on the roster like `booting`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limited: Option<RateLimitedWindow>,
     // Container start time; the web app watches it change to retire a "restart to apply" flag.
     // camelCase on the wire to match the web's AgentInfo; omitted when the agent has never started.
     #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
@@ -1052,9 +1066,26 @@ pub fn read_agent_port_and_token(
     agents_dir: &std::path::Path,
 ) -> (Option<u16>, Option<String>) {
     let env_path = agents_dir.join(format!("{agent_name}.env"));
-    let Ok(content) = std::fs::read_to_string(&env_path) else {
-        return (None, None);
-    };
+    match std::fs::read_to_string(&env_path) {
+        Ok(content) => parse_agent_env(&content),
+        Err(_) => (None, None),
+    }
+}
+
+/// `read_agent_port_and_token` for async callers: the same single read through tokio's fs,
+/// so a request handler never blocks the runtime on file IO.
+pub async fn read_agent_port_and_token_async(
+    agent_name: &str,
+    agents_dir: &std::path::Path,
+) -> (Option<u16>, Option<String>) {
+    let env_path = agents_dir.join(format!("{agent_name}.env"));
+    match tokio::fs::read_to_string(&env_path).await {
+        Ok(content) => parse_agent_env(&content),
+        Err(_) => (None, None),
+    }
+}
+
+fn parse_agent_env(content: &str) -> (Option<u16>, Option<String>) {
     let mut port = None;
     let mut token = None;
     for line in content.lines() {
@@ -1080,6 +1111,19 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
+    /// The advertised `https://<lan-ip>:<port>`, set only when the API is bound to the
+    /// LAN (`--expose-lan`) and an IP was resolvable; a LAN URL written without that
+    /// bind would be unreachable.
+    pub vestad_lan_url: Option<String>,
+}
+
+/// The user-facing base URL of the gateway, one value for scripts: the tunnel when one
+/// exists, else the LAN URL. Written as `VESTAD_PUBLIC_URL`; this is its one owner.
+fn vestad_public_url<'a>(
+    vestad_tunnel: Option<&'a str>,
+    vestad_lan_url: Option<&'a str>,
+) -> Option<&'a str> {
+    vestad_tunnel.or(vestad_lan_url)
 }
 
 /// Validate that the config and agents directories exist, are writable, and have
@@ -1142,8 +1186,10 @@ pub fn write_agent_env_file(
          export AGENT_TOKEN={agent_token}\n\
          export IS_SANDBOX=1\n\
          export VESTAD_PORT={}\n\
-         export BOX_HOST={AGENT_BOX_HOST}\n",
+         export BOX_HOST={AGENT_BOX_HOST}\n\
+         export VESTAD_HOSTNAME={}\n",
         env_config.vestad_port,
+        crate::tunnel::gethostname(),
     );
     let mut append_optional = |key: &str, value: Option<&str>| {
         if let Some(v) = value {
@@ -1152,6 +1198,13 @@ pub fn write_agent_env_file(
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
+    append_optional(
+        "VESTAD_PUBLIC_URL",
+        vestad_public_url(
+            env_config.vestad_tunnel.as_deref(),
+            env_config.vestad_lan_url.as_deref(),
+        ),
+    );
     // The control-plane base URL the agent's account/onboard skills call. Comes
     // from vestad's own env (the cloud-init managed.conf drop-in); absent on
     // self-hosted boxes. (The referral code is NOT forwarded here: it lives with
@@ -1239,15 +1292,18 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update `VESTAD_PORT`, `VESTAD_TUNNEL`, and `BOX_HOST` in all existing per-agent env
-/// files. Called at vestad startup so running containers pick up the current values on
-/// restart; this is how an agent created before `BOX_HOST` existed converges onto it,
-/// with no separate migration needed.
+/// Update `VESTAD_PORT`, `VESTAD_TUNNEL`, `BOX_HOST`, `VESTAD_HOSTNAME`, and
+/// `VESTAD_PUBLIC_URL` in all existing per-agent env files. Called at vestad startup so
+/// running containers pick up the current values on restart; this is how an agent
+/// created before one of these vars existed converges onto it, with no separate
+/// migration needed.
 pub fn update_all_agent_env_files(
     agents_dir: &std::path::Path,
     vestad_port: u16,
     vestad_tunnel: Option<&str>,
+    vestad_lan_url: Option<&str>,
 ) {
+    let hostname = crate::tunnel::gethostname();
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else {
@@ -1260,6 +1316,8 @@ pub fn update_all_agent_env_files(
                 if stripped.starts_with("VESTAD_PORT=")
                     || stripped.starts_with("VESTAD_TUNNEL=")
                     || stripped.starts_with("BOX_HOST=")
+                    || stripped.starts_with("VESTAD_HOSTNAME=")
+                    || stripped.starts_with("VESTAD_PUBLIC_URL=")
                 {
                     return None; // re-appended below with the current values
                 }
@@ -1271,6 +1329,10 @@ pub fn update_all_agent_env_files(
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
         new_lines.push(format!("export BOX_HOST={AGENT_BOX_HOST}"));
+        new_lines.push(format!("export VESTAD_HOSTNAME={hostname}"));
+        if let Some(url) = vestad_public_url(vestad_tunnel, vestad_lan_url) {
+            new_lines.push(format!("export VESTAD_PUBLIC_URL={url}"));
+        }
         new_lines.push(String::new());
         let new_content = new_lines.join("\n");
         if new_content == content {
@@ -1615,76 +1677,19 @@ async fn remove_snapshots<'a>(docker: &Docker, tags: impl Iterator<Item = &'a st
     }
 }
 
-/// Export a Docker image to a gzip-compressed tar file.
-/// Streams from Docker through gzip to disk without buffering the full image in memory.
-/// Cleans up the partial file on failure.
-pub async fn export_image_gzip(
+/// LEGACY(remove-when: 2027-08-01; only `import_legacy` consumes docker-load tars, and every
+/// other capture path now moves flat filesystem tars through `import_container_fs_tar_cmd`):
+/// import a Docker image from a byte stream of a `docker save` tar, gzip-compressed or not
+/// (Docker's load API accepts both natively). Returns the loaded image name
+/// (e.g. "vesta-backup:name_12345").
+pub async fn load_image_from_stream<S, E>(
     docker: &Docker,
-    image: &str,
-    output: &std::path::Path,
-) -> Result<(), DockerError> {
-    let output = output.to_path_buf();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(8);
-
-    let write_output = output.clone();
-    let write_handle = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-        let file = std::fs::File::create(&write_output)
-            .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        while let Some(chunk) = rx.blocking_recv() {
-            std::io::Write::write_all(&mut encoder, &chunk)
-                .map_err(|e| DockerError::Failed(format!("failed to write export data: {e}")))?;
-        }
-        encoder
-            .finish()
-            .map_err(|e| DockerError::Failed(format!("failed to finalize gzip: {e}")))?;
-        Ok(())
-    });
-
-    let mut stream = docker.export_image(image);
-    let mut stream_err = None;
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(data) => {
-                if tx.send(data).await.is_err() {
-                    break;
-                }
-            }
-            Err(e) => {
-                stream_err = Some(DockerError::Failed(format!("export stream error: {e}")));
-                break;
-            }
-        }
-    }
-    drop(tx);
-
-    if let Some(err) = stream_err {
-        tokio::fs::remove_file(&output).await.ok();
-        return Err(err);
-    }
-
-    write_handle
-        .await
-        .map_err(|e| DockerError::Failed(format!("export task failed: {e}")))?
-        .inspect_err(|_| {
-            std::fs::remove_file(&output).ok();
-        })
-}
-
-/// Import a Docker image from a gzip-compressed tar file (replaces `gunzip | docker load`).
-/// Streams the file directly — Docker's load API accepts gzip natively.
-/// Returns the loaded image name (e.g. "vesta-backup:name_12345").
-pub async fn import_image_gzip(
-    docker: &Docker,
-    input: &std::path::Path,
-) -> Result<String, DockerError> {
-    let file = tokio::fs::File::open(input)
-        .await
-        .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
-    let byte_stream =
-        tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
-            .map(|r| r.map(bytes::BytesMut::freeze));
-
+    byte_stream: S,
+) -> Result<String, DockerError>
+where
+    S: futures_util::Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
+{
     let opts = ImportImageOptions {
         ..Default::default()
     };
@@ -1692,8 +1697,10 @@ pub async fn import_image_gzip(
     let mut loaded_image = String::new();
     while let Some(msg) = stream.next().await {
         let info = msg.map_err(|e| DockerError::Failed(format!("import failed: {e}")))?;
-        if let Some(status) = info.status {
-            if let Some(name) = status.strip_prefix(LOADED_IMAGE_PREFIX) {
+        // The daemon reports the loaded tag on the `stream` field (not `status`), terminated
+        // with a newline meant for direct terminal output: {"stream":"Loaded image: name:tag\n"}.
+        if let Some(line) = info.stream {
+            if let Some(name) = line.trim_end().strip_prefix(LOADED_IMAGE_PREFIX) {
                 loaded_image = name.to_string();
             }
         }
@@ -1705,6 +1712,106 @@ pub async fn import_image_gzip(
         ));
     }
     Ok(loaded_image)
+}
+
+/// LEGACY(remove-when: 2027-08-01; plain-image files from the removed `vestad backup export` are
+/// by then over a year stale): the one caller of `load_image_from_stream`, and it goes when the
+/// legacy import that calls it goes. Imports a Docker image from a tar file (replaces
+/// `gunzip | docker load`), streaming rather than buffering it in memory.
+pub async fn load_image_from_file(
+    docker: &Docker,
+    input: &std::path::Path,
+) -> Result<String, DockerError> {
+    let file = tokio::fs::File::open(input)
+        .await
+        .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
+    let byte_stream =
+        tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
+            .map(|r| r.map(bytes::BytesMut::freeze));
+    load_image_from_stream(docker, byte_stream).await
+}
+
+/// A container run to completion for a single command, never restarted or kept around.
+pub struct OneshotSpec<'a> {
+    pub image: &'a str,
+    pub cname: &'a str,
+    pub cmd: Vec<String>,
+    /// Full `host:container:ro,z` bind strings.
+    pub ro_binds: Vec<String>,
+}
+
+/// Create, start, and wait out a one-shot container, returning its exit status code. Network
+/// isolated (`network_mode: "none"`) and carries no restart policy, since it exists only to run
+/// `spec.cmd` and exit. On success the caller removes the container; every failure past creation
+/// force-removes it before returning, so a retry never collides on the name.
+pub async fn run_oneshot_container(
+    docker: &Docker,
+    spec: OneshotSpec<'_>,
+    timeout_secs: u64,
+) -> Result<i64, DockerError> {
+    let options = CreateContainerOptions {
+        name: Some(spec.cname.to_string()),
+        ..Default::default()
+    };
+    // A throwaway container must never enumerate as an agent. It may run from an image committed
+    // off one, which carries that agent's labels, managed label included, so the create overrides
+    // the label rather than inheriting it.
+    let body = ContainerCreateBody {
+        image: Some(spec.image.to_string()),
+        cmd: Some(spec.cmd),
+        labels: Some(HashMap::from([(
+            LABEL_MANAGED.to_string(),
+            "false".to_string(),
+        )])),
+        host_config: Some(bollard::models::HostConfig {
+            binds: Some(spec.ro_binds),
+            network_mode: Some("none".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    docker
+        .create_container(Some(options), body)
+        .await
+        .map_err(|e| DockerError::Failed(format!("docker create for oneshot failed: {e}")))?;
+
+    if let Err(e) = docker.start_container(spec.cname, None).await {
+        remove_container_force(docker, spec.cname).await?;
+        return Err(DockerError::Failed(format!(
+            "docker start for oneshot failed: {e}"
+        )));
+    }
+
+    let mut wait_stream = docker
+        .wait_container(spec.cname, None::<bollard::query_parameters::WaitContainerOptions>);
+    let wait_result = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        wait_stream.next(),
+    )
+    .await;
+
+    // Every branch past this point has an already-created (and started) container to clean up:
+    // only the success path leaves it for the caller to remove.
+    match wait_result {
+        Err(_) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(format!(
+                "oneshot container timed out after {timeout_secs}s"
+            )))
+        }
+        Ok(Some(Ok(response))) => Ok(response.status_code),
+        Ok(Some(Err(bollard::errors::Error::DockerContainerWaitError { code, .. }))) => Ok(code),
+        Ok(Some(Err(e))) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(format!("oneshot container wait failed: {e}")))
+        }
+        Ok(None) => {
+            remove_container_force(docker, spec.cname).await?;
+            Err(DockerError::Failed(
+                "oneshot container wait stream ended with no response".into(),
+            ))
+        }
+    }
 }
 
 pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
@@ -1866,19 +1973,82 @@ pub async fn snapshot_container(
                         "docker export failed: {stderr}"
                     )));
                 }
-                if !import_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&import_output.stderr);
-                    return Err(DockerError::Failed(format!(
-                        "docker import failed: {stderr}"
-                    )));
-                }
-                Ok(())
+                finish_import_output(&import_output)
             })
         }),
     )
     .await
     .map_err(|_| DockerError::Failed(format!("snapshot timed out after {SNAPSHOT_TIMEOUT_SECS}s")))?
     .map_err(|e| DockerError::Failed(format!("snapshot task failed: {e}")))?
+}
+
+/// Stream `docker export <cname>` (a flat filesystem tar) straight to a file, removing the
+/// partial file on failure. The caller owns the container's lifecycle: export reads a running
+/// container without stopping it.
+pub async fn export_container_to_file(
+    cname: &str,
+    output: &std::path::Path,
+) -> Result<(), DockerError> {
+    let cname = cname.to_string();
+    let output_path = output.to_path_buf();
+
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
+        tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
+            let file = std::fs::File::create(&output_path)
+                .map_err(|e| DockerError::Failed(format!("failed to create export file: {e}")))?;
+            let out = std::process::Command::new("docker")
+                .args(["export", &cname])
+                .stdout(std::process::Stdio::from(file))
+                .stderr(std::process::Stdio::piped())
+                .output()
+                .map_err(|e| DockerError::Failed(format!("failed to run docker export: {e}")))?;
+            if out.status.success() {
+                return Ok(());
+            }
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            Err(DockerError::Failed(format!(
+                "docker export failed: {stderr}"
+            )))
+        }),
+    )
+    .await;
+
+    let result = match outcome {
+        Ok(Ok(exported)) => exported,
+        Ok(Err(join_error)) => Err(DockerError::Failed(format!(
+            "export task failed: {join_error}"
+        ))),
+        Err(_) => Err(DockerError::Failed(format!(
+            "export timed out after {SNAPSHOT_TIMEOUT_SECS}s"
+        ))),
+    };
+    if result.is_err() {
+        tokio::fs::remove_file(output).await.ok();
+    }
+    result
+}
+
+/// The `docker import - <image_ref>` command a caller feeds a flat filesystem tar into.
+/// Stdin is piped so the reader owns the stream; `finish_import_output` reads the result.
+pub fn import_container_fs_tar_cmd(image_ref: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("docker");
+    cmd.args(["import", "-", image_ref])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    cmd
+}
+
+/// Map a finished `import_container_fs_tar_cmd` run to a result, naming docker's stderr.
+pub fn finish_import_output(output: &std::process::Output) -> Result<(), DockerError> {
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(DockerError::Failed(format!(
+        "docker import failed: {stderr}"
+    )))
 }
 
 // --- Container creation ---
@@ -2115,6 +2285,10 @@ pub enum AgentOperation {
     /// as the nightly dream). Internal only: it exists to mark the cycle as planned work for
     /// the lifecycle push, and `on_wire` keeps it off the roster shipped clients parse.
     Restarting,
+    /// A user stop in flight. The agent process exits (its tap drops) before Docker reports the
+    /// container stopped, a window the container reading alone would project as `Starting`.
+    /// Internal only, like `Restarting`: the roster projects `Stopped` for its duration.
+    Stopping,
 }
 
 impl AgentOperation {
@@ -2916,7 +3090,9 @@ async fn discard_unused_snapshot(docker: &Docker, cname: &str, snapshot: &str) {
     }
     match remove_image(docker, snapshot).await {
         Ok(()) => tracing::info!(image = %snapshot, "removed snapshot from failed rebuild"),
-        Err(e) => tracing::warn!(image = %snapshot, error = %e, "could not remove failed rebuild's snapshot"),
+        Err(e) => {
+            tracing::warn!(image = %snapshot, error = %e, "could not remove failed rebuild's snapshot");
+        }
     }
 }
 
@@ -3549,6 +3725,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
         let content = std::fs::read_to_string(&path).expect("read env file");
@@ -3575,6 +3752,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
         let content = std::fs::read_to_string(&path).expect("read env file");
@@ -3582,13 +3760,48 @@ mod tests {
             content.contains(&format!("export BOX_HOST={AGENT_BOX_HOST}")),
             "BOX_HOST written for a fresh agent: {content}"
         );
+        assert!(
+            content.contains("export VESTAD_HOSTNAME="),
+            "VESTAD_HOSTNAME written for a fresh agent: {content}"
+        );
+        // No tunnel and no LAN URL: no public URL exists, so no line is written.
+        assert!(
+            !content.contains("VESTAD_PUBLIC_URL"),
+            "VESTAD_PUBLIC_URL absent with no reachable URL: {content}"
+        );
+    }
+
+    #[test]
+    fn write_agent_env_file_merges_public_url_tunnel_over_lan() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mut cfg = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+            vestad_lan_url: Some("https://192.168.1.10:4433".to_string()),
+        };
+        let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains("export VESTAD_PUBLIC_URL=https://192.168.1.10:4433"),
+            "LAN URL used when no tunnel exists: {content}"
+        );
+
+        cfg.vestad_tunnel = Some("https://box.vesta.run".to_string());
+        let path = write_agent_env_file(&cfg, "agent2", 3, "tok2").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains("export VESTAD_PUBLIC_URL=https://box.vesta.run"),
+            "tunnel preferred over LAN URL: {content}"
+        );
     }
 
     #[test]
     fn update_all_agent_env_files_adds_vestad_host_to_a_legacy_file() {
-        // A legacy env file predating BOX_HOST: no such line at all. This is exactly
-        // the fleet-convergence path — the agent picks it up on its next restart with no
-        // separate migration.
+        // A legacy env file predating BOX_HOST, VESTAD_HOSTNAME, and VESTAD_PUBLIC_URL:
+        // none of those lines at all. This is exactly the fleet-convergence path — the
+        // agent picks them up on its next restart with no separate migration.
         let dir = tempfile::TempDir::new().expect("tempdir");
         let path = dir.path().join("agent1.env");
         std::fs::write(
@@ -3597,7 +3810,7 @@ mod tests {
         )
         .expect("write legacy env file");
 
-        update_all_agent_env_files(dir.path(), 9443, None);
+        update_all_agent_env_files(dir.path(), 9443, None, Some("https://192.168.1.10:9443"));
 
         let content = std::fs::read_to_string(&path).expect("read env file");
         assert!(
@@ -3605,6 +3818,14 @@ mod tests {
             "BOX_HOST added on convergence: {content}"
         );
         assert!(content.contains("export VESTAD_PORT=9443"));
+        assert!(
+            content.contains("export VESTAD_HOSTNAME="),
+            "VESTAD_HOSTNAME added on convergence: {content}"
+        );
+        assert!(
+            content.contains("export VESTAD_PUBLIC_URL=https://192.168.1.10:9443"),
+            "VESTAD_PUBLIC_URL added on convergence: {content}"
+        );
     }
 
     #[test]
@@ -3704,6 +3925,44 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(tries.get(), IMPORT_PIPELINE_MAX_ATTEMPTS);
+    }
+
+    #[test]
+    fn import_container_fs_tar_cmd_reads_the_tar_from_stdin() {
+        let cmd = import_container_fs_tar_cmd("vesta-restore:ada");
+        assert_eq!(cmd.get_program(), "docker");
+        let args: Vec<_> = cmd.get_args().map(std::ffi::OsStr::to_string_lossy).collect();
+        assert_eq!(args, ["import", "-", "vesta-restore:ada"]);
+    }
+
+    fn shell_output(script: &str) -> std::process::Output {
+        std::process::Command::new("sh")
+            .args(["-c", script])
+            .output()
+            .expect("sh runs")
+    }
+
+    #[test]
+    fn finish_import_output_passes_a_successful_import() {
+        assert!(finish_import_output(&shell_output("exit 0")).is_ok());
+    }
+
+    #[test]
+    fn finish_import_output_names_dockers_stderr_on_failure() {
+        let output = shell_output("printf 'unexpected EOF' >&2; exit 1");
+        let err = finish_import_output(&output).expect_err("non-zero import fails");
+        assert!(err.to_string().contains("unexpected EOF"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn export_container_to_file_fails_before_spawning_when_the_target_is_unwritable() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let unwritable = dir.path().join("no-such-dir").join("agent.tar");
+        let err = export_container_to_file("vesta-ada", &unwritable)
+            .await
+            .expect_err("an uncreatable output file fails");
+        assert!(err.to_string().contains("failed to create export file"), "{err}");
+        assert!(!unwritable.exists());
     }
 
     #[test]
@@ -4207,6 +4466,44 @@ mod tests {
         }
     }
 
+    /// Regression test for the daemon's real `/images/load` response shape: it reports the
+    /// loaded tag on the `stream` field (newline-terminated), never `status`. A minimal,
+    /// hermetic source image (`docker import` of a one-file tarball, no registry pull) keeps
+    /// this cheap so it runs on every Docker-gated pass rather than only the full bundle test.
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn save_and_load_image_round_trips_the_tag() {
+        let docker = test_docker();
+        let img = TestImage::new("save-load");
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let fs_tar = dir.path().join("fs.tar");
+        let file = std::fs::File::create(&fs_tar).expect("create fs tar");
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(5);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, "hello.txt", &b"hello"[..]).expect("append");
+        builder.into_inner().expect("finish tar");
+        let status = std::process::Command::new("docker")
+            .args(["import", &fs_tar.display().to_string(), &img.tag])
+            .status()
+            .expect("docker import runs");
+        assert!(status.success());
+
+        let saved = dir.path().join("image.tar");
+        let save_status = std::process::Command::new("docker")
+            .args(["save", "-o", &saved.display().to_string(), &img.tag])
+            .status()
+            .expect("docker save runs");
+        assert!(save_status.success());
+        docker_cleanup(&["rmi", &img.tag]);
+
+        let loaded = load_image_from_file(&docker, &saved).await.expect("load");
+        assert_eq!(loaded, img.tag, "load must report the same tag it was saved under");
+    }
+
     /// Clean up a test agent network on drop.
     struct TestNetwork {
         name: String,
@@ -4229,6 +4526,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let _net_cleanup = TestNetwork {
             name: agent_network_name(&tc.name),
@@ -4350,6 +4648,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let spec = ContainerSpec {
             cname: &cname,
@@ -4407,6 +4706,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         create_container(
             &docker,
@@ -4454,6 +4754,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 1,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         let _net_cleanup = TestNetwork {
             name: agent_network_name(&tc.name),
@@ -4767,6 +5068,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 4111,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
         write_agent_env_file(&env_config, &agent, 45_999, "tok").expect("write env file");
 
@@ -4839,6 +5141,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 4111,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
 
         create_test_container_with_binds_async(
@@ -4887,6 +5190,7 @@ mod tests {
             agents_dir: dir.path().to_path_buf(),
             vestad_port: 4111,
             vestad_tunnel: None,
+            vestad_lan_url: None,
         };
 
         create_test_container_with_binds_async(
@@ -5411,7 +5715,13 @@ mod tests {
         // mkdir runs asynchronously after start; retry the drop until the dir exists.
         let mut file_name = None;
         for _ in 0..RENAME_NOTIF_DROP_TRIES {
-            match crate::serve::drop_rename_notification(&docker, &agent_name, "old-name").await {
+            match crate::agent_notification::drop(
+                &docker,
+                &agent_name,
+                &crate::agent_notification::rename("old-name", &agent_name),
+            )
+            .await
+            {
                 Ok(name) => {
                     file_name = Some(name);
                     break;
@@ -5465,10 +5775,10 @@ mod tests {
         // mkdir runs asynchronously after start; retry the drop until the dir exists.
         let mut file_name = None;
         for _ in 0..RENAME_NOTIF_DROP_TRIES {
-            match crate::serve::drop_presence_notification(
+            match crate::agent_notification::drop(
                 &docker,
                 &agent_name,
-                crate::types::ClientKind::Mobile,
+                &crate::agent_notification::user_presence(crate::types::ClientKind::Mobile),
             )
             .await
             {
@@ -5495,7 +5805,7 @@ mod tests {
         assert_eq!(payload["interrupt"], false);
         assert_eq!(
             payload["message"],
-            "the user just opened Vesta Mobile App and is here now."
+            "the user just opened your page on Vesta Mobile App and is here now."
         );
     }
 
@@ -5625,5 +5935,60 @@ mod tests {
             !missing.success,
             "without a grant, the host path must not appear inside the container"
         );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn run_oneshot_container_returns_exit_code_and_respects_ro_bind() {
+        let docker = test_docker();
+        let tc = TestContainer::new("oneshot");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::write(dir.path().join("marker"), "present").expect("write marker");
+        let bind = format!("{}:/mnt/probe:ro,z", dir.path().display());
+
+        let exit = run_oneshot_container(
+            &docker,
+            OneshotSpec {
+                image: &test_agent_image(),
+                cname: &tc.name,
+                cmd: vec!["sh".into(), "-c".into(), "test -f /mnt/probe/marker".into()],
+                ro_binds: vec![bind.clone()],
+            },
+            60,
+        )
+        .await
+        .expect("oneshot runs");
+        assert_eq!(exit, 0);
+
+        // The image a scrub runs from is committed off an agent and carries its labels, so the
+        // create must win: a oneshot left behind must never enumerate as that agent.
+        let labels = docker
+            .inspect_container(&tc.name, None)
+            .await
+            .expect("inspect the oneshot container")
+            .config
+            .and_then(|config| config.labels)
+            .unwrap_or_default();
+        assert_eq!(
+            labels.get(LABEL_MANAGED).map(String::as_str),
+            Some("false"),
+            "a oneshot container must carry the managed label as false, got {labels:?}"
+        );
+
+        remove_container_force(&docker, &tc.name).await.expect("cleanup");
+        let tc_fail = TestContainer::new("oneshot-fail");
+        let exit_fail = run_oneshot_container(
+            &docker,
+            OneshotSpec {
+                image: &test_agent_image(),
+                cname: &tc_fail.name,
+                cmd: vec!["sh".into(), "-c".into(), "exit 7".into()],
+                ro_binds: vec![],
+            },
+            60,
+        )
+        .await
+        .expect("oneshot runs");
+        assert_eq!(exit_fail, 7);
     }
 }

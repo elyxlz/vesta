@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef } from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { FlatList, StyleSheet, View, type ListRenderItem } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getNotificationHistory } from "@/api/endpoints";
+import { getNotificationHistory } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   getPendingNotificationIds,
@@ -19,7 +19,9 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { navHeaderHeight, radii } from "@/theme/layout";
 
-function NotificationRow({
+// Memoized: row identities are stable across merges, so unrelated chat events re-render no rows,
+// and the parsed content plus formatted timestamp are computed once per event.
+const NotificationRow = memo(function NotificationRow({
   event,
   pending,
 }: {
@@ -42,7 +44,19 @@ function NotificationRow({
         : event.decided === "trash"
           ? "trashed"
           : null;
-  const content = parseNotificationContent(event);
+  const content = useMemo(() => parseNotificationContent(event), [event]);
+  const timeLabel = useMemo(
+    () =>
+      event.ts
+        ? new Date(event.ts).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null,
+    [event.ts],
+  );
 
   return (
     <View
@@ -64,16 +78,11 @@ function NotificationRow({
             pending
           </Text>
         ) : null}
-        {decision || event.ts ? (
+        {decision || timeLabel ? (
           <View style={styles.notificationMeta}>
-            {event.ts ? (
+            {timeLabel ? (
               <Text style={[styles.time, { color: colors.tertiaryText }]}>
-                {new Date(event.ts).toLocaleString([], {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+                {timeLabel}
               </Text>
             ) : null}
             {decision ? (
@@ -109,6 +118,12 @@ function NotificationRow({
       ) : null}
     </View>
   );
+});
+
+// Module-scoped so the separator keeps one component identity across page renders;
+// an inline arrow would remount every separator on each render.
+function NotificationSeparator() {
+  return <View style={styles.separator} />;
 }
 
 interface NotificationsPageProps {
@@ -155,6 +170,16 @@ export default function NotificationsPage({
     void refetch();
   }, [refetch, socket.reseedRevision]);
 
+  const renderNotification = useCallback<ListRenderItem<NotificationView>>(
+    ({ item }) => (
+      <NotificationRow
+        event={item}
+        pending={Boolean(item.notif_id && pendingIds.has(item.notif_id))}
+      />
+    ),
+    [pendingIds],
+  );
+
   return (
     <View style={styles.screen}>
       <FlatList
@@ -168,13 +193,8 @@ export default function NotificationsPage({
         data={displayItems}
         inverted={!standalone}
         keyExtractor={notificationRowKey}
-        renderItem={({ item }) => (
-          <NotificationRow
-            event={item}
-            pending={Boolean(item.notif_id && pendingIds.has(item.notif_id))}
-          />
-        )}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        renderItem={renderNotification}
+        ItemSeparatorComponent={NotificationSeparator}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={
@@ -198,6 +218,9 @@ export default function NotificationsPage({
         onContentSizeChange={
           standalone ? bottomAnchor.onContentSizeChange : undefined
         }
+        // The sheet lays out every loaded row before its tail scroll, so the end it lands on is
+        // the real one rather than the first batch's.
+        initialNumToRender={standalone ? displayItems.length : undefined}
         onScroll={standalone ? bottomAnchor.onScroll : undefined}
         scrollEventThrottle={standalone ? 16 : undefined}
         ListEmptyComponent={

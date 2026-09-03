@@ -1,0 +1,55 @@
+"""APScheduler setup and notification writing for the reminders daemon."""
+
+import json
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+from apscheduler.schedulers.background import BackgroundScheduler
+
+
+def create_scheduler() -> BackgroundScheduler:
+    # Every trigger carries its own zone (an aware run_date, or the cron's resolved tz), so this
+    # pin only decides how a naive datetime would be read: UTC, the storage convention.
+    return BackgroundScheduler(
+        timezone=UTC,
+        job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
+    )
+
+
+_SNOOZE_HINT = "Not actionable right now? Push it back: `reminders snooze {rid} --in-hours N`."
+
+
+def write_notification(notif_dir: Path, type_: str, **fields: object) -> None:
+    """Atomically write a `source=reminders` notification JSON file. Single owner of the
+    on-disk notification format (source, timestamp, filename pattern, tmp+rename)."""
+    notif_dir.mkdir(exist_ok=True)
+    notif = {
+        "source": "reminders",
+        "type": type_,
+        **fields,
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
+    }
+    filename = f"{int(time.time() * 1e6)}-reminders-{type_}.json"
+    tmp = notif_dir / f"{filename}.tmp"
+    tmp.write_text(json.dumps(notif, indent=2))
+    tmp.replace(notif_dir / filename)
+
+
+def write_reminder_notification(
+    notif_dir: Path,
+    reminder_id: str,
+    message: str,
+    *,
+    notif_type: str = "reminder_due",
+    snooze_hint: bool = False,
+):
+    """Write a reminder notification JSON file. `notif_type` names the event: `reminder_due` for a
+    reminder firing on schedule, `reminder_missed` for one replayed after its time passed while the
+    daemon was down. `snooze_hint` appends the snooze tip; set it for one-shot reminders only
+    (recurring ones fire again anyway)."""
+    if not reminder_id or not message:
+        raise ValueError("reminder_id and message required")
+
+    full_message = f"{message}\n{_SNOOZE_HINT.format(rid=reminder_id)}" if snooze_hint else message
+    write_notification(notif_dir, notif_type, message=full_message, reminder_id=reminder_id)

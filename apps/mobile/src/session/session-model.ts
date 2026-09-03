@@ -1,4 +1,4 @@
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 
 export function changesGateway(
   current: ConnectionConfig | null,
@@ -14,4 +14,15 @@ export function connectionKeyOf(
   connection: ConnectionConfig | null,
 ): string | null {
   return connection ? `${connection.url}|${String(connection.hosted)}` : null;
+}
+
+// The stored connection to adopt on foreground when another writer rotated the tokens while the app
+// was suspended (the background device-context poll refreshes and writes SecureStore): the same
+// gateway with newer tokens. Never adopts across a sign-out (no current) or a gateway switch.
+export function rotatedStoredConnection(
+  current: ConnectionConfig | null,
+  stored: ConnectionConfig | null,
+): ConnectionConfig | null {
+  if (!current || !stored || changesGateway(current, stored)) return null;
+  return stored.refreshToken !== current.refreshToken ? stored : null;
 }

@@ -4,6 +4,7 @@ import type {
   AgentActivityState,
   AgentOperation,
   AgentStatus,
+  RateLimitedInfo,
 } from "@vesta/core";
 import { AgentOrb } from "@/components/AgentOrb";
 import { AgentStatusBadge } from "@/components/AgentStatus";
@@ -18,8 +19,11 @@ export function AgentIdentityCard({
   activityState,
   operation = null,
   booting = false,
+  rateLimited = null,
   orb,
   showStatus = true,
+  /** Rendered under the name, for example the provider pill. */
+  caption,
   style,
 }: {
   name: string;
@@ -27,8 +31,10 @@ export function AgentIdentityCard({
   activityState: AgentActivityState;
   operation?: AgentOperation | null;
   booting?: boolean;
+  rateLimited?: RateLimitedInfo | null;
   orb?: ReactNode;
   showStatus?: boolean;
+  caption?: ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = usePreferences();
@@ -37,26 +43,31 @@ export function AgentIdentityCard({
     <View style={[styles.card, style]}>
       {orb ?? (
         <AgentOrb
+          name={name}
           status={status}
           activityState={activityState}
           operation={operation}
           booting={booting}
+          rateLimited={rateLimited}
           size={AGENT_IDENTITY_ORB_SIZE}
         />
       )}
       <View style={styles.details}>
         {showStatus ? (
           <AgentStatusBadge
+            name={name}
             status={status}
             activityState={activityState}
             operation={operation}
             booting={booting}
+            rateLimited={rateLimited}
             centered
           />
         ) : null}
-        <Text family="heading" style={[styles.name, { color: colors.text }]}>
+        <Text family="serif" style={[styles.name, { color: colors.text }]}>
           {name}
         </Text>
+        {caption ? <View style={styles.caption}>{caption}</View> : null}
       </View>
     </View>
   );
@@ -66,4 +77,5 @@ const styles = StyleSheet.create({
   card: { alignItems: "center", gap: 32 },
   details: { alignItems: "center", gap: 6 },
   name: { fontSize: 38, fontWeight: "500", letterSpacing: -1 },
+  caption: { marginTop: 4 },
 });

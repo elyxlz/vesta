@@ -1,7 +1,30 @@
-import { BrowserWindow, Menu, app, ipcMain, nativeTheme, shell } from "electron";
+import {
+  BrowserWindow,
+  Menu,
+  app,
+  ipcMain,
+  nativeTheme,
+  shell,
+} from "electron";
 import path from "node:path";
+import { CHANNEL } from "./channels";
+import { readNativeGeolocation } from "./geolocation";
+import { trackQuitIntent } from "./lifecycle";
 import { cancelLoopback, startLoopback } from "./oauth-loopback";
-import { clearConnection, readConnection, writeConnection } from "./store";
+import {
+  clearConnection,
+  clearRecentGateways,
+  credentialStorageIsSecure,
+  readConnection,
+  readRecentGateways,
+  writeConnection,
+  writeRecentGateways,
+} from "./store";
+import {
+  downloadAppUpdate,
+  getAppUpdate,
+  quitAndInstallUpdate,
+} from "./updater";
 import { createMainWindow, registerAppScheme, showMainWindow } from "./window";
 
 registerAppScheme();
@@ -11,7 +34,7 @@ if (!gotLock) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | null = null;
-  let quitting = false;
+  const isQuitting = trackQuitIntent(app);
 
   const buildMenu = () => {
     if (process.platform !== "darwin") {
@@ -29,47 +52,81 @@ if (!gotLock) {
   };
 
   const wireIpc = () => {
-    ipcMain.handle("focus-window", () => {
+    ipcMain.handle(CHANNEL.focusWindow, () => {
       if (mainWindow) showMainWindow(mainWindow);
     });
-    ipcMain.handle("window:minimize", () => mainWindow?.minimize());
-    ipcMain.handle("window:toggle-maximize", () => {
+    ipcMain.handle(CHANNEL.windowMinimize, () => mainWindow?.minimize());
+    ipcMain.handle(CHANNEL.windowToggleMaximize, () => {
       if (!mainWindow) return;
       if (mainWindow.isMaximized()) mainWindow.unmaximize();
       else mainWindow.maximize();
     });
-    ipcMain.handle("window:close", () => mainWindow?.close());
+    ipcMain.handle(CHANNEL.windowClose, () => mainWindow?.close());
     ipcMain.handle(
-      "window:is-maximized",
+      CHANNEL.windowIsMaximized,
       () => mainWindow?.isMaximized() ?? false,
     );
-    ipcMain.on("set-theme", (_event, theme: unknown) => {
-      if (theme === "light" || theme === "dark") nativeTheme.themeSource = theme;
+    ipcMain.on(CHANNEL.setTheme, (_event, theme: unknown) => {
+      // "system" hands the scheme back to the OS, so prefers-color-scheme in the renderer tracks it
+      // again instead of the last forced value.
+      if (theme === "light" || theme === "dark" || theme === "system")
+        nativeTheme.themeSource = theme;
     });
-    ipcMain.handle("open-external", (_event, url: unknown) => {
+    ipcMain.handle(CHANNEL.openExternal, (_event, url: unknown) => {
       if (typeof url === "string" && /^https?:\/\//.test(url))
         return shell.openExternal(url);
       throw new Error("openExternal only accepts http(s) urls");
     });
-    ipcMain.handle("store:read", () => readConnection());
-    ipcMain.handle("store:write", (_event, value: unknown) =>
+    // App self-update is manual: the renderer drives check -> download -> relaunch on a click.
+    ipcMain.handle(CHANNEL.appUpdateCheck, () => getAppUpdate());
+    ipcMain.handle(CHANNEL.appUpdateDownload, (event) =>
+      downloadAppUpdate((percent) => {
+        event.sender.send(CHANNEL.appUpdateProgress, percent);
+      }),
+    );
+    ipcMain.handle(CHANNEL.appUpdateInstall, () => {
+      quitAndInstallUpdate();
+    });
+    ipcMain.handle(CHANNEL.storeRead, () => readConnection());
+    ipcMain.handle(CHANNEL.storeWrite, (_event, value: unknown) =>
       writeConnection(value),
     );
-    ipcMain.handle("store:clear", () => clearConnection());
-    ipcMain.handle("oauth:start", () =>
-      startLoopback((url) => mainWindow?.webContents.send("oauth:callback", url)),
+    ipcMain.handle(CHANNEL.storeClear, () => clearConnection());
+    ipcMain.handle(CHANNEL.storeIsSecure, () => credentialStorageIsSecure());
+    ipcMain.handle(CHANNEL.recentStoreRead, () => readRecentGateways());
+    ipcMain.handle(CHANNEL.recentStoreWrite, (_event, value: unknown) =>
+      writeRecentGateways(value),
     );
-    ipcMain.handle("oauth:cancel", (_event, port: unknown) => {
+    ipcMain.handle(CHANNEL.recentStoreClear, () => clearRecentGateways());
+    ipcMain.handle(CHANNEL.oauthStart, () =>
+      startLoopback((url) =>
+        mainWindow?.webContents.send(CHANNEL.oauthCallback, url),
+      ),
+    );
+    ipcMain.handle(CHANNEL.oauthCancel, (_event, port: unknown) => {
       if (typeof port === "number") cancelLoopback(port);
+    });
+    // The macOS CoreLocation helper ships beside the web bundle in Resources; in dev it is the
+    // `native/` build output.
+    const macHelperPath = app.isPackaged
+      ? path.join(process.resourcesPath, "vesta-location")
+      : path.join(app.getAppPath(), "native", "vesta-location");
+    ipcMain.handle(CHANNEL.geolocationRead, () =>
+      readNativeGeolocation(macHelperPath),
+    );
+    // OS launch-at-login toggle; the login item is the source of truth (registry on Windows,
+    // LaunchAgent on macOS, ~/.config/autostart on Linux), so nothing is persisted here.
+    ipcMain.handle(
+      CHANNEL.loginItemGet,
+      () => app.getLoginItemSettings().openAtLogin,
+    );
+    ipcMain.handle(CHANNEL.loginItemSet, (_event, enabled: unknown) => {
+      app.setLoginItemSettings({ openAtLogin: enabled === true });
     });
   };
 
   app.on("second-instance", () => {
     if (mainWindow) showMainWindow(mainWindow);
-  });
-
-  app.on("before-quit", () => {
-    quitting = true;
   });
 
   app.on("window-all-closed", () => {
@@ -91,19 +148,10 @@ if (!gotLock) {
     mainWindow = createMainWindow();
     // macOS convention: closing the window keeps Vesta in the dock.
     mainWindow.on("close", (event) => {
-      if (process.platform === "darwin" && !quitting) {
+      if (process.platform === "darwin" && !isQuitting()) {
         event.preventDefault();
         mainWindow?.hide();
       }
     });
-    // Drift toward the latest release on our own: check on launch, download in the
-    // background, install on the next quit. Packaged only (dev has no update feed).
-    if (app.isPackaged) {
-      void import("./updater.js")
-        .then(({ checkForAppUpdate }) => checkForAppUpdate())
-        .catch((err: unknown) => {
-          console.error("app update check failed:", err);
-        });
-    }
   });
 }

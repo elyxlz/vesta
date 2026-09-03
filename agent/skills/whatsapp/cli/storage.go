@@ -131,6 +131,27 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		db.Exec("ALTER TABLE messages ADD COLUMN delivery_timestamp TIMESTAMP")
 	}
 
+	// One-time scrub: clear the WhatsApp profile names (pushnames) that direct chats once stored, so
+	// a person with no saved contact holds no chat name that could collide with a saved contact's
+	// name. SearchContacts reads chats rows only for `@s.whatsapp.net` jids, so those are exactly the
+	// names to clear; saved names live in the contacts table and are untouched. getChatName writes a
+	// number back on the next message.
+	var schemaVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to read schema version: %v", err)
+	}
+	if schemaVersion < 1 {
+		if _, err := db.Exec("UPDATE chats SET name = NULL WHERE jid LIKE '%@s.whatsapp.net' AND name IS NOT NULL"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to clear stored profile names: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to set schema version: %v", err)
+		}
+	}
+
 	ms := &MessageStore{db: db}
 	if err := ms.rebuildFTS(); err != nil {
 		db.Close()
@@ -615,6 +636,30 @@ func (ms *MessageStore) ManualContactJIDsByName(name string) ([]string, error) {
 	return jids, rows.Err()
 }
 
+// ManualContactsByName returns every contact row whose name equals name once trimmed and lowercased,
+// so a duplicate-name check catches a near-copy that differs only by case or surrounding spaces.
+func (ms *MessageStore) ManualContactsByName(name string) ([]Contact, error) {
+	rows, err := ms.db.Query(
+		`SELECT jid, name, phone_number FROM contacts WHERE lower(trim(name)) = lower(trim(?))`,
+		name,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var contacts []Contact
+	for rows.Next() {
+		var jid, phone string
+		var rowName sql.NullString
+		if err := rows.Scan(&jid, &rowName, &phone); err != nil {
+			return nil, err
+		}
+		contacts = append(contacts, Contact{JID: jid, Name: rowName.String, PhoneNumber: phone, IsManual: true})
+	}
+	return contacts, rows.Err()
+}
+
 // DeleteManualContactsByJID removes the contact rows under the given keys, reporting whether any
 // did. Callers pass every key form of one peer, so a revoke leaves nothing behind.
 func (ms *MessageStore) DeleteManualContactsByJID(jids []string) (bool, error) {
@@ -737,7 +782,8 @@ func (ms *MessageStore) listMessagesQuery(
 	qb.WriteString(`
 		SELECT
 			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
+			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename,
+			m.delivery_status, m.delivery_timestamp
 		FROM messages m
 		JOIN chats c ON m.chat_jid = c.jid`)
 	var args []any
@@ -788,16 +834,23 @@ func (ms *MessageStore) scanMessages(rows *sql.Rows, err error) ([]Message, erro
 	var messages []Message
 	for rows.Next() {
 		var m Message
-		var chatName, mediaType, filename sql.NullString
+		var chatName, mediaType, filename, deliveryStatus sql.NullString
+		var deliveryTimestamp sql.NullTime
 		if err := rows.Scan(
 			&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
 			&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
+			&deliveryStatus, &deliveryTimestamp,
 		); err != nil {
 			continue
 		}
 		m.ChatName = chatName.String
 		m.MediaType = mediaType.String
 		m.Filename = filename.String
+		m.DeliveryStatus = deliveryStatus.String
+		if deliveryTimestamp.Valid {
+			t := deliveryTimestamp.Time
+			m.DeliveryTimestamp = &t
+		}
 		messages = append(messages, m)
 	}
 	return messages, nil

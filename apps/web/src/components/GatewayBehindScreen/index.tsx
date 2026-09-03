@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { LogOut } from "lucide-react";
-import { Footer } from "@/components/Footer";
-import { LogoText } from "@/components/Logo/LogoText";
+import { NavbarLogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { triggerGatewayUpdate } from "@vesta/core";
 import { httpClient } from "@/api/client";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import {
   Empty,
   EmptyHeader,
@@ -31,7 +30,8 @@ export function GatewayBehindScreen() {
   const handleUpdate = async () => {
     setUpdating(true);
     setError(null);
-    if (!(await triggerGatewayUpdate(httpClient))) {
+    const outcome = await triggerGatewayUpdate(httpClient);
+    if (outcome.kind !== "started") {
       setError("gateway update request failed");
       setUpdating(false);
     }
@@ -40,7 +40,7 @@ export function GatewayBehindScreen() {
   return (
     <>
       {/* no StatusPill: the socket is live here, so the pill would read "can't reach gateway" */}
-      <Navbar center={<LogoText />} />
+      <Navbar center={<NavbarLogoText />} />
       <Empty>
         <EmptyHeader className="max-w-lg">
           <EmptyTitle>gateway is behind</EmptyTitle>
@@ -78,7 +78,6 @@ export function GatewayBehindScreen() {
           )}
         </EmptyContent>
       </Empty>
-      <Footer />
     </>
   );
 }

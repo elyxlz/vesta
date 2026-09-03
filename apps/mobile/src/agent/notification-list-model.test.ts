@@ -5,10 +5,7 @@ import {
   mergeLiveNotifications,
 } from "./notification-list-model";
 
-function notification(
-  notifId: string,
-  ts: string,
-): NotificationView {
+function notification(notifId: string, ts: string): NotificationView {
   return {
     type: "notification",
     source: "test",
@@ -30,14 +27,23 @@ describe("notification list model", () => {
   });
 
   it("surfaces a re-arrival of the same notif_id at a later ts", () => {
-    const first = notification("nightly_dream-2026-01-01", "2026-01-01T03:00:00Z");
-    const redrop = notification("nightly_dream-2026-01-01", "2026-01-01T05:00:00Z");
+    const first = notification(
+      "nightly_dream-2026-01-01",
+      "2026-01-01T03:00:00Z",
+    );
+    const redrop = notification(
+      "nightly_dream-2026-01-01",
+      "2026-01-01T05:00:00Z",
+    );
 
     expect(mergeLiveNotifications([first], [redrop])).toEqual([redrop, first]);
   });
 
   it("still drops a replay of the same notif_id at the same ts", () => {
-    const arrival = notification("nightly_dream-2026-01-01", "2026-01-01T03:00:00Z");
+    const arrival = notification(
+      "nightly_dream-2026-01-01",
+      "2026-01-01T03:00:00Z",
+    );
 
     expect(mergeLiveNotifications([arrival], [arrival])).toEqual([arrival]);
   });
@@ -60,8 +66,16 @@ describe("notification list model", () => {
   });
 
   it("distinguishes id-less, ts-less events by their content", () => {
-    const one: NotificationView = { type: "notification", source: "email", summary: "a" };
-    const two: NotificationView = { type: "notification", source: "email", summary: "b" };
+    const one: NotificationView = {
+      type: "notification",
+      source: "email",
+      summary: "a",
+    };
+    const two: NotificationView = {
+      type: "notification",
+      source: "email",
+      summary: "b",
+    };
 
     expect(mergeLiveNotifications([one], [two])).toEqual([two, one]);
   });

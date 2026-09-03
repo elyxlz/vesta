@@ -2,6 +2,7 @@ import * as React from "react";
 import { Drawer as DrawerPrimitive } from "vaul";
 
 import { cn } from "@/lib/utils";
+import { ScrollShell, ShellChrome } from "@/components/ui/scroll-shell";
 
 function Drawer({
   shouldScaleBackground = false,
@@ -45,7 +46,7 @@ function DrawerOverlay({
     <DrawerPrimitive.Overlay
       data-slot="drawer-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/30 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 z-50 bg-background/70 dark:bg-background/55 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       onPointerDown={(e) => {
@@ -65,9 +66,17 @@ function DrawerContent({
   className,
   children,
   container,
+  showHandle = true,
+  bare = false,
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Content> & {
   container?: Element | null;
+  // Off when a consumer floats the handle inside its own sticky header instead
+  // (the Dialog drawer path), so content scrolls flush under handle and title.
+  showHandle?: boolean;
+  // Skip the floating scroll shell: the child owns its own scroll and layout (the sidebar, a menu
+  // that caps its own height). Every other drawer gets the floating header/footer + edge fades.
+  bare?: boolean;
 }) {
   return (
     <DrawerPortal data-slot="drawer-portal" container={container}>
@@ -75,23 +84,49 @@ function DrawerContent({
       <DrawerPrimitive.Content
         data-slot="drawer-content"
         className={cn(
-          "group/drawer-content fixed z-50 flex h-auto flex-col bg-transparent px-1 sm:px-2 md:px-4 pt-0 text-sm before:absolute before:inset-x-2 before:top-0 before:-bottom-10 before:-z-10 before:rounded-4xl before:rounded-b-none before:border before:border-b-0 before:border-border before:bg-popover before:shadow-xl data-[vaul-drawer-direction=bottom]:inset-x-0 data-[vaul-drawer-direction=bottom]:bottom-0 data-[vaul-drawer-direction=bottom]:mt-24 data-[vaul-drawer-direction=bottom]:max-h-[80vh] data-[vaul-drawer-direction=left]:inset-y-0 data-[vaul-drawer-direction=left]:left-0 data-[vaul-drawer-direction=left]:w-3/4 data-[vaul-drawer-direction=right]:inset-y-0 data-[vaul-drawer-direction=right]:right-0 data-[vaul-drawer-direction=right]:w-3/4 data-[vaul-drawer-direction=top]:inset-x-0 data-[vaul-drawer-direction=top]:top-0 data-[vaul-drawer-direction=top]:mb-24 data-[vaul-drawer-direction=top]:max-h-[80vh] data-[vaul-drawer-direction=left]:sm:max-w-sm data-[vaul-drawer-direction=right]:sm:max-w-sm",
+          // The content element IS the sheet surface, so overflow-hidden clips children to the
+          // squircle instead of the old inset before-layer they could spill past.
+          "group/drawer-content fixed z-50 flex h-auto flex-col overflow-hidden rounded-squircle-md [corner-shape:squircle] bg-popover text-sm ring-1 ring-(color:--card-ring) data-[vaul-drawer-direction=bottom]:inset-x-2 data-[vaul-drawer-direction=bottom]:bottom-2 data-[vaul-drawer-direction=bottom]:mt-24 data-[vaul-drawer-direction=bottom]:max-h-[80vh] data-[vaul-drawer-direction=left]:inset-y-2 data-[vaul-drawer-direction=left]:left-2 data-[vaul-drawer-direction=left]:w-3/4 data-[vaul-drawer-direction=right]:inset-y-2 data-[vaul-drawer-direction=right]:right-2 data-[vaul-drawer-direction=right]:w-3/4 data-[vaul-drawer-direction=top]:inset-x-2 data-[vaul-drawer-direction=top]:top-2 data-[vaul-drawer-direction=top]:mb-24 data-[vaul-drawer-direction=top]:max-h-[80vh] data-[vaul-drawer-direction=left]:sm:max-w-sm data-[vaul-drawer-direction=right]:sm:max-w-sm",
           className,
         )}
         {...props}
       >
-        <div className="hidden w-full py-5 shrink-0 cursor-grab active:cursor-grabbing group-data-[vaul-drawer-direction=bottom]/drawer-content:flex items-center justify-center">
-          <div className="h-1.5 w-[100px] rounded-full bg-muted" />
-        </div>
-        {children}
+        {bare ? (
+          <>
+            {showHandle && <DrawerHandle />}
+            {children}
+          </>
+        ) : (
+          <ScrollShell>
+            {showHandle && <DrawerHandle />}
+            {children}
+          </ScrollShell>
+        )}
       </DrawerPrimitive.Content>
     </DrawerPortal>
   );
 }
 
-function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
+// The grab handle floats over the shell's top (bottom drawers only), measured so the scroll reserves
+// its height and content dissolves beneath it while scrolling flush to the edge. In a bare drawer it
+// renders in normal flow above the content.
+function DrawerHandle() {
   return (
-    <div
+    <ShellChrome
+      edge="top"
+      className="hidden w-full py-5 shrink-0 cursor-grab items-center justify-center active:cursor-grabbing group-data-[vaul-drawer-direction=bottom]/drawer-content:flex"
+    >
+      <div className="h-1.5 w-[100px] rounded-full bg-muted-foreground/40" />
+    </ShellChrome>
+  );
+}
+
+function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
+  // Floats over the shell's top when inside a floating DrawerContent, and renders in place inside a
+  // bare drawer.
+  return (
+    <ShellChrome
+      edge="top"
       data-slot="drawer-header"
       className={cn(
         "flex flex-col gap-0.5 p-4 group-data-[vaul-drawer-direction=bottom]/drawer-content:text-center group-data-[vaul-drawer-direction=top]/drawer-content:text-center md:gap-1.5 md:text-left",
@@ -103,8 +138,11 @@ function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function DrawerFooter({ className, ...props }: React.ComponentProps<"div">) {
+  // The mirror of DrawerHeader: floats over the shell's bottom, or pins to the bottom in normal flow
+  // (mt-auto) inside a bare drawer.
   return (
-    <div
+    <ShellChrome
+      edge="bottom"
       data-slot="drawer-footer"
       className={cn("mt-auto flex flex-col gap-2 p-4", className)}
       {...props}

@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest"
-import { act, cleanup, render, screen } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen } from "@testing-library/react";
 
-import { UPDATED_NOTICE_MS, useUpdateResolution } from "./use-update-resolution"
-import type { GatewayOperation } from "../protocol/tree"
+import {
+  RESTARTED_NOTICE_MS,
+  UPDATED_NOTICE_MS,
+  useRestartResolution,
+  useUpdateResolution,
+} from "./use-update-resolution";
+import type { GatewayOperation } from "../protocol/tree";
 
 function operation(kind: GatewayOperation["kind"]): GatewayOperation {
   return {
@@ -15,71 +20,128 @@ function operation(kind: GatewayOperation["kind"]): GatewayOperation {
     targetVersion: kind === "update" ? "0.1.190" : null,
     warnings: [],
     error: null,
-  }
+  };
 }
 
 function Harness({
   operation: running,
   version,
 }: {
-  operation: GatewayOperation | null
-  version: string
+  operation: GatewayOperation | null;
+  version: string;
 }) {
-  const updatedTo = useUpdateResolution(running, version)
-  return <span data-testid="resolution">{updatedTo ?? "none"}</span>
+  const updatedTo = useUpdateResolution(running, version);
+  return <span data-testid="resolution">{updatedTo ?? "none"}</span>;
 }
 
 function resolution(): string | null {
-  return screen.getByTestId("resolution").textContent
+  return screen.getByTestId("resolution").textContent;
 }
 
 describe("useUpdateResolution", () => {
   afterEach(() => {
-    cleanup()
-    vi.useRealTimers()
-  })
+    cleanup();
+    vi.useRealTimers();
+  });
 
   it("reports the version an update the client watched landed on", () => {
-    const view = render(<Harness operation={operation("update")} version="0.1.189" />)
-    expect(resolution()).toBe("none")
-    view.rerender(<Harness operation={null} version="0.1.190" />)
-    expect(resolution()).toBe("0.1.190")
-  })
+    const view = render(
+      <Harness operation={operation("update")} version="0.1.189" />,
+    );
+    expect(resolution()).toBe("none");
+    view.rerender(<Harness operation={null} version="0.1.190" />);
+    expect(resolution()).toBe("0.1.190");
+  });
 
   it("clears the notice after its moment", async () => {
-    vi.useFakeTimers()
-    const view = render(<Harness operation={operation("update")} version="0.1.189" />)
-    view.rerender(<Harness operation={null} version="0.1.190" />)
-    expect(resolution()).toBe("0.1.190")
+    vi.useFakeTimers();
+    const view = render(
+      <Harness operation={operation("update")} version="0.1.189" />,
+    );
+    view.rerender(<Harness operation={null} version="0.1.190" />);
+    expect(resolution()).toBe("0.1.190");
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(UPDATED_NOTICE_MS)
-    })
-    expect(resolution()).toBe("none")
-  })
+      await vi.advanceTimersByTimeAsync(UPDATED_NOTICE_MS);
+    });
+    expect(resolution()).toBe("none");
+  });
 
   it("resolves nothing for a restart, which lands on the same version", () => {
-    const view = render(<Harness operation={operation("restart")} version="0.1.189" />)
-    view.rerender(<Harness operation={null} version="0.1.189" />)
-    expect(resolution()).toBe("none")
-  })
+    const view = render(
+      <Harness operation={operation("restart")} version="0.1.189" />,
+    );
+    view.rerender(<Harness operation={null} version="0.1.189" />);
+    expect(resolution()).toBe("none");
+  });
 
   it("resolves nothing while there is no gateway branch yet", () => {
-    const view = render(<Harness operation={operation("update")} version="" />)
-    view.rerender(<Harness operation={null} version="" />)
-    expect(resolution()).toBe("none")
-  })
+    const view = render(<Harness operation={operation("update")} version="" />);
+    view.rerender(<Harness operation={null} version="" />);
+    expect(resolution()).toBe("none");
+  });
 
   it("resolves nothing for an operation the client never saw start", () => {
-    const view = render(<Harness operation={null} version="0.1.189" />)
-    view.rerender(<Harness operation={null} version="0.1.190" />)
-    expect(resolution()).toBe("none")
-  })
+    const view = render(<Harness operation={null} version="0.1.189" />);
+    view.rerender(<Harness operation={null} version="0.1.190" />);
+    expect(resolution()).toBe("none");
+  });
 
   it("lets a new operation supersede a still-showing notice", () => {
-    const view = render(<Harness operation={operation("update")} version="0.1.189" />)
-    view.rerender(<Harness operation={null} version="0.1.190" />)
-    expect(resolution()).toBe("0.1.190")
-    view.rerender(<Harness operation={operation("restart")} version="0.1.190" />)
-    expect(resolution()).toBe("none")
-  })
-})
+    const view = render(
+      <Harness operation={operation("update")} version="0.1.189" />,
+    );
+    view.rerender(<Harness operation={null} version="0.1.190" />);
+    expect(resolution()).toBe("0.1.190");
+    view.rerender(
+      <Harness operation={operation("restart")} version="0.1.190" />,
+    );
+    expect(resolution()).toBe("none");
+  });
+});
+
+function RestartHarness({
+  operation: running,
+}: {
+  operation: GatewayOperation | null;
+}) {
+  const restarted = useRestartResolution(running);
+  return (
+    <span data-testid="restarted">{restarted ? "restarted" : "none"}</span>
+  );
+}
+
+function restartedText(): string | null {
+  return screen.getByTestId("restarted").textContent;
+}
+
+describe("useRestartResolution", () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it("reports a finished restart for a moment, then clears", () => {
+    vi.useFakeTimers();
+    const view = render(<RestartHarness operation={operation("restart")} />);
+    expect(restartedText()).toBe("none");
+    view.rerender(<RestartHarness operation={null} />);
+    expect(restartedText()).toBe("restarted");
+    act(() => {
+      vi.advanceTimersByTime(RESTARTED_NOTICE_MS);
+    });
+    expect(restartedText()).toBe("none");
+  });
+
+  it("stays silent when an update or a failed restart clears", () => {
+    const view = render(<RestartHarness operation={operation("update")} />);
+    view.rerender(<RestartHarness operation={null} />);
+    expect(restartedText()).toBe("none");
+    view.rerender(
+      <RestartHarness
+        operation={{ ...operation("restart"), phase: "failed" }}
+      />,
+    );
+    view.rerender(<RestartHarness operation={null} />);
+    expect(restartedText()).toBe("none");
+  });
+});

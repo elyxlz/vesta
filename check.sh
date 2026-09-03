@@ -15,10 +15,11 @@ Suites:
   vestad         cargo clippy -p vestad -D warnings + cargo test -p vestad
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
-  web            all four app slices below (core, web, desktop, mobile); CI runs them as separate jobs
+  web            all five app slices below (core, web, desktop, visual, mobile); CI runs them as separate jobs
   app-core       @vesta/core: eslint + prettier --check + tsc + vitest
   app-web        design-token sync check + @vesta/web: eslint + prettier --check + tsc + vitest
   app-desktop    @vesta/desktop: eslint + tsc + vitest
+  app-visual     @vesta/visual: eslint + vitest (the shared visual QA gallery and store)
   app-mobile     Expo dependency validation + @vesta/mobile: eslint + tsc + vitest + clean-prebuild verify
   mobile-ios     clean Expo prebuild + unsigned iOS simulator compile
   mobile-android clean Expo prebuild + Android debug compile
@@ -110,6 +111,7 @@ check_app_core() {
     npm -w @vesta/core run format:check
     npm -w @vesta/core run check
     npm -w @vesta/core run test
+    npx knip --workspace core --no-progress
   )
 }
 
@@ -124,6 +126,7 @@ check_app_web() {
     npm -w @vesta/web run format:check
     npm -w @vesta/web run check
     npm -w @vesta/web run test
+    npx knip --workspace web --no-progress
   )
 }
 
@@ -134,8 +137,21 @@ check_app_desktop() {
       npm install
     fi
     npm -w @vesta/desktop run lint
+    npm -w @vesta/desktop run format:check
     npm -w @vesta/desktop run check
     npm -w @vesta/desktop run test
+    npx knip --workspace desktop --no-progress
+  )
+}
+
+check_app_visual() {
+  (
+    cd apps
+    if [ ! -d node_modules ]; then
+      npm install
+    fi
+    npm -w @vesta/visual run lint
+    npm -w @vesta/visual run test
   )
 }
 
@@ -159,11 +175,12 @@ check_app_mobile() {
   )
 }
 
-# Local run-everything entry: CI runs the four app-* slices as separate jobs.
+# Local run-everything entry: CI runs the five app-* slices as separate jobs.
 check_web() {
   check_app_core
   check_app_web
   check_app_desktop
+  check_app_visual
   check_app_mobile
 }
 
@@ -351,6 +368,7 @@ for suite in "$@"; do
     app-core) check_app_core ;;
     app-web) check_app_web ;;
     app-desktop) check_app_desktop ;;
+    app-visual) check_app_visual ;;
     app-mobile) check_app_mobile ;;
     mobile-ios) check_mobile_native ios ;;
     mobile-android) check_mobile_native android ;;

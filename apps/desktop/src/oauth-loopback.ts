@@ -1,7 +1,15 @@
 import http from "node:http";
-import type { AddressInfo } from "node:net";
 
 const servers = new Map<number, http.Server>();
+
+// A listening TCP server always reports an address object; a string names a pipe, which this
+// loopback never binds.
+function boundPort(server: http.Server): number {
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("loopback server is not listening on a TCP port");
+  return address.port;
+}
 
 const CALLBACK_PAGE =
   "<!doctype html><meta charset=utf-8><title>Vesta</title>" +
@@ -13,12 +21,11 @@ export function startLoopback(onUrl: (url: string) => void): Promise<number> {
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(CALLBACK_PAGE);
-      const { port } = server.address() as AddressInfo;
-      onUrl(`http://127.0.0.1:${String(port)}${req.url ?? "/"}`);
+      onUrl(`http://127.0.0.1:${String(boundPort(server))}${req.url ?? "/"}`);
     });
     server.on("error", reject);
     server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address() as AddressInfo;
+      const port = boundPort(server);
       servers.set(port, server);
       resolve(port);
     });

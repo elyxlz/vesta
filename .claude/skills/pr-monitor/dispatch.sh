@@ -115,10 +115,11 @@ remove_transcript() {
 # silent. A failed listing returns early: an empty one legitimately means every
 # PR closed, but an errored one must never be read as "prune everything".
 prune_sessions() {
-  local repo="$1" dir open file pr
+  local repo="$1" dir open file pr wtroot
   dir="$STATE_ROOT/${repo//\//__}/sessions"
   [ -d "$dir" ] || return 0
   open=$(gh pr list --repo "$repo" --state open --limit 200 --json number -q '.[].number' 2>/dev/null) || return 0
+  wtroot="$(cd "$(git -C "$SKILL_DIR" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)"
   for file in "$dir"/pr-*.session; do
     [ -e "$file" ] || continue
     pr="${file##*/pr-}"
@@ -126,6 +127,9 @@ prune_sessions() {
     printf '%s\n' "$open" | grep -qx "$pr" && continue
     [ "${PR_MONITOR_PRUNE_TRANSCRIPTS:-0}" = "1" ] && remove_transcript "$(cat "$file")"
     rm -f "$file"
+    # The PR's review worktree dies with its session: it is a disposable read
+    # surface reset from master each run, so nothing in it is ever worth keeping.
+    [ -n "$wtroot" ] && git -C "$wtroot" worktree remove --force "$wtroot/.claude/worktrees/pr-review-$pr" 2>/dev/null
     echo "dispatch: pruned session for closed $repo#$pr" >&2
   done
 }
@@ -175,6 +179,9 @@ prune_worktrees() {
   git fetch -q origin 2>/dev/null || true
   for wt in "$root"/*/; do
     [ -d "$wt" ] || continue
+    # Review worktrees are always clean and at master, so this sweep would yank
+    # one from under a live run; their lifecycle is prune_sessions', on PR close.
+    case "$wt" in */pr-review-*) continue ;; esac
     [ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -1)" ] && continue
     head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || continue
     state=keep
@@ -242,6 +249,28 @@ await_backoff() {
   sleep "$(( until - now ))"
 }
 
+# A run launched in the dispatcher's own tree reads the deployed snapshot, which
+# can lag origin/master by releases and cite deleted code as current (#2175).
+# Give each PR a disposable worktree reset to just-fetched master instead: plain
+# reads resolve to today's code, the path is stable so the PR's resumed session
+# keeps its footing, and the dispatcher's checkout is never rewritten under the
+# running script. Only the repo this checkout tracks gets one; a foreign repo
+# has no local tree, and any failure falls back to the old working directory.
+review_worktree() {
+  local repo="$1" pr="$2" root wt
+  root="$(cd "$(git -C "$SKILL_DIR" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)" || return 1
+  git -C "$root" remote get-url origin 2>/dev/null | grep -qF "$repo" || return 1
+  git -C "$root" fetch -q origin master >/dev/null 2>&1 || return 1
+  wt="$root/.claude/worktrees/pr-review-$pr"
+  if [ -d "$wt" ]; then
+    git -C "$wt" checkout -q --detach origin/master >/dev/null 2>&1 || return 1
+    git -C "$wt" reset -q --hard origin/master >/dev/null 2>&1 || return 1
+  else
+    git -C "$root" worktree add -q --detach "$wt" origin/master >/dev/null 2>&1 || return 1
+  fi
+  printf '%s' "$wt"
+}
+
 handle() {
   local repo="$1" kind="$2" id="$3" pr="$4" prompt="$5"
   local sf sid out rc lock
@@ -262,7 +291,8 @@ handle() {
   # monitor reads it as handled, and the event is never emitted again.
   trap 'release "$repo" "$kind" "$id"; exit 143' TERM INT
   sf="$(session_file "$repo" "$pr")"
-  local before
+  local before wt
+  wt="$(review_worktree "$repo" "$pr")" || wt=""
   before=$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)
   local args=(-p --model "$MODEL" --output-format json --dangerously-skip-permissions)
   [ -s "$sf" ] && args+=(--resume "$(cat "$sf")")
@@ -272,7 +302,7 @@ handle() {
   # takes, because a run killed after it has pushed leaves the commit with nothing
   # explaining it, and the retry repeats the work. A polish pass dispatches a
   # blocking subagent and runs past half an hour; an abandoned run sat for twelve.
-  out=$(timeout "$RUN_TIMEOUT" claude "${args[@]}" "$prompt" 2>/dev/null)
+  out=$( { [ -z "$wt" ] || cd "$wt" || exit 9; } && timeout "$RUN_TIMEOUT" claude "${args[@]}" "$prompt" 2>/dev/null )
   rc=$?
   # A stored id that no longer resolves would fail every retry, so forget it.
   if [ "$rc" -ne 0 ]; then

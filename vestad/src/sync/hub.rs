@@ -10,12 +10,16 @@ use super::events::{NotificationChange, PendingNotifications};
 /// session that falls this far behind simply drops the intervening ones, which is acceptable by design.
 const USER_NOTIFICATION_BROADCAST_CAPACITY: usize = 256;
 
-/// One user-facing notification fanned out to every `/sync` session: the source agent plus the
-/// display triple (`kind` in `message`/`rate_limited`/`gateway_updated`, a title, and a body).
-/// Injected by the agent through `POST /agents/{name}/user-notification`, except `gateway_updated`,
-/// which the gateway publishes itself and names no agent. The client routes the toast on `kind`.
+/// One user-facing notification fanned out to every `/sync` session: the durable log entry's
+/// identity (`id`, `at`), the source agent, and the display triple (`kind` in
+/// `message`/`needs_user`/`gateway_updated`, a title, and a body). Injected by the agent through
+/// `POST /agents/{name}/user-notification`, except `gateway_updated`, which the gateway publishes
+/// itself and names no agent. The client routes the toast on `kind` and joins the feed by `id`.
 #[derive(Clone, Debug)]
 pub(crate) struct UserNotification {
+    pub id: u64,
+    /// Unix seconds at delivery, the log's own stamp.
+    pub at: u64,
     pub agent: String,
     pub kind: String,
     pub title: String,
@@ -30,6 +34,8 @@ pub(crate) struct SyncHub {
     notifications_tx: watch::Sender<u64>,
     notifications_rx: watch::Receiver<u64>,
     user_notifications_tx: broadcast::Sender<Arc<UserNotification>>,
+    user_feed_tx: watch::Sender<u64>,
+    user_feed_rx: watch::Receiver<u64>,
 }
 
 impl Default for SyncHub {
@@ -42,7 +48,8 @@ impl SyncHub {
     pub fn new() -> Self {
         let (notifications_tx, notifications_rx) = watch::channel(0);
         let (user_notifications_tx, _user_notifications_rx) = broadcast::channel(USER_NOTIFICATION_BROADCAST_CAPACITY);
-        Self { agents: Mutex::new(HashMap::new()), notifications_tx, notifications_rx, user_notifications_tx }
+        let (user_feed_tx, user_feed_rx) = watch::channel(0);
+        Self { agents: Mutex::new(HashMap::new()), notifications_tx, notifications_rx, user_notifications_tx, user_feed_tx, user_feed_rx }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, PendingNotifications>> {
@@ -91,12 +98,24 @@ impl SyncHub {
 
     /// Fan a user-facing notification out to every `/sync` session. A send with no subscribers, or one
     /// dropped by a lagging receiver, is an accepted no-op: user notifications are ephemeral.
-    pub fn publish_user_notification(&self, agent: &str, kind: String, title: String, body: String) {
-        let _ = self.user_notifications_tx.send(Arc::new(UserNotification { agent: agent.to_string(), kind, title, body }));
+    pub fn publish_user_notification(&self, notification: UserNotification) {
+        let _ = self.user_notifications_tx.send(Arc::new(notification));
     }
 
     fn bump_notifications(&self) {
         self.notifications_tx.send_modify(|v| *v = v.wrapping_add(1));
+    }
+
+    /// Subscribe to the user-notification feed's scalar state (the seen watermark and the newest
+    /// entry's stamp, carried on the gateway branch): a wake means sessions must re-emit gateway state.
+    pub fn subscribe_user_feed(&self) -> watch::Receiver<u64> {
+        self.user_feed_rx.clone()
+    }
+
+    /// Wake `/sync` sessions after the feed's scalars changed (an append moved the newest stamp, or
+    /// the user marked the feed seen).
+    pub fn bump_user_feed(&self) {
+        self.user_feed_tx.send_modify(|v| *v = v.wrapping_add(1));
     }
 }
 
@@ -109,9 +128,17 @@ mod tests {
         let hub = SyncHub::new();
         let mut first = hub.subscribe_user_notifications();
         let mut second = hub.subscribe_user_notifications();
-        hub.publish_user_notification("scout", "message".into(), "scout".into(), "hi".into());
+        hub.publish_user_notification(UserNotification {
+            id: 7,
+            at: 1_700_000_000,
+            agent: "scout".into(),
+            kind: "message".into(),
+            title: "scout".into(),
+            body: "hi".into(),
+        });
         for rx in [&mut first, &mut second] {
             let notification = rx.recv().await.expect("user notification");
+            assert_eq!(notification.id, 7);
             assert_eq!(notification.agent, "scout");
             assert_eq!(notification.kind, "message");
             assert_eq!(notification.title, "scout");

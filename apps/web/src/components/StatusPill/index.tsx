@@ -1,6 +1,5 @@
 import { connectionHostname } from "@/lib/connection";
 import { useGateway } from "@/providers/GatewayProvider/context";
-import { UpdatePill } from "@/components/UpdatePill";
 
 interface StatusPillProps {
   showHostname?: boolean;
@@ -29,7 +28,6 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
           </span>
         )}
       </div>
-      <UpdatePill />
     </div>
   );
 }

@@ -22,7 +22,7 @@ use crate::state::{
 };
 use crate::{
     agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
-    maintenance_window, mobile_app, operation, systemd, update,
+    maintenance_window, mobile_app, operation, systemd, update, user_notifications,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -41,7 +41,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services",
+    "services", "devices", "providers", "personalities",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 
@@ -527,10 +527,8 @@ async fn restart_gateway_handler(
     // Delay so the HTTP response can flush before systemctl kills this process.
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
-        let error = match tokio::task::spawn_blocking(systemd::restart).await {
-            Ok(Ok(())) => return,
-            Ok(Err(error)) => error,
-            Err(error) => error.to_string(),
+        let Some(error) = update::restart_self(state.shutdown_tx.subscribe()).await else {
+            return;
         };
         tracing::error!(%error, "gateway restart failed");
         // No new process is coming to empty the slot, so this one must, or every client would sit
@@ -757,6 +755,11 @@ async fn stop_agent_handler(
     tracing::info!(name = %name, "stopping agent");
     ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
+    // The agent exits before Docker reports the container stopped; for that window the roster
+    // projects Stopped instead of the container reading's Starting, and the lifecycle push treats
+    // the transition as the planned work it is.
+    let _operation =
+        agent_status::PublishedOperation::new(state.agent_status_cache.clone(), &name, docker::AgentOperation::Stopping);
 
     {
         let mut settings = state.settings.write().await;
@@ -771,6 +774,10 @@ async fn stop_agent_handler(
     docker::stop_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
+    // Uncached, a proxied request to this stopped agent fails its address resolve immediately
+    // and diagnoses "not running" at once, instead of dialing the stale address through the
+    // full bind-grace window first.
+    state.agent_status_cache.clear_bridge_ip(&name);
     Ok(ok_json())
 }
 
@@ -885,7 +892,6 @@ async fn destroy_agent_handler(
     // Forget the destroyed agent's lifecycle-observation state, so an agent later created under
     // the same name seeds fresh instead of diffing against its predecessor.
     state.agent_status_cache.forget_agent(&name);
-    state.mobile_app.forget_agent(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -966,7 +972,7 @@ async fn rename_agent_handler(
         save_settings(&settings);
     }
 
-    if let Err(e) = drop_rename_notification(&state.docker, &new_name, &name).await {
+    if let Err(e) = crate::agent_notification::drop(&state.docker, &new_name, &crate::agent_notification::rename(&name, &new_name)).await {
         tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
     }
 
@@ -975,90 +981,6 @@ async fn rename_agent_handler(
         .map_err(map_docker_err)?;
 
     Ok(Json(serde_json::json!({"name": new_name})))
-}
-
-/// Build the rename notification payload. Pure (no IO) so its shape can be
-/// asserted without spinning up a container.
-fn rename_notification_payload(
-    old_name: &str,
-    new_name: &str,
-    epoch_secs: u64,
-) -> Result<serde_json::Value, String> {
-    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
-    Ok(serde_json::json!({
-        "timestamp": timestamp,
-        "source": "vestad",
-        "type": "rename",
-        "interrupt": true,
-        "old_name": old_name,
-        "new_name": new_name,
-        "message": format!(
-            "you have been renamed from '{old_name}' to '{new_name}'. \
-             AGENT_NAME is now '{new_name}'. update your MEMORY.md and anything else \
-             that references your old name."
-        ),
-    }))
-}
-
-/// Write a vestad-authored notification JSON into an agent's notification intake. Best-effort: the
-/// caller decides whether a failure is fatal. Returns the file name written.
-async fn drop_notification(
-    docker: &bollard::Docker,
-    agent: &str,
-    file_name: &str,
-    payload: &serde_json::Value,
-) -> Result<String, String> {
-    let cname = docker::container_name(agent);
-    let bytes = serde_json::to_vec(payload).map_err(|e| format!("serialize notification: {e}"))?;
-    docker::upload_to_container(docker, &cname, "/root/agent/notifications", file_name, &bytes)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(file_name.to_string())
-}
-
-/// Drop a high-priority notification into the renamed agent so it self-updates
-/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
-/// to write the notification doesn't block the rename. Returns the notification
-/// file name written into the container.
-pub(crate) async fn drop_rename_notification(
-    docker: &bollard::Docker,
-    new_name: &str,
-    old_name: &str,
-) -> Result<String, String> {
-    let epoch = crate::time_utils::now_epoch_secs();
-    let payload = rename_notification_payload(old_name, new_name, epoch)?;
-    drop_notification(docker, new_name, &format!("rename-{epoch}.json"), &payload).await
-}
-
-/// Build the presence notification payload. Pure (no IO) so its shape can be
-/// asserted without spinning up a container. `interrupt: false` snoozes it
-/// (ambient presence), overridable by the user's `notification_rules`.
-fn presence_notification_payload(
-    epoch_secs: u64,
-    client: crate::types::ClientKind,
-) -> Result<serde_json::Value, String> {
-    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
-    let client = client.display_name();
-    Ok(serde_json::json!({
-        "timestamp": timestamp,
-        "source": "vestad",
-        "type": "user-presence",
-        "interrupt": false,
-        "message": format!("the user just opened {client} and is here now."),
-    }))
-}
-
-/// Drop a snoozed presence notification into the agent so Vesta knows the user
-/// just returned to a client. Best-effort: a stopped agent or write failure is
-/// logged, never fatal. Returns the notification file name written.
-pub(crate) async fn drop_presence_notification(
-    docker: &bollard::Docker,
-    agent: &str,
-    client: crate::types::ClientKind,
-) -> Result<String, String> {
-    let epoch = crate::time_utils::now_epoch_secs();
-    let payload = presence_notification_payload(epoch, client)?;
-    drop_notification(docker, agent, &format!("user-presence-{epoch}.json"), &payload).await
 }
 
 /// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent` so the
@@ -1533,15 +1455,7 @@ async fn read_file_handler(
         let content = docker::read_constitution(&state.env_config.agents_dir, &name)
             .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
         let size = content.len() as u64;
-        return Ok(Json(serde_json::json!({
-            "path": q.path,
-            "content": content,
-            "encoding": "utf-8",
-            "readonly": false,
-            "mode": 0o644,
-            "size": size,
-            "is_dir": false,
-        })));
+        return Ok(Json(file_read_json(&q.path, &content, "utf-8", false, 0o644, size)));
     }
 
     // Refuse symlinks anywhere in the path. Without this, an agent-controlled
@@ -1626,15 +1540,27 @@ async fn read_file_handler(
         )
     };
 
-    Ok(Json(serde_json::json!({
-        "path": q.path,
+    Ok(Json(file_read_json(&q.path, &content, encoding, readonly, mode, size)))
+}
+
+/// The GET /agents/{name}/file response body, the one owner of its shape.
+fn file_read_json(
+    path: &str,
+    content: &str,
+    encoding: &str,
+    readonly: bool,
+    mode: u32,
+    size: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "path": path,
         "content": content,
         "encoding": encoding,
         "readonly": readonly,
         "mode": mode,
         "size": size,
         "is_dir": false,
-    })))
+    })
 }
 
 #[derive(Deserialize)]
@@ -1809,6 +1735,21 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
+/// The port a (re)registration binds. A cached port is reused only when it sits in the safe band
+/// above the kernel's ephemeral range; a cached port at or below it can be handed out as a
+/// transient outbound source port and fail the caller's `bind()`, so it is dropped and a fresh
+/// safe port allocated. Every daemon re-registers on start, so a service still on a low port
+/// relocates itself the next time its daemon starts.
+// LEGACY(remove-when: no fleet service is registered on a port <= ephemeral_port_high): once no
+// agent carries a sub-ephemeral registration, the relocation arm never fires and this folds back
+// into "reuse cached, else allocate".
+fn port_for_registration(cached_port: Option<u16>, registry: &HashMap<String, HashMap<String, ServiceEntry>>, agent: &str) -> Option<u16> {
+    match cached_port {
+        Some(port) if port > ephemeral_port_high() => Some(port),
+        _ => allocate_service_port(registry, agent),
+    }
+}
+
 /// `public` is intrinsic to a registration, like the port: an absent field inherits
 /// the cached entry's value, so a re-register that only wants the port (whatsapp's
 /// `resolveVoiceBaseURL`, voice's own status/stop/restart) cannot silently revoke a
@@ -1827,13 +1768,6 @@ struct UserNotificationBody {
     kind: String,
     title: String,
     body: String,
-}
-
-/// The kinds an agent may inject are a closed set: `message` (a new agent reply) and `rate_limited`.
-/// An unknown kind is rejected so the user-notification surface cannot drift open, and that includes
-/// the gateway's own `gateway_updated`: only a real update publishes one, so no agent can forge it.
-fn valid_user_notification_kind(kind: &str) -> bool {
-    matches!(kind, "message" | "rate_limited")
 }
 
 /// Truncate to at most `max` chars on a char boundary, appending an ellipsis when it cut. Counting by
@@ -1856,15 +1790,12 @@ async fn user_notification_handler(
     Path(name): Path<String>,
     Json(body): Json<UserNotificationBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if !valid_user_notification_kind(&body.kind) {
+    if !user_notifications::agent_injectable_kind(&body.kind) {
         return Err(err_response(StatusCode::BAD_REQUEST, "unknown user notification kind"));
     }
     let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
     let preview = truncate_chars(&body.body, USER_NOTIFICATION_BODY_MAX_CHARS);
-    state
-        .sync_hub
-        .publish_user_notification(&name, body.kind.clone(), title.clone(), preview.clone());
-    state.mobile_app.push_user_notification(&name, &body.kind, &title, &preview);
+    state.user_notifier().await.notify(&name, &body.kind, title, preview);
     Ok(ok_json())
 }
 
@@ -1899,10 +1830,8 @@ async fn register_service_handler(
         .get(&name)
         .and_then(|services| services.get(&service_name))
         .copied();
-    let port = match cached_entry.map(|entry| entry.port) {
-        Some(cached_port) => cached_port,
-        None => allocate_service_port(&settings.services, &name).ok_or_else(no_free_ports_err)?,
-    };
+    let port = port_for_registration(cached_entry.map(|entry| entry.port), &settings.services, &name)
+        .ok_or_else(no_free_ports_err)?;
     let public = resolve_public(body.public, cached_entry);
 
     let entry = ServiceEntry { port, public };
@@ -2193,6 +2122,11 @@ async fn delete_backup_handler(
 /// The unified settings view returned by GET/PUT /gateway/settings. Single owner of
 /// the daemon-settings wire shape, shared by both handlers.
 fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Value {
+    let push_notifications: serde_json::Map<String, serde_json::Value> =
+        user_notifications::effective_push_kinds(&settings.push_notifications)
+            .into_iter()
+            .map(|(kind, enabled)| (kind.to_string(), serde_json::Value::Bool(enabled)))
+            .collect();
     serde_json::json!({
         "auto_update": settings.auto_update,
         "channel": channel,
@@ -2201,6 +2135,7 @@ fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Valu
             "every_n_days": settings.backup.every_n_days,
             "retention": settings.backup.retention,
         },
+        "push_notifications": push_notifications,
     })
 }
 
@@ -2275,6 +2210,41 @@ struct UpdateSettingsBody {
     auto_update: Option<bool>,
     channel: Option<String>,
     auto_backup: Option<SetBackupSettingsBody>,
+    /// Sparse per-kind push toggles, merged into the stored overrides.
+    push_notifications: Option<std::collections::HashMap<String, bool>>,
+}
+
+#[derive(Deserialize)]
+struct UserNotificationsQuery {
+    /// Return entries with ids below this (a page cursor); absent means newest.
+    before: Option<u64>,
+    limit: Option<usize>,
+}
+
+const USER_NOTIFICATIONS_DEFAULT_LIMIT: usize = 50;
+const USER_NOTIFICATIONS_MAX_LIMIT: usize = 200;
+
+/// `GET /notifications`: a newest-first, id-cursored page of the durable user-notification log
+/// (the history behind the ephemeral `user_notification` delta; a feed joins the two by id).
+async fn list_user_notifications_handler(
+    State(state): State<SharedState>,
+    Query(query): Query<UserNotificationsQuery>,
+) -> Json<serde_json::Value> {
+    let limit = query
+        .limit
+        .unwrap_or(USER_NOTIFICATIONS_DEFAULT_LIMIT)
+        .min(USER_NOTIFICATIONS_MAX_LIMIT);
+    let notifications = state.user_notification_log.page(query.before, limit);
+    Json(serde_json::json!({ "notifications": notifications }))
+}
+
+/// `POST /notifications/seen`: the user caught up on the feed (closed a history surface having
+/// been shown everything unseen). Advances the synced watermark to the server's now, so client
+/// clocks never decide what was seen, and wakes `/sync` sessions to carry it on the gateway branch.
+async fn mark_user_notifications_seen_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let seen_at = state.user_notification_log.mark_seen_now();
+    state.sync_hub.bump_user_feed();
+    Json(serde_json::json!({ "seenAt": seen_at }))
 }
 
 async fn get_gateway_settings_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
@@ -2306,6 +2276,14 @@ async fn put_gateway_settings_handler(
         })?),
         None => None,
     };
+    if let Some(ref push) = body.push_notifications {
+        if let Some(unknown) = push.keys().find(|kind| !user_notifications::known_push_kind(kind)) {
+            return Err(err_response(
+                StatusCode::BAD_REQUEST,
+                &format!("unknown notification kind '{unknown}'"),
+            ));
+        }
+    }
 
     {
         let mut settings = state.settings.write().await;
@@ -2320,6 +2298,10 @@ async fn put_gateway_settings_handler(
         if let Some(ref backup) = body.auto_backup {
             apply_backup_update(&mut settings.backup, backup);
             tracing::info!("auto-backup settings updated");
+        }
+        if let Some(push) = body.push_notifications {
+            settings.push_notifications.extend(push);
+            tracing::info!("push-notification settings updated");
         }
         save_settings(&settings);
     }
@@ -2629,12 +2611,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/health", get(health))
         .route("/info", get(info))
         .route("/auth/session", post(auth::create_session_handler))
-        .route("/auth/refresh", post(auth::refresh_session_handler))
-        // Reference data: read-only and non-sensitive (static per version, already shown in the
-        // public onboarding UI). Unauthenticated so every frontend reads it the same way — the
-        // app, the CLI, and the onboard skill (just another frontend hitting its own box's vestad
-        // over the loopback), none of which then need to keep a hardcoded copy.
-        .route("/manifest", get(crate::manifest::manifest_handler));
+        .route("/auth/refresh", post(auth::refresh_session_handler));
 
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
     // request so a stalled docker/restic call cannot hold a connection open indefinitely.
@@ -2646,34 +2623,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/auth/exchange", post(auth::exchange_session_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/info", get(gateway_info_handler))
-        .route(
-            "/providers/claude/oauth/start",
-            post(crate::providers::claude::oauth_start_handler),
-        )
-        .route(
-            "/providers/claude/oauth/complete",
-            post(crate::providers::claude::oauth_complete_handler),
-        )
-        .route(
-            "/providers/openai/oauth/start",
-            post(crate::providers::openai::oauth_start_handler),
-        )
-        .route(
-            "/providers/openai/oauth/complete",
-            post(crate::providers::openai::oauth_complete_handler),
-        )
-        .route(
-            "/providers/claude/models",
-            post(crate::providers::claude::list_models_handler),
-        )
-        .route(
-            "/providers/openrouter/models/top",
-            get(crate::providers::openrouter::list_top_models_handler),
-        )
-        .route(
-            "/providers/openrouter/validate-key",
-            post(crate::providers::openrouter::validate_key_handler),
-        )
         .route("/agents", get(list_agents_handler))
         .route("/agents/start", post(start_all_handler))
         .route(
@@ -2695,6 +2644,14 @@ pub fn build_router(state: SharedState) -> Router {
                 .delete(clear_provider_handler),
         )
         .route("/agents/{name}/provider/models", get(provider_models_handler))
+        .route(
+            "/agents/{name}/providers/{*path}",
+            any(agent_proxy::provider_setup_proxy_handler),
+        )
+        .route(
+            "/agents/{name}/personalities",
+            get(agent_proxy::personalities_proxy_handler),
+        )
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route(
@@ -2731,9 +2688,15 @@ pub fn build_router(state: SharedState) -> Router {
             put(mobile_app::register_device_handler).delete(mobile_app::delete_device_handler),
         )
         .route(
+            "/devices/{device_id}/context",
+            put(crate::user_context::report_context_handler),
+        )
+        .route(
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
         )
+        .route("/notifications", get(list_user_notifications_handler))
+        .route("/notifications/seen", post(mark_user_notifications_seen_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2789,6 +2752,7 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route("/agents/{name}/user-notification", post(user_notification_handler))
+        .route("/agents/{name}/devices", get(crate::user_context::agent_devices_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -3130,6 +3094,7 @@ pub async fn run_server(cfg: ServerConfig) {
         agents_dir,
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
+        vestad_lan_url: lan_url.clone(),
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");
@@ -3182,8 +3147,10 @@ pub async fn run_server(cfg: ServerConfig) {
     recover_interrupted_update(&state);
     // Every boot, not only after an interrupted update: a backup killed with its process (a crash,
     // a reboot mid-export) leaves the same throwaway container behind and nothing else collects it.
+    // A url import killed the same way leaves its partial download, on disk rather than in docker.
     let sweep_docker = docker.clone();
     tokio::spawn(async move { backup::sweep_backup_temp_artifacts(&sweep_docker).await });
+    crate::agent_bundle::sweep_import_downloads(&state.env_config.config_dir);
     // The device registry persists on a background flush task: every mutation (a /sync connect or a
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();
@@ -3203,6 +3170,7 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
+    let reconcile_status_cache = state.agent_status_cache.clone();
     tokio::spawn(async move {
         Box::pin(docker::reconcile_containers(
             &reconcile_docker,
@@ -3222,6 +3190,8 @@ pub async fn run_server(cfg: ServerConfig) {
             &reconcile_rebuilding,
         ))
         .await;
+        // Only now is a stable observation the agent's own news, not the tail of the reconcile.
+        reconcile_status_cache.begin_observing();
     });
     // Each agent has its own bridge network, so its calls into vestad (register-service,
     // user-notification, health) cannot reach the loopback bind below; they dial `BOX_HOST`
@@ -3245,6 +3215,7 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
+    let shutdown_state = state.clone();
     agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
         cache: state.agent_status_cache.clone(),
         docker,
@@ -3252,8 +3223,7 @@ pub async fn run_server(cfg: ServerConfig) {
         agents_dir: state.env_config.agents_dir.clone(),
         on_agents_changed,
         rebuilding: state.rebuilding.clone(),
-        mobile_app: state.mobile_app.clone(),
-        sync_hub: state.sync_hub.clone(),
+        state: state.clone(),
         gateway_operation: state.operation.clone(),
     });
     let app = build_router(state.clone());
@@ -3328,6 +3298,9 @@ pub async fn run_server(cfg: ServerConfig) {
         r = agent_handle => r.expect("agent-gateway https task panicked"),
         () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
+            shutdown_state.shutdown_tx.send_replace(true);
+            // The stops below are vestad's own work, exactly as the boot reconcile's starts are.
+            shutdown_state.agent_status_cache.stop_observing();
             docker::stop_all_agents(&shutdown_docker).await;
         }
     }
@@ -3362,22 +3335,10 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, resolve_public, spawn_pipeline_sse,
-        truncate_chars, update, valid_user_notification_kind, RegisterServiceBody,
+        allocate_service_port, ensure_not_rebuilding, ephemeral_port_high, port_for_registration,
+        resolve_public, spawn_pipeline_sse, truncate_chars, RegisterServiceBody, SERVICE_PORT_MAX,
+        SERVICE_PORT_MIN,
     };
-
-    #[test]
-    fn user_notification_kind_is_a_closed_set() {
-        assert!(valid_user_notification_kind("message"));
-        assert!(valid_user_notification_kind("rate_limited"));
-        assert!(
-            !valid_user_notification_kind(update::UPDATED_NOTIFICATION_KIND),
-            "the gateway owns its update announcement; an agent cannot inject one"
-        );
-        assert!(!valid_user_notification_kind("chat"));
-        assert!(!valid_user_notification_kind("status"));
-        assert!(!valid_user_notification_kind(""));
-    }
 
     #[test]
     fn truncate_chars_cuts_on_char_boundaries_with_an_ellipsis() {
@@ -3467,46 +3428,6 @@ mod tests {
         assert!(
             started.load(Ordering::SeqCst),
             "the pipeline spawned by spawn_pipeline_sse must run to completion regardless of SSE client disconnect"
-        );
-    }
-
-    // --- Rename notification payload (the content contract the agent self-heals on) ---
-
-    #[test]
-    fn rename_notification_payload_carries_both_names_and_rfc3339_timestamp() {
-        // Fixed epoch -> deterministic RFC3339 timestamp, no wall clock.
-        let payload = super::rename_notification_payload("old-bot", "new-bot", 1_700_000_000)
-            .expect("payload");
-        assert_eq!(payload["source"], "vestad");
-        assert_eq!(payload["type"], "rename");
-        assert_eq!(payload["interrupt"], true);
-        assert_eq!(payload["old_name"], "old-bot");
-        assert_eq!(payload["new_name"], "new-bot");
-        assert_eq!(payload["timestamp"], "2023-11-14T22:13:20Z");
-        let message = payload["message"].as_str().expect("message is a string");
-        assert!(
-            message.contains("old-bot"),
-            "message missing old name: {message}"
-        );
-        assert!(
-            message.contains("new-bot"),
-            "message missing new name: {message}"
-        );
-    }
-
-    #[test]
-    fn presence_payload_is_snoozed_vestad_notification() {
-        let payload = super::presence_notification_payload(
-            1_700_000_000,
-            crate::types::ClientKind::Web,
-        )
-        .expect("payload");
-        assert_eq!(payload["source"], "vestad");
-        assert_eq!(payload["type"], "user-presence");
-        assert_eq!(payload["interrupt"], false);
-        assert_eq!(
-            payload["message"],
-            "the user just opened Vesta Web App and is here now."
         );
     }
 
@@ -3695,32 +3616,37 @@ mod tests {
         );
     }
 
-    // vestad cannot probe bindability inside an agent's network namespace, since each agent has
-    // its own, so an existing registration is always reused: no liveness check, no bind probe.
-    // The caller's own bind() is the only
-    // real check, same as it is for every service. Replays register_service_handler's port
-    // decision, which is now this simple.
     #[test]
-    fn register_service_handler_reuses_a_cached_port_unconditionally() {
+    fn port_for_registration_keeps_a_safe_cached_port() {
+        // A port above the ephemeral range cannot be stolen as an outbound source port, so a
+        // re-registration reuses it unchanged (sticky, no churn on the common path).
+        let safe = SERVICE_PORT_MAX;
+        assert!(safe > ephemeral_port_high(), "test assumes a normal ephemeral range");
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        assert_eq!(port_for_registration(Some(safe), &empty, "agent"), Some(safe));
+    }
+
+    #[test]
+    fn port_for_registration_relocates_a_sub_ephemeral_cached_port() {
+        // A cached port the kernel can reuse as a transient outbound source port is dropped and a
+        // fresh safe one allocated, so the daemon's next re-register moves it out of harm's way.
+        let low = SERVICE_PORT_MIN;
+        assert!(low <= ephemeral_port_high(), "test assumes SERVICE_PORT_MIN is sub-ephemeral");
         let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
         registry.entry("agent".into()).or_default().insert(
-            "dashboard".into(),
-            ServiceEntry {
-                port: 55000,
-                public: false,
-            },
+            "tasks".into(),
+            ServiceEntry { port: low, public: false },
         );
+        let port = port_for_registration(Some(low), &registry, "agent").expect("allocate");
+        assert!(port > ephemeral_port_high(), "a sub-ephemeral cached port must relocate above the range");
+        assert_ne!(port, low);
+    }
 
-        let cached = registry
-            .get("agent")
-            .and_then(|services| services.get("dashboard"))
-            .map(|entry| entry.port);
-        let resolved = match cached {
-            Some(port) => port,
-            None => allocate_service_port(&registry, "agent").expect("a port should be free"),
-        };
-
-        assert_eq!(resolved, 55000, "an existing registration is always reused");
+    #[test]
+    fn port_for_registration_allocates_a_safe_port_when_uncached() {
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let port = port_for_registration(None, &empty, "agent").expect("allocate");
+        assert!(port > ephemeral_port_high(), "a first registration lands in the safe band");
     }
 
     // Reproduction of vesta#1323: the caller re-registering is often a resolver that never
@@ -3797,15 +3723,14 @@ mod tests {
 
     // ── API contract fixtures ──────────────────────────────────────────────
     //
-    // Serializes sample values of every wire type the web app consumes into
-    // apps/web/src/lib/vestad-api-fixtures.ts, using the real production
-    // serialization code. The web's api-contract.test.ts then `satisfies`-checks
-    // those fixtures against its TypeScript types, so a wire format change on
-    // either side fails CI instead of breaking clients at runtime.
+    // Serializes sample values of every vestad-owned wire type the clients read into
+    // apps/core/fixtures/vestad-api-fixtures.ts with the production serialization code;
+    // @vesta/core's api-contract.test.ts `satisfies`-checks them against its types, so a
+    // wire change on either side fails CI. Shapes the agent owns and vestad relays (usage,
+    // notification rules, personalities, provider catalogs, voice) have no entry here.
 
     use super::{ServiceEntry, TreeEntry};
     use crate::docker::{AgentStatus, ListEntry, StartAllResult, StatusJson};
-    use crate::providers::claude::OAuthStartResponse;
     use crate::types::{BackupInfo, BackupType};
     use std::collections::HashMap;
 
@@ -3832,6 +3757,7 @@ mod tests {
                 status: AgentStatus::Alive,
                 ws_port: 4200,
                 booting: false,
+                rate_limited: None,
                 started_at: Some("2026-01-01T00:00:00Z".into()),
             },
             ListEntry {
@@ -3839,26 +3765,31 @@ mod tests {
                 status: AgentStatus::Stopped,
                 ws_port: 4201,
                 booting: false,
+                rate_limited: None,
                 started_at: None,
             },
         ];
         let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
 
+        // `created_at` is restic's compact stamp, the shape the clients sort and format. The two
+        // optional version fields appear both ways: stamped on the kinds that carry them and absent
+        // on a pre-stamp snapshot, so the fixture pins the omitted shape too.
         let backups: Vec<serde_json::Value> = [
-            BackupType::Manual,
-            BackupType::Periodic,
-            BackupType::PreUpdate,
-            BackupType::PreRestore,
+            (BackupType::Manual, None, None),
+            (BackupType::Periodic, None, Some("0.1.0")),
+            (BackupType::PreUpdate, Some("v0.1.0"), Some("0.1.0")),
+            (BackupType::PreRestore, None, Some("0.1.0")),
         ]
         .into_iter()
-        .map(|backup_type| {
+        .map(|(backup_type, from_version, vestad_version)| {
             serde_json::to_value(BackupInfo {
                 id: "1a2b3c4d".into(),
                 agent_name: "sample-agent".into(),
                 backup_type,
-                created_at: "2026-01-01T00:00:00Z".into(),
+                created_at: "20260101-000000".into(),
                 size: 1234567890,
-                from_version: None,
+                from_version: from_version.map(str::to_string),
+                vestad_version: vestad_version.map(str::to_string),
             })
             .expect("serialize BackupInfo")
         })
@@ -3867,16 +3798,11 @@ mod tests {
         let agent_status_json = serde_json::to_value(StatusJson {
             name: "sample-agent".into(),
             status: AgentStatus::Alive,
+            booting: false,
             id: Some("c0ffee".into()),
             ws_port: 4200,
         })
         .expect("serialize StatusJson");
-
-        let auth_start = serde_json::to_value(OAuthStartResponse {
-            auth_url: "https://claude.ai/oauth/authorize?code=true".into(),
-            session_id: "0123456789abcdef".into(),
-        })
-        .expect("serialize OAuthStartResponse");
 
         // The POST /agents/start-all response body.
         let start_all = serde_json::json!({
@@ -3905,15 +3831,48 @@ mod tests {
             "auto_update": true,
         });
 
+        let gateway_info = super::gateway_info_json(
+            true,
+            Some("https://192.168.1.20:4111"),
+            Some("https://sample.vesta.run"),
+            4111,
+        );
+        let gateway_settings =
+            super::gateway_settings_json(&crate::settings::Settings::default(), "stable");
+        let agent_backup_settings = super::agent_backup_json(
+            true,
+            crate::types::RetentionPolicy { periodic: 1, pre_update_versions: 5 },
+            false,
+        )
+        .0;
+        let host_mount = serde_json::to_value(crate::mounts::HostMount {
+            host_path: "/home/sample/notes".into(),
+            container_path: "/mnt/notes".into(),
+            writable: false,
+        })
+        .expect("serialize HostMount");
+        let mounts = serde_json::json!({ "mounts": [host_mount] });
+        let mounts_updated = serde_json::json!({ "mounts": [host_mount], "restart_required": true });
+        let file_read = super::file_read_json("notes/todo.md", "hello", "utf-8", false, 0o644, 5);
+        let renamed = serde_json::json!({ "name": "sample-agent-2" });
+        let host_folders = serde_json::json!({ "folders": ["/home/sample/Documents"] });
+
         serde_json::json!({
             "agent_statuses": agent_statuses,
             "agents": agents_json,
             "agent_status_json": agent_status_json,
             "backups": backups,
-            "auth_start": auth_start,
             "start_all": start_all,
             "tree_entry": tree_entry,
             "version": version,
+            "gateway_info": gateway_info,
+            "gateway_settings": gateway_settings,
+            "agent_backup_settings": agent_backup_settings,
+            "mounts": mounts,
+            "mounts_updated": mounts_updated,
+            "file_read": file_read,
+            "renamed": renamed,
+            "host_folders": host_folders,
         })
     }
 
@@ -3948,20 +3907,25 @@ mod tests {
         let ts_content = format!(
             "// AUTO-GENERATED by vestad's API contract test. Do not edit by hand.\n\
              // Regenerate: cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\n\
-             // Checked by apps/web/src/lib/api-contract.test.ts against the web's TypeScript types.\n\
+             // Checked by apps/core/src/api/api-contract.test.ts against @vesta/core's TypeScript types.\n\
              export const vestadApiFixtures = {json} as const;\n"
         );
         let ts_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../apps/web/src/lib/vestad-api-fixtures.ts");
+            .join("../apps/core/fixtures/vestad-api-fixtures.ts");
         sync_fixture_file(&ts_path, &ts_content, regen);
 
-        // Sync-protocol fixtures (Stage 4): the /sync frames the @vesta/core contract test parses.
-        // Additive beside the web fixtures above, which retire when those clients migrate.
+        // Sync-protocol fixtures: the /sync frames the @vesta/core contract test parses and
+        // `satisfies`-checks against its tree types.
         let sync_json = serde_json::to_string_pretty(&crate::sync::protocol::protocol_fixtures())
             .expect("serialize sync fixtures");
-        let sync_content = format!("{sync_json}\n");
+        let sync_content = format!(
+            "// AUTO-GENERATED by vestad's API contract test. Do not edit by hand.\n\
+             // Regenerate: cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\n\
+             // Checked by apps/core/src/protocol/sync-contract.test.ts against @vesta/core's frame types.\n\
+             export const syncProtocolFixtures = {sync_json} as const;\n"
+        );
         let sync_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../apps/core/fixtures/sync-protocol.json");
+            .join("../apps/core/fixtures/sync-protocol.ts");
         sync_fixture_file(&sync_path, &sync_content, regen);
 
         // The restart tokens a client may send. vestad owns the copy each resolves to, so this list

@@ -1,9 +1,10 @@
+export interface ReplyTarget {
+  text: string;
+  sender: string;
+}
+
 export type MessageActionId =
-  | "reply"
-  | "copy"
-  | "edit-resend"
-  | "read-aloud"
-  | "share";
+  "reply" | "copy" | "edit-resend" | "read-aloud" | "share";
 
 export function messageActionIds({
   user,

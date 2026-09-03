@@ -1,0 +1,49 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // Hoisting pins for the workspace (see `overrides` in package.json), not imports.
+  "ignoreDependencies": ["expo-router", "react", "react-dom"],
+  // The postinstall runs mobile's patch-package from the workspace root.
+  "ignoreBinaries": ["patch-package"],
+  "workspaces": {
+    "core": {
+      "project": ["src/**/*.ts", "src/**/*.tsx"],
+      // A name on the @vesta/core barrel must have a consumer in web, mobile, or desktop.
+      "includeEntryExports": true
+    },
+    "web": {
+      "entry": ["visual/**/*.ts"],
+      "project": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.css", "visual/**/*.ts"],
+      "ignore": [
+        // The shadcn registry ships whole for the dashboard skill, so web never renders all of it.
+        "src/components/ui/**"
+      ],
+      // Consumed only by the ignored registry.
+      "ignoreDependencies": [
+        "@base-ui/react",
+        "cmdk",
+        "embla-carousel-react",
+        "input-otp",
+        "recharts"
+      ]
+    },
+    "desktop": {
+      "entry": ["src/preload.ts"],
+      "project": ["src/**/*.ts"],
+      // make-icons.py runs under uv, installed on the developer's machine, never a package.
+      "ignoreBinaries": ["uv"]
+    },
+    "mobile": {
+      "entry": ["visual/**/*.ts", "visual/**/*.tsx"],
+      "project": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "app/**/*.tsx",
+        "visual/**/*.ts",
+        "visual/**/*.tsx"
+      ]
+    },
+    "visual": {
+      "project": ["src/**/*.ts", "src/**/*.tsx"]
+    }
+  }
+}

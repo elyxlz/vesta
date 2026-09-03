@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useResource } from "@vesta/core/react";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,12 +8,12 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { useGateway } from "@/providers/GatewayProvider";
-import { useWhatsNew } from "@/stores/use-whats-new";
-import { filterReleaseNotes, fetchReleaseNotes } from "@/lib/whats-new";
-import type { ReleaseNote } from "@/lib/whats-new";
+import { useGateway } from "@/providers/GatewayProvider/context";
+import { useDialogs } from "@/stores/use-dialogs";
+import { filterReleaseNotes, fetchReleaseNotes } from "@vesta/core";
+import type { ReleaseNote } from "@vesta/core";
 import { useWhatsNewAutoOpen } from "./use-whats-new-auto-open";
 
 function formatReleaseDate(iso: string): string {
@@ -25,17 +26,23 @@ function formatReleaseDate(iso: string): string {
 
 export function WhatsNewButton() {
   const { reachable } = useGateway();
-  const setOpen = useWhatsNew((s) => s.setOpen);
+  const setDialogOpen = useDialogs((s) => s.setOpen);
+  const setOpen = useCallback(
+    (next: boolean) => {
+      setDialogOpen("whatsNew", next);
+    },
+    [setDialogOpen],
+  );
 
   if (!reachable) return null;
 
   return (
     <Button
       type="button"
-      variant="ghost"
-      size="xs"
+      variant="outline"
+      size="lg"
       onClick={() => setOpen(true)}
-      className="text-muted-foreground"
+      className="text-xs"
     >
       <Sparkles data-icon="inline-start" className="size-3.5" />
       What's new
@@ -47,38 +54,39 @@ export function WhatsNewButton() {
 // the settings navbar button opens the same instance via the store.
 export function WhatsNewDialog() {
   const { gatewayVersion, gatewayChannel } = useGateway();
-  const open = useWhatsNew((s) => s.open);
-  const setOpen = useWhatsNew((s) => s.setOpen);
-  const [notes, setNotes] = useState<ReleaseNote[] | null>(null);
-  const [failed, setFailed] = useState(false);
-
+  const open = useDialogs((s) => s.open.whatsNew);
+  const setDialogOpen = useDialogs((s) => s.setOpen);
+  const setOpen = useCallback(
+    (next: boolean) => {
+      setDialogOpen("whatsNew", next);
+    },
+    [setDialogOpen],
+  );
+  // The auto-open already carries the visible notes; a manual open fetches them once per
+  // gateway version. fetchReleaseNotes answers null on failure rather than throwing.
+  const [autoNotes, setAutoNotes] = useState<ReleaseNote[] | null>(null);
   const handleAutoOpen = useCallback(
     (visible: ReleaseNote[]) => {
-      setNotes(visible);
+      setAutoNotes(visible);
       setOpen(true);
     },
     [setOpen],
   );
   useWhatsNewAutoOpen(handleAutoOpen);
 
-  useEffect(() => {
-    if (!open || notes !== null) return;
-    let cancelled = false;
-    void fetchReleaseNotes().then((fetched) => {
-      if (cancelled) return;
-      setFailed(fetched === null);
-      if (fetched === null) return;
-      setNotes(
-        filterReleaseNotes(fetched, {
+  const fetched = useResource(
+    open && autoNotes === null ? gatewayVersion : null,
+    () => fetchReleaseNotes(),
+  );
+  const notes =
+    autoNotes ??
+    (fetched.data
+      ? filterReleaseNotes(fetched.data, {
           version: gatewayVersion,
           channel: gatewayChannel,
-        }),
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, notes, gatewayVersion, gatewayChannel]);
+        })
+      : null);
+  const failed = open && !fetched.loading && notes === null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

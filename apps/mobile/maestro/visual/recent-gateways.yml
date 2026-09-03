@@ -9,6 +9,40 @@ tags:
     permissions:
       camera: deny
 - extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
+- extendedWaitUntil:
     visible: "Try again"
     timeout: 30000
 - waitForAnimationToEnd:
@@ -18,11 +52,16 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: privacy-initialization-error.png
+# The unlock label carries the platform authentication name ("Unlock with
+# Face ID" on iOS, "Unlock Vesta" on Android), so the steps match by prefix.
 - tapOn:
     text: "Try again"
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
-    visible: "Unlock with Face ID"
+    visible: "Vesta is locked"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Unlock.*"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
@@ -32,7 +71,7 @@ tags:
     env:
       SCREENSHOT: privacy-locked.png
 - tapOn:
-    text: "Unlock with Face ID"
+    text: "Unlock.*"
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
     visible: "Device authentication is temporarily locked.*"
@@ -45,6 +84,9 @@ tags:
     env:
       SCREENSHOT: privacy-unlock-error.png
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - setPermissions:
     permissions:
       camera: deny
@@ -96,17 +138,19 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - extendedWaitUntil:
-    visible: "Natural chat pacing"
+    visible: '.*Provider and model.*'
     timeout: 30000
 - scrollUntilVisible:
     element:
-      text: "^Manage backups,.*"
+      text: "^Manage backups.*"
     direction: DOWN
     timeout: 10000
     speed: 40
     visibilityPercentage: 100
+    centerElement: true
+
 - tapOn:
-    text: "^Manage backups,.*"
+    text: "^Manage backups.*"
 - extendedWaitUntil:
     visible: "Available backups"
     timeout: 10000

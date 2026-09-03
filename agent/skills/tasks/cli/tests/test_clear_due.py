@@ -1,27 +1,16 @@
 """Clearing a due date.
 
-`clear` unsets a task's due date and deletes the auto reminders regenerated from it (see
-`db._create_auto_reminders_for_existing`). Only an explicit clear touches the date, and it cannot
-be combined with a due-setting field.
+`clear` unsets a task's due date, which silences its checkpoint ladder since checkpoints derive
+from the date. Only an explicit clear touches the date, and it cannot be combined with a
+due-setting field.
 """
 
-from contextlib import closing
-
 import pytest
-from tasks_cli import commands, db
+from tasks_cli import commands
 from tasks_cli.config import Config
 
 
-def _pending_auto_reminders(config: Config, task_id: str) -> int:
-    with closing(db.get_db(config.data_dir)) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM reminders WHERE task_id = ? AND auto_generated = 1",
-            (task_id,),
-        ).fetchone()
-    return row[0]
-
-
-def test_clear_due_removes_date_and_auto_reminders(tmp_config: Config):
+def test_clear_due_removes_the_date(tmp_config: Config):
     config = tmp_config
     task = commands.add_task(
         config,
@@ -31,7 +20,6 @@ def test_clear_due_removes_date_and_auto_reminders(tmp_config: Config):
     task_id = task["id"]
 
     assert task["due_date"] is not None
-    assert _pending_auto_reminders(config, task_id) > 0
 
     updated = commands.update_task(
         config,
@@ -40,11 +28,10 @@ def test_clear_due_removes_date_and_auto_reminders(tmp_config: Config):
     )
 
     assert updated["due_date"] is None
-    assert _pending_auto_reminders(config, task_id) == 0
 
 
 def test_clear_due_does_not_need_a_timezone(tmp_config: Config):
-    """`due_datetime` requires a timezone; clearing must not inherit that requirement."""
+    """Clearing takes no time flags at all: no datetime, no timezone."""
     config = tmp_config
     task = commands.add_task(config, subject="item", due=commands.DueSpec(due_in_hours=5))
 
@@ -71,4 +58,3 @@ def test_update_without_due_spec_leaves_the_date_alone(tmp_config: Config):
     updated = commands.update_task(config, task_id=task["id"], subject="renamed")
 
     assert updated["due_date"] == before
-    assert _pending_auto_reminders(config, task["id"]) > 0

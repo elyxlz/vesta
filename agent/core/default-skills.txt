@@ -7,6 +7,7 @@ dashboard
 dream
 email-client
 emergency
+maps
 microsoft
 nap
 notifications
@@ -14,12 +15,13 @@ onboard
 personality
 proactive-check
 recall
+reminders
 restart
 vestad
 skills-registry
 tasks
 timezone
-upstream-pr
+upstream
 vesta-cloud
 voice
 what-day

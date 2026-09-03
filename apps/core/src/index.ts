@@ -1,20 +1,16 @@
 export {
-  clientAheadOfGateway,
-  clientBelowMinimum,
   compareReleaseVersions,
   resolveClientVersion,
-} from "./protocol/release-version"
+} from "./protocol/release-version";
 
 export {
-  extractWhatsNew,
   fetchReleaseNotes,
   filterReleaseNotes,
-  parseReleaseNotes,
-} from "./release-notes/release-notes"
-export type { ReleaseNote } from "./release-notes/release-notes"
+} from "./release-notes/release-notes";
+export type { ReleaseNote } from "./release-notes/release-notes";
 
-export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi"
-export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"
+export { parseAnsi, resolveAnsiColor } from "./ansi/ansi";
+export type { AnsiColor, AnsiStyle } from "./ansi/ansi";
 
 export type {
   AgentActivityState,
@@ -25,129 +21,280 @@ export type {
   BuildPhase,
   DeviceInfo,
   DeviceKind,
+  DevicePlace,
+  DevicePosition,
   GatewayInfo,
-  GatewayLan,
   GatewayOperation,
-  GatewayOperationPhase,
+  RateLimitedInfo,
   ReleaseChannel,
   ServiceInfo,
   Tree,
-} from "./protocol/tree"
-export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
-export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
-export { selectDevices, devicesEqual } from "./tree/devices"
+} from "./protocol/tree";
+export type {
+  InputMethod,
+  NotificationEvent,
+  VestaEvent,
+} from "./protocol/events";
+export type { UserNotificationDelta, Delta } from "./protocol/deltas";
+export {
+  PILL_FALLBACK_ICON,
+  PILL_KIND_ICONS,
+  pillDisplayLine,
+  type PillNotification,
+} from "./notifications-pill/notifications-pill";
+export { type LoggedUserNotification } from "./notifications-pill/user-notification-feed";
+export {
+  feedSections,
+  feedUnseen,
+  feedView,
+  type FeedSections,
+  type FeedView,
+  type NotificationFeed,
+} from "./notifications-pill/notification-feed";
+export { parseServerFrame } from "./protocol/parse";
+export { selectDevices, devicesEqual } from "./tree/devices";
 export {
   gatewayOperationLabel,
   gatewayOperationsEqual,
   selectGatewayOperation,
-} from "./tree/gateway-operation"
+} from "./tree/gateway-operation";
 
-export { createReplica } from "./replica/store"
-export type { Replica } from "./replica/store"
+export { createReplica } from "./replica/store";
 
-export { ApiError, createHttpClient } from "./transport/http"
-export type { FetchLike, HttpClient, HttpDeps } from "./transport/http"
-export type { SocketLike, SyncSocketDeps, SyncState } from "./transport/socket"
-export { readSse } from "./transport/sse"
-export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse"
+export { ApiError, jsonInit } from "./transport/http";
+export type { FetchLike, HttpClient } from "./transport/http";
+export type { SyncState } from "./transport/socket";
+export type { DeviceContext } from "./protocol/frames";
+export { readSse } from "./transport/sse";
+export type { SseHandle, StreamEvent } from "./transport/sse";
 
-export type { ForegroundSignal } from "./adapters/types"
+export type { ForegroundSignal } from "./adapters/types";
 
-export { PACING, typingDelay } from "./pacing/pacing"
-
-export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons"
-export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons"
+export { agentHoldKey, createKeyedHoldStore } from "./holds/keyed-hold";
+export type { KeyedHoldStore } from "./holds/keyed-hold";
 
 export {
   notificationRowKey,
   parseNotificationContent,
-} from "./notification-content/notification-content"
-export type {
-  NotificationContent,
-  NotificationView,
-} from "./notification-content/notification-content"
+} from "./notification-content/notification-content";
+export type { NotificationView } from "./notification-content/notification-content";
 
 export {
+  TRIM_HISTORY_SETTLE_MS,
   beginSend,
   commitPacedChat,
   foldLiveEvent,
   initialChatState,
-  markSend,
   prependPage,
   seedTail,
-} from "./chat/chat-stream-model"
-export type { ChatMessage, ChatState, HistoryPage, SendState } from "./chat/chat-stream-model"
+} from "./chat/chat-stream-model";
+export type { ChatMessage, ChatState } from "./chat/chat-stream-model";
 
 export {
-  BUBBLE_GROUP_TIME_GAP_MS,
-  chatMessageSide,
-  startsNewBubbleGroup,
-} from "./chat/bubble-grouping"
-export type { ChatMessageSide } from "./chat/bubble-grouping"
-
-export { createChatSocket } from "./chat/chat-socket"
+  appChatAttachmentPath,
+  attachmentKind,
+  formatBytes,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+} from "./attachments/attachment-model";
 export type {
-  ChatSocket,
-  ChatSocketCallbacks,
-  ChatSocketDeps,
-  ChatSocketState,
-} from "./chat/chat-socket"
+  AttachmentKind,
+  ChatAttachment,
+} from "./attachments/attachment-model";
+export type {
+  Connectivity,
+  UploadErrorReason,
+  UploadMeta,
+} from "./attachments/upload";
+export { draftTotalBytes } from "./attachments/attachment-draft";
+export type { DraftAttachment } from "./attachments/attachment-draft";
 
-export { sendMessage } from "./intents/send-message"
-export type { IdGenerator, SendFailure, SendMessageBody, SentMessage } from "./intents/send-message"
+export { chatMessageSide, startsNewBubbleGroup } from "./chat/bubble-grouping";
+export type { ChatMessageSide } from "./chat/bubble-grouping";
 
+export { createChatSession } from "./chat/chat-session";
+export type { ChatSession } from "./chat/chat-session";
+export { createDraftStore } from "./attachments/draft-store";
+export type { DraftSource, DraftStore } from "./attachments/draft-store";
+
+export { createVoiceSession } from "./voice/voice-session";
+export type { VoiceMode, VoiceSession } from "./voice/voice-session";
+export type { AudioCapture } from "./voice/stt-session";
+export type { SpeechPlayer } from "./voice/tts-queue";
+
+export { sendMessage } from "./intents/send-message";
+
+// The gateway session: what every client holds, with the app injecting only persistence.
+export {
+  ConnectError,
+  GATEWAY_CONNECT_TIMEOUT_MS,
+  REAUTH_POLL_MS,
+  TOKEN_REFRESH_BUFFER_MS,
+  createSession,
+  isTokenExpiringSoon,
+  mintConnection,
+  normalizeGatewayUrl,
+  refreshConnection,
+  runReauthCheck,
+} from "./session/session";
+export type { ConnectionConfig, Session } from "./session/session";
+
+// The gateway REST catalog: every route once, as a function taking the app's HttpClient first.
+export {
+  AgentStatusError,
+  agentPath,
+  createAgent,
+  deleteAgent,
+  fetchUsage,
+  renameAgent,
+  restartAgent,
+  startAgent,
+  stopAgent,
+  waitUntilReady,
+  waitUntilRunning,
+} from "./api/agents";
+export type { Account, Usage, UsageCredits, UsageMeter } from "./api/agents";
+export {
+  completeClaudeOAuth,
+  completeOpenAIOAuth,
+  fetchAgentClaudeModels,
+  fetchClaudeModelsWithCredentials,
+  fetchOpenRouterModels,
+  getProvider,
+  provisionAgent,
+  setContextWindow,
+  setModel,
+  signOutProvider,
+  startClaudeOAuth,
+  startOpenAIOAuth,
+  validateOpenRouterKey,
+} from "./api/provider";
+export type {
+  ClaudeOAuthStart,
+  OpenAIOAuthStart,
+  OpenRouterModelOption,
+  ProviderResource,
+} from "./api/provider";
+export {
+  createBackup,
+  deleteBackup,
+  fetchAgentBackupSettings,
+  listBackups,
+  restoreBackup,
+  setAgentBackupSettings,
+} from "./api/backups";
+export type { BackupInfo } from "./api/backups";
+export {
+  getNotificationInterruptRules,
+  setNotificationInterruptRules,
+} from "./api/config-rules";
+export type {
+  FieldPredicate,
+  NotificationInterruptRule,
+} from "./api/config-rules";
+export { chatSocketPath, getNotificationHistory } from "./api/history";
+export { fetchFileTree, readFile, writeFile } from "./api/files";
+export type { FileReadResponse, FileTreeEntry } from "./api/files";
+export {
+  getAgentMounts,
+  getHostFolderSuggestions,
+  setAgentMounts,
+} from "./api/mounts";
+export type { HostMount } from "./api/mounts";
 export {
   checkForGatewayUpdate,
   dismissGatewayUpdate,
+  fetchGatewayInfo,
+  fetchGatewaySettings,
   triggerGatewayRestart,
   triggerGatewayUpdate,
-} from "./intents/gateway-update"
+  updateGatewaySettings,
+} from "./api/gateway";
+export type { GatewayEndpointInfo, GatewaySettings } from "./api/gateway";
+export {
+  contextForModel,
+  fetchPersonalities,
+  fetchProviderCatalog,
+} from "./api/catalogs";
+export type { Personality, PersonalityCatalog } from "./api/catalogs";
+export {
+  fetchSttUsage,
+  fetchTtsUsage,
+  fetchVoiceStatus,
+  prepareSpeech,
+  setVoiceEnabled,
+  setVoiceSetting,
+  sttListenPath,
+  ttsStreamPath,
+} from "./api/voice";
+export type {
+  SettingDef,
+  SttUsage,
+  TtsUsage,
+  VoiceDomain,
+  VoiceStatus,
+} from "./api/voice";
+export { agentLogsPath, gatewayLogsPath } from "./api/logs";
+export {
+  registerMobileDevice,
+  reportDeviceContext,
+  unregisterMobileDevice,
+} from "./api/devices";
 
 export {
   createServiceKeyCache,
-  isKeyFresh,
-  mintServiceKey,
   serviceKeyPathUrl,
-  serviceKeyQueryUrl,
-  serviceKeySocketUrl,
-} from "./service-keys/service-keys"
-export type { CachedServiceKey, ServiceKey, ServiceKeyCache } from "./service-keys/service-keys"
+} from "./service-keys/service-keys";
+export type { ServiceKeyCache } from "./service-keys/service-keys";
 
-export { rosterFromTree, rostersEqual } from "./tree/roster"
-export type { AgentRow } from "./tree/roster"
+export { rosterFromTree, rostersEqual } from "./tree/roster";
+export type { AgentRow } from "./tree/roster";
 
 export {
   agentIsConnectable,
   agentIsDown,
   agentNeedsUser,
-  agentOperationLabel,
-  agentOrbState,
   agentStatusKind,
   agentStatusLabel,
-  orbIsLive,
-} from "./agent-status/agent-status"
-export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
+  formatResetTime,
+} from "./agent-status/agent-status";
+export type { OrbVisualState } from "./agent-status/agent-status";
+
+export {
+  agentVisualStatus,
+  createAgentRequests,
+} from "./agent-request/agent-request";
+export type { AgentRequest } from "./agent-request/agent-request";
+
+export { ORB_GRADIENT_ANGLE_DEG, orbVisual } from "./orb/orb";
+export type { OrbMotion } from "./orb/orb";
+
+export {
+  buildBackupTimeline,
+  formatSnapshotStamp,
+  parseBackupKind,
+} from "./backups/backup-timeline";
+export type {
+  BackupTimelinePoint,
+  BackupTimelineRow,
+} from "./backups/backup-timeline";
 
 export {
   CLAUDE_ALIASES,
   canonicalClaudeModel,
-  normalizeProviderInfo,
-  providerPutBody,
   resolveProviderIdentity,
-} from "./provider/provider"
+} from "./provider/provider";
 export type {
-  ProviderAuthKind,
   ProviderContextPolicy,
   ProviderContextPreset,
   ProviderInfo,
   ProviderIdentity,
-  ProviderInfoWire,
   ProviderKind,
-  ProviderManifest,
-  ProviderManifestEntry,
-  ProviderPutBody,
+  ProviderCatalog,
+  ProviderCatalogEntry,
   ProviderSelection,
-} from "./provider/provider"
+} from "./provider/provider";
 
-export { createController } from "./controller/controller"
-export type { Controller, ControllerDeps } from "./controller/controller"
+export { createController } from "./controller/controller";
+export type { Controller, ControllerDeps } from "./controller/controller";
+export type { SocketLike } from "./transport/websocket";
+export type { ProviderInfoWire } from "./provider/provider";

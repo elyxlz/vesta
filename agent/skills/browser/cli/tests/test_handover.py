@@ -285,14 +285,14 @@ def test_readiness_ok_when_all_present(monkeypatch, isolated):
 
 
 def test_register_public_service_none_off_box(monkeypatch):
-    # No tunnel / agent env means dev or tests: fall back to a local port, no registration.
-    monkeypatch.delenv("VESTAD_TUNNEL", raising=False)
+    # No public URL / agent env means dev or tests: fall back to a local port, no registration.
+    monkeypatch.delenv("VESTAD_PUBLIC_URL", raising=False)
     monkeypatch.delenv("AGENT_NAME", raising=False)
     assert handover._register_public_service() is None
 
 
 def test_register_public_service_returns_port_and_public_url(monkeypatch, tmp_path):
-    monkeypatch.setenv("VESTAD_TUNNEL", "https://box.vesta.run/")
+    monkeypatch.setenv("VESTAD_PUBLIC_URL", "https://box.vesta.run/")
     monkeypatch.setenv("AGENT_NAME", "ada")
     script = tmp_path / "register-service"
     script.write_text("#!/bin/sh\necho 7431\n")
@@ -391,3 +391,38 @@ def test_free_display_reuses_a_dead_display(monkeypatch):
     # and corpses eventually exhausted the range. Judging by liveness makes a dead display reusable.
     monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: False)
     assert handover._free_display(start=99) == ":99"
+
+
+# ── the public route must not outlive the session ─────────────
+
+
+def test_stop_deregisters_the_public_service(monkeypatch, tmp_path):
+    # `start` registers a PUBLIC route. Leaving it behind advertises a public path at a port
+    # nothing is listening on, and the next handover inherits a route it never created.
+    killed = _record_kills(monkeypatch)
+    called = tmp_path / "called"
+    script = tmp_path / "deregister-service"
+    script.write_text(f'#!/bin/sh\necho "$1" >> {called}\n')
+    script.chmod(0o755)
+    monkeypatch.setattr(handover, "DEREGISTER_SERVICE", script)
+    assert handover.stop() == {"stopped": True}
+    assert called.read_text().split() == [handover.HANDOVER_SERVICE]
+    assert killed == []
+
+
+def test_stop_survives_a_missing_deregister_script(monkeypatch, tmp_path):
+    # Teardown must not fail because the helper is absent (dev boxes, older workspaces).
+    _record_kills(monkeypatch)
+    monkeypatch.setattr(handover, "DEREGISTER_SERVICE", tmp_path / "not-here")
+    assert handover.stop() == {"stopped": True}
+
+
+def test_stop_survives_a_failing_deregister(monkeypatch, tmp_path):
+    # vestad unreachable must not turn a teardown into an exception: the processes are already
+    # down by this point and raising here would strand the caller mid-cleanup.
+    _record_kills(monkeypatch)
+    script = tmp_path / "deregister-service"
+    script.write_text("#!/bin/sh\nexit 1\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(handover, "DEREGISTER_SERVICE", script)
+    assert handover.stop() == {"stopped": True}

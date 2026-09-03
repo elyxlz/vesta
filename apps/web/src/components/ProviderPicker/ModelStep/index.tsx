@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Field, FieldGroup } from "@/components/ui/field";
-import { openrouterProvider } from "@/api";
-
-type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { formatTokens } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { useScrollFade } from "@/hooks/use-scroll-fade";
+import {
+  glassFrost,
+  glassHover,
+  glassSelected,
+} from "@/components/NewAgent/glass";
 import { ProviderIcon } from "../ProviderIcon";
 import { ProviderStep } from "../ProviderStep";
 import { fuzzyMatch } from "../fuzzy";
 import { CLAUDE_ALIASES } from "../model-options";
 import { canonicalClaudeModel } from "@vesta/core";
+import type { OpenRouterModelOption } from "@vesta/core";
 
 export function ModelStep({
   initialModel,
@@ -17,24 +24,24 @@ export function ModelStep({
   onSubmit,
   models,
   claudeLiveModels,
-  allowCustom = true,
+  loadModels,
   submitLabel = "continue",
   logo,
-  onCancel,
+  onBack,
 }: {
   initialModel: string;
   onModelChange?: (model: string) => void;
   onSubmit: (model: string) => void;
   /// Fixed model list (e.g. Z.AI's). When provided, the step shows just these
-  /// and skips the OpenRouter fetch, search, and custom-slug.
+  /// and skips the OpenRouter fetch and search.
   models?: OpenRouterModelOption[];
   /// Claude's two-tier picker: the alias buttons plus this expandable live-slug
   /// list (null while loading). Takes over the render when not undefined.
   claudeLiveModels?: OpenRouterModelOption[] | null;
-  allowCustom?: boolean;
+  loadModels?: () => Promise<OpenRouterModelOption[]>;
   submitLabel?: string;
   logo?: ReactNode;
-  onCancel?: () => void;
+  onBack?: () => void;
 }) {
   const isFixed = models !== undefined;
   const isClaude = claudeLiveModels !== undefined;
@@ -46,7 +53,6 @@ export function ModelStep({
   const [topModels, setTopModels] = useState<OpenRouterModelOption[] | null>(
     models ?? null,
   );
-  const [customMode, setCustomMode] = useState(false);
 
   // Mirrors the model state so the one-shot fetch below can read the value
   // current at resolve time without depending on it.
@@ -59,10 +65,9 @@ export function ModelStep({
   };
 
   useEffect(() => {
-    if (isFixed || isClaude) return;
+    if (isFixed || isClaude || loadModels === undefined) return;
     let cancelled = false;
-    openrouterProvider
-      .fetchTopModels()
+    loadModels()
       .then((items) => {
         if (cancelled) return;
         setTopModels(items);
@@ -79,7 +84,7 @@ export function ModelStep({
     return () => {
       cancelled = true;
     };
-  }, [isFixed, isClaude, onModelChange]);
+  }, [isFixed, isClaude, loadModels, onModelChange]);
 
   const filtered = useMemo(() => {
     if (!topModels) return [];
@@ -108,7 +113,7 @@ export function ModelStep({
       onSubmit={() => {
         if (canContinue) onSubmit(model.trim());
       }}
-      onCancel={onCancel}
+      onBack={onBack}
     >
       <FieldGroup className="w-full gap-3">
         <Field>
@@ -119,52 +124,33 @@ export function ModelStep({
               onSelect={setModel}
             />
           ) : isFixed ? (
+            // A fixed catalog is one provider, so a per-row icon is redundant
+            // (and its author is a display name the icon CDN can't resolve).
             <ModelCardList
               models={filtered}
               selected={model}
               onSelect={setModel}
               loading={false}
+              showIcon={false}
             />
-          ) : customMode ? (
-            <>
-              <Input
-                id="or-model-custom"
-                placeholder="provider/model"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                autoFocus
-              />
-              <button
-                type="button"
-                className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
-                onClick={() => setCustomMode(false)}
-              >
-                ← back to top models
-              </button>
-            </>
           ) : (
             <>
-              <Input
-                id="or-model-search"
-                placeholder="search models..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
+              <div className="relative w-full">
+                <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="or-model-search"
+                  placeholder="search models..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="h-11 pl-10"
+                />
+              </div>
               <ModelCardList
                 models={filtered}
                 selected={model}
                 onSelect={setModel}
                 loading={topModels === null}
               />
-              {allowCustom && (
-                <button
-                  type="button"
-                  className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
-                  onClick={() => setCustomMode(true)}
-                >
-                  use a custom slug →
-                </button>
-              )}
             </>
           )}
         </Field>
@@ -186,37 +172,54 @@ function ClaudeModelPicker({
   onSelect: (slug: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const tileBase =
+    "flex cursor-pointer items-center justify-center rounded-2xl [corner-shape:squircle] p-3 text-center text-sm font-medium";
   return (
     <div className="flex w-full flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2">
+      {/* Opus and Sonnet fill the row; a compact tile expands the live list. */}
+      <div className="flex gap-2">
         {CLAUDE_ALIASES.map((a) => (
           <button
             key={a.slug}
             type="button"
             onClick={() => onSelect(a.slug)}
-            className={`rounded-xl border p-3 text-center text-sm font-medium transition-all cursor-pointer ${
-              model === a.slug
-                ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
-                : "border-border bg-input/30 hover:bg-input/60"
-            }`}
+            className={cn(
+              tileBase,
+              "flex-1",
+              glassFrost,
+              glassHover,
+              model === a.slug && glassSelected,
+            )}
           >
             {a.label}
           </button>
         ))}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? "fewer models" : "more models"}
+          onClick={() => setExpanded((v) => !v)}
+          className={cn(
+            tileBase,
+            "shrink-0 text-muted-foreground",
+            glassFrost,
+            glassHover,
+          )}
+        >
+          {expanded ? (
+            <ChevronUpIcon className="size-4" />
+          ) : (
+            <ChevronDownIcon className="size-4" />
+          )}
+        </button>
       </div>
-      <button
-        type="button"
-        className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        {expanded ? "← fewer models" : "more models →"}
-      </button>
       {expanded && (
         <ModelCardList
           models={liveModels ?? []}
           selected={model}
           onSelect={onSelect}
           loading={liveModels === null}
+          showIcon={false}
         />
       )}
     </div>
@@ -228,18 +231,23 @@ function ModelCardList({
   selected,
   onSelect,
   loading,
+  showIcon = true,
 }: {
   models: OpenRouterModelOption[];
   selected: string;
   onSelect: (slug: string) => void;
   loading: boolean;
+  showIcon?: boolean;
 }) {
+  const { ref, style, update } = useScrollFade<HTMLDivElement>();
+  // The box height is fixed, so a resize observer never fires; recompute the
+  // fade when the list contents change (search filter, catalog load).
+  useEffect(() => {
+    update();
+  }, [models, update]);
+
   if (loading) {
-    return (
-      <div className="flex h-[260px] items-center justify-center text-xs text-muted-foreground">
-        loading models...
-      </div>
-    );
+    return <ModelListSkeleton showIcon={showIcon} />;
   }
   if (models.length === 0) {
     return (
@@ -249,14 +257,53 @@ function ModelCardList({
     );
   }
   return (
-    <div className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto pr-1 -mr-1">
+    <div
+      ref={ref}
+      style={style}
+      // p-1/-m-1 keeps the layout width but gives the selected row's ring room
+      // inside the padding box, so the overflow clip never cuts it.
+      className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto p-1 -m-1"
+    >
       {models.map((m) => (
         <ModelCard
           key={m.slug}
           model={m}
           active={m.slug === selected}
+          showIcon={showIcon}
           onClick={() => onSelect(m.slug)}
         />
+      ))}
+    </div>
+  );
+}
+
+// Card-shaped placeholders that fill the list area while the catalog loads, so
+// the load reads as model cards resolving in place rather than a text spinner.
+const SKELETON_ROWS = [
+  { label: "w-2/5", detail: "w-3/5" },
+  { label: "w-1/2", detail: "w-2/5" },
+  { label: "w-1/3", detail: "w-1/2" },
+  { label: "w-2/5", detail: "w-1/3" },
+  { label: "w-1/2", detail: "w-3/5" },
+];
+
+function ModelListSkeleton({ showIcon }: { showIcon: boolean }) {
+  return (
+    <div className="flex max-h-[260px] flex-col gap-1.5 overflow-hidden">
+      {SKELETON_ROWS.map((row, i) => (
+        <div
+          key={i}
+          className={cn(
+            "flex items-center gap-2.5 rounded-2xl [corner-shape:squircle] px-2.5 py-1.5",
+            glassFrost,
+          )}
+        >
+          {showIcon && <Skeleton className="size-7 shrink-0 rounded-full" />}
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className={cn("h-3.5 rounded-md", row.label)} />
+            <Skeleton className={cn("h-2.5 rounded-md", row.detail)} />
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -265,10 +312,12 @@ function ModelCardList({
 function ModelCard({
   model,
   active,
+  showIcon,
   onClick,
 }: {
   model: OpenRouterModelOption;
   active: boolean;
+  showIcon: boolean;
   onClick: () => void;
 }) {
   const price = formatPrice(
@@ -276,26 +325,34 @@ function ModelCard({
     model.output_price,
     model.cache_read_price,
   );
+  // Author is carried by the icon, not repeated as text; the detail line shows
+  // only context + price, and is dropped when neither is known.
+  const detail = [
+    model.context_length ? `${formatTokens(model.context_length)} ctx` : null,
+    price,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-        active
-          ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
-          : "border-border bg-input/30 hover:bg-input/60 hover:border-border/80"
-      }`}
+      className={cn(
+        // A scroll-list row hovers with a fill/border shift, not the card lift
+        // + shadow of glassHover, whose shadow the overflow container clips.
+        "flex cursor-pointer items-center gap-2.5 rounded-2xl [corner-shape:squircle] px-2.5 py-1.5 text-left transition-colors hover:border-border/80 hover:bg-input/50",
+        glassFrost,
+        active && glassSelected,
+      )}
     >
-      <ProviderIcon name={model.author} />
+      {showIcon && <ProviderIcon name={model.author} className="size-7" />}
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{model.label}</span>
-        <span className="truncate text-[11px] text-muted-foreground">
-          {model.author}
-          {model.context_length
-            ? ` · ${formatTokens(model.context_length)} ctx`
-            : ""}
-          {price ? ` · ${price}` : ""}
-        </span>
+        {detail && (
+          <span className="truncate text-[11px] text-muted-foreground">
+            {detail}
+          </span>
+        )}
       </div>
     </button>
   );

@@ -1,22 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+import { useRouter } from "expo-router";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import { Ionicons } from "@expo/vector-icons";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useToast } from "@/components/native-toast";
 import { NativeDeleteRow } from "@/components/NativeDeleteRow";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { RecentGateway } from "@/storage/recent-gateway-model";
+import {
+  recentGatewayId,
+  type RecentGateway,
+} from "@/storage/recent-gateway-model";
 import { radii } from "@/theme/layout";
 
 const CONNECTION_PROGRESS_DELAY_MS = 150;
@@ -33,41 +33,46 @@ type ConnectionAttempt =
       message: string;
     };
 
-export default function RecentGatewaysScreen() {
-  return <RecentGatewaysContent />;
-}
-
 function gatewayName(gateway: RecentGateway): string {
   return new URL(gateway.url).host;
 }
 
+// Joined by hand so the label reads identically on iOS and Android; the
+// platforms join date and time with different separators otherwise.
 function lastConnectedLabel(timestamp: number): string {
-  return new Date(timestamp).toLocaleString([], {
-    month: "short",
-    day: "numeric",
+  const date = new Date(timestamp);
+  const day = date.toLocaleDateString([], { month: "short", day: "numeric" });
+  const time = date.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
+  return `${day} at ${time}`;
 }
 
-function RecentGatewaysContent() {
+export default function RecentGatewaysScreen() {
   const {
+    status,
+    connection,
     recentGateways,
     connectRecentGateway,
     forgetRecentGateway,
-    clearRecentGateways,
   } = useSession();
   const { showError } = useToast();
   const { colors } = usePreferences();
+  const router = useRouter();
   const connectionProgressTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const [connectionAttempt, setConnectionAttempt] =
     useState<ConnectionAttempt | null>(null);
   const [showConnectionState, setShowConnectionState] = useState(false);
+  const [pendingForget, setPendingForget] = useState<RecentGateway | null>(
+    null,
+  );
   const isConnecting = connectionAttempt?.status === "connecting";
   const showsConnectionState =
     showConnectionState && connectionAttempt !== null;
+  const currentGatewayId = connection ? recentGatewayId(connection.url) : null;
 
   useEffect(
     () => () => {
@@ -80,6 +85,7 @@ function RecentGatewaysContent() {
 
   const connect = async (gateway: RecentGateway, showImmediately = false) => {
     if (isConnecting) return;
+    const dismissAfterConnect = status === "connected";
     if (connectionProgressTimer.current) {
       clearTimeout(connectionProgressTimer.current);
       connectionProgressTimer.current = null;
@@ -98,6 +104,7 @@ function RecentGatewaysContent() {
 
     try {
       await connectRecentGateway(gateway.id);
+      if (dismissAfterConnect) router.dismissTo("/");
     } catch (cause) {
       if (connectionProgressTimer.current) {
         clearTimeout(connectionProgressTimer.current);
@@ -118,47 +125,28 @@ function RecentGatewaysContent() {
   };
 
   const confirmForget = (gateway: RecentGateway) => {
-    Alert.alert(
-      `Forget ${gatewayName(gateway)}?`,
-      "Its saved connection credentials will be permanently removed from this device.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Forget",
-          style: "destructive",
-          onPress: () => {
-            void forgetRecentGateway(gateway.id).catch((cause: unknown) =>
-              showError(cause, "Could not forget this gateway"),
-            );
-          },
-        },
-      ],
-    );
+    setPendingForget(gateway);
   };
 
-  const confirmClear = () => {
-    Alert.alert(
-      "Clear all recent gateways?",
-      "All saved gateway credentials will be permanently removed from this device.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear all",
-          style: "destructive",
-          onPress: () => {
-            void clearRecentGateways().catch((cause: unknown) =>
-              showError(cause, "Could not clear recent gateways"),
-            );
-          },
-        },
-      ],
+  const performForget = () => {
+    const gateway = pendingForget;
+    setPendingForget(null);
+    if (!gateway) return;
+    void forgetRecentGateway(gateway.id).catch((cause: unknown) =>
+      showError(cause, "Could not forget this gateway"),
     );
   };
 
   return (
     <AuthSheet
       mode={showsConnectionState ? "plain" : "scroll"}
-      title={showsConnectionState ? undefined : "Recent gateways"}
+      title={
+        showsConnectionState
+          ? undefined
+          : status === "connected"
+            ? "Switch gateway"
+            : "Recent gateways"
+      }
       hasGrabber
     >
       {showsConnectionState ? (
@@ -178,7 +166,11 @@ function RecentGatewaysContent() {
           style={styles.connectionState}
         >
           {connectionAttempt.status === "connecting" ? (
-            <ActivityIndicator size="large" color={colors.interactive} />
+            <LoadingSpinner
+              size="large"
+              color={colors.interactive}
+              style={styles.connectionSpinner}
+            />
           ) : (
             <View
               style={[
@@ -189,7 +181,7 @@ function RecentGatewaysContent() {
               <Ionicons
                 name="alert-circle-outline"
                 size={32}
-                color={colors.danger}
+                color={colors.text}
               />
             </View>
           )}
@@ -202,17 +194,17 @@ function RecentGatewaysContent() {
                 ? `Connecting to ${gatewayName(connectionAttempt.gateway)}`
                 : `Couldn’t connect to ${gatewayName(connectionAttempt.gateway)}`}
             </Text>
-            <Text
-              selectable={connectionAttempt.status === "error"}
-              style={[
-                styles.connectionStateDetail,
-                { color: colors.secondaryText },
-              ]}
-            >
-              {connectionAttempt.status === "connecting"
-                ? "Using saved connection…"
-                : connectionAttempt.message}
-            </Text>
+            {connectionAttempt.status === "error" ? (
+              <Text
+                selectable
+                style={[
+                  styles.connectionStateDetail,
+                  { color: colors.secondaryText },
+                ]}
+              >
+                {connectionAttempt.message}
+              </Text>
+            ) : null}
           </View>
           {connectionAttempt.status === "error" ? (
             <View style={styles.connectionStateActions}>
@@ -234,35 +226,24 @@ function RecentGatewaysContent() {
           exiting={FadeOut.duration(CONTENT_TRANSITION_MS)}
         >
           {recentGateways === null ? (
-            <ActivityIndicator
-              style={styles.loading}
-              color={colors.interactive}
-            />
+            <LoadingSpinner style={styles.loading} color={colors.interactive} />
           ) : recentGateways.length === 0 ? (
             <Text style={[styles.empty, { color: colors.secondaryText }]}>
               No saved gateways.
             </Text>
           ) : (
             <View style={styles.listContent}>
-              {recentGateways.map((gateway) => (
-                <NativeDeleteRow
-                  key={gateway.id}
-                  containerStyle={[
-                    styles.gateway,
-                    {
-                      backgroundColor: colors.input,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                  deleteAccessibilityLabel={`Forget ${gatewayName(gateway)}`}
-                  dangerColor={colors.danger}
-                  disabled={isConnecting}
-                  onDelete={() => confirmForget(gateway)}
-                >
+              {recentGateways.map((gateway) => {
+                const current = gateway.id === currentGatewayId;
+                const row = (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`Connect to ${gatewayName(gateway)}`}
-                    disabled={isConnecting}
+                    accessibilityLabel={
+                      current
+                        ? `${gatewayName(gateway)}, current gateway`
+                        : `Connect to ${gatewayName(gateway)}`
+                    }
+                    disabled={isConnecting || current}
                     onPress={() => void connect(gateway)}
                     style={({ pressed }) => [
                       styles.gatewayMain,
@@ -301,35 +282,77 @@ function RecentGatewaysContent() {
                         {lastConnectedLabel(gateway.lastConnectedAt)}
                       </Text>
                     </View>
-                    <Ionicons
-                      name="chevron-forward"
-                      size={17}
-                      color={colors.tertiaryText}
-                    />
+                    {current ? (
+                      <Text
+                        style={[
+                          styles.currentLabel,
+                          {
+                            backgroundColor: colors.accentSoft,
+                            color: colors.accent,
+                          },
+                        ]}
+                      >
+                        Current
+                      </Text>
+                    ) : (
+                      <Ionicons
+                        name="chevron-forward"
+                        size={17}
+                        color={colors.tertiaryText}
+                      />
+                    )}
                   </Pressable>
-                </NativeDeleteRow>
-              ))}
+                );
+                const containerStyle = [
+                  styles.gateway,
+                  {
+                    backgroundColor: colors.input,
+                    borderColor: colors.border,
+                  },
+                ];
+                return current ? (
+                  <View key={gateway.id} style={containerStyle}>
+                    {row}
+                  </View>
+                ) : (
+                  <NativeDeleteRow
+                    key={gateway.id}
+                    containerStyle={containerStyle}
+                    deleteAccessibilityLabel={`Forget ${gatewayName(gateway)}`}
+                    dangerColor={colors.danger}
+                    disabled={isConnecting}
+                    onDelete={() => confirmForget(gateway)}
+                  >
+                    {row}
+                  </NativeDeleteRow>
+                );
+              })}
             </View>
           )}
 
-          {(recentGateways?.length ?? 0) > 1 ? (
-            <View style={styles.clearAction}>
-              <Button
-                pill
-                size="compact"
-                variant="ghost"
-                icon="trash-outline"
-                iconSize={16}
-                labelStyle={styles.clearActionLabel}
-                disabled={isConnecting}
-                onPress={confirmClear}
-              >
-                Clear all gateways
-              </Button>
-            </View>
-          ) : null}
+          <View style={styles.footerActions}>
+            <Button
+              pill
+              size="compact"
+              variant="ghost"
+              labelStyle={styles.footerActionLabel}
+              disabled={isConnecting}
+              onPress={router.back}
+            >
+              Back
+            </Button>
+          </View>
         </Animated.View>
       )}
+      <ConfirmDialog
+        visible={pendingForget !== null}
+        title={`Forget ${pendingForget ? gatewayName(pendingForget) : ""}?`}
+        message="Its saved connection credentials will be permanently removed from this device."
+        confirmLabel="Forget"
+        destructive
+        onConfirm={performForget}
+        onDismiss={() => setPendingForget(null)}
+      />
     </AuthSheet>
   );
 }
@@ -341,6 +364,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 18,
   },
+  connectionSpinner: { transform: [{ scale: 0.75 }] },
   connectionStateIcon: {
     width: 56,
     height: 56,
@@ -397,6 +421,15 @@ const styles = StyleSheet.create({
   gatewayCopy: { flex: 1, gap: 2 },
   gatewayName: { fontSize: 16, lineHeight: 20, fontWeight: "500" },
   gatewayDetail: { fontSize: 13, lineHeight: 18 },
-  clearAction: { marginTop: 16 },
-  clearActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
+  currentLabel: {
+    borderRadius: radii.pill,
+    overflow: "hidden",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "600",
+  },
+  footerActions: { marginTop: 16 },
+  footerActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
 });

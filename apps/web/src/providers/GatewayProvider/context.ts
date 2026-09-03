@@ -2,13 +2,9 @@ import { createContext, useContext } from "react";
 import type { DeviceInfo, GatewayOperation, ReleaseChannel } from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
 
-// Context + hook live here, separate from the GatewayProvider component, so the
-// GatewayContext identity is stable across Fast Refresh. Co-locating them with the
-// component made every edit re-create the context, detaching mounted consumers
-// ("useGateway must be used within GatewayProvider" on hot reload).
 export interface GatewayContextValue {
   reachable: boolean;
-  /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
+  /** True iff this is a hosted (vesta.run-managed) gateway; gates the account link. */
   managed: boolean;
   gatewayVersion: string;
   gatewayChannel: ReleaseChannel;
@@ -25,6 +21,10 @@ export interface GatewayContextValue {
   agents: AgentRow[];
   agentsFetched: boolean;
   devices: DeviceInfo[];
+  /** The user-notification feed's synced seen watermark, 0 before the first catch-up ever. */
+  userNotificationsSeenAt: number;
+  /** The newest feed entry's stamp, null on an empty log or an older gateway. */
+  lastUserNotificationAt: number | null;
   triggerGatewayUpdate: () => Promise<boolean>;
   triggerGatewayRestart: () => Promise<boolean>;
   dismissUpdate: () => Promise<boolean>;
@@ -48,6 +48,8 @@ export const disconnectedValue: GatewayContextValue = {
   agents: [],
   agentsFetched: false,
   devices: [],
+  userNotificationsSeenAt: 0,
+  lastUserNotificationAt: null,
   triggerGatewayUpdate: () => Promise.resolve(false),
   triggerGatewayRestart: () => Promise.resolve(false),
   dismissUpdate: () => Promise.resolve(false),

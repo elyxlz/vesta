@@ -705,15 +705,17 @@ def test_owa_login_browser_captures_token(tmp_path, monkeypatch):
             self.stdout = out
 
     def fake_run(args, capture_output, text, env, check):
-        return _Res(fresh if args[1] == "evaluate" else "ok")
+        # `browser evaluate` prints the JS result JSON-encoded, so a string token arrives quoted.
+        return _Res(json.dumps(fresh) if args[1] == "evaluate" else "ok")
 
     monkeypatch.setattr(auth_commands.subprocess, "run", fake_run)
     result = auth_commands.owa_login(cfg, account_email="user@example.com")
     assert result["status"] == "success"
-    assert owa_rest.has_valid_token("user@example.com", cfg) is True
+    assert owa_rest.load_token("user@example.com", cfg) == fresh
 
 
-def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monkeypatch):
+@pytest.mark.parametrize("raw", ['"NONE"', "null", ""])
+def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monkeypatch, raw):
     from microsoft_cli import auth_commands
     from microsoft_cli.config import Config
 
@@ -723,7 +725,7 @@ def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monk
         def __init__(self, out):
             self.stdout = out
 
-    monkeypatch.setattr(auth_commands.subprocess, "run", lambda *a, **k: _Res("NONE"))
+    monkeypatch.setattr(auth_commands.subprocess, "run", lambda *a, **k: _Res(raw))
     result = auth_commands.owa_login(cfg, account_email="user@example.com")
     assert result["status"] == "sign_in_required"
     assert owa_rest.has_valid_token("user@example.com", cfg) is False

@@ -54,12 +54,13 @@ func linkServiceName() string {
 	return "wa-link"
 }
 
-// linkPageURL builds the URL the user opens: the public tunnel route when the
-// box has one, the raw local port otherwise (the caller then exposes it). The
-// service segment matches the registered vestad service name.
-func linkPageURL(tunnel, agentName, serviceName string, port int) string {
-	if tunnel != "" && agentName != "" {
-		return strings.TrimSuffix(tunnel, "/") + "/agents/" + agentName + "/" + serviceName + "/"
+// linkPageURL builds the URL the user opens: the gateway's user-facing route
+// ($VESTAD_PUBLIC_URL, the tunnel or a LAN address) when the box has one, the
+// raw local port otherwise (the caller then exposes it). The service segment
+// matches the registered vestad service name.
+func linkPageURL(publicURL, agentName, serviceName string, port int) string {
+	if publicURL != "" && agentName != "" {
+		return strings.TrimSuffix(publicURL, "/") + "/agents/" + agentName + "/" + serviceName + "/"
 	}
 	return fmt.Sprintf("http://localhost:%d/", port)
 }
@@ -186,7 +187,7 @@ func resolveQRLinkPage(requireBindable bool) (int, string, bool) {
 		port = registeredPort
 		registered = true
 	}
-	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
+	pageURL := linkPageURL(os.Getenv("VESTAD_PUBLIC_URL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
 	return port, pageURL, registered
 }
 
@@ -245,9 +246,9 @@ func waitForQRReady(port int, result <-chan socketCommandResult) (socketCommandR
 				}
 			}
 		case <-deadline.C:
-			data, _ := json.MarshalIndent(map[string]any{
+			data, _ := json.Marshal(map[string]any{
 				"error": "WhatsApp did not produce a QR code in time; run `whatsapp status` before retrying connect",
-			}, "", "  ")
+			})
 			return socketCommandResult{output: data, exitCode: 1, connected: true}, false
 		}
 	}
@@ -274,7 +275,7 @@ func currentQRLink() activeQRLink {
 }
 
 func runLink() {
-	if err := ensureDaemon(); err != nil {
+	if err := requireDaemon(); err != nil {
 		failJSON("%s", err.Error())
 	}
 	lock, err := acquireConnectLock()
@@ -287,7 +288,7 @@ func runLink() {
 		pageURL := fmt.Sprintf("http://localhost:%d/", active.port)
 		if active.service != "" {
 			pageURL = linkPageURL(
-				os.Getenv("VESTAD_TUNNEL"),
+				os.Getenv("VESTAD_PUBLIC_URL"),
 				os.Getenv("AGENT_NAME"),
 				active.service,
 				active.port,
@@ -336,7 +337,7 @@ func runLink() {
 }
 
 func runLinkPhone(phone string) {
-	if err := ensureDaemon(); err != nil {
+	if err := requireDaemon(); err != nil {
 		failJSON("%s", err.Error())
 	}
 	lock, err := acquireConnectLock()

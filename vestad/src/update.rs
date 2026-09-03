@@ -19,6 +19,7 @@ use crate::state::SharedState;
 // via POST /version/check.
 pub const CHECK_INTERVAL_SECS: u64 = 5 * 60 * 60;
 const FETCH_TIMEOUT_SECS: u64 = 10;
+const SELF_RESTART_DEATH_GRACE_SECS: u64 = 30;
 const ERROR_SNIPPET_MAX_LEN: usize = 300;
 const HTTP_STATUS_SENTINEL: &str = "\n__VESTA_HTTP_STATUS__:";
 const CACHE_FILE_NAME: &str = "update-check-cache.json";
@@ -88,6 +89,41 @@ pub fn check_once(channel: Channel) -> Result<UpdateInfo, String> {
 pub(crate) fn version_less_than(a: &str, b: &str) -> bool {
     let parse = |v: &str| -> Vec<u64> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
     parse(a) < parse(b)
+}
+
+/// Whether `version_less_than` reads this string correctly. It drops every dot component that is
+/// not a number, so a `dev` sentinel compares as nothing and a `v`-prefixed tag loses its major
+/// component. A guard that must not act on a wrong comparison checks here and fails open.
+pub(crate) fn version_comparable(version: &str) -> bool {
+    !version.is_empty() && version.split('.').all(|part| part.parse::<u64>().is_ok())
+}
+
+/// What this vestad must do about state stamped with the version that wrote it: a restic snapshot
+/// or an export bundle. State from a newer vestad would run under older code, so it is refused;
+/// older state converges on the agent's next boot, so that one is the caller's call. An unstamped
+/// or incomparable version fails open. One owner of the decision; each caller owns its wording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum VersionGate {
+    Proceed,
+    ConfirmOlder { stamped: String, current: String },
+    RefuseNewer { stamped: String, current: String },
+}
+
+pub(crate) fn version_gate(stamped: Option<&str>, current: &str) -> VersionGate {
+    let Some(stamped) = stamped else {
+        return VersionGate::Proceed;
+    };
+    if !version_comparable(stamped) || !version_comparable(current) {
+        return VersionGate::Proceed;
+    }
+    let (stamped, current) = (stamped.to_string(), current.to_string());
+    if version_less_than(&current, &stamped) {
+        VersionGate::RefuseNewer { stamped, current }
+    } else if version_less_than(&stamped, &current) {
+        VersionGate::ConfirmOlder { stamped, current }
+    } else {
+        VersionGate::Proceed
+    }
 }
 
 // Persisted across restarts so the conditional request below keeps working
@@ -357,10 +393,6 @@ pub fn recover_at_boot(config_dir: &Path, running_version: &str) -> BootRecovery
 
 // --- Announcing an update that landed ---
 
-/// The kind the announcement rides on the `user_notification` delta. Owned by the gateway: the
-/// agent-injected endpoint refuses it, so nothing but a real update can produce one.
-pub const UPDATED_NOTIFICATION_KIND: &str = "gateway_updated";
-
 /// The `agent` a gateway-owned user notification names: none. The field identifies the source, and
 /// the gateway is not an agent. Every shipped client degrades gracefully on it, rendering the
 /// server-decided title and body and routing nowhere.
@@ -390,12 +422,9 @@ pub fn announcement(recovery: &BootRecovery) -> Option<(String, String)> {
     let backup_warnings = if warnings.is_empty() {
         String::new()
     } else {
-        format!(" Backup warnings: {}.", warnings.join("; "))
+        format!("Backup warnings: {}.", warnings.join("; "))
     };
-    Some((
-        format!("Updated to v{version}"),
-        format!("Your gateway updated to v{version}.{backup_warnings}"),
-    ))
+    Some((format!("gateway updated to v{version}"), backup_warnings))
 }
 
 /// Whether the grace window passed with no client connected and focused. A client that focused at
@@ -418,12 +447,9 @@ pub async fn announce(state: SharedState, title: String, body: String) {
         return;
     }
     tracing::info!(%title, "announcing the update to the clients that missed it");
-    state
-        .mobile_app
-        .push_user_notification(GATEWAY_NOTIFICATION_AGENT, UPDATED_NOTIFICATION_KIND, &title, &body);
-    state.sync_hub.publish_user_notification(
+    state.user_notifier().await.notify(
         GATEWAY_NOTIFICATION_AGENT,
-        UPDATED_NOTIFICATION_KIND.to_string(),
+        crate::user_notifications::KIND_GATEWAY_UPDATED,
         title,
         body,
     );
@@ -509,11 +535,27 @@ pub async fn refresh_update_info(state: &SharedState) -> Result<UpdateInfo, Stri
     match tokio::task::spawn_blocking(move || check_once(channel)).await {
         Ok(Ok(info)) => {
             *state.update_info.lock().await = Some(info.clone());
+            announce_available(state, &info).await;
             Ok(info)
         }
         Ok(Err(error)) => Err(error),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Notify each newly discovered pending release once ever, remembered by the durable
+/// notification log itself: an ambient nudge beside the `UpdatePill`, for the gateways that
+/// update by hand, never repeated by a restart or a re-check.
+async fn announce_available(state: &SharedState, info: &UpdateInfo) {
+    if !info.update_available {
+        return;
+    }
+    state.user_notifier().await.notify_once(
+        GATEWAY_NOTIFICATION_AGENT,
+        crate::user_notifications::KIND_UPDATE_AVAILABLE,
+        format!("gateway v{} available", info.latest),
+        String::new(),
+    );
 }
 
 /// One update in flight: the state it drives and the identity it records at every transition.
@@ -587,11 +629,36 @@ async fn run_update(run: UpdateRun) {
         return run.finish();
     }
     run.advance(UpdatePhase::Restarting);
-    match tokio::task::spawn_blocking(crate::systemd::restart).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => run.fail(UpdateStage::Restarting, error),
-        Err(error) => run.fail(UpdateStage::Restarting, error.to_string()),
+    if let Some(error) = restart_self(run.state.shutdown_tx.subscribe()).await {
+        run.fail(UpdateStage::Restarting, error);
     }
+}
+
+/// Restart vestad's own unit, reporting `Some` only for a restart that genuinely failed. Failing
+/// on the success path would clear the `Restarting` ledger, erasing the signal the next boot needs
+/// to announce the update, and would leave the API restart's caller on a "failed" screen.
+pub(crate) async fn restart_self(shutdown: tokio::sync::watch::Receiver<bool>) -> Option<String> {
+    let error = match tokio::task::spawn_blocking(crate::systemd::restart).await {
+        Ok(Ok(())) => return None,
+        Ok(Err(error)) => error,
+        Err(error) => error.to_string(),
+    };
+    if self_restart_is_dying(shutdown, Duration::from_secs(SELF_RESTART_DEATH_GRACE_SECS)).await {
+        tracing::info!("restart is stopping this process; the next boot carries on from the ledger");
+        return None;
+    }
+    Some(error)
+}
+
+/// Whether this process is dying because the restart it asked systemd for is underway.
+/// `systemctl restart` on vestad's own unit SIGTERMs this process, which kills the systemctl
+/// child before it can report success, so an error exit is expected exactly when the restart is
+/// working. The shutdown signal inside the grace window is the confirmation to die quietly;
+/// surviving the window is the real failure.
+async fn self_restart_is_dying(mut shutdown: tokio::sync::watch::Receiver<bool>, grace: Duration) -> bool {
+    tokio::time::timeout(grace, shutdown.wait_for(|dying| *dying))
+        .await
+        .is_ok_and(|received| received.is_ok())
 }
 
 /// Snapshot each agent in turn, reporting progress and warnings as they happen so the update
@@ -894,7 +961,7 @@ mod tests {
                 version: "0.1.190".into(),
                 warnings: Vec::new(),
             }),
-            Some(("Updated to v0.1.190".into(), "Your gateway updated to v0.1.190.".into()))
+            Some(("gateway updated to v0.1.190".into(), String::new()))
         );
     }
 
@@ -905,11 +972,8 @@ mod tests {
             warnings: vec!["axel: snapshot timed out".into(), "mona: disk full".into()],
         })
         .expect("an update that landed announces");
-        assert_eq!(title, "Updated to v0.1.190");
-        assert_eq!(
-            body,
-            "Your gateway updated to v0.1.190. Backup warnings: axel: snapshot timed out; mona: disk full."
-        );
+        assert_eq!(title, "gateway updated to v0.1.190");
+        assert_eq!(body, "Backup warnings: axel: snapshot timed out; mona: disk full.");
     }
 
     fn focused_context() -> crate::sync::protocol::ClientContext {
@@ -1039,11 +1103,42 @@ mod tests {
     }
 
     #[test]
+    fn version_gate_refuses_newer_confirms_older_passes_equal_and_unstamped() {
+        // Both consumers read this one decision: a restore refuses RefuseNewer, an import refuses
+        // it and confirms ConfirmOlder. An inverted comparison would flip both at once.
+        assert!(matches!(version_gate(Some("9.9.9"), "0.2.1"), VersionGate::RefuseNewer { .. }));
+        assert!(matches!(version_gate(Some("0.1.0"), "0.2.1"), VersionGate::ConfirmOlder { .. }));
+        assert!(matches!(version_gate(Some("0.2.1"), "0.2.1"), VersionGate::Proceed));
+        assert!(matches!(version_gate(None, "0.2.1"), VersionGate::Proceed));
+        // Unparseable fails open, matching the client-compat convention. A `v` prefix is one such
+        // shape: comparing it would drop the major component and read v0.1.0 as newer than 0.2.1.
+        assert!(matches!(version_gate(Some("dev"), "0.2.1"), VersionGate::Proceed));
+        assert!(matches!(version_gate(Some("v0.1.0"), "0.2.1"), VersionGate::Proceed));
+        assert!(matches!(version_gate(Some("0.1.0"), "dev"), VersionGate::Proceed));
+    }
+
+    #[test]
+    fn version_gate_carries_both_versions_for_the_caller_to_word() {
+        assert_eq!(
+            version_gate(Some("9.9.9"), "0.2.1"),
+            VersionGate::RefuseNewer { stamped: "9.9.9".into(), current: "0.2.1".into() }
+        );
+    }
+
+    #[test]
     fn version_less_than_compares_numerically() {
         assert!(version_less_than("0.1.132", "0.1.141"));
         assert!(version_less_than("0.1.9", "0.1.10"));
         assert!(!version_less_than("0.1.141", "0.1.132"));
         assert!(!version_less_than("0.1.141", "0.1.141"));
+    }
+
+    #[test]
+    fn version_comparable_rejects_the_shapes_that_compare_wrong() {
+        assert!(version_comparable("0.1.141"));
+        assert!(!version_comparable("v0.1.141"));
+        assert!(!version_comparable("dev"));
+        assert!(!version_comparable(""));
     }
 
     #[test]
@@ -1146,5 +1241,31 @@ mod tests {
         if let (Some(stable), Some(beta)) = (stable, beta) {
             assert_ne!(stable, beta);
         }
+    }
+
+    #[tokio::test]
+    async fn a_restart_error_while_shutting_down_is_the_update_succeeding() {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let verdict = tokio::spawn(self_restart_is_dying(shutdown_rx, Duration::from_secs(30)));
+        shutdown_tx.send_replace(true);
+        assert!(verdict.await.expect("adjudicator task"));
+    }
+
+    #[tokio::test]
+    async fn a_restart_error_with_no_shutdown_signal_is_a_real_failure() {
+        // The timeout itself is the behavior under test: no signal ever arrives, so a short
+        // real grace is deterministic.
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        assert!(!self_restart_is_dying(shutdown_rx, Duration::from_millis(50)).await);
+    }
+
+    #[tokio::test]
+    async fn a_shutdown_already_signaled_before_the_adjudicator_looks_still_counts() {
+        // The SIGTERM can land before spawn_blocking returns the systemctl error, so the flag
+        // must read as dying even when it flipped before anyone was waiting on it. Subscribing
+        // after the send is the production shape: it marks the value already seen.
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+        shutdown_tx.send_replace(true);
+        assert!(self_restart_is_dying(shutdown_tx.subscribe(), Duration::from_secs(30)).await);
     }
 }

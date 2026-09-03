@@ -266,7 +266,7 @@ def test_format_for_display_strips_timestamp_microseconds():
         {
             "timestamp": "2025-01-01T12:34:56.123456+00:00",
             "source": "tasks",
-            "type": "reminder",
+            "type": "task_due",
             "message": "ping",
         }
     )
@@ -615,6 +615,43 @@ async def test_proactive_check_skipped_while_busy_fires_on_first_idle_tick(tmp_p
             seen = ticks[0]
             await wait_for_condition(lambda: ticks[0] >= seen + 2, message="monitor_loop did not tick after the check fired")
             assert len(proactive_files()) == 1, "exactly one proactive check fires per elapsed interval"
+        finally:
+            state.shutdown_event.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_proactive_check_interval_zero_disables_checks(tmp_path, monkeypatch):
+    """proactive_check_interval=0 turns proactive checks off: however far the clock advances on an
+    idle agent, no proactive-check notification is ever dropped."""
+    config = _passive_config(tmp_path, monkeypatch)
+    config.proactive_check_interval = 0
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    t0 = dt.datetime(2025, 1, 1, 12, 0, 0)
+    clock = [t0]
+    ticks = [0]
+    real_load = load_notifications
+
+    async def counting_load(*, config):
+        ticks[0] += 1
+        return await real_load(config=config)
+
+    with (
+        patch("core.loops._now", side_effect=lambda: clock[0]),
+        patch("core.loops.load_prompt", return_value="check in"),
+        patch("core.loops.load_notifications", counting_load),
+    ):
+        task = asyncio.create_task(monitor_loop(queue, state=state, config=config))
+        try:
+            await wait_for_condition(lambda: ticks[0] >= 1, message="monitor_loop never ticked")
+            clock[0] = t0 + dt.timedelta(days=7)
+            seen = ticks[0]
+            await wait_for_condition(lambda: ticks[0] >= seen + 2, message="monitor_loop did not tick past the jump")
+            assert list(config.notifications_dir.glob("proactive_check-*.json")) == []
         finally:
             state.shutdown_event.set()
             task.cancel()

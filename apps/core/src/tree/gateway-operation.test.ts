@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest";
 
-import type { GatewayInfo, GatewayOperation, Tree } from "../protocol/tree"
+import type { GatewayInfo, GatewayOperation, Tree } from "../protocol/tree";
 import {
   gatewayOperationLabel,
   gatewayOperationsEqual,
   selectGatewayOperation,
-} from "./gateway-operation"
+} from "./gateway-operation";
 
 function treeWith(operation: unknown): Tree {
   const gateway = {
@@ -19,8 +19,8 @@ function treeWith(operation: unknown): Tree {
     latestVersion: "0.1.190",
     managed: false,
     operation,
-  } as unknown as GatewayInfo
-  return { gateway, agents: {}, devices: [] }
+  } as unknown as GatewayInfo;
+  return { gateway, agents: {}, devices: [] };
 }
 
 describe("selectGatewayOperation", () => {
@@ -36,7 +36,7 @@ describe("selectGatewayOperation", () => {
         warnings: ["mona: backup failed (disk full)"],
         error: null,
       }),
-    )
+    );
     expect(operation).toEqual({
       kind: "update",
       phase: "snapshotting",
@@ -46,14 +46,14 @@ describe("selectGatewayOperation", () => {
       targetVersion: "0.1.190",
       warnings: ["mona: backup failed (disk full)"],
       error: null,
-    })
-  })
+    });
+  });
 
   it("reads an idle gateway, a missing field, and a missing tree as no operation", () => {
-    expect(selectGatewayOperation(treeWith(null))).toBeNull()
-    expect(selectGatewayOperation(treeWith(undefined))).toBeNull()
-    expect(selectGatewayOperation(null)).toBeNull()
-  })
+    expect(selectGatewayOperation(treeWith(null))).toBeNull();
+    expect(selectGatewayOperation(treeWith(undefined))).toBeNull();
+    expect(selectGatewayOperation(null)).toBeNull();
+  });
 
   it("reads a running restart, which reports the phase an update also ends on", () => {
     const operation = selectGatewayOperation(
@@ -67,10 +67,10 @@ describe("selectGatewayOperation", () => {
         warnings: [],
         error: null,
       }),
-    )
-    expect(operation?.kind).toBe("restart")
-    expect(operation?.phase).toBe("restarting")
-  })
+    );
+    expect(operation?.kind).toBe("restart");
+    expect(operation?.phase).toBe("restarting");
+  });
 
   it("ignores a kind it does not know, so a newer gateway never locks this app on an unknown operation", () => {
     expect(
@@ -86,8 +86,8 @@ describe("selectGatewayOperation", () => {
           error: null,
         }),
       ),
-    ).toBeNull()
-  })
+    ).toBeNull();
+  });
 
   it("ignores a phase it does not know, so a newer gateway never locks this app on an unknown state", () => {
     expect(
@@ -103,12 +103,14 @@ describe("selectGatewayOperation", () => {
           error: null,
         }),
       ),
-    ).toBeNull()
-  })
-})
+    ).toBeNull();
+  });
+});
 
 describe("gatewayOperationsEqual", () => {
-  const operation = (overrides: Partial<GatewayOperation> = {}): GatewayOperation => ({
+  const operation = (
+    overrides: Partial<GatewayOperation> = {},
+  ): GatewayOperation => ({
     kind: "update",
     phase: "snapshotting",
     agent: "axel",
@@ -118,24 +120,35 @@ describe("gatewayOperationsEqual", () => {
     warnings: ["mona: backup failed (disk full)"],
     error: null,
     ...overrides,
-  })
+  });
 
   it("treats structurally identical operations as equal, so a rebuilt tree does not re-render", () => {
-    expect(gatewayOperationsEqual(operation(), operation())).toBe(true)
-    expect(gatewayOperationsEqual(null, null)).toBe(true)
-  })
+    expect(gatewayOperationsEqual(operation(), operation())).toBe(true);
+    expect(gatewayOperationsEqual(null, null)).toBe(true);
+  });
 
   it("sees every field that moves during an operation", () => {
-    expect(gatewayOperationsEqual(operation(), null)).toBe(false)
-    expect(gatewayOperationsEqual(operation(), operation({ kind: "restart" }))).toBe(false)
-    expect(gatewayOperationsEqual(operation(), operation({ done: 2 }))).toBe(false)
-    expect(gatewayOperationsEqual(operation(), operation({ phase: "applying" }))).toBe(false)
-    expect(gatewayOperationsEqual(operation(), operation({ warnings: [] }))).toBe(false)
+    expect(gatewayOperationsEqual(operation(), null)).toBe(false);
     expect(
-      gatewayOperationsEqual(operation(), operation({ error: "while installing: curl failed" })),
-    ).toBe(false)
-  })
-})
+      gatewayOperationsEqual(operation(), operation({ kind: "restart" })),
+    ).toBe(false);
+    expect(gatewayOperationsEqual(operation(), operation({ done: 2 }))).toBe(
+      false,
+    );
+    expect(
+      gatewayOperationsEqual(operation(), operation({ phase: "applying" })),
+    ).toBe(false);
+    expect(
+      gatewayOperationsEqual(operation(), operation({ warnings: [] })),
+    ).toBe(false);
+    expect(
+      gatewayOperationsEqual(
+        operation(),
+        operation({ error: "while installing: curl failed" }),
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("gatewayOperationLabel", () => {
   it("names the agent and its place in the queue while backing up", () => {
@@ -150,8 +163,8 @@ describe("gatewayOperationLabel", () => {
         warnings: [],
         error: null,
       }),
-    ).toBe("backing up axel 2/4")
-  })
+    ).toBe("backing up axel 2/4");
+  });
 
   it("labels a restart with its one phase", () => {
     expect(
@@ -165,8 +178,8 @@ describe("gatewayOperationLabel", () => {
         warnings: [],
         error: null,
       }),
-    ).toBe("restarting")
-  })
+    ).toBe("restarting");
+  });
 
   it("falls back to a plain phrase when there is no agent to name", () => {
     const base = {
@@ -177,10 +190,18 @@ describe("gatewayOperationLabel", () => {
       targetVersion: "0.1.190",
       warnings: [],
       error: null,
-    }
-    expect(gatewayOperationLabel({ ...base, phase: "snapshotting" })).toBe("backing up your agents")
-    expect(gatewayOperationLabel({ ...base, phase: "applying" })).toBe("installing")
-    expect(gatewayOperationLabel({ ...base, phase: "restarting" })).toBe("restarting")
-    expect(gatewayOperationLabel({ ...base, phase: "failed" })).toBe("update failed")
-  })
-})
+    };
+    expect(gatewayOperationLabel({ ...base, phase: "snapshotting" })).toBe(
+      "backing up your agents",
+    );
+    expect(gatewayOperationLabel({ ...base, phase: "applying" })).toBe(
+      "installing",
+    );
+    expect(gatewayOperationLabel({ ...base, phase: "restarting" })).toBe(
+      "restarting",
+    );
+    expect(gatewayOperationLabel({ ...base, phase: "failed" })).toBe(
+      "update failed",
+    );
+  });
+});

@@ -180,8 +180,8 @@ def collect_boot_turns(
     proceeds to sync. When sync merges changes, its own restart naturally leaves the still-unmarked
     after-sync migrations for the next boot.
 
-    Daemons come up last, at the greeting's restart turn (it runs the restart skill's Daemons block),
-    so they never start against a Daemons block the sync or a migration is about to rewrite. The
+    Daemons come up last, at the greeting's restart turn (it runs the restart skill),
+    so they never start against a daemon list the sync or a migration is about to rewrite. The
     greeting is appended every boot, before it is known whether this boot restarts: a boot that
     settles (no-op sync, a migration batch that does not restart, a plain restart) ends on it and
     brings daemons up, while a boot that restarts mid-converge (sync merge, before-sync barrier)
@@ -224,7 +224,7 @@ def _consume_restart_reason(
         return lifecycle.FIRST_START
     stored = state.persisted.last_restart_reason
     if pending is not None and not lifecycle.is_crash(stored):
-        # An external actor (vestad backup/mounts/manual restart) handed in a reason for this boot.
+        # An external actor (vestad export/import/mounts/manual restart) handed in a reason for this boot.
         # It overrides the clean-restart placeholder the prior run persisted on its way down, but
         # never a recorded crash: the crash detail is the more important story to surface.
         reason = pending

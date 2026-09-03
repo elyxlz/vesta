@@ -1,27 +1,19 @@
 import { memo } from "react";
+import { bubbleRadiusStyle } from "../bubble-radius";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
-import type { InputMethod } from "@vesta/core";
-import type { ChatMessage } from "@/lib/types";
+import { formatResetTime } from "@vesta/core";
+import type { ChatAttachment, InputMethod, ChatMessage } from "@vesta/core";
 import { cn } from "@/lib/utils";
+import { AttachmentContent, type OpenViewerRequest } from "./AttachmentContent";
 
 export type RetryHandler = (
   intentId: string,
   text: string,
   inputMethod?: InputMethod,
+  attachments?: ChatAttachment[],
 ) => void;
-
-// Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
-// plenty of precision for "come back later" copy.
-function formatResetTime(resetsAt: number): string {
-  const minutes = Math.round((resetsAt * 1000 - Date.now()) / 60_000);
-  if (minutes <= 1) return "in a minute";
-  if (minutes < 60) return `in ${String(minutes)}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `in ${String(hours)}h`;
-  return `in ${String(Math.round(hours / 24))}d`;
-}
 
 function formatBubbleTime(ts: string | undefined): string {
   if (!ts) return "";
@@ -45,22 +37,33 @@ function statusLineText(
 export const ChatBubble = memo(function ChatBubble({
   event,
   className,
-  fullscreen,
   isMobile,
+  hasTail = true,
   onRetry,
+  agentName,
+  onOpenAttachment,
 }: {
   event: ChatMessage;
   className?: string;
-  fullscreen?: boolean;
   isMobile: boolean;
+  hasTail?: boolean;
   onRetry?: RetryHandler;
+  agentName?: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
+  // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
+  const large = !isMobile;
   if (event.type === "status") return null;
 
   if (event.type === "error" || event.type === "rate_limited") {
     return (
       <div className={cn("flex justify-center", className)}>
-        <span className="text-[11px] text-muted-foreground/60 select-none">
+        <span
+          className={cn(
+            "text-muted-foreground/60 select-none",
+            large ? "text-sm" : "text-[11px]",
+          )}
+        >
           {statusLineText(event)}
         </span>
       </div>
@@ -68,6 +71,8 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (event.type !== "user" && event.type !== "chat") return null;
+
+  const ts = formatBubbleTime(event.ts);
 
   // A send whose POST failed (503 retryable) or errored: a subtle "not sent" line with tap-to-retry,
   // re-posting the same intent id. Delivery truth is still the echo, which clears send_state.
@@ -77,20 +82,24 @@ export const ChatBubble = memo(function ChatBubble({
     (event.send_state === "retry" || event.send_state === "failed")
   ) {
     const intentId = event.intent_id;
-    const { text, input_method } = event;
+    const { text, input_method, attachments } = event;
     return (
       <div className={className}>
         <MessageBubble
           isUser
           text={text}
-          ts={formatBubbleTime(event.ts)}
-          mobileCard={Boolean(fullscreen && isMobile)}
+          ts={ts}
+          large={large}
+          hasTail={hasTail}
+          attachments={attachments}
+          agentName={agentName}
+          onOpenAttachment={onOpenAttachment}
         />
         <div className="mt-0.5 flex justify-end pr-1">
           <button
             type="button"
             onClick={() => {
-              onRetry?.(intentId, text, input_method);
+              onRetry?.(intentId, text, input_method, attachments);
             }}
             className="text-[10px] text-destructive/70 transition-colors select-none hover:text-destructive"
           >
@@ -105,9 +114,13 @@ export const ChatBubble = memo(function ChatBubble({
     <MessageBubble
       isUser={event.type === "user"}
       text={event.text}
-      ts={formatBubbleTime(event.ts)}
+      ts={ts}
       className={className}
-      mobileCard={Boolean(fullscreen && isMobile)}
+      large={large}
+      hasTail={hasTail}
+      attachments={event.attachments}
+      agentName={agentName}
+      onOpenAttachment={onOpenAttachment}
     />
   );
 });
@@ -117,37 +130,60 @@ function MessageBubble({
   text,
   ts,
   className,
-  mobileCard,
+  large,
+  hasTail,
+  attachments,
+  agentName,
+  onOpenAttachment,
 }: {
   isUser: boolean;
   text: string;
   ts: string;
   className?: string;
-  // Mobile fullscreen lifts the agent bubble onto a card surface with a ring/shadow; the
-  // bg override goes through the same `*:data-[slot=bubble-content]` channel the variant uses
-  // so twMerge drops the variant's bg-secondary cleanly.
-  mobileCard: boolean;
+  // Desktop fullscreen: 16px body text (overrides the ui bubble's text-sm default).
+  large: boolean;
+  // Only the last bubble of a group carries the tighter tail corner.
+  hasTail: boolean;
+  attachments?: ChatAttachment[];
+  agentName?: string;
+  onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
+  // Attachments need the agent name to build their URLs; a caller that omits it (the Debug
+  // stream) renders the caption alone.
+  const blocks =
+    agentName !== undefined &&
+    attachments !== undefined &&
+    attachments.length > 0
+      ? { agentName, attachments }
+      : null;
   return (
     <Message align={isUser ? "end" : "start"} className={className}>
       <Bubble
         variant={isUser ? "default" : "secondary"}
         align={isUser ? "end" : "start"}
-        className={cn(
-          "max-w-[85%]",
-          !isUser && mobileCard && "*:data-[slot=bubble-content]:bg-card",
-        )}
+        className="max-w-[85%]"
       >
         <BubbleContent
-          className={cn(
-            "flex items-end rounded-squircle-sm [corner-shape:squircle] px-3 py-1.5",
-            isUser ? "rounded-br-sm" : "rounded-bl-sm",
-            mobileCard &&
-              "shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
-          )}
+          className={cn("flex items-end px-3.5 py-1.5", large && "text-base")}
+          // Pill bubble; the last bubble of a group gets one tighter "tail"
+          // corner for the conversation look.
+          style={bubbleRadiusStyle(isUser, hasTail)}
         >
+          {/* Block flow (not flex) so adjacent markdown paragraphs keep their collapsed margins. */}
           <div className="min-w-0 break-words">
-            <Markdown>{text}</Markdown>
+            {blocks && (
+              <div className={cn("flex flex-col gap-2.5 py-1", text && "mb-1")}>
+                {blocks.attachments.map((attachment) => (
+                  <AttachmentContent
+                    key={attachment.id}
+                    agent={blocks.agentName}
+                    attachment={attachment}
+                    onOpen={onOpenAttachment}
+                  />
+                ))}
+              </div>
+            )}
+            {text && <Markdown>{text}</Markdown>}
           </div>
           {ts && (
             <span

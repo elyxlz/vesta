@@ -1,0 +1,141 @@
+appId: ${APP_ID}
+name: Chat states
+tags:
+  - visual
+  - connected
+---
+- clearState
+- setPermissions:
+    permissions:
+      location: inuse
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=delivery"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
+- extendedWaitUntil:
+    visible: '.*Retry sending message.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-delivery
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-delivery.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=errors"
+- extendedWaitUntil:
+    visible: '.*Rate limited.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-errors
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-errors.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=markdown"
+- extendedWaitUntil:
+    visible: '.*Rotating the key.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-markdown
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-markdown.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=long"
+- extendedWaitUntil:
+    visible: '.*visual regressions.*'
+    timeout: 30000
+- swipe:
+    start: "50%,30%"
+    end: "50%,80%"
+    duration: 250
+- swipe:
+    start: "50%,30%"
+    end: "50%,80%"
+    duration: 250
+- extendedWaitUntil:
+    visible: '.*Status check.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-scrolled
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-scrolled.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualServices=voice"
+- extendedWaitUntil:
+    visible: '.*Start voice input.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-voice-button
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-voice-button.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*visual regressions.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Waiting for agent.*'
+- inputText: "Can you also book the room?"
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-draft
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-draft.png

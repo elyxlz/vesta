@@ -1,7 +1,7 @@
 export const meta = {
   name: 'repo-architecture',
   description: 'Higher-altitude pass: audit the whole system against the codified Architecture Principles and the elegance north star; specifiable improvements become PRs (including structural simplifications), genuine design forks become GitHub issues',
-  whenToUse: 'Recurring architecture and test-strategy review. Defaults to landing verified PRs; reserves issues for decisions that genuinely need the user.',
+  whenToUse: 'Recurring architecture and test-strategy review. Defaults to landing verified PRs; reserves issues for decisions that genuinely need the user. args {emit:\'draft\'} returns the triage instead of opening anything.',
   phases: [
     { title: 'Audit', detail: 'per architectural concern, whole-system survey' },
     { title: 'Triage', detail: 'dedup, verify, group into PRs and issues' },
@@ -16,27 +16,31 @@ const fast = (prompt, opts) => agent(prompt, { model: 'haiku', ...opts })
 
 const NORTH_STAR = `NORTH STAR: elegance. 90% of the value for 10% of the effort. The best architecture has fewer moving parts, not better-managed ones. Be bold in scope, ruthless in the result: merge modules, delete layers, collapse config into defaults; the system must END SIMPLER. Vesta is a single-tenant personal daemon: never propose distributed-systems ceremony (circuit breakers, bulkheads, dashboards). A complex final design is failure, not ambition.`
 
-const SYSTEM_CONTEXT = `Intentional design, never propose unwinding:
-- vestad daemon (Rust: Docker + HTTP/WS API), vesta CLI (Rust), Python agent in Docker, React SPA in Tauri. No shared crate between cli and vestad. No MCP servers.
-- The agent drives the claude CLI in tmux via the in-repo cc_sdk, not the official SDK.
-- SQLite events.db (FTS5), persisted session_id for resume, restic snapshot backups.
-- Functional Python (no classes-with-methods, no getattr/.get fallback/hasattr); Rust without panic/unwrap/expect on fallible paths; no dashes in prose; check.sh is the single test entry point; release.sh owns versions (never bump in a PR).`
+const SYSTEM_CONTEXT = `Intentional design, never propose unwinding (AGENTS.md is the authority):
+- vestad daemon (Rust: Docker + HTTP/WS API, the single client-facing contract producer), Python agent in Docker driven through the official claude-agent-sdk (agent/core/cc_sdk is a dormant alternative driver: leave it alone), @vesta/core (the shared TypeScript client controller), React SPA (apps/web) served by vestad and wrapped by Electron (apps/desktop), Expo app (apps/mobile). The only MCP server is the agent's own in-process tool registry.
+- Three client planes: the /sync state socket, addressed HTTP intents with intent_id, the authenticated per-agent proxy; wire shapes locked by fixture round-trips; a version window (min_supported) governs client compatibility.
+- SQLite events.db (FTS5), persisted session_id for resume, restic snapshot backups, prompt migrations under agent/core/migrations.
+- Functional Python (no classes-with-methods, no getattr/.get fallback/hasattr); Rust without panic/unwrap/expect on fallible paths; one shared eslint base for the TypeScript packages; no dashes in prose; check.sh is the single test entry point; release.sh owns versions (never bump in a PR).`
 
-const RULES = `Rubric: read root CLAUDE.md (Architecture + Architecture Principles, including the conflicts already resolved in our favor) and CONTRIBUTING.md (Testing strategy, Karpathy Guidelines) first; they override external canon.`
+// "live" lands PRs and issues; "draft" returns the triage as the result and stops before Implement.
+const EMIT = (args && args.emit) || "live";
+
+const RULES = `Rubric: read root AGENTS.md (Architecture, Architecture Principles including the conflicts already resolved in our favor, Code conventions, Testing strategy, Karpathy Guidelines) first; it overrides external canon.`
 
 const PR_RULES = `Branch from origin/master (git fetch origin master, git checkout -b <branch> origin/master). Never weaken or delete a test to pass. Commit ending with the Co-Authored-By trailer for Claude, push -u origin, gh pr create --base master. Body: what and why, no dashes, ending with the Generated with Claude Code trailer.`
 
 const AREA_CHECK = {
   agent: './check.sh agent',
-  cli: './check.sh cli',
   vestad: './check.sh vestad',
-  web: './check.sh web',
+  core: './check.sh app-core',
+  web: './check.sh app-web',
+  desktop: './check.sh app-desktop',
   repo: './check.sh all',
 }
 
 const CONCERNS = [
   { key: 'elegance', focus: 'where the system could be radically simpler: modules that could merge, layers or indirection that could disappear, config that could become a default, duplicated mechanisms that could unify' },
-  { key: 'boundaries', focus: 'module boundaries, coupling and cohesion, leaky abstractions, deep vs shallow modules, dependency direction across cli, vestad, agent, web' },
+  { key: 'boundaries', focus: 'module boundaries, coupling and cohesion, leaky abstractions, deep vs shallow modules, dependency direction across agent, vestad, core, web, desktop, mobile' },
   { key: 'error-resilience', focus: 'error-handling consistency, failure modes, timeouts, retries, resource cleanup, cancellation, the message-interruption path' },
   { key: 'concurrency-state', focus: 'async task lifecycle, shared mutable state, races, backpressure, the message and notification loops, websocket lifecycle' },
   { key: 'testing', focus: 'test-pyramid balance, untested critical paths, flaky tests, assertion quality, missing integration coverage, hermeticity' },
@@ -66,7 +70,7 @@ const TRIAGE_SCHEMA = {
       labels: { type: 'array', items: { type: 'string' } },
     }, required: ['title', 'body', 'priority', 'effort'] } },
     prGroups: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-      area: { type: 'string', enum: ['agent', 'cli', 'vestad', 'web', 'repo'] },
+      area: { type: 'string', enum: ['agent', 'vestad', 'core', 'web', 'desktop', 'repo'] },
       theme: { type: 'string' },
       ambition: { type: 'string', enum: ['surgical', 'structural'], description: 'structural = a behavior-preserving simplification that reshapes code' },
       tasks: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
@@ -102,7 +106,7 @@ phase('Audit')
 const auditByConcern = (await parallel(CONCERNS.map((concern) => () =>
   deep(
     `Audit the whole Vesta system for the '${concern.key}' concern: ${concern.focus}.
-Architectural and test-level review, not line-by-line style. Build a mental model first: read CLAUDE.md and the relevant modules across agent/, vestad/, cli/, apps/web/.
+Architectural and test-level review, not line-by-line style. Build a mental model first: read AGENTS.md and the relevant modules across agent/, vestad/, apps/core/, apps/web/, apps/desktop/, apps/mobile/.
 ${RULES}
 ${NORTH_STAR}
 ${SYSTEM_CONTEXT}
@@ -123,13 +127,18 @@ const triage = (await deep(
 ${NORTH_STAR}
 ${SYSTEM_CONTEXT}
 1. Dedup, then verify each by reading the cited code; discard the speculative, the wrong, and anything fighting the intentional design. Run \`gh pr list --state open\` first: drop tasks an open PR already covers; closed-unmerged PRs from prior runs are rejected taste, do not re-propose them.
-2. prGroups (the default destination): coherent reviewable PRs by area (agent, cli, vestad, web, repo). Up to 5 groups, up to 5 tasks each, precise fix instructions. ambition='surgical' for contained fixes and tests; ambition='structural' for one behavior-preserving simplification per group with a reviewable diff.
+2. prGroups (the default destination): coherent reviewable PRs by area (agent, vestad, core, web, desktop, repo). Up to 5 groups, up to 5 tasks each, precise fix instructions. ambition='surgical' for contained fixes and tests; ambition='structural' for one behavior-preserving simplification per group with a reviewable diff.
 3. issues: only genuine design forks needing the user's call. Up to 8, highest value first. Body sections: Problem, Evidence, Proposed direction, Alternatives considered, Effort and risk. No dashes. Suggest labels (type:architecture, type:tech-debt, area:*).
 Findings: ${JSON.stringify(allFindings)}`,
   { phase: 'Triage', label: 'triage', schema: TRIAGE_SCHEMA },
 )) || { issues: [], prGroups: [] }
 
 log(`Triage: ${triage.prGroups.length} PR groups, ${triage.issues.length} issue proposals`)
+
+if (EMIT === 'draft') {
+  log('draft emit: returning the triage for review, nothing opened')
+  return { triage, findingCount: allFindings.length }
+}
 
 // ---- Implement ----
 phase('Implement')

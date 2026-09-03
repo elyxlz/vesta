@@ -1,22 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  agentOrbState,
-  orbIsLive,
+  agentVisualStatus,
+  orbVisual,
   type AgentActivityState,
   type AgentOperation,
   type AgentStatus,
+  type RateLimitedInfo,
 } from "@vesta/core";
+import { useAgentRequest } from "@vesta/core/react";
 import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
+import { ControllerContext } from "@/controller/context";
 import { designTokens } from "@/theme/generated";
 
 interface AgentOrbProps {
+  // The roster agent, so this client's own in-flight request overlays the orb; a nameless orb
+  // (the brand mark, the boot splash) renders the status alone.
+  name?: string;
   status: AgentStatus;
   activityState?: AgentActivityState;
   operation?: AgentOperation | null;
   booting?: boolean;
+  rateLimited?: RateLimitedInfo | null;
   size?: number;
   animated?: boolean;
   pulseScale?: number;
@@ -25,10 +32,12 @@ interface AgentOrbProps {
 }
 
 export function AgentOrb({
+  name,
   status,
   activityState = "idle",
   operation = null,
   booting = false,
+  rateLimited = null,
   size = 88,
   animated = true,
   pulseScale,
@@ -39,15 +48,21 @@ export function AgentOrb({
   const [pulse] = useState(() => new Animated.Value(1));
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
-  const orbState = agentOrbState(status, activityState, operation, booting);
-  const shouldAnimate = animated && !transitionFrozen && orbIsLive(orbState);
+  const { request } = useAgentRequest(use(ControllerContext), name ?? null);
+  const { orbState } = agentVisualStatus(
+    { status, operation, booting, rateLimited },
+    request,
+    activityState,
+  );
+  const visual = orbVisual(orbState);
+  const shouldAnimate = animated && !transitionFrozen && visual.live;
   const colors = designTokens.orb[orbState];
   // Breathing is what "the agent itself is up" looks like, so it follows the resolved orb state:
   // a restore on a still-alive agent reads busy and must not keep breathing.
-  const thinking = orbState === "thinking";
-  const breathes = orbState === "alive" || thinking;
-  const maximumPulseScale = pulseScale ?? (thinking ? 1.1 : 1.04);
-  const halfPulseDuration = pulseDuration ?? (thinking ? 1200 : 1800);
+  const breathes = visual.breathes;
+  const maximumPulseScale = pulseScale ?? visual.pulseScale;
+  const halfPulseDuration = pulseDuration ?? visual.pulseHalfMs;
+  const highlight = visual.highlight;
 
   useEffect(() => {
     pulseHapticsEnabled.current = pulseHaptics;
@@ -62,14 +77,14 @@ export function AgentOrb({
     const rotate = Animated.loop(
       Animated.timing(rotation, {
         toValue: 1,
-        duration: thinking ? 2600 : 9000,
+        duration: visual.rotationMs,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     );
     rotate.start();
     return () => rotate.stop();
-  }, [rotation, shouldAnimate, thinking]);
+  }, [rotation, shouldAnimate, visual.rotationMs]);
 
   useEffect(() => {
     if (!shouldAnimate || !breathes) {
@@ -93,10 +108,7 @@ export function AgentOrb({
           return;
         }
 
-        if (
-          pulseHapticsEnabled.current &&
-          process.env.EXPO_OS === "ios"
-        ) {
+        if (pulseHapticsEnabled.current && process.env.EXPO_OS === "ios") {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft).catch(
             () => undefined,
           );
@@ -147,8 +159,8 @@ export function AgentOrb({
       >
         <LinearGradient
           colors={colors}
-          start={{ x: 0.15, y: 0 }}
-          end={{ x: 0.9, y: 1 }}
+          start={visual.gradient.start}
+          end={visual.gradient.end}
           style={{ flex: 1, borderRadius: size / 2 }}
         />
       </Animated.View>
@@ -156,11 +168,13 @@ export function AgentOrb({
         style={[
           styles.highlight,
           {
-            width: size * 0.42,
-            height: size * 0.24,
+            width: size * highlight.wRatio,
+            height: size * highlight.hRatio,
             borderRadius: size,
-            top: size * 0.16,
-            left: size * 0.18,
+            top: size * (highlight.cy - highlight.hRatio / 2),
+            left: size * (highlight.cx - highlight.wRatio / 2),
+            backgroundColor: `rgba(255,255,255,${String(highlight.alpha)})`,
+            transform: [{ rotate: `${String(highlight.angleDeg)}deg` }],
           },
         ]}
       />
@@ -178,7 +192,5 @@ const styles = StyleSheet.create({
   },
   highlight: {
     position: "absolute",
-    backgroundColor: "rgba(255,255,255,0.34)",
-    transform: [{ rotate: "-24deg" }],
   },
 });

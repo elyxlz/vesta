@@ -1,41 +1,23 @@
-import { ApiError, createHttpClient } from "@vesta/core";
-import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
-import { ensureFreshToken } from "@/lib/token-refresh";
+import { ApiError, createSession } from "@vesta/core";
+import { getConnection, restoreConnection } from "@/lib/connection";
+import { startHostedLogin } from "@/lib/pkce";
 
-// The Bearer-auth + refresh-on-401 + error-shaping mechanics live once in @vesta/core; web
-// injects its own connection accessors and refresh implementation. `ApiError` is re-exported
-// so the ~10 api/* modules and create-flow keep importing it from here.
-export { ApiError };
-
-// The single web-side gateway HTTP client. `apiFetch`/`apiJson` wrap it for the ~10 api/* modules;
-// it is exported directly for the @vesta/core wire calls that take an `HttpClient` (e.g. the gateway
-// update calls), matching the app's component-to-api convention.
-export const httpClient = createHttpClient({
-  baseUrl: () => {
-    const conn = getConnection();
-    if (!conn) throw new Error("not connected to vestad");
-    return conn.url;
-  },
+// The web app's one gateway session, built over the connection store the native bridge persists.
+// @vesta/core owns the refresh, the expiry buffer, the token-in-URL carriers, and the http client;
+// web injects only persistence and the hosted re-authorization bounce (the apex session cookie is
+// the refresh root, so a hosted connection with no refresh token re-runs the PKCE flow).
+export const session = createSession({
   fetch: (input, init) => fetch(input, init),
-  token: () => getConnection()?.accessToken ?? null,
-  refresh: async () => (await ensureFreshToken(true)) === "ok",
-  isExpiring: () => isTokenExpiringSoon(),
+  read: getConnection,
+  write: restoreConnection,
+  reauthorize: () => {
+    void startHostedLogin();
+  },
 });
 
-export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  return httpClient.request(path, init);
-}
+// The single web-side HttpClient. Every api/* wrapper binds it, and the controller shares it.
+export const httpClient = session.http;
+export const authedUrl = session.authedUrl;
+export const websocketUrl = session.websocketUrl;
 
-export function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  return httpClient.json<T>(path, init);
-}
-
-// The one place that owns the JSON request shape (method + Content-Type + serialized body),
-// so individual endpoints don't each re-spell the same header and JSON.stringify.
-export function jsonInit(method: string, body: unknown): RequestInit {
-  return {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  };
-}
+export { ApiError };

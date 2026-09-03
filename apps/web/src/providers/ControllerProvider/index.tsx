@@ -1,44 +1,31 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
-import { getConnection } from "@/lib/connection";
-import { websocketUrl } from "@/lib/authed-url";
+import { session } from "@/api/client";
 import { native } from "@/lib/native";
 import { deviceIdentity } from "@/lib/device-identity";
-import { ensureFreshToken } from "@/lib/token-refresh";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
-import { createBrowserSocket } from "./browser-socket";
-import { runReauthCheck } from "./reauth-poll";
 import { ControllerContext, ControllerReconnectContext } from "./context";
-
-export {
-  ControllerContext,
-  useController,
-  useControllerReconnect,
-} from "./context";
-export { useSyncState };
 
 // Brief grace before the disconnect overlay appears, so quick socket blips don't flash it.
 const DISCONNECT_GRACE_MS = 750;
-const REAUTH_POLL_MS = 60000;
 
+// The app's one session is the controller's: it dials the session's token-stamped /sync URL,
+// shares its http client, and rotates the token in-band before it expires.
 function buildController(): Controller {
   return createController({
+    session,
     sync: {
-      buildUrl: () => websocketUrl("/sync"),
-      createSocket: createBrowserSocket,
-      setTimer: (fn, ms) => window.setTimeout(fn, ms),
-      clearTimer: (handle) => window.clearTimeout(handle),
       clientVersion: __CLIENT_VERSION__,
       clientKind: native.runtime === "electron" ? "desktop" : "web",
       device: deviceIdentity(),
-    },
-    http: {
-      baseUrl: () => getConnection()?.url ?? "",
-      fetch: (input, init) => fetch(input, init),
-      token: () => getConnection()?.accessToken ?? null,
-      refresh: async () => (await ensureFreshToken(true)) === "ok",
     },
   });
 }
@@ -59,54 +46,73 @@ function ActiveController({ children }: { children: ReactNode }) {
   );
 }
 
-// One live controller for the lifetime of a session mount. Built once via a lazy useState
-// initializer (run exactly once per mount and never discarded, so it avoids the
-// useMemo-side-effect-in-render caveat), closed on unmount. Reauth rotates the socket's token
-// in-band before it expires; the overlay tracks the sync sub-store. Like mobile, the desktop
-// app is a drifting client: it opens /sync and the served version window (min_supported..version)
-// decides compatibility. GatewayProvider turns incompatible states into blocking screens while
-// keeping the gateway context mounted for their shared UI.
+// A slot whose occupant the effect owns, read through useSyncExternalStore: the controller is
+// created by the effect whose cleanup closes it, so the two lifetimes cannot diverge. Fast
+// Refresh and StrictMode re-run effects while preserving state, and a render-owned controller
+// would be closed by the re-run's cleanup and stranded terminal (sync state "closed", which
+// never reconnects); here the re-run builds a live replacement instead.
+function createControllerSlot() {
+  let current: Controller | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set: (next: Controller | null) => {
+      current = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+// Children wait out the one pre-effect render with no controller.
 function ControllerSession({ children }: { children: ReactNode }) {
-  const [controller] = useState(buildController);
+  const [slot] = useState(createControllerSlot);
+  const controller = useSyncExternalStore(slot.subscribe, slot.get);
+
+  useEffect(() => {
+    const created = buildController();
+    slot.set(created);
+    return () => {
+      created.close();
+      slot.set(null);
+    };
+  }, [slot]);
+
+  if (controller === null) return null;
+  return <LiveSession controller={controller}>{children}</LiveSession>;
+}
+
+// The overlay tracks the sync sub-store. Like mobile, the desktop app is a drifting client: it
+// opens /sync and the served version window (min_supported..version) decides compatibility.
+// GatewayProvider turns incompatible states into blocking screens while keeping the gateway
+// context mounted for their shared UI.
+function LiveSession({
+  controller,
+  children,
+}: {
+  controller: Controller;
+  children: ReactNode;
+}) {
   const syncState = useSyncState(controller);
-  const [showDisconnected, setShowDisconnected] = useState(false);
+  const connecting = syncState === "connecting" || syncState === "reconnecting";
+  // The grace timer belongs to one connecting stretch: a state change starts it over, and
+  // its expiry is what shows the overlay.
+  const [grace, setGrace] = useState({ state: syncState, elapsed: false });
+  if (grace.state !== syncState) setGrace({ state: syncState, elapsed: false });
+  const showDisconnected = connecting && grace.elapsed;
 
   useEffect(() => {
-    return () => {
-      controller.close();
-    };
-  }, [controller]);
-
-  useEffect(() => {
-    // Also on mount, not just every poll: a session restored with an already-expired token
-    // would otherwise keep retrying /sync with it for a whole interval.
-    const tick = () => {
-      void runReauthCheck((token) => {
-        controller.reauth(token);
-      }).catch((err: unknown) =>
-        console.warn("[controller] reauth failed:", err),
-      );
-    };
-    tick();
-    const timer = window.setInterval(tick, REAUTH_POLL_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [controller]);
-
-  useEffect(() => {
-    if (syncState !== "connecting" && syncState !== "reconnecting") {
-      setShowDisconnected(false);
-      return;
-    }
-    const timer = window.setTimeout(
-      () => setShowDisconnected(true),
-      DISCONNECT_GRACE_MS,
-    );
+    if (!connecting) return;
+    const timer = window.setTimeout(() => {
+      setGrace({ state: syncState, elapsed: true });
+    }, DISCONNECT_GRACE_MS);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [syncState]);
+  }, [connecting, syncState]);
 
   return (
     <ControllerContext.Provider value={controller}>

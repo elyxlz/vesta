@@ -1,31 +1,38 @@
-import type { ReactElement } from "react";
-import {
-  Platform,
-  type ColorValue,
-  type NativeSyntheticEvent,
-  type StyleProp,
-  type ViewStyle,
+import type { ReactElement, Ref } from "react";
+import type {
+  ColorValue,
+  NativeSyntheticEvent,
+  StyleProp,
+  ViewStyle,
 } from "react-native";
 import { requireNativeViewManager } from "expo-modules-core";
 import {
   MenuView,
   type MenuAction as ExpoMenuAction,
+  type MenuComponentRef,
 } from "@expo/ui/community/menu";
 
-export interface MessageMenuAction {
-  id: string;
+// The Android menu is a Pressable wrapper, so a pressable child (an attachment block) wins the
+// long-press. `menuRef.show()` lets that child reopen the menu itself; on iOS the native
+// UIContextMenuInteraction already recognizes over subviews and the ref is ignored.
+export type MessageMenuHandle = MenuComponentRef;
+
+export interface MessageMenuAction<Id extends string = string> {
+  id: Id;
   title: string;
   systemImage?: Extract<ExpoMenuAction["image"], string>;
+  androidImage?: Exclude<ExpoMenuAction["image"], string>;
   destructive?: boolean;
   disabled?: boolean;
 }
 
 type TailSide = "none" | "leading" | "trailing";
 
-interface MessageContextMenuProps {
-  actions: MessageMenuAction[];
+interface MessageContextMenuProps<Id extends string> {
+  actions: MessageMenuAction<Id>[];
   children: ReactElement;
-  onAction: (id: string) => void;
+  onAction: (id: Id) => void;
+  menuRef?: Ref<MessageMenuHandle>;
   style?: StyleProp<ViewStyle>;
   tailSide?: TailSide;
   tailOverhang?: number;
@@ -35,25 +42,26 @@ interface MessageContextMenuProps {
   bubbleStrokeWidth?: number;
 }
 
-interface NativeMessageContextMenuProps
-  extends Omit<MessageContextMenuProps, "onAction"> {
-  onAction: (
-    event: NativeSyntheticEvent<{ id: string }>,
-  ) => void;
+interface NativeMessageContextMenuProps extends Omit<
+  MessageContextMenuProps<string>,
+  "onAction"
+> {
+  onAction: (event: NativeSyntheticEvent<{ id: string }>) => void;
 }
 
 const NativeMessageContextMenu =
-  Platform.OS === "ios"
+  process.env.EXPO_OS === "ios"
     ? requireNativeViewManager<NativeMessageContextMenuProps>(
         "VestaMessageMenu",
         "VestaMessageMenuView",
       )
     : null;
 
-export function MessageContextMenu({
+export function MessageContextMenu<Id extends string = string>({
   actions,
   children,
   onAction,
+  menuRef,
   style,
   tailSide = "none",
   tailOverhang = 0,
@@ -61,7 +69,12 @@ export function MessageContextMenu({
   bubbleFillColor = "transparent",
   bubbleStrokeColor = "transparent",
   bubbleStrokeWidth = 0,
-}: MessageContextMenuProps) {
+}: MessageContextMenuProps<Id>) {
+  const emitAction = (id: string) => {
+    const action = actions.find((entry) => entry.id === id);
+    if (action) onAction(action.id);
+  };
+
   if (NativeMessageContextMenu) {
     const tailLayout =
       tailSide === "none"
@@ -77,7 +90,7 @@ export function MessageContextMenu({
         bubbleFillColor={bubbleFillColor}
         bubbleStrokeColor={bubbleStrokeColor}
         bubbleStrokeWidth={bubbleStrokeWidth}
-        onAction={({ nativeEvent }) => onAction(nativeEvent.id)}
+        onAction={({ nativeEvent }) => emitAction(nativeEvent.id)}
         previewCornerRadius={previewCornerRadius}
         style={[style, tailLayout]}
         tailOverhang={tailOverhang}
@@ -90,16 +103,17 @@ export function MessageContextMenu({
 
   return (
     <MenuView
+      ref={menuRef}
       actions={actions.map((action) => ({
         id: action.id,
         title: action.title,
-        image: action.systemImage,
+        image: action.androidImage ?? action.systemImage,
         attributes: {
           destructive: action.destructive,
           disabled: action.disabled,
         },
       }))}
-      onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+      onPressAction={({ nativeEvent }) => emitAction(nativeEvent.event)}
       shouldOpenOnLongPress
       style={style}
     >

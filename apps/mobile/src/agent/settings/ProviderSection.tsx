@@ -1,16 +1,8 @@
 import { useState } from "react";
-import { CLAUDE_ALIASES } from "@vesta/core";
-import type { ProviderKind } from "@vesta/core";
-import { Alert, StyleSheet, View } from "react-native";
-import * as Clipboard from "expo-clipboard";
-import * as WebBrowser from "expo-web-browser";
-import { Text } from "@/components/ui/Typography";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   completeClaudeOAuth,
   completeOpenAIOAuth,
-  fetchClaudeModels,
-  fetchManifest,
+  fetchAgentClaudeModels,
   fetchOpenRouterModels,
   fetchUsage,
   getProvider,
@@ -21,29 +13,71 @@ import {
   startClaudeOAuth,
   startOpenAIOAuth,
   validateOpenRouterKey,
+  type Account,
+  type ProviderKind,
   type ProviderSelection,
-} from "@/api/endpoints";
+} from "@vesta/core";
+import { Alert, StyleSheet, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import * as WebBrowser from "expo-web-browser";
+import { Text } from "@/components/ui/Typography";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAgentRequest } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
+import { useController } from "@/controller/context";
+import {
+  buildModelOptions,
+  resolveProviderKind,
+  sortAdvertisedProviders,
+} from "@/agent/settings/provider-model";
 import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection } from "@/components/ui/Form";
-import { ErrorState, LoadingState } from "@/components/ui/States";
+import { FormSectionSkeleton } from "@/components/ui/form-section-skeleton";
+import { ErrorState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
 type KeyProviderKind = Extract<ProviderSelection, { key: string }>["kind"];
 
+function formatMemberSince(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+  });
+}
+
+function AccountSection({ account }: { account: Account }) {
+  const rows = [
+    { label: "Name", value: account.name },
+    { label: "Email", value: account.email },
+    { label: "Plan", value: account.plan },
+    { label: "Organization", value: account.organization },
+    {
+      label: "Member since",
+      value: account.created_at ? formatMemberSince(account.created_at) : null,
+    },
+  ].filter(
+    (row): row is { label: string; value: string } => row.value !== null,
+  );
+
+  if (rows.length === 0) return null;
+
+  return (
+    <FormSection title="Account">
+      {rows.map((row) => (
+        <FormRow key={row.label} label={row.label} value={row.value} />
+      ))}
+    </FormSection>
+  );
+}
+
 function isKeyProviderKind(kind: ProviderKind): kind is KeyProviderKind {
   return kind === "openrouter" || kind === "zai" || kind === "kimi";
 }
-
-// The two Claude aliases offered ahead of the live catalog (owned by @vesta/core), so the
-// picker still shows something useful when the live fetch fails or has not resolved yet.
-const CLAUDE_ALIAS_OPTIONS = CLAUDE_ALIASES.map((alias) => ({
-  label: alias.label,
-  value: alias.slug,
-}));
 
 export function ProviderSection() {
   const queryClient = useQueryClient();
@@ -52,31 +86,29 @@ export function ProviderSection() {
   const { showError } = useToast();
   const { colors } = usePreferences();
   const [authKind, setAuthKind] = useState<ProviderKind>("claude");
-  const provider = useQuery({
+  const providerResource = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
   });
-  const manifest = useQuery({
-    queryKey: ["manifest"],
-    queryFn: () => fetchManifest(api),
-  });
+  const provider = providerResource.data?.provider;
+  const catalog = providerResource.data?.catalog;
   const usage = useQuery({
     queryKey: ["usage", name],
     queryFn: () => fetchUsage(api, name),
   });
   const openRouterModels = useQuery({
-    queryKey: ["openrouter-models"],
-    queryFn: () => fetchOpenRouterModels(api),
+    queryKey: ["openrouter-models", name],
+    queryFn: () => fetchOpenRouterModels(api, name),
     enabled:
-      provider.data?.kind === "openrouter" ||
-      (provider.data?.kind === "none" && authKind === "openrouter"),
+      provider?.kind === "openrouter" ||
+      (provider?.kind === "none" && authKind === "openrouter"),
   });
   // Enabled only once signed in: the agent lists models with its stored OAuth token,
   // so before sign-in (kind "none") the endpoint can only 409.
   const claudeModels = useQuery({
     queryKey: ["claude-models", name],
-    queryFn: () => fetchClaudeModels(api, name),
-    enabled: provider.data?.kind === "claude",
+    queryFn: () => fetchAgentClaudeModels(api, name),
+    enabled: provider?.kind === "claude",
     // The catalog changes on the order of months; don't re-run the two-hop
     // Anthropic call on every settings visit.
     staleTime: 60 * 60 * 1000,
@@ -85,7 +117,26 @@ export function ProviderSection() {
   const [oauthCode, setOauthCode] = useState("");
   const [openAIUserCode, setOpenAIUserCode] = useState("");
   const [providerKey, setProviderKey] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [requestBusy, setBusy] = useState(false);
+  // Provisioning is this client's own request on the agent: the orb reads "signing in..." app-wide
+  // until the gateway answers, then the roster's restart carries the rest.
+  const { requests } = useController();
+  const request = useAgentRequest(useController(), name);
+  const busy = requestBusy || request.request !== "idle";
+  const provision = async (selection: ProviderSelection) => {
+    requests.set(name, "authenticating");
+    try {
+      await provisionAgent(api, name, selection);
+      requests.clear(name);
+    } catch (cause) {
+      requests.set(
+        name,
+        "idle",
+        cause instanceof Error ? cause.message : "Provider sign-in failed",
+      );
+      throw cause;
+    }
+  };
 
   const selectAuthKind = (kind: ProviderKind) => {
     setAuthKind(kind);
@@ -110,48 +161,41 @@ export function ProviderSection() {
     onError: (error) => showError(error, "Could not update provider"),
   });
 
-  if (provider.isLoading || manifest.isLoading)
-    return <LoadingState label="Loading provider…" />;
-  if (!provider.data || !manifest.data) {
+  if (providerResource.isLoading) {
+    return (
+      <>
+        <FormSectionSkeleton
+          title="Provider"
+          rows={5}
+          label="Loading provider"
+        />
+        <FormSectionSkeleton title="Account" rows={3} label="Loading account" />
+        <FormSectionSkeleton title="Usage" rows={2} label="Loading usage" />
+      </>
+    );
+  }
+  if (!provider || !catalog) {
     return (
       <ErrorState
         message="Could not load provider settings."
         retry={() => {
-          void provider.refetch();
-          void manifest.refetch();
+          void providerResource.refetch();
         }}
       />
     );
   }
 
-  const providerKind =
-    provider.data.kind === "none" ? authKind : provider.data.kind;
-  const entry = manifest.data.providers[providerKind];
-  const selectedModel = provider.data.model ?? entry?.default_model ?? "";
+  const providerKind = resolveProviderKind(provider.kind, authKind);
+  const entry = catalog.providers[providerKind];
+  const selectedModel = provider.model ?? entry?.default_model ?? "";
   const context = entry?.context_by_model?.[selectedModel] ?? entry?.context;
-  const advertisedProviders = (
-    Object.keys(manifest.data.providers) as ProviderKind[]
-  ).sort(
-    (left, right) =>
-      (manifest.data.providers[left]?.order ?? Number.MAX_SAFE_INTEGER) -
-      (manifest.data.providers[right]?.order ?? Number.MAX_SAFE_INTEGER),
+  const advertisedProviders = sortAdvertisedProviders(catalog.providers);
+  const modelOptions = buildModelOptions(
+    providerKind,
+    entry,
+    openRouterModels.data,
+    claudeModels.data,
   );
-  const toOption = (model: { slug: string; label: string }) => ({
-    label: model.label,
-    value: model.slug,
-  });
-  const manifestModels = entry?.models;
-  const modelOptions =
-    providerKind === "openrouter"
-      ? (openRouterModels.data ?? []).map(toOption)
-      : providerKind === "claude"
-        ? [...CLAUDE_ALIAS_OPTIONS, ...(claudeModels.data ?? []).map(toOption)]
-        : Array.isArray(manifestModels)
-          ? manifestModels.map((model) => ({
-              label: entry?.model_names?.[model] ?? model,
-              value: model,
-            }))
-          : [];
 
   const chooseModel = () => {
     const options = modelOptions.slice(0, 12).map((option) => ({
@@ -177,62 +221,54 @@ export function ProviderSection() {
     ]);
   };
 
-  const connectClaude = async () => {
+  // One OAuth flow for both browser-based providers: the first press starts a session and opens
+  // the browser (OpenAI also surfaces its one-time code), the second completes and provisions.
+  const connectOAuth = async (kind: "claude" | "openai") => {
     setBusy(true);
     try {
       if (!oauthSession) {
-        const started = await startClaudeOAuth(api);
+        let started: { auth_url: string; session_id: string };
+        if (kind === "claude") {
+          started = await startClaudeOAuth(api, name);
+        } else {
+          const openAIStart = await startOpenAIOAuth(api, name);
+          setOpenAIUserCode(openAIStart.user_code);
+          started = openAIStart;
+        }
         setOauthSession(started.session_id);
         await WebBrowser.openBrowserAsync(started.auth_url, {
           presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
         });
       } else {
-        const credentials = await completeClaudeOAuth(
-          api,
-          oauthSession,
-          oauthCode.trim(),
-        );
-        const selection: ProviderSelection = {
-          kind: "claude",
-          credentials,
-          model: provider.data?.model ?? entry?.default_model ?? undefined,
-          maxContextTokens:
-            provider.data?.max_context_tokens ?? context?.default,
-        };
-        await provisionAgent(api, name, selection);
+        const maxContextTokens =
+          provider?.max_context_tokens ?? context?.default;
+        const selection: ProviderSelection =
+          kind === "claude"
+            ? {
+                kind,
+                credentials: await completeClaudeOAuth(
+                  api,
+                  name,
+                  oauthSession,
+                  oauthCode.trim(),
+                ),
+                model: provider?.model ?? entry?.default_model ?? undefined,
+                maxContextTokens,
+              }
+            : {
+                kind,
+                credentials: await completeOpenAIOAuth(api, name, oauthSession),
+                model: selectedModel,
+                maxContextTokens,
+              };
+        await provision(selection);
         await queryClient.invalidateQueries({ queryKey: ["provider", name] });
       }
     } catch (cause) {
-      showError(cause, "Claude sign-in failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const connectOpenAI = async () => {
-    setBusy(true);
-    try {
-      if (!oauthSession) {
-        const started = await startOpenAIOAuth(api);
-        setOauthSession(started.session_id);
-        setOpenAIUserCode(started.user_code);
-        await WebBrowser.openBrowserAsync(started.auth_url, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-        });
-      } else {
-        const credentials = await completeOpenAIOAuth(api, oauthSession);
-        const selection: ProviderSelection = {
-          kind: "openai",
-          credentials,
-          model: selectedModel,
-          maxContextTokens:
-            provider.data?.max_context_tokens ?? context?.default,
-        };
-        await provisionAgent(api, name, selection);
-        await queryClient.invalidateQueries({ queryKey: ["provider", name] });
-      }
-    } catch (cause) {
-      showError(cause, "OpenAI sign-in failed");
+      showError(
+        cause,
+        kind === "claude" ? "Claude sign-in failed" : "OpenAI sign-in failed",
+      );
     } finally {
       setBusy(false);
     }
@@ -248,16 +284,16 @@ export function ProviderSection() {
     setBusy(true);
     try {
       const key = providerKey.trim();
-      if (providerKind === "openrouter") await validateOpenRouterKey(api, key);
-      const defaultContext =
-        provider.data?.max_context_tokens ?? context?.default;
+      if (providerKind === "openrouter")
+        await validateOpenRouterKey(api, name, key);
+      const defaultContext = provider?.max_context_tokens ?? context?.default;
       const selection: ProviderSelection = {
         kind: providerKind,
         key,
         model: selectedModel || modelOptions[0]?.value || "",
         ...(defaultContext ? { maxContextTokens: defaultContext } : {}),
       };
-      await provisionAgent(api, name, selection);
+      await provision(selection);
       await queryClient.invalidateQueries({ queryKey: ["provider", name] });
     } catch (cause) {
       showError(cause, "Provider sign-in failed");
@@ -266,26 +302,25 @@ export function ProviderSection() {
     }
   };
 
-  const needsAuthentication =
-    provider.data.kind === "none" || !provider.data.authed;
+  const needsAuthentication = provider.kind === "none" || !provider.authed;
   return (
     <>
       <FormSection title="Provider">
-        <FormRow label="Provider" value={provider.data.kind} />
+        <FormRow label="Provider" value={provider.kind} />
         <FormRow
           label="Authentication"
-          value={provider.data.authed ? "connected" : "needed"}
+          value={provider.authed ? "connected" : "needed"}
         />
-        <FormRow label="Plan" value={provider.data.plan ?? "not reported"} />
+        <FormRow label="Plan" value={provider.plan ?? "not reported"} />
         <FormRow
           label="Model"
-          value={provider.data.model ?? "not selected"}
+          value={provider.model ?? "not selected"}
           onPress={modelOptions.length > 0 ? chooseModel : undefined}
         />
         <FormRow
           label="Context"
           value={
-            provider.data.max_context_tokens?.toLocaleString() ??
+            provider.max_context_tokens?.toLocaleString() ??
             (providerKind === "openrouter" ? "model limit" : "default")
           }
           onPress={
@@ -293,6 +328,21 @@ export function ProviderSection() {
           }
         />
       </FormSection>
+
+      {usage.isPending ? (
+        <>
+          <FormSectionSkeleton
+            title="Account"
+            rows={3}
+            label="Loading account"
+          />
+          <FormSectionSkeleton title="Usage" rows={2} label="Loading usage" />
+        </>
+      ) : null}
+
+      {usage.data?.account ? (
+        <AccountSection account={usage.data.account} />
+      ) : null}
 
       {usage.data ? (
         <FormSection title="Usage">
@@ -340,7 +390,7 @@ export function ProviderSection() {
           >
             Connect a provider
           </Text>
-          {provider.data.kind === "none" ? (
+          {provider.kind === "none" ? (
             <View style={styles.kindButtons}>
               {advertisedProviders.map((kind) => (
                 <Button
@@ -348,7 +398,7 @@ export function ProviderSection() {
                   variant={authKind === kind ? "primary" : "secondary"}
                   onPress={() => selectAuthKind(kind)}
                 >
-                  {manifest.data.providers[kind]?.display ?? kind}
+                  {catalog.providers[kind]?.display ?? kind}
                 </Button>
               ))}
             </View>
@@ -378,7 +428,7 @@ export function ProviderSection() {
               <Button
                 loading={busy}
                 disabled={Boolean(oauthSession && !oauthCode.trim())}
-                onPress={() => void connectClaude()}
+                onPress={() => void connectOAuth("claude")}
               >
                 {oauthSession ? "Finish Claude sign-in" : "Open Claude sign-in"}
               </Button>
@@ -399,7 +449,10 @@ export function ProviderSection() {
                   </Button>
                 </>
               ) : null}
-              <Button loading={busy} onPress={() => void connectOpenAI()}>
+              <Button
+                loading={busy}
+                onPress={() => void connectOAuth("openai")}
+              >
                 {oauthSession
                   ? "Finish OpenAI sign-in"
                   : "Open ChatGPT sign-in"}

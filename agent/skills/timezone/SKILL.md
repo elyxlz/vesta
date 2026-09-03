@@ -1,11 +1,11 @@
 ---
 name: timezone
-description: Set or change the agent's IANA timezone. Use whenever the user relocates, moves, travels, or goes on holiday somewhere on a different timezone, or on first setup when the timezone is still the default `UTC`.
+description: Set or change the agent's IANA timezone. Use whenever the user relocates, moves, travels, or goes on holiday somewhere on a different timezone, when a `source=vestad` `type=user-timezone` notification arrives, or on first setup when the timezone is still the default `UTC`.
 ---
 
 # Timezone
 
-The timezone lives in the agent's config store (`~/agent/data/config.json`, key `timezone`). On boot the config object applies it to the process `TZ`, so dates, calendar events, reminders, and `what-day` all read from it. The live value is the `$TZ` env var.
+The timezone lives in the agent's config store (`~/agent/data/config.json`, key `timezone`). On boot the config object applies it to the process `TZ`, so dates, calendar events, reminders, dreams, and `what-day` all read from it. The live value is the `$TZ` env var.
 
 ## How to change it
 
@@ -15,3 +15,17 @@ The timezone lives in the agent's config store (`~/agent/data/config.json`, key 
    cd ~/agent && uv run python -c "from core.config import update_config_store; update_config_store({'timezone': 'Europe/London'})"
    ```
 3. Applies on the next restart (`restart_vesta` to apply now).
+
+After the restart, tasks and reminders read the new timezone automatically: a recurring reminder created without `--tz` follows it, and one created with `--tz` stays pinned to that zone (`reminders list` names the zone on exactly the pinned rows). If the move is permanent, check the pinned rows still mean what they should, and repoint the ones that do not with `reminders update <id> --tz <zone>`, or `--unpin-tz` to make them follow this timezone; both keep the reminder's id.
+
+## How you learn the user moved
+
+The user's devices report where they are, and vestad tells you when that changes:
+
+- `source=vestad` `type=user-timezone`: a device the user is on reports a zone that differs from yours. The notification carries `device` (e.g. `Vesta Mobile on iOS`), `device_timezone`, and `agent_timezone`. You get it once per change: a zone you were just told, or the zone you already run on, is not repeated, whichever device reports it; a further move, or a device back on the old zone after you switched, is news again.
+- `source=vestad` `type=user-location`: the phone's macro place changed (city and country), or it moved a long way when no place name was known. The notification carries `place` (e.g. `Tokyo, Japan`), `latitude`, `longitude`, and `accuracy_m`. Only a phone whose owner turned on location sharing in the app sends this.
+- The `user_devices` tool lists every device with its current timezone, position, place, and report time, whenever you want to check rather than wait.
+
+Chat channels carry no zone: a WhatsApp or Telegram message tells you nothing about where it was sent from. There, what the user says ("landed in Tokyo") is the signal, as it always is.
+
+The decision is yours, not vestad's. A one-day trip is not a reason to move dreams and reminders; a stay is. When a `user-timezone` notification arrives, check the user's plans (calendar, what they told you) and, if it looks like a stay or you are unsure, ask them briefly before switching. Switching means the steps above plus a `restart_vesta`, so reminders and the nightly dream follow the user.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BookOpen,
   ChevronLeft,
@@ -20,7 +20,6 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import type { FileTreeEntry } from "@/api/files";
 import { HostAccessCard } from "../HostAccessCard";
 import {
   collectDreamPaths,
@@ -28,6 +27,7 @@ import {
   MEMORY_PATH,
   SKILLS_PREFIX,
 } from "./paths";
+import type { FileTreeEntry } from "@vesta/core";
 
 interface SimpleViewProps {
   entries: FileTreeEntry[];
@@ -90,7 +90,7 @@ export function SimpleView({
     // bento — the left column (mind + shared folders) is a continuous flex column, skills on the
     // right. The wrappers use `display: contents` on mobile so all three sections flatten into one
     // column and interleave; at lg they become the two real columns.
-    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
+    <div className="flex flex-col gap-3 p-1 max-md:px-0 lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
       <div className="contents lg:flex lg:flex-col lg:gap-6">
         <div className="flex flex-col gap-3">
           <GroupLabel>who {name} is</GroupLabel>
@@ -261,7 +261,7 @@ function SkillsCard({
   selected: string | null;
   onSelect: (path: string) => void;
 }) {
-  const [nav, setNav] = useState<SkillNav>(() => {
+  const [navState, setNav] = useState<SkillNav>(() => {
     if (selected?.startsWith(SKILLS_PREFIX)) {
       const skillName = selected.slice(SKILLS_PREFIX.length).split("/")[0];
       const skill = skills.find((s) => s.name === skillName);
@@ -270,11 +270,12 @@ function SkillsCard({
     return { view: "root" };
   });
 
-  useEffect(() => {
-    if (nav.view === "skill" && !skills.some((s) => s.path === nav.skillPath)) {
-      setNav({ view: "root" });
-    }
-  }, [skills, nav]);
+  // A skill that vanished from the list drops the drill-in back to the root.
+  const nav: SkillNav =
+    navState.view === "skill" &&
+    !skills.some((s) => s.path === navState.skillPath)
+      ? { view: "root" }
+      : navState;
 
   const activeSkill =
     nav.view === "skill"

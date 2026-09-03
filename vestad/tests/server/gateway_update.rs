@@ -286,6 +286,13 @@ async fn collect_until_phase(
         if operation.is_null() {
             continue;
         }
+        // A retried update watches a socket whose projection still carries the prior attempt's
+        // terminal `failed`. That residual precedes the fresh walk, so drop it while nothing else
+        // has been seen: a terminal state never opens a forward walk, and counting it would read as
+        // the update going backwards. A walk deliberately ending on `failed` keeps it.
+        if seen.is_empty() && operation["phase"].as_str() == Some("failed") && phase != "failed" {
+            continue;
+        }
         let reached = operation["phase"].as_str() == Some(phase);
         seen.push(operation);
         if reached {
@@ -459,11 +466,12 @@ async fn an_update_walks_its_phases_and_the_next_boot_reports_the_new_version() 
     );
     assert_eq!(
         announcement["title"].as_str(),
-        Some(format!("Updated to v{NEWER_VERSION}").as_str())
+        Some(format!("gateway updated to v{NEWER_VERSION}").as_str())
     );
     assert_eq!(
         announcement["body"].as_str(),
-        Some(format!("Your gateway updated to v{NEWER_VERSION}.").as_str())
+        Some(""),
+        "the title is the whole message; the body carries only backup warnings"
     );
 
     destroy_agent(&updated_client, &agent);

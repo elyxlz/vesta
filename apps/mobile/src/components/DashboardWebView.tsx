@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
-import { Platform, type StyleProp, type ViewStyle } from "react-native";
+import type { StyleProp, ViewStyle } from "react-native";
 import IOSWebView from "react-native-webview/lib/WebView.ios";
 import AndroidWebView from "react-native-webview/lib/WebView.android";
 import type {
@@ -94,10 +94,7 @@ interface DashboardWebViewProps {
 export const DashboardWebView = forwardRef<
   DashboardWebViewHandle,
   DashboardWebViewProps
->(function DashboardWebView(
-  { bridgeMessages, dark, ...props },
-  forwardedRef,
-) {
+>(function DashboardWebView({ bridgeMessages, dark, ...props }, forwardedRef) {
   const nativeRef = useRef<{
     injectJavaScript: (script: string) => void;
   }>(null);
@@ -125,9 +122,17 @@ export const DashboardWebView = forwardRef<
     allowsInlineMediaPlayback: true,
     mediaPlaybackRequiresUserAction: false,
   };
-  return Platform.OS === "ios" ? (
+  return process.env.EXPO_OS === "ios" ? (
     <IOSWebView {...sharedProps} />
   ) : (
-    <AndroidWebView {...sharedProps} />
+    // setSupportMultipleWindows(false) routes target=_blank links through
+    // onShouldStartLoadWithRequest, matching the iOS branch; textZoom pins the
+    // dashboard to its own type scale instead of the system font scale.
+    <AndroidWebView
+      {...sharedProps}
+      overScrollMode="never"
+      setSupportMultipleWindows={false}
+      textZoom={100}
+    />
   );
 });

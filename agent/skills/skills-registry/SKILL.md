@@ -106,10 +106,10 @@ To hand that private service to someone who holds no app credential, mint it a s
 `service-key mint <service>` prints a one-time secret, and you share the keyed link. The `vestad`
 skill covers minting, revoking, and the link forms.
 
-Then add the startup line yourself, the bare `<skill> daemon start`, to the `## Daemons` section
-of the `restart` skill, so the daemon comes back after a container restart.
+Then read the `restart` skill and add the startup line yourself, the bare `<skill> daemon start`,
+to your restart daemons, so the daemon comes back after a container restart.
 
-Skills you build are yours until you file them: the `upstream-pr` skill contributes anything
+Skills you build are yours until you file them: the `upstream` skill contributes anything
 general back so every Vesta gets it.
 
 ## Notes

@@ -1,4 +1,4 @@
-import { native } from "./native";
+import { runtimeInfo } from "./native";
 
 // A stable per-install id (minted once, persisted) plus a self-composed label, reported up /sync so
 // vestad tracks this device in the registry. Mirrors mobile's installation id.
@@ -38,7 +38,6 @@ function browserName(ua: string): string {
 export function deviceIdentity(): { id: string; descriptor: string } {
   const ua = navigator.userAgent;
   const os = osName(ua);
-  const surface =
-    native.runtime === "electron" ? "Vesta Desktop" : browserName(ua);
+  const surface = runtimeInfo.isDesktopApp ? "Vesta desktop" : browserName(ua);
   return { id: installationId(), descriptor: `${surface} on ${os}` };
 }

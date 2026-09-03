@@ -1,29 +1,11 @@
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-  type RefObject,
-} from "react";
-import {
-  agentNeedsUser,
-  type Controller,
-  type Delta,
-  type Tree,
-} from "@vesta/core";
-import { useAnyFocused, useReplica } from "@vesta/core/react";
-import { useGateway } from "@/providers/GatewayProvider";
-import { ControllerContext } from "@/providers/ControllerProvider";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { type Delta, type Tree } from "@vesta/core";
+import { useReplica } from "@vesta/core/react";
+import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
-import { useWindowFocus } from "@/hooks/use-window-focus";
-import type { AgentRow } from "@/lib/types";
 import { NotificationContext } from "./context";
-
-export { useNotifications } from "./context";
 
 const PREVIEW_MAX = 100;
 const NOTIFICATION_AUTO_CLOSE_MS = 6000;
@@ -55,82 +37,14 @@ async function focusAndOpen(
   openAgent(agentName);
 }
 
-// The controller-driven half of the provider: it toasts the server's always-on `user_notification`
-// deltas and lights the unseen badge from the replica's fleet-wide pending branch. Rendered only once
-// the controller exists, so its hooks always have a live replica.
-function ReplicaNotifications({
-  controller,
-  chattingAgentRef,
-  anyFocusedRef,
-  notifyAssistant,
-  notifyRateLimited,
-  notifyGateway,
-  markUnseen,
-}: {
-  controller: Controller;
-  chattingAgentRef: RefObject<string | null>;
-  anyFocusedRef: RefObject<boolean>;
-  notifyAssistant: (agentName: string, text: string) => void;
-  notifyRateLimited: (agentName: string, text: string) => void;
-  notifyGateway: (title: string, text: string) => void;
-  markUnseen: () => void;
-}) {
-  // Mirror the global "any client focused" flag into the parent's ref so notifyAssistant can gate on
-  // it. The hook lives here because it needs a non-null controller, which this component guarantees.
-  const anyFocused = useAnyFocused(controller);
-  useEffect(() => {
-    anyFocusedRef.current = anyFocused;
-  }, [anyFocused, anyFocusedRef]);
-
-  // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display triple:
-  // kind/title/body), independent of any subscription. A rate limit toasts even while focused; a
-  // chat lights the unseen badge and toasts, deferring the actively-chatted agent to
-  // AgentSocketProvider (which fires after the typing delay so it lines up with the visible bubble).
-  useEffect(() => {
-    return controller.subscribeDeltas((delta: Delta) => {
-      if (delta.type !== "user_notification") return;
-      const { agent, kind, title, body } = delta;
-      if (kind === "rate_limited") {
-        notifyRateLimited(agent, body);
-        return;
-      }
-      // The gateway's own announcement, sent only to clients that missed the update: it names no
-      // agent, so it carries its own title and lights no unseen badge.
-      if (kind === "gateway_updated") {
-        notifyGateway(title, body);
-        return;
-      }
-      markUnseen();
-      if (chattingAgentRef.current === agent) return;
-      notifyAssistant(agent, body);
-    });
-  }, [
-    controller,
-    notifyAssistant,
-    notifyRateLimited,
-    notifyGateway,
-    chattingAgentRef,
-    markUnseen,
-  ]);
-
-  // The fleet-wide pending count is the replica's always-on truth for unprocessed notifications.
-  // A rising count while hidden means a new one arrived somewhere: light the unseen badge.
-  const pendingCount = useReplica(controller.replica, (tree: Tree | null) =>
-    tree
-      ? Object.values(tree.agents).reduce(
-          (sum, node) => sum + node.notifications.pending.length,
-          0,
-        )
-      : 0,
-  );
-  const prevPendingRef = useRef(pendingCount);
-  useEffect(() => {
-    const grew = pendingCount > prevPendingRef.current;
-    prevPendingRef.current = pendingCount;
-    if (grew) markUnseen();
-  }, [pendingCount, markUnseen]);
-
-  return null;
+// The fleet-wide pending count is the replica's always-on truth for unprocessed notifications.
+function selectPendingCount(tree: Tree | null): number {
+  return tree
+    ? Object.values(tree.agents).reduce(
+        (sum, node) => sum + node.notifications.pending.length,
+        0,
+      )
+    : 0;
 }
 
 export function NotificationProvider({
@@ -140,18 +54,11 @@ export function NotificationProvider({
   children: ReactNode;
   onOpenAgent: (agentName: string) => void;
 }) {
-  const { agents } = useGateway();
-  const controller = useContext(ControllerContext);
-  const focused = useWindowFocus();
-  const focusedRef = useRef(focused);
-  const anyFocusedRef = useRef(false);
-  useEffect(() => {
-    focusedRef.current = focused;
-  }, [focused]);
-
+  // Null before the controller exists; every hook below answers the null with its idle value, so
+  // the provider's hook order never depends on the connection. Focus, the viewed agent, and the
+  // fleet-wide focus flag are all read from the controller at call time: one owner, no mirror.
+  const controller = useOptionalController();
   const permissionRef = useRef<boolean>(false);
-  const chattingAgentRef = useRef<string | null>(null);
-  const prevStatusRef = useRef<Map<string, AgentRow["status"]>>(new Map());
 
   useEffect(() => {
     const onVisible = () => {
@@ -175,9 +82,17 @@ export function NotificationProvider({
     setFaviconUnseen(true);
   }, []);
 
+  // Muted while this window or any client anywhere is focused (vestad broadcasts the global flag).
+  const anyoneFocused = useCallback(
+    () =>
+      (controller?.getFocused() ?? false) ||
+      (controller?.getAnyFocused() ?? false),
+    [controller],
+  );
+
   const notifyAssistant = useCallback(
     (agentName: string, text: string) => {
-      if (focusedRef.current || anyFocusedRef.current) return;
+      if (anyoneFocused()) return;
       if (!permissionRef.current) return;
       const body = text.trim();
       if (!body) return;
@@ -200,18 +115,19 @@ export function NotificationProvider({
         /* ignore */
       }
     },
-    [onOpenAgent],
+    [anyoneFocused, onOpenAgent],
   );
 
-  // Unlike chat previews, a hit rate limit fires even while the app is focused: the chat
-  // surface shows nothing for a throttled turn, so this is the user's only signal.
-  const notifyRateLimited = useCallback(
-    (agentName: string, text: string) => {
+  // Unlike chat previews, a needs-user alert (set up, sign in, rate limited) fires even while
+  // the app is focused: the chat surface shows nothing for it, so this is the user's only
+  // signal. The server decides the title; tapping it opens the agent, where the fix lives.
+  const notifyNeedsUser = useCallback(
+    (agentName: string, title: string, text: string) => {
       if (!permissionRef.current) return;
       try {
-        const n = new Notification(`${agentName} hit a Claude rate limit`, {
-          body: text,
-          tag: `${agentName}-rate-limited`,
+        const n = new Notification(title, {
+          body: truncate(text),
+          tag: `${agentName}-needs-user`,
         });
         n.onclick = () => {
           void focusAndOpen(agentName, onOpenAgent);
@@ -226,19 +142,18 @@ export function NotificationProvider({
 
   // The gateway announces an update only to clients that were away for it, so this raises with the
   // same focus mute as a chat preview and opens nothing: there is no agent behind it.
-  const notifyGateway = useCallback((title: string, text: string) => {
-    if (focusedRef.current || anyFocusedRef.current) return;
-    if (!permissionRef.current) return;
-    try {
-      new Notification(title, { body: truncate(text), tag: "gateway" });
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const setChattingAgent = useCallback((agentName: string | null) => {
-    chattingAgentRef.current = agentName;
-  }, []);
+  const notifyGateway = useCallback(
+    (title: string, text: string) => {
+      if (anyoneFocused()) return;
+      if (!permissionRef.current) return;
+      try {
+        new Notification(title, { body: truncate(text), tag: "gateway" });
+      } catch {
+        /* ignore */
+      }
+    },
+    [anyoneFocused],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -250,53 +165,50 @@ export function NotificationProvider({
     };
   }, []);
 
+  // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display triple:
+  // kind/title/body), independent of any subscription. A needs-user alert (set up, sign in, rate
+  // limited) toasts even while focused, since the chat surface shows nothing for it; a chat lights
+  // the unseen badge and toasts, deferring the agent whose page is open to AgentSocketProvider (which
+  // fires after the typing delay so it lines up with the visible bubble).
   useEffect(() => {
-    for (const agent of agents) {
-      const previous = prevStatusRef.current.get(agent.name);
-      prevStatusRef.current.set(agent.name, agent.status);
-      if (!previous || previous === agent.status) continue;
-      if (!agentNeedsUser(agent.status)) continue;
-      if (!permissionRef.current) continue;
-      const unprovisioned = agent.status === "unprovisioned";
-      const title = unprovisioned
-        ? `${agent.name} needs to be set up`
-        : `${agent.name} needs to sign in again`;
-      const body = unprovisioned
-        ? "Tap to choose a provider and sign in."
-        : "vesta lost the provider credentials. Tap to re-authenticate.";
-      try {
-        const n = new Notification(title, {
-          body,
-          tag: `${agent.name}-${agent.status}`,
-        });
-        n.onclick = () => {
-          void focusAndOpen(agent.name, onOpenAgent);
-          n.close();
-        };
-      } catch {
-        /* ignore */
+    if (!controller) return;
+    return controller.subscribeDeltas((delta: Delta) => {
+      if (delta.type !== "user_notification") return;
+      const { agent, kind, title, body } = delta;
+      // LEGACY(remove-when: no supported gateway emits kind=rate_limited; it
+      // was renamed needs_user alongside the durable notification log):
+      if (kind === "needs_user" || kind === "rate_limited") {
+        notifyNeedsUser(agent, title, body);
+        return;
       }
-    }
-  }, [agents, onOpenAgent]);
+      // The gateway's own announcement, sent only to clients that missed the update: it names no
+      // agent, so it carries its own title and lights no unseen badge.
+      if (kind === "gateway_updated") {
+        notifyGateway(title, body);
+        return;
+      }
+      markUnseen();
+      if (controller.getViewing() === agent) return;
+      notifyAssistant(agent, body);
+    });
+  }, [controller, notifyAssistant, notifyNeedsUser, notifyGateway, markUnseen]);
 
-  const value = useMemo(
-    () => ({ notifyAssistant, setChattingAgent }),
-    [notifyAssistant, setChattingAgent],
+  // A rising pending count while hidden means a new one arrived somewhere: light the unseen badge.
+  const pendingCount = useReplica(
+    controller?.replica ?? null,
+    selectPendingCount,
   );
+  const prevPendingRef = useRef(pendingCount);
+  useEffect(() => {
+    const grew = pendingCount > prevPendingRef.current;
+    prevPendingRef.current = pendingCount;
+    if (grew) markUnseen();
+  }, [pendingCount, markUnseen]);
+
+  const value = useMemo(() => ({ notifyAssistant }), [notifyAssistant]);
 
   return (
     <NotificationContext.Provider value={value}>
-      {controller ? (
-        <ReplicaNotifications
-          controller={controller}
-          chattingAgentRef={chattingAgentRef}
-          anyFocusedRef={anyFocusedRef}
-          notifyAssistant={notifyAssistant}
-          notifyRateLimited={notifyRateLimited}
-          notifyGateway={notifyGateway}
-          markUnseen={markUnseen}
-        />
-      ) : null}
       {children}
     </NotificationContext.Provider>
   );

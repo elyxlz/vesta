@@ -1,4 +1,9 @@
+import { normalizeGatewayUrl, type ConnectionConfig } from "@vesta/core";
 import { native } from "./native";
+import { useCredentialStorage } from "@/stores/use-credential-storage";
+import { errorMessage } from "./utils";
+
+export type { ConnectionConfig };
 
 /** Parse the one-click connect key from a URL fragment like `#k=<key>`, which
  * `vestad status` embeds so opening the link connects without pasting the key.
@@ -28,22 +33,28 @@ export function parseConnectLink(
   return { host, key };
 }
 
-export interface ConnectionConfig {
-  url: string;
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-  // Hosted (vesta.run) connections carry NO refresh token — the apex session
-  // cookie is the refresh root. On expiry the app re-runs the PKCE authorize
-  // flow (see token-refresh.ts) instead of calling vestad /auth/refresh.
-  hosted?: boolean;
-}
-
 // ── Storage backend ────────────────────────────────────────────
 // The bridge owns persistence (Electron: json in userData via the preload;
 // browser: localStorage). `cached` gives the sync accessors their value;
-// AuthProvider awaits initConnection before anything reads it.
+// AuthProvider awaits initConnection before anything reads it. The session
+// logic (refresh, expiry, token carriers) lives in @vesta/core over these
+// accessors (see api/client.ts). A write that fails is shown in App Settings
+// (the credential storage card), since the session it lost would otherwise
+// vanish silently at the next launch.
 let cached: ConnectionConfig | null | undefined;
+
+function persist(operation: () => Promise<void>, failureMessage: string): void {
+  const { setWriteError } = useCredentialStorage.getState();
+  void Promise.resolve()
+    .then(operation)
+    .then(
+      () => setWriteError(null),
+      (cause: unknown) =>
+        setWriteError(
+          `${failureMessage}: ${errorMessage(cause, "unknown error")}`,
+        ),
+    );
+}
 
 // ── Public API ─────────────────────────────────────────────────
 
@@ -68,27 +79,9 @@ export function connectionHostname(): string {
   }
 }
 
-export function setConnection(
-  url: string,
-  accessToken: string,
-  refreshToken: string,
-  expiresIn: number,
-): void {
-  const normalized = url.replace(/\/+$/, "");
-  const expiresAt = Date.now() + expiresIn * 1000;
-  const config: ConnectionConfig = {
-    url: normalized,
-    accessToken,
-    refreshToken,
-    expiresAt,
-  };
-  cached = config;
-  void native.connectionStore.write(config);
-}
-
 /**
  * Persist a hosted (vesta.run) connection: the PKCE-minted access token, no
- * refresh token. `url` is this box's own origin (the SPA talks to its own
+ * refresh token. `url` is this gateway's own origin (the SPA talks to its own
  * vestad). On expiry the app re-authorizes rather than refreshing.
  */
 export function setHostedConnection(
@@ -96,35 +89,44 @@ export function setHostedConnection(
   accessToken: string,
   expiresIn: number,
 ): void {
-  const normalized = url.replace(/\/+$/, "");
-  const config: ConnectionConfig = {
-    url: normalized,
+  restoreConnection({
+    url: normalizeGatewayUrl(url),
     accessToken,
     refreshToken: "",
     expiresAt: Date.now() + expiresIn * 1000,
     hosted: true,
-  };
-  cached = config;
-  void native.connectionStore.write(config);
+  });
 }
 
-export function updateTokens(
+/** Write a whole config as the active connection: a freshly minted session, a
+ * saved gateway restored with its tokens verbatim (expiry included), or the
+ * session's own token rotation. The session revives an expired one on the next call. */
+export function restoreConnection(config: ConnectionConfig): void {
+  cached = config;
+  persist(
+    () => native.connectionStore.write(config),
+    "could not save the active gateway",
+  );
+}
+
+export function setConnection(
+  url: string,
   accessToken: string,
   refreshToken: string,
   expiresIn: number,
 ): void {
-  const conn = getConnection();
-  if (!conn) return;
-  setConnection(conn.url, accessToken, refreshToken, expiresIn);
+  restoreConnection({
+    url: normalizeGatewayUrl(url),
+    accessToken,
+    refreshToken,
+    expiresAt: Date.now() + expiresIn * 1000,
+  });
 }
 
 export function clearConnection(): void {
   cached = null;
-  void native.connectionStore.clear();
-}
-
-export function isTokenExpiringSoon(): boolean {
-  const conn = getConnection();
-  if (!conn) return false;
-  return Date.now() > conn.expiresAt - 5 * 60 * 1000; // 5 min buffer
+  persist(
+    () => native.connectionStore.clear(),
+    "could not clear the active gateway",
+  );
 }

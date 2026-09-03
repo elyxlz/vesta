@@ -4,10 +4,15 @@ dist/
 
 # Electron build artifacts
 desktop/dist-electron/
+desktop/native/vesta-location
+desktop/native/vesta-location.*64
 
 # Expo mobile build artifacts
 mobile/.expo/
 mobile/ios/
 mobile/android/
+mobile/modules/*/android/build/
 mobile/coverage/
 mobile/.visual/
+web/.visual/
+visual/.visual/

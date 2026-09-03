@@ -185,7 +185,7 @@ def main():
             "calendar": _dispatch_calendar,
         }
         result = dispatchers[args.group](args, config)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result))
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)

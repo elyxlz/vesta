@@ -1,21 +1,26 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { openaiProvider } from "@/api";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/utils";
 import { ProviderStep } from "../ProviderStep";
+import { OAuthLink } from "../OAuthLink";
 import { OpenAILogo } from "../logos";
+import { completeOpenAIOAuth } from "@vesta/core";
+import type { OpenAIOAuthStart } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function OpenAIAuthStep({
+  agentName,
   authStart,
   startError,
   onCredentialsReady,
-  onCancel,
+  onBack,
 }: {
-  authStart: openaiProvider.OAuthStartResult | null;
+  agentName: string;
+  authStart: OpenAIOAuthStart | null;
   startError: string | null;
   onCredentialsReady: (credentials: string) => void;
-  onCancel: () => void;
+  onBack: () => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -40,7 +45,7 @@ export function OpenAIAuthStep({
     setError("");
     try {
       onCredentialsReady(
-        await openaiProvider.completeOAuth(authStart.session_id),
+        await completeOpenAIOAuth(httpClient, agentName, authStart.session_id),
       );
     } catch (caught: unknown) {
       setError(errorMessage(caught, "verification failed"));
@@ -56,18 +61,9 @@ export function OpenAIAuthStep({
       submitLabel={submitting ? "checking sign-in..." : "continue"}
       submitDisabled={submitting}
       onSubmit={() => void submit()}
-      onCancel={onCancel}
+      onBack={onBack}
       error={error || undefined}
-      oauthLink={
-        <a
-          href={authStart.auth_url}
-          target="_blank"
-          rel="noopener"
-          className="text-xs text-muted-foreground hover:text-foreground"
-        >
-          {authStart.auth_url}
-        </a>
-      }
+      oauthLink={<OAuthLink url={authStart.auth_url} />}
     >
       <div className="flex w-full items-center justify-center gap-2 rounded-xl border bg-input/30 p-3">
         <code className="text-lg font-semibold tracking-[0.2em]">

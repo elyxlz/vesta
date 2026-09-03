@@ -1,26 +1,22 @@
-import { useNavigate } from "react-router-dom";
-import { KeyRound } from "lucide-react";
+import { KeyRound, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { AgentActions } from "@/components/AgentMenu/AgentActions";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { AgentActions } from "@/components/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useGateway } from "@/providers/GatewayProvider";
-import { useModals } from "@/providers/ModalsProvider";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
+import { useDialogs } from "@/stores/use-dialogs";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { agentIsDown, agentNeedsUser } from "@vesta/core";
 
 export function ActionsCard() {
-  const navigate = useNavigate();
-  const {
-    name: agentName,
-    agent,
-    isBusy,
-    start,
-    stop,
-    restart,
-  } = useSelectedAgent();
-  const { handleOpenAuth, setDeleteDialogOpen, setBackupDialogOpen } =
-    useModals();
+  const { agent, isBusy, start, stop, restart } = useSelectedAgent();
+  const openDialog = useDialogs((s) => s.setOpen);
 
   const isRunning = !agentIsDown(agent.status);
   const showAliveActions = agent.status === "alive";
@@ -36,13 +32,22 @@ export function ActionsCard() {
 
   return (
     <Card size="sm">
+      <CardHeader>
+        <CardTitle>
+          <SlidersHorizontal className="size-4 text-muted-foreground" />
+          agent
+        </CardTitle>
+        <CardDescription>
+          start, restart, or back up this agent.
+        </CardDescription>
+      </CardHeader>
       <CardContent>
         {showTopSignIn && (
           <Button
             variant="default"
             size="lg"
             className="mb-4 w-full"
-            onClick={() => handleOpenAuth()}
+            onClick={() => openDialog("providerAuth", true)}
           >
             <KeyRound data-icon="inline-start" />
             sign in
@@ -52,16 +57,12 @@ export function ActionsCard() {
           isRunning={isRunning}
           showAliveActions={showAliveActions}
           isBusy={isBusy}
-          onLogs={() => {
-            void navigate(`/agent/${encodeURIComponent(agentName)}/logs`);
-          }}
           onToggle={() => {
             if (isRunning) stop();
             else start();
           }}
           onRestart={() => void restart()}
-          onBackup={() => setBackupDialogOpen(true)}
-          onDelete={() => setDeleteDialogOpen(true)}
+          onBackup={() => openDialog("backups", true)}
         />
       </CardContent>
     </Card>

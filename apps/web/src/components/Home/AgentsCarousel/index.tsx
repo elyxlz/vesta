@@ -1,26 +1,37 @@
 import { motion } from "motion/react";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentCard } from "@/components/AgentCard";
-import type { AgentRow } from "@/lib/types";
+import type { AgentRow } from "@vesta/core";
+import { cn } from "@/lib/utils";
 import {
   AGENT_CAROUSEL_GAP,
   AGENT_CAROUSEL_CARD_WIDTH,
-  scaleForCarouselItemOffset,
+  AGENT_CAROUSEL_EDGE_SCALE,
+  AGENT_CAROUSEL_ITEM_STRIDE,
 } from "./constants";
+import { useDragScroll, type DragPhase } from "./use-drag-scroll";
 
 const EDGE_FADE =
   "linear-gradient(to right, transparent, black 10%, black 90%, transparent)";
 
-// scrollLeft that places the card's center at the scroller's horizontal center.
-function centerScrollLeft(scroller: HTMLDivElement, card: HTMLDivElement) {
-  return card.offsetLeft + card.offsetWidth / 2 - scroller.clientWidth / 2;
+// The inline padding centers card 0 at scrollLeft 0, so a card's index is its
+// scrollLeft in strides: the one position decision, read by the active dot,
+// and every programmatic scroll.
+function indexAt(scrollLeft: number) {
+  return Math.round(scrollLeft / AGENT_CAROUSEL_ITEM_STRIDE);
 }
+
+// The scroller's custom properties feed the carousel-card CSS animation.
+const SCROLLER_STYLE: React.CSSProperties = {
+  gap: AGENT_CAROUSEL_GAP,
+  paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
+  overscrollBehaviorX: "none",
+  touchAction: "pan-x",
+  maskImage: EDGE_FADE,
+  WebkitMaskImage: EDGE_FADE,
+  "--carousel-stride": `${String(AGENT_CAROUSEL_ITEM_STRIDE)}px`,
+  "--carousel-edge-scale": String(AGENT_CAROUSEL_EDGE_SCALE),
+};
 
 function Pagination({
   total,
@@ -61,108 +72,73 @@ export function AgentsCarousel({
   initialIndex?: number;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const frameRef = useRef<number | null>(null);
   const [centeredIndex, setCenteredIndex] = useState(
     initialIndex > 0 ? initialIndex : 0,
   );
-
-  // Scale every card by its distance to the scroller's horizontal center and
-  // derive the centered index. Scale is written imperatively so per-frame
-  // scroll updates never touch React state; only a changed centered index
-  // re-renders (to flip enableTracking + the active pagination dot).
-  const applyEffects = useCallback(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    const viewportCenter = scroller.scrollLeft + scroller.clientWidth / 2;
-    let nearestIndex = 0;
-    let nearestDistance = Infinity;
-    cardRefs.current.forEach((card, index) => {
-      if (!card) return;
-      const cardCenter = card.offsetLeft + card.offsetWidth / 2;
-      const offset = cardCenter - viewportCenter;
-      card.style.transform = `scale(${String(scaleForCarouselItemOffset(offset))})`;
-      const distance = Math.abs(offset);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestIndex = index;
-      }
-    });
-    setCenteredIndex((prev) => (prev === nearestIndex ? prev : nearestIndex));
-  }, []);
+  // Mouse drag-to-scroll: snapping is off while dragging and through the smooth settle, so the
+  // release glides to the nearest card instead of hard-snapping.
+  const [phase, setPhase] = useState<DragPhase>("idle");
+  useDragScroll(scrollerRef, AGENT_CAROUSEL_ITEM_STRIDE, setPhase);
 
   // Center initialIndex before paint, without animation.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
-    const card = cardRefs.current[initialIndex];
-    if (scroller && card && initialIndex > 0) {
-      scroller.scrollLeft = centerScrollLeft(scroller, card);
+    if (scroller && initialIndex > 0) {
+      scroller.scrollLeft = initialIndex * AGENT_CAROUSEL_ITEM_STRIDE;
     }
-    applyEffects();
-  }, [applyEffects, initialIndex]);
+  }, [initialIndex]);
 
+  // The active dot follows the scroll, one state write per frame at most and
+  // only when the index changes; the card scale is CSS on the scroll timeline.
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-
+    let frame: number | null = null;
     const onScroll = () => {
-      if (frameRef.current !== null) return;
-      frameRef.current = requestAnimationFrame(() => {
-        frameRef.current = null;
-        applyEffects();
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        setCenteredIndex(indexAt(scroller.scrollLeft));
       });
     };
-
-    const observer = new ResizeObserver(() => applyEffects());
     scroller.addEventListener("scroll", onScroll, { passive: true });
-    observer.observe(scroller);
-
     return () => {
       scroller.removeEventListener("scroll", onScroll);
-      observer.disconnect();
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [applyEffects]);
+  }, []);
 
   const gotoIndex = (index: number) => {
-    const scroller = scrollerRef.current;
-    const card = cardRefs.current[index];
-    if (!scroller || !card) return;
-    scroller.scrollTo({
-      left: centerScrollLeft(scroller, card),
+    scrollerRef.current?.scrollTo({
+      left: index * AGENT_CAROUSEL_ITEM_STRIDE,
       behavior: "smooth",
     });
   };
 
   return (
-    <div className="relative flex min-h-0 w-full flex-1 items-center">
+    <div className="relative flex min-h-0 w-full flex-1">
       <div
         ref={scrollerRef}
-        className="flex w-full items-center overflow-x-auto no-scrollbar"
+        className={cn(
+          "flex w-full items-center overflow-x-auto no-scrollbar",
+          phase === "dragging" ? "cursor-grabbing select-none" : "cursor-grab",
+        )}
         style={{
-          gap: AGENT_CAROUSEL_GAP,
-          scrollSnapType: "x mandatory",
-          paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
-          overscrollBehaviorX: "none",
-          touchAction: "pan-x",
-          maskImage: EDGE_FADE,
-          WebkitMaskImage: EDGE_FADE,
+          ...SCROLLER_STYLE,
+          scrollSnapType: phase === "idle" ? "x mandatory" : "none",
         }}
       >
-        {agents.map((agent, index) => (
+        {agents.map((agent) => (
           <div
             key={agent.name}
-            ref={(el) => {
-              cardRefs.current[index] = el;
-            }}
-            className="flex shrink-0 items-center justify-center"
+            className="carousel-card flex shrink-0 items-center justify-center"
             style={{
               width: `${String(AGENT_CAROUSEL_CARD_WIDTH)}px`,
               aspectRatio: "1/1",
               scrollSnapAlign: "center",
             }}
           >
-            <AgentCard agent={agent} enableTracking={index === centeredIndex} />
+            <AgentCard agent={agent} />
           </div>
         ))}
       </div>

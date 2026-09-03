@@ -12,11 +12,14 @@
     "./react": "./src/react/index.ts"
   },
   "scripts": {
-    "lint": "eslint src",
+    "lint": "eslint src --max-warnings 0",
     "check": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write src",
     "format:check": "prettier --check src"
+  },
+  "dependencies": {
+    "zustand": "^5.0.15"
   },
   "peerDependencies": {
     "react": ">=19"
@@ -28,18 +31,15 @@
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.4.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
-    "eslint": "^10.7.0",
-    "eslint-config-prettier": "^10.1.8",
     "fast-check": "^4.9.0",
     "jsdom": "^30.0.1",
-    "prettier": "^3.9.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "typescript": "^7.0.2",
-    "typescript-eslint": "^8.65.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }

@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from "react";
-import type { ContextPreset } from "@/api/manifest";
 import { ProviderStep } from "../ProviderStep";
+import type { ProviderContextPreset } from "@vesta/core";
 
-// Presets + the default come from the manifest (GET /manifest), passed in by the parent,
+// Presets and the default come from the agent's provider catalog, passed in by the parent,
 // so this step holds no copy of either.
 export function ContextStep({
   presets,
@@ -10,14 +10,14 @@ export function ContextStep({
   onSubmit,
   submitLabel = "continue",
   logo,
-  onCancel,
+  onBack,
 }: {
-  presets: ContextPreset[];
+  presets: ProviderContextPreset[];
   initial: number;
   onSubmit: (tokens: number) => void;
   submitLabel?: string;
   logo?: ReactNode;
-  onCancel?: () => void;
+  onBack?: () => void;
 }) {
   const [selected, setSelected] = useState<number>(initial);
 
@@ -28,7 +28,7 @@ export function ContextStep({
       subtitle="how much vesta keeps in mind. longer remembers more, uses more; shorter is cheaper."
       submitLabel={submitLabel}
       onSubmit={() => onSubmit(selected)}
-      onCancel={onCancel}
+      onBack={onBack}
     >
       <div className="flex w-full flex-col gap-1.5">
         {presets.map((preset) => (

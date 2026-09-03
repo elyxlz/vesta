@@ -39,10 +39,10 @@ const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 
 // D2: the served compatibility window's low end, mirrored from vestad's crate-private
 // `sync::MIN_SUPPORTED_CLIENT_VERSION` (not importable from an integration crate, so pinned to the
-// contract literal here). The claude manifest catalog went live (models: "live", no model_names)
-// after 0.1.188, so older clients would render an empty Claude model picker (see release.sh for
+// contract literal here). Dropping the device `location` field from the roster removed a wire field
+// clients read, so the floor moved to the in-gap bump above the shipped version (see release.sh for
 // the in-gap bump convention).
-const EXPECT_MIN_SUPPORTED: &str = "0.1.189";
+const EXPECT_MIN_SUPPORTED: &str = "0.2.16";
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
 /// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed). The
@@ -173,7 +173,7 @@ async fn hello_then_snapshot_carries_agent_info_branch() {
 }
 
 /// (2) `POST /agents/{name}/user-notification {kind:"message",...}` carrying the agent's own
-/// `X-Agent-Token` fans a `user_notification` delta `{agent,kind,title,body}` to a connected `/sync`
+/// `X-Agent-Token` fans a `user_notification` delta `{id,at,agent,kind,title,body}` to a connected `/sync`
 /// session (the loopback path the app-chat reply hook and the rate-limit notice use). The kind is a
 /// closed set: an unknown kind is a 400.
 #[tokio::test]
@@ -198,6 +198,8 @@ async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
         .expect("a user_notification delta for the user notification");
     assert_eq!(user_notification["kind"].as_str(), Some("message"), "carries the kind");
     assert_eq!(user_notification["title"].as_str(), Some(agent.name.as_str()), "carries the title");
+    assert!(user_notification["id"].as_u64().is_some(), "carries the log entry's id");
+    assert!(user_notification["at"].as_u64().is_some(), "carries the log entry's stamp");
     assert_eq!(user_notification["body"].as_str(), Some("a fresh reply"), "carries the body");
 
     // The kind is a closed set: an unknown kind is rejected with 400 (mapped to the error string).
@@ -205,6 +207,46 @@ async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
         .send_user_notification(&agent.name, &token, "bogus", &agent.name, "nope")
         .expect_err("an unknown kind is rejected");
     assert!(err.contains("unknown user notification kind"), "unexpected error for a bad kind: {err}");
+    sock.close().await.ok();
+}
+
+/// The user-notification feed's seen watermark is synced state on the gateway branch:
+/// `POST /notifications/seen` advances it server-side and every `/sync` session receives a `state`
+/// delta carrying the new `userNotificationsSeenAt`; an appended notification moves
+/// `lastUserNotificationAt` the same way. Predicates are `>=` because parallel scenarios share the
+/// server and may append or mark concurrently.
+#[tokio::test]
+async fn marking_the_feed_seen_projects_the_watermark_on_the_gateway_branch() {
+    let c = SERVER.client();
+    let agent = running_agent(&c, "sync-seen");
+    let token = c.read_agent_token(&agent.name).expect("read agent token");
+
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+
+    let seen_at = c.mark_notifications_seen().expect("mark notifications seen");
+    assert!(seen_at > 0, "the watermark is the server's now");
+    sock.expect_frame_matching(
+        |f| {
+            f["type"].as_str() == Some("state")
+                && f["value"]["userNotificationsSeenAt"].as_u64().is_some_and(|at| at >= seen_at)
+        },
+        USER_NOTIFICATION_TIMEOUT,
+    )
+    .await
+    .expect("a state delta carrying the advanced seen watermark");
+
+    c.send_user_notification(&agent.name, &token, "message", &agent.name, "past the watermark")
+        .expect("send user notification");
+    sock.expect_frame_matching(
+        |f| {
+            f["type"].as_str() == Some("state")
+                && f["value"]["lastUserNotificationAt"].as_u64().is_some_and(|at| at >= seen_at)
+        },
+        USER_NOTIFICATION_TIMEOUT,
+    )
+    .await
+    .expect("a state delta carrying the newest entry's stamp");
     sock.close().await.ok();
 }
 
@@ -293,5 +335,88 @@ async fn unknown_client_frames_are_ignored() {
 
     // The socket stayed live: a following user notification still fans its delta here.
     send_user_notification_and_expect_delta(&c, &mut sock, &agent.name, &token, "still alive").await;
+    sock.close().await.ok();
+}
+
+/// (6) A device's reported context reaches the store, the roster, the agent, and the agent's read
+/// path. A `client_context` frame carrying `timezone` + `position` from a focused device fans a
+/// `devices` delta with those facts; the agent's `GET /agents/{name}/devices` (X-Agent-Token) returns
+/// them; and vestad drops a `user-timezone` notification into an agent whose own zone differs (a
+/// fresh agent runs on UTC). The HTTP carrier `PUT /devices/{id}/context` lands in the same store.
+#[tokio::test]
+async fn device_context_reaches_roster_agent_and_notification_intake() {
+    let c = SERVER.client();
+    let agent = running_agent(&c, "sync-context");
+    let token = c.read_agent_token(&agent.name).expect("read agent token");
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+
+    let device_id = format!("dev-{}", agent.name);
+    sock.send_client_frame(&serde_json::json!({
+        "type": "client_context", "focused": true, "client": "mobile",
+        "deviceId": device_id, "descriptor": "Vesta Mobile on iOS",
+        "timezone": "Asia/Tokyo",
+        "position": {"latitude": 35.6762, "longitude": 139.6503, "accuracyM": 50.0,
+                     "place": {"city": "Tokyo", "country": "Japan"}},
+    }))
+    .await
+    .expect("send client_context with device context");
+    let devices = sock
+        .expect_frame_matching(
+            |f| {
+                f["type"].as_str() == Some("devices")
+                    && f["devices"].as_array().is_some_and(|list| {
+                        list.iter().any(|d| d["id"].as_str() == Some(device_id.as_str()) && d["timezone"].is_string())
+                    })
+            },
+            USER_NOTIFICATION_TIMEOUT,
+        )
+        .await
+        .expect("a devices delta carrying the reported context");
+    let device = devices["devices"]
+        .as_array()
+        .and_then(|list| list.iter().find(|d| d["id"].as_str() == Some(device_id.as_str())))
+        .expect("the reporting device");
+    assert_eq!(device["timezone"].as_str(), Some("Asia/Tokyo"));
+    assert_eq!(device["position"]["place"]["city"].as_str(), Some("Tokyo"));
+
+    // The agent reads the same facts through its own self-scoped route.
+    let seen = c.agent_devices(&agent.name, &token).expect("agent devices");
+    let mine = seen["devices"]
+        .as_array()
+        .and_then(|list| list.iter().find(|d| d["id"].as_str() == Some(device_id.as_str())))
+        .expect("the device on the agent's read path");
+    assert_eq!(mine["timezone"].as_str(), Some("Asia/Tokyo"));
+    assert_eq!(mine["position"]["latitude"].as_f64(), Some(35.6762));
+
+    // A fresh agent runs on UTC, so Tokyo is news: the notification lands in its intake. A model-less
+    // agent never consumes it, so it stays for the poll.
+    let container = vesta_tests::agent_container_name(&agent.name);
+    let deadline = Instant::now() + USER_NOTIFICATION_TIMEOUT;
+    let listing = loop {
+        let listing = vesta_tests::exec_in_container(&container, "ls /root/agent/notifications").unwrap_or_default();
+        if listing.contains("user-timezone-") && listing.contains("user-location-") {
+            break listing;
+        }
+        assert!(Instant::now() < deadline, "no user-timezone/user-location notification landed; intake: {listing}");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    let payload = vesta_tests::exec_in_container(
+        &container,
+        "cat /root/agent/notifications/user-timezone-*.json",
+    )
+    .expect("read the timezone notification");
+    assert!(payload.contains("\"source\":\"vestad\"") && payload.contains("Asia/Tokyo"), "payload: {payload}, intake: {listing}");
+
+    // The HTTP carrier writes the same store: a later zone shows on the agent's read path.
+    c.report_device_context(&device_id, &serde_json::json!({ "timezone": "Europe/Paris" }))
+        .expect("report context over http");
+    let seen = c.agent_devices(&agent.name, &token).expect("agent devices after http report");
+    let mine = seen["devices"]
+        .as_array()
+        .and_then(|list| list.iter().find(|d| d["id"].as_str() == Some(device_id.as_str())))
+        .expect("the device on the agent's read path");
+    assert_eq!(mine["timezone"].as_str(), Some("Europe/Paris"));
+    assert_eq!(mine["position"]["place"]["city"].as_str(), Some("Tokyo"), "a zone-only report keeps the position");
     sock.close().await.ok();
 }

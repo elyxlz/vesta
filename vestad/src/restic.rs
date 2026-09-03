@@ -337,6 +337,7 @@ pub async fn snapshot(
     let tar_name = agent_tar_name(name);
     let agent_tag = format!("agent:{name}");
     let type_tag = format!("type:{backup_type}");
+    let stamp_tag = format!("vestad-version:{}", env!("CARGO_PKG_VERSION"));
     let timeout_secs = snapshot_timeout_secs(backup_type);
     let version_tag = from_version.map(|v| format!("from-version:{v}"));
     let from_version = from_version.map(str::to_string);
@@ -359,6 +360,8 @@ pub async fn snapshot(
             &agent_tag,
             "--tag",
             &type_tag,
+            "--tag",
+            &stamp_tag,
         ]);
         if let Some(ref tag) = version_tag {
             backup.args(["--tag", tag]);
@@ -415,6 +418,7 @@ pub async fn snapshot(
         created_at: crate::time_utils::now_timestamp(),
         size: summary.total_bytes_processed,
         from_version,
+        vestad_version: Some(env!("CARGO_PKG_VERSION").to_string()),
     })
 }
 
@@ -482,6 +486,7 @@ fn snapshot_to_info(snap: ResticSnapshot) -> Option<BackupInfo> {
     let backup_type = tag_value(&snap.tags, "type:")?.parse::<BackupType>().ok()?;
     let created_at = format_restic_time(&snap.time)?;
     let from_version = tag_value(&snap.tags, "from-version:").map(str::to_string);
+    let vestad_version = tag_value(&snap.tags, "vestad-version:").map(str::to_string);
     Some(BackupInfo {
         id: snap.short_id,
         agent_name,
@@ -489,6 +494,7 @@ fn snapshot_to_info(snap: ResticSnapshot) -> Option<BackupInfo> {
         created_at,
         size: snap.summary.map_or(0, |s| s.total_bytes_processed),
         from_version,
+        vestad_version,
     })
 }
 
@@ -808,7 +814,11 @@ mod tests {
         let snap = ResticSnapshot {
             short_id: "abc12345".into(),
             time: "2026-05-29T04:00:01Z".into(),
-            tags: vec!["agent:okami".into(), "type:daily".into()],
+            tags: vec![
+                "agent:okami".into(),
+                "type:daily".into(),
+                "vestad-version:0.2.1".into(),
+            ],
             summary: Some(ResticSnapshotSummary {
                 total_bytes_processed: 4242,
             }),
@@ -821,6 +831,16 @@ mod tests {
         assert_eq!(info.created_at, "20260529-040001");
         assert_eq!(info.size, 4242);
         assert_eq!(info.from_version, None);
+        assert_eq!(info.vestad_version.as_deref(), Some("0.2.1"));
+
+        let unstamped = ResticSnapshot {
+            short_id: "def67890".into(),
+            time: "2026-05-29T04:00:01Z".into(),
+            tags: vec!["agent:okami".into(), "type:manual".into()],
+            summary: None,
+        };
+        let info = snapshot_to_info(unstamped).unwrap();
+        assert_eq!(info.vestad_version, None);
 
         let untagged = ResticSnapshot {
             short_id: "abc12345".into(),

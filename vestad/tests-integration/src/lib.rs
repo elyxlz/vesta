@@ -44,6 +44,13 @@ static TEST_AGENT_COUNTER: AtomicU32 = AtomicU32::new(0);
 /// curl flags that absorb transient GitHub API/CDN flakes during integration tests.
 const CURL_RETRY_ARGS: &[&str] = &["--retry", "5", "--retry-all-errors", "--retry-delay", "2"];
 
+/// A gateway update swaps the very binary the next boot exec's; the swap's writer can still hold
+/// the file when the boot spawns it, which the kernel reports as ETXTBSY (errno 26). The busy
+/// window closes the instant that handle drops, so a short bounded retry absorbs it.
+const ETXTBSY: i32 = 26;
+const SPAWN_ETXTBSY_BUDGET: Duration = Duration::from_secs(5);
+const SPAWN_ETXTBSY_BACKOFF: Duration = Duration::from_millis(50);
+
 /// Generate a unique user name for test isolation. Includes PID for cross-run
 /// uniqueness and an atomic counter for intra-run uniqueness. This prevents
 /// tests from seeing each other's Docker containers (vestad scopes by
@@ -269,7 +276,19 @@ impl TestServer {
             cmd.env(key, value);
         }
 
-        let process = cmd.spawn().map_err(|e| format!("spawn vestad: {e}"))?;
+        let spawn_deadline = std::time::Instant::now() + SPAWN_ETXTBSY_BUDGET;
+        let process = loop {
+            match cmd.spawn() {
+                Ok(child) => break child,
+                Err(e)
+                    if e.raw_os_error() == Some(ETXTBSY)
+                        && std::time::Instant::now() < spawn_deadline =>
+                {
+                    std::thread::sleep(SPAWN_ETXTBSY_BACKOFF);
+                }
+                Err(e) => return Err(format!("spawn vestad: {e}")),
+            }
+        };
 
         let config_dir = home.join(".config/vesta/vestad");
         let port_path = config_dir.join("port");

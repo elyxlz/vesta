@@ -6,9 +6,9 @@ import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { usePathname, useRouter } from "expo-router";
-import { registerMobileDevice, unregisterMobileDevice } from "@/api/endpoints";
+import { registerMobileDevice, unregisterMobileDevice } from "@vesta/core";
 import { createApiClient, type ApiClient } from "@/api/client";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 import { useRoster } from "@/session/RosterProvider";
@@ -65,6 +65,14 @@ function configuredProjectId(): string | null {
   const eas = extra.eas;
   if (!eas || typeof eas !== "object" || !("projectId" in eas)) return null;
   return typeof eas.projectId === "string" ? eas.projectId : null;
+}
+
+// Android push tokens come from FCM, wired in through android.googleServicesFile. A build
+// without those credentials cannot mint a device token (the native fetch rejects), so
+// registration on such a build is a quiet no-op: no permission prompt, no crash, and the
+// unregister paths stay safe because no token was ever stored.
+function androidPushConfigured(): boolean {
+  return typeof Constants.expoConfig?.android?.googleServicesFile === "string";
 }
 
 // The stable per-install id, reused as this device's id in both push registration and the device
@@ -160,11 +168,11 @@ function EnabledPushCoordinator() {
         response.notification.request.content.data,
         response.notification.request.identifier,
       );
-      if (!next) {
-        await Notifications.clearLastNotificationResponseAsync();
-        return;
-      }
       try {
+        if (!next) {
+          await Notifications.clearLastNotificationResponseAsync();
+          return;
+        }
         await AsyncStorage.setItem(
           PENDING_NOTIFICATION_KEY,
           JSON.stringify(next),
@@ -173,7 +181,7 @@ function EnabledPushCoordinator() {
         await Notifications.clearLastNotificationResponseAsync();
       } catch (cause: unknown) {
         console.warn("Could not preserve notification navigation:", cause);
-        if (active) setPending(next);
+        if (active && next) setPending(next);
       }
     };
     const subscription = Notifications.addNotificationResponseReceivedListener(
@@ -181,19 +189,27 @@ function EnabledPushCoordinator() {
         void capture(response);
       },
     );
-    void AsyncStorage.getItem(PENDING_NOTIFICATION_KEY).then((stored) => {
-      const restored = readPendingNotification(stored);
-      if (active && restored) setPending((current) => current ?? restored);
-    });
-    void Notifications.getLastNotificationResponseAsync().then((response) =>
-      capture(response),
-    );
+    void AsyncStorage.getItem(PENDING_NOTIFICATION_KEY)
+      .then((stored) => {
+        const restored = readPendingNotification(stored);
+        if (active && restored) setPending((current) => current ?? restored);
+      })
+      .catch((cause: unknown) => {
+        console.warn("Could not restore notification navigation:", cause);
+      });
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => capture(response))
+      .catch((cause: unknown) => {
+        console.warn("Could not read the launch notification:", cause);
+      });
     return () => {
       active = false;
       subscription.remove();
     };
   }, []);
 
+  const sessionStatus = session.status;
+  const sessionGatewayUrl = session.connection?.url ?? null;
   useEffect(() => {
     if (privacyBlocked || !pending) return;
     const routeReady = !["/connect", "/connect-link", "/scan"].includes(
@@ -201,12 +217,12 @@ function EnabledPushCoordinator() {
     );
     const decision = notificationNavigationDecision({
       pending,
-      sessionStatus: session.status,
+      sessionStatus,
       reachable,
       agentsReady,
       agentNames: agents.map((agent) => agent.name),
       routeReady,
-      currentGateway: session.connection?.url ?? null,
+      currentGateway: sessionGatewayUrl,
     });
     if (decision === "wait") return;
     if (processingNotification.current === pending.identifier) return;
@@ -234,7 +250,8 @@ function EnabledPushCoordinator() {
     pending,
     privacyBlocked,
     router,
-    session,
+    sessionStatus,
+    sessionGatewayUrl,
     reachable,
     agentsReady,
     agents,
@@ -290,11 +307,12 @@ function EnabledPushCoordinator() {
     const platform = Platform.OS;
     if (!Device.isDevice || (platform !== "ios" && platform !== "android"))
       return;
+    if (platform === "android" && !androidPushConfigured()) return;
     const gateway = session.connection?.url;
     if (!gateway) return;
     const eventTypes = [
       ...(preferences.pushChatReplies ? ["chat"] : []),
-      ...(preferences.pushStatusChanges ? ["status"] : []),
+      "status",
     ];
     let permissionGranted = false;
     const registerExpoToken = async (
@@ -370,7 +388,6 @@ function EnabledPushCoordinator() {
     preferences.hydrated,
     preferences.notificationPreviews,
     preferences.pushChatReplies,
-    preferences.pushStatusChanges,
     preferences.remoteNotifications,
     session.api,
     session.connection?.url,

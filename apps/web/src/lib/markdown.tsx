@@ -1,11 +1,40 @@
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { splitTextIntoLinks, type MdastNode } from "./bare-url";
+
+function linkifyNode(node: MdastNode): void {
+  const children = node.children;
+  if (!children) return;
+  const next: MdastNode[] = [];
+  for (const child of children) {
+    if (child.type === "text" && child.value) {
+      next.push(...splitTextIntoLinks(child.value));
+      continue;
+    }
+    // Don't descend into existing links or code; everything else can hold linkifiable text.
+    if (
+      child.type !== "link" &&
+      child.type !== "inlineCode" &&
+      child.type !== "code"
+    ) {
+      linkifyNode(child);
+    }
+    next.push(child);
+  }
+  node.children = next;
+}
+
+function remarkLinkifyBareUrls() {
+  return (tree: MdastNode) => {
+    linkifyNode(tree);
+  };
+}
 
 export function Markdown({ children }: { children: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkBreaks]}
+      remarkPlugins={[remarkGfm, remarkBreaks, remarkLinkifyBareUrls]}
       components={{
         a: ({ node: _n, ...props }) => (
           <a

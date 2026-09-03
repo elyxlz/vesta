@@ -2,8 +2,8 @@ import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
-import Stack from "expo-router/stack";
-import { readFile, writeFile } from "@/api/endpoints";
+import { SheetTitle } from "@/components/sheet-title";
+import { readFile, writeFile } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { Screen } from "@/components/layout/Screen";
 import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
@@ -67,7 +67,7 @@ function AgentFileContent() {
   const changed = editable && draft !== file.data.content;
   return (
     <>
-      <Stack.Title>{fileName(path)}</Stack.Title>
+      <SheetTitle>{fileName(path)}</SheetTitle>
       <NativeSheetCloseButton accessibilityLabel="Close file" />
       <Screen contentStyle={styles.content}>
         <Card>

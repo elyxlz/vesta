@@ -1,15 +1,14 @@
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProviderStep } from "@/components/ProviderPicker/ProviderStep";
+import { OAuthLink } from "@/components/ProviderPicker/OAuthLink";
 import { ClaudeLogo } from "@/components/ProviderPicker/logos";
 import { errorMessage } from "@/lib/utils";
 
 interface AuthFlowProps {
   authUrl: string;
   onSubmitCode: (code: string) => Promise<void>;
-  onCancel?: () => void;
+  onBack?: () => void;
   onComplete?: () => void;
 }
 
@@ -18,23 +17,12 @@ type AuthState = "waiting" | "submitting" | "error";
 export function AuthFlow({
   authUrl,
   onSubmitCode,
-  onCancel,
+  onBack,
   onComplete,
 }: AuthFlowProps) {
   const [authState, setAuthState] = useState<AuthState>("waiting");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
-
-  const copyAuthUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(authUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard unavailable; the link stays visible for a manual copy */
-    }
-  };
 
   const submitting = authState === "submitting";
 
@@ -54,47 +42,16 @@ export function AuthFlow({
 
   return (
     <ProviderStep
-      className="gap-2"
       logo={<ClaudeLogo />}
       title="sign in to claude"
       subtitle="open the link, sign in, then paste the code below."
-      oauthLink={
-        authUrl ? (
-          <div className="mt-2 flex w-full min-w-0 max-w-full flex-col gap-1">
-            <div className="flex min-h-0 w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
-              <a
-                href={authUrl}
-                target="_blank"
-                rel="noopener"
-                className="block min-w-0 flex-1 truncate text-xs text-muted-foreground hover:text-foreground"
-              >
-                {authUrl}
-              </a>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="shrink-0"
-                type="button"
-                aria-label={copied ? "copied" : "copy auth link"}
-                onClick={() => {
-                  void copyAuthUrl();
-                }}
-              >
-                {copied ? <Check /> : <Copy />}
-              </Button>
-              <span className="sr-only" role="status" aria-live="polite">
-                {copied ? "copied" : ""}
-              </span>
-            </div>
-          </div>
-        ) : undefined
-      }
+      oauthLink={authUrl ? <OAuthLink url={authUrl} /> : undefined}
       submitLabel={submitting ? "verifying code..." : "continue"}
       submitDisabled={!code.trim() || submitting}
       onSubmit={() => {
         void submit();
       }}
-      onCancel={onCancel}
+      onBack={onBack}
       error={error || undefined}
     >
       <Input
@@ -103,7 +60,7 @@ export function AuthFlow({
         onChange={(e) => setCode(e.target.value)}
         autoFocus
         disabled={submitting}
-        className="w-full text-center"
+        className="h-11 w-full text-center"
       />
     </ProviderStep>
   );

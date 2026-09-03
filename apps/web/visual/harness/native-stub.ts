@@ -1,0 +1,80 @@
+import type { Page } from "@playwright/test";
+import { VISUAL_CONNECTION } from "./storage";
+import type { VestaNativeApi } from "../../src/lib/native/types";
+
+// Defines window.vestaNative before app code runs, so the app takes its real
+// desktop path (.desktop, .vibrancy, data-platform, titlebar inset or custom
+// window controls). Every method is inert; the store starts with the saved
+// visual connection, which is where the desktop bridge reads it from.
+export async function installNativeStub(
+  page: Page,
+  options: {
+    platform?: "darwin" | "win32";
+    connection?: boolean;
+    appUpdate?: { available: boolean; version: string };
+  } = {},
+): Promise<void> {
+  await page.addInitScript(
+    ({ appUpdate, connection, platform }) => {
+      // The app reads the user agent, not the bridge, for platform-specific
+      // chrome such as keybind glyphs, so a Windows shell needs a Windows UA.
+      if (platform === "win32") {
+        Object.defineProperty(navigator, "userAgent", {
+          get: () =>
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Electron/38.0.0 Safari/537.36",
+        });
+      }
+      let stored: unknown = connection;
+      let recentStored: unknown = null;
+      const noop = (): void => undefined;
+      const resolved = (): Promise<void> => Promise.resolve();
+      window.vestaNative = {
+        platform,
+        focusWindow: resolved,
+        setTheme: noop,
+        openExternal: resolved,
+        getAppUpdate: () =>
+          Promise.resolve(appUpdate ?? { available: false, version: null }),
+        downloadAppUpdate: resolved,
+        onAppUpdateProgress: () => noop,
+        installAppUpdate: resolved,
+        storeRead: () => Promise.resolve(stored),
+        storeWrite: (value: unknown) => {
+          stored = value;
+          return Promise.resolve();
+        },
+        storeClear: () => {
+          stored = null;
+          return Promise.resolve();
+        },
+        storeIsSecure: () => Promise.resolve(true),
+        recentStoreRead: () => Promise.resolve(recentStored),
+        recentStoreWrite: (value: unknown) => {
+          recentStored = value;
+          return Promise.resolve();
+        },
+        recentStoreClear: () => {
+          recentStored = null;
+          return Promise.resolve();
+        },
+        oauthStart: () => Promise.resolve(0),
+        onOauthCallback: () => noop,
+        oauthCancel: resolved,
+        readGeolocation: () => Promise.resolve(null),
+        onWindowFocus: () => noop,
+        windowMinimize: resolved,
+        windowToggleMaximize: resolved,
+        windowClose: resolved,
+        windowIsMaximized: () => Promise.resolve(false),
+        onWindowMaximizedChange: () => noop,
+        getOpenAtLogin: () => Promise.resolve(false),
+        setOpenAtLogin: resolved,
+      } satisfies VestaNativeApi;
+    },
+    {
+      appUpdate: options.appUpdate ?? null,
+      connection: options.connection === false ? null : VISUAL_CONNECTION,
+      platform: options.platform ?? "darwin",
+    },
+  );
+}

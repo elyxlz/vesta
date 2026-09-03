@@ -1,0 +1,120 @@
+appId: ${APP_ID}
+name: Gateway update states
+tags:
+  - visual
+  - gateway-update
+---
+- clearState
+- setPermissions:
+    permissions:
+      location: inuse
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
+- extendedWaitUntil:
+    visible: '.*Disconnect gateway.*'
+    timeout: 30000
+- tapOn:
+    text: '.*Disconnect gateway.*'
+- extendedWaitUntil:
+    visible: '.*Disconnect from gateway\?.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-disconnect-confirm
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-disconnect-confirm.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=applying"
+- extendedWaitUntil:
+    visible: '.*installing.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-applying
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-applying.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=snapshotting-all"
+- extendedWaitUntil:
+    visible: '.*backing up your agents.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-snapshotting-all
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-snapshotting-all.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=update-restarting"
+- extendedWaitUntil:
+    visible: '.*restarting.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-restarting
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-restarting.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=failed-generic"
+- extendedWaitUntil:
+    visible: '.*Something stopped the update.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: gateway-update-failed-generic
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: gateway-update-failed-generic.png
+- stopApp

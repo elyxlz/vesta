@@ -12,6 +12,9 @@ permissions:
   # ci.yml (called below) requests pull-requests: read; a reusable workflow
   # cannot request more than its caller grants, so grant it here too.
   pull-requests: read
+  # live-tests.yml (called below) requests actions: read for its credentials
+  # preflight, same reusable-workflow rule: grant it here too.
+  actions: read
 
 concurrency:
   group: release-pipeline-${{ github.event.release.tag_name }}
@@ -273,17 +276,21 @@ jobs:
   # Gated on the release gates (test-live + test-linux, the same pair push-image
   # waits on), not on publish-release: this job reads only the release event's body
   # and builds mobile from the tag checkout, so it needs no uploaded GitHub assets.
-  # Decoupling lets TestFlight delivery run in parallel with the GHCR push and asset
-  # upload. Accepted tradeoff: if publish-release later fails and revert-failed-release
-  # fires, a TestFlight build of a since-reverted release may already be delivered to
-  # the internal (beta) group. The user accepted this beta-channel risk.
-  mobile-testflight:
-    name: Mobile · Build and upload to TestFlight
+  # Both mobile builds run on GitHub-hosted runners through the same
+  # apps/mobile/scripts/deliver-mobile.sh (eas build --local, signing from EAS
+  # remote credentials via EXPO_TOKEN): iOS on macOS submits to TestFlight, Android
+  # on ubuntu attaches the internal APK to the GitHub release as vesta-android.apk,
+  # which is what the README's stable releases/latest/download link serves.
+  # They run in parallel with the GHCR push and asset upload. Accepted tradeoff: if
+  # publish-release later fails and revert-failed-release fires, a TestFlight build
+  # of a since-reverted release may already be delivered to the internal (beta) group.
+  mobile-ios:
+    name: Mobile · Build and submit iOS to TestFlight
     needs: [test-live, test-linux]
     if: >-
       ${{ !failure() && !cancelled() &&
       contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -292,28 +299,63 @@ jobs:
         with:
           node-version: 22
 
-      - name: Set up EAS
-        uses: expo/expo-github-action@v9
-        with:
-          eas-version: latest
-          packager: npm
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      # eas workflow:run reads apps/mobile/app.config.ts locally, which needs the
+      # deliver-mobile.sh reads apps/mobile/app.config.ts, which needs the
       # monorepo's TypeScript toolchain installed or the read fails.
       - name: Install app deps
         run: npm --prefix apps ci
 
-      - name: Build and deliver the tagged app to TestFlight
+      - name: Build and submit iOS to TestFlight
         working-directory: apps/mobile
         env:
-          RELEASE_BODY: ${{ github.event.release.body }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: ./scripts/deliver-mobile.sh --platform ios --profile production --submit
+
+  mobile-android:
+    name: Mobile · Build and attach Android APK
+    needs: [test-live, test-linux]
+    permissions:
+      contents: write
+    if: >-
+      ${{ !failure() && !cancelled() &&
+      contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
+    runs-on: ubuntu-latest
+    # A cold gradle release build overruns 60 minutes on the hosted runner; the
+    # cache below brings warm builds well under it.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('apps/package-lock.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # The user-home gradle.properties overrides the Expo template's, whose
+      # 512m Metaspace cap OOMs the daemon on this build.
+      - name: Size the gradle daemon for the runner
         run: |
-          CHANGELOG=$(printf '%s\n' "$RELEASE_BODY" | sed -n '/<!-- whats-new -->/,/<!-- \/whats-new -->/p' | sed '1d;$d')
-          jq -n --arg changelog "$CHANGELOG" '{changelog: $changelog}' | \
-            eas workflow:run .eas/workflows/testflight-prerelease.yml \
-              --non-interactive \
-              --wait
+          mkdir -p ~/.gradle
+          printf 'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1536m\n' >> ~/.gradle/gradle.properties
+
+      - name: Install app deps
+        run: npm --prefix apps ci
+
+      - name: Build and attach the Android APK
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apk=$(./scripts/deliver-mobile.sh --platform android --profile android-internal)
+          cp "$apk" vesta-android.apk
+          gh release upload "${{ github.event.release.tag_name }}" vesta-android.apk --clobber
 
   revert-failed-release:
     name: Release · Revert failed release
@@ -326,9 +368,12 @@ jobs:
         push-image,
         push-image-manifest,
         publish-release,
-        mobile-testflight,
+        mobile-ios,
+        mobile-android,
       ]
-    if: ${{ failure() }}
+    # cancelled() too: a job that overruns timeout-minutes concludes cancelled,
+    # not failed, and a half-delivered release must revert either way.
+    if: ${{ failure() || cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -13,6 +13,25 @@ const WINDOW_START_HOUR: i8 = 4;
 const WINDOW_END_HOUR: i8 = 5;
 const SCAN_HORIZON_HOURS: i64 = 24;
 const SCAN_STEP_MINUTES: i64 = 15;
+/// Upper bound on the per-night open jitter: the effective window keeps at least 30 minutes,
+/// so an idle-gated poll and the closing poll both still fit before the fixed 5:00 close. This
+/// must stay above `2 * SCAN_STEP_MINUTES`; raising the jitter cap or the poll step without the
+/// other can shrink the window below room for both polls.
+const WINDOW_JITTER_MINUTES: u64 = 30;
+
+/// The minute past 4:00 the window opens on `date`'s night, hashed (FNV-1a) from the zone-local
+/// date: stable across polls and vestad restarts, different each night, so the pass never lands
+/// on the same clock minute night after night.
+fn jitter_minutes(date: jiff::civil::Date) -> i8 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = FNV_OFFSET;
+    for byte in date.to_string().bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    i8::try_from(hash % WINDOW_JITTER_MINUTES).expect("jitter is below 30")
+}
 
 /// Resolve an agent's reported IANA timezone name to a zone, falling back to the vestad host's
 /// local zone when the agent reported none (pre-upstream-sync fleet) or the name doesn't parse.
@@ -21,10 +40,11 @@ pub fn resolve_zone(name: Option<&str>) -> TimeZone {
     name.and_then(|name| TimeZone::get(name).ok()).unwrap_or_else(TimeZone::system)
 }
 
-/// Whether `at` falls inside the `[4:00, 5:00)` local window for `zone`.
+/// Whether `at` falls inside the `[4:JJ, 5:00)` local window for `zone`, `JJ` being the night's
+/// jitter minute. The single-hour window makes the minute check apply exactly at the open hour.
 fn in_window(zone: &TimeZone, at: Timestamp) -> bool {
-    let hour = at.to_zoned(zone.clone()).hour();
-    (WINDOW_START_HOUR..WINDOW_END_HOUR).contains(&hour)
+    let zoned = at.to_zoned(zone.clone());
+    (WINDOW_START_HOUR..WINDOW_END_HOUR).contains(&zoned.hour()) && zoned.minute() >= jitter_minutes(zoned.date())
 }
 
 /// How long to wait from `now` before running maintenance so it lands in the upcoming 4-5am
@@ -65,44 +85,59 @@ mod tests {
     }
 
     #[test]
-    fn in_window_utc_boundaries_are_half_open() {
+    fn in_window_utc_boundaries_open_at_the_jitter_minute() {
+        // fnv1a("2026-01-01") % 30 == 19: this night's window is [4:19, 5:00).
         let utc = zone("UTC");
         assert!(!in_window(&utc, ts("2026-01-01T03:59:00Z")));
-        assert!(in_window(&utc, ts("2026-01-01T04:00:00Z")));
+        assert!(!in_window(&utc, ts("2026-01-01T04:18:00Z")));
+        assert!(in_window(&utc, ts("2026-01-01T04:19:00Z")));
         assert!(in_window(&utc, ts("2026-01-01T04:59:00Z")));
         assert!(!in_window(&utc, ts("2026-01-01T05:00:00Z")));
     }
 
     #[test]
+    fn window_open_minute_changes_across_nights() {
+        // fnv1a("2026-01-02") % 30 == 20: the next night opens one minute later, so the pass
+        // cannot land on the same clock minute night after night. The close edge stays 5:00.
+        let utc = zone("UTC");
+        assert!(!in_window(&utc, ts("2026-01-02T04:19:00Z")));
+        assert!(in_window(&utc, ts("2026-01-02T04:20:00Z")));
+        assert!(in_window(&utc, ts("2026-01-02T04:59:00Z")));
+        assert!(!in_window(&utc, ts("2026-01-02T05:00:00Z")));
+    }
+
+    #[test]
     fn in_window_respects_offset_zone_in_winter() {
-        // New York is UTC-5 in January, so 04:00 EST == 09:00 UTC.
+        // New York is UTC-5 in January, so 04:19 EST (the night's open, jitter 19) == 09:19 UTC.
         let ny = zone("America/New_York");
-        assert!(in_window(&ny, ts("2026-01-01T09:00:00Z")));
-        assert!(!in_window(&ny, ts("2026-01-01T06:00:00Z"))); // 01:00 EST
+        assert!(in_window(&ny, ts("2026-01-01T09:19:00Z")));
+        assert!(!in_window(&ny, ts("2026-01-01T06:19:00Z"))); // 01:19 EST
     }
 
     #[test]
     fn in_window_respects_dst_shift_in_summer() {
-        // New York is UTC-4 in July (EDT): 04:00 EDT == 08:00 UTC is in-window, while 09:00 UTC ==
-        // 05:00 EDT is out -- the very same 09:00 UTC instant that IS in-window in winter (04:00 EST,
-        // asserted above), so the zone's DST offset is being applied, not a fixed one.
+        // New York is UTC-4 in July (EDT): 04:29 EDT (jitter 29) == 08:29 UTC is in-window, while
+        // 09:29 UTC == 05:29 EDT is out -- in winter that same wall-clock check sat an hour later in
+        // UTC (asserted above), so the zone's DST offset is being applied, not a fixed one.
         let ny = zone("America/New_York");
-        assert!(in_window(&ny, ts("2026-07-01T08:00:00Z")));
-        assert!(!in_window(&ny, ts("2026-07-01T09:00:00Z")));
+        assert!(in_window(&ny, ts("2026-07-01T08:29:00Z")));
+        assert!(!in_window(&ny, ts("2026-07-01T09:29:00Z")));
     }
 
     #[test]
     fn wait_until_best_window_picks_the_least_disruptive_upcoming_window() {
+        // Jan 1's window opens at 4:19 (jitter 19), so on-the-hour scans reach it at the 4:30 step;
+        // Jul 1 opens at 4:29, reached at the 4:30 local step.
         let cases: [(&str, Vec<TimeZone>, &str, SignedDuration); 7] = [
             ("already inside the window applies now", vec![zone("UTC")], "2026-01-01T04:30:00Z", SignedDuration::ZERO),
-            ("waits for the next window to open", vec![zone("UTC")], "2026-01-01T01:00:00Z", SignedDuration::from_hours(3)),
-            // July: NY's 04:00 EDT window opens at 08:00 UTC (not 09:00), so 4h from 04:00 UTC.
-            ("targets the DST-shifted window in summer", vec![zone("America/New_York")], "2026-07-01T04:00:00Z", SignedDuration::from_hours(4)),
-            ("same-zone agents share one window", vec![zone("UTC"), zone("UTC"), zone("UTC")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(4)),
-            // Two UTC agents outrank the lone NY agent, so aim at UTC's 04:00 window (4h) not NY's.
-            ("picks the window covering the most agents", vec![zone("UTC"), zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(4)),
-            // Neither window covers more than one, so take the earliest: UTC's 04:00 (4h) beats NY's 09:00 UTC (9h).
-            ("disjoint single zones take the earliest window", vec![zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(4)),
+            ("waits for the next window to open", vec![zone("UTC")], "2026-01-01T01:00:00Z", SignedDuration::from_mins(210)),
+            // July: NY's 04:29 EDT open sits at 08:29 UTC (not 09:29), so the 08:30 step, 270m from 04:00 UTC.
+            ("targets the DST-shifted window in summer", vec![zone("America/New_York")], "2026-07-01T04:00:00Z", SignedDuration::from_mins(270)),
+            ("same-zone agents share one window", vec![zone("UTC"), zone("UTC"), zone("UTC")], "2026-01-01T00:00:00Z", SignedDuration::from_mins(270)),
+            // Two UTC agents outrank the lone NY agent, so aim at UTC's 04:30 step (270m) not NY's.
+            ("picks the window covering the most agents", vec![zone("UTC"), zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_mins(270)),
+            // Neither window covers more than one, so take the earliest: UTC's 04:30 step (270m) beats NY's 09:30 UTC (570m).
+            ("disjoint single zones take the earliest window", vec![zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_mins(270)),
             ("no agents applies immediately", vec![], "2026-01-01T12:00:00Z", SignedDuration::ZERO),
         ];
         for (desc, zones, now, expected) in cases {

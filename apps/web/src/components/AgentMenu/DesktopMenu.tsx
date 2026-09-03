@@ -4,7 +4,7 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/DropdownMenu";
 import { buildActionSections } from "./action-sections";
 import type { MenuProps } from "./types";
 
@@ -14,12 +14,13 @@ export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
     showAliveActions: state.showAliveActions,
     isBusy: state.isBusy,
     onLogs: state.onLogs,
+    onServices: state.onServices,
     onToggle: state.onToggle,
     onRestart: state.onRestart,
     onBackup: state.onBackup,
     onAppSettings: state.onAppSettings,
     onAgentSettings: state.onAgentSettings,
-    onDebugInfo: state.onDebugInfo,
+    onSwitchGateway: state.onSwitchGateway,
   });
 
   return (
@@ -40,7 +41,7 @@ export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
                   item.variant === "destructive" ? "destructive" : undefined
                 }
               >
-                {item.icon}
+                <item.icon data-icon="inline-start" />
                 {item.label}
               </DropdownMenuItem>
             ))}

@@ -8,7 +8,7 @@ import {
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { LayoutDashboard, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useMeasuredHeight } from "@/hooks/use-measured-height";
+import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { useLayout } from "@/stores/use-layout";
 
 export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
@@ -19,7 +19,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
   const dashboardRef = useRef<HTMLButtonElement | null>(null);
   const chatRef = useRef<HTMLButtonElement | null>(null);
   const setBottomBarHeight = useLayout((s) => s.setBottomBarHeight);
-  const wrapperRef = useMeasuredHeight(setBottomBarHeight);
+  const wrapperRef = useMeasuredSize("height", setBottomBarHeight);
   const [pillNode, setPillNode] = useState<HTMLDivElement | null>(null);
   const [tabMetrics, setTabMetrics] = useState({
     overlayWidth: 0,
@@ -75,7 +75,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
       tabMetrics.overlayWidth - tabMetrics.endLeft - tabMetrics.startWidth,
     ],
   );
-  const pillClipPath = useMotionTemplate`inset(${tabMetrics.startTop}px ${pillRight}px ${tabMetrics.startBottom}px ${pillLeft}px round 16px)`;
+  const pillClipPath = useMotionTemplate`inset(${tabMetrics.startTop}px ${pillRight}px ${tabMetrics.startBottom}px ${pillLeft}px round 9999px)`;
 
   useEffect(() => {
     if (!pillNode) return;
@@ -116,7 +116,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         aria-current={isDashboard ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex h-9 flex-1 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
+          "flex h-9 flex-1 items-center justify-center gap-2 rounded-full px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
@@ -136,7 +136,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         aria-current={isChat ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex h-9 flex-1 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
+          "flex h-9 flex-1 items-center justify-center gap-2 rounded-full px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
@@ -149,17 +149,17 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
   return (
     <div
       ref={wrapperRef}
-      className="pointer-events-none absolute bottom-0 left-0 right-0 z-40 pt-1.5 sm:pt-3"
+      className="pointer-events-none absolute bottom-0 left-0 right-0 z-40 px-3 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pt-3"
     >
       <div
         ref={pillMeasureRef}
-        className="pointer-events-auto relative flex w-full gap-0.5 overflow-hidden rounded-t-squircle-md [corner-shape:squircle] bg-card text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+        className="pointer-events-auto relative flex w-full gap-0.5 overflow-hidden rounded-full bg-card text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10 p-1.5"
       >
         <div className="relative flex w-full gap-0.5">
           {renderButtons({ active: false, interactive: true })}
         </div>
         <motion.div
-          className="pointer-events-none absolute inset-0 z-10 bg-primary p-3"
+          className="pointer-events-none absolute inset-0 z-10 bg-primary p-1.5"
           style={{ clipPath: pillClipPath }}
         >
           <div className="flex w-full gap-0.5">

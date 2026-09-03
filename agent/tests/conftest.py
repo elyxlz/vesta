@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
 import os
+import pathlib as pl
+import tempfile
 import time
 import typing as tp
 from unittest.mock import AsyncMock, MagicMock
@@ -59,7 +61,7 @@ def assistant_msg(content):
     return msg
 
 
-def result_msg():
+def result_msg(*, is_error=False, api_error_status=None):
     from claude_agent_sdk import ResultMessage
 
     msg = MagicMock(spec=ResultMessage)
@@ -67,7 +69,9 @@ def result_msg():
     msg.usage = None
     msg.total_cost_usd = None
     msg.duration_ms = 0
-    msg.session_id = None  # no persist: harness configs point at the real home, not a tmp dir
+    msg.session_id = None  # no persist: the harness only persists into its own tmp agent dir
+    msg.is_error = is_error
+    msg.api_error_status = api_error_status
     return msg
 
 
@@ -83,10 +87,12 @@ def make_stream_harness(response_timeout: int | None = None):
     from core.provider import ProviderAuthState, ProviderStatus
 
     emitted: list[tuple[str, float]] = []
+    # A tmp agent dir keeps the consumer's persistence (state.json writes) hermetic.
+    agent_dir = pl.Path(tempfile.mkdtemp(prefix="vesta-harness-"))
     if response_timeout is None:
-        config = cfg.VestaConfig(interrupt_timeout=0.5)
+        config = cfg.VestaConfig(interrupt_timeout=0.5, agent_dir=agent_dir)
     else:
-        config = cfg.VestaConfig(interrupt_timeout=0.5, response_timeout=response_timeout)
+        config = cfg.VestaConfig(interrupt_timeout=0.5, response_timeout=response_timeout, agent_dir=agent_dir)
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 

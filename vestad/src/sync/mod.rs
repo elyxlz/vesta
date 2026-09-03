@@ -15,9 +15,9 @@ pub(crate) mod protocol;
 /// every client ever built; the first wire break bumps it (see release.sh's guard and the Client
 /// compatibility contract in CLAUDE.md). Additive changes never move it, thanks to the
 /// ignore-unknown-frames rule.
-pub(crate) const MIN_SUPPORTED_CLIENT_VERSION: &str = "0.1.189";
+pub(crate) const MIN_SUPPORTED_CLIENT_VERSION: &str = "0.2.16";
 
 pub(crate) use events::{activity_state, notification_change};
 pub(crate) use handler::sync_ws_handler;
-pub(crate) use hub::SyncHub;
+pub(crate) use hub::{SyncHub, UserNotification};
 pub(crate) use presence::{ConnId, Presence};

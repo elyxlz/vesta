@@ -1,20 +1,18 @@
-import { ApiError, createHttpClient, createServiceKeyCache } from "@vesta/core";
-import type { ServiceKeyCache } from "@vesta/core";
-import type { ConnectionConfig } from "./types";
+import {
+  ApiError,
+  createServiceKeyCache,
+  createSession,
+  jsonInit,
+  type ConnectionConfig,
+  type Session,
+  type ServiceKeyCache,
+} from "@vesta/core";
 
-// The Bearer-auth + refresh-on-401 + retry mechanics live once in @vesta/core; this module
-// injects mobile's connection accessors, its 5-min-buffer refresh, and its gateway error
-// shaping. `ApiError` is re-exported so endpoints and consumers keep importing it from here.
+// The mobile gateway session: @vesta/core owns the refresh, the expiry buffer, the token-in-URL
+// carriers, and the one http client; this adapter injects SecureStore-backed persistence, the
+// sign-out on a rejected refresh, and the gateway error shaping (an HTML body from a proxy is never
+// shown). `ApiError` is re-exported so consumers keep importing it from here.
 export { ApiError };
-
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
-
-export function isTokenExpiringSoon(
-  connection: ConnectionConfig,
-  now: number = Date.now(),
-): boolean {
-  return now >= connection.expiresAt - TOKEN_REFRESH_BUFFER_MS;
-}
 
 interface ClientOptions {
   getConnection: () => ConnectionConfig | null;
@@ -29,9 +27,12 @@ export interface ApiClient {
     init?: RequestInit,
   ) => Promise<ResponseBody>;
   jsonInit: (method: string, body: unknown) => RequestInit;
+  authedUrl: (path: string, query?: URLSearchParams) => Promise<string>;
   websocketUrl: (path: string, query?: URLSearchParams) => Promise<string>;
   getConnection: () => ConnectionConfig | null;
   forceRefresh: () => Promise<boolean>;
+  // The core session this client fronts: the controller dials and refreshes through it.
+  session: Session;
   // The client's own service keys, so a client built by a test never shares them and
   // reconnecting to another gateway keeps the client while missing the cache.
   serviceKeys: ServiceKeyCache;
@@ -62,114 +63,29 @@ function apiErrorMessage(response: Response, body: string): string {
 }
 
 export function createApiClient(options: ClientOptions): ApiClient {
-  let refreshPromise: Promise<ConnectionConfig | null> | null = null;
-
-  const refresh = async (force: boolean): Promise<ConnectionConfig | null> => {
-    const current = options.getConnection();
-    if (!current) return null;
-    if (!force && Date.now() < current.expiresAt - TOKEN_REFRESH_BUFFER_MS) {
-      return current;
-    }
-    if (refreshPromise) return refreshPromise;
-
-    refreshPromise = (async () => {
-      if (!current.refreshToken) {
-        await options.onSessionExpired();
-        return null;
-      }
-      try {
-        const response = await fetch(`${current.url}/auth/refresh`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: current.refreshToken }),
-        });
-        if (response.status === 401) {
-          await options.onSessionExpired();
-          return null;
-        }
-        if (!response.ok) return current;
-        const tokens: {
-          access_token: string;
-          refresh_token: string;
-          expires_in: number;
-        } = await response.json();
-        const next: ConnectionConfig = {
-          ...current,
-          accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
-          expiresAt: Date.now() + tokens.expires_in * 1000,
-        };
-        await options.onConnectionChange(next);
-        return next;
-      } catch {
-        return current;
-      }
-    })();
-
-    try {
-      return await refreshPromise;
-    } finally {
-      refreshPromise = null;
-    }
-  };
-
-  const http = createHttpClient({
-    baseUrl: () => options.getConnection()?.url ?? "",
+  const session = createSession({
     fetch: (input, init) => fetch(input, init),
-    token: () => options.getConnection()?.accessToken ?? null,
-    refresh: async () => (await refresh(true)) !== null,
-    isExpiring: () => {
-      const current = options.getConnection();
-      return (
-        current !== null &&
-        Date.now() >= current.expiresAt - TOKEN_REFRESH_BUFFER_MS
-      );
+    read: options.getConnection,
+    write: options.onConnectionChange,
+    onExpired: () => {
+      void options.onSessionExpired();
     },
     formatError: apiErrorMessage,
   });
-
-  const request = async (
-    path: string,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    if (!options.getConnection())
-      throw new Error("Not connected to a Vesta gateway.");
-    return http.request(path, init);
-  };
-
-  const json = <ResponseBody>(
-    path: string,
-    init?: RequestInit,
-  ): Promise<ResponseBody> => http.json<ResponseBody>(path, init);
-
-  // The one place the access token is stamped into a URL: a socket handshake sends no headers.
-  // Refreshing here is what makes it impossible for a call site to dial with a token that
-  // expired while the client was away.
-  const socketUrl = async (
-    path: string,
-    query: URLSearchParams,
-  ): Promise<string> => {
-    await refresh(false);
-    const connection = options.getConnection();
-    if (!connection) throw new Error("Not connected to a Vesta gateway.");
-    query.set("token", connection.accessToken);
-    return `${connection.url.replace(/^http/, "ws")}${path}?${query.toString()}`;
-  };
+  const forceRefresh = async (): Promise<boolean> =>
+    (await session.ensureFresh(true)) === "ok";
 
   return {
-    request,
-    json,
-    jsonInit: (method, body) => ({
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-    websocketUrl: (path, query = new URLSearchParams()) =>
-      socketUrl(path, query),
+    request: session.http.request,
+    json: session.http.json,
+    jsonInit,
+    authedUrl: session.authedUrl,
+    websocketUrl: session.websocketUrl,
     getConnection: options.getConnection,
-    forceRefresh: async () => (await refresh(true)) !== null,
+    forceRefresh,
+    session,
     serviceKeys: createServiceKeyCache({
-      http,
+      http: session.http,
       gateway: () => options.getConnection()?.url ?? null,
     }),
   };

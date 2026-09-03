@@ -8,10 +8,13 @@ export const PACING = {
   variance: 0.2,
   flushThreshold: 3,
   maxMessages: 5000,
-} as const
+} as const;
 
-export function typingDelay(charCount: number, rng: () => number = Math.random): number {
-  const raw = Math.min(PACING.min + PACING.perChar * charCount, PACING.max)
-  const variance = Math.floor(raw * PACING.variance)
-  return raw + Math.floor(rng() * variance * 2) - variance
+export function typingDelay(
+  charCount: number,
+  rng: () => number = Math.random,
+): number {
+  const raw = Math.min(PACING.min + PACING.perChar * charCount, PACING.max);
+  const variance = Math.floor(raw * PACING.variance);
+  return raw + Math.floor(rng() * variance * 2) - variance;
 }

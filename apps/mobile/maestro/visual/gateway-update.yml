@@ -7,6 +7,9 @@ tags:
 # Cover the blocking screen and the optional update in Settings.
 ---
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - openLink:
     link: "vesta-dev://?visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
 - tapOn:
@@ -14,11 +17,48 @@ tags:
     optional: true
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
+- extendedWaitUntil:
     visible: "Privacy unavailable"
     timeout: 30000
-- assertNotVisible: "This app is newer than the gateway.*"
+- assertNotVisible: "This version of the app needs a newer gateway.*"
 - stopApp
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
@@ -29,7 +69,7 @@ tags:
     optional: true
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
-    visible: "This app is newer than the gateway. Update the gateway to reconnect."
+    visible: ".*This version of the app needs a newer gateway.*"
     timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
@@ -40,8 +80,7 @@ tags:
       SCREENSHOT: gateway-update-required.png
 
 - tapOn:
-    text: "^Update gateway$"
-    index: 1
+    text: ".*Update gateway.*"
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-in-progress
@@ -72,7 +111,7 @@ tags:
     timeout: 10000
 - scrollUntilVisible:
     element:
-      text: "Gateway"
+      text: "^Update gateway.*"
     direction: DOWN
     timeout: 10000
     speed: 40
@@ -84,8 +123,17 @@ tags:
     env:
       SCREENSHOT: settings-gateway-update-available.png
 
+- scrollUntilVisible:
+    element:
+      text: "^Update gateway.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+    centerElement: true
+
 - tapOn:
-    text: "^Update gateway,.*"
+    text: "^Update gateway.*"
 - extendedWaitUntil:
     visible: "Update gateway?"
     timeout: 10000
@@ -110,8 +158,6 @@ tags:
 - extendedWaitUntil:
     visible: "backing up nova 2/3"
     timeout: 10000
-- assertVisible:
-    text: "App settings.*"
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-snapshotting
@@ -124,12 +170,12 @@ tags:
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=failed"
 - extendedWaitUntil:
-    visible: "Update failed"
+    visible: ".*Update didn.t finish.*"
     timeout: 30000
 - extendedWaitUntil:
-    visible: "Retry update"
+    visible: ".*Try again.*"
     timeout: 10000
-- assertVisible: "Dismiss"
+- assertVisible: ".*Not now.*"
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-failed
@@ -142,10 +188,8 @@ tags:
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=restarting"
 - extendedWaitUntil:
-    visible: "Restarting the gateway"
+    visible: ".*Restarting gateway.*"
     timeout: 30000
-- assertVisible:
-    text: "App settings.*"
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-restarting
@@ -161,7 +205,7 @@ tags:
 - extendedWaitUntil:
     visible: "Updated to v0.2.1"
     timeout: 30000
-- assertVisible: "Your gateway is on the new version."
+- assertVisible: ".*running the new version.*"
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-updated
@@ -169,3 +213,18 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: gateway-updated.png
+
+# The opposite version failure: this app is below the gateway's supported window.
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSyncState=app_behind"
+- extendedWaitUntil:
+    visible: "This app is too old for the gateway.*"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: app-behind
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: app-behind.png

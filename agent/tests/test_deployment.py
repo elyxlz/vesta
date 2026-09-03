@@ -13,7 +13,7 @@ def test_deployment_structure():
 
     expected_skills = [
         "tasks",
-        "upstream-pr",
+        "upstream",
         "dream",
         "what-day",
         "browser",

@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { LogOut } from "lucide-react";
 import { connectionHostname } from "@/lib/connection";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/providers/AuthProvider/context";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -23,7 +23,7 @@ export function DisconnectedOverlay() {
       aria-label="disconnected from gateway"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-muted/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-muted/85"
     >
       <Empty className="border-none">
         <EmptyHeader className="max-w-md">

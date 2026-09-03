@@ -23,7 +23,7 @@ LABEL org.opencontainers.image.title="Vesta" \
 # without them every `browser launch` exits 255 before BiDi. The t64 names are trixie's time_t
 # rename; gdk-pixbuf comes in via GTK3.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git ca-certificates tzdata gnupg screen tmux \
+    curl git gh ca-certificates tzdata gnupg screen tmux \
     libgtk-3-0t64 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2t64 && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \

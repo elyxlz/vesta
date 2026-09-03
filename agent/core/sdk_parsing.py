@@ -80,6 +80,10 @@ _RATE_LIMIT_WINDOWS: dict[str, str] = {
 }
 _ROLLING_WINDOW_NOTE = " This is the rolling usage limit, not a spend or billing limit."
 
+# Wording for a rejection observed without the structured classification (a bare 429, or the CLI's
+# own retry paraphrase, whose text is untrusted: issue #1071).
+GENERIC_RATE_LIMIT_NOTICE = "Claude rate limit hit."
+
 
 def rate_limit_notice(info: RateLimitInfo, *, now: float) -> str | None:
     """User-facing wording for a rejected rate limit, built from the CLI's structured
@@ -134,6 +138,20 @@ def _is_cli_error_text(text: str) -> bool:
     return text.startswith("API Error:") or text == "Prompt is too long"
 
 
+# The CLI stamps this url param into the limit paraphrase it prints on its own retry schedule
+# ("You've hit your monthly spend limit · raise it at claude.ai/..."): a stable machine marker on
+# an otherwise untrusted, changeable sentence.
+_CLI_LIMIT_MARKER = "cc_cli_limit_message"
+
+
+def _is_rate_limit_error_text(text: str) -> bool:
+    """A CLI-synthesized text that reports a rate-limit rejection: the retry-schedule paraphrase
+    (marked by _CLI_LIMIT_MARKER, printed as plain assistant text with no companion RateLimitEvent)
+    or an 'API Error: 429' body. Routed to the rate-limited channel: neither speech nor a generic
+    turn failure."""
+    return _CLI_LIMIT_MARKER in text or text.startswith("API Error: 429")
+
+
 def _parse_agent_input(input_data: object) -> tuple[str, str]:
     if isinstance(input_data, dict):
         data = tp.cast(dict[str, tp.Any], input_data)
@@ -145,7 +163,7 @@ def _parse_agent_input(input_data: object) -> tuple[str, str]:
     return agent_type, description
 
 
-_ParsedMessage = tuple[list[str], list[ThinkingBlock], str | None, list[str]]
+_ParsedMessage = tuple[list[str], list[ThinkingBlock], str | None, list[str], bool]
 
 
 def _log_result_usage(msg: ResultMessage) -> None:
@@ -171,25 +189,30 @@ def _parse_system_message(msg: SystemMessage) -> _ParsedMessage:
         init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
         if init_sid:
             logger.debug(f"[init] session_id={init_sid[:16]}")
-        return [], [], init_sid, []
+        return [], [], init_sid, [], False
     # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it
     # floods the log with no signal here (thinking_tokens_estimate exposes it for liveness notes).
     if msg.subtype == "thinking_tokens":
-        return [], [], None, []
+        return [], [], None, [], False
     if msg.subtype == "compact_boundary":
         logger.client("Compaction boundary reached")
-        return [], [], None, []
+        return [], [], None, [], False
     raw = json.dumps(msg.data, default=str)
     logger.system(f"[{msg.subtype}] {raw[:2000]}")
-    return [], [], None, []
+    return [], [], None, [], False
 
 
 def _parse_assistant_message(msg: AssistantMessage) -> _ParsedMessage:
     texts = []
     thinking_blocks = []
     error_texts = []
+    rate_limited = False
     for block in msg.content:
         if isinstance(block, TextBlock):
+            if _is_rate_limit_error_text(block.text):
+                logger.warning(f"Suppressed CLI rate-limit text from assistant output: {block.text[:500]}")
+                rate_limited = True
+                continue
             if _is_cli_error_text(block.text):
                 logger.warning(f"Suppressed CLI-synthesized error text from assistant output: {block.text[:500]}")
                 error_texts.append(block.text)
@@ -197,27 +220,29 @@ def _parse_assistant_message(msg: AssistantMessage) -> _ParsedMessage:
             texts.append(block.text)
         elif isinstance(block, ThinkingBlock):
             thinking_blocks.append(block)
-    return texts, thinking_blocks, None, error_texts
+    return texts, thinking_blocks, None, error_texts, rate_limited
 
 
 def parse_sdk_message(msg: Message) -> _ParsedMessage:
     """Extract assistant text + thinking blocks (and a session_id from a ResultMessage) from one SDK
     message. CLI-synthesized error text (_is_cli_error_text) is kept out of the speech texts and
-    returned in the final element so the caller surfaces it through the error channel. Tool-use
-    blocks carry no output here: tool/subagent activity is surfaced via the native hooks in
-    make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
+    returned in the fourth element so the caller surfaces it through the error channel; a text
+    reporting a rate-limit rejection (_is_rate_limit_error_text) is kept out of both and flips the
+    final flag so the caller records the rate-limited state instead. Tool-use blocks carry no output
+    here: tool/subagent activity is surfaced via the native hooks in make_hooks, so they are
+    ignored. Non-assistant messages just log and return empties."""
     if isinstance(msg, ResultMessage):
         _log_result_usage(msg)
-        return [], [], msg.session_id, []
+        return [], [], msg.session_id, [], False
     if isinstance(msg, RateLimitEvent):
         info = msg.rate_limit_info
         log_fn = logger.debug if info.status == "allowed" else logger.warning
         log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
-        return [], [], None, []
+        return [], [], None, [], False
     if isinstance(msg, SystemMessage):
         return _parse_system_message(msg)
     if not isinstance(msg, AssistantMessage):
-        return [], [], None, []
+        return [], [], None, [], False
     return _parse_assistant_message(msg)
 
 

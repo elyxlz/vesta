@@ -5,18 +5,19 @@ import { Card } from "@/components/ui/card";
 import { Console } from "@/components/Console";
 import { useFillHeight } from "@/hooks/use-fill-height";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { cn } from "@/lib/utils";
 
-// The Tabs container's pb-6 sits below the card, so reserve it when filling.
-const BOTTOM_GAP = 24;
+// Reserve the floating nav pill's height so the filled panel clears it (matches
+// the flowing tabs' max-md:pb-28 in AgentSettings).
+const BOTTOM_GAP = 112;
 
 // Desktop: a fixed h-[70vh] matching the files tab. Mobile: fill the space left
 // down to the viewport bottom (floored to a min by useFillHeight), since logs is
 // the whole tab there.
 export function LogsTab() {
   const navigate = useNavigate();
-  const { name, agent } = useSelectedAgent();
+  const { name } = useSelectedAgent();
   const isMobile = useIsMobile();
   const { ref, height } = useFillHeight(BOTTOM_GAP);
 
@@ -29,7 +30,7 @@ export function LogsTab() {
       )}
       style={isMobile ? { height } : undefined}
     >
-      <Console name={name} status={agent.status} />
+      <Console />
       <div className="absolute right-3 top-3 z-10">
         <Button
           variant="outline"

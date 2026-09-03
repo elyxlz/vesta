@@ -16,13 +16,10 @@ import {
   type KeyboardChatScrollViewProps,
 } from "react-native-keyboard-controller";
 import type { SharedValue } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getLatestMessageOffset,
   isNearLatestMessage,
 } from "@/agent/chat-scroll-model";
-
-const COMPOSER_MARGIN = 8;
 
 type ChatScrollViewRef = ComponentRef<typeof KeyboardChatScrollView>;
 type ContentInsetChange = NonNullable<
@@ -32,30 +29,29 @@ type ContentInsetChange = NonNullable<
 const NativeChatScrollView = forwardRef<
   ChatScrollViewRef,
   ScrollViewProps & KeyboardChatScrollViewProps
->(({ inverted, ...props }, ref) => {
-  const { bottom } = useSafeAreaInsets();
-
-  return (
-    <KeyboardChatScrollView
-      ref={ref}
-      automaticallyAdjustContentInsets={false}
-      contentInsetAdjustmentBehavior="never"
-      inverted={inverted}
-      keyboardDismissMode="interactive"
-      keyboardLiftBehavior="whenAtEnd"
-      offset={Math.max(bottom - COMPOSER_MARGIN, 0)}
-      {...props}
-    />
-  );
-});
+>(({ inverted, ...props }, ref) => (
+  <KeyboardChatScrollView
+    ref={ref}
+    automaticallyAdjustContentInsets={false}
+    contentInsetAdjustmentBehavior="never"
+    inverted={inverted}
+    keyboardDismissMode="interactive"
+    keyboardLiftBehavior="whenAtEnd"
+    {...props}
+  />
+));
 NativeChatScrollView.displayName = "NativeChatScrollView";
 
+// `keyboardOffset` is the composer dock's own opened offset, so the list and
+// the dock agree on how much of the keyboard's height the content must yield.
 export function useInvertedChatScroll<Row>(
   extraContentPadding: SharedValue<number>,
+  keyboardOffset: number,
 ) {
   const listRef = useRef<FlatList<Row>>(null);
   const isAtLatestRef = useRef(true);
   const hasInitialInsetAnchorRef = useRef(false);
+  const hasContentRef = useRef(false);
   const latestOffsetRef = useRef(0);
   const [isAwayFromLatest, setIsAwayFromLatest] = useState(false);
 
@@ -63,30 +59,44 @@ export function useInvertedChatScroll<Row>(
     listRef.current = list;
   }, []);
 
+  // iOS rests an inverted list at offset 0, the screen's bottom edge, until it
+  // is told where the end lies; anchor once both the inset and content exist,
+  // whichever lands second.
+  const anchorToLatest = useCallback(() => {
+    if (
+      process.env.EXPO_OS !== "ios" ||
+      hasInitialInsetAnchorRef.current ||
+      !hasContentRef.current ||
+      latestOffsetRef.current >= 0 ||
+      !isAtLatestRef.current
+    ) {
+      return;
+    }
+
+    hasInitialInsetAnchorRef.current = true;
+    listRef.current?.scrollToOffset({
+      offset: latestOffsetRef.current,
+      animated: false,
+    });
+  }, []);
+
   const handleContentInsetChange = useCallback<ContentInsetChange>(
     (insets) => {
-      const latestOffset = getLatestMessageOffset(
+      latestOffsetRef.current = getLatestMessageOffset(
         process.env.EXPO_OS,
         insets.top,
       );
-      latestOffsetRef.current = latestOffset;
-
-      if (
-        process.env.EXPO_OS !== "ios" ||
-        hasInitialInsetAnchorRef.current ||
-        insets.top <= 0 ||
-        !isAtLatestRef.current
-      ) {
-        return;
-      }
-
-      hasInitialInsetAnchorRef.current = true;
-      listRef.current?.scrollToOffset({
-        offset: latestOffset,
-        animated: false,
-      });
+      anchorToLatest();
     },
-    [],
+    [anchorToLatest],
+  );
+
+  const handleContentSizeChange = useCallback(
+    (_width: number, height: number) => {
+      hasContentRef.current = height > 0;
+      anchorToLatest();
+    },
+    [anchorToLatest],
   );
 
   const renderScrollComponent = useCallback(
@@ -94,10 +104,11 @@ export function useInvertedChatScroll<Row>(
       <NativeChatScrollView
         {...props}
         extraContentPadding={extraContentPadding}
+        offset={keyboardOffset}
         onContentInsetChange={handleContentInsetChange}
       />
     ),
-    [extraContentPadding, handleContentInsetChange],
+    [extraContentPadding, handleContentInsetChange, keyboardOffset],
   );
 
   const handleScroll = useCallback(
@@ -125,6 +136,7 @@ export function useInvertedChatScroll<Row>(
 
   return {
     attachList,
+    handleContentSizeChange,
     handleScroll,
     isAwayFromLatest,
     renderScrollComponent,

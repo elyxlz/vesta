@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
-import { useGateway } from "@/providers/GatewayProvider";
-import { compareVersions } from "@/lib/version";
+import { compareReleaseVersions } from "@vesta/core";
+import { useGateway } from "@/providers/GatewayProvider/context";
+import { usePreferences } from "@/stores/use-preferences";
 import {
   fetchReleaseNotes,
   filterReleaseNotes,
   type ReleaseNote,
-} from "@/lib/whats-new";
-
-const LAST_SEEN_VERSION_KEY = "vesta:whats-new-last-seen";
+} from "@vesta/core";
 
 /**
  * Open the dialog once after a vestad update: when the connected version
@@ -26,9 +25,9 @@ export function useWhatsNewAutoOpen(
     if (checkedRef.current || !reachable || !gatewayVersion) return;
     checkedRef.current = true;
 
-    const lastSeen = localStorage.getItem(LAST_SEEN_VERSION_KEY);
+    const { whatsNewLastSeen: lastSeen, update } = usePreferences.getState();
     if (lastSeen === null) {
-      localStorage.setItem(LAST_SEEN_VERSION_KEY, gatewayVersion);
+      update({ whatsNewLastSeen: gatewayVersion });
       return;
     }
     if (lastSeen === gatewayVersion) return;
@@ -41,10 +40,10 @@ export function useWhatsNewAutoOpen(
         channel: gatewayChannel,
       });
       const hasCurrent = visible.some(
-        (entry) => compareVersions(entry.version, gatewayVersion) === 0,
+        (entry) => compareReleaseVersions(entry.version, gatewayVersion) === 0,
       );
       if (!hasCurrent) return;
-      localStorage.setItem(LAST_SEEN_VERSION_KEY, gatewayVersion);
+      update({ whatsNewLastSeen: gatewayVersion });
       onAutoOpen(visible);
     });
     return () => {

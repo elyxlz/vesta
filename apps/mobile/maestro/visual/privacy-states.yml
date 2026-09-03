@@ -1,0 +1,113 @@
+appId: ${APP_ID}
+name: Privacy states
+tags:
+  - visual
+  - privacy
+---
+- clearState
+- setPermissions:
+    permissions:
+      location: inuse
+- openLink:
+    link: "vesta-dev://?visualPrivacy=opening"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
+- extendedWaitUntil:
+    visible: '.*vesta.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-opening
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-opening.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*Privacy unavailable.*'
+    timeout: 30000
+- tapOn:
+    text: 'Try again'
+- extendedWaitUntil:
+    visible: '.*vesta.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: privacy-locked-connected
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: privacy-locked-connected.png
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: '.*App Lock.*'
+    timeout: 30000
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "^1$"
+          rightOf:
+            text: '.*App Lock.*'
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          rightOf:
+            text: '.*App Lock.*'
+          above:
+            text: '.*Preview the message.*'
+- extendedWaitUntil:
+    visible: '.*Preview the message.*'
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-app-lock-off
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-app-lock-off.png

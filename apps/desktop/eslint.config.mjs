@@ -1,19 +1,14 @@
 import js from "@eslint/js";
-import globals from "globals";
-import tseslint from "typescript-eslint";
 import comments from "@eslint-community/eslint-plugin-eslint-comments/configs";
+import globals from "globals";
 import { defineConfig, globalIgnores } from "eslint/config";
+import { baseConfig, boundaryCastOverride } from "../eslint.base.mjs";
 
 export default defineConfig([
   globalIgnores(["dist-electron", "dist"]),
   {
     files: ["src/**/*.ts"],
-    extends: [
-      js.configs.recommended,
-      tseslint.configs.strictTypeChecked,
-      tseslint.configs.stylisticTypeChecked,
-      comments.recommended,
-    ],
+    extends: [baseConfig],
     languageOptions: {
       globals: globals.node,
       parserOptions: {
@@ -21,24 +16,11 @@ export default defineConfig([
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    rules: {
-      // Escape hatches are banned repo-wide: no lint-suppressing comments, no ts-comment directives.
-      "@eslint-community/eslint-comments/no-use": "error",
-      "@typescript-eslint/ban-ts-comment": [
-        "error",
-        {
-          "ts-expect-error": true,
-          "ts-ignore": true,
-          "ts-nocheck": true,
-          "ts-check": false,
-        },
-      ],
-      // Code-smell ceilings.
-      complexity: ["error", 15],
-      "max-params": ["error", 5],
-      "max-depth": ["error", 4],
+    settings: {
+      "import-x/resolver": { typescript: { project: ["tsconfig.json"] } },
     },
   },
+  boundaryCastOverride,
   {
     files: ["scripts/**/*.mjs"],
     extends: [js.configs.recommended, comments.recommended],

@@ -33,7 +33,7 @@ const config: ExpoConfig = {
   name: isDevelopment ? "Vesta Dev" : "Vesta",
   owner: "vesta-cloud",
   slug: "vesta",
-  version: "0.2.1",
+  version: "0.2.17",
   scheme: isDevelopment ? "vesta-dev" : "vesta",
   orientation: "portrait",
   icon: appIcon,
@@ -54,8 +54,13 @@ const config: ExpoConfig = {
       : { associatedDomains: ["applinks:vesta.run"] }),
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
-      NSCameraUsageDescription: "Scan a Vesta connection QR code.",
+      NSCameraUsageDescription:
+        "Scan a Vesta connection QR code, and capture photos or videos to send in chat.",
       NSMicrophoneUsageDescription: "Talk to your Vesta agent.",
+      NSPhotoLibraryUsageDescription:
+        "Attach photos and videos from your library to your chat.",
+      // Keeps a hands-free voice conversation alive with the screen locked.
+      UIBackgroundModes: ["audio"],
     },
   },
   android: {
@@ -64,7 +69,21 @@ const config: ExpoConfig = {
       foregroundImage: appIcon,
       backgroundColor: nativeConfigTokens.background,
     },
+    edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: true,
+    permissions: [
+      "android.permission.CAMERA",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.POST_NOTIFICATIONS",
+      // Scoped media reads for the attachment picker (API 33+); documents go
+      // through the Storage Access Framework and need no permission.
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VIDEO",
+      // The microphone foreground service that keeps a hands-free voice conversation alive
+      // while the app is backgrounded or the screen is locked.
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+    ],
     intentFilters: [
       {
         action: "VIEW",
@@ -104,7 +123,35 @@ const config: ExpoConfig = {
         microphonePermission: "Talk to your Vesta agent.",
       },
     ],
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "Attach photos and videos from your library to your chat.",
+        cameraPermission:
+          "Scan a Vesta connection QR code, and capture photos or videos to send in chat.",
+        microphonePermission: "Talk to your Vesta agent.",
+      },
+    ],
+    "expo-video",
     ...notificationPlugins,
+    "expo-localization",
+    [
+      "expo-location",
+      {
+        locationWhenInUsePermission:
+          "Let Vesta know where you are, to help you wherever you go.",
+        locationAlwaysAndWhenInUsePermission:
+          "Let Vesta know where you are, even while the app is closed, to help you wherever you go.",
+        locationAlwaysPermission:
+          "Let Vesta know where you are while the app is closed, to help you wherever you go.",
+        // The closed-app poll reads a fresh fix, which needs the always-on grant on both platforms
+        // and, on iOS, the location background mode as well; the processing mode alone cannot get one.
+        isIosBackgroundLocationEnabled: true,
+        isAndroidBackgroundLocationEnabled: true,
+      },
+    ],
+    "expo-background-task",
     [
       "expo-splash-screen",
       {
@@ -129,6 +176,10 @@ const config: ExpoConfig = {
   extra: {
     apiCompat: "0.2",
     appVariant,
+    // Vesta Cloud is not open to the public yet: production builds offer
+    // self-hosted connection only, so App Review never meets a sign-in it
+    // cannot complete. Flip to true when cloud sign-up opens.
+    cloudSignInEnabled: isDevelopment,
     pushNotificationsEnabled: !localIosNoPush,
     ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },

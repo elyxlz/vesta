@@ -14,11 +14,10 @@ import { darkColors, lightColors, type AppColors } from "@/theme/colors";
 import {
   getNaturalChatPacingForAgent,
   initialPreferences,
+  PREFERENCES_KEY,
   readStoredPreferences,
   type PreferencesState,
 } from "./model";
-
-const PREFERENCES_KEY = "vesta.preferences.v1";
 
 export type { ThemePreference } from "./model";
 

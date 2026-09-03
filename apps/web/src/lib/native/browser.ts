@@ -4,8 +4,20 @@ import { parseConnectionConfig } from "./parse-connection-config";
 import type { NativeBridge } from "./types";
 
 const STORAGE_KEY = "vesta-connection";
+const RECENT_GATEWAYS_STORAGE_KEY = "vesta-recent-gateways";
 
-export function parseConnection(raw: string): ConnectionConfig | null {
+function readStoredJson(key: string): unknown {
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(key);
+    return null;
+  }
+}
+
+function parseConnection(raw: string): ConnectionConfig | null {
   try {
     return parseConnectionConfig(JSON.parse(raw));
   } catch {
@@ -31,6 +43,22 @@ export function createBrowserBridge(): NativeBridge {
         return Promise.resolve();
       },
     },
+    recentGatewayStore: {
+      read() {
+        return Promise.resolve(readStoredJson(RECENT_GATEWAYS_STORAGE_KEY));
+      },
+      write(value) {
+        localStorage.setItem(
+          RECENT_GATEWAYS_STORAGE_KEY,
+          JSON.stringify(value),
+        );
+        return Promise.resolve();
+      },
+      clear() {
+        localStorage.removeItem(RECENT_GATEWAYS_STORAGE_KEY);
+        return Promise.resolve();
+      },
+    },
     openExternal(url) {
       window.open(url, "_blank");
       return Promise.resolve();
@@ -49,5 +77,9 @@ export function createBrowserBridge(): NativeBridge {
     },
     oauthLoopback: null,
     windowControls: null,
+    readGeolocation: null,
+    credentialStorageIsSecure: null,
+    appUpdate: null,
+    loginItem: null,
   };
 }

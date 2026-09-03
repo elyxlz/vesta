@@ -2,8 +2,19 @@ import type { ReactNode } from "react";
 import { Monitor, Smartphone, Globe, HelpCircle, Circle } from "lucide-react";
 import type { DeviceInfo, DeviceKind } from "@vesta/core";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+} from "@/components/ui/field";
 import { MenuSection } from "@/components/ui/menu-section";
-import { useGateway } from "@/providers/GatewayProvider";
+import { Switch } from "@/components/ui/switch";
+import { useScrollFade } from "@/hooks/use-scroll-fade";
+import { deviceIdentity } from "@/lib/device-identity";
+import { useGateway } from "@/providers/GatewayProvider/context";
+import { usePreferences } from "@/stores/use-preferences";
+import { contextLine } from "./context-line";
 
 function kindIcon(kind: DeviceKind): ReactNode {
   const className = "size-4 shrink-0 text-muted-foreground";
@@ -25,17 +36,54 @@ function lastSeenLabel(lastSeen: string): string {
   return `last seen ${String(days)}d ago`;
 }
 
-function DeviceRow({ device }: { device: DeviceInfo }) {
+// This device's location sharing switch, on by default: the presence reporter reads a geolocation
+// fix (in the desktop app through its OS location provider), and the OS permission prompt is the
+// real consent. Off reports only the timezone and retracts the position the gateway stored for
+// this device, so changing your mind wipes it.
+function LocationToggle() {
+  const enabled = usePreferences((s) => s.shareLocation);
+  const update = usePreferences((s) => s.update);
+  const setEnabled = (shareLocation: boolean) => {
+    update({ shareLocation });
+  };
+
   return (
-    <div className="flex min-w-0 items-center gap-3 text-sm leading-none">
+    <div className="mt-3 flex flex-col gap-2">
+      <Field orientation="horizontal" className="items-center justify-between">
+        <FieldContent>
+          <FieldLabel className="text-sm">
+            share this device&apos;s location
+          </FieldLabel>
+          <FieldDescription>
+            let your agents see where this device is, from its precise location;
+            the system asks permission the first time, and switching off forgets
+            what this device shared
+          </FieldDescription>
+        </FieldContent>
+        <Switch checked={enabled} onCheckedChange={setEnabled} />
+      </Field>
+    </div>
+  );
+}
+
+function DeviceRow({
+  device,
+  locationFallback,
+}: {
+  device: DeviceInfo;
+  locationFallback?: string;
+}) {
+  const context = contextLine(device, locationFallback);
+  return (
+    <div className="flex min-w-0 items-center gap-3 text-base leading-none">
       {kindIcon(device.kind)}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="min-w-0 truncate font-medium text-foreground">
-          {device.descriptor ?? "Unnamed device"}
+          {device.descriptor ?? "unnamed device"}
         </span>
-        {device.location !== null && (
-          <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {device.location}
+        {context !== null && (
+          <span className="min-w-0 truncate text-sm text-muted-foreground">
+            {context}
           </span>
         )}
       </div>
@@ -53,17 +101,67 @@ function DeviceRow({ device }: { device: DeviceInfo }) {
   );
 }
 
+function ColumnLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="text-[0.7rem] font-medium lowercase tracking-wide text-muted-foreground/60">
+      {children}
+    </span>
+  );
+}
+
 export function DevicesCard() {
   const { devices } = useGateway();
+  const { ref: othersRef, style: othersFade } = useScrollFade<HTMLDivElement>({
+    top: "20px",
+    bottom: "20px",
+  });
   if (devices.length === 0) return null;
+  const selfId = deviceIdentity().id;
+  const current = devices.find((device) => device.id === selfId) ?? null;
+  // Present devices first, then most recently seen.
+  const others = devices
+    .filter((device) => device.id !== selfId)
+    .sort(
+      (a, b) =>
+        Number(b.present) - Number(a.present) ||
+        new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime(),
+    );
   return (
-    <Card size="sm">
-      <CardContent>
+    <Card size="sm" className="md:col-span-2">
+      <CardContent className="lowercase">
         <MenuSection title="devices">
-          <div className="mt-2 flex flex-col gap-3">
-            {devices.map((device) => (
-              <DeviceRow key={device.id} device={device} />
-            ))}
+          <div className="mt-2 flex flex-wrap gap-x-8 gap-y-6">
+            <div className="flex min-w-[11rem] flex-1 flex-col gap-3">
+              <ColumnLabel>this device</ColumnLabel>
+              <div className="rounded-xl bg-accent p-3">
+                {current ? (
+                  <DeviceRow device={current} locationFallback="no location" />
+                ) : (
+                  <span className="text-base text-muted-foreground">
+                    not registered yet
+                  </span>
+                )}
+              </div>
+              <LocationToggle />
+            </div>
+            <div className="flex min-w-[11rem] flex-1 flex-col gap-3">
+              <ColumnLabel>other devices</ColumnLabel>
+              {others.length === 0 ? (
+                <span className="text-base text-muted-foreground">
+                  no other devices
+                </span>
+              ) : (
+                <div
+                  ref={othersRef}
+                  style={othersFade}
+                  className="-mx-1 flex max-h-56 flex-col gap-3 overflow-y-auto overscroll-contain px-1 py-2"
+                >
+                  {others.map((device) => (
+                    <DeviceRow key={device.id} device={device} />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </MenuSection>
       </CardContent>

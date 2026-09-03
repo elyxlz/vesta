@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { apiJson } from "@/api/client";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { Switch } from "@/components/ui/switch";
 import {
   Field,
@@ -8,6 +7,8 @@ import {
   FieldDescription,
   FieldLabel,
 } from "@/components/ui/field";
+import { updateGatewaySettings } from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 function ConnectionToggle({
   label,
@@ -55,10 +56,8 @@ export function ConnectionControls() {
   const onToggleBeta = async (enabled: boolean) => {
     setChannelSaving(true);
     try {
-      await apiJson("/gateway/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: enabled ? "beta" : "stable" }),
+      await updateGatewaySettings(httpClient, {
+        channel: enabled ? "beta" : "stable",
       });
       await checkForUpdate();
     } catch (err) {
@@ -71,11 +70,7 @@ export function ConnectionControls() {
   const onToggleAutoUpdate = async (enabled: boolean) => {
     setAutoUpdateSaving(true);
     try {
-      await apiJson("/gateway/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auto_update: enabled }),
-      });
+      await updateGatewaySettings(httpClient, { auto_update: enabled });
       await checkForUpdate();
     } catch (err) {
       console.warn("[settings] failed to set auto-update:", err);

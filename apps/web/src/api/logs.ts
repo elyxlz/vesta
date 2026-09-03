@@ -1,4 +1,4 @@
-import type { SseHandle } from "@vesta/core";
+import { agentLogsPath, gatewayLogsPath, type SseHandle } from "@vesta/core";
 import { replayTailLines } from "@/lib/log-stream-policy";
 import type { LogEvent } from "@/lib/types";
 import { openLogStream } from "./log-stream";
@@ -10,15 +10,12 @@ export function streamLogs(
   onEvent: (event: LogEvent) => void,
   opts?: { replay?: boolean },
 ): Promise<void> {
-  const params = new URLSearchParams({
-    tail: String(replayTailLines(opts?.replay ?? true)),
-  });
   return new Promise((resolve) => {
     logSources.get(name)?.cancel();
     logSources.set(
       name,
       openLogStream(
-        `/agents/${encodeURIComponent(name)}/logs?${params.toString()}`,
+        agentLogsPath(name, replayTailLines(opts?.replay ?? true)),
         "agent_stopped",
         onEvent,
         () => {
@@ -37,4 +34,31 @@ export function stopLogs(name: string): Promise<void> {
     logSources.delete(name);
   }
   return Promise.resolve();
+}
+
+let gatewayLogSource: SseHandle | null = null;
+
+export function streamGatewayLogs(
+  follow: boolean,
+  onEvent: (event: LogEvent) => void,
+): Promise<void> {
+  return new Promise((resolve) => {
+    gatewayLogSource?.cancel();
+    gatewayLogSource = openLogStream(
+      gatewayLogsPath(follow),
+      "gateway_stopped",
+      onEvent,
+      () => {
+        gatewayLogSource = null;
+        resolve();
+      },
+    );
+  });
+}
+
+export function stopGatewayLogs(): void {
+  if (gatewayLogSource) {
+    gatewayLogSource.cancel();
+    gatewayLogSource = null;
+  }
 }

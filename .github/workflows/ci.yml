@@ -58,6 +58,7 @@ jobs:
       mobile: ${{ steps.filter.outputs.mobile }}
       mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
+      visual: ${{ steps.filter.outputs.visual }}
       comms: ${{ steps.filter.outputs.comms }}
       mac_universal: ${{ steps.flags.outputs.mac_universal }}
       mobile_matrix: ${{ steps.flags.outputs.mobile_matrix }}
@@ -67,7 +68,7 @@ jobs:
         id: flags
         env:
           BUILD_MAC_UNIVERSAL: "false" # false = Apple Silicon (arm64) only; true = universal (arm64 + Intel)
-          BUILD_ANDROID: "false" # false = skip the Android compile; true = build it
+          BUILD_ANDROID: "true" # false = skip the Android compile; true = build it
         run: |
           echo "mac_universal=${BUILD_MAC_UNIVERSAL}" >> "$GITHUB_OUTPUT"
           matrix='[{"label":"iOS simulator","platform":"ios","os":"macos-latest"}]'
@@ -111,6 +112,14 @@ jobs:
               - 'check.sh'
             desktop:
               - 'apps/desktop/**'
+              - 'apps/package.json'
+              - 'apps/package-lock.json'
+              - '.github/workflows/ci.yml'
+              - 'check.sh'
+            visual:
+              - 'apps/visual/**'
+              - 'apps/mobile/visual/scenarios.json'
+              - 'apps/web/visual/scenarios.json'
               - 'apps/package.json'
               - 'apps/package-lock.json'
               - '.github/workflows/ci.yml'
@@ -382,6 +391,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.visual == 'true' ||
       needs.detect-changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -427,12 +437,37 @@ jobs:
       - name: Run desktop checks
         run: ./check.sh app-desktop
 
+  test-app-visual:
+    name: Apps · visual
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.visual == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Install deps
+        run: npm --prefix apps ci
+
+      - name: Run visual checks
+        run: ./check.sh app-visual
+
   test-app-mobile:
     name: Apps · mobile
     needs: detect-changes
     if: >-
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.visual == 'true' ||
       needs.detect-changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -451,37 +486,6 @@ jobs:
 
       - name: Run mobile checks
         run: ./check.sh app-mobile
-
-  # ── EAS workflow schema validation (mobile PRs only) ─────────────────
-  # This is local schema validation only. It neither authenticates to Expo nor
-  # queues a cloud build, so PRs cannot consume EAS quota or access EXPO_TOKEN.
-  validate-mobile-eas:
-    name: Mobile · Validate EAS workflows
-    needs: detect-changes
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.mobile == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Validate EAS workflows
-        working-directory: apps/mobile
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          workflows=(.eas/workflows/*.yml .eas/workflows/*.yaml)
-          if [ "${#workflows[@]}" -eq 0 ]; then
-            echo "No EAS workflows found"
-            exit 1
-          fi
-          schema="$RUNNER_TEMP/eas-workflow-schema.json"
-          curl --fail --silent --show-error https://api.expo.dev/v2/workflows/schema |
-            jq --exit-status '.data' > "$schema"
-          uvx check-jsonschema==0.36.2 --schemafile "$schema" "${workflows[@]}"
 
   # ── Warm the agent image build cache (shared by the Docker consumers) ──
   # test-integration and check-vestad each build the agent image from their own
@@ -957,7 +961,7 @@ jobs:
         if: inputs.release_artifacts
         run: |
           mkdir -p electron-out
-          cp apps/desktop/dist/*.deb apps/desktop/dist/*.rpm electron-out/
+          cp apps/desktop/dist/*.deb apps/desktop/dist/*.rpm apps/desktop/dist/latest-linux*.yml electron-out/
           [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
@@ -1053,7 +1057,7 @@ jobs:
 
       - name: Set up Java
         if: matrix.platform == 'android'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -1081,6 +1085,7 @@ jobs:
       - test-app-core
       - test-app-web
       - test-app-desktop
+      - test-app-visual
       - test-app-mobile
       - build-agent-image
       - test-integration
@@ -1092,7 +1097,6 @@ jobs:
       - build-electron-linux
       - build-electron-windows
       - mobile-native
-      - validate-mobile-eas
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

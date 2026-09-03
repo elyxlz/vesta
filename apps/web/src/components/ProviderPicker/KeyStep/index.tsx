@@ -7,7 +7,7 @@ export function KeyStep({
   initialKey,
   onNext,
   logo,
-  onCancel,
+  onBack,
   title,
   subtitle,
   placeholder,
@@ -16,7 +16,7 @@ export function KeyStep({
   initialKey: string;
   onNext: (key: string) => void;
   logo?: ReactNode;
-  onCancel?: () => void;
+  onBack?: () => void;
   title: string;
   subtitle: string;
   placeholder?: string;
@@ -52,7 +52,7 @@ export function KeyStep({
       onSubmit={() => {
         void submit();
       }}
-      onCancel={onCancel}
+      onBack={onBack}
       error={error}
     >
       <Input
@@ -63,7 +63,7 @@ export function KeyStep({
         data-1p-ignore
         data-lpignore="true"
         data-form-type="other"
-        style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
+        style={{ WebkitTextSecurity: "disc" }}
         placeholder={placeholder}
         value={key}
         onChange={(e) => {
@@ -71,7 +71,7 @@ export function KeyStep({
           if (error) setError(null);
         }}
         autoFocus
-        className="w-full text-center"
+        className="h-11 w-full text-center"
       />
     </ProviderStep>
   );

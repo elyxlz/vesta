@@ -10,7 +10,51 @@ import (
 )
 
 func (wac *WhatsAppClient) AddContact(name, phone string) (Contact, error) {
+	if digits, _, err := normalizePhoneInput(phone); err == nil {
+		peer := wac.canonicalChatJID(types.NewJID(digits, types.DefaultUserServer))
+		if err := wac.rejectDuplicateContactName(name, peer); err != nil {
+			return Contact{}, err
+		}
+	}
 	return wac.store.SaveManualContact(name, phone)
+}
+
+// rejectDuplicateContactName keeps every saved name pointing at one person, so `whatsapp send --to
+// '<name>'` and the reply command that emits a name are never ambiguous. The peer's own rows are
+// excluded: one person holds a row under each of their key forms (phone JID and LID), so re-saving
+// or renaming the same person is an update, never a clash. The match is case-insensitive and trimmed
+// so a near-copy cannot reintroduce the ambiguity.
+func (wac *WhatsAppClient) rejectDuplicateContactName(name string, peer types.JID) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return nil
+	}
+	existing, err := wac.store.ManualContactsByName(trimmed)
+	if err != nil {
+		return fmt.Errorf("failed to check for a duplicate contact name: %v", err)
+	}
+	own := make(map[string]struct{})
+	for _, key := range wac.contactKeys(peer) {
+		own[key] = struct{}{}
+	}
+	for _, contact := range existing {
+		if _, mine := own[contact.JID]; mine {
+			continue
+		}
+		return fmt.Errorf(
+			"a contact named '%s' already exists (%s); choose a distinct name like '%s R' so a reply names one person",
+			trimmed, contactLabel(contact), trimmed,
+		)
+	}
+	return nil
+}
+
+// contactLabel names the peer already holding a name, its number when known, otherwise its chat id.
+func contactLabel(contact Contact) string {
+	if contact.PhoneNumber != "" {
+		return contact.PhoneNumber
+	}
+	return contact.JID
 }
 
 // AddContactByChat saves a contact for a chat given by its own id, the form for a peer WhatsApp
@@ -35,6 +79,9 @@ func (wac *WhatsAppClient) AddContactByChat(name, chat string) (Contact, error) 
 		return Contact{}, fmt.Errorf("'%s' is a group, not a person; only people need a saved contact", chat)
 	}
 	peer := wac.canonicalChatJID(jid)
+	if err := wac.rejectDuplicateContactName(name, peer); err != nil {
+		return Contact{}, err
+	}
 	if peer.Server == types.DefaultUserServer {
 		return wac.store.SaveManualContact(name, "+"+peer.User)
 	}
@@ -208,17 +255,28 @@ func (wac *WhatsAppClient) resolveRecipientJID(identifier string) (types.JID, er
 		return types.NewJID(identifier, types.DefaultUserServer), nil
 	}
 
-	// Search contacts by name
-	contacts, err := wac.store.SearchContacts(identifier, 50)
-	if err == nil {
-		if jid, err := resolveFromContacts(contacts, identifier); err != nil || jid.User != "" {
+	// Both are searched with the same name-filtered query, cheap enough to run together so a name
+	// that reaches both a contact and a group can be caught before either resolves.
+	contacts, contactsErr := wac.store.SearchContacts(identifier, 50)
+	groups, groupsErr := wac.store.SearchGroups(identifier, 50)
+
+	// A bare name that exactly matches both a saved contact and a group is ambiguous: refuse it so a
+	// message never goes silently to the wrong one. The contact is the one name the caller controls,
+	// so the remedy renames it; the contact stays reachable meanwhile by their phone number.
+	if contactsErr == nil && groupsErr == nil && hasExactName(contactNames(contacts), identifier) && hasExactName(groupNames(groups), identifier) {
+		return types.JID{}, fmt.Errorf(
+			"'%s' is both a saved contact and a group; give the contact a different name so the name reaches one recipient, or address them by their phone number",
+			identifier,
+		)
+	}
+
+	if contactsErr == nil {
+		if jid, err := wac.resolveFromContacts(contacts, identifier); err != nil || jid.User != "" {
 			return jid, err
 		}
 	}
 
-	// Search groups by name (filtered query avoids loading all groups)
-	groups, err := wac.store.SearchGroups(identifier, 50)
-	if err == nil {
+	if groupsErr == nil {
 		if jid, err := resolveFromGroups(groups, identifier); err != nil || jid.User != "" {
 			return jid, err
 		}
@@ -227,12 +285,56 @@ func (wac *WhatsAppClient) resolveRecipientJID(identifier string) (types.JID, er
 	return types.JID{}, fmt.Errorf("no contact or group found matching '%s'. Use search_contacts or list_groups to find available recipients", identifier)
 }
 
-func resolveFromContacts(contacts []Contact, identifier string) (types.JID, error) {
+// nameEquals is the one owner of "these two names are the same recipient name": non-empty, equal
+// once trimmed, ignoring case. Contact and group matching both go through it so they cannot drift.
+func nameEquals(candidate, target string) bool {
+	return candidate != "" && strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(target))
+}
+
+func hasExactName(candidates []string, target string) bool {
+	for _, candidate := range candidates {
+		if nameEquals(candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func contactNames(contacts []Contact) []string {
+	names := make([]string, len(contacts))
+	for i, c := range contacts {
+		names[i] = c.Name
+	}
+	return names
+}
+
+func groupNames(groups []Chat) []string {
+	names := make([]string, len(groups))
+	for i, g := range groups {
+		names[i] = g.Name
+	}
+	return names
+}
+
+// nameSharedWithGroup reports whether a group holds the exact name, used to keep a reply on the chat
+// JID when a saved contact's name would otherwise resolve ambiguously.
+func (wac *WhatsAppClient) nameSharedWithGroup(name string) bool {
+	if wac.store == nil {
+		return false
+	}
+	groups, err := wac.store.SearchGroups(name, 50)
+	if err != nil {
+		return false
+	}
+	return hasExactName(groupNames(groups), name)
+}
+
+func (wac *WhatsAppClient) resolveFromContacts(contacts []Contact, identifier string) (types.JID, error) {
 	if len(contacts) == 0 {
 		return types.JID{}, nil
 	}
 
-	if jid, handled, err := preferExactContactMatch(contacts, identifier); handled {
+	if jid, handled, err := wac.preferExactContactMatch(contacts, identifier); handled {
 		return jid, err
 	}
 
@@ -260,7 +362,7 @@ func resolveFromContacts(contacts []Contact, identifier string) (types.JID, erro
 		identifier, strings.Join(names, ", "))
 }
 
-func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, bool, error) {
+func (wac *WhatsAppClient) preferExactContactMatch(contacts []Contact, identifier string) (types.JID, bool, error) {
 	trimmed := strings.TrimSpace(identifier)
 	if trimmed == "" {
 		return types.JID{}, false, nil
@@ -268,13 +370,13 @@ func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, 
 
 	var matches []Contact
 	for _, c := range contacts {
-		if c.Name != "" && strings.EqualFold(strings.TrimSpace(c.Name), trimmed) {
+		if nameEquals(c.Name, trimmed) {
 			matches = append(matches, c)
 		}
 	}
 
 	if len(matches) > 1 {
-		return types.JID{}, true, fmt.Errorf("multiple contacts share the exact name '%s'. Please disambiguate with the precise phone number (+1234567890)", identifier)
+		return wac.collapseSamePeerMatches(matches, identifier)
 	}
 
 	if len(matches) == 1 {
@@ -287,12 +389,11 @@ func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, 
 		return types.JID{}, false, nil
 	}
 
+	// At most one row can hold a given non-empty phone number: the jid is the primary key and is
+	// derived from those digits, so a repeat save upserts the same row rather than adding a second.
 	var phoneMatch *Contact
 	for i := range contacts {
 		if digitsOnly(contacts[i].PhoneNumber) == digits {
-			if phoneMatch != nil {
-				return types.JID{}, true, fmt.Errorf("multiple contacts share that phone number. Please specify the exact contact name instead")
-			}
 			phoneMatch = &contacts[i]
 		}
 	}
@@ -303,6 +404,40 @@ func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, 
 
 	jid, err := types.ParseJID(phoneMatch.JID)
 	return jid, true, err
+}
+
+// collapseSamePeerMatches folds exact-name matches that resolve to one peer into that peer's
+// deliverable phone JID: one person holds a row under each key form (phone JID and LID), so a name
+// held under both is not ambiguous. It reuses canonicalChatJID, the one owner of peer identity, so
+// the collapse cannot disagree with the send gate about who two rows are. canonicalChatJID resolves
+// a LID to its phone JID, so the returned identity is the deliverable phone form. The name stays
+// ambiguous only when the matches are genuinely different peers.
+func (wac *WhatsAppClient) collapseSamePeerMatches(matches []Contact, identifier string) (types.JID, bool, error) {
+	var peer types.JID
+	seen := make(map[string]struct{})
+	var labels []string
+	for _, c := range matches {
+		jid, err := types.ParseJID(c.JID)
+		if err != nil {
+			return types.JID{}, true, err
+		}
+		canonical := wac.canonicalChatJID(jid)
+		if _, known := seen[canonical.String()]; known {
+			continue
+		}
+		seen[canonical.String()] = struct{}{}
+		labels = append(labels, contactLabel(c))
+		if peer.IsEmpty() {
+			peer = canonical
+		}
+	}
+	if len(seen) > 1 {
+		return types.JID{}, true, fmt.Errorf(
+			"multiple contacts share the exact name '%s' (%s); address one by their exact phone number, or give one a different name",
+			identifier, strings.Join(labels, ", "),
+		)
+	}
+	return peer, true, nil
 }
 
 func resolveFromGroups(groups []Chat, identifier string) (types.JID, error) {
@@ -343,7 +478,11 @@ func isNumeric(s string) bool {
 	return err == nil && len(s) > 0
 }
 
-// getChatName returns a human-readable name for a chat JID.
+// getChatName returns the name shown for a chat: a saved contact's name, a group's name, or, for a
+// person with no saved contact, their phone number. A direct chat never takes the peer's WhatsApp
+// profile name (pushname), so a name in the chats table is always a saved contact or a number. Two
+// different people cannot then share a chat name, which keeps a saved name pointing at one person
+// for name-based sends and replies.
 func (wac *WhatsAppClient) getChatName(jid types.JID) string {
 	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil && contact.Name != "" {
 		return contact.Name
@@ -356,9 +495,6 @@ func (wac *WhatsAppClient) getChatName(jid types.JID) string {
 			return groupInfo.Name
 		}
 		return fmt.Sprintf("Group %s", jid.User)
-	}
-	if contact, err := wac.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.FullName != "" {
-		return contact.FullName
 	}
 	if jid.Server == types.DefaultUserServer && jid.User != "" {
 		return "+" + jid.User
@@ -429,10 +565,11 @@ func (wac *WhatsAppClient) formatSenderForDisplay(jid types.JID) string {
 func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 	resolvedSender types.JID,
 	senderDisplay string,
-	contactName, contactPhone string,
+	contactPhone string,
 	contactSaved, isDirectChat bool,
 ) {
 	resolvedSender = wac.resolveSenderJID(info.Sender, info.SenderAlt)
+	var contactName string
 
 	// resolvedChat is the peer's number for display, read through the alt address the message
 	// itself carries, which the LID store need not hold. It never decides which rows are the

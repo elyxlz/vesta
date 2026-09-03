@@ -1,25 +1,22 @@
-import { useEffect, useState, type ReactNode } from "react";
-import {
-  startAgent,
-  stopAgent,
-  restartAgent,
-  createBackup,
-  listBackups,
-  restoreBackup,
-  deleteBackup,
-  deleteAgent,
-  type BackupInfo,
-} from "@/api";
-import { useAgentOps, type AgentRequest } from "@/stores/use-agent-ops";
+import { useCallback, type ReactNode } from "react";
+import { useAgentVisualStatus, useResource } from "@vesta/core/react";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentActivityState } from "@vesta/core";
-import type { AgentRow } from "@/lib/types";
+import type { AgentRequest, AgentRow } from "@vesta/core";
 import { errorMessage } from "@/lib/utils";
-import { getAgentVisualStatus } from "@/components/Orb/styles";
+import { useController } from "@/providers/ControllerProvider/context";
 import { SelectedAgentContext } from "./context";
 import type { SelectedAgentContextValue } from "./context";
-
-export { useSelectedAgent } from "./context";
+import {
+  createBackup,
+  deleteAgent,
+  deleteBackup,
+  listBackups,
+  restartAgent,
+  restoreBackup,
+  startAgent,
+  stopAgent,
+} from "@vesta/core";
+import { httpClient } from "@/api/client";
 
 export function SelectedAgentProvider({
   agent,
@@ -29,37 +26,35 @@ export function SelectedAgentProvider({
   children: ReactNode;
 }) {
   const name = agent.name;
-  const [agentState, setAgentState] = useState<AgentActivityState>(
+  const { requests } = useController();
+  const clearRestartPending = useRestartPending((s) => s.clearPending);
+  const { label, orbState, request, error } = useAgentVisualStatus(
+    useController(),
+    agent,
     agent.activityState,
   );
-
-  const withOp = useAgentOps((s) => s.withOp);
-  const clearRestartPending = useRestartPending((s) => s.clearPending);
-  const opState = useAgentOps((s) => s.getOp(name));
   // Long-running work started anywhere disables the actions here too, not just work this tab began.
-  const isBusy = opState.operation !== "idle" || agent.operation !== null;
-
-  const { label: statusLabel, orbState } = getAgentVisualStatus(
-    agent,
-    opState.operation,
-    opState.error,
-    agentState,
-  );
+  const isBusy = request !== "idle" || agent.operation !== null;
+  const statusLabel = error || label;
 
   const op =
-    (operation: AgentRequest, run: () => Promise<unknown>, failure: string) =>
+    (request: AgentRequest, run: () => Promise<unknown>, failure: string) =>
     () =>
-      withOp(
+      requests.run(
         name,
-        operation,
+        request,
         async () => {
           await run();
         },
         failure,
       );
 
-  const start = op("starting", () => startAgent(name), "start failed");
-  const stop = op("stopping", () => stopAgent(name), "stop failed");
+  const start = op(
+    "starting",
+    () => startAgent(httpClient, name),
+    "start failed",
+  );
+  const stop = op("stopping", () => stopAgent(httpClient, name), "stop failed");
   // A restart applies any pending saved changes, so clear the "restart to apply" reminder on
   // success (the run callback throws on failure, so a failed op keeps the reminder). For most reasons
   // reconcile (use-restart-pending) is the owner — it clears the flag once the agent is observed to
@@ -68,12 +63,12 @@ export function SelectedAgentProvider({
   // alone (its mount needs a recreate a boot-time change can't confirm), this button IS the owner:
   // it runs restartAgent, which recreates on mount drift and thus actually applies the grant.
   const applyPending = (
-    operation: AgentRequest,
+    request: AgentRequest,
     run: () => Promise<unknown>,
     failure: string,
   ) =>
     op(
-      operation,
+      request,
       async () => {
         await run();
         clearRestartPending(name);
@@ -82,88 +77,72 @@ export function SelectedAgentProvider({
     );
   const restart = applyPending(
     "starting",
-    () => restartAgent(name),
+    () => restartAgent(httpClient, name),
     "restart failed",
   );
-  const [backups, setBackups] = useState<BackupInfo[]>([]);
-
-  const refreshBackups = async () => {
-    try {
-      setBackups(await listBackups(name));
-    } catch {
-      /* ignore */
-    }
-  };
-
-  useEffect(() => {
-    let ignore = false;
-    listBackups(name)
-      .then((fetched) => {
-        if (!ignore) setBackups(fetched);
-      })
-      .catch(() => {
-        /* ignore */
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [name]);
+  // An empty list and a list that never arrived look identical, so the dialog reports a failed
+  // read instead of "no snapshots yet". `reload` keeps one identity, so the dialog can re-read
+  // the list every time it opens without looping.
+  const {
+    data: backupList,
+    error: backupsError,
+    reload,
+  } = useResource(name, (key) => listBackups(httpClient, key));
+  const backups = backupList ?? [];
+  const backupsFailed = backupsError !== null;
+  const refreshBackups = useCallback(() => {
+    reload();
+    return Promise.resolve();
+  }, [reload]);
 
   const backup = op(
     "backing-up",
     async () => {
-      await createBackup(name);
+      await createBackup(httpClient, name);
       await refreshBackups();
     },
     "backup failed",
   );
 
   const restore = (backupId: string) => {
-    void withOp(
+    void requests.run(
       name,
       "restoring",
       async () => {
-        await restoreBackup(name, backupId);
+        await restoreBackup(httpClient, name, backupId);
         await refreshBackups();
       },
       "restore failed",
     );
   };
 
-  const removeBackup = (backupId: string) => {
-    void withOp(
-      name,
-      "deleting",
-      async () => {
-        await deleteBackup(name, backupId);
-        await refreshBackups();
-      },
-      "delete backup failed",
-    );
+  // Deleting a snapshot is not an agent lifecycle operation (vestad publishes none for it), so it
+  // stays off the agent request that "backing-up"/"restoring" ride: the dialog owns its own pending
+  // state, and the agent orb never reads as "deleting" while a snapshot is removed.
+  const removeBackup = async (backupId: string) => {
+    await deleteBackup(httpClient, name, backupId);
+    await refreshBackups();
   };
 
-  // Delete is terminal: unlike the other ops it hands off to the agent's
-  // disappearance, not to a new status. So it holds "deleting" on success and
-  // lets reconcile drop the op when the agent leaves the list, rather than
-  // clearing to idle and flashing the card back to the gray stopped orb.
+  // Delete is terminal: unlike the other requests it hands off to the agent's disappearance, not
+  // to a new status. So it holds "deleting" on success and lets the controller drop the request
+  // when the agent leaves the roster, rather than clearing to idle and flashing the card back to
+  // the gray stopped orb.
   const remove = async () => {
-    const ops = useAgentOps.getState();
-    if (ops.getOp(name).operation !== "idle") return;
-    ops.setOp(name, "deleting");
+    if (requests.get(name).request !== "idle") return;
+    requests.set(name, "deleting");
     try {
-      await deleteAgent(name);
+      await deleteAgent(httpClient, name);
     } catch (e) {
-      ops.setOp(name, "idle", errorMessage(e, "delete failed"));
+      requests.set(name, "idle", errorMessage(e, "delete failed"));
     }
   };
 
   const value: SelectedAgentContextValue = {
     name,
     agent,
-    agentState,
-    setAgentState,
-    operation: opState.operation,
-    error: opState.error,
+    request,
+    error,
     statusLabel,
     orbState,
     isBusy,
@@ -172,6 +151,7 @@ export function SelectedAgentProvider({
     restart,
     backup: () => void backup(),
     backups,
+    backupsFailed,
     refreshBackups,
     restore,
     removeBackup,

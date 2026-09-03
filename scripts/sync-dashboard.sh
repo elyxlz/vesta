@@ -4,13 +4,14 @@
 #
 # `design/tokens.json` is the canonical visual-token source and is generated
 # before the web outputs are copied. `apps/web/src/components/ui/` is the
-# CANONICAL shadcn registry for this repo:
-# it is the single source of truth that this script mirrors into the dashboard
+# CANONICAL shadcn registry for this repo: stock primitives plus the app's
+# design tokens, with no app behavior inside (app wrappers such as
+# components/Dialog compose them). This script mirrors it into the dashboard
 # skill's own `app/src/components/ui/`. Those primitives are intentionally the
 # FULL set, not only what apps/web itself renders, so the dashboard skill (which
 # the agent uses to build arbitrary UIs) always has every component on hand.
 # Do NOT delete a primitive from apps/web just because it looks unimported there
-# (knip/dead-code tools will flag them) -- the dashboard is the other consumer.
+# (knip ignores ui/ for that reason) -- the dashboard is the other consumer.
 # The ui/ mirror below uses rsync --delete so the two trees stay strictly 1-to-1
 # and CI's dashboard-sync-check catches any drift in either direction.
 set -euo pipefail
@@ -30,6 +31,7 @@ cp "$APP_SRC/design-tokens.css" "$DASHBOARD_SRC/design-tokens.css"
 cp "$APP_SRC/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
 cp "$APP_SRC/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
 cp "$APP_SRC/hooks/use-media-query.ts" "$DASHBOARD_SRC/hooks/use-media-query.ts" # use-mobile delegates to it
+cp "$APP_SRC/hooks/use-scroll-fade.ts" "$DASHBOARD_SRC/hooks/use-scroll-fade.ts" # ui/scroll-shell imports it
 # Strict mirror (delete-on-sync) so the dashboard's ui/ exactly matches the
 # canonical registry; a primitive removed from one side fails the CI check.
 rsync -a --delete --include='*.tsx' --exclude='*' "$APP_SRC/components/ui/" "$DASHBOARD_SRC/components/ui/"
@@ -39,6 +41,19 @@ rsync -a --delete --include='*.tsx' --exclude='*' "$APP_SRC/components/ui/" "$DA
 perl -i -pe 's/bg-background ?//g; s/ bg-background//g' "$DASHBOARD_SRC/index.css"
 perl -i -pe 's|^(\s*html \{)$|$1\n    background: transparent;|; s|^(\s*body \{)$|$1\n    background: transparent;|' "$DASHBOARD_SRC/index.css"
 perl -i -pe 'print "\@source \"./components/ui\";\n\@source \"./lib\";\n\@source \"./hooks\";\n" if $. == 1' "$DASHBOARD_SRC/index.css"
+
+# Dashboard cards are flat: neutralize the shared Card's shadow in the dashboard copy only
+# (apps/web keeps shadow-md). Appended here so the rule lives in the synced index.css without
+# touching the canonical apps/web source. See agent/skills/dashboard/design/SKILL.md.
+cat >> "$DASHBOARD_SRC/index.css" <<'CARD_FLAT_CSS'
+
+/* Dashboard cards are flat: drop the base Card's shadow while keeping its hairline ring
+   for edge definition, by zeroing only the shadow layer of the composed box-shadow (the
+   ring uses its own var, so it survives). See the "Cards are flat" design rule. */
+[data-slot="card"] {
+  --tw-shadow: 0 0 #0000;
+}
+CARD_FLAT_CSS
 
 # Guard: every font the synced index.css @imports must be a dependency of the dashboard's own
 # package.json. The CSS is synced but package.json is NOT, so a font newly added to apps/web (e.g.

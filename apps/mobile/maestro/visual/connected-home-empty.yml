@@ -5,6 +5,9 @@ tags:
   - connected
 ---
 - clearState
+- setPermissions:
+    permissions:
+      location: inuse
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=empty"
 - waitForAnimationToEnd:
@@ -13,6 +16,40 @@ tags:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: ".*While [Uu]sing.*"
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: ".*While [Uu]sing.*"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
+    timeout: 4000
+    optional: true
+- tapOn:
+    text: "Keep Only While Using"
+    optional: true
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible: ".*Location access.*"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: ".*Location access.*"
+          commands:
+            - pressKey: Back
+      - extendedWaitUntil:
+          visible: ".*Turn on.*"
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: ".*Turn on.*"
+          optional: true
 - extendedWaitUntil:
     visible: "Create your agent"
     timeout: 30000
@@ -32,13 +69,25 @@ tags:
 - extendedWaitUntil:
     visible: "Done. I prioritized the visual regressions first.*"
     timeout: 10000
-- swipe:
-    start: "85%,50%"
-    end: "15%,50%"
-    duration: 450
+# The dashboard renders in a WebView whose inner text Android does not expose to
+# the accessibility tree; the harness reveals this native marker on WebView load.
+# An emulator can drop a swipe, so the page gesture retries until the marker shows.
+- repeat:
+    times: 3
+    while:
+      notVisible: "Dashboard ready"
+    commands:
+      - swipe:
+          start: "85%,25%"
+          end: "15%,25%"
+          duration: 180
+      - extendedWaitUntil:
+          visible: "Dashboard ready"
+          timeout: 20000
+          optional: true
 - extendedWaitUntil:
-    visible: "Today at a glance"
-    timeout: 10000
+    visible: "Dashboard ready"
+    timeout: 20000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-dashboard
@@ -60,3 +109,52 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: home-gateway-disconnected.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=loading"
+# Android appends the busy state to the content description ("Opening Vesta, busy").
+- extendedWaitUntil:
+    visible: "Opening Vesta.*"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-loading
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-loading.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- repeat:
+    times: 3
+    while:
+      notVisible: "Open nova"
+    commands:
+      - swipe:
+          start: "85%,25%"
+          end: "15%,25%"
+          duration: 180
+      - extendedWaitUntil:
+          visible: "Open nova"
+          timeout: 5000
+          optional: true
+- extendedWaitUntil:
+    visible: "Open nova"
+    timeout: 5000
+- tapOn: "Open nova"
+- extendedWaitUntil:
+    visible: "Start a conversation"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-empty.png

@@ -10,6 +10,7 @@ export function GatewaySettingsButton({
   disconnectedColor,
   reachable,
   label,
+  backgroundColor,
   onPress,
 }: {
   color: string;
@@ -17,6 +18,7 @@ export function GatewaySettingsButton({
   disconnectedColor: string;
   reachable: boolean;
   label: string;
+  backgroundColor?: string;
   onPress: () => void;
 }) {
   return (
@@ -27,6 +29,8 @@ export function GatewaySettingsButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        IS_IOS ? styles.fixedWidth : styles.pill,
+        backgroundColor === undefined ? null : { backgroundColor },
         { opacity: pressed ? 0.72 : 1 },
       ]}
     >
@@ -36,9 +40,7 @@ export function GatewaySettingsButton({
           style={[
             styles.statusDot,
             {
-              backgroundColor: reachable
-                ? connectedColor
-                : disconnectedColor,
+              backgroundColor: reachable ? connectedColor : disconnectedColor,
             },
           ]}
         />
@@ -59,12 +61,13 @@ export function GatewaySettingsButton({
 
 const styles = StyleSheet.create({
   button: {
-    width: 42,
     height: 42,
     borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
   },
+  fixedWidth: { width: 42 },
+  pill: { paddingHorizontal: 13 },
   content: {
     flexDirection: "row",
     alignItems: "center",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FolderOpen, Lock, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/Dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,15 +21,38 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useResource } from "@vesta/core/react";
+import { useRestartPending } from "@/stores/use-restart-pending";
+import { errorMessage, loadFailure } from "@/lib/utils";
 import {
   getAgentMounts,
   getHostFolderSuggestions,
   setAgentMounts,
-  type HostMount,
-} from "@/api/agents";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useRestartPending } from "@/stores/use-restart-pending";
-import { errorMessage } from "@/lib/utils";
+} from "@vesta/core";
+import type { HostMount } from "@vesta/core";
+import { httpClient } from "@/api/client";
+
+// Suggestions not already shared, and not the one being typed.
+function unsharedSuggestions(
+  suggestions: string[] | null,
+  mounts: HostMount[] | null,
+  typed: string,
+): string[] {
+  return (suggestions ?? []).filter(
+    (s) => !(mounts ?? []).some((m) => m.host_path === s) && s !== typed,
+  );
+}
+
+// Folder suggestions load lazily, the first time the add dialog opens, and stay loaded.
+function useHostFolderSuggestions(open: boolean): string[] | null {
+  const [wanted, setWanted] = useState(false);
+  if (open && !wanted) setWanted(true);
+  const suggested = useResource(wanted ? "host-folders" : null, () =>
+    getHostFolderSuggestions(httpClient),
+  );
+  return suggested.error === null ? suggested.data : [];
+}
 
 function folderName(path: string): string {
   const segments = path.split("/").filter(Boolean);
@@ -42,8 +65,14 @@ function folderName(path: string): string {
 export function HostAccessCard() {
   const { name: agentName, agent } = useSelectedAgent();
   const markRestartPending = useRestartPending((s) => s.markPending);
-  const [mounts, setMounts] = useState<HostMount[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const mountsResource = useResource(agentName || null, (key) =>
+    getAgentMounts(httpClient, key),
+  );
+  const mounts = mountsResource.data;
+  const loadError = loadFailure(
+    mountsResource.error,
+    "failed to load host access",
+  );
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
@@ -52,50 +81,15 @@ export function HostAccessCard() {
   const [containerPath, setContainerPath] = useState("");
   const [writable, setWritable] = useState(false);
   const [showContainerPath, setShowContainerPath] = useState(false);
-  const [suggestions, setSuggestions] = useState<string[] | null>(null);
-
-  useEffect(() => {
-    if (!agentName) return;
-    let ignore = false;
-    setMounts(null);
-    setLoadError(null);
-    getAgentMounts(agentName)
-      .then((m) => {
-        if (ignore) return;
-        setMounts(m);
-      })
-      .catch((e: unknown) => {
-        if (!ignore)
-          setLoadError(errorMessage(e, "failed to load host access"));
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [agentName]);
-
-  // Fetch folder suggestions lazily, the first time the add dialog opens.
-  useEffect(() => {
-    if (!open || suggestions !== null) return;
-    let ignore = false;
-    getHostFolderSuggestions()
-      .then((f) => {
-        if (!ignore) setSuggestions(f);
-      })
-      .catch(() => {
-        if (!ignore) setSuggestions([]);
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [open, suggestions]);
+  const suggestions = useHostFolderSuggestions(open);
 
   const save = async (next: HostMount[]): Promise<boolean> => {
     if (!agentName) return false;
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await setAgentMounts(agentName, next);
-      setMounts(result.mounts);
+      const result = await setAgentMounts(httpClient, agentName, next);
+      mountsResource.set(result.mounts);
       if (result.restartRequired)
         markRestartPending(agentName, "host-access", agent.startedAt);
       return true;
@@ -138,9 +132,10 @@ export function HostAccessCard() {
     );
   };
 
-  // Suggestions not already shared, and not the one being typed.
-  const availableSuggestions = (suggestions ?? []).filter(
-    (s) => !(mounts ?? []).some((m) => m.host_path === s) && s !== hostPath,
+  const availableSuggestions = unsharedSuggestions(
+    suggestions,
+    mounts,
+    hostPath,
   );
 
   return (

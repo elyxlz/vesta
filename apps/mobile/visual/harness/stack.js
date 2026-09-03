@@ -31,10 +31,11 @@ function disableScreenAnimations(child) {
   }
 
   if (child.props.children !== undefined) {
-    return React.cloneElement(child, undefined, React.Children.map(
-      child.props.children,
-      disableScreenAnimations,
-    ));
+    return React.cloneElement(
+      child,
+      undefined,
+      React.Children.map(child.props.children, disableScreenAnimations),
+    );
   }
 
   return child;

@@ -17,7 +17,7 @@ moneypot daemon restart
 
 `start` is idempotent, so re-running it never stacks a second copy, and it returns only once the API actually answers on its port.
 
-The port is registered **private**, so vestad is the gate in front of it and the API itself checks no credential. Reach it at `$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/...` with the app api key, or mint a service key for a caller that holds no app credential:
+The port is registered **private**, so vestad is the gate in front of it and the API itself checks no credential. Reach it at `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/moneypot/...` with the app api key, or mint a service key for a caller that holds no app credential:
 
 ```bash
 service-key mint moneypot --label "what it is for"     # prints the secret once; share the keyed link

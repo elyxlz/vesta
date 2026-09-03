@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { z } from "zod";
-import type { ConnectionConfig } from "@/api/types";
+import type { ConnectionConfig } from "@vesta/core";
 import { connectionSchema } from "@/storage/connection";
 import {
   recentGatewayId,
@@ -95,14 +95,4 @@ export async function forgetRecentGateway(
   await AsyncStorage.setItem(RECENT_GATEWAY_INDEX_KEY, JSON.stringify(next));
   await SecureStore.deleteItemAsync(secretKey(id));
   return next;
-}
-
-export async function clearRecentGateways(): Promise<void> {
-  const current = await readRecentGateways();
-  await AsyncStorage.removeItem(RECENT_GATEWAY_INDEX_KEY);
-  await Promise.all(
-    current.map((gateway) =>
-      SecureStore.deleteItemAsync(secretKey(gateway.id)),
-    ),
-  );
 }

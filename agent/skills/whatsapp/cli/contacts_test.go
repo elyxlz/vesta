@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 // groupIDDigits is a WhatsApp group ID rendered numerically: all digits, but
@@ -308,18 +310,173 @@ func TestNotificationNamesAPeerSavedByChatIDAfterTheMappingIsLearned(t *testing.
 		t.Fatalf("failed to record the learned mapping: %v", err)
 	}
 
-	_, senderDisplay, contactName, contactPhone, contactSaved, _ := wac.prepareNotificationInfo(
+	_, senderDisplay, contactPhone, contactSaved, _ := wac.prepareNotificationInfo(
 		types.MessageSource{Chat: lid, Sender: lid, SenderAlt: phone},
 	)
 
 	if !contactSaved {
 		t.Errorf("a peer the gate treats as confirmed must not be reported as unknown")
 	}
-	if contactName != "Ana" || senderDisplay != "Ana" {
-		t.Errorf("expected the saved name, got contact_name %q and sender %q", contactName, senderDisplay)
+	if senderDisplay != "Ana" {
+		t.Errorf("expected the saved name, got sender %q", senderDisplay)
 	}
 	if contactPhone != "+"+phone.User {
 		t.Errorf("expected the learned number %q, got %q", "+"+phone.User, contactPhone)
+	}
+}
+
+// A saved contact name is the word a reply command addresses, so two different people cannot share
+// one. Saving a name already held by a different number is refused with a distinct-name remedy, so
+// `whatsapp send --to '<name>'` always names exactly one person.
+func TestAddContactRejectsDuplicateNameForADifferentNumber(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("first save must succeed, got %v", err)
+	}
+	_, err := wac.AddContact("Emmy", "+447700900123")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("a name already used by another number must be refused, got %v", err)
+	}
+}
+
+// A duplicate name matches after trimming and ignoring case, so a near-copy cannot slip past the
+// rule and reintroduce the ambiguity.
+func TestAddContactDuplicateNameIgnoresCaseAndSpace(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("first save must succeed, got %v", err)
+	}
+	_, err := wac.AddContact("  emmy ", "+447700900123")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("a name differing only by case or spacing must still collide, got %v", err)
+	}
+}
+
+// Renaming or re-saving the same number is an update, never a collision with itself.
+func TestAddContactAllowsRenamingAndReSavingTheSameNumber(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("first save must succeed, got %v", err)
+	}
+	if _, err := wac.AddContact("Emmy", "+15551110000"); err != nil {
+		t.Errorf("re-saving the same name and number must succeed, got %v", err)
+	}
+	if _, err := wac.AddContact("Emmy R", "+15551110000"); err != nil {
+		t.Errorf("renaming the same number must succeed, got %v", err)
+	}
+}
+
+// One peer holds a row under each key form (phone JID and LID), and those rows may carry the same
+// name, so saving the phone row for a peer already saved by chat id is the same person, not a clash.
+func TestAddContactAllowsTheSameNameForOnePeerUnderBothKeyForms(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	lid := types.NewJID("99988877766655", types.HiddenUserServer)
+	phone := types.NewJID("15551110000", types.DefaultUserServer)
+
+	if _, err := wac.AddContactByChat("Emmy", lid.String()); err != nil {
+		t.Fatalf("saving by chat id must succeed, got %v", err)
+	}
+	if err := wac.client.Store.LIDs.PutLIDMapping(context.Background(), lid, phone); err != nil {
+		t.Fatalf("failed to record the learned mapping: %v", err)
+	}
+	if _, err := wac.AddContact("Emmy", "+"+phone.User); err != nil {
+		t.Errorf("the same peer's phone row must not collide with their own LID row, got %v", err)
+	}
+}
+
+// A dual-key peer holds two rows under one name, one LID and one phone JID, so the name the reply
+// command emits matches both. Both rows are the same person, so the name must resolve to that one
+// peer's deliverable phone JID rather than fail as ambiguous (#1961).
+func TestResolveRecipientCollapsesADualKeyPeerToItsPhoneJID(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	saveContactUnderBothKeys(t, wac, "Emmy", "Emmy")
+
+	resolved, err := wac.ResolveRecipient("Emmy")
+	if err != nil {
+		t.Fatalf("a name held by one peer under both key forms must resolve, got %v", err)
+	}
+	if resolved.String() != splitContactPhone {
+		t.Errorf("name must resolve to the deliverable phone JID %q, got %q", splitContactPhone, resolved)
+	}
+	if resolved.Server != types.DefaultUserServer {
+		t.Errorf("name must resolve to a phone-server JID, got %v", resolved.Server)
+	}
+}
+
+// Two genuinely different people cannot share one name a reply command emits, so a name held by
+// two distinct peers stays ambiguous and is refused with the disambiguation remedy.
+func TestResolveRecipientStillErrorsForDifferentPeersSharingAName(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.store.SaveManualContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("failed to seed first peer: %v", err)
+	}
+	if _, err := wac.store.SaveManualContact("Emmy", "+447700900123"); err != nil {
+		t.Fatalf("failed to seed second peer: %v", err)
+	}
+
+	_, err := wac.ResolveRecipient("Emmy")
+	if err == nil || !strings.Contains(err.Error(), "multiple contacts share the exact name") {
+		t.Fatalf("a name held by two different peers must stay ambiguous, got %v", err)
+	}
+	// The error names each colliding number, so the caller can address the right one instead of guessing.
+	if !strings.Contains(err.Error(), "+15551110000") || !strings.Contains(err.Error(), "+447700900123") {
+		t.Errorf("the ambiguity error must name both colliding numbers, got %v", err)
+	}
+}
+
+// An unsaved direct chat takes the peer's phone number as its name, never their WhatsApp profile
+// name, so no unsaved chat can share a name with a saved contact and make a name-based reply
+// ambiguous.
+func TestGetChatNameUsesTheNumberForAnUnsavedDirectChat(t *testing.T) {
+	wac := &WhatsAppClient{store: newTestStore(t), logger: waLog.Noop}
+	jid, err := types.ParseJID("15551234567@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("failed to parse jid: %v", err)
+	}
+	if name := wac.getChatName(jid); name != "+15551234567" {
+		t.Errorf("an unsaved direct chat must be named by its number, got %q", name)
+	}
+}
+
+// A WhatsApp profile name stored for an unsaved direct chat by an earlier version is cleared on the
+// next open, so a saved contact that shares that name resolves to exactly one person again.
+func TestStoredProfileNameIsScrubbedSoASavedNameResolves(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewMessageStore(dir)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	if _, err := first.SaveManualContact("Emmy", "+15551110000"); err != nil {
+		t.Fatalf("failed to save contact: %v", err)
+	}
+	if err := first.StoreChat("15559998888@s.whatsapp.net", "Emmy", time.Now()); err != nil {
+		t.Fatalf("failed to store chat: %v", err)
+	}
+	// Before the scrub the unsaved chat shares the saved name, so the name is ambiguous.
+	preScrub := &WhatsAppClient{store: first, logger: waLog.Noop}
+	if _, err := preScrub.ResolveRecipient("Emmy"); err == nil {
+		t.Fatalf("a stored profile name sharing a saved name must be ambiguous before the scrub")
+	}
+	// Model a database that predates the scrub, so reopening it runs the scrub.
+	if _, err := first.db.Exec("PRAGMA user_version = 0"); err != nil {
+		t.Fatalf("failed to reset schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("failed to close store: %v", err)
+	}
+
+	second, err := NewMessageStore(dir)
+	if err != nil {
+		t.Fatalf("failed to reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	wac := &WhatsAppClient{store: second, logger: waLog.Noop}
+	resolved, err := wac.ResolveRecipient("Emmy")
+	if err != nil {
+		t.Fatalf("after the scrub a saved name must resolve, got %v", err)
+	}
+	if resolved.String() != "15551110000@s.whatsapp.net" {
+		t.Errorf("the saved contact must resolve to its phone JID, got %q", resolved)
 	}
 }
 
@@ -358,5 +515,42 @@ func TestRequireManualContactLeavesGroupsUngated(t *testing.T) {
 
 	if err := wac.requireManualContact(types.NewJID(groupIDDigits, types.GroupServer)); err != nil {
 		t.Errorf("a group must not require a saved contact, got %v", err)
+	}
+}
+
+// A bare name held by both a saved contact and a group is ambiguous: refuse it so a message never
+// goes silently to the wrong one. The remedy renames the contact, the one name the agent controls.
+func TestResolveRecipientErrorsWhenANameIsBothAContactAndAGroup(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.store.SaveManualContact("Book Club", "+15551110000"); err != nil {
+		t.Fatalf("failed to seed contact: %v", err)
+	}
+	if err := wac.store.StoreChat("120363021234567890@g.us", "Book Club", time.Now()); err != nil {
+		t.Fatalf("failed to seed group: %v", err)
+	}
+
+	_, err := wac.ResolveRecipient("Book Club")
+	if err == nil || !strings.Contains(err.Error(), "both a saved contact and a group") {
+		t.Fatalf("a name shared by a contact and a group must be refused, got %v", err)
+	}
+}
+
+// A contact name that only appears inside a group name is not a collision: the exact contact still
+// resolves, so a near-match group never blocks addressing the person.
+func TestResolveRecipientResolvesAContactWhenAGroupOnlyPartiallyMatches(t *testing.T) {
+	wac := newOutgoingTestClient(t)
+	if _, err := wac.store.SaveManualContact("Sam", "+15551110000"); err != nil {
+		t.Fatalf("failed to seed contact: %v", err)
+	}
+	if err := wac.store.StoreChat("120363021234567890@g.us", "Sam's Book Club", time.Now()); err != nil {
+		t.Fatalf("failed to seed group: %v", err)
+	}
+
+	resolved, err := wac.ResolveRecipient("Sam")
+	if err != nil {
+		t.Fatalf("an exact contact name must resolve despite a partial group match, got %v", err)
+	}
+	if resolved.User != "15551110000" {
+		t.Errorf("must resolve to the contact, got %v", resolved)
 	}
 }

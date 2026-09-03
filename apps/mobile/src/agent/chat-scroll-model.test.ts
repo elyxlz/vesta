@@ -18,10 +18,7 @@ describe("chat scroll model", () => {
     const latestOffset = -294;
 
     expect(
-      isNearLatestMessage(
-        latestOffset + CHAT_LATEST_THRESHOLD,
-        latestOffset,
-      ),
+      isNearLatestMessage(latestOffset + CHAT_LATEST_THRESHOLD, latestOffset),
     ).toBe(true);
     expect(
       isNearLatestMessage(

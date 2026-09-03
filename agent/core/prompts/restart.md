@@ -1,1 +1,3 @@
-Your daemons are down after this restart. Read the `restart` skill and follow it: its Daemons block brings them back (idempotent, a safe no-op when everything is already up).
+Your daemons are down after this restart. Read the `restart` skill and follow it to bring them back (idempotent, a safe no-op when everything is already up).
+
+This wake-up turn is a boot turn: while it runs, the app shows you as still waking up, and incoming messages queue instead of reaching you. Keep it short. Recover the daemons, orient yourself, and end the turn. Do not resume in-progress work inside it: queued messages and notification files reach you again on their own right after boot, and every minute of work you do in this turn is a minute the user who just restarted you cannot get through.

@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest";
 import {
   clientAheadOfGateway,
   clientBelowMinimum,
   compareReleaseVersions,
   resolveClientVersion,
-} from "./release-version"
+} from "./release-version";
 
 describe("resolveClientVersion", () => {
   it.each([
@@ -14,10 +14,10 @@ describe("resolveClientVersion", () => {
   ])(
     "resolves $release with development=$development to $expected",
     ({ release, development, expected }) => {
-      expect(resolveClientVersion(release, development)).toBe(expected)
+      expect(resolveClientVersion(release, development)).toBe(expected);
     },
-  )
-})
+  );
+});
 
 describe("compareReleaseVersions", () => {
   it.each([
@@ -31,8 +31,8 @@ describe("compareReleaseVersions", () => {
     { a: "0.1.180-beta.2", b: "0.1.179", expected: 1 },
     { a: "0.1.179-beta", b: "0.1.179", expected: 0 },
   ])("$a vs $b -> $expected", ({ a, b, expected }) => {
-    expect(compareReleaseVersions(a, b)).toBe(expected)
-  })
+    expect(compareReleaseVersions(a, b)).toBe(expected);
+  });
 
   it.each([
     { a: "dev", b: "0.1.0" },
@@ -40,34 +40,34 @@ describe("compareReleaseVersions", () => {
     { a: "nightly", b: "unknown" },
     { a: "0.1.x", b: "0.1.0" },
   ])("fails open (null) on unparseable $a / $b", ({ a, b }) => {
-    expect(compareReleaseVersions(a, b)).toBeNull()
-  })
-})
+    expect(compareReleaseVersions(a, b)).toBeNull();
+  });
+});
 
 describe("clientAheadOfGateway", () => {
   it("blocks only when the client is strictly newer", () => {
-    expect(clientAheadOfGateway("0.2.0", "0.1.179")).toBe(true)
-    expect(clientAheadOfGateway("0.1.179", "0.1.179")).toBe(false)
-    expect(clientAheadOfGateway("0.1.178", "0.1.179")).toBe(false)
-  })
+    expect(clientAheadOfGateway("0.2.0", "0.1.179")).toBe(true);
+    expect(clientAheadOfGateway("0.1.179", "0.1.179")).toBe(false);
+    expect(clientAheadOfGateway("0.1.178", "0.1.179")).toBe(false);
+  });
 
   it("fails open when a version is unparseable so dev builds never block", () => {
-    expect(clientAheadOfGateway("dev", "0.1.0")).toBe(false)
-    expect(clientAheadOfGateway("0.2.0", "gateway-dev")).toBe(false)
-  })
-})
+    expect(clientAheadOfGateway("dev", "0.1.0")).toBe(false);
+    expect(clientAheadOfGateway("0.2.0", "gateway-dev")).toBe(false);
+  });
+});
 
 describe("clientBelowMinimum", () => {
   it("blocks only when the client is older than the served minimum", () => {
-    expect(clientBelowMinimum("0.1.178", "0.1.179")).toBe(true)
-    expect(clientBelowMinimum("0.1.179", "0.1.179")).toBe(false)
-    expect(clientBelowMinimum("0.2.0", "0.1.179")).toBe(false)
+    expect(clientBelowMinimum("0.1.178", "0.1.179")).toBe(true);
+    expect(clientBelowMinimum("0.1.179", "0.1.179")).toBe(false);
+    expect(clientBelowMinimum("0.2.0", "0.1.179")).toBe(false);
     // the default "accept everything" window never blocks a real build
-    expect(clientBelowMinimum("0.1.0", "0.0.0")).toBe(false)
-  })
+    expect(clientBelowMinimum("0.1.0", "0.0.0")).toBe(false);
+  });
 
   it("fails open when a version is unparseable so dev builds never block", () => {
-    expect(clientBelowMinimum("dev", "0.1.0")).toBe(false)
-    expect(clientBelowMinimum("0.1.0", "min-dev")).toBe(false)
-  })
-})
+    expect(clientBelowMinimum("dev", "0.1.0")).toBe(false);
+    expect(clientBelowMinimum("0.1.0", "min-dev")).toBe(false);
+  });
+});
