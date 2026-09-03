@@ -20,3 +20,4 @@ microsoft calendar delete --account user@example.com --id <event_id>
 - `--no-cancellation` on `delete` skips notifying attendees.
 - `--no-details` on `list` returns compact output (no body/attendees); `--user-timezone` converts times to the given IANA timezone.
 - The reminder knob (`--reminder-on`/`--reminder-off`/`--reminder-minutes`) on `update` is Graph-only.
+- Every event `create` makes carries the `vesta` category on both backends, and `list` prefixes those subjects with `[vesta]`: an entry with that mark is your own suggestion, not a plan the user made, so never cite it as evidence of their intent.
