@@ -57,7 +57,9 @@ Only fill what's real. A near-stranger might be three lines. Someone central mig
 
 - **Someone new appears** (a new sender, a name the user mentions, a person on the calendar): add a file, even if it's just a stub.
 - **You learn something**: append it to their file. A preference, a date, a mood, a fact, a thing they're going through. Small and often beats a big rewrite.
-- **Before reaching out**: read their file so you match their style and remember what's open.
+- **Before reaching out**: read their file so you match their style and remember what's open. Then pick the channel by where they last wrote to you, never by where you last wrote to them: a channel whose recent traffic is all yours is dead, and silence from a dead channel reads exactly like an answer.
+  - Check with that channel's own command: `whatsapp messages --to <name>`, `telegram messages --to <name>`, `app-chat history` (the user's own screen), or `recall "<name>"` for a channel with no command.
+  - Record the answer on their `Channels:` line, marking the live one and when they last wrote there (`whatsapp +39... (live, last inbound 2026-08-30)`), so the next reach-out starts from it.
 - **The user asks about someone**: their file is your first stop, then `recall` for anything not captured yet.
 
 ## Keeping contacts current
