@@ -113,9 +113,11 @@ are what separate the two.
   your problem, do not file a second: the maintainer keeps one fix per problem and closes
   the rest, so the duplicate costs a consolidation and adds nothing. Add your evidence as
   an issue if it is new.
-- **Issue, PR, or both?** Fix in your workspace: PR + issue, with `fixes #N` on its own
-  line in the PR body (never the commit). Problem in `agent/core/` (read-only): issue
-  only, with cause, file, line, and the fix you would make. No fix yet: issue only.
+- **Issue, PR, or both?** Fix in your workspace: PR + issue, with `Closes #N` on its own
+  line in the PR body (never the commit). GitHub closes the issue when that PR merges, so
+  the issue never lingers after the fix ships; a PR closed without merging does not fire it,
+  which is expected. Problem in `agent/core/` (read-only): issue only, with cause, file,
+  line, and the fix you would make. No fix yet: issue only.
 - **Strip the story.** Agent-facing files state mechanism and constraint, never what
   changed or the incident behind it; that goes in the commit and PR body. A code comment
   states the rule in one line, with no date and no PR number; a comment that needs a
@@ -146,7 +148,7 @@ git -C ~ remote set-url upstream https://github.com/elyxlz/vesta.git 2>/dev/null
 git -C ~ fetch upstream
 git -C ~ worktree add /tmp/vesta-pr -b feature/<name> upstream/master
 cd /tmp/vesta-pr   # apply changes, commit
-upstream gh pr create --title "fix(skills/x): ..." --body "...fixes #N"
+upstream gh pr create --title "fix(skills/x): ..." --body "...Closes #N"
 ```
 
 Branch off `upstream/master` only, never `agent-upstream` (a standalone snapshot with no

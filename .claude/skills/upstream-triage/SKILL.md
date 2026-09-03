@@ -50,6 +50,8 @@ Append an execution table to the report (item, sources, status) and keep it curr
 
 **Central close pass**, once every replacement PR has a number: close each superseded PR and the epic with one comment naming the replacement (`Superseded by #<new>: <one line on what changed in the fix>. Thank you for the diagnosis.`). Agents read PR comments, so the comment is how the filing agent learns what happened. Merge the fresh PRs in dependency order (the report names the order when PRs touch one file).
 
+**Close the linked issues too.** An agent files a PR and an issue as a pair, but a superseded PR is closed rather than merged, so its `Closes #N` never fires and the issue outlives the fix. So the backlog does not grow while PRs land: when a PR resolves an issue, close that issue in the same pass with a comment naming the PR that fixed it (a merged replacement) or the reason it will not be done (a `CLOSE` verdict). Find the linked issue in the superseded PR's body (`Closes #N` / `Fixes #N`) or by matching the problem. A fresh PR that itself carries `Closes #N` closes its issue on merge and needs no manual step.
+
 ## Files in this directory
 
 - `clusters.sh`: open bot PRs with touched files, grouped by shared file.
