@@ -249,6 +249,32 @@ func detectMediaType(filePath string) (whatsmeow.MediaType, string) {
 		return whatsmeow.MediaAudio, "audio/mp4"
 	case ".wav":
 		return whatsmeow.MediaAudio, "audio/wav"
+	case ".pdf":
+		return whatsmeow.MediaDocument, "application/pdf"
+	case ".doc":
+		return whatsmeow.MediaDocument, "application/msword"
+	case ".docx":
+		return whatsmeow.MediaDocument, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xls":
+		return whatsmeow.MediaDocument, "application/vnd.ms-excel"
+	case ".xlsx":
+		return whatsmeow.MediaDocument, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".ppt":
+		return whatsmeow.MediaDocument, "application/vnd.ms-powerpoint"
+	case ".pptx":
+		return whatsmeow.MediaDocument, "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".txt":
+		return whatsmeow.MediaDocument, "text/plain"
+	case ".csv":
+		return whatsmeow.MediaDocument, "text/csv"
+	case ".zip":
+		return whatsmeow.MediaDocument, "application/zip"
+	case ".md":
+		return whatsmeow.MediaDocument, "text/markdown"
+	case ".vcf":
+		return whatsmeow.MediaDocument, "text/vcard"
+	case ".ics":
+		return whatsmeow.MediaDocument, "text/calendar"
 	default:
 		return whatsmeow.MediaDocument, "application/octet-stream"
 	}
