@@ -31,7 +31,13 @@ You implement ONE work item from the triage report the orchestrator names (`~/ve
   ```
   Write the body file in your own worktree's git dir, never a shared scratch path: several agents run at once and a shared path gets overwritten between your write and `gh`'s read. Re-read the PR body after creating it.
   Body structure: `## Problem` (one paragraph, from the superseded PRs, credit them by number), `## Change` (bullets, what and why at the design level), `## Evidence` (test names, counts, commands run), then a final line `Supersedes #N, #M.` No `fixes`/`closes` keywords for PRs. If a superseded PR body had `fixes #<issue>`, carry that line over verbatim on its own line.
-- Then `gh pr checks <n> --watch` until done. If CI fails, fix on the branch and push again. Report a PR done only when checks are green.
+- Then wait for CI without `gh pr checks --watch` (it polls GraphQL every few seconds; a dozen parallel agents exhaust the shared 5000/hr budget). Poll the REST check-runs endpoint at 2-minute intervals, in the background:
+  ```bash
+  sha=$(git rev-parse HEAD)
+  until cr=$(gh api "repos/<owner>/<repo>/commits/$sha/check-runs?per_page=100") && [ "$(jq '[.check_runs[] | select(.status != "completed")] | length' <<<"$cr")" -eq 0 ]; do sleep 120; done
+  jq -r '.check_runs[] | "\(.name): \(.conclusion)"' <<<"$cr"
+  ```
+  If CI fails, fix on the branch and push again. Report a PR done only when every check run is `success` or `skipped`.
 - **Do NOT merge. Do NOT close or comment on any other PR or issue.** That happens centrally.
 
 ## Report back (concise)
