@@ -1,0 +1,23 @@
+[project]
+name = "pdf-text"
+version = "0.1.0"
+description = "Flag PDF fonts whose extracted text is invented"
+requires-python = ">=3.11"
+dependencies = [
+    "pymupdf>=1.24.0",
+]
+
+[project.scripts]
+pdf-text = "pdf_text_cli.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pdf_text_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
