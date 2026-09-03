@@ -42,6 +42,8 @@ This skill is also your one voice backend: it owns the STT/TTS providers, keys, 
 
 ## Commands
 
+**Transcribe a file**: `transcribe <file> [--language <code>]` prints the transcript of any audio or video file on stdout and nothing else. It sends the file to the configured STT provider (Deepgram Nova-3, language detected unless `--language` pins one such as `it`) and, when STT is unset, disabled, or the provider fails, runs the whisper skill's local whisper.cpp instead; it prints `{"error": ...}` on stderr and exits non-zero only when both fail. Every skill that needs speech as text calls this one command (the whatsapp daemon runs it on each incoming voice note), so a transcription problem anywhere is fixed here: check `voice-keys status`, then the whisper skill's setup.
+
 **Daemon**: `voice-keys daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and owns the register-service call; stop is the deliberate shutdown, so it does not fire the `daemon_died` notification every other exit fires; status reports whether the server is up and on which port. Provider and enabled state come from `voice-keys status`. Manage the daemon only through these commands, never by launching `voice-server` yourself.
 
 ```bash
@@ -69,6 +71,10 @@ voice-keys remove-keyterm <term>
 # STT end-of-turn tuning
 voice-keys set-eot --threshold 0.8
 voice-keys set-eot --timeout-ms 10000
+
+# One audio or video file to text (provider first, local whisper fallback)
+transcribe ~/note.ogg
+transcribe ~/meeting.mp4 --language it
 ```
 
 ## Common asks

@@ -1,172 +1,58 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
-
-	"github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
-	wav "github.com/go-audio/wav"
 )
 
-var (
-	whisperModel     whisper.Model
-	whisperModelOnce sync.Once
-	whisperModelErr  error
-
-	// whisperProcessMu serializes all use of the whisper C context: model.NewContext
-	// hands out a fresh wrapper per call, but every wrapper shares the one underlying
-	// C model context, which whisper.cpp does not support calling concurrently.
-	whisperProcessMu sync.Mutex
-)
-
-// getLanguage returns WHISPER_LANGUAGE when set (a fixed whisper.cpp language
-// code, since auto-detection can misread short clips), defaulting to "auto".
-func getLanguage() string {
-	if l := os.Getenv("WHISPER_LANGUAGE"); l != "" {
-		return l
+// transcribeArgs builds the `transcribe` invocation: the audio file, plus the
+// language WHISPER_LANGUAGE pins (auto-detection can misread short clips).
+func transcribeArgs(audioPath, language string) []string {
+	args := []string{audioPath}
+	if language != "" {
+		args = append(args, "--language", language)
 	}
-	return "auto"
+	return args
 }
 
-func getModelPath() string {
-	if p := os.Getenv("WHISPER_MODEL"); p != "" {
-		return p
-	}
-	// Prefer multilingual models, fall back to english-only
-	if _, err := os.Stat(DefaultWhisperModelPath); err == nil {
-		return DefaultWhisperModelPath
-	}
-	fallbacks := []string{
-		"/usr/local/share/ggml-small.en.bin",
-		"/usr/local/share/ggml-tiny.bin",
-		"/usr/local/share/ggml-tiny.en.bin",
-	}
-	for _, fb := range fallbacks {
-		if _, err := os.Stat(fb); err == nil {
-			return fb
-		}
-	}
-	return DefaultWhisperModelPath
-}
-
-func loadWhisperModel() (whisper.Model, error) {
-	whisperModelOnce.Do(func() {
-		modelPath := getModelPath()
-		whisperModel, whisperModelErr = whisper.New(modelPath)
-		if whisperModelErr != nil {
-			whisperModelErr = fmt.Errorf("failed to load whisper model at %s (run ~/agent/skills/whatsapp/setup.sh to download it): %w", modelPath, whisperModelErr)
-		}
-	})
-	return whisperModel, whisperModelErr
-}
-
-// whisperThreads is the per-transcription thread budget: all of a small box's
-// cores, capped at WhisperMaxThreads on a big one.
-func whisperThreads(numCPU int) uint {
-	return uint(min(numCPU, WhisperMaxThreads))
-}
-
-// transcribeAudioBuiltIn transcribes audio using the built-in whisper.cpp bindings.
-func transcribeAudioBuiltIn(audioPath string) (string, error) {
-	model, err := loadWhisperModel()
-	if err != nil {
-		return "", err
-	}
-
-	// Convert to 16kHz mono WAV using ffmpeg
-	wavPath := audioPath + ".wav"
-	defer os.Remove(wavPath)
-
-	cmd := exec.Command("ffmpeg", "-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath)
-	cmd.Stderr = nil
-	cmd.Stdout = nil
+// runTranscribe shells the voice skill's `transcribe`, which owns provider
+// selection and the local whisper fallback: stdout is the transcript, and a
+// non-zero exit carries {"error"} on stderr.
+func runTranscribe(audioPath string) (string, error) {
+	cmd := exec.Command("transcribe", transcribeArgs(audioPath, os.Getenv("WHISPER_LANGUAGE"))...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffmpeg conversion failed: %w", err)
+		return "", transcribeError(stderr.Bytes(), err)
 	}
-
-	// Read WAV file
-	samples, err := readWAVSamples(wavPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read WAV: %w", err)
-	}
-
-	// Create context and process
-	ctx, err := model.NewContext()
-	if err != nil {
-		return "", fmt.Errorf("failed to create whisper context: %w", err)
-	}
-
-	lang := getLanguage()
-	if err := ctx.SetLanguage(lang); err != nil {
-		return "", fmt.Errorf("failed to set language to %q: %w", lang, err)
-	}
-
-	// Cap compute threads: the binding otherwise gives the context
-	// runtime.NumCPU(). Thread count only partitions the matmuls, it is not a
-	// decoding parameter, so the transcript is unaffected.
-	ctx.SetThreads(whisperThreads(runtime.NumCPU()))
-
-	// Process and segment reads both touch the C model context shared by every
-	// context wrapper (see whisperProcessMu).
-	whisperProcessMu.Lock()
-	defer whisperProcessMu.Unlock()
-
-	if err := ctx.Process(samples, nil, nil, nil); err != nil {
-		return "", fmt.Errorf("whisper processing failed: %w", err)
-	}
-
-	var parts []string
-	for {
-		segment, err := ctx.NextSegment()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", fmt.Errorf("failed to get segment: %w", err)
-		}
-		parts = append(parts, segment.Text)
-	}
-
-	return strings.TrimSpace(strings.Join(parts, "")), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
-func readWAVSamples(path string) ([]float32, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+// transcribeError names why `transcribe` did not answer: the command is not
+// installed, the structured {error} it printed, or a bare exit failure.
+func transcribeError(stderr []byte, runErr error) error {
+	if errors.Is(runErr, exec.ErrNotFound) {
+		return errors.New("transcribe not on PATH; install it with: uv tool install --editable ~/agent/skills/voice/cli")
 	}
-	defer f.Close()
-
-	dec := wav.NewDecoder(f)
-	if !dec.IsValidFile() {
-		return nil, fmt.Errorf("invalid WAV file")
+	var resp struct {
+		Error string `json:"error"`
 	}
-
-	buf, err := dec.FullPCMBuffer()
-	if err != nil {
-		return nil, err
+	if json.Unmarshal(bytes.TrimSpace(stderr), &resp) == nil && resp.Error != "" {
+		return fmt.Errorf("transcribe: %s", resp.Error)
 	}
-
-	// Convert int samples to float32 [-1.0, 1.0]
-	samples := make([]float32, len(buf.Data))
-	bitDepth := dec.BitDepth
-	maxVal := float32(int(1)<<(bitDepth-1) - 1)
-	for i, s := range buf.Data {
-		samples[i] = float32(s) / maxVal
-	}
-
-	return samples, nil
+	return fmt.Errorf("transcribe failed: %w", runErr)
 }
 
-// Convenience wrapper used by handleMessage. Returns the transcription text and any error.
+// transcribeAudioMessage downloads a voice note and hands it to `transcribe`.
+// An empty transcript is a clean answer (silence), never an error.
 func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) (string, error) {
-	// Download audio to temp file
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("wa_audio_%s.ogg", messageID))
 	defer os.Remove(tmpFile)
 
@@ -176,12 +62,11 @@ func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) (st
 		return "", fmt.Errorf("failed to download audio: %w", err)
 	}
 
-	text, err := transcribeAudioBuiltIn(path)
+	text, err := runTranscribe(path)
 	if err != nil {
-		wac.logger.Warnf("Transcription failed: %v", err)
+		wac.logger.Warnf("Transcription failed for %s: %v", messageID, err)
 		return "", err
 	}
-
 	if text != "" {
 		wac.logger.Infof("Transcribed audio %s: %s", messageID, text)
 	}

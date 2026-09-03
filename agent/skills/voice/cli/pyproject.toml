@@ -10,6 +10,7 @@ dependencies = [
 [project.scripts]
 voice-server = "voice.server:main"
 voice-keys = "voice.voice_keys:main"
+transcribe = "voice.transcribe:main"
 
 [dependency-groups]
 dev = ["pytest>=8.4.0"]

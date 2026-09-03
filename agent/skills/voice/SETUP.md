@@ -6,7 +6,7 @@
 uv tool install --editable ~/agent/skills/voice/cli
 ```
 
-Provides the `voice-server` and `voice-keys` commands.
+Provides the `voice-server`, `voice-keys`, and `transcribe` commands. Re-run it whenever `[project.scripts]` in `cli/pyproject.toml` gains a command: an editable install picks up code changes on its own, but a new console script exists only after a reinstall.
 
 ## 2. Start the voice server
 
