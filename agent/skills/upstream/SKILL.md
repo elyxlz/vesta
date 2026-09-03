@@ -123,6 +123,15 @@ are what separate the two.
 - **Strip personal information.** Upstream is public: no names, addresses, credentials,
   or one user's quirks. Describe the pattern, not the instance. A script that encodes your
   user's file names, language, headings, or box paths is workspace tooling: keep it local.
+  The wrapper enforces the name half of this rule: `pr create`, `issue create`, `pr comment`,
+  and `issue comment` refuse a `--body` that carries, as a whole word in any case, your
+  user's name from the `- **Name**:` line of `~/agent/MEMORY.md` or the stem of a
+  `~/.contacts/*.md` file, and exit 1 naming only the kind of match (`the user's name`,
+  `a contact's name`), never the word, because the refusal is itself printed into your
+  history. Words under four letters are not checked, so a short name still needs your own
+  read, as do addresses, handles, and a paraphrase that identifies someone by circumstance.
+  A refusal means rewrite the sentence around the pattern, never route the same text through
+  another flag.
 - **Evidence names what is in the diff.** Every test the PR body mentions exists in the
   diff by name, and the body pastes the run's count. A claim the diff does not contain is
   read as the behavior being untested, and it costs the PR its credibility.

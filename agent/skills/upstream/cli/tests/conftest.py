@@ -10,6 +10,15 @@ SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
 AGENT_IDENTITY = ("tester", "9.9.9")
 
 
+@pytest.fixture(autouse=True)
+def scratch_home(tmp_path, monkeypatch):
+    """Every test runs under an empty HOME, so the identity check never reads this machine's owner."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
 @pytest.fixture
 def agent_identity(monkeypatch):
     monkeypatch.setattr(cli, "resolve_agent_identity", lambda: AGENT_IDENTITY)
