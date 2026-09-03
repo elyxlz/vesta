@@ -1,4 +1,4 @@
-"""Behavioral tests for scripts/check-conventions.py (escape hatches, comment blocks, import cycles, skill envelopes)."""
+"""Behavioral tests for scripts/check-conventions.py (escape hatches, comment blocks, import cycles, skill envelopes, narration)."""
 
 import importlib.util
 import pathlib as pl
@@ -138,6 +138,47 @@ def test_pretty_opt_ins_file_writes_and_other_trees_pass_envelope_check(tmp_path
         write_skill(tmp_path, "agent/skills/demo/scripts/setup.sh", "#!/usr/bin/env bash\necho '{\"indent\": 2}'\n"),
     ]
     assert check_conventions.check_skill_envelopes(rels) == []
+
+
+def test_narration_in_agent_prose_is_flagged(tmp_path, monkeypatch):
+    """A comment, a docstring, an inline comment, and a Markdown line that describe the old design each name their line."""
+    monkeypatch.chdir(tmp_path)
+    comment = write_skill(tmp_path, "agent/skills/demo/cli/src/demo/a.py", "# Previously this returned the stock file.\nx = 1\n")
+    docstring = write_skill(tmp_path, "agent/core/b.py", 'def f():\n    """Runs the loop.\n\n    This used to say the daemon was up."""\n')
+    inline = write_skill(tmp_path, "agent/skills/demo/scripts/tool", "#!/usr/bin/env python3\nx = 120  # 120, not 30: a bet about disk speed\n")
+    markdown = write_skill(
+        tmp_path, "agent/skills/demo/SKILL.md", "# Demo\n\nThe hook was formerly a rule; before this change it read nothing.\n"
+    )
+    errors = check_conventions.check_narration([comment, docstring, inline, markdown])
+    assert [error.split(": ")[0] for error in errors] == [f"{comment}:1", f"{docstring}:4", f"{inline}:2", f"{markdown}:3"]
+
+
+def test_code_and_present_state_prose_pass_narration_check(tmp_path, monkeypatch):
+    """Code that reads like a pair, a purpose "used to", a dotted address pair, and a state the agent can meet are not narration."""
+    monkeypatch.chdir(tmp_path)
+    rels = [
+        write_skill(tmp_path, "agent/skills/demo/cli/src/demo/a.py", 'retries = max(120, not_before)\nlabel = "previously linked"\n'),
+        write_skill(tmp_path, "agent/skills/demo/cli/src/demo/b.py", "# The token used to authenticate the request is read from the header.\n"),
+        write_skill(
+            tmp_path, "agent/skills/demo/cli/src/demo/c.py", "# Bind 0.0.0.0, not 127.0.0.1: the proxy reaches the service from outside.\n"
+        ),
+        write_skill(tmp_path, "agent/skills/demo/SKILL.md", "An account authed before the client id changed must re-auth once.\n"),
+    ]
+    assert check_conventions.check_narration(rels) == []
+
+
+def test_memory_migrations_and_other_trees_pass_narration_check(tmp_path, monkeypatch):
+    """MEMORY.md is one box's dated history, a migration describes the state it converges, and developer docs may explain what they replaced."""
+    monkeypatch.chdir(tmp_path)
+    line = "Previously the daemon read the stock file.\n"
+    rels = [
+        write_skill(tmp_path, "agent/MEMORY.md", line),
+        write_skill(tmp_path, "agent/core/migrations/0009-move-store.md", line),
+        write_skill(tmp_path, "vestad/README.md", line),
+        write_skill(tmp_path, "AGENTS.md", line),
+        write_skill(tmp_path, "agent/skills/demo/setup.sh", "#!/usr/bin/env bash\n# " + line),
+    ]
+    assert check_conventions.check_narration(rels) == []
 
 
 def test_import_cycle_is_detected(tmp_path):

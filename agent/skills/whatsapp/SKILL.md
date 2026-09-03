@@ -18,7 +18,7 @@ Always start with `whatsapp status`:
 - `{"linked":true,...}`: use the existing link, do not pair again.
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
-- previously linked, now logged out or lost: get the user's explicit approval before reconnecting.
+- linked earlier, now logged out or lost: get the user's explicit approval before reconnecting.
   On a managed number a re-link also drops outbound to everyone who has not messaged you since,
   and only their next inbound restores it, so an unasked reconnect can cost the channel to the one
   person who matters, at the moment you most need it.
