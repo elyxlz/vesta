@@ -110,12 +110,15 @@ instances at the same account/device store.
 
 ## Transcription
 
-Voice notes transcribe in-process: the CLI downloads the audio, `ffmpeg` converts
-it to 16kHz mono WAV, and the built-in whisper.cpp bindings replace the `[audio]`
-placeholder with the text. Override the model path with the `WHISPER_MODEL` env
-var (default `/usr/local/share/ggml-small.bin`, downloaded by `setup.sh`). Set
-`WHISPER_LANGUAGE` to a whisper.cpp language code (default: auto-detect) when the
-user's voice notes are one known language, since auto-detection can misread short clips.
+Voice notes transcribe through the voice skill's `transcribe` command: the daemon
+downloads the audio and shells `transcribe <file>`, which asks the configured STT
+provider first and falls back to the whisper skill's local whisper.cpp (`whisper-cli`
+plus the `ggml-small.bin` model `setup.sh` downloads). The command exists once the
+voice CLI is installed (`uv tool install --editable ~/agent/skills/voice/cli`); a
+voice note whose transcription fails arrives as a notification naming what is missing.
+Set `WHISPER_LANGUAGE` to a language code (default: auto-detect) when the user's voice
+notes are one known language, since auto-detection can misread short clips; the daemon
+passes it to `transcribe --language`.
 
 ## Contact cards
 

@@ -1,24 +1,37 @@
 package main
 
-import "testing"
+import (
+	"os/exec"
+	"strings"
+	"testing"
+)
 
-// The thread budget uses every core on a small box and stays at
-// WhisperMaxThreads on a big one, so one transcription never pins a large
-// host while a single-core box still gets a worker.
-func TestWhisperThreadsClampsToMaxOnBigBoxes(t *testing.T) {
-	cases := []struct {
-		numCPU int
-		want   uint
-	}{
-		{numCPU: 1, want: 1},
-		{numCPU: 2, want: 2},
-		{numCPU: 4, want: 4},
-		{numCPU: 8, want: 4},
-		{numCPU: 32, want: 4},
+// WHISPER_LANGUAGE rides into `transcribe` as --language, so the provider and
+// the whisper fallback both honor the pin; unset, the command auto-detects.
+func TestTranscribeArgsCarryTheLanguagePin(t *testing.T) {
+	if got := strings.Join(transcribeArgs("/tmp/a.ogg", ""), " "); got != "/tmp/a.ogg" {
+		t.Errorf("no pin: args = %q, want the file alone", got)
 	}
-	for _, tc := range cases {
-		if got := whisperThreads(tc.numCPU); got != tc.want {
-			t.Errorf("whisperThreads(%d) = %d, want %d", tc.numCPU, got, tc.want)
-		}
+	if got := strings.Join(transcribeArgs("/tmp/a.ogg", "it"), " "); got != "/tmp/a.ogg --language it" {
+		t.Errorf("pinned: args = %q, want --language it", got)
+	}
+}
+
+// transcribeError names why `transcribe` did not answer: the {error} it
+// printed, a missing command (with the install line), or a bare exit failure,
+// so the notification the agent reads says what to fix.
+func TestTranscribeError(t *testing.T) {
+	exit := &exec.ExitError{}
+	notFound := &exec.Error{Name: "transcribe", Err: exec.ErrNotFound}
+
+	if err := transcribeError([]byte(`{"error":"STT not configured; whisper: whisper-cli not found"}`), exit); err == nil ||
+		!strings.Contains(err.Error(), "whisper-cli not found") {
+		t.Errorf("structured error = %v, want it to carry the stderr reason", err)
+	}
+	if err := transcribeError(nil, notFound); err == nil || !strings.Contains(err.Error(), "uv tool install") {
+		t.Errorf("missing-command error = %v, want the install line", err)
+	}
+	if err := transcribeError([]byte("not json"), exit); err == nil {
+		t.Errorf("bare failure error = nil, want a non-nil error")
 	}
 }

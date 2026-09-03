@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import pathlib as pl
 import typing as tp
 from urllib.parse import urlencode
 
@@ -19,6 +20,10 @@ MODEL = "flux-general-en"
 MODEL_MULTI = "nova-3"
 ENCODING = "linear16"
 SAMPLE_RATE = 16000
+
+# Prerecorded (one-shot file) transcription, the `transcribe` command's provider path.
+PRERECORDED_MODEL = "nova-3"
+PRERECORDED_TIMEOUT_SECS = 120
 
 
 class DeepgramStt:
@@ -106,6 +111,20 @@ class DeepgramStt:
                     await dg_ws.close()
         finally:
             await session.close()
+
+    async def transcribe_file(self, audio_path: pl.Path, creds: dict[str, str], language: str | None) -> str:
+        if "api_key" not in creds or not creds["api_key"]:
+            raise ValueError("missing deepgram api_key")
+        url = f"{DEEPGRAM_API}/v1/listen?{urlencode(_prerecorded_params(language))}"
+        headers = {"Authorization": f"Token {creds['api_key']}", "Content-Type": "audio/*"}
+        audio = await asyncio.to_thread(audio_path.read_bytes)
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(url, data=audio, headers=headers, timeout=aiohttp.ClientTimeout(total=PRERECORDED_TIMEOUT_SECS)) as resp,
+        ):
+            if resp.status != 200:
+                raise RuntimeError(f"deepgram returned {resp.status}: {(await resp.text()).strip()}")
+            return _prerecorded_transcript(await resp.json())
 
     async def _cached_project_id(self, api_key: str) -> str | None:
         if (cached := self._project_id_cache.get(api_key)) is not None:
@@ -195,6 +214,18 @@ def _listen_url(stt_domain: dict, multi_language: bool) -> str:
         params.append((keyterm_param, term))
     # Build the URL only after keyterms are appended, otherwise they are dropped.
     return f"{DEEPGRAM_WS}{listen_path}?{urlencode(params)}"
+
+
+def _prerecorded_params(language: str | None) -> list[tuple[str, str]]:
+    """Nova-3 with smart formatting; `multi` makes Deepgram detect the spoken language."""
+    return [("model", PRERECORDED_MODEL), ("smart_format", "true"), ("language", language or "multi")]
+
+
+def _prerecorded_transcript(body: dict) -> str:
+    try:
+        return body["results"]["channels"][0]["alternatives"][0]["transcript"].strip()
+    except (KeyError, IndexError, TypeError):
+        return ""
 
 
 async def _browser_to_deepgram(browser_ws: web.WebSocketResponse, dg_ws: aiohttp.ClientWebSocketResponse) -> None:
