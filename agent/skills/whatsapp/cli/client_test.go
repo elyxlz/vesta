@@ -73,6 +73,22 @@ func TestRecoverOrRestartRefusesWhenParked(t *testing.T) {
 	}
 }
 
+// TestEnsureOnlineNamesThePushNameFix: a store with no push name cannot broadcast presence,
+// so the account never appears online. The error must name the one command that fixes it,
+// since the log line is the only place the condition ever shows.
+func TestEnsureOnlineNamesThePushNameFix(t *testing.T) {
+	wac, err := NewWhatsAppClient(t.TempDir(), "", "personal", false, true, map[string]bool{}, waLog.Noop)
+	if err != nil {
+		t.Fatalf("NewWhatsAppClient: %v", err)
+	}
+	t.Cleanup(wac.Disconnect)
+
+	err = wac.EnsureOnline()
+	if err == nil || !strings.Contains(err.Error(), "whatsapp profile name") {
+		t.Fatalf("EnsureOnline without a push name must name `whatsapp profile name`, got %v", err)
+	}
+}
+
 // TestDeliberateConnectClearsPark proves a deliberate connect/link (which funnels
 // through onConnected on success) clears both the in-memory and the persisted park,
 // so a re-link ends the parked posture and lets reconnects resume.

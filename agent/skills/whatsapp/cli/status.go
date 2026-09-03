@@ -78,16 +78,26 @@ func daemonDownStatus(dataDir string) map[string]any {
 	return result
 }
 
+// clientOutdatedNext is the one recovery for a client version the server rejects: a
+// restart or a re-link hits the same 405 until the pinned whatsmeow is bumped.
+const clientOutdatedNext = "whatsapp update-deps, then whatsapp daemon restart"
+
 // notLinkedStatus is the not-linked verdict, carrying the last logout/conflict
-// reason so the agent sees why it is not linked.
+// reason so the agent sees why it is not linked. A 405 rejection is the exception:
+// the device is still linked, so the verdict points at the dependency bump instead
+// of a connect that would re-pair.
 func notLinkedStatus(dataDir string) map[string]any {
+	st := loadStateFromDisk(dataDir)
+	if st.ExitStatus == exitClientOutdated {
+		return map[string]any{"linked": true, "connected": false, "reason": st.ExitReason, "next": clientOutdatedNext}
+	}
 	result := map[string]any{
 		"linked":    false,
 		"connected": false,
 		"next":      "run: whatsapp connect --source <vesta-cloud|doubletick|self-managed>",
 	}
-	if reason := loadStateFromDisk(dataDir).ExitReason; reason != "" {
-		result["reason"] = reason
+	if st.ExitReason != "" {
+		result["reason"] = st.ExitReason
 	}
 	return result
 }

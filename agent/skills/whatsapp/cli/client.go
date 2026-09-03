@@ -563,6 +563,9 @@ func (wac *WhatsAppClient) EnsureOnline() error {
 
 	if !wac.presenceActive {
 		err := wac.client.SendPresence(context.Background(), types.PresenceAvailable)
+		if errors.Is(err, whatsmeow.ErrNoPushName) {
+			return fmt.Errorf("failed to set online status: the account cannot appear online until a push name is set; run: whatsapp profile name '<name>'")
+		}
 		if err != nil {
 			return fmt.Errorf("failed to set online status: %v", err)
 		}
