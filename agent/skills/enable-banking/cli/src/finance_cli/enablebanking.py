@@ -219,10 +219,7 @@ def aggregate_by_category(transactions: list[dict]) -> dict:
       - creditor_name
       - bank_transaction_code.proprietary.code (category hint)
     """
-    # Keyed by (category, currency), NEVER by category alone. An account that sees more than one
-    # currency is the normal case for anyone who travels, and adding EUR to GBP as bare floats
-    # produces a single confident number that is not a quantity of anything. It reads as a total,
-    # so nothing downstream questions it.
+    # Keyed by (category, currency): amounts in different currencies are never added together.
     totals: dict[tuple[str, str], float] = {}
     counts: dict[tuple[str, str], int] = {}
 
@@ -237,7 +234,7 @@ def aggregate_by_category(transactions: list[dict]) -> dict:
             amount = float(amt_obj.get("amount", 0))
         except (ValueError, TypeError):
             amount = 0.0
-        currency = amt_obj.get("currency") or "???"
+        currency = amt_obj.get("currency") or tx.get("_account_currency", "")
 
         # Try to derive a category label
         category = _extract_category(tx)
@@ -262,8 +259,7 @@ def aggregate_by_category(transactions: list[dict]) -> dict:
 
     return {
         "categories": summary,
-        # One total per currency. There is deliberately no single cross-currency figure: this
-        # module has no rates, and inventing one by addition is the bug this replaced.
+        # One total per currency; this module has no exchange rates, so there is no cross-currency figure.
         "grand_total": {cur: round(value, 2) for cur, value in sorted(by_currency.items())},
         "transaction_count": sum(counts.values()),
     }

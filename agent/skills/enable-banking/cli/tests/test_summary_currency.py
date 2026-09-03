@@ -1,11 +1,4 @@
-"""`aggregate_by_category` must never add two currencies together.
-
-An account that sees more than one currency is the ordinary case for anyone who travels, and the
-old implementation summed `transaction_amount.amount` as a bare float while ignoring
-`transaction_amount.currency` entirely. The result was a single confident number that was not a
-quantity of anything, presented as `grand_total`. A weekly spending figure built that way overstates
-by roughly the exchange rate on every foreign line, and nothing downstream can tell.
-"""
+"""`aggregate_by_category` must never add two currencies together."""
 
 from finance_cli.enablebanking import aggregate_by_category
 
@@ -38,14 +31,14 @@ def test_every_row_carries_its_currency():
 
 
 def test_credits_are_still_excluded():
-    """Unchanged behaviour, pinned so the currency work cannot quietly alter it."""
+    """Credits are income and never enter the spending summary."""
     out = aggregate_by_category([_tx("50.00", "GBP", "Refund", indicator="CRDT")])
     assert out["categories"] == []
     assert out["grand_total"] == {}
     assert out["transaction_count"] == 0
 
 
-def test_a_missing_currency_is_marked_not_merged():
-    """Unknown must not silently join a real currency's pile."""
-    out = aggregate_by_category([{"credit_debit_indicator": "DBIT", "transaction_amount": {"amount": "7.00"}, "creditor_name": "X"}])
-    assert out["grand_total"] == {"???": 7.00}
+def test_a_missing_currency_falls_back_to_the_account_currency():
+    tx = {"credit_debit_indicator": "DBIT", "transaction_amount": {"amount": "7.00"}, "creditor_name": "X", "_account_currency": "GBP"}
+    out = aggregate_by_category([tx])
+    assert out["grand_total"] == {"GBP": 7.00}
