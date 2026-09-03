@@ -59,6 +59,13 @@ notification's other fields. Every field/condition you set must hold (AND); what
   greetings, dreamer, proactive checks) are never affected by rules.
 - To make a source usually not interrupt, add a broad `--source X --action snooze` rule with the exceptions
   (narrower interrupt rules) above it; auto-placement usually handles the ordering.
+- **A rule in `list` is not a rule that fires; check for the effect.** A firing `trash` rule moves the
+  notification file into `~/agent/notifications/trash/`, so after a notification that should have matched,
+  look for it there: absent means the rule never matched, whatever `list` shows. Test a regex offline before
+  installing it, against values that must match and values that must not (`~=` is `re.search`, case-insensitive:
+  `python3 -c "import re; print(bool(re.search(r'@mkt\.', 'bill@utility.example', re.I)))"` must print
+  `False`), and prefer the narrowest pattern that does the job: a broad `trash` rule drops what mattered as
+  quietly as it drops the noise.
 
 ## Usage
 
