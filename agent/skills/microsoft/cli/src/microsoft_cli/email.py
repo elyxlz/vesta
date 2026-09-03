@@ -377,7 +377,7 @@ def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: st
     if not draft or "id" not in draft:
         raise ValueError("Failed to create reply/forward draft")
     draft_id = draft["id"]
-    _compose_over_quote(config, client, draft_id, account_id, mail.body, mail.html)
+    prefilled = _compose_over_quote(config, client, draft_id, account_id, mail.body, mail.html)
 
     updates: dict[str, Any] = {}
     if mail.subject:
@@ -392,7 +392,13 @@ def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: st
         graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
 
     _attach_files(config, client, draft_id, mail.attachments, account_id)
-    return {"status": "drafted", "id": draft_id, "source_id": source_id}
+    return {
+        "status": "drafted",
+        "id": draft_id,
+        "source_id": source_id,
+        "to": ", ".join(mail.to) if mail.to else prefilled["to"],
+        "cc": ", ".join(mail.cc) if mail.cc else prefilled["cc"],
+    }
 
 
 def create_email_draft(config: Config, client: httpx.Client, *, account_email: str, mail: MailDraft) -> dict[str, Any]:
@@ -599,12 +605,15 @@ def _quote_to_html(quote: dict[str, Any]) -> str:
     return '<pre style="white-space:pre-wrap;font-family:inherit">' + html.escape(quote["content"]) + "</pre>"
 
 
-def _compose_over_quote(config: Config, client: httpx.Client, draft_id: str, account_id: str, body: str, html: bool) -> None:
+def _compose_over_quote(config: Config, client: httpx.Client, draft_id: str, account_id: str, body: str, html: bool) -> dict[str, str]:
     """Place `body` above the quoted original that createReply/createReplyAll/createForward
     pre-filled into draft `draft_id`. PATCHing `body` replaces the whole draft body, so the
     quote is read back first and written under the new text. A plain-text body renders through
-    `_reply_body_to_html`; an HTML body is used as is."""
-    existing = graph.request_cfg(config, client, "GET", f"/me/messages/{draft_id}", account_id, params={"$select": "body"})
+    `_reply_body_to_html`; an HTML body is used as is. The same read-back carries the recipients
+    Graph pre-filled (a reply goes to the source message's sender), returned as `to` and `cc`."""
+    existing = graph.request_cfg(
+        config, client, "GET", f"/me/messages/{draft_id}", account_id, params={"$select": "body,toRecipients,ccRecipients"}
+    )
     if not existing or "body" not in existing:
         raise ValueError("Failed to read the created draft")
     top = body if html else _reply_body_to_html(body)
@@ -616,6 +625,10 @@ def _compose_over_quote(config: Config, client: httpx.Client, draft_id: str, acc
         account_id,
         json={"body": {"contentType": "HTML", "content": top + "<br><br>" + _quote_to_html(existing["body"])}},
     )
+    return {
+        "to": _extract_addresses(existing["toRecipients"] if "toRecipients" in existing else []),
+        "cc": _extract_addresses(existing["ccRecipients"] if "ccRecipients" in existing else []),
+    }
 
 
 def reply_draft(
@@ -721,7 +734,8 @@ def _queue_draft(
     draft_id = str(draft["id"]) if "id" in draft else ""
     if not draft_id:
         raise ValueError("Microsoft Graph did not return an id for the pending draft")
-    recipients = ", ".join([*(mail.to or []), *(mail.cc or []), *(mail.bcc or [])]) or "thread recipients"
+    addressed = [draft["to"], draft["cc"]] if "to" in draft else [*(mail.to or []), *(mail.cc or [])]
+    recipients = ", ".join(part for part in [*addressed, *(mail.bcc or [])] if part)
     subject = mail.subject or f"{action} to {mail.reply_to_id or mail.forward_id}"
     queued = pending_send.enqueue(
         config.data_dir,
