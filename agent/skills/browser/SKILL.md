@@ -105,10 +105,11 @@ PY
 
 All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `list_tabs`,
 `ensure_real_tab`, `click` (coordinate), `type_text`, `press_key`, `scroll`, `screenshot`,
-`page_info`, `set_viewport`, `js`, `bidi` (raw escape hatch), `drain_events`, `pending_dialog`,
-`http_get`, `fetch_navigate`, `wait`, `wait_for_load`, `wait_for_text`, `wait_for_url`,
-`upload_file`, `iframe_target`. Plus ref-based variants: `click_ref`, `type_ref`, `hover_ref`,
-`scroll_to_ref`.
+`page_info`, `set_viewport`, `js`, `bidi` (raw escape hatch, keyword params:
+`bidi("storage.getCookies", filter={...})`; the shell command takes one JSON blob instead),
+`drain_events`, `pending_dialog`, `http_get`, `fetch_navigate`, `wait`, `wait_for_load`,
+`wait_for_text`, `wait_for_url`, `upload_file`, `iframe_target`. Plus ref-based variants:
+`click_ref`, `type_ref`, `hover_ref`, `scroll_to_ref`.
 
 ## Command reference
 
