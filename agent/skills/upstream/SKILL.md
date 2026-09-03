@@ -1,6 +1,6 @@
 ---
 name: upstream
-description: Contribute back to the Vesta project. Use to open a PR or an issue on elyxlz/vesta, watch its CI, or read anything in that repo through gh.
+description: Contribute back to the Vesta project. Use to open a PR or an issue on elyxlz/vesta, to act on a source=upstream notification about a PR you filed (a comment, a check result, a merge, a close), or to read anything in that repo through gh.
 ---
 
 # Upstream (CLI: upstream)
@@ -52,7 +52,13 @@ does land in history, scrub it: `~/agent/skills/dream/scripts/redact_secrets.sh`
 
 ```bash
 uv tool install --editable ~/agent/skills/upstream/cli
+upstream daemon start
 ```
+
+Register `upstream daemon start` for restart as `~/agent/skills/restart/SKILL.md` describes,
+so the PR watcher (see "After filing" below) comes back after a container restart. It serves
+no port and registers no service. Its log is `~/agent/logs/upstream.log`; what it last saw
+of each PR is `~/agent/data/upstream-prs.json`.
 
 ## Discovering what to file (nightly, in the dream's Upstream phase)
 
@@ -135,13 +141,46 @@ upstream gh pr create --title "fix(skills/x): ..." --body "...fixes #N"
 ```
 
 Branch off `upstream/master` only, never `agent-upstream` (a standalone snapshot with no
-master ancestry; the shared-history guard catches it). Wait for CI green
-(`upstream gh pr checks <n>`); fix failures on the same branch and re-run
-`upstream gh pr create` from the worktree, after fetching and rebasing onto the branch's
-remote tip, since the push is a force push. A bare `git push upstream` has no credentials
-by design; the wrapper is the authenticated path. Keep the worktree until the local apply
-below is verified, then `git -C ~ worktree remove /tmp/vesta-pr`. Report a PR done only
-when every check is green.
+master ancestry; the shared-history guard catches it). A bare `git push upstream` has no
+credentials by design; the wrapper is the authenticated path. Once the PR URL exists, the
+filing is finished for this turn: what happens to the PR next reaches you as notifications
+(next section), so end the turn instead of polling `pr checks` or `pr view --comments`.
+Keep the worktree until the local apply below is verified, then
+`git -C ~ worktree remove /tmp/vesta-pr`. A later fix recreates it from the branch:
+`git -C ~ fetch upstream && git -C ~ worktree add /tmp/vesta-pr <branch>`.
+
+## After filing: PR news arrives as notifications
+
+The watcher (`upstream daemon start`, in Setup) polls the PRs you opened every five minutes
+and writes one `source=upstream` notification per change into `~/agent/notifications/`,
+snoozed, so it pools until you are idle and never breaks a live conversation. Nothing about
+a PR needs polling in-turn: file it, end the turn, and act when the notification comes.
+Each carries `number`, `title`, and `url`, and its `type` is one of:
+
+- `pr_comment`: a comment, a review (`review` names its state), or an inline review comment
+  (`path` names the file); `author` is the login and `message` the text. Reproduce the
+  critique against your own data before you reply: a fix that nudges a number while
+  reading as a solution is worse than none, because it stops anyone looking. Reply with
+  `upstream gh pr comment <n> --body "..."`; comments posted through the App, yours
+  included, are never reported back to you.
+- `pr_checks`: the head commit's checks settled. `checks` is `green` or `red`, and
+  `failing` lists the red check names. On red, fix on the same branch and re-run
+  `upstream gh pr create` from the worktree after fetching and rebasing onto the branch's
+  remote tip (the push is a force push); the result of that push arrives the same way.
+  Every push resets the checks, so each settled result is reported once.
+- `pr_merged`: `author` is who merged it. Apply the fix locally if you have not (below).
+- `pr_closed`: closed without a merge; `message` is the closing comment and `author` who
+  wrote it. Read it: it names the replacement (a consolidated PR, a fix already on master,
+  the layer the change belongs at), which is the whole answer. Filing the same change
+  again is the wrong response.
+
+A PR is done when it is open and its checks were green on the last notification about it.
+Green in-turn means `upstream gh pr checks <n>` exits 0 (8 while a check is still pending,
+1 with a failing one); run it only when a notification made you look, never as a loop to
+wait in. The watcher's first pass records the PRs it finds and reports nothing, so a
+backlog never arrives as a storm; `upstream poll` runs one pass by hand and prints what it
+wrote (`{"watched": 3, "notified": ["pr_checks"]}`), which is how to check the path when
+you doubt it.
 
 ## Apply the fix locally too
 

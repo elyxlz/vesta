@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+import typing as tp
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,6 +15,8 @@ from urllib.parse import quote
 
 import jwt
 
+from upstream_cli import daemon
+from upstream_cli.notifications import NOTIFICATIONS_DIR, write_notification
 from upstream_cli.titles import title_errors, title_warnings
 
 # Config: hardcoded for the vesta-upstream GitHub App
@@ -153,22 +156,26 @@ PR_STATES = {"open": "[OPEN]", "closed": "[CLOSED, MERGED]", "all": "[OPEN, CLOS
 PR_PAGE_SIZE = 100
 
 
-def prs_with_authors_query(state) -> str:
-    """One page of PRs, newest first, each carrying its commit author names in order. The state list
-    is written into the query text: `gh api -f` sends every variable as a string, and GraphQL takes
-    an enum list only as a literal."""
+def pull_requests_query(states, selection) -> str:
+    """One page of PRs, newest first, each carrying number, title, url, and `selection`. The state
+    list is written into the query text: `gh api -f` sends every variable as a string, and GraphQL
+    takes an enum list only as a literal."""
     owner, name = UPSTREAM_REPO.split("/", maxsplit=1)
     return (
         f'query($cursor: String) {{ repository(owner: "{owner}", name: "{name}") {{ pullRequests('
-        f"states: {PR_STATES[state]}, first: {PR_PAGE_SIZE}, after: $cursor, orderBy: {{field: CREATED_AT, direction: DESC}}"
-        ") { pageInfo { hasNextPage endCursor } nodes { number title url"
-        " commits(first: 100) { nodes { commit { author { name } } } } } } } }"
+        f"states: {states}, first: {PR_PAGE_SIZE}, after: $cursor, orderBy: {{field: CREATED_AT, direction: DESC}}"
+        f") {{ pageInfo {{ hasNextPage endCursor }} nodes {{ number title url {selection} }} }} }} }}"
     )
 
 
-def fetch_prs_with_authors(token, state):
-    """Every PR in `state`, following the cursor to the last page."""
-    fields = {"query": prs_with_authors_query(state)}
+def prs_with_authors_query(state) -> str:
+    """Every commit author name in order, which is what classifies a PR as opened or only pushed to."""
+    return pull_requests_query(PR_STATES[state], "commits(first: 100) { nodes { commit { author { name } } } }")
+
+
+def fetch_pr_pages(token, query):
+    """Every PR the query selects, following the cursor to the last page."""
+    fields = {"query": query}
     prs = []
     while True:
         code, out = gh_api(token, "graphql", method="POST", fields=fields)
@@ -195,7 +202,7 @@ def list_my_prs(token, agent_name, state, limit):
     and identifies nobody; the commit authors are the only field naming the agent, and the FIRST
     commit's author opened the PR. Every PR in `state` is classified; `limit` caps the printed rows."""
     me = commit_author_name(agent_name)
-    prs = fetch_prs_with_authors(token, state)
+    prs = fetch_pr_pages(token, prs_with_authors_query(state))
     opened, touched = [], []
     for pr in prs:
         authors = [node["commit"]["author"]["name"] for node in pr["commits"]["nodes"]]
@@ -212,6 +219,158 @@ def list_my_prs(token, agent_name, state, limit):
     if touched:
         print(f"\nNot yours, but you have commits on them ({len(touched)}):")
         print_capped(touched, limit)
+
+
+WATCH_STATE_PATH = Path.home() / "agent/data/upstream-prs.json"
+# The App's own login: a comment it posted is this agent's or another agent's reply, never news.
+BOT_LOGIN = "vesta-upstream[bot]"
+# The opener is the first commit's author; the head commit's rollup is what `pr checks` reports.
+WATCH_SELECTION = (
+    "commits(first: 1) { nodes { commit { author { name } } } }"
+    " head: commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {"
+    " ... on CheckRun { name conclusion } ... on StatusContext { context state } } } } } } }"
+)
+FAILED_CONCLUSIONS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+FAILED_STATUS_STATES = {"FAILURE", "ERROR"}
+CHECK_VERDICTS = {"SUCCESS": "green", "FAILURE": "red", "ERROR": "red"}
+# The three feeds a PR's conversation lands in, and the REST path of each.
+COMMENT_FEEDS = {"comment": "issues/{n}/comments", "review": "pulls/{n}/reviews", "review_comment": "pulls/{n}/comments"}
+
+
+class WatchedPr(tp.TypedDict):
+    """What one poll remembers of an open PR: the highest id seen per feed and the last checks verdict."""
+
+    title: str
+    url: str
+    seen: dict[str, int]
+    checks: str
+
+
+def read_watch_state(path: Path) -> dict[str, WatchedPr] | None:
+    """None before the first pass ever completes, which is the one pass that seeds without notifying."""
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def write_watch_state(path: Path, state: dict[str, WatchedPr]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    tmp.replace(path)
+
+
+def check_verdict(pr) -> tuple[str, list[str]]:
+    """The head commit's rollup as green, red, or pending, plus the contexts that failed."""
+    head = pr["head"]["nodes"]
+    rollup = head[0]["commit"]["statusCheckRollup"] if head else None
+    if rollup is None:
+        return "pending", []
+    failing = []
+    for context in rollup["contexts"]["nodes"]:
+        if "name" in context and context["conclusion"] in FAILED_CONCLUSIONS:
+            failing.append(context["name"])
+        elif "context" in context and context["state"] in FAILED_STATUS_STATES:
+            failing.append(context["context"])
+    state = rollup["state"]
+    return (CHECK_VERDICTS[state] if state in CHECK_VERDICTS else "pending"), failing
+
+
+def comment_news(kind, item) -> dict[str, str] | None:
+    """The notification fields one feed item carries, or None for an item that is not news: the
+    App's own comments, and the empty review that only wraps inline comments."""
+    if item["user"]["login"] == BOT_LOGIN:
+        return None
+    fields = {"author": item["user"]["login"], "url": item["html_url"], "message": item["body"]}
+    if kind == "review":
+        if not item["body"] and item["state"] == "COMMENTED":
+            return None
+        fields["review"] = item["state"]
+    if kind == "review_comment":
+        fields["path"] = item["path"]
+    return fields
+
+
+def watch_open_pr(token, number, pr, previous: WatchedPr | None) -> tuple[WatchedPr, list[tuple[str, dict[str, object]]]]:
+    """One open PR against what the last pass saw: the record to keep and the news to write. A feed
+    that cannot be read keeps its watermark, so its news arrives on the next pass instead of never."""
+    seen = dict(previous["seen"]) if previous else {}
+    entry = WatchedPr(title=pr["title"], url=pr["url"], seen=seen, checks="pending")
+    about = {"number": int(number), "title": pr["title"]}
+    news: list[tuple[str, dict[str, object]]] = []
+    verdict, failing = check_verdict(pr)
+    entry["checks"] = verdict
+    if verdict != "pending" and verdict != (previous["checks"] if previous else "pending"):
+        message = "checks green" if verdict == "green" else f"checks red: {', '.join(failing)}"
+        news.append(("pr_checks", {**about, "url": pr["url"], "checks": verdict, "failing": ", ".join(failing), "message": message}))
+    for kind, path in COMMENT_FEEDS.items():
+        code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/{path.format(n=number)}?per_page=100")
+        if code != 0:
+            print(f"Warning: could not read {kind}s of #{number}: {out}", file=sys.stderr)
+            continue
+        last = seen[kind] if kind in seen else 0
+        for item in json.loads(out):
+            fields = comment_news(kind, item) if item["id"] > last else None
+            if fields is not None:
+                news.append(("pr_comment", {**about, **fields}))
+            seen[kind] = max(seen[kind] if kind in seen else 0, item["id"])
+    return entry, news
+
+
+def settled_pr_news(token, number, previous: WatchedPr) -> tuple[str, dict[str, object]] | None:
+    """A PR that left the open list, read back to say how: merged, or closed with the comment that
+    closed it. None keeps watching it: the read failed, or the PR is open after all."""
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls/{number}")
+    if code != 0:
+        print(f"Warning: could not read #{number}: {out}", file=sys.stderr)
+        return None
+    pr = json.loads(out)
+    about: dict[str, object] = {"number": int(number), "title": previous["title"], "url": previous["url"]}
+    if pr["merged"]:
+        return "pr_merged", {**about, "author": pr["merged_by"]["login"], "message": "merged"}
+    if pr["state"] != "closed":
+        return None
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/issues/{number}/comments?per_page=100")
+    comments = json.loads(out) if code == 0 else []
+    if not comments:
+        return "pr_closed", {**about, "author": "", "message": "closed without a comment"}
+    return "pr_closed", {**about, "author": comments[-1]["user"]["login"], "message": comments[-1]["body"]}
+
+
+def poll_prs(token, agent_name, state_path: Path, notif_dir: Path) -> tuple[int, list[str]]:
+    """One pass over the PRs this agent opened: every change since the last pass becomes one
+    notification file. Returns how many PRs are watched and the types written. The first pass ever
+    records what it finds and writes nothing, so a backlog never arrives as a storm."""
+    me = commit_author_name(agent_name)
+    prs = fetch_pr_pages(token, pull_requests_query(PR_STATES["open"], WATCH_SELECTION))
+    mine = {str(pr["number"]): pr for pr in prs if [node["commit"]["author"]["name"] for node in pr["commits"]["nodes"]][:1] == [me]}
+    known = read_watch_state(state_path)
+    seeding = known is None
+    known = known or {}
+    news: list[tuple[str, dict[str, object]]] = []
+    state: dict[str, WatchedPr] = {}
+    for number, pr in mine.items():
+        state[number], found = watch_open_pr(token, number, pr, known[number] if number in known else None)
+        news.extend(found)
+    for number, previous in known.items():
+        if number in mine:
+            continue
+        settled = settled_pr_news(token, number, previous)
+        if settled is None:
+            state[number] = previous
+        else:
+            news.append(settled)
+    written = []
+    if not seeding:
+        for notif_type, fields in news:
+            write_notification(notif_dir, notif_type, interrupt=False, **fields)
+            written.append(notif_type)
+    write_watch_state(state_path, state)
+    return len(mine), written
+
+
+def poll_command():
+    agent_name, _ = resolve_agent_identity()
+    watched, written = poll_prs(get_installation_token(), agent_name, WATCH_STATE_PATH, NOTIFICATIONS_DIR)
+    print(json.dumps({"watched": watched, "notified": written}))
 
 
 GUARD_BRANCH_REF = "refs/vesta-guard/branch"
@@ -337,7 +496,7 @@ def submit_pr(args):
     create_pr(token, args.title, body_with_attribution(args.body, agent_name, vesta_version), branch, args.base)
 
 
-USAGE = "usage: upstream gh <gh args> | upstream token"
+USAGE = "usage: upstream gh <gh args> | upstream token | upstream daemon <start|stop|restart|status> | upstream poll"
 CREATE_UNSUPPORTED_HELP = (
     "supported create flags: --title --body --head --base --adopt (pr), --title --body (issue). "
     "Other gh create flags are not carried by the guarded create."
@@ -425,10 +584,21 @@ def canonical_gh_args(args) -> list[str]:
 
 def main():
     argv = sys.argv[1:]
-    if argv and argv[0] == "token":
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(USAGE)
+        return
+    if argv[0] == "token":
         print(get_installation_token())
         return
-    if not argv or argv[0] != "gh":
+    if argv[0] == "daemon":
+        sys.exit(daemon.daemon_cmd(argv[1] if len(argv) > 1 else ""))
+    if argv[0] == "serve":
+        daemon.serve()
+        return
+    if argv[0] == "poll":
+        poll_command()
+        return
+    if argv[0] != "gh":
         print(USAGE, file=sys.stderr)
         sys.exit(2)
     args = canonical_gh_args(argv[1:])

@@ -15,10 +15,24 @@ def run_main(monkeypatch, argv):
     return 0
 
 
-def test_bare_and_unknown_verbs_refuse_with_usage(monkeypatch, capsys):
-    assert run_main(monkeypatch, []) == 2
+def test_bare_and_help_forms_print_usage_on_stdout(monkeypatch, capsys):
+    """The daemon contract: a command reached for blind answers with usage instead of failing."""
+    for argv in ([], ["-h"], ["--help"], ["help"], ["daemon"], ["daemon", "help"]):
+        assert run_main(monkeypatch, argv) == 0
+        assert "usage" in capsys.readouterr().out.lower()
+
+
+def test_unknown_verbs_refuse_with_usage(monkeypatch, capsys):
     assert run_main(monkeypatch, ["--title", "x"]) == 2
     assert "usage: upstream gh" in capsys.readouterr().err
+    assert run_main(monkeypatch, ["daemon", "bogus"]) == 1
+    assert "usage" in capsys.readouterr().err.lower()
+
+
+def test_daemon_verbs_dispatch_to_the_daemon(monkeypatch, capsys):
+    monkeypatch.setattr(cli.daemon, "daemon_cmd", lambda action: print(json.dumps({"verb": action})) or 0)
+    assert run_main(monkeypatch, ["daemon", "status"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"verb": "status"}
 
 
 def test_passthrough_forwards_args_untouched_and_propagates_exit(monkeypatch, fake_gh):
