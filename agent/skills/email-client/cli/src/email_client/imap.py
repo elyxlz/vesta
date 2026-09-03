@@ -40,6 +40,7 @@ import time
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 
 from imap_tools import AND, MailBox, MailboxUidsError, MailMessageFlags
 
@@ -50,6 +51,9 @@ from .providers import (
     get_profile,
     resolve_provider,
 )
+
+if TYPE_CHECKING:
+    from imap_tools import MailMessage
 
 
 def _env(name: str, default: str | None = None, *, required: bool = False) -> str:
@@ -520,24 +524,9 @@ _HTML_BLOCK_TAGS = {
     "footer",
 }
 _HTML_CELL_TAGS = {"td", "th"}
-# Elements whose text is markup, not message. Their end tags are MANDATORY in HTML,
-# so depth counting is safe for these two.
-_HTML_SKIP_TAGS = ("script", "style")
-# ``head`` is a flag, never a depth count: its end tag is OPTIONAL in HTML, so a depth
-# only ``</head>`` decrements never returns to zero on the mail that omits it, and every
-# word of the message is dropped while ``get`` still answers successfully. It closes the
-# way the HTML parsing spec closes it: explicitly by ``</head>``, or IMPLICITLY at the
-# first start tag that cannot legally appear inside it, ``<body>`` included.
-_HTML_HEAD_ONLY_TAGS = {
-    "title",
-    "base",
-    "link",
-    "style",
-    "meta",
-    "script",
-    "noscript",
-    "template",
-}
+# Elements whose text is markup, not message. Their end tags are mandatory in HTML,
+# so depth counting is safe.
+_HTML_SKIP_TAGS = ("script", "style", "title")
 
 
 class _HTMLToText(HTMLParser):
@@ -551,29 +540,20 @@ class _HTMLToText(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self._skip_depth = 0
-        self._in_head = False
         self._href: str | None = None
         self._anchor_start = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "head":
-            self._in_head = True
-            return
-        # The implicit close. Without this, a missing </head> swallowed the whole message.
-        if self._in_head and tag not in _HTML_HEAD_ONLY_TAGS:
-            self._in_head = False
         if tag in _HTML_SKIP_TAGS:
             self._skip_depth += 1
         elif tag == "a":
-            self._href = dict(attrs).get("href")
+            self._href = next((v for k, v in attrs if k == "href"), None)
             self._anchor_start = len(self.parts)
         elif tag in _HTML_BLOCK_TAGS:
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "head":
-            self._in_head = False
-        elif tag in _HTML_SKIP_TAGS and self._skip_depth:
+        if tag in _HTML_SKIP_TAGS and self._skip_depth:
             self._skip_depth -= 1
         elif tag == "a":
             href = self._href
@@ -590,7 +570,7 @@ class _HTMLToText(HTMLParser):
             self.parts.append("\n")
 
     def handle_data(self, data: str) -> None:
-        if not self._skip_depth and not self._in_head:
+        if not self._skip_depth:
             self.parts.append(data)
 
     def get_text(self) -> str:
@@ -618,6 +598,15 @@ def _html_to_text(markup: str) -> str:
     return parser.get_text()
 
 
+def _readable_body(m: MailMessage) -> tuple[str, str]:
+    """Return a message's readable body and its format: the plain-text part as ``text``, else the flattened HTML as ``html-to-text``."""
+    if m.text.strip():
+        return m.text, "text"
+    if m.html:
+        return _html_to_text(m.html), "html-to-text"
+    return "", "text"
+
+
 def cmd_get(args):
     with connect(getattr(args, "account", None), initial_folder=None) as mb:
         mb.folder.set(args.folder)
@@ -625,12 +614,7 @@ def cmd_get(args):
         if not msgs:
             sys.exit("not found")
         m = msgs[0]
-        if m.text:
-            body, body_format = m.text, "text"
-        elif m.html:
-            body, body_format = _html_to_text(m.html), "html-to-text"
-        else:
-            body, body_format = "", "text"
+        body, body_format = _readable_body(m)
         out = {
             "from": _from_full(m),
             "to": _to_full(m),

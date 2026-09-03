@@ -1,9 +1,9 @@
-"""`get` returns readable text for an HTML-only mail, and says when it truncated."""
+"""`get` returns readable text for an HTML-only mail, says when it truncated, and reply quoting reads the same body."""
 
 import argparse
 import json
 
-from email_client import imap
+from email_client import imap, smtp
 
 # A stylesheet longer than the slice the caller asks for, the shape a bulk sender
 # emits: the message sits after it.
@@ -36,6 +36,8 @@ class _Msg:
         self.from_ = "sender@example.com"
         self.to_values = ()
         self.to = ("jane@example.com",)
+        self.cc_values = ()
+        self.headers = {}
 
 
 class _Box:
@@ -84,6 +86,19 @@ def test_plain_text_part_is_preferred_untouched(monkeypatch, capsys):
     out = _run(monkeypatch, capsys, _Msg(text="plain <b>wins</b>", html=BULK_SENDER_SHAPED))
     assert out["body_format"] == "text"
     assert out["body"] == "plain <b>wins</b>"
+
+
+def test_whitespace_only_text_part_falls_through_to_html(monkeypatch, capsys):
+    out = _run(monkeypatch, capsys, _Msg(text=" \n", html=BULK_SENDER_SHAPED))
+    assert out["body_format"] == "html-to-text"
+    assert "Hello Jane Doe" in out["body"]
+
+
+def test_reply_quoting_reads_the_same_body_as_get(monkeypatch):
+    monkeypatch.setattr(smtp, "connect", lambda *a, **k: _Box(_Msg(html=BULK_SENDER_SHAPED)))
+    orig = smtp.fetch_original(None, "INBOX", "1")
+    assert "Hello Jane Doe" in orig["body"]
+    assert "@font-face" not in orig["body"]
 
 
 def test_truncation_is_reported(monkeypatch, capsys):
@@ -139,11 +154,8 @@ def test_nbsp_folds_to_a_plain_space():
     assert imap._html_to_text("50,00&nbsp;&euro;") == "50,00 \u20ac"
 
 
-# The `</head>` end tag is OPTIONAL in HTML, and a bulk sender that omits it produced a
-# SILENT EMPTY: head was tracked by depth count, so the skip flag stuck on for the whole
-# document and every word of the message was dropped while `get` still reported success.
-# That is the worst failure shape for a mail reader, indistinguishable from a message that
-# genuinely says nothing. Two of these four shapes returned "" before the fix.
+# `</head>` is optional in HTML: a sender that omits it must still yield the message,
+# and head content must still stay out of the body.
 _MSG = "Your flight is cancelled"
 
 
@@ -167,8 +179,6 @@ def test_well_formed_head_still_works():
     assert _MSG in imap._html_to_text(html)
 
 
-# The other direction: the implicit close must not let head content leak into the body,
-# which is the defect the skip logic existed to prevent in the first place.
 def test_stylesheet_still_dropped_when_head_is_unclosed():
     html = "<html><head><style>.cls{font-size:9px}</style><body>" + _MSG + "</body></html>"
     out = imap._html_to_text(html)
