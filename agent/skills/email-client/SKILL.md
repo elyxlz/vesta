@@ -64,7 +64,9 @@ email-client search --account personal --folder INBOX --query 'SUBJECT "invoice"
 email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 ```
 
-`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body. `search --query` takes a raw IMAP SEARCH expression; a query the server rejects as malformed is retried as a plain-text phrase search, so `--query 'job alert'` works too.
+`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `search --query` takes a raw IMAP SEARCH expression; a query the server rejects as malformed is retried as a plain-text phrase search, so `--query 'job alert'` works too.
+
+`get` returns the message with a readable body. `body_format` says where that body came from: `text` for the message's own plain-text part, `html-to-text` when it had none and the HTML was flattened (link targets kept in parentheses). The body is capped at `--body-chars` (default 4000); when the cap cuts it, the result carries `body_truncated: true` and `body_chars_total`, so a value you cannot find is distinguishable from one that is simply past the cut. Re-run with a larger `--body-chars` to read the rest.
 
 ## Attachments
 

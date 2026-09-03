@@ -34,10 +34,13 @@ import imaplib
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 import urllib.parse
 import urllib.request
+from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 
 from imap_tools import AND, MailBox, MailboxUidsError, MailMessageFlags
 
@@ -48,6 +51,9 @@ from .providers import (
     get_profile,
     resolve_provider,
 )
+
+if TYPE_CHECKING:
+    from imap_tools import MailMessage
 
 
 def _env(name: str, default: str | None = None, *, required: bool = False) -> str:
@@ -494,6 +500,113 @@ def cmd_search(args):
         sys.exit(f"search failed for {args.query!r}: {exc}")
 
 
+_HTML_BLOCK_TAGS = {
+    "p",
+    "div",
+    "br",
+    "tr",
+    "li",
+    "ul",
+    "ol",
+    "table",
+    "thead",
+    "tbody",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "blockquote",
+    "section",
+    "article",
+    "header",
+    "footer",
+}
+_HTML_CELL_TAGS = {"td", "th"}
+# Elements whose text is markup, not message. Their end tags are mandatory in HTML,
+# so depth counting is safe.
+_HTML_SKIP_TAGS = ("script", "style", "title")
+
+
+class _HTMLToText(HTMLParser):
+    """Flatten HTML to readable text, keeping link targets.
+
+    Skipped elements are dropped, block tags become line breaks, and entities are
+    converted by HTMLParser (``convert_charrefs`` defaults on).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skip_depth = 0
+        self._href: str | None = None
+        self._anchor_start = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _HTML_SKIP_TAGS:
+            self._skip_depth += 1
+        elif tag == "a":
+            self._href = next((v for k, v in attrs if k == "href"), None)
+            self._anchor_start = len(self.parts)
+        elif tag in _HTML_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _HTML_SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag == "a":
+            href = self._href
+            self._href = None
+            if href and not href.startswith(("#", "javascript:", "mailto:")):
+                anchor_text = "".join(self.parts[self._anchor_start :])
+                if href not in anchor_text:
+                    self.parts.append(f" ({href})")
+        elif tag in _HTML_CELL_TAGS:
+            # A row is one line, so cells need a separator of their own or two
+            # adjacent values concatenate into a single unsearchable token.
+            self.parts.append(" ")
+        elif tag in _HTML_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self.parts.append(data)
+
+    def get_text(self) -> str:
+        text = "".join(self.parts)
+        # A zero-width space is not whitespace to a regex, so drop it explicitly;
+        # every other space character folds into a plain one below, so a value read
+        # out of the body still matches when it is searched for later.
+        text = text.replace("\u200b", "")
+        text = re.sub(r"[^\S\n]+", " ", text)
+        text = "\n".join(line.strip() for line in text.split("\n"))
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def _html_to_text(markup: str) -> str:
+    """Flatten an HTML body, for a message that carries no ``text/plain`` part.
+
+    Slicing raw markup is what makes an HTML-only message unreadable: the opening
+    thousands of characters are ``<head>`` and its stylesheet, so a caller reading
+    the default slice gets CSS and concludes the message says nothing.
+    """
+    parser = _HTMLToText()
+    parser.feed(markup)
+    parser.close()
+    return parser.get_text()
+
+
+def _readable_body(m: MailMessage) -> tuple[str, str]:
+    """Return a message's readable body and its format: the plain-text part as ``text``, else the flattened HTML as ``html-to-text``."""
+    if m.text.strip():
+        return m.text, "text"
+    if m.html:
+        return _html_to_text(m.html), "html-to-text"
+    return "", "text"
+
+
 def cmd_get(args):
     with connect(getattr(args, "account", None), initial_folder=None) as mb:
         mb.folder.set(args.folder)
@@ -501,19 +614,22 @@ def cmd_get(args):
         if not msgs:
             sys.exit("not found")
         m = msgs[0]
-        body = m.text or m.html or ""
-        print(
-            json.dumps(
-                {
-                    "from": _from_full(m),
-                    "to": _to_full(m),
-                    "subject": m.subject,
-                    "date": m.date_str,
-                    "body": body[: args.body_chars],
-                },
-                ensure_ascii=False,
-            )
-        )
+        body, body_format = _readable_body(m)
+        out = {
+            "from": _from_full(m),
+            "to": _to_full(m),
+            "subject": m.subject,
+            "date": m.date_str,
+            "body": body[: args.body_chars],
+            "body_format": body_format,
+        }
+        # Say so when the slice is partial: a silent cut reads exactly like a short
+        # message, so a caller cannot tell "the mail does not mention it" from
+        # "the mention is past the cut".
+        if len(body) > args.body_chars:
+            out["body_truncated"] = True
+            out["body_chars_total"] = len(body)
+        print(json.dumps(out, ensure_ascii=False))
 
 
 def cmd_attachments(args):

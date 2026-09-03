@@ -81,6 +81,7 @@ from . import daemon, pending_send
 from .imap import (
     _env,
     _from_full,
+    _readable_body,
     _state_dir,
     _to_full,
     account_profile,
@@ -165,6 +166,7 @@ def fetch_original(account: str | None, folder: str, uid: str) -> dict:
             sys.exit(f"uid {uid!r} not found in folder {folder!r}")
         m = msgs[0]
     cc = ", ".join(a.full for a in m.cc_values) if m.cc_values else ""
+    body, _ = _readable_body(m)
     return {
         "message_id": (m.headers.get("message-id", ("",))[0] or "").strip(),
         "references": (m.headers.get("references", ("",))[0] or "").strip(),
@@ -173,7 +175,7 @@ def fetch_original(account: str | None, folder: str, uid: str) -> dict:
         "cc": cc,
         "subject": m.subject,
         "date": m.date_str,
-        "body": m.text or m.html or "",
+        "body": body,
     }
 
 
