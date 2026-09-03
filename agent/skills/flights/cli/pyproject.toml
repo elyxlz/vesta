@@ -12,6 +12,11 @@ dependencies = [
 [project.scripts]
 flights = "flights_cli.cli:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/flights_cli"]
 
