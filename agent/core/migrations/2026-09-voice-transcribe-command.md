@@ -1,8 +1,8 @@
 `transcribe <file> [--language <code>]` turns an audio file into text: it asks the STT provider
-configured in the voice skill first and falls back to the whisper skill's local whisper.cpp, and
-the whatsapp daemon shells it for every incoming voice note. It is a console script of the voice
-skill's CLI, so the installed tool needs one refresh for the command to exist on this box. Safe to
-run more than once.
+configured in the voice skill first and falls back to a local whisper.cpp build, and the whatsapp
+daemon shells it for every incoming voice note. This box needs the console script on PATH and,
+for the fallback, the `whisper-cli` binary and a model on disk. Every step checks before acting, so
+this is safe to run more than once.
 
 ### 1. Refresh the voice CLI
 
@@ -15,21 +15,28 @@ The install is transactional and a re-run over an existing install is a no-op. T
 print a path under `~/.local/bin`. If it fails, STOP, leave this migration unmarked, and report it
 to the user.
 
-### 2. Check that one transcription path works
+### 2. Build the local whisper fallback if it is missing
 
-Skip this step when the whatsapp skill is not active. Otherwise `transcribe` needs either an
-enabled STT provider or the local whisper fallback:
+The fallback needs `whisper-cli` and `/usr/local/share/ggml-small.bin`. Check both, and build only
+what is absent (the compile takes a few minutes; the model is 488 MB):
 
 ```bash
-voice-keys status
-command -v whisper-cli || echo "no whisper-cli"
+command -v whisper-cli || {
+  apt-get update && apt-get install -y build-essential cmake ffmpeg &&
+  git clone https://github.com/ggerganov/whisper.cpp.git /opt/whisper.cpp 2>/dev/null;
+  cd /opt/whisper.cpp && git pull --ff-only &&
+  cmake -B build && cmake --build build --config Release -j"$(nproc)" &&
+  cp build/bin/whisper-cli /usr/local/bin/
+}
+[ -f /usr/local/share/ggml-small.bin ] || curl -L -o /usr/local/share/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+command -v whisper-cli && [ -f /usr/local/share/ggml-small.bin ] && echo fallback-ready
 ```
 
-An enabled provider shows as `"stt": {..., "enabled": true}` in the first output. If there is none
-and the second line prints `no whisper-cli`, incoming voice notes cannot be transcribed on this
-box: follow `~/agent/skills/whisper/SETUP.md` to build `whisper-cli` (the `ggml-small.bin` model
-is already present when the whatsapp skill's `setup.sh` ran), or offer the user Deepgram through
-the voice skill.
+If the last line prints `fallback-ready`, the local path works with no provider. If the build fails
+(no disk, no network), the provider path still transcribes: tell the user the local fallback is not
+built and point them at `~/agent/skills/voice/SETUP.md` section 4, then continue to step 3 anyway,
+since a failed compile will not succeed on a later boot without their help.
 
 ### 3. Mark this migration applied
 

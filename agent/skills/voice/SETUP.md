@@ -59,6 +59,30 @@ Each user needs their own keys: one Deepgram key for STT (voice input), one Elev
 
 **Note:** free tier is 10k characters/month. Model `eleven_flash_v2_5`, output format `mp3_22050_32`.
 
+## 4. Local transcription fallback (whisper.cpp)
+
+`transcribe` asks the configured STT provider first (Deepgram above) and falls back to a local
+whisper.cpp build when no provider is enabled or the provider call fails. The fallback needs the
+`whisper-cli` binary and one model on disk. Build them once:
+
+```bash
+# Build deps and ffmpeg
+apt-get update && apt-get install -y build-essential cmake ffmpeg
+
+# whisper.cpp
+git clone https://github.com/ggerganov/whisper.cpp.git /opt/whisper.cpp
+cd /opt/whisper.cpp && cmake -B build && cmake --build build --config Release -j"$(nproc)"
+cp build/bin/whisper-cli /usr/local/bin/
+
+# Model: multilingual ggml-small (488 MB), the default the fallback looks for
+curl -L -o /usr/local/share/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+The whatsapp skill's `setup.sh` downloads the same model, so if you already ran that only the
+binary is missing. Other model sizes and the `WHISPER_MODEL` override live in the `whisper`
+skill's SETUP.md.
+
 ## Adding a custom ElevenLabs voice
 
 1. In the dashboard, open **Voices** -> **VoiceLab** or the Voice Library.
