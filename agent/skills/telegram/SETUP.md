@@ -3,11 +3,11 @@
 Everything the build needs (Go, gcc) ships in the agent image; install nothing,
 download nothing.
 
-1. Put `telegram` on PATH and warm the launcher's build cache. The launcher compiles `cli/`
-   from source on every invocation, so no stale binary can ever drift (the send-message handler
-   and its bubble lint run inside the daemon; a static binary left the daemon executing
-   weeks-old code after the source changed). CGO/FTS5 build flags live in `cli/cgo-env.sh`,
-   sourced by the launcher.
+1. Put `telegram` on PATH and warm the launcher's build cache. The launcher builds `cli/` from
+   source into a cached binary and rebuilds only when a Go source, `go.mod` or `go.sum` is newer
+   than that binary, so no stale binary can ever drift (the send-message handler and its bubble
+   lint run inside the daemon; a static binary left the daemon executing weeks-old code after the
+   source changed). CGO/FTS5 build flags live in `cli/cgo-env.sh`, sourced by the launcher.
    ```bash
    mkdir -p ~/.local/bin && ln -sf ~/agent/skills/telegram/telegram ~/.local/bin/telegram
    telegram --help >/dev/null   # a compile error surfaces HERE, loudly
@@ -38,9 +38,9 @@ download nothing.
    repeated restarts) and drops a notification when it acts. Especially important when Telegram
    is the primary/only channel.
 
-   **Deploying source changes:** there is no build step. The launcher recompiles `cli/` from
-   source on every invocation (Go's build cache keeps an unchanged rebuild well under a second),
-   so an edit is picked up by the next invocation. For the daemon (which holds the running
+   **Deploying source changes:** there is no build step. The launcher rebuilds `cli/` only when
+   a Go source, `go.mod` or `go.sum` is newer than the cached binary, so an edit is picked up by
+   the next invocation. For the daemon (which holds the running
    process), `telegram daemon restart` bounces it onto the fresh build; the watchdog goes down
    with the daemon and comes back with it, so it can never race you into two daemons (two
    pollers, Telegram 409 Conflict).
