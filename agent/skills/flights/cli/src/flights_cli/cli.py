@@ -73,6 +73,13 @@ def _roundtrip_to_dict(outbound, inbound, currency: str = DEFAULT_CURRENCY) -> d
     }
 
 
+def _is_nonstop(row: dict) -> bool:
+    """A one-way row carries `stops`; a round-trip row is nonstop when both directions are."""
+    if "stops" in row:
+        return row["stops"] == 0
+    return row["outbound"]["stops"] == 0 and row["return"]["stops"] == 0
+
+
 @dataclasses.dataclass
 class FlightSearchQuery:
     """Bundled so adding a field does not trip PLR0913, the same reason DateSearchQuery exists."""
@@ -121,13 +128,19 @@ def _search_flights(query: FlightSearchQuery) -> list[dict]:
         if not results:
             return []
 
-        out = []
-        for r in results[: query.max_results]:
-            if isinstance(r, tuple):
-                out.append(_roundtrip_to_dict(r[0], r[1], query.currency))
-            else:
-                out.append(_flight_to_dict(r, query.currency))
-        return out
+        rows = [_roundtrip_to_dict(r[0], r[1], query.currency) if isinstance(r, tuple) else _flight_to_dict(r, query.currency) for r in results]
+        page = rows[: query.max_results]
+        # Short-haul connections often price below every nonstop, so a cheapest-first page can hold
+        # only connections while the nonstops sit past it and the route reads as connection-only.
+        omitted_nonstops = [row for row in rows[query.max_results :] if _is_nonstop(row)]
+        if omitted_nonstops and not any(_is_nonstop(row) for row in page):
+            page[-1] = min(omitted_nonstops, key=lambda row: row["price"])
+            print(
+                f"NOTE: omitted_nonstops: {len(omitted_nonstops) - 1}. The page held no nonstop, so the cheapest nonstop past "
+                "--max-results replaced its last row. Run the same search with --stops 0 to list every nonstop.",
+                file=sys.stderr,
+            )
+        return page
 
     except Exception as e:
         return [{"error": str(e), "origin": query.origin}]
