@@ -27,6 +27,12 @@ var (
 	bubbleURLRe        = regexp.MustCompile(`https?://\S+`)         // urls
 	bubbleDecimalRe    = regexp.MustCompile(`\b\d+[.,]\d+\b`)       // decimals: 8.6, 86,5
 	bubbleInitialismRe = regexp.MustCompile(`\b(?:[A-Za-z]\.){2,}`) // initialisms: W.A.S.T.E., U.K.
+	// Bare, schemeless hostnames: UGG.co.uk, example.com, sub-domain.example.co.uk. A dot-connected
+	// run with no interior whitespace is one token, never a full stop. Must run BEFORE bubbleAbbrRe,
+	// or an interior segment on the abbreviation allowlist ("co.", "st.") gets blanked mid-host and
+	// forges a false gap ("UGG.co.uk" -> "UGG. uk", which then trips). It matches no trailing dot, so
+	// a real stop after a host ("go to example.com. then leave") is preserved and still caught.
+	bubbleHostRe = regexp.MustCompile(`\b[\w-]+(?:\.[\w-]+)+\b`)
 	// Abbreviations, an allowlist, so an unlisted one reads as a full stop. Every entry is a word
 	// that is always followed by more, never one that can end a thought: protecting "etc." or "min."
 	// would blank the stop in "eggs, milk, etc. also bread" and let the wall through. Dotted forms
@@ -44,7 +50,7 @@ var (
 // stripProtected blanks out spans whose '.', '?' or '!' are not full stops, so
 // they cannot trip the lint.
 func stripProtected(text string) string {
-	for _, re := range []*regexp.Regexp{bubbleListMarkerRe, bubbleURLRe, bubbleDecimalRe, bubbleInitialismRe, bubbleAbbrRe, bubbleEllipsisRe} {
+	for _, re := range []*regexp.Regexp{bubbleListMarkerRe, bubbleURLRe, bubbleDecimalRe, bubbleInitialismRe, bubbleHostRe, bubbleAbbrRe, bubbleEllipsisRe} {
 		text = re.ReplaceAllString(text, " ")
 	}
 	return text
