@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from .payloads import AGENT_EVENT_CATEGORY
+
 
 def strip_odata(obj: Any) -> Any:
     """Recursively drop keys starting with `@odata.` from dicts and lists."""
@@ -44,17 +46,20 @@ def format_email_list(emails: list[dict[str, Any]]) -> str:
 
 
 def format_calendar_event_list(events: list[dict[str, Any]]) -> str:
-    """One line per event: start  end  subject  location  id."""
+    """One line per event: start  end  subject  location  id. An event the agent created gets a `[vesta]` prefix on its subject."""
     if not events:
         return "(no events)"
-    return "\n".join(
-        f"{_trunc(_pick(e, 'start', 'dateTime'), 20)}\t"
-        f"{_trunc(_pick(e, 'end', 'dateTime'), 20)}\t"
-        f"{_trunc(_pick(e, 'subject'), 80)}\t"
-        f"{_trunc(_pick(e, 'location', 'displayName'), 32)}\t"
-        f"{_pick(e, 'id')}"
-        for e in events
-    )
+    rows = []
+    for e in events:
+        mark = f"[{AGENT_EVENT_CATEGORY}] " if AGENT_EVENT_CATEGORY in (e["categories"] if "categories" in e else []) else ""
+        rows.append(
+            f"{_trunc(_pick(e, 'start', 'dateTime'), 20)}\t"
+            f"{_trunc(_pick(e, 'end', 'dateTime'), 20)}\t"
+            f"{mark}{_trunc(_pick(e, 'subject'), 80)}\t"
+            f"{_trunc(_pick(e, 'location', 'displayName'), 32)}\t"
+            f"{_pick(e, 'id')}"
+        )
+    return "\n".join(rows)
 
 
 def format_folder_list(folders: list[dict[str, Any]]) -> str:

@@ -29,7 +29,7 @@ import httpx
 
 from . import auth
 from .config import OWA_REST_SCOPES, read_json_marker
-from .payloads import EventFields, EventPatch, MailDraft
+from .payloads import AGENT_EVENT_CATEGORY, EventFields, EventPatch, MailDraft
 from .settings import OWA_REST_CLIENT_ID
 
 OWA_REST_BASE = "https://outlook.office.com/api/v2.0"
@@ -662,7 +662,7 @@ def delete_folder(client: httpx.Client, account_email: str, config, *, folder_id
 # Calendar
 # ---------------------------------------------------------------------------
 
-_EVENT_SELECT = "id,subject,start,end,location,organizer,isAllDay,attendees,body,bodyPreview"
+_EVENT_SELECT = "id,subject,start,end,location,organizer,isAllDay,attendees,body,bodyPreview,categories"
 
 
 def list_events(client: httpx.Client, account_email: str, config, *, start_utc: str, end_utc: str, limit: int = 100) -> list[dict]:
@@ -694,6 +694,7 @@ def create_event(client: httpx.Client, account_email: str, config, *, event: Eve
         "start": {"dateTime": event.start, "timeZone": event.timezone},
         "end": {"dateTime": event.end, "timeZone": event.timezone},
         "isAllDay": event.is_all_day,
+        "categories": [AGENT_EVENT_CATEGORY],
     }
     if event.body:
         payload["body"] = {"contentType": "Text", "content": event.body}

@@ -8,6 +8,10 @@ not support a field simply ignores it.
 
 import dataclasses
 
+# Stamped on every event this CLI creates and selected by every event read, so an entry the
+# agent put on the calendar never reads back as a plan the user made.
+AGENT_EVENT_CATEGORY = "vesta"
+
 
 @dataclasses.dataclass(frozen=True)
 class MailDraft:
