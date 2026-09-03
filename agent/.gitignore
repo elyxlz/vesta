@@ -21,8 +21,9 @@ htmlcov/
 .hypothesis/
 .tox/
 
-# Runtime data (local research, session state, secrets)
-data/
+# Runtime data (local research, session state, secrets), anchored so a nested data/ such as
+# skills/dashboard/app/src/data stays tracked
+/data/
 
 # Runtime memory (created at startup, not tracked)
 memory/conversations/
