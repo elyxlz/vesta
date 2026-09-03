@@ -57,7 +57,7 @@ def test_compose_requires_recipient(patched):
 
 def test_reply_draft_is_threaded_and_not_sent(patched):
     result = email.create_email_draft(Config(), None, account_email="me@example.com", mail=MailDraft(body="thanks", reply_to_id="orig-1"))
-    assert result == {"status": "drafted", "id": "reply-draft", "source_id": "orig-1"}
+    assert result == {"status": "drafted", "id": "reply-draft", "source_id": "orig-1", "to": "", "cc": ""}
     assert patched[0]["path"] == "/me/messages/orig-1/createReply"
     patch = _body_patch(patched)
     assert patch["path"] == "/me/messages/reply-draft"

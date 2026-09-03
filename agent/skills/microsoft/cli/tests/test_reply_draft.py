@@ -20,7 +20,7 @@ def _patch_graph(monkeypatch, calls, quote):
             return {"id": "reply-draft"}
         if method == "POST" and path.endswith("/createReplyAll"):
             return {"id": "replyall-draft"}
-        if method == "GET" and kwargs["params"]["$select"] == "body":
+        if method == "GET" and kwargs["params"]["$select"] == "body,toRecipients,ccRecipients":
             return {"body": quote}
         if method == "GET":
             return {

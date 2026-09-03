@@ -291,6 +291,43 @@ def test_graph_reply_all_creates_a_threaded_draft(tmp_path, monkeypatch):
     assert pending_send.list_pending(tmp_path)[0].action == "reply-all"
 
 
+def _patch_graph_reply_recipients(monkeypatch, calls, to, cc):
+    """Graph pre-fills a reply draft's recipients server-side; this fake reports them on the read-back."""
+    _patch_graph(monkeypatch, calls)
+    plain = email.graph.request_cfg
+
+    def request(config, client, method, path, account_id, **kwargs):
+        result = plain(config, client, method, path, account_id, **kwargs)
+        if method == "GET":
+            result["toRecipients"] = [{"emailAddress": {"address": addr}} for addr in to]
+            result["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
+        return result
+
+    monkeypatch.setattr(email.graph, "request_cfg", request)
+
+
+def test_a_queued_reply_to_the_accounts_own_message_reports_the_account_as_recipient(tmp_path, monkeypatch):
+    calls = []
+    config = Config(data_dir=tmp_path)
+    _patch_graph_reply_recipients(monkeypatch, calls, to=["me@example.com"], cc=[])
+
+    result = email.reply_to_email(config, None, account_email="me@example.com", email_id="my-sent-1", body="Following up")
+
+    assert result["status"] == "pending"
+    assert result["recipients"] == "me@example.com"
+    assert pending_send.list_pending(tmp_path)[0].public()["recipients"] == "me@example.com"
+
+
+def test_a_queued_reply_all_reports_the_threads_to_and_cc(tmp_path, monkeypatch):
+    calls = []
+    config = Config(data_dir=tmp_path)
+    _patch_graph_reply_recipients(monkeypatch, calls, to=["bob@example.com"], cc=["carol@example.com"])
+
+    result = email.reply_to_email(config, None, account_email="me@example.com", email_id="my-sent-1", body="Thanks all", reply_all=True)
+
+    assert result["recipients"] == "bob@example.com, carol@example.com"
+
+
 def test_graph_immediate_reply_with_attachments_sends_the_body_over_the_quote(tmp_path, monkeypatch):
     calls = []
     config = Config(data_dir=tmp_path)

@@ -18,6 +18,8 @@ microsoft email search --account user@example.com --query "invoice" --since 2021
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
 
+`reply` answers the message's sender, so when the latest message in the thread is the account's own, that sender is the account itself and the reply goes nowhere else. In that case use `--reply-all`, which addresses the original recipients, or `send --to <addr>` with the `RE:` subject; the `recipients` field of the queued send shows where it will go.
+
 ## Delayed send and undo
 
 Send, reply, and forward operations wait 30 seconds by default across all Microsoft accounts and both email backends. The delay is one persisted setting for the Microsoft client and cannot be overridden on an individual send:
@@ -106,3 +108,4 @@ microsoft email attachment --account user@example.com --id '<email_id>' --attach
 - `--no-attachments` on `email get` skips attachment metadata; `--save-to` overrides the auto-save path for the body.
 - **`email get` always saves the body to disk** under `~/.microsoft/emails/<account>/<timestamp>_<subject>_<id>.txt` (`<account>` is the `--account` address lowercased, every character that is not a letter or digit replaced by `_`) and strips it from the JSON response. The JSON returns `body: {saved_to, length, size_bytes, _note}` plus the legacy `body_saved_to`, `body_saved_size`, `body_length` fields, and a short `preview`. To inspect content, read the file at `body.saved_to`. The full `body.content` field is intentionally never returned inline to keep agent context small. Bodies over 5000 chars also surface a warning telling you to grep/crop before pasting snippets. `microsoft auth remove --account <email>` deletes that account's saved bodies together with its sign-in.
 - `--categories` on `email update` accepts multiple space-separated names; `--flagged`/`--unflagged` set or clear the follow-up flag.
+- **Which threads are waiting on whom.** "Nothing new arrived" says nothing about what already sits in a thread, so read both directions: `email list --folder sent --since <date> --limit N --json` and `email list --since <date> --limit N --json`. Group the two lists by `conversationId` and take each group's latest `receivedDateTime`. Compare that message's `from` to the account: their message last means the thread is waiting on you, your message last means you are waiting on them. A list that returns exactly `--limit` items did not read the whole window (the CLI prints a NOTE on stderr), so raise `--limit` before you call a thread unanswered.
