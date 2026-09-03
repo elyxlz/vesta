@@ -1,3 +1,7 @@
+---
+hosts: share.1password.com
+---
+
 # 1Password share links (share.1password.com), reading a shared credential
 
 Field-tested 2026-08-30. A 1Password one-time **share link** (`https://share.1password.com/s#<fragment>`)
@@ -43,7 +47,9 @@ from `innerText` first if the item has an unusual shape (e.g. an API-key item wi
 
 ## Security
 
-The captured secret is a real user credential. Use it for the task at hand, never echo it back to
-the user or into any visible surface, and let the nightly `dream` redaction scrub it from history.
-Do not persist it to disk unless the user asked you to store it (then use the `1password` skill /
-their vault, not a plaintext file).
+The captured secret is a real user credential. Use it for the task at hand and never echo it back
+to the user or into any visible surface. A human-chosen password matches no API-key shape, so the
+nightly `dream` scan cannot find it: scrub it yourself with
+`redact_secrets.sh --scrub-literal '<exact value>'` (documented in the `dream` skill). Do not
+persist it to disk unless the user asked you to store it (then use their vault, not a plaintext
+file).

@@ -1,8 +1,11 @@
+---
+hosts: thetrainline.com
+---
+
 # thetrainline.com, booking a UK train ticket (logged in)
 
-Field-tested 2026-08-30, booking a London Bridge → Three Bridges return with a saved account. The
-site is a React SPA; the search widget's date/passenger controls are the fiddly part. Sequence that
-worked end-to-end:
+Field-tested 2026-08-30, booking a same-day return with a saved account. The site is a React SPA;
+the search widget's date/passenger controls are the fiddly part. Sequence that worked end-to-end:
 
 ## 1. Cookie + region walls (do first)
 - A **OneTrust** consent dialog blocks all clicks until dismissed. Click **"Necessary only"** (a
@@ -25,8 +28,8 @@ account name appears in the header and no "incorrect/verify" error text is prese
 - **Journey type**: the `#return` radio responds to a plain `.click()`.
 - **Calendar day cells + time selects DO NOT respond to synthetic `.value` / dispatched events** , 
   React reverts them instantly. Use **real input**:
-  - Day cell: get its `getBoundingClientRect()` centre and use the Python helper `click(x, y)` (NOT
-    `browser click <ref>`, which is ref-only). Viewport is 2560-wide, dpr 1, so CSS px == device px.
+  - Day cell: get its `getBoundingClientRect()` centre and click it by coordinate (the Python
+    helper `click(x, y)` or `browser click --at X Y`).
   - Hour/minute `<select>`: `click(x,y)` to focus, then `press_key("ArrowUp"/"ArrowDown")` N times
     to step the value (a focused native select changes on arrow keys and fires a trusted change).
   - The **passenger age** confirm select (US-origin accounts demand "Select age") DOES accept the
@@ -38,8 +41,7 @@ account name appears in the header and no "incorrect/verify" error text is prese
 "Find cheap tickets" opens the results in a **new tab** (URL `/book/results?...`); the origin tab
 stays on the homepage, which looks like a failed submit. Run `browser tabs` and switch to the
 `book/results` tab. Clicking the button several times spawns several duplicate results tabs, close
-the extras. The results URL carries station URNs, e.g. `urn:trainline:generic:loc:LBG5148gb` (London
-Bridge), `...:TBD5491gb` (Three Bridges).
+the extras.
 
 ## 5. Fares
 Trainline pre-selects a sensible cheapest option. For a same-day round trip the flexible winner is
