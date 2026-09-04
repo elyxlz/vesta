@@ -5,7 +5,7 @@ import sys
 import time
 
 import pytest
-from vesta_browser import chromium, serve
+from vesta_browser import chromium, serve, sessions
 from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
 
@@ -74,6 +74,15 @@ def _pid_alive(pid):
     except ProcessLookupError:
         return False
     return True
+
+
+async def _wait_until_dead(pid, timeout=POLL_DEADLINE_SECS):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return True
+        await asyncio.sleep(POLL_INTERVAL_SECS)
+    return False
 
 
 def test_exec_on_a_new_session_starts_chromium_and_returns_the_full_envelope(paths):
@@ -210,11 +219,103 @@ def test_idle_sweep_stops_a_ready_session(paths, monkeypatch):
 
     async def run():
         await serve.request(paths, _exec("research", "print(1)"))
-        await asyncio.sleep(1.0)
+        await _wait_for_state(paths, "research", "stopped")
         return await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
 
     res = _with_daemon(paths, run)
     assert res["data"]["sessions"][0]["state"] == "stopped"
+
+
+def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
+    """One raised exception must not end the loop that stops every idle browser for this daemon's life."""
+    monkeypatch.setattr(serve, "IDLE_SWEEP_SECS", 0.05)
+    monkeypatch.setattr(serve, "IDLE_STOP_SECS", 0)
+    original = serve._stop_session
+    calls = []
+
+    async def flaky(session, *, force=False):
+        calls.append(session.name)
+        if len(calls) == 1:
+            raise RuntimeError("sweep boom")
+        return await original(session, force=force)
+
+    monkeypatch.setattr(serve, "_stop_session", flaky)
+
+    async def run():
+        await serve.request(paths, _exec("research", "print(1)"))
+        await _wait_for_state(paths, "research", "stopped")
+        return len(calls)
+
+    assert _with_daemon(paths, run) >= 2
+
+
+def test_a_total_start_failure_frees_the_session_and_kills_the_browser(paths, monkeypatch):
+    """A failure the engine cannot name still has to leave no browser behind and no wedged session."""
+
+    def _garbage(_url):
+        raise ValueError("devtools answered with garbage")
+
+    async def run():
+        original = chromium._fetch_json
+        monkeypatch.setattr(chromium, "_fetch_json", _garbage)
+        failed = await serve.request(paths, _exec("research", "print(1)"))
+        listing = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
+        pid = int((paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        dead = await _wait_until_dead(pid)
+        monkeypatch.setattr(chromium, "_fetch_json", original)
+        recovered = await serve.request(paths, _exec("research", "print(1)", request_id="r2"))
+        return failed, listing, dead, recovered
+
+    failed, listing, dead, recovered = _with_daemon(paths, run)
+    assert failed["ok"] is False and failed["error"]["code"] == "engine_unavailable"
+    assert listing["data"]["sessions"][0]["state"] == "stopped"
+    assert dead is True
+    assert recovered["ok"] is True
+
+
+def test_a_stop_marks_the_session_before_it_awaits_the_engine(paths, monkeypatch):
+    """An exec racing a stop must find a `stopped` session, never one the stop is still tearing down."""
+    seen = {}
+    original = chromium.stop
+
+    async def _record_then_stop(runtime, session):
+        seen["state"] = session.state
+        seen["runtime"] = session.runtime
+        await original(runtime, session)
+
+    async def run():
+        table = sessions.load_table(paths)
+        session = sessions.resolve_session(table, "research", None)
+        session.runtime = await chromium.start(session, paths)
+        sessions.mark(session, "ready")
+        monkeypatch.setattr(serve.ENGINES["chromium"], "stop", _record_then_stop)
+        await serve._stop_session(session, force=True)
+        return seen
+
+    assert asyncio.run(run()) == {"state": "stopped", "runtime": None}
+
+
+def test_shutdown_kills_a_session_whose_engine_stop_hangs(paths, monkeypatch):
+    """The stop budget is below the SIGKILL `browser daemon stop` lands, so nothing outlives the daemon."""
+
+    async def _hang(_runtime, _session):
+        await asyncio.sleep(60)
+
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        session = sessions.resolve_session(state.table, "research", None)
+        session.runtime = await chromium.start(session, paths)
+        sessions.mark(session, "ready")
+        pid = int((session.profile_dir / "fake.pid").read_text())
+        monkeypatch.setattr(serve, "SHUTDOWN_BUDGET_SECS", 0.2)
+        monkeypatch.setattr(serve.ENGINES["chromium"], "stop", _hang)
+        started = time.monotonic()
+        await serve.shutdown(state)
+        return time.monotonic() - started, await _wait_until_dead(pid)
+
+    elapsed, dead = asyncio.run(run())
+    assert elapsed < 5
+    assert dead is True
 
 
 def test_shutdown_ends_an_inflight_exec_and_kills_its_processes(paths):

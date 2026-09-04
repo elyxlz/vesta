@@ -29,6 +29,11 @@ pathlib.Path(profile, "fake.pid").write_text(str(os.getpid()))
 time.sleep(30)
 """
 
+FAKE_WORKER_COMPLAINS_AND_EXITS = """
+import sys
+print("camoufox-worker-stderr-marker", file=sys.stderr, flush=True)
+"""
+
 FAKE_WORKER_IGNORES_STDIN = """
 import json, os, pathlib, sys, time
 profile = sys.argv[sys.argv.index("--profile") + 1]
@@ -180,6 +185,39 @@ def test_stop_kills_a_worker_that_never_answers(rig, monkeypatch):
 
     async def run():
         runtime = await camoufox.start(session, fake_paths)
+        await asyncio.wait_for(camoufox.stop(runtime, session), 5)
+        return runtime.process.returncode
+
+    assert asyncio.run(run()) is not None
+
+
+def test_a_failed_start_leaves_the_workers_stderr_in_the_daemon_log(rig):
+    """The worker's stderr is the whole diagnosis of a browser that would not come up."""
+    paths, session = rig
+    fake = _write_fake_worker(session.scratch_dir, "complaining_worker.py", FAKE_WORKER_COMPLAINS_AND_EXITS)
+    fake_paths = dataclasses.replace(paths, worker_script=fake)
+
+    async def run():
+        with pytest.raises(camoufox.p.BrowserError) as excinfo:
+            await camoufox.start(session, fake_paths)
+        return excinfo.value
+
+    err = asyncio.run(run())
+    assert err.err["code"] == "engine_unavailable"
+    assert "camoufox-worker-stderr-marker" in paths.log.read_text()
+
+
+def test_stop_does_not_ask_a_worker_that_has_already_exited(rig, monkeypatch):
+    """A dead worker cannot answer, so the ask is skipped; only the group kill still has work to do."""
+    paths, session = rig
+
+    async def _refuse(*_args, **_kwargs):
+        raise AssertionError("stop asked an exited worker")
+
+    async def run():
+        runtime = await camoufox.start(session, paths)
+        await camoufox.exec_code(runtime, session, paths, "import time; time.sleep(30)", timeout_s=1)
+        monkeypatch.setattr(camoufox, "_ask", _refuse)
         await asyncio.wait_for(camoufox.stop(runtime, session), 5)
         return runtime.process.returncode
 

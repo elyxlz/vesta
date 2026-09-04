@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import signal
+import sys
 
 import pytest
 from vesta_browser import chromium, sessions
@@ -162,5 +164,49 @@ def test_start_kills_chromium_when_cancelled_before_devtools_is_ready(rig, monke
             if loop.time() > death_deadline:
                 return False
             await asyncio.sleep(0.05)
+
+    assert _run(run()) is True
+
+
+async def _spawn_marked(marker: str) -> asyncio.subprocess.Process:
+    """A process whose argv carries `marker`, so /proc/<pid>/cmdline decides its identity."""
+    return await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(30)", marker)
+
+
+def _write_harness_record(session, pid: int):
+    record = session.scratch_dir / "runtime" / "bu.pid"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"pid": pid, "started": 1}))
+    return record
+
+
+def test_stop_kills_the_harness_daemon_the_record_names_and_drops_the_record(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await chromium.start(session, paths)
+        harness = await _spawn_marked("browser_harness.daemon")
+        record = _write_harness_record(session, harness.pid)
+        await chromium.stop(runtime, session)
+        await asyncio.wait_for(harness.wait(), 5)
+        return harness.returncode, record.exists()
+
+    returncode, record_kept = _run(run())
+    assert returncode == -signal.SIGTERM
+    assert record_kept is False
+
+
+def test_stop_leaves_a_recycled_pid_alone(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await chromium.start(session, paths)
+        stranger = await _spawn_marked("some-other-program")
+        _write_harness_record(session, stranger.pid)
+        await chromium.stop(runtime, session)
+        survived = stranger.returncode is None and chromium._pid_alive(stranger.pid)
+        stranger.terminate()
+        await stranger.wait()
+        return survived
 
     assert _run(run()) is True

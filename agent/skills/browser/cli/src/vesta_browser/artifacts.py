@@ -84,12 +84,16 @@ def collect(session: Session, stdout: str, started_at: float, now: tp.Callable[[
 
 
 def prune(paths: Paths, now: float | None = None) -> int:
+    """Age out both screenshot homes under one retention: the artifact dirs the daemon reports from,
+    and the session scratch `tmp` dirs Browser Harness writes into and never cleans."""
     cutoff = (time.time() if now is None else now) - ARTIFACT_RETENTION_DAYS * 86400
+    roots = [paths.artifacts, *sorted(paths.sessions.glob("*/tmp"))]
     removed = 0
-    if not paths.artifacts.is_dir():
-        return 0
-    for path in paths.artifacts.rglob("*"):
-        if path.is_file() and path.stat().st_mtime < cutoff:
-            path.unlink()
-            removed += 1
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
     return removed

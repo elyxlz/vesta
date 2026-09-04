@@ -15,7 +15,7 @@ import typing as tp
 
 from . import protocol as p
 from .presets import select_preset
-from .procs import kill_group
+from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
 from .runtimes import CamoufoxRuntime, ExecOutcome
 from .sessions import Session
@@ -29,7 +29,7 @@ def _unavailable(message: str) -> p.BrowserError:
 
 
 async def _fail_startup(process: asyncio.subprocess.Process, message: str) -> tp.NoReturn:
-    await kill_group(process, 1)
+    await kill_group(process, KILL_GRACE_SECS)
     raise _unavailable(message) from None
 
 
@@ -67,13 +67,17 @@ async def start(session: Session, paths: Paths, *, headed: bool = False) -> Camo
     config_path = session.scratch_dir / "camou-config.json"
     preset = {key: value for key, value in select_preset(session.profile_dir).items() if not key.startswith("_")}
     config_path.write_text(json.dumps(preset))
-    process = await asyncio.create_subprocess_exec(
-        *worker_argv(paths, session, config_path, headed),
-        start_new_session=True,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+    paths.log.parent.mkdir(parents=True, exist_ok=True)
+    # The worker's stderr is its whole diagnosis of a browser that would not come up; it belongs in
+    # the daemon log beside everything else, never in /dev/null.
+    with paths.log.open("ab") as log:
+        process = await asyncio.create_subprocess_exec(
+            *worker_argv(paths, session, config_path, headed),
+            start_new_session=True,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=log,
+        )
     if process.stdout is None:
         raise RuntimeError("camoufox worker has no pipe")
     try:
@@ -81,8 +85,10 @@ async def start(session: Session, paths: Paths, *, headed: bool = False) -> Camo
     except TimeoutError:
         await _fail_startup(process, f"camoufox worker did not report ready within {CAMOUFOX_READY_TIMEOUT_SECS}s")
     except asyncio.CancelledError:
-        await kill_group(process, 1)
+        await kill_group(process, KILL_GRACE_SECS)
         raise
+    except Exception as exc:
+        await _fail_startup(process, f"camoufox worker failed during startup: {exc}")
     if not line:
         await _fail_startup(process, f"camoufox worker exited during startup (code {process.returncode})")
     try:
@@ -114,13 +120,13 @@ async def exec_code(runtime: CamoufoxRuntime, _session: Session, _paths: Paths, 
     try:
         answer = await _ask(runtime, {"op": "exec", "code": code}, timeout_s)
     except TimeoutError:
-        await kill_group(runtime.process, 1)
+        await kill_group(runtime.process, KILL_GRACE_SECS)
         return ExecOutcome("", "", None, int((time.monotonic() - started) * 1000), timed_out=True)
     except asyncio.CancelledError:
-        await kill_group(runtime.process, 1)
+        await kill_group(runtime.process, KILL_GRACE_SECS)
         raise
     except (ConnectionError, ValueError) as exc:
-        await kill_group(runtime.process, 1)
+        await kill_group(runtime.process, KILL_GRACE_SECS)
         return ExecOutcome("", str(exc), None, int((time.monotonic() - started) * 1000), warnings=["worker_restarted"])
     runtime.last_page = _page_info(answer["page"])
     mismatch = answer["capability_mismatch"]
@@ -145,6 +151,8 @@ async def observe(runtime: CamoufoxRuntime) -> p.PageInfo:
 
 
 async def stop(runtime: CamoufoxRuntime, _session: Session) -> None:
+    """The graceful ask is skipped for a worker that has already exited; the group kill is not,
+    because a browser child can outlive the worker that owned it."""
     try:
         if runtime.process.returncode is None:
             with contextlib.suppress(TimeoutError, ConnectionError, ValueError):

@@ -23,13 +23,17 @@ from . import artifacts, camoufox, chromium, doctor
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State, routes
+from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths, load_paths
 from .runtimes import ExecOutcome
 
 logger = logging.getLogger(__name__)
 IDLE_SWEEP_SECS = 60
 IDLE_STOP_SECS = p.SESSION_IDLE_STOP_SECS
-CLIENT_TIMEOUT_SECS = 5.0
+PRUNE_INTERVAL_SECS = 3600
+# `browser daemon stop` SIGKILLs this process two thirds into its own stop budget, so every session
+# teardown shares one budget below that point; whatever the budget catches is killed outright.
+SHUTDOWN_BUDGET_SECS = 6.0
 
 ENGINES = {"chromium": chromium, "camoufox": camoufox}
 
@@ -77,8 +81,11 @@ async def _ensure_running(state: State, session: sessions_mod.Session) -> list[s
     sessions_mod.mark(session, "starting")
     try:
         session.runtime = await ENGINES[session.engine].start(session, state.paths)
-    except p.BrowserError:
+    except Exception:
+        # Any failure at all, not only a named one: a session left `starting` refuses every later
+        # exec and no command can bring it back.
         sessions_mod.mark(session, "stopped")
+        session.runtime = None
         raise
     sessions_mod.mark(session, "ready")
     return ["worker_restarted"] if restarted else []
@@ -92,9 +99,11 @@ async def _stop_session(session: sessions_mod.Session, *, force: bool = False) -
         return False
     runtime = session.runtime
     session.runtime = None
+    # Marked before the engine stop is awaited, so an exec arriving during the teardown sees a
+    # stopped session and starts a runtime of its own that this trailing write cannot undo.
+    sessions_mod.mark(session, "stopped")
     if runtime is not None:
         await ENGINES[session.engine].stop(runtime, session)
-    sessions_mod.mark(session, "stopped")
     return True
 
 
@@ -240,12 +249,22 @@ async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonV
 
 
 async def _idle_sweep(state: State) -> None:
+    """The daemon's one background loop: idle sessions every pass, artifacts once an hour. A pass
+    that fails is logged and the loop goes on, because a dead sweep leaves browsers running for the
+    life of the daemon with nothing saying so."""
+    since_prune = 0.0
     while True:
         await asyncio.sleep(IDLE_SWEEP_SECS)
-        for session in sessions_mod.idle_sessions(state.table, IDLE_STOP_SECS):
-            logger.info("stopping idle session %s", session.name)
-            await _stop_session(session)
-        artifacts.prune(state.paths)
+        try:
+            for session in sessions_mod.idle_sessions(state.table, IDLE_STOP_SECS):
+                logger.info("stopping idle session %s", session.name)
+                await _stop_session(session)
+            since_prune += IDLE_SWEEP_SECS
+            if since_prune >= PRUNE_INTERVAL_SECS:
+                since_prune = 0.0
+                await asyncio.to_thread(artifacts.prune, state.paths)
+        except Exception:
+            logger.exception("idle sweep pass failed")
 
 
 Handler = tp.Callable[[State, str, dict[str, p.JsonValue]], tp.Awaitable[p.Result]]
@@ -320,6 +339,7 @@ async def serve(paths: Paths) -> int:
         )
     finally:
         os.umask(old_umask)
+    await asyncio.to_thread(artifacts.prune, paths)
     sweep_task = asyncio.create_task(_idle_sweep(state))
     state.tasks.add(sweep_task)
     sweep_task.add_done_callback(state.tasks.discard)
@@ -339,6 +359,24 @@ async def serve(paths: Paths) -> int:
     return 0
 
 
+async def _stop_every_session(state: State) -> None:
+    """Every session torn down at once inside one budget, not one after another: a stop that is
+    still running when the budget expires has its process group killed, because the alternative is
+    a browser orphaned by the SIGKILL that ends this daemon, still holding its profile lock."""
+    sessions = list(state.table.sessions.values())
+    if not sessions:
+        return
+    runtimes = [session.runtime for session in sessions]
+    stops = [asyncio.ensure_future(_stop_session(session, force=True)) for session in sessions]
+    _, pending = await asyncio.wait(stops, timeout=SHUTDOWN_BUDGET_SECS)
+    if not pending:
+        return
+    for task in pending:
+        task.cancel()
+    stuck = [runtime for task, runtime in zip(stops, runtimes, strict=True) if task in pending and runtime is not None]
+    await asyncio.gather(*[kill_group(runtime.process, KILL_GRACE_SECS) for runtime in stuck], *pending, return_exceptions=True)
+
+
 async def shutdown(state: State) -> None:
     """Cancels the idle sweep, cancels and awaits every inflight exec, then force-stops every session."""
     for task in list(state.tasks):
@@ -351,8 +389,7 @@ async def shutdown(state: State) -> None:
         task.cancel()
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
-    for session in state.table.sessions.values():
-        await _stop_session(session, force=True)
+    await _stop_every_session(state)
 
 
 def ping(paths: Paths, timeout: float) -> bool:

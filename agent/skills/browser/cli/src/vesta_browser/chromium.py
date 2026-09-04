@@ -18,16 +18,20 @@ import time
 import urllib.request
 
 from . import protocol as p
-from .procs import kill_group
+from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
 from .runtimes import ChromiumRuntime, ExecOutcome
 from .sessions import Session
 
 CHROMIUM_READY_TIMEOUT_SECS = 30
 READY_POLL_SECS = 0.1
+PID_POLL_SECS = 0.05
 OBSERVE_TIMEOUT_SECS = 5
 HARNESS_STOP_GRACE_SECS = 3
 BROWSER_STOP_GRACE_SECS = 5
+# The harness daemon runs as `python -m browser_harness.daemon`, so its own argv is what proves the
+# recorded pid is still that daemon.
+HARNESS_MARKER = b"browser_harness"
 
 
 def launch_argv(paths: Paths, session: Session) -> list[str]:
@@ -45,9 +49,13 @@ def launch_argv(paths: Paths, session: Session) -> list[str]:
     ]
 
 
+def _path() -> str:
+    return os.environ["PATH"] if "PATH" in os.environ else "/usr/local/bin:/usr/bin:/bin"
+
+
 def child_env(session: Session, port: int) -> dict[str, str]:
     return {
-        "PATH": os.environ["PATH"] if "PATH" in os.environ else "/usr/local/bin:/usr/bin:/bin",
+        "PATH": _path(),
         "HOME": str(pl.Path.home()),
         "LANG": os.environ["LANG"] if "LANG" in os.environ else "C.UTF-8",
         "TMPDIR": str(session.scratch_dir / "tmp"),
@@ -80,19 +88,20 @@ async def start(session: Session, paths: Paths) -> ChromiumRuntime:
         (session.scratch_dir / sub).mkdir(exist_ok=True)
     port_file = session.profile_dir / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
-    env = {"PATH": child_env(session, 0)["PATH"], "HOME": str(pl.Path.home())}
     process = await asyncio.create_subprocess_exec(
         *launch_argv(paths, session),
-        env=env,
+        env={"PATH": _path(), "HOME": str(pl.Path.home())},
         start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
     deadline = time.monotonic() + CHROMIUM_READY_TIMEOUT_SECS
+    exited: int | None = None
     try:
         while time.monotonic() < deadline:
             if process.returncode is not None:
-                raise _unavailable(f"chromium exited with {process.returncode} during startup")
+                exited = process.returncode
+                break
             if port_file.is_file():
                 first = port_file.read_text().splitlines()
                 if first and first[0].isdigit():
@@ -107,7 +116,14 @@ async def start(session: Session, paths: Paths) -> ChromiumRuntime:
     except asyncio.CancelledError:
         await kill_group(process, BROWSER_STOP_GRACE_SECS)
         raise
+    except Exception as exc:
+        # Every other failure here (an unreadable port file, a DevTools answer that is not JSON)
+        # leaves a browser running that nothing else holds a handle to.
+        await kill_group(process, BROWSER_STOP_GRACE_SECS)
+        raise _unavailable(f"chromium startup failed: {exc}") from exc
     await kill_group(process, BROWSER_STOP_GRACE_SECS)
+    if exited is not None:
+        raise _unavailable(f"chromium exited with {exited} during startup")
     raise _unavailable(f"chromium did not expose DevTools within {CHROMIUM_READY_TIMEOUT_SECS}s")
 
 
@@ -125,10 +141,10 @@ async def exec_code(runtime: ChromiumRuntime, session: Session, paths: Paths, co
     try:
         out, err = await asyncio.wait_for(child.communicate(code.encode()), timeout_s)
     except TimeoutError:
-        await kill_group(child, 1)
+        await kill_group(child, KILL_GRACE_SECS)
         return ExecOutcome("", "", None, int((time.monotonic() - started) * 1000), timed_out=True)
     except asyncio.CancelledError:
-        await kill_group(child, 1)
+        await kill_group(child, KILL_GRACE_SECS)
         raise
     return ExecOutcome(out.decode(errors="replace"), err.decode(errors="replace"), child.returncode, int((time.monotonic() - started) * 1000))
 
@@ -167,22 +183,45 @@ def _harness_pid(session: Session) -> int | None:
         return None
 
 
-async def stop(runtime: ChromiumRuntime, session: Session) -> None:
-    pid = _harness_pid(session)
-    if pid is not None:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGTERM)
-        await asyncio.sleep(0)
-    await kill_group(runtime.process, BROWSER_STOP_GRACE_SECS)
-    if pid is not None:
-        await asyncio.sleep(HARNESS_STOP_GRACE_SECS if _pid_alive(pid) else 0)
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGKILL)
-
-
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     return True
+
+
+def _is_harness(pid: int) -> bool:
+    """Whether the recorded pid is still the harness daemon that was recorded.
+
+    The scratch dir outlives the container, so a record can name a pid the kernel has since handed
+    to something else; signalling on the record alone would kill that stranger.
+    """
+    try:
+        cmdline = pl.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    return HARNESS_MARKER in cmdline
+
+
+async def _await_exit(pid: int, grace: float) -> bool:
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return True
+        await asyncio.sleep(PID_POLL_SECS)
+    return not _pid_alive(pid)
+
+
+async def stop(runtime: ChromiumRuntime, session: Session) -> None:
+    pid = _harness_pid(session)
+    if pid is not None and _is_harness(pid):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
+    else:
+        pid = None
+    await kill_group(runtime.process, BROWSER_STOP_GRACE_SECS)
+    if pid is not None and not await _await_exit(pid, HARNESS_STOP_GRACE_SECS):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    (session.scratch_dir / "runtime" / "bu.pid").unlink(missing_ok=True)

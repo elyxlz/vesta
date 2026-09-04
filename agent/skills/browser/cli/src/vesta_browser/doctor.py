@@ -9,7 +9,7 @@ import pathlib as pl
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State, routes
-from .procs import kill_group
+from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
 
 VERSION_PROBE_TIMEOUT_SECS = 10
@@ -25,7 +25,7 @@ async def _probe(argv: list[str]) -> str:
     try:
         out, _ = await asyncio.wait_for(process.communicate(), VERSION_PROBE_TIMEOUT_SECS)
     except TimeoutError:
-        await kill_group(process, 1)
+        await kill_group(process, KILL_GRACE_SECS)
         return "unavailable"
     text = out.decode(errors="replace").strip()
     return text if process.returncode == 0 and text else "unavailable"

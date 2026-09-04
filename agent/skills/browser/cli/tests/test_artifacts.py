@@ -105,3 +105,19 @@ def test_prune_removes_only_files_past_retention(tmp_path):
     fresh.write_bytes(PNG)
     assert a.prune(paths) == 1
     assert not old.exists() and fresh.exists()
+
+
+def test_prune_ages_out_the_session_tmp_dir_too(tmp_path):
+    """Browser Harness writes its screenshots into the session scratch tmp and never cleans them."""
+    paths = load_paths({}, tmp_path)
+    session = s.resolve_session(s.load_table(paths), "research", None)
+    scratch_tmp = session.scratch_dir / "tmp"
+    scratch_tmp.mkdir()
+    old = scratch_tmp / "old-shot.png"
+    old.write_bytes(PNG)
+    stamp = time.time() - (a.ARTIFACT_RETENTION_DAYS + 1) * 86400
+    os.utime(old, (stamp, stamp))
+    fresh = scratch_tmp / "fresh-shot.png"
+    fresh.write_bytes(PNG)
+    assert a.prune(paths) == 1
+    assert not old.exists() and fresh.exists()
