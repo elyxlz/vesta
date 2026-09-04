@@ -3,8 +3,9 @@
 //! key works in the path prefix an iframe's sub-resources inherit and in the query string a
 //! WebSocket upgrade is limited to, revoking it takes effect immediately on both, the mint and
 //! revoke endpoints are authenticated and self-scoped to one agent, vestad hands its
-//! inner-proxy agent token to the raw agent port alone, and the client credential the proxy
-//! consumed (Authorization header, `?token=` pair) never reaches an upstream.
+//! inner-proxy agent token to the raw agent port alone, the client credential the proxy
+//! consumed (Authorization header, `?token=` pair) never reaches an upstream, and a
+//! credential vestad did not issue reaches it untouched.
 
 use vesta_tests::{
     agent_container_name, exec_in_container, unique_agent, ProxyAuth, TestAgent, SERVER,
@@ -38,29 +39,54 @@ http.server.HTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
 PY
 screen -dmS header-echo python3 /tmp/header-echo.py"#;
 
-/// Create a running agent with `service` registered, backed by the header-echo upstream.
-/// Returns the agent handle (kept alive by the caller so its Drop still destroys it).
+/// Create a running agent with `service` registered private, backed by the header-echo
+/// upstream. Returns the agent handle (kept alive by the caller so its Drop still destroys it).
 fn agent_serving<'client>(
     client: &'client vesta_tests::client::Client,
     prefix: &str,
     service: &str,
 ) -> (TestAgent<'client>, serde_json::Value) {
+    let agent = running_agent(client, prefix);
+    let registered = client
+        .register_service(&agent.name, service)
+        .expect("register service");
+    start_header_echo(&agent, &registered);
+    (agent, registered)
+}
+
+/// `agent_serving` with the service registered public, the shape of a webhook endpoint.
+fn agent_serving_public<'client>(
+    client: &'client vesta_tests::client::Client,
+    prefix: &str,
+    service: &str,
+) -> (TestAgent<'client>, serde_json::Value) {
+    let agent = running_agent(client, prefix);
+    let registered = client
+        .register_public_service(&agent.name, service)
+        .expect("register public service");
+    start_header_echo(&agent, &registered);
+    (agent, registered)
+}
+
+fn running_agent<'client>(
+    client: &'client vesta_tests::client::Client,
+    prefix: &str,
+) -> TestAgent<'client> {
     let agent = TestAgent::create(client, &unique_agent(prefix)).expect("create agent");
     client.start_agent(&agent.name).expect("start agent");
     client
         .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent running");
+    agent
+}
 
-    let registered = client
-        .register_service(&agent.name, service)
-        .expect("register service");
+fn start_header_echo(agent: &TestAgent<'_>, registered: &serde_json::Value) {
     let port = registered["port"].as_u64().expect("port in response");
     exec_in_container(
         &agent_container_name(&agent.name),
         &format!("{HEADER_ECHO_UPSTREAM} {port}"),
     )
     .expect("start header-echo upstream");
-    (agent, registered)
 }
 
 #[test]
@@ -340,6 +366,66 @@ fn the_consumed_client_credential_never_reaches_the_upstream() {
     assert!(
         !echoed_headers(&body).contains_key("authorization"),
         "no Authorization header materializes upstream, got: {body}"
+    );
+}
+
+/// A credential vestad did not issue is the upstream's own to verify, so the proxy forwards
+/// it as sent: a signed third-party callback (a bot framework's JWT in `Authorization`, a
+/// `?token=` the caller chose) works behind the gate. On a private service the vestad
+/// credential that opened the request is still removed while the third party's rides through.
+#[test]
+fn a_credential_vestad_did_not_issue_reaches_the_upstream_untouched() {
+    let client = SERVER.client();
+    let (agent, _) = agent_serving_public(&client, "svc-fwd", "hook");
+
+    let (status, body) = client
+        .proxy_get(
+            &format!("/agents/{}/hook/echo?token=theirs&sig=abc", agent.name),
+            ProxyAuth::Bearer("eyJ.third.party"),
+        )
+        .expect("reach the public service with a third-party bearer");
+    assert_eq!(
+        status, 200,
+        "a public service needs no vestad credential, got: {body}"
+    );
+    assert_eq!(
+        echoed_headers(&body)["authorization"],
+        "Bearer eyJ.third.party",
+        "the third-party bearer is forwarded as sent, got: {body}"
+    );
+    assert_eq!(
+        echoed_path(&body),
+        "/echo?token=theirs&sig=abc",
+        "a token= pair vestad did not issue is forwarded as sent"
+    );
+
+    let (private_agent, _) = agent_serving(&client, "svc-fwd-private", "probe");
+    let minted = client
+        .mint_service_key(&private_agent.name, "probe")
+        .expect("mint service key");
+    let key = minted["key"].as_str().expect("secret in mint response");
+    let (status, body) = client
+        .proxy_get(
+            &format!(
+                "/agents/{}/probe/echo?token={key}&sig=abc",
+                private_agent.name
+            ),
+            ProxyAuth::Bearer("eyJ.third.party"),
+        )
+        .expect("reach the private service with a query-string service key");
+    assert_eq!(
+        status, 200,
+        "the service key opens the service, got: {body}"
+    );
+    assert_eq!(
+        echoed_headers(&body)["authorization"],
+        "Bearer eyJ.third.party",
+        "the third-party bearer survives beside the consumed service key, got: {body}"
+    );
+    assert_eq!(
+        echoed_path(&body),
+        "/echo?sig=abc",
+        "the consumed service key is removed and the rest survives"
     );
 }
 
