@@ -177,13 +177,10 @@ def result(
     page: PageInfo | None = None,
     output: Output | None = None,
     artifacts: tp.Iterable[Artifact] = (),
-    **kwopts: tp.Any,
+    warnings: tp.Iterable[str] = (),
+    err: Error | None = None,
+    data: JsonValue = None,
 ) -> Result:
-    warnings = kwopts.pop("warnings", [])
-    err = kwopts.pop("err", None)
-    data = kwopts.pop("data", None)
-    if kwopts:
-        raise TypeError(f"unexpected keyword arguments: {', '.join(kwopts)}")
     return {
         "schema": SCHEMA,
         "ok": ok,

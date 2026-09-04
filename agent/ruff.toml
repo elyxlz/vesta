@@ -32,3 +32,5 @@ max-complexity = 15
 "**/conftest.py" = ["ARG", "PLC0415"]
 # Skill CLIs lazy-import heavy deps so cold CLI startup stays fast.
 "**/skills/**" = ["PLC0415"]
+# The one wire-envelope builder names every field of the result; a container type would just rename them.
+"skills/browser/cli/src/vesta_browser/protocol.py" = ["PLR0913"]
