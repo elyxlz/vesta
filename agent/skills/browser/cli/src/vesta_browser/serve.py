@@ -19,7 +19,7 @@ import sys
 import time
 import typing as tp
 
-from . import artifacts, camoufox, chromium
+from . import artifacts, camoufox, chromium, doctor
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State, routes
@@ -390,6 +390,7 @@ HANDLERS: dict[str, Handler] = {
     "sessions": op_sessions,
     "session_stop": op_session_stop,
     "stop_all": op_stop_all,
+    "doctor": doctor.op_doctor,
 }
 
 
