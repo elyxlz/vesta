@@ -1,16 +1,10 @@
 [project]
 name = "vesta-browser"
-version = "0.1.0"
-description = "Self-healing browser harness for Vesta agents. Camoufox over raw WebDriver BiDi, per-session daemon, agent-editable helpers."
+version = "0.2.0"
+description = "Browser daemon and CLI for Vesta agents: one owner for sessions, both engines, artifacts, and handover."
 readme = {text = "", content-type = "text/plain"}
-authors = [
-    { name = "elyxlz" },
-]
-license = { text = "MIT" }
 requires-python = ">=3.11"
-dependencies = [
-    "websockets>=15",
-]
+dependencies = []
 
 [project.scripts]
 browser = "vesta_browser.cli:main"
