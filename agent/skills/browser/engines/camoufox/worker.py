@@ -206,7 +206,7 @@ def _wait(seconds: float = 1.0) -> None:
 def _wait_for_load(state: WorkerState, timeout: float = 15.0) -> bool:
     try:
         state.page.wait_for_load_state("load", timeout=timeout * 1000)
-    except (TimeoutError, RuntimeError):
+    except Exception:  # Playwright raises its own TimeoutError subclass
         return False
     return True
 
@@ -214,7 +214,7 @@ def _wait_for_load(state: WorkerState, timeout: float = 15.0) -> bool:
 def _wait_for_element(state: WorkerState, selector: str, timeout: float = 10.0, visible: bool = False) -> bool:
     try:
         state.page.wait_for_selector(selector, state="visible" if visible else "attached", timeout=timeout * 1000)
-    except (TimeoutError, RuntimeError):
+    except Exception:
         return False
     return True
 
@@ -222,7 +222,7 @@ def _wait_for_element(state: WorkerState, selector: str, timeout: float = 10.0, 
 def _wait_for_network_idle(state: WorkerState, timeout: float = 10.0, idle_ms: int = 500) -> bool:
     try:
         state.page.wait_for_load_state("networkidle", timeout=timeout * 1000)
-    except (TimeoutError, RuntimeError):
+    except Exception:
         return False
     return True
 
@@ -274,7 +274,7 @@ def observe(state: WorkerState) -> dict[str, str] | None:
         return None
     try:
         return {"tab_id": _tab_id(state, state.page), "url": state.page.url, "title": state.page.title()}
-    except (TimeoutError, RuntimeError):
+    except Exception:
         return None
 
 

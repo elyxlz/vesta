@@ -4,6 +4,14 @@ import json
 import pathlib as pl
 
 
+class PlaywrightError(Exception):
+    """Mirrors playwright._impl._errors.Error, which does not subclass the builtin Exception hierarchy the worker expects."""
+
+
+class TimeoutError(PlaywrightError):
+    """Shadows the builtin deliberately: playwright.sync_api.TimeoutError is this name, not the builtin."""
+
+
 class _Mouse:
     def __init__(self, log):
         self.log = log
@@ -45,6 +53,8 @@ class FakePage:
         self.log.append(("goto", url))
 
     def title(self):
+        if self.closed:
+            raise PlaywrightError("Target closed")
         return self._title
 
     def evaluate(self, expression, arg=None):

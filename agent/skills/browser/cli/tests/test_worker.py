@@ -95,6 +95,15 @@ def test_screenshot_lands_in_the_artifact_dir(worker):
     assert printed.parent == artifacts and printed.is_file()
 
 
+def test_close_tab_then_observe_does_not_crash_the_worker(worker):
+    ask, _, _ = worker
+    ask({"op": "exec", "code": "close_tab()"})
+    res = ask({"op": "observe"})
+    assert res["page"] is None or "url" in res["page"]
+    follow_up = ask({"op": "exec", "code": "print(1)"})
+    assert follow_up["exit_code"] == 0 and follow_up["stdout"] == "1\n"
+
+
 def test_fill_input_clear_first_false_types_into_the_field(worker):
     ask, _, _ = worker
     ask({"op": "exec", "code": "fill_input('#q', 'x', clear_first=False)"})
