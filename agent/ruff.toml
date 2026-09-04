@@ -34,3 +34,5 @@ max-complexity = 15
 "**/skills/**" = ["PLC0415"]
 # The one wire-envelope builder names every field of the result; a container type would just rename them.
 "skills/browser/cli/src/vesta_browser/protocol.py" = ["PLR0913"]
+# Portable helpers mirror Browser Harness signatures; two knobs have no Playwright equivalent and stay accepted.
+"skills/browser/engines/camoufox/worker.py" = ["ARG001"]

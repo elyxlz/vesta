@@ -95,6 +95,19 @@ def test_screenshot_lands_in_the_artifact_dir(worker):
     assert printed.parent == artifacts and printed.is_file()
 
 
+def test_fill_input_clear_first_false_types_into_the_field(worker):
+    ask, _, _ = worker
+    ask({"op": "exec", "code": "fill_input('#q', 'x', clear_first=False)"})
+    res = ask({"op": "exec", "code": "print(context.log[-1])"})
+    assert res["stdout"] == "('type_into', '#q', 'x')\n"
+
+
+def test_unused_knobs_are_accepted_without_error(worker):
+    ask, _, _ = worker
+    res = ask({"op": "exec", "code": "wait_for_network_idle(idle_ms=100); capture_screenshot(max_dim=800)"})
+    assert res["exit_code"] == 0
+
+
 def test_wait_for_element_returns_false_on_timeout_like_the_harness(worker):
     ask, _, _ = worker
     res = ask({"op": "exec", "code": "print(wait_for_element('#never', timeout=0.1)); print(wait_for_element('#ok'))"})

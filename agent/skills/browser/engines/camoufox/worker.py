@@ -67,6 +67,7 @@ class PageLike(tp.Protocol):
     def goto(self, url: str) -> None: ...
     def evaluate(self, expression: str) -> object: ...
     def fill(self, selector: str, text: str, timeout: float | None = None) -> None: ...
+    def type(self, selector: str, text: str) -> None: ...
     def wait_for_load_state(self, state: str, timeout: float) -> None: ...
     def wait_for_selector(self, selector: str, state: str, timeout: float) -> None: ...
     def screenshot(self, path: str, full_page: bool) -> None: ...
@@ -176,8 +177,11 @@ def _type_text(state: WorkerState, text: str) -> None:
     state.page.keyboard.type(text)
 
 
-def _fill_input(state: WorkerState, selector: str, text: str, timeout: float = 0.0) -> None:
-    state.page.fill(selector, text, timeout=timeout * 1000 if timeout else None)
+def _fill_input(state: WorkerState, selector: str, text: str, clear_first: bool = True, timeout: float = 0.0) -> None:
+    if clear_first:
+        state.page.fill(selector, text, timeout=timeout * 1000 if timeout else None)
+    else:
+        state.page.type(selector, text)
 
 
 def _press_key(state: WorkerState, key: str, modifiers: int = 0) -> None:
@@ -215,7 +219,7 @@ def _wait_for_element(state: WorkerState, selector: str, timeout: float = 10.0, 
     return True
 
 
-def _wait_for_network_idle(state: WorkerState, timeout: float = 10.0) -> bool:
+def _wait_for_network_idle(state: WorkerState, timeout: float = 10.0, idle_ms: int = 500) -> bool:
     try:
         state.page.wait_for_load_state("networkidle", timeout=timeout * 1000)
     except (TimeoutError, RuntimeError):
@@ -223,7 +227,7 @@ def _wait_for_network_idle(state: WorkerState, timeout: float = 10.0) -> bool:
     return True
 
 
-def _capture_screenshot(state: WorkerState, path: str | None = None, full: bool = False) -> str:
+def _capture_screenshot(state: WorkerState, path: str | None = None, full: bool = False, max_dim: int | None = None) -> str:
     state.shots += 1
     target = pl.Path(path) if path else state.artifacts / f"shot-{state.shots}.png"
     state.page.screenshot(path=str(target), full_page=full)

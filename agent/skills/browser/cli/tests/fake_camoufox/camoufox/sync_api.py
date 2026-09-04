@@ -60,6 +60,9 @@ class FakePage:
     def fill(self, selector, text, timeout=None, **_):
         self.log.append(("fill", selector, text))
 
+    def type(self, selector, text):
+        self.log.append(("type_into", selector, text))
+
     def wait_for_load_state(self, state="load", timeout=None):
         self.log.append(("wait_for_load_state", state))
 
