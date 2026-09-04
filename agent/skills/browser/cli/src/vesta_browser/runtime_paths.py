@@ -12,9 +12,8 @@ import typing as tp
 SKILL_DIR = pl.Path(__file__).resolve().parents[3]
 ENGINES_DIR = SKILL_DIR / "engines"
 CAMOUFOX_INSTALL_ROOT = pl.Path("/opt/camoufox")
-# LEGACY(remove-when: camoufox_install.CAMOUFOX_RELEASE_TAG moves): duplicated here rather than
-# imported, because camoufox_install.py runs standalone under the system python and must not
-# import the package; Task 12 asserts the two values agree.
+# Duplicated in camoufox_install.py, which runs standalone under the system python and cannot
+# import this package; test_camoufox_install.py pins the two values equal.
 CAMOUFOX_RELEASE_TAG = "v150.0.2-beta.25"
 
 
