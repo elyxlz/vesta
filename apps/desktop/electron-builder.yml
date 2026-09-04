@@ -10,6 +10,7 @@ files:
 extraResources:
   - from: ../web/dist
     to: web
+beforeBuild: scripts/bundle-preload.mjs
 beforePack: scripts/build-native.mjs
 mac:
   extraResources:

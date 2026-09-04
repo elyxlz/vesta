@@ -19,4 +19,15 @@ describe("compiled preload", () => {
     expect(bundle).toContain('exposeInMainWorld("vestaNative"');
     expect(bundle).not.toMatch(RELATIVE_IMPORT);
   }, 120_000);
+
+  // CI packages with `npx tsc` + `npx electron-builder`, never `npm run compile`, so the bundle
+  // must be wired into a build hook: without it electron-builder ships the un-bundled tsc preload
+  // and the desktop app silently renders the web UI. Lock the wiring here.
+  it("is bundled by electron-builder itself, not only by npm run compile", () => {
+    const config = fs.readFileSync(
+      path.join(DESKTOP_ROOT, "electron-builder.yml"),
+      "utf8",
+    );
+    expect(config).toMatch(/^beforeBuild:\s*scripts\/bundle-preload\.mjs\s*$/m);
+  });
 });
