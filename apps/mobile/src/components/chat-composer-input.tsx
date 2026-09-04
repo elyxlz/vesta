@@ -1,9 +1,4 @@
-import {
-  useImperativeHandle,
-  useRef,
-  useState,
-  type ComponentRef,
-} from "react";
+import { useImperativeHandle, useRef, type ComponentRef } from "react";
 import { StyleSheet, TextInput } from "react-native";
 import {
   CHAT_COMPOSER_CONTROL_HEIGHT,
@@ -17,6 +12,9 @@ const MIN_HEIGHT = CHAT_COMPOSER_CONTROL_HEIGHT;
 const VERTICAL_PADDING = (MIN_HEIGHT - LINE_HEIGHT) / 2;
 const MAX_HEIGHT = 180;
 
+// No fixed height: the new-architecture text input measures its own text, so layout grows it
+// between the min and max heights. A height pinned from state would freeze layout, and the
+// content-size event only fires on a layout change.
 export function ChatComposerInput({
   ref,
   value,
@@ -28,7 +26,6 @@ export function ChatComposerInput({
   onChangeText,
 }: ChatComposerInputProps) {
   const nativeRef = useRef<ComponentRef<typeof TextInput>>(null);
-  const [height, setHeight] = useState(MIN_HEIGHT);
 
   useImperativeHandle(
     ref,
@@ -42,19 +39,10 @@ export function ChatComposerInput({
       maxLength={maxLength}
       multiline
       onChangeText={onChangeText}
-      onContentSizeChange={(event) =>
-        setHeight(
-          Math.min(
-            Math.max(event.nativeEvent.contentSize.height, MIN_HEIGHT),
-            MAX_HEIGHT,
-          ),
-        )
-      }
       placeholder={placeholder}
       placeholderTextColor={placeholderTextColor}
-      scrollEnabled={height >= MAX_HEIGHT}
       selectionColor={selectionColor}
-      style={[styles.input, { color: textColor, height }]}
+      style={[styles.input, { color: textColor }]}
       value={value}
     />
   );
@@ -63,6 +51,7 @@ export function ChatComposerInput({
 const styles = StyleSheet.create({
   input: {
     flex: 1,
+    minHeight: MIN_HEIGHT,
     maxHeight: MAX_HEIGHT,
     paddingHorizontal: 9,
     paddingTop: VERTICAL_PADDING,
