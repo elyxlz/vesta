@@ -20,14 +20,17 @@ describe("compiled preload", () => {
     expect(bundle).not.toMatch(RELATIVE_IMPORT);
   }, 120_000);
 
-  // CI packages with `npx tsc` + `npx electron-builder`, never `npm run compile`, so the bundle
-  // must be wired into a build hook: without it electron-builder ships the un-bundled tsc preload
-  // and the desktop app silently renders the web UI. Lock the wiring here.
-  it("is bundled by electron-builder itself, not only by npm run compile", () => {
+  // CI packages with `npx tsc` + `npx electron-builder`, never `npm run compile`, so the bundling
+  // must run inside a build hook. beforePack, not beforeBuild: beforeBuild is the dependency-install
+  // hook and defining it drops node_modules from the asar. verify-pack (afterPack) then fails the
+  // build if either the preload or node_modules is missing. Lock both hooks here.
+  it("wires preload bundling and artifact verification into electron-builder", () => {
     const config = fs.readFileSync(
       path.join(DESKTOP_ROOT, "electron-builder.yml"),
       "utf8",
     );
-    expect(config).toMatch(/^beforeBuild:\s*scripts\/bundle-preload\.mjs\s*$/m);
+    expect(config).toMatch(/^beforePack:\s*scripts\/before-pack\.mjs\s*$/m);
+    expect(config).toMatch(/^afterPack:\s*scripts\/verify-pack\.mjs\s*$/m);
+    expect(config).not.toMatch(/^beforeBuild:/m);
   });
 });

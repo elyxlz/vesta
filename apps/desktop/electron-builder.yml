@@ -11,6 +11,7 @@ extraResources:
   - from: ../web/dist
     to: web
 beforePack: scripts/before-pack.mjs
+afterPack: scripts/verify-pack.mjs
 mac:
   extraResources:
     - from: native/vesta-location
