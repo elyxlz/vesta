@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { Ban, Download, Maximize2, RotateCcw } from "lucide-react";
 import {
-  appChatAttachmentPath,
   attachmentKind,
+  chatAttachmentPath,
   formatBytes,
   type ChatAttachment,
 } from "@vesta/core";
@@ -42,7 +42,7 @@ type MediaPhase = "loading" | "loaded" | "removed" | "error";
 // a 410 is the terminal removed state, anything else a retryable load failure.
 async function probePhase(agent: string, id: string): Promise<MediaPhase> {
   try {
-    await httpClient.request(appChatAttachmentPath(agent, id), {
+    await httpClient.request(chatAttachmentPath(agent, id), {
       method: "HEAD",
     });
     return "error";
@@ -93,7 +93,7 @@ function ImageBlock({
   // Each retry bumps the epoch: useAuthedSrc rebuilds the token URL, so a retry after token
   // expiry dials fresh instead of remounting the same stale src.
   const [epoch, setEpoch] = useState(0);
-  const src = useAuthedSrc(appChatAttachmentPath(agent, attachment.id), epoch);
+  const src = useAuthedSrc(chatAttachmentPath(agent, attachment.id), epoch);
 
   if (phase === "removed") return <RemovedTile attachment={attachment} />;
   if (phase === "error") {
@@ -168,7 +168,7 @@ function VideoBlock({
 }) {
   const [played, setPlayed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const src = useAuthedSrc(appChatAttachmentPath(agent, attachment.id));
+  const src = useAuthedSrc(chatAttachmentPath(agent, attachment.id));
   return (
     <span
       className="relative block overflow-hidden rounded-xl"
@@ -214,7 +214,7 @@ function AudioBlock({
   agent: string;
   attachment: ChatAttachment;
 }) {
-  const src = useAuthedSrc(appChatAttachmentPath(agent, attachment.id));
+  const src = useAuthedSrc(chatAttachmentPath(agent, attachment.id));
   return (
     <span className="flex flex-col gap-0.5">
       {src !== null && (

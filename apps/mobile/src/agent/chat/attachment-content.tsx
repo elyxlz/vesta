@@ -4,8 +4,8 @@ import { Image } from "expo-image";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { Ionicons } from "@expo/vector-icons";
 import {
-  appChatAttachmentPath,
   attachmentKind,
+  chatAttachmentPath,
   formatBytes,
   type ChatAttachment,
 } from "@vesta/core";
@@ -165,7 +165,7 @@ function ImageBlock({
   const [epoch, setEpoch] = useState(0);
   const uri = useAuthedMediaUri(
     context.api,
-    appChatAttachmentPath(context.agent, attachment.id),
+    chatAttachmentPath(context.agent, attachment.id),
     epoch,
   );
   const size = mediaSize(attachment);
@@ -211,7 +211,7 @@ function ImageBlock({
             // An image error carries no status; a bodyless HEAD tells removed from transient.
             void probeAttachmentStatus(
               context.api,
-              appChatAttachmentPath(context.agent, attachment.id),
+              chatAttachmentPath(context.agent, attachment.id),
             )
               .then((status) => {
                 setPhase(status === 410 ? "removed" : "error");
@@ -309,7 +309,7 @@ function ActiveAudioTile({
 }) {
   const uri = useAuthedMediaUri(
     context.api,
-    appChatAttachmentPath(context.agent, attachment.id),
+    chatAttachmentPath(context.agent, attachment.id),
   );
   const player = useAudioPlayer(uri ? { uri } : null);
   const status = useAudioPlayerStatus(player);
@@ -341,7 +341,7 @@ function ActiveAudioTile({
           // The player load failed silently; a bodyless HEAD tells removed from transient.
           void probeAttachmentStatus(
             context.api,
-            appChatAttachmentPath(context.agent, attachment.id),
+            chatAttachmentPath(context.agent, attachment.id),
           )
             .then((probed) => {
               if (probed === 410) onRemoved();

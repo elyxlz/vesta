@@ -130,7 +130,7 @@ function partitionHeld(
 
 // Tool-call events ride the wire (Debug, agent-internal) but never appear in the chat list: the
 // conversation is the person, not the machinery. Filtered at the live-fold entry so no tool row ever
-// enters `messages`; history pages from the app-chat service are already pure conversation.
+// enters `messages`; history pages from the chat service are already pure conversation.
 function isChatRow(event: ChatMessage): boolean {
   return event.type !== "tool_start" && event.type !== "tool_end";
 }

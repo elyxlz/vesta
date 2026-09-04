@@ -35,7 +35,7 @@ describe("downloadAttachment", () => {
     await downloadAttachment("ada", ATTACHMENT);
 
     expect(apiFetchMock).toHaveBeenCalledWith(
-      "/agents/ada/app-chat/attachments/att1?download=1",
+      "/agents/ada/chat/attachments/att1?download=1",
     );
     expect(createUrl).toHaveBeenCalledOnce();
     expect(click).toHaveBeenCalledOnce();

@@ -1,7 +1,7 @@
 import type { InputMethod } from "../protocol/events";
 import { ApiError, type HttpClient } from "../transport/http";
 
-// Every send carries a client-generated id. The app-chat service stores it on the user event and
+// Every send carries a client-generated id. The chat service stores it on the user event and
 // echoes it on the chat socket, making optimistic-echo dedup exact and HTTP retries idempotent.
 // The id generator is injected (crypto.randomUUID in production) for testability.
 export type IdGenerator = () => string;
@@ -36,7 +36,7 @@ export function sendMessage(
 ): SentMessage {
   const id = newId();
   const outcome = http
-    .json(`/agents/${encodeURIComponent(agent)}/app-chat/message`, {
+    .json(`/agents/${encodeURIComponent(agent)}/chat/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

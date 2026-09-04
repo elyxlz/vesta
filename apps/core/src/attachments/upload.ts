@@ -11,7 +11,7 @@ import {
   type ChatAttachment,
 } from "./attachment-model";
 
-// The chunked upload engine: offset-addressed PUTs against the app-chat service, built for spotty
+// The chunked upload engine: offset-addressed PUTs against the chat service, built for spotty
 // connections. The server holds the truth about staged bytes (a 409 or a status probe resyncs the
 // offset), chunk size adapts to link quality, retryable failures back off forever while the draft
 // lives, and an offline link parks the run (no timers burn) until the connectivity edge. Everything
@@ -101,7 +101,7 @@ export function uploadAttachment(
   callbacks: UploadCallbacks,
 ): UploadHandle {
   const { agent, blob, meta } = request;
-  const base = `/agents/${encodeURIComponent(agent)}/app-chat/attachments`;
+  const base = `/agents/${encodeURIComponent(agent)}/chat/attachments`;
   // Aborts every non-chunk request in flight (create, status probe, complete) the moment the caller
   // gives up; chunk PUTs carry their own controller so the stall timeout can abort just one chunk.
   const runAbort = new AbortController();

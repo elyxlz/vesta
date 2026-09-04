@@ -10,15 +10,15 @@ function cursorQuery(cursor: number | undefined): URLSearchParams {
   return params;
 }
 
-// The app-chat service's own paged, id-cursored history (GET .../app-chat/history).
+// The chat service's own paged, id-cursored history (GET .../chat/history).
 function chatHistoryPath(name: string, cursor?: number): string {
   const query = cursorQuery(cursor).toString();
-  return agentPath(name, `/app-chat/history${query ? `?${query}` : ""}`);
+  return agentPath(name, `/chat/history${query ? `?${query}` : ""}`);
 }
 
-// The replay-free live chat socket (GET .../app-chat/ws); dialed with the token in the query.
+// The replay-free live chat socket (GET .../chat/ws); dialed with the token in the query.
 export function chatSocketPath(name: string): string {
-  return agentPath(name, "/app-chat/ws");
+  return agentPath(name, "/chat/ws");
 }
 
 export async function fetchChatHistory(

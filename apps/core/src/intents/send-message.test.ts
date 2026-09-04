@@ -19,7 +19,7 @@ describe("sendMessage", () => {
     expect(id).toBe("i-1");
     const call = json.mock.calls[0];
     if (!call) throw new Error("no POST");
-    expect(call[0]).toBe("/agents/scout/app-chat/message");
+    expect(call[0]).toBe("/agents/scout/chat/message");
     const body = JSON.parse((call[1] as { body: string }).body) as unknown;
     expect(body).toEqual({
       text: "hi",

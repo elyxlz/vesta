@@ -21,8 +21,8 @@ import { Image } from "expo-image";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { Ionicons } from "@expo/vector-icons";
 import {
-  appChatAttachmentPath,
   attachmentKind,
+  chatAttachmentPath,
   formatBytes,
   type ChatAttachment,
 } from "@vesta/core";
@@ -207,7 +207,7 @@ export function AttachmentViewer({
   const attachment = request?.attachment ?? null;
   const uri = useAuthedMediaUri(
     api,
-    attachment ? appChatAttachmentPath(agent, attachment.id) : null,
+    attachment ? chatAttachmentPath(agent, attachment.id) : null,
   );
   if (attachment === null) return null;
   const kind = attachmentKind(attachment.mime);

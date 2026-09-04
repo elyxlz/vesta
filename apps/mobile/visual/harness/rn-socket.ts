@@ -1,7 +1,7 @@
 import type { SocketLike } from "@vesta/core";
 import { visualSwitch } from "./launch-query";
 
-// The app-chat socket without a gateway: it opens on the next tick, and
+// The chat socket without a gateway: it opens on the next tick, and
 // visualLive=typing streams long replies after open in two batches of three,
 // so the paced queue (which flushes past three pending) shows the typing
 // indicator continuously for well over the capture window.

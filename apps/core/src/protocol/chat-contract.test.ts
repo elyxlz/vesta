@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appChatFixtures as fixtures } from "../../fixtures/app-chat-events";
+import { chatFixtures as fixtures } from "../../fixtures/chat-events";
 import type { ChatMessage, HistoryPage } from "../chat/chat-stream-model";
 import { parseChatEvent, parseHistoryPage } from "./parse-chat";
 
@@ -12,11 +12,11 @@ type DeepReadonly<T> = T extends (infer U)[]
     ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
     : T;
 
-// The fixtures are produced by the app-chat service's real intake and store paths
-// (agent/skills/app-chat/cli/tests/test_chat_events_fixture.py, REGEN_EVENT_FIXTURES=1). Parsing
+// The fixtures are produced by the chat service's real intake and store paths
+// (agent/skills/chat/cli/tests/test_chat_events_fixture.py, REGEN_EVENT_FIXTURES=1). Parsing
 // them with the boundary parser proves the service->client seam at runtime, and the `satisfies`
 // checks prove it at compile time: a renamed field on either side fails `npm run check`.
-describe("app-chat event contract (service fixtures)", () => {
+describe("chat event contract (service fixtures)", () => {
   it("types the echo frame and the history page at compile time", () => {
     const echo = fixtures.echo satisfies DeepReadonly<ChatMessage>;
     const page = fixtures.history satisfies DeepReadonly<HistoryPage>;
